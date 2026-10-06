@@ -17,7 +17,6 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode, type SidecarCapabilityRule } from "@intx/types";
 import {
   createApp,
-  createAuth,
   createMailTriggeredRunGrantsMaterializer,
 } from "@intx/hub-api";
 import {
@@ -49,9 +48,11 @@ import { MAX_SIDECAR_FRAME_BYTES } from "@intx/types/sidecar";
 import { upgradeWebSocket, websocket } from "hono/bun";
 import { setup, getLogger } from "@intx/log";
 import type { DatabaseConfig } from "./env.js";
+import { createHubAuth, type HubAuthConfig } from "./auth.js";
 
 export type CreateHubServerOpts = {
   readonly database: DatabaseConfig;
+  readonly authConfig: HubAuthConfig;
   /** Provisioners eligible to host frozen workflow deployments. */
   readonly sidecarProvisioners?: readonly SidecarProvisioner[];
   /** Selects among matching deployment provisioners. Defaults to the first. */
@@ -69,6 +70,7 @@ export type CreateHubServerOpts = {
 
 export async function createInterchangeHub({
   database,
+  authConfig,
   sidecarProvisioners = [],
   sidecarProvisionerChooser,
   probeSidecarProvisioners = [],
@@ -84,7 +86,7 @@ export async function createInterchangeHub({
 
   const { db } = createDB(database);
 
-  const auth = createAuth(db);
+  const auth = createHubAuth(db, authConfig);
 
   const hubDataDir = process.env["HUB_DATA_DIR"];
   if (!hubDataDir) {
