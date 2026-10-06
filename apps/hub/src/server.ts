@@ -37,7 +37,8 @@ import {
 } from "./local-process-sidecar-provisioner.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
-import { databaseConfig, githubApiOrigin, loadHubEnv, migrationEnv } from "./env.js";
+import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
+import { databaseConfig, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
@@ -129,9 +130,10 @@ process.once("SIGINT", onShutdownSignal);
 process.once("SIGTERM", onShutdownSignal);
 
 const portalOrigin = env.PORTAL_ORIGIN === undefined ? [] : [new URL(env.PORTAL_ORIGIN).origin];
+const signIn = signInSettings(env);
 const composition = await createInterchangeHub({
   database,
-  authConfig: { baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin },
+  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin },
   sidecarProvisioners: [local.provisioner],
   probeSidecarProvisioners: [local.provisioner],
 });
@@ -259,6 +261,7 @@ const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandl
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
   if (servePortal && isPortalRequest(req)) return servePortal(req);
   const url = new URL(req.url);
+  if (url.pathname === AUTH_METHODS_PATH && req.method === "GET") return Response.json(authMethods(signIn));
   // Intercept before the stock Hono logger: callback query values include the
   // one-time GitHub code and must never enter request/access logs.
   if (url.pathname === GITHUB_MANIFEST_CALLBACK_PATH && req.method === "GET") {
