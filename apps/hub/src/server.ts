@@ -189,6 +189,7 @@ const githubManifest = createGithubManifestIntegration({
   getSession: composition.getSession,
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
+  publicOrigin: new URL(env.BETTER_AUTH_BASE_URL).origin,
   authorizeCredential: authorizePortal,
 });
 const githubPrActions = createGithubPrActions({

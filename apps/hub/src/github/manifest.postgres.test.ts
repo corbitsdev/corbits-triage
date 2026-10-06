@@ -50,7 +50,7 @@ test("PostgreSQL: a canonical insert after start is preserved and remains decryp
       getSession: signedInSession,
       authorizeCredential: allow,
       trustedPortalOrigins: [],
-      githubApiOrigin: GITHUB_API_ORIGIN,
+      githubApiOrigin: GITHUB_API_ORIGIN, publicOrigin: "https://hub.example.com",
       fetchImpl: Object.assign(convertManifest, { preconnect: noPreconnect }),
     });
 
