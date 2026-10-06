@@ -2,6 +2,7 @@ import { type } from "arktype";
 import {
   configureGithubApp,
   configureGithubHook,
+  ensureGitHubProvider,
   githubAppInstallUrl,
   githubAppSecret,
   GITHUB_CREDENTIAL_NAME,
@@ -44,7 +45,15 @@ export class ManifestStartError extends Error {
   }
 }
 
-export async function startGithubManifest(tenantId: string, portalOrigin: string, replace: boolean, restart = false): Promise<ManifestStart> {
+/** The hub stores the new App under the workspace's `github` provider, so that provider must exist first. */
+export async function startGithubManifest(
+  transport: Transport,
+  tenantId: string,
+  portalOrigin: string,
+  replace: boolean,
+  restart: boolean,
+): Promise<ManifestStart> {
+  await ensureGitHubProvider(transport, tenantId);
   const response = await fetch(`${requestOrigin()}/api/integrations/github-manifest/${encodeURIComponent(tenantId)}/start`, {
     method: "POST",
     credentials: "include",

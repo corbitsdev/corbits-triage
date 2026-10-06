@@ -104,7 +104,7 @@ export default function Connect() {
     setError("");
     try {
       if (!snapshot) throw new Error("The workspace is still loading.");
-      const start = await startGithubManifest(snapshot.workspace.tenantId, window.location.origin, replace, restart);
+      const start = await startGithubManifest(createHubTransport(), snapshot.workspace.tenantId, window.location.origin, replace, restart);
       postGithubManifest(start);
     } catch (cause) {
       if (cause instanceof ManifestStartError && cause.reason === "replacement_confirmation_required") {
