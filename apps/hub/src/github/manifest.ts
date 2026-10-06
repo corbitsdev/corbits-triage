@@ -285,7 +285,7 @@ function currentDate(): Date {
 }
 
 export function createGithubManifestIntegration({
-  db, cipher, getSession, authorizeCredential, trustedPortalOrigins, githubApiOrigin, fetchImpl = fetch, now = currentDate,
+  db, cipher, getSession, authorizeCredential, trustedPortalOrigins, githubApiOrigin, publicOrigin, fetchImpl = fetch, now = currentDate,
 }: {
   db: DB["db"];
   cipher: CredentialCipher;
@@ -293,6 +293,8 @@ export function createGithubManifestIntegration({
   authorizeCredential: AuthorizeCredential;
   trustedPortalOrigins: readonly string[];
   githubApiOrigin: string;
+  /** The hub's public origin; behind a TLS proxy the request URL is not. */
+  publicOrigin: string;
   fetchImpl?: typeof fetch;
   now?: () => Date;
 }) {
@@ -380,8 +382,7 @@ export function createGithubManifestIntegration({
     try { portalOrigin = safeOrigin(body.portalOrigin); } catch { return securedJson({ error: "invalid_request" }, 400); }
     if (!trustedOrigins.has(portalOrigin)) return securedJson({ error: "forbidden" }, 403);
     const state = randomBytes(32).toString("hex");
-    const requestUrl = new URL(req.url);
-    const callbackUrl = `${requestUrl.origin}${GITHUB_MANIFEST_CALLBACK_PATH}`;
+    const callbackUrl = `${publicOrigin}${GITHUB_MANIFEST_CALLBACK_PATH}`;
     const stamp = now();
     const reservation = await db.transaction(async function reserveSetup(tx) {
       // One live reservation per tenant prevents two fresh starts from choosing
@@ -423,7 +424,7 @@ export function createGithubManifestIntegration({
       error: reservation.error,
       ...(reservation.error === "setup_in_progress" ? { owned: reservation.owned } : {}),
     }, reservation.error === "forbidden" ? 403 : 409);
-    const hookUrl = `${requestUrl.origin}/api/hooks/${encodeURIComponent(tenantId)}/github-hook`;
+    const hookUrl = `${publicOrigin}/api/hooks/${encodeURIComponent(tenantId)}/github-hook`;
     return securedJson({ manifest: buildGithubAppManifest(portalOrigin, hookUrl, callbackUrl), state }, 201);
   }
 
