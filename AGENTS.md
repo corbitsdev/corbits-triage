@@ -13,7 +13,6 @@
 - Interchange is stock. Code lives in `apps/*` and `packages/*` only.
 - `vendor/interchange` changes only with owner approval, each listed in `vendor/interchange/VENDORED.md` and `tooling/vendor-diff-allowlist.txt`.
 - Hub env is read only in `apps/hub/src/env.ts` and passed down as config.
-- Never commit `.env`, `tmp/`, `mockups/` or `.corbits/`.
 
 ## Code
 
