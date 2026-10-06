@@ -245,6 +245,42 @@ function applyCreatedOrAdded(ns: CorbitsTriageNs, listed: { names: string[]; tru
   };
 }
 
+export type InstallationListing = { fields: InstallationFields; names: string[] };
+
+/** Makes the stored repositories match what GitHub reports for every installation of the App. */
+export function applyInstallationListing(ns: CorbitsTriageNs, listings: readonly InstallationListing[]): CorbitsTriageNs {
+  const live = new Set(listings.map((listing) => listing.fields.installationId));
+  let next = ns;
+  for (const row of repoRecords(ns)) {
+    if (row.installationId !== undefined && !live.has(row.installationId)) next = dropReposByInstallation(next, row.installationId);
+  }
+  const added: string[] = [];
+  for (const { fields, names } of listings) {
+    const listed = new Set(names);
+    const gone = repoRecords(next).filter((row) => row.installationId === fields.installationId && !listed.has(row.name));
+    next = dropReposByName(next, gone.map((row) => row.name));
+    const upserted = upsertConnectedRepos(next, names, fields);
+    next = upserted.ns;
+    added.push(...upserted.added);
+  }
+  return markBacklogPending(next, catchupNames(ns, listings.flatMap((listing) => listing.names), added));
+}
+
+export type BacklogDeps = Pick<BridgeDeps, "sendMail" | "readCheckPack">;
+
+/** Mails backlog catch-up for each repository that owes one and has a check pack; returns the repositories mailed. */
+export async function sendBacklog(d: BacklogDeps, tenantId: string, ns: CorbitsTriageNs, names: readonly string[]): Promise<string[]> {
+  const mailed: string[] = [];
+  for (const repo of namesNeedingBacklog(ns, names)) {
+    const pack = await resolvedPack(d.readCheckPack, tenantId, repo);
+    if (!pack) continue;
+    const row = repoRecords(ns).find((item) => item.name === repo);
+    await d.sendMail(tenantId, BACKLOG_WORKFLOW, mailPayload("backlog", repo, repoPolicy(row), pack));
+    mailed.push(repo);
+  }
+  return mailed;
+}
+
 function applyInstallAction(
   event: string,
   action: string,
@@ -339,16 +375,9 @@ async function handleInstallEvent(
     });
   }
 
-  const toMail = namesNeedingBacklog(nextNs, payloadCatchupNames(event, action, payload));
-  const mailed: string[] = [];
+  let mailed: string[] = [];
   try {
-    for (const repo of toMail) {
-      const pack = await resolvedPack(d.readCheckPack, loaded.tenantId, repo);
-      if (!pack) continue;
-      const row = repoRecords(nextNs).find((item) => item.name === repo);
-      await d.sendMail(loaded.tenantId, BACKLOG_WORKFLOW, mailPayload("backlog", repo, repoPolicy(row), pack));
-      mailed.push(repo);
-    }
+    mailed = await sendBacklog(d, loaded.tenantId, nextNs, payloadCatchupNames(event, action, payload));
   } catch (err) {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
     log({ level: "error", msg: "forward_failed", delivery, event, action, error: String(err) });
