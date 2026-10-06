@@ -23,6 +23,8 @@ export const GITHUB_HOOK_CREDENTIAL_NAME = "github-hook";
 export const INFERENCE_PROVIDER = "corbits-system-one";
 export const INFERENCE_PROVIDER_PLUGIN = "corbits-system-one";
 export const INFERENCE_CREDENTIAL_NAME = "corbits-system-one";
+/** Catalog model the triage workflows declare; its offering carries the provider's own model name. */
+export const DECISION_MODEL_ALIAS = "decision";
 
 export function githubProviderApiBaseUrl(
   env: Record<string, string | undefined> = (import.meta as { env?: Record<string, string | undefined> }).env ?? {},
@@ -762,7 +764,7 @@ export async function saveInference(
   });
 }
 
-type CatalogRow = { id: string; name?: string; canonicalName?: string; baseURL?: string; modelId?: string; providerId?: string };
+type CatalogRow = { id: string; name?: string; canonicalName?: string; baseURL?: string; modelId?: string; providerId?: string; quirks?: Record<string, unknown> | null };
 
 /** Catalog provider, model, and offering the triage workflows deploy onto; reuses rows that already match. */
 async function ensureInferenceOffering(
@@ -784,11 +786,15 @@ async function ensureInferenceOffering(
     await transport.fetch("PATCH", `${base}/providers/${enc(provider.id)}`, { baseURL: input.endpoint });
   }
   const models = await listAll<CatalogRow>(transport, `${base}/models`);
-  const model = models.find((row) => row.canonicalName === input.model)
-    ?? await transport.fetch<CatalogRow>("POST", `${base}/models`, { canonicalName: input.model });
+  const model = models.find((row) => row.canonicalName === DECISION_MODEL_ALIAS)
+    ?? await transport.fetch<CatalogRow>("POST", `${base}/models`, { canonicalName: DECISION_MODEL_ALIAS });
+  const quirks = { model: input.model };
   const offerings = await listAll<CatalogRow>(transport, `${base}/offerings`);
-  if (!offerings.some((row) => row.modelId === model.id && row.providerId === provider.id)) {
-    await transport.fetch("POST", `${base}/offerings`, { modelId: model.id, providerId: provider.id, priority: 0 });
+  const offering = offerings.find((row) => row.modelId === model.id && row.providerId === provider.id);
+  if (!offering) {
+    await transport.fetch("POST", `${base}/offerings`, { modelId: model.id, providerId: provider.id, priority: 0, quirks });
+  } else if (JSON.stringify(offering.quirks) !== JSON.stringify(quirks)) {
+    await transport.fetch("PATCH", `${base}/offerings/${enc(offering.id)}`, { quirks });
   }
 }
 

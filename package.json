@@ -38,7 +38,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@corbits/system-one": "0.3.0",
+    "@corbits/system-one": "0.3.1",
     "@intx/hub-client": "workspace:*",
     "@intx/inference": "workspace:*",
     "@intx/types": "workspace:*"

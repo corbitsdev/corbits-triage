@@ -321,8 +321,18 @@ describe("workspace GitHub App and repository lifecycle", () => {
     });
     expect(calls).toContainEqual({
       method: "POST",
+      path: "/api/tenants/tenant/catalog/models",
+      body: { canonicalName: "decision" },
+    });
+    expect(calls).toContainEqual({
+      method: "POST",
       path: "/api/tenants/tenant/catalog/offerings",
-      body: { modelId: "mdl-inference", providerId: "mpv-inference", priority: 0 },
+      body: {
+        modelId: "mdl-inference",
+        providerId: "mpv-inference",
+        priority: 0,
+        quirks: { model: "triage-large" },
+      },
     });
     expect(calls).toContainEqual({
       method: "POST",

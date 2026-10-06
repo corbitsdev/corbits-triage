@@ -34,6 +34,7 @@ import {
 } from "./hub-api.ts";
 import type { CreateGrantInput } from "./grant-actions.ts";
 import { ensureWorkflows, suggestOfferings } from "./workflow-deploy.ts";
+import { hasDecisionModelCredential } from "./decision-models.ts";
 import type { RepoPolicy } from "@corbits/triage-contracts";
 
 interface PortalContextValue {
@@ -145,21 +146,18 @@ export function PortalProvider({ children }: { children: ReactNode }) {
 
   const tenantId = snapshot?.workspace.tenantId;
   const githubConnected = snapshot ? hasActiveGithubCredential(snapshot.credentials) : false;
-  const convergeWorkflows = useCallback(function convergeWorkflows(id: string) {
-    if (convergedTenants.has(id)) return;
+  const decisionModelConnected = snapshot ? hasDecisionModelCredential(snapshot.credentials) : false;
+  const convergeWorkflows = useCallback(function convergeWorkflows(id: string, redeploy: boolean) {
+    if (!redeploy && convergedTenants.has(id)) return;
     convergedTenants.add(id);
     async function deploy() {
       try {
         const transport = createHubTransport();
         const offerings = await suggestOfferings(transport, id);
-        if (!offerings) {
-          convergedTenants.delete(id);
-          notify("Triage needs a System One inference offering. Add one in Settings → Inference.");
-          return;
-        }
-        const deployed = await ensureWorkflows(transport, id, offerings);
+        if (!offerings) throw new Error("No decision model offering found. Save it again in Settings → Model.");
+        const deployed = await ensureWorkflows(transport, id, offerings, redeploy);
         if (deployed.length) {
-          notify(`Deployed ${deployed.join(" and ")} on ${offerings.model}.`);
+          notify(`Deployed ${deployed.join(" and ")}.`);
           refresh();
         }
       } catch (cause: unknown) {
@@ -171,8 +169,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [notify, refresh]);
 
   useEffect(function convergeOnConnect() {
-    if (tenantId && githubConnected) convergeWorkflows(tenantId);
-  }, [convergeWorkflows, githubConnected, tenantId]);
+    if (tenantId && githubConnected && decisionModelConnected) convergeWorkflows(tenantId, false);
+  }, [convergeWorkflows, decisionModelConnected, githubConnected, tenantId]);
 
   const requireSnapshot = useCallback(function requireSnapshot() {
     if (readOnly || !snapshot) {
@@ -372,12 +370,9 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     async function saveInferenceSecret(input: { endpoint: string; model: string; secret: string }) {
       const current = requireSnapshot();
       await saveInference(createHubTransport(), current.workspace.tenantId, input);
-      notify("Inference saved.");
+      notify("Decision model saved.");
       refresh();
-      if (hasActiveGithubCredential(current.credentials)) {
-        convergedTenants.delete(current.workspace.tenantId);
-        convergeWorkflows(current.workspace.tenantId);
-      }
+      if (hasActiveGithubCredential(current.credentials)) convergeWorkflows(current.workspace.tenantId, true);
     },
     [convergeWorkflows, notify, refresh, requireSnapshot],
   );

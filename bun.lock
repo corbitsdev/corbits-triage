@@ -5,7 +5,7 @@
     "": {
       "name": "corbits-triage",
       "dependencies": {
-        "@corbits/system-one": "0.3.0",
+        "@corbits/system-one": "0.3.1",
         "@intx/hub-client": "workspace:*",
         "@intx/inference": "workspace:*",
         "@intx/types": "workspace:*",
@@ -635,7 +635,7 @@
 
     "@corbits/rule-packs": ["@corbits/rule-packs@workspace:packages/rule-packs"],
 
-    "@corbits/system-one": ["@corbits/system-one@0.3.0", "", { "dependencies": { "arktype": "2.2.3" }, "peerDependencies": { "@intx/inference": "^0.4.0", "@intx/types": "^0.4.0" } }, "sha512-rH1MSTyTph1O3wRjVuh2gbunfPLXK0HFDjOym9CkXtcDpRa6J+sWiDsnHdIla3KnVxPWQ2dTbYYck6KlTghtIw=="],
+    "@corbits/system-one": ["@corbits/system-one@0.3.1", "", { "dependencies": { "arktype": "2.2.3" }, "peerDependencies": { "@intx/inference": "^0.4.0", "@intx/types": "^0.4.0" } }, "sha512-YvYaP6CY5VGM7MPJW6JPU4d5uPESMCX1xspddch0NGCBNB4Nz4yAR1JOFz6gYyVy0JyYHqtNYArXwFB5kUetug=="],
 
     "@corbits/triage-contracts": ["@corbits/triage-contracts@workspace:packages/triage-contracts"],
 

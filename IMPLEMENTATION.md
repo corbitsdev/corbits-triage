@@ -49,8 +49,19 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   LightningFS, speaking receive-pack to the hub's asset git endpoint.
 - `scripts/build-workflows.ts`: bundles `packages/triage-workflows` into
   `public/workflows/<name>/` (`package.json`, entry `.mjs`, `directors.mjs`).
-- `src/lib/hub-api.ts`: typed calls over stock hub routes; inference setup
-  creates the catalog provider/model and the `corbits-system-one` offering.
+- `src/lib/hub-api.ts`: typed calls over stock hub routes.
+- `src/lib/decision-models.ts`: presets (TypeSafe, Vercel AI Gateway) plus
+  custom. Saving stores the key as a vault credential, sets the
+  `corbits-system-one` provider `baseURL`, and points the `decision` catalog
+  model's offering at the provider's own model name (`quirks.model`).
+
+### Decision model
+
+The workflows declare one catalog model, `corbits-system-one:decision`, so
+their source is identical for every tenant. The tenant's offering for
+`decision` picks the provider (`baseURL` + `/systemone`) and wire model
+(`@corbits/system-one` ≥ 0.3.1). Saving a model redeploys, because a
+deployment resolves its offering when deployed.
 
 ## Packages
 
