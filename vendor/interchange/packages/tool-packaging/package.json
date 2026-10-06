@@ -1,0 +1,42 @@
+{
+  "name": "@intx/tool-packaging",
+  "description": "Resolver and loader for the npm-distributed Interchange tool-package format",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@intx/agent": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/storage-isogit": "workspace:*",
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:",
+    "isomorphic-git": "catalog:",
+    "npm-package-arg": "^12.0.2",
+    "npm-pick-manifest": "^10.0.0",
+    "npm-registry-fetch": "^19.0.0",
+    "semver": "catalog:",
+    "ssri": "catalog:",
+    "tar": "catalog:"
+  },
+  "devDependencies": {
+    "@types/npm-package-arg": "^6.1.4",
+    "@types/semver": "catalog:",
+    "@types/ssri": "catalog:"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

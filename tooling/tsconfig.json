@@ -1,0 +1,19 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@corbits/rule-packs": [
+        "../packages/rule-packs/src/index.ts"
+      ],
+      "@corbits/triage-contracts": [
+        "../packages/triage-contracts/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "*.ts"
+  ],
+  "exclude": [
+    "vendor-health.test.ts"
+  ]
+}

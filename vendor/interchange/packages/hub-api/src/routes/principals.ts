@@ -1,0 +1,441 @@
+import { eq, ne, and } from "drizzle-orm";
+import { Hono } from "hono";
+import { describeRoute, validator } from "hono-openapi";
+
+import { principal, principalRole, role, user } from "@intx/db/schema";
+import { createPrincipalStore, parsePrincipalRow } from "@intx/db";
+import type { DB, PrincipalKeyStore } from "@intx/db";
+import {
+  PrincipalResponse,
+  ErrorResponse,
+  UpdatePrincipal,
+  InviteMember,
+  paginatedSchema,
+} from "@intx/types";
+
+import type { TenantEnv } from "../context";
+import { errorResponse } from "../error-response";
+import { ts } from "../format";
+import { generateId } from "@intx/hub-common";
+import { idResource } from "../middleware/grant";
+import type { RequireGrant } from "../middleware/grant";
+import { resolveWorkflowPrincipalLabels } from "./workflow-principal-name";
+import {
+  parsePageParams,
+  cursorCondition,
+  pageOrder,
+  paginatedResponse,
+  pageParameters,
+} from "../pagination";
+import { jsonResponse } from "../openapi";
+
+type ResolvedIdentity = { displayName: string; email?: string };
+
+function formatPrincipal(
+  row: typeof principal.$inferSelect,
+  roles: { id: string; name: string }[],
+  identity?: ResolvedIdentity,
+) {
+  const parsed = parsePrincipalRow(row);
+  return {
+    id: parsed.id,
+    tenantId: parsed.tenantId,
+    kind: parsed.kind,
+    refId: parsed.refId,
+    displayName: identity?.displayName ?? parsed.refId,
+    ...(identity?.email ? { email: identity.email } : {}),
+    status: parsed.status,
+    roles,
+    createdAt: ts(parsed.createdAt),
+    updatedAt: ts(parsed.updatedAt),
+  };
+}
+
+async function resolveIdentities(
+  db: DB["db"],
+  principals: (typeof principal.$inferSelect)[],
+): Promise<Map<string, ResolvedIdentity>> {
+  const identities = new Map<string, ResolvedIdentity>();
+
+  const userRefIds = principals
+    .filter((p) => p.kind === "user")
+    .map((p) => p.refId);
+  const workflowRefIds = principals
+    .filter((p) => p.kind === "workflow")
+    .map((p) => p.refId);
+
+  if (userRefIds.length > 0) {
+    const users = await db.query.user.findMany({
+      where: (u, { inArray }) => inArray(u.id, userRefIds),
+    });
+    for (const u of users) {
+      identities.set(u.id, { displayName: u.name, email: u.email });
+    }
+  }
+
+  if (workflowRefIds.length > 0) {
+    const wfNames = await resolveWorkflowPrincipalLabels(db, workflowRefIds);
+    for (const [refId, displayName] of wfNames) {
+      identities.set(refId, { displayName });
+    }
+  }
+
+  return identities;
+}
+
+async function loadRolesForPrincipal(db: DB["db"], principalId: string) {
+  const assignments = await db.query.principalRole.findMany({
+    where: eq(principalRole.principalId, principalId),
+  });
+  if (assignments.length === 0) return [];
+
+  const roleIds = assignments.map((a) => a.roleId);
+  const roles = await db.query.role.findMany({
+    where: (r, { inArray }) => inArray(r.id, roleIds),
+  });
+  return roles.map((r) => ({ id: r.id, name: r.name }));
+}
+
+export type CreatePrincipalRoutesDeps = {
+  db: DB["db"];
+  requireGrant: RequireGrant;
+};
+
+export function createPrincipalRoutes({
+  db,
+  requireGrant,
+}: CreatePrincipalRoutesDeps): Hono<TenantEnv> {
+  const app = new Hono<TenantEnv>();
+
+  app.get(
+    "/",
+    requireGrant("principal:*", "read"),
+    describeRoute({
+      tags: ["Principals"],
+      summary: "List principals in the tenant",
+      description:
+        "Lists all principals (users, agents, and workflow runs) in the tenant. Filterable by kind and status.",
+      parameters: [
+        {
+          name: "kind",
+          in: "query",
+          schema: { type: "string", enum: ["user", "agent", "workflow"] },
+        },
+        {
+          name: "status",
+          in: "query",
+          schema: {
+            type: "string",
+            enum: ["active", "suspended", "invited", "deactivated"],
+          },
+        },
+        ...pageParameters,
+      ],
+      responses: {
+        200: jsonResponse(
+          "List of principals",
+          paginatedSchema(PrincipalResponse),
+        ),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const kind = c.req.query("kind");
+      const status = c.req.query("status");
+      const { limit, cursor } = parsePageParams({
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
+      });
+
+      const conditions = [eq(principal.tenantId, tenantCtx.id)];
+      if (kind === "user" || kind === "agent" || kind === "workflow") {
+        conditions.push(eq(principal.kind, kind));
+      }
+      if (
+        status === "active" ||
+        status === "suspended" ||
+        status === "invited" ||
+        status === "deactivated"
+      ) {
+        conditions.push(eq(principal.status, status));
+      } else {
+        // Exclude deactivated principals by default
+        conditions.push(ne(principal.status, "deactivated"));
+      }
+      if (cursor) {
+        conditions.push(
+          cursorCondition(principal.createdAt, principal.id, cursor),
+        );
+      }
+
+      const rows = await db.query.principal.findMany({
+        where: and(...conditions),
+        orderBy: pageOrder(principal.createdAt, principal.id),
+        limit,
+      });
+
+      const allAssignments =
+        rows.length > 0
+          ? await db.query.principalRole.findMany({
+              where: (pr, { inArray }) =>
+                inArray(
+                  pr.principalId,
+                  rows.map((p) => p.id),
+                ),
+            })
+          : [];
+
+      const roleIds = [...new Set(allAssignments.map((a) => a.roleId))];
+      const roles =
+        roleIds.length > 0
+          ? await db.query.role.findMany({
+              where: (r, { inArray }) => inArray(r.id, roleIds),
+            })
+          : [];
+      const roleMap = new Map(roles.map((r) => [r.id, r]));
+
+      const rolesByPrincipal = new Map<
+        string,
+        { id: string; name: string }[]
+      >();
+      for (const a of allAssignments) {
+        const r = roleMap.get(a.roleId);
+        if (!r) continue;
+        const list = rolesByPrincipal.get(a.principalId) ?? [];
+        list.push({ id: r.id, name: r.name });
+        rolesByPrincipal.set(a.principalId, list);
+      }
+
+      const identities = await resolveIdentities(db, rows);
+
+      const items = rows.map((p) =>
+        formatPrincipal(
+          p,
+          rolesByPrincipal.get(p.id) ?? [],
+          identities.get(p.refId),
+        ),
+      );
+
+      return c.json(paginatedResponse(items, rows, limit));
+    },
+  );
+
+  app.get(
+    "/:principalId",
+    requireGrant(idResource("principal", "principalId"), "read"),
+    describeRoute({
+      tags: ["Principals"],
+      summary: "Get principal details",
+      description:
+        "Returns principal details including kind, status, assigned roles, and effective grants.",
+      responses: {
+        200: jsonResponse("Principal details", PrincipalResponse),
+        404: jsonResponse("Principal not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const principalId = c.req.param("principalId");
+
+      const row = await db.query.principal.findFirst({
+        where: and(
+          eq(principal.id, principalId),
+          eq(principal.tenantId, tenantCtx.id),
+        ),
+      });
+
+      if (!row) {
+        return errorResponse(c, "not_found", "Principal not found");
+      }
+
+      const roles = await loadRolesForPrincipal(db, principalId);
+      const identities = await resolveIdentities(db, [row]);
+      return c.json(formatPrincipal(row, roles, identities.get(row.refId)));
+    },
+  );
+
+  app.patch(
+    "/:principalId",
+    requireGrant(idResource("principal", "principalId"), "manage"),
+    describeRoute({
+      tags: ["Principals"],
+      summary: "Update principal status",
+      description: "Activate, suspend, or deactivate a principal.",
+      responses: {
+        200: jsonResponse("Principal updated", PrincipalResponse),
+        403: jsonResponse("Insufficient grants", ErrorResponse),
+      },
+    }),
+    validator("json", UpdatePrincipal),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const principalId = c.req.param("principalId");
+      const body = c.req.valid("json");
+
+      const [updated] = await db
+        .update(principal)
+        .set({ status: body.status, updatedAt: new Date() })
+        .where(
+          and(
+            eq(principal.id, principalId),
+            eq(principal.tenantId, tenantCtx.id),
+          ),
+        )
+        .returning();
+
+      if (!updated) {
+        return errorResponse(c, "not_found", "Principal not found");
+      }
+
+      const roles = await loadRolesForPrincipal(db, principalId);
+      const identities = await resolveIdentities(db, [updated]);
+      return c.json(
+        formatPrincipal(updated, roles, identities.get(updated.refId)),
+      );
+    },
+  );
+
+  app.delete(
+    "/:principalId",
+    requireGrant(idResource("principal", "principalId"), "manage"),
+    describeRoute({
+      tags: ["Principals"],
+      summary: "Remove principal from tenant",
+      description: "Removes a principal from the tenant.",
+      responses: {
+        204: {
+          description: "Principal removed",
+        },
+        403: jsonResponse("Insufficient grants", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const principalId = c.req.param("principalId");
+
+      const deleted = await db
+        .delete(principal)
+        .where(
+          and(
+            eq(principal.id, principalId),
+            eq(principal.tenantId, tenantCtx.id),
+          ),
+        )
+        .returning();
+
+      if (deleted.length === 0) {
+        return errorResponse(c, "not_found", "Principal not found");
+      }
+
+      return c.body(null, 204);
+    },
+  );
+
+  return app;
+}
+
+// Invite is mounted separately at ../members/invite in app.ts
+export type CreateInviteRoutesDeps = {
+  db: DB["db"];
+  principalKeyStore: PrincipalKeyStore;
+  requireGrant: RequireGrant;
+};
+
+export function createInviteRoutes({
+  db,
+  principalKeyStore,
+  requireGrant,
+}: CreateInviteRoutesDeps): Hono<TenantEnv> {
+  const inviteApp = new Hono<TenantEnv>();
+  const principalStore = createPrincipalStore(db, principalKeyStore);
+
+  inviteApp.post(
+    "/",
+    requireGrant("principal:*", "create"),
+    describeRoute({
+      tags: ["Principals"],
+      summary: "Invite a user to the tenant",
+      description:
+        "Invites a user by email. Creates a principal with invited status and optionally assigns a role.",
+      responses: {
+        201: jsonResponse("Invitation sent", PrincipalResponse),
+        400: jsonResponse("Validation error", ErrorResponse),
+      },
+    }),
+    validator("json", InviteMember),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const body = c.req.valid("json");
+
+      const invitedUser = await db.query.user.findFirst({
+        where: eq(user.email, body.email),
+      });
+
+      if (!invitedUser) {
+        return errorResponse(c, "not_found", "No user found with that email");
+      }
+
+      const existing = await db.query.principal.findFirst({
+        where: and(
+          eq(principal.tenantId, tenantCtx.id),
+          eq(principal.kind, "user"),
+          eq(principal.refId, invitedUser.id),
+        ),
+      });
+
+      if (existing) {
+        return errorResponse(
+          c,
+          "conflict",
+          "User is already a member of this tenant",
+        );
+      }
+
+      const now = new Date();
+
+      const roleRow = body.roleId
+        ? await db.query.role.findFirst({
+            where: and(
+              eq(role.id, body.roleId),
+              eq(role.tenantId, tenantCtx.id),
+            ),
+          })
+        : undefined;
+
+      const row = await db.transaction(async (tx) => {
+        const invited = await principalStore.create(
+          {
+            id: generateId("principal"),
+            tenantId: tenantCtx.id,
+            kind: "user",
+            refId: invitedUser.id,
+            status: "invited",
+            createdAt: now,
+            updatedAt: now,
+          },
+          tx,
+        );
+        if (roleRow) {
+          await tx.insert(principalRole).values({
+            principalId: invited.id,
+            roleId: roleRow.id,
+            createdAt: now,
+          });
+        }
+        return invited;
+      });
+
+      const roles: { id: string; name: string }[] = roleRow
+        ? [{ id: roleRow.id, name: roleRow.name }]
+        : [];
+
+      const identity: ResolvedIdentity = {
+        displayName: invitedUser.name,
+        email: invitedUser.email,
+      };
+      return c.json(formatPrincipal(row, roles, identity), 201);
+    },
+  );
+
+  return inviteApp;
+}

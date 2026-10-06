@@ -1,0 +1,38 @@
+{
+  "name": "@intx/tools-posix",
+  "description": "POSIX tool runner giving agents read_file, write_file, edit_file, run_shell, search_files, and grep",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "interchange": {
+    "tools": "./dist/sidecar-bundle.js"
+  },
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./sidecar-bundle": {
+      "intx-src": "./src/sidecar-bundle.ts",
+      "types": "./dist/sidecar-bundle.d.ts",
+      "default": "./dist/sidecar-bundle.js"
+    }
+  },
+  "dependencies": {
+    "@intx/agent": "workspace:*",
+    "@intx/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@intx/storage-isogit": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

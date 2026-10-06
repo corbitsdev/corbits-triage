@@ -1,0 +1,415 @@
+import { eq, and } from "drizzle-orm";
+import { Hono } from "hono";
+import { describeRoute, validator } from "hono-openapi";
+
+import { authorize } from "@intx/authz";
+import { grant, principal } from "@intx/db/schema";
+import { parseGrantRow } from "@intx/db";
+import type { DB } from "@intx/db";
+import type { ConditionRegistry, GrantStore } from "@intx/types/authz";
+import {
+  CreateGrant,
+  ErrorResponse,
+  UpdateGrant,
+  GrantResponse,
+  EvaluateRequest,
+  EvaluateResult,
+  paginatedSchema,
+} from "@intx/types";
+
+import type { TenantEnv } from "../context";
+import { errorResponse } from "../error-response";
+import { first, ts } from "../format";
+import { generateId } from "@intx/hub-common";
+import { idResource } from "../middleware/grant";
+import type { RequireGrant } from "../middleware/grant";
+import { resolveWorkflowPrincipalLabels } from "./workflow-principal-name";
+import {
+  parsePageParams,
+  cursorCondition,
+  pageOrder,
+  paginatedResponse,
+  pageParameters,
+} from "../pagination";
+import { jsonResponse } from "../openapi";
+
+type ResolvedNames = {
+  roleNames: Map<string, string>;
+  principalNames: Map<string, string>;
+};
+
+function formatGrant(row: typeof grant.$inferSelect, names?: ResolvedNames) {
+  const parsed = parseGrantRow(row);
+  return {
+    id: parsed.id,
+    tenantId: parsed.tenantId,
+    roleId: parsed.roleId ?? null,
+    roleName: (parsed.roleId && names?.roleNames.get(parsed.roleId)) ?? null,
+    principalId: parsed.principalId ?? null,
+    principalName:
+      (parsed.principalId && names?.principalNames.get(parsed.principalId)) ??
+      null,
+    resource: parsed.resource,
+    action: parsed.action,
+    effect: parsed.effect,
+    conditions: parsed.conditions,
+    origin: parsed.origin,
+    expiresAt: parsed.expiresAt ? ts(parsed.expiresAt) : null,
+    createdAt: ts(parsed.createdAt),
+    updatedAt: ts(parsed.updatedAt),
+  };
+}
+
+async function resolveGrantNames(
+  db: DB["db"],
+  grants: (typeof grant.$inferSelect)[],
+): Promise<ResolvedNames> {
+  const roleIds = [
+    ...new Set(
+      grants.map((g) => g.roleId).filter((id): id is string => id !== null),
+    ),
+  ];
+  const principalIds = [
+    ...new Set(
+      grants
+        .map((g) => g.principalId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+
+  const roleNames = new Map<string, string>();
+  if (roleIds.length > 0) {
+    const roles = await db.query.role.findMany({
+      where: (r, { inArray }) => inArray(r.id, roleIds),
+    });
+    for (const r of roles) {
+      roleNames.set(r.id, r.name);
+    }
+  }
+
+  const principalNames = new Map<string, string>();
+  if (principalIds.length > 0) {
+    const principals = await db.query.principal.findMany({
+      where: (p, { inArray }) => inArray(p.id, principalIds),
+    });
+
+    const userRefIds = principals
+      .filter((p) => p.kind === "user")
+      .map((p) => p.refId);
+    const workflowRefIds = principals
+      .filter((p) => p.kind === "workflow")
+      .map((p) => p.refId);
+
+    const refToName = new Map<string, string>();
+
+    if (userRefIds.length > 0) {
+      const users = await db.query.user.findMany({
+        where: (u, { inArray }) => inArray(u.id, userRefIds),
+      });
+      for (const u of users) {
+        refToName.set(u.id, u.name);
+      }
+    }
+
+    if (workflowRefIds.length > 0) {
+      const wfNames = await resolveWorkflowPrincipalLabels(db, workflowRefIds);
+      for (const [refId, name] of wfNames) {
+        refToName.set(refId, name);
+      }
+    }
+
+    for (const p of principals) {
+      const name = refToName.get(p.refId);
+      if (name) principalNames.set(p.id, name);
+    }
+  }
+
+  return { roleNames, principalNames };
+}
+
+export type CreateGrantRoutesDeps = {
+  db: DB["db"];
+  requireGrant: RequireGrant;
+};
+
+export function createGrantRoutes({
+  db,
+  requireGrant,
+}: CreateGrantRoutesDeps): Hono<TenantEnv> {
+  const app = new Hono<TenantEnv>();
+
+  app.get(
+    "/",
+    requireGrant("grant:*", "read"),
+    describeRoute({
+      tags: ["Grants"],
+      summary: "List grants in the tenant",
+      description:
+        "Lists all grants. Filterable by principalId, roleId, resource pattern, and effect.",
+      parameters: [
+        { name: "principalId", in: "query", schema: { type: "string" } },
+        { name: "roleId", in: "query", schema: { type: "string" } },
+        { name: "resource", in: "query", schema: { type: "string" } },
+        {
+          name: "effect",
+          in: "query",
+          schema: { type: "string", enum: ["allow", "deny", "ask"] },
+        },
+        ...pageParameters,
+      ],
+      responses: {
+        200: jsonResponse("List of grants", paginatedSchema(GrantResponse)),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+
+      const principalId = c.req.query("principalId");
+      const roleId = c.req.query("roleId");
+      const resource = c.req.query("resource");
+      const effect = c.req.query("effect");
+      const { limit, cursor } = parsePageParams({
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
+      });
+
+      const conditions = [eq(grant.tenantId, tenantCtx.id)];
+      if (principalId) conditions.push(eq(grant.principalId, principalId));
+      if (roleId) conditions.push(eq(grant.roleId, roleId));
+      if (resource) conditions.push(eq(grant.resource, resource));
+      if (effect === "allow" || effect === "deny" || effect === "ask") {
+        conditions.push(eq(grant.effect, effect));
+      }
+      if (cursor) {
+        conditions.push(cursorCondition(grant.createdAt, grant.id, cursor));
+      }
+
+      const rows = await db.query.grant.findMany({
+        where: and(...conditions),
+        orderBy: pageOrder(grant.createdAt, grant.id),
+        limit,
+      });
+
+      const names = await resolveGrantNames(db, rows);
+      return c.json(
+        paginatedResponse(
+          rows.map((g) => formatGrant(g, names)),
+          rows,
+          limit,
+        ),
+      );
+    },
+  );
+
+  app.post(
+    "/",
+    requireGrant("grant:*", "create"),
+    describeRoute({
+      tags: ["Grants"],
+      summary: "Create a grant",
+      description:
+        "Creates a grant targeting either a role or a principal directly. Exactly one of roleId or principalId must be provided.",
+      responses: {
+        201: jsonResponse("Grant created", GrantResponse),
+        400: jsonResponse("Validation error", ErrorResponse),
+      },
+    }),
+    validator("json", CreateGrant),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      // The body validator (CreateGrant) already enforces exactly one target
+      // -- roleId or principalId, not both and not neither -- so a malformed
+      // request is a 400 before this handler runs.
+      const body = c.req.valid("json");
+
+      const now = new Date();
+      const row = first(
+        await db
+          .insert(grant)
+          .values({
+            id: generateId("grant"),
+            tenantId: tenantCtx.id,
+            roleId: body.roleId ?? null,
+            principalId: body.principalId ?? null,
+            resource: body.resource,
+            action: body.action,
+            effect: body.effect,
+            conditions: body.conditions ?? null,
+            origin: body.origin,
+            expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning(),
+      );
+
+      return c.json(formatGrant(row), 201);
+    },
+  );
+
+  app.get(
+    "/:grantId",
+    requireGrant(idResource("grant", "grantId"), "read"),
+    describeRoute({
+      tags: ["Grants"],
+      summary: "Get grant details",
+      responses: {
+        200: jsonResponse("Grant details", GrantResponse),
+        404: jsonResponse("Grant not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const grantId = c.req.param("grantId");
+
+      const row = await db.query.grant.findFirst({
+        where: and(eq(grant.id, grantId), eq(grant.tenantId, tenantCtx.id)),
+      });
+
+      if (!row) {
+        return errorResponse(c, "not_found", "Grant not found");
+      }
+
+      return c.json(formatGrant(row));
+    },
+  );
+
+  app.patch(
+    "/:grantId",
+    requireGrant(idResource("grant", "grantId"), "manage"),
+    describeRoute({
+      tags: ["Grants"],
+      summary: "Update a grant",
+      description: "Update effect, conditions, or expiry on an existing grant.",
+      responses: {
+        200: jsonResponse("Grant updated", GrantResponse),
+        404: jsonResponse("Grant not found", ErrorResponse),
+      },
+    }),
+    validator("json", UpdateGrant),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const grantId = c.req.param("grantId");
+      const body = c.req.valid("json");
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.effect !== undefined) updates["effect"] = body.effect;
+      if (body.conditions !== undefined)
+        updates["conditions"] = body.conditions;
+      if (body.expiresAt !== undefined) {
+        updates["expiresAt"] = body.expiresAt ? new Date(body.expiresAt) : null;
+      }
+
+      const [updated] = await db
+        .update(grant)
+        .set(updates)
+        .where(and(eq(grant.id, grantId), eq(grant.tenantId, tenantCtx.id)))
+        .returning();
+
+      if (!updated) {
+        return errorResponse(c, "not_found", "Grant not found");
+      }
+
+      return c.json(formatGrant(updated));
+    },
+  );
+
+  app.delete(
+    "/:grantId",
+    requireGrant(idResource("grant", "grantId"), "manage"),
+    describeRoute({
+      tags: ["Grants"],
+      summary: "Revoke a grant",
+      responses: {
+        204: {
+          description: "Grant revoked",
+        },
+        404: jsonResponse("Grant not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const grantId = c.req.param("grantId");
+
+      const deleted = await db
+        .delete(grant)
+        .where(and(eq(grant.id, grantId), eq(grant.tenantId, tenantCtx.id)))
+        .returning();
+
+      if (deleted.length === 0) {
+        return errorResponse(c, "not_found", "Grant not found");
+      }
+
+      return c.body(null, 204);
+    },
+  );
+
+  return app;
+}
+
+// Evaluate endpoint is mounted under principals
+export type CreateEvaluateRoutesDeps = {
+  db: DB["db"];
+  grantStore: GrantStore;
+  conditionRegistry: ConditionRegistry;
+};
+
+export function createEvaluateRoutes({
+  db,
+  grantStore,
+  conditionRegistry,
+}: CreateEvaluateRoutesDeps): Hono<TenantEnv> {
+  const evaluateApp = new Hono<TenantEnv>();
+
+  evaluateApp.post(
+    "/",
+    describeRoute({
+      tags: ["Grants"],
+      summary: "Evaluate grants for a principal",
+      description:
+        "Evaluates what would happen if a principal attempted an operation. Returns the resolved effect and all matching grants. Useful for debugging authorization.",
+      responses: {
+        200: jsonResponse("Evaluation result", EvaluateResult),
+        404: jsonResponse("Principal not found", ErrorResponse),
+      },
+    }),
+    validator("json", EvaluateRequest),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const principalId = c.req.param("principalId") ?? "";
+      const body = c.req.valid("json");
+      const principalRow = await db.query.principal.findFirst({
+        where: and(
+          eq(principal.id, principalId),
+          eq(principal.tenantId, tenantCtx.id),
+        ),
+      });
+
+      if (!principalRow) {
+        return errorResponse(c, "not_found", "Principal not found");
+      }
+
+      const result = await authorize(
+        grantStore,
+        principalId,
+        tenantCtx.id,
+        body.resource,
+        body.action,
+        conditionRegistry,
+      );
+
+      return c.json({
+        effect: result.effect ?? "deny",
+        matchingGrants: result.matchingGrants.map((g) => ({
+          id: g.id,
+          resource: g.resource,
+          action: g.action,
+          effect: g.effect,
+          origin: g.origin,
+        })),
+      });
+    },
+  );
+
+  return evaluateApp;
+}

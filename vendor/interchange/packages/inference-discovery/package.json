@@ -1,0 +1,33 @@
+{
+  "name": "@intx/inference-discovery",
+  "description": "Runtime for the inference discovery rig: plug-in contract, capture runs, and capability catalog",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./catalog": {
+      "intx-src": "./src/catalog/index.ts",
+      "types": "./dist/catalog/index.d.ts",
+      "default": "./dist/catalog/index.js"
+    }
+  },
+  "dependencies": {
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "files": [
+    "dist",
+    "media",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

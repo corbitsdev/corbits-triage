@@ -1,0 +1,107 @@
+export {
+  createClock,
+  ClockOverrunError,
+  ClockWallClockOverrunError,
+} from "./clock";
+export type { Clock, AdvanceOpts, RunOpts } from "./clock";
+
+export { setupHarness } from "./harness";
+export type { Harness, SetupHarnessOpts } from "./harness";
+
+export { createSimulatedStream, toStreamId } from "./simulated-stream";
+export type {
+  SimulatedStream,
+  SimulatedStreamHandle,
+  StreamId,
+  CreateSimulatedStreamOpts,
+  ChunkFiredEvent,
+  EnqueueAllOpts,
+} from "./simulated-stream";
+
+export type {
+  Scenario,
+  HarnessRequest,
+  ReplyOnceOpts,
+  ReplyOnceToolCall,
+  RequestPredicate,
+  BodyAwareRequestPredicate,
+  StallHandle,
+  StallOpts,
+  WhenRequestMatchesOpts,
+  WireEventPredicate,
+} from "./scenario";
+
+export type {
+  ToolHandler,
+  ToolHandlerReturn,
+  DispatchToolResult,
+} from "./tool-handler";
+
+export {
+  WrongHarnessError,
+  UnmatchedFetchError,
+  AmbiguousRequestError,
+} from "./errors";
+export type { UnmatchedFetchInfo, AmbiguousFetchInfo } from "./errors";
+
+export * as wire from "./wire";
+
+export {
+  expectEvents,
+  expectMediaBlock,
+  expectToolCalls,
+  expectToolCall,
+} from "./matchers";
+export type {
+  EventAssertion,
+  EventPartial,
+  ToolCallsAssertion,
+  ToolCallPartial,
+  CollectedToolCall,
+  MediaBlock,
+  MediaBlockAssertion,
+  ExpectMediaBlockOpts,
+  SingleToolCallAssertion,
+} from "./matchers";
+
+export { INVARIANTS, formatEventBrief } from "./invariants";
+export type {
+  Invariant,
+  InvariantViolation,
+  ReplayContext,
+} from "./invariants";
+
+export {
+  createRecordingHarness,
+  SessionRecordingBudgetExceededError,
+} from "./session-recording";
+export type {
+  CreateRecordingHarnessOpts,
+  RecordingFetchLike,
+  RecordingHarness,
+} from "./session-recording";
+
+export {
+  createReplayHarness,
+  replayResponsesForParsing,
+  SessionReplayMismatchError,
+} from "./session-replay";
+export type {
+  CapturedDispatch,
+  CapturedExchange,
+  CreateReplayHarnessOpts,
+  ParserReplayOpts,
+  ParserReplayResult,
+  ReplayHarness,
+  RunTurnOpts,
+} from "./session-replay";
+
+export { classifyReplay, classifySession } from "./classify-replay";
+export type { ReplayOutcome, ReplayClassification } from "./classify-replay";
+
+export { userTurn } from "./turns";
+export {
+  LIVE_WEATHER_TOOL,
+  LIVE_TOOL_DEFINITIONS,
+  LIVE_TOOL_PROMPT,
+} from "./live-tool-scenario";

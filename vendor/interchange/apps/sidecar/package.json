@@ -1,0 +1,36 @@
+{
+  "name": "@intx/sidecar-app",
+  "description": "Host process running a fleet of hub-orchestrated agent runtimes in one Bun process",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "workflow-child": "./bin/workflow-child"
+  },
+  "dependencies": {
+    "@intx/agent": "workspace:*",
+    "@intx/authz": "workspace:*",
+    "@intx/crypto": "workspace:*",
+    "@intx/harness": "workspace:*",
+    "@intx/hub-agent": "workspace:*",
+    "@intx/hub-sessions": "workspace:*",
+    "@intx/inference": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/mail-memory": "workspace:*",
+    "@intx/pack-transport": "workspace:*",
+    "@intx/storage-isogit": "workspace:*",
+    "@intx/tool-packaging": "workspace:*",
+    "@intx/tools-lsp": "workspace:*",
+    "@intx/tools-mail": "workspace:*",
+    "@intx/tools-posix": "workspace:*",
+    "@intx/types": "workspace:*",
+    "@intx/workflow": "workspace:*",
+    "@intx/workflow-deploy": "workspace:*",
+    "@intx/workflow-host": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "isomorphic-git": "catalog:"
+  }
+}

@@ -1,0 +1,542 @@
+// SPDX-License-Identifier: LGPL-2.1-only
+//
+// UPSTREAM-SYNC: vendor/interchange/apps/hub/src/server.ts
+// Keep the bootstrap below synchronized with upstream. The Corbits-only delta is
+// the function name and return shape: this composition exposes the live router
+// and its shared hook dependencies alongside the stock Bun server options, and
+// returns the Hono `app` so extra tenant routes mount on the same instance as
+// `resolveTenant`.
+import {
+  createDB,
+  createGrantStore,
+  createPrincipalKeyStore,
+  createSidecarAllocationStore,
+  createWorkflowRunDispatchStore,
+  resolveFrameSenderKey,
+  resolveSenderKey,
+} from "@intx/db";
+import { createEnvKeyCredentialCipher } from "@intx/crypto";
+import { hexDecode, type SidecarCapabilityRule } from "@intx/types";
+import {
+  createApp,
+  createAuth,
+  createMailTriggeredRunGrantsMaterializer,
+} from "@intx/hub-api";
+import {
+  createAgentRepoStore,
+  createAssetService,
+  createEventCollectorRegistry,
+  createHubSessionLookups,
+  createHubSessionOrchestrator,
+  createSessionService,
+  createSidecarAllocationReconciler,
+  createSidecarPluginRegistry,
+  createSidecarRouter,
+  createSidecarCredentialResolver,
+  createWorkflowAllocationService,
+  createWorkflowDispatchService,
+  createReconciliationScheduler,
+  recoverSenderDeploy,
+  DEFAULT_SIDECAR_ALLOCATION_CONCURRENCY,
+  pushCredentialReconcile,
+  WORKSPACE_BUILTINS_REGISTRY,
+  type SidecarLookups,
+  type SidecarProvisioner,
+  type SidecarProvisionerChooser,
+  type WsHandle,
+} from "@intx/hub-sessions";
+import { generateKeyPair } from "@intx/crypto";
+import { hexEncode } from "@intx/types";
+import { MAX_SIDECAR_FRAME_BYTES } from "@intx/types/sidecar";
+import { upgradeWebSocket, websocket } from "hono/bun";
+import { setup, getLogger } from "@intx/log";
+import type { DatabaseConfig } from "./env.js";
+
+export type CreateHubServerOpts = {
+  readonly database: DatabaseConfig;
+  /** Provisioners eligible to host frozen workflow deployments. */
+  readonly sidecarProvisioners?: readonly SidecarProvisioner[];
+  /** Selects among matching deployment provisioners. Defaults to the first. */
+  readonly sidecarProvisionerChooser?: SidecarProvisionerChooser;
+  /** Provisioners eligible to evaluate workflow source code. */
+  readonly probeSidecarProvisioners?: readonly SidecarProvisioner[];
+  /** Selects among matching probe provisioners. Defaults to the first. */
+  readonly probeSidecarProvisionerChooser?: SidecarProvisionerChooser;
+  readonly probeSidecarCapabilityRules?: readonly SidecarCapabilityRule[];
+  /** Maximum simultaneous allocation reconciliations. Defaults to eight. */
+  readonly sidecarAllocationConcurrency?: number;
+  /** Deadline for provider calls, allocation claims, lease validation, and connection waits. Defaults to 120 seconds. */
+  readonly sidecarOperationTimeoutMs?: number;
+};
+
+export async function createInterchangeHub({
+  database,
+  sidecarProvisioners = [],
+  sidecarProvisionerChooser,
+  probeSidecarProvisioners = [],
+  probeSidecarProvisionerChooser,
+  probeSidecarCapabilityRules = [],
+  sidecarAllocationConcurrency = DEFAULT_SIDECAR_ALLOCATION_CONCURRENCY,
+  sidecarOperationTimeoutMs,
+}: CreateHubServerOpts) {
+  await setup();
+
+  const log = getLogger(["hub"]);
+  const port = Number(process.env["PORT"] ?? 3000);
+
+  const { db } = createDB(database);
+
+  const auth = createAuth(db);
+
+  const hubDataDir = process.env["HUB_DATA_DIR"];
+  if (!hubDataDir) {
+    throw new Error("HUB_DATA_DIR environment variable is required");
+  }
+
+  // Credential secrets are encrypted at rest under this operator-provided key.
+  // Required at boot: a missing or wrong-length key fails loudly here rather than
+  // letting the hub run and store secrets it cannot protect. 32 bytes, hex --
+  // e.g. `openssl rand -hex 32`, the same shape as BETTER_AUTH_SECRET.
+  const credentialEncryptionKeyHex = process.env["CREDENTIAL_ENCRYPTION_KEY"];
+  if (
+    credentialEncryptionKeyHex === undefined ||
+    credentialEncryptionKeyHex.trim() === ""
+  ) {
+    throw new Error(
+      "CREDENTIAL_ENCRYPTION_KEY environment variable is required",
+    );
+  }
+  const credentialCipher = createEnvKeyCredentialCipher(
+    hexDecode(credentialEncryptionKeyHex),
+  );
+
+  // Per-principal signing keys are sealed at rest under their own operator key,
+  // separate from CREDENTIAL_ENCRYPTION_KEY so the two rotate independently.
+  // Required at boot for the same reason: a missing key would silently persist
+  // minted private keys in the clear. 32 bytes, hex.
+  const principalKeyEncryptionKeyHex =
+    process.env["PRINCIPAL_KEY_ENCRYPTION_KEY"];
+  if (
+    principalKeyEncryptionKeyHex === undefined ||
+    principalKeyEncryptionKeyHex.trim() === ""
+  ) {
+    throw new Error(
+      "PRINCIPAL_KEY_ENCRYPTION_KEY environment variable is required",
+    );
+  }
+  const principalKeyStore = createPrincipalKeyStore({
+    db,
+    cipher: createEnvKeyCredentialCipher(
+      hexDecode(principalKeyEncryptionKeyHex),
+    ),
+  });
+
+  // 10 MiB is the production cap for tool-package tarballs uploaded via
+  // the package-registry PUT endpoint. The npm registry's own per-tarball
+  // soft cap is several times this, but the substrate's tool packages are
+  // the curated subset the operator vets; an upload pushing past 10 MiB
+  // is far more likely to be misuse than a legitimate build. The
+  // HUB_MAX_TARBALL_BYTES env var lets an operator opt into a different
+  // cap without a code change.
+  const DEFAULT_HUB_MAX_TARBALL_BYTES = 10 * 1024 * 1024;
+  const hubMaxTarballBytesRaw = process.env["HUB_MAX_TARBALL_BYTES"];
+  const hubMaxTarballBytes =
+    hubMaxTarballBytesRaw === undefined || hubMaxTarballBytesRaw.trim() === ""
+      ? DEFAULT_HUB_MAX_TARBALL_BYTES
+      : Number(hubMaxTarballBytesRaw);
+  if (!Number.isFinite(hubMaxTarballBytes) || hubMaxTarballBytes <= 0) {
+    throw new Error(
+      `HUB_MAX_TARBALL_BYTES must be a positive number; got ${JSON.stringify(hubMaxTarballBytesRaw)}`,
+    );
+  }
+
+  const hubSigningKey = await generateKeyPair();
+  log.info("Generated hub deploy signing key");
+
+  // Write-path GC for the hub's agent-state repos. Each accepted state
+  // pack strands the prior tip's objects and adds a pack, and each deploy
+  // commit strands loose objects; left alone the repo grows without bound.
+  // The hub reclaims on the write path once a repo crosses
+  // HUB_AGENT_GC_PACK_THRESHOLD packs or HUB_AGENT_GC_LOOSE_THRESHOLD loose
+  // objects, and warns once it crosses HUB_AGENT_GC_WARN_BYTES. Retention
+  // is fixed to keep-history and not operator-configurable: the hub is the
+  // long-term archive of an agent's state graph, and tip-only would prune
+  // the commit ancestry the hub's subscriber-seq and history replay derive
+  // from git.log.
+  const DEFAULT_HUB_AGENT_GC_PACK_THRESHOLD = 64;
+  const DEFAULT_HUB_AGENT_GC_LOOSE_THRESHOLD = 2048;
+  const DEFAULT_HUB_AGENT_GC_WARN_BYTES = 256 * 1024 * 1024;
+
+  function readPositiveIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === "") return fallback;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(
+        `${name} must be a positive integer; got ${JSON.stringify(raw)}`,
+      );
+    }
+    return value;
+  }
+
+  // Like `readPositiveIntEnv` but with no fallback: returns `undefined` when the
+  // var is unset so the caller can omit the field and let the consumer apply its
+  // own default, instead of duplicating that default here.
+  function readOptionalPositiveIntEnv(name: string): number | undefined {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(
+        `${name} must be a positive integer; got ${JSON.stringify(raw)}`,
+      );
+    }
+    return value;
+  }
+
+  const agentRepoStore = createAgentRepoStore({
+    dataDir: hubDataDir,
+    signingKey: hubSigningKey,
+    gc: {
+      packThreshold: readPositiveIntEnv(
+        "HUB_AGENT_GC_PACK_THRESHOLD",
+        DEFAULT_HUB_AGENT_GC_PACK_THRESHOLD,
+      ),
+      looseThreshold: readPositiveIntEnv(
+        "HUB_AGENT_GC_LOOSE_THRESHOLD",
+        DEFAULT_HUB_AGENT_GC_LOOSE_THRESHOLD,
+      ),
+      warnBytes: readPositiveIntEnv(
+        "HUB_AGENT_GC_WARN_BYTES",
+        DEFAULT_HUB_AGENT_GC_WARN_BYTES,
+      ),
+      retention: "keep-history",
+    },
+  });
+
+  // The asset service shares the agent-repo store's substrate so skill
+  // assets land under the same on-disk root and reuse the same signing
+  // key for commit signatures. It is consumed by the session service for
+  // per-attachment pack fan-out, by the smart-HTTP asset routes for clone
+  // and push, and by the mail-triggered run-grants materializer to hydrate
+  // a receiving deployment's definition. The E2E test seeds fixtures
+  // directly through this service object.
+  const httpRegistries = new Map([
+    ["npmjs", { url: "https://registry.npmjs.org" }],
+  ]);
+
+  const assetService = createAssetService({
+    db,
+    repoStore: agentRepoStore.repoStore,
+    // Reserve every configured HTTP registry name so a `package-registry`
+    // asset cannot silently shadow it at session launch. The session
+    // service's per-launch registry assembly applies asset-wins-on-name-
+    // collision (see `session-service.ts` `assetIndex` build), which
+    // turns a same-named asset into an opaque reroute of the public
+    // npm registry; rejecting at creation surfaces the collision at
+    // intent time instead of debugging an unexpected reroute later.
+    reservedPackageRegistryNames: new Set(httpRegistries.keys()),
+  });
+
+  // Materialize a mail-triggered workflow run's grants from the receiving
+  // deployment's definition, so a workflow->workflow mail run is born with
+  // the same authorization an externally-triggered run gets. Threaded into
+  // the sidecar router as a lookup its `mail.outbound` handler invokes for
+  // each workflow-deployment recipient.
+  const lookups: SidecarLookups = {
+    ...createHubSessionLookups({ db, agentRepoStore }),
+    materializeMailTriggeredRunGrants: createMailTriggeredRunGrantsMaterializer(
+      {
+        db,
+        principalKeyStore,
+        grantStore: createGrantStore(db),
+      },
+    ),
+    resolveSenderKey: (address) =>
+      resolveFrameSenderKey(db, principalKeyStore, address),
+    // The strict sibling for reconnect reconciliation: it preserves the strict
+    // resolver's throw (a fault must be kept distinct from a confirmed absence
+    // so the handler evicts only a genuinely deleted sender, never on a fault),
+    // and unwraps the resolution to the hex key the handler pushes.
+    resolveSenderKeyStrict: async (address) =>
+      (await resolveSenderKey(db, principalKeyStore, address))?.publicKey ??
+      null,
+  };
+
+  const sidecarCredentials = createSidecarCredentialResolver({ db });
+  // HUB_PROBE_TIMEOUT_MS widens the router's per-probe timeout for operators
+  // whose registries or definition evaluations run slow; unset, the router
+  // applies its own DEFAULT_PROBE_TIMEOUT_MS.
+  const probeTimeoutMs = readOptionalPositiveIntEnv("HUB_PROBE_TIMEOUT_MS");
+
+  const sidecarRouter = createSidecarRouter({
+    hubPublicKey: hexEncode(hubSigningKey.publicKey),
+    authenticateSidecar: async ({ token }) => sidecarCredentials.resolve(token),
+    validateSidecarIdentity: sidecarCredentials.isCurrent,
+    lookups,
+    ...(probeTimeoutMs !== undefined ? { probeTimeoutMs } : {}),
+  });
+
+  // Wire the reconnect credential resync now that the router exists (the lookup
+  // calls back into it). The handler reads `lookups.resyncCredentials` lazily on
+  // each reconnect, so assigning it after construction is in time.
+  lookups.resyncCredentials = (agentAddress) => {
+    void pushCredentialReconcile(
+      db,
+      sidecarRouter,
+      agentAddress,
+      credentialCipher,
+    );
+  };
+
+  const eventCollectors = createEventCollectorRegistry({
+    db,
+    onTurnFinalized(agentAddress, turn) {
+      sidecarRouter.dispatchAgentEvent(agentAddress, {
+        type: "turn.committed",
+        data: {
+          turnId: turn.turnId,
+          status: turn.status,
+          text: turn.text,
+          hadReply: turn.hadReply,
+          hadError: turn.hadError,
+          errors: turn.errors,
+          toolCalls: turn.toolCalls,
+          toolErrors: turn.toolErrors,
+        },
+      });
+    },
+  });
+
+  createHubSessionOrchestrator({
+    events: sidecarRouter.events,
+    router: sidecarRouter,
+    db,
+    eventCollectors,
+  });
+
+  const sessionService = createSessionService({
+    sidecarRouter,
+    sidecarAllocationRouter: sidecarRouter,
+    agentRepoStore,
+    assetService,
+    db,
+    toolPackageRegistries: {
+      httpRegistries,
+      defaultRegistry: "npmjs",
+      // The `workspace-builtins` package-registry asset hosts the
+      // three in-tree tool packages (`@intx/tools-mail`,
+      // `@intx/tools-posix`, `@intx/tools-lsp`). Routing the `@intx`
+      // scope through it keeps an agent's pin set readable
+      // (`{ name: "@intx/tools-mail" }`) without forcing every pin to
+      // carry an explicit `registry` field. Operators who shadow this
+      // asset at a child tenancy with their own `workspace-builtins`
+      // asset get the closer-scope win for free, since the session
+      // service builds the per-launch registry map leaf-to-root.
+      scopeRouting: [{ scope: "@intx", registry: WORKSPACE_BUILTINS_REGISTRY }],
+    },
+  });
+
+  const sidecarPlugins = createSidecarPluginRegistry({
+    provisioners: sidecarProvisioners,
+    ...(sidecarProvisionerChooser !== undefined
+      ? { chooser: sidecarProvisionerChooser }
+      : {}),
+  });
+  const probeSidecarPlugins = createSidecarPluginRegistry({
+    provisioners: probeSidecarProvisioners,
+    ...(probeSidecarProvisionerChooser !== undefined
+      ? { chooser: probeSidecarProvisionerChooser }
+      : {}),
+  });
+  const hubSidecarWebSocketUrl =
+    process.env["HUB_SIDECAR_WEBSOCKET_URL"] ??
+    `ws://127.0.0.1:${String(port)}/api/sidecars/ws`;
+  const workflowAllocationService = createWorkflowAllocationService({
+    db,
+    deploymentPlugins: sidecarPlugins,
+    probePlugins: probeSidecarPlugins,
+    preparedDeployer: sessionService,
+    credentialCipher,
+    probeCapabilityRules: probeSidecarCapabilityRules,
+    allocationRouter: sidecarRouter,
+    hubWebSocketUrl: hubSidecarWebSocketUrl,
+    ...(sidecarOperationTimeoutMs !== undefined
+      ? { operationTimeoutMs: sidecarOperationTimeoutMs }
+      : {}),
+  });
+  const sidecarAllocationStore = createSidecarAllocationStore(db);
+  const workflowDispatchService = createWorkflowDispatchService({
+    dispatchStore: createWorkflowRunDispatchStore(db),
+    allocationStore: sidecarAllocationStore,
+    router: sidecarRouter,
+    resolveAnchorAddress: async (anchorRunId) => {
+      const row = await db.query.workflowRun.findFirst({
+        where: (run, { eq }) => eq(run.id, anchorRunId),
+        columns: { address: true },
+      });
+      return row?.address ?? null;
+    },
+  });
+  const sidecarAllocationReconciler = createSidecarAllocationReconciler({
+    allocationStore: sidecarAllocationStore,
+    maxConcurrentClaims: sidecarAllocationConcurrency,
+    plugins: sidecarPlugins,
+    router: sidecarRouter,
+    hubWebSocketUrl: hubSidecarWebSocketUrl,
+    ...(sidecarOperationTimeoutMs !== undefined
+      ? { operationTimeoutMs: sidecarOperationTimeoutMs }
+      : {}),
+    onInitializationRecovery: (allocation, reconciliation) =>
+      recoverSenderDeploy({ db, sidecarRouter, allocation, reconciliation }),
+    onReady: async (allocation, reconciliation) => {
+      await workflowAllocationService.deployReadyAllocation(
+        allocation,
+        reconciliation,
+      );
+      reconciliation.signal.throwIfAborted();
+      await workflowDispatchService.requeueForReadyAllocation(
+        allocation.anchorRunId,
+      );
+    },
+  });
+
+  await workflowAllocationService.initialize?.();
+  await sidecarAllocationReconciler.initialize();
+  sidecarRouter.events.on("sidecar.disconnect", ({ allocated }) => {
+    if (allocated === undefined) return;
+    return sidecarAllocationReconciler.handleDisconnect(allocated);
+  });
+  sidecarRouter.events.on("sidecar.allocated.connected", (allocated) =>
+    sidecarAllocationReconciler.handleConnected(allocated),
+  );
+  sidecarRouter.events.on(
+    "mail.inbound.acknowledged",
+    ({ messageId, allocated }) => {
+      if (allocated === undefined) return;
+      return workflowDispatchService.acknowledge({ ...allocated, messageId });
+    },
+  );
+
+  const allocationScheduler = createReconciliationScheduler({
+    name: "Sidecar allocation",
+    concurrency: sidecarAllocationConcurrency,
+    reconcileNext: () => sidecarAllocationReconciler.reconcileNext(),
+  });
+  const probeCleanupScheduler = createReconciliationScheduler({
+    name: "Workflow probe cleanup",
+    concurrency: 1,
+    intervalMs: 30_000,
+    reconcileNext: async () => {
+      await workflowAllocationService.reconcileReleasingProbes?.();
+      return false;
+    },
+  });
+  const dispatchScheduler = createReconciliationScheduler({
+    name: "Workflow dispatch",
+    concurrency: 1,
+    reconcileNext: async () => {
+      // Drain directly instead of poking the guarded wake(): a stuck drain
+      // must not block unrelated dispatches. Claims are lease-guarded and
+      // skip locked rows, so concurrent drains route around each other while
+      // enqueue notifications still enter through wake().
+      await workflowDispatchService.reconcileUntilIdle();
+      return false;
+    },
+  });
+  const connectionRepairScheduler = createReconciliationScheduler({
+    name: "Sidecar connection repair",
+    concurrency: 1,
+    intervalMs: 30_000,
+    reconcileNext: async () => {
+      await sidecarAllocationReconciler.repairUnscheduledConnections();
+      return false;
+    },
+  });
+
+  // Initial polls run on the next timer turn, after the websocket endpoint is assembled.
+  allocationScheduler.start();
+  probeCleanupScheduler.start();
+  dispatchScheduler.start();
+  connectionRepairScheduler.start();
+
+  const getSession = async (headers: Headers) => {
+    const result = await auth.api.getSession({ headers });
+    return result ? { user: result.user, session: result.session } : null;
+  };
+  const app = createApp({
+    getSession,
+    authHandler: (c) => auth.handler(c.req.raw),
+    db,
+    sidecarRouter,
+    sessionService,
+    workflowAllocationService,
+    workflowDispatchService,
+    eventCollectors,
+    credentialCipher,
+    principalKeyStore,
+    assetService,
+    repoStore: agentRepoStore.repoStore,
+    maxTarballBytes: hubMaxTarballBytes,
+    sidecarWsHandler: upgradeWebSocket((_c) => {
+      let handle: WsHandle;
+      return {
+        onOpen(_evt, ws) {
+          handle = {
+            send(data: string) {
+              ws.send(data);
+            },
+            close() {
+              ws.close();
+            },
+          };
+          sidecarRouter.handleOpen(handle);
+        },
+        onMessage(evt, _ws) {
+          if (typeof evt.data === "string") {
+            sidecarRouter.handleMessage(handle, evt.data);
+          }
+        },
+        onClose(_evt, _ws) {
+          sidecarRouter.handleClose(handle);
+        },
+      };
+    }),
+  });
+
+  log.info("Starting server on port {port}", { port });
+
+  // Cap the size of a frame the hub accepts from a sidecar. Bun's default
+  // (~16MB) sits below legitimate frames -- a large mail.outbound would trip it
+  // and Bun would CLOSE the sidecar's control socket, forcing a reconnect. Raise
+  // it above the largest legit received frame so only a genuinely oversized
+  // frame closes the connection. hono types the shared `websocket` handler with
+  // its minimal BunWebSocketHandler interface, which omits Bun's serve-level
+  // `maxPayloadLength`. The explicit `typeof websocket & { maxPayloadLength }`
+  // annotation adds the field with a nameable type -- both halves are portable,
+  // which keeps createHubServer's return type nameable, where an un-annotated
+  // inline spread infers an anonymous intersection that references hono's
+  // internal websocket type and trips TS2742 -- while still type-checking the
+  // option name so a future typo fails to compile rather than silently reverting
+  // to Bun's default.
+  const sidecarWebsocket: typeof websocket & { maxPayloadLength: number } = {
+    ...websocket,
+    maxPayloadLength: MAX_SIDECAR_FRAME_BYTES,
+  };
+
+  return {
+    server: {
+      fetch: app.fetch,
+      websocket: sidecarWebsocket,
+      port,
+      idleTimeout: 0,
+    },
+    // Corbits: same Hono app createApp built (`resolveTenant` already mounted).
+    app,
+    sidecarRouter,
+    db,
+    credentialCipher,
+    principalKeyStore,
+    getSession,
+  };
+}

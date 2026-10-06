@@ -1,0 +1,4733 @@
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import git from "isomorphic-git";
+import { generateKeyPair } from "@intx/crypto";
+import { collectReachableObjects } from "@intx/storage-isogit/node";
+import type { KeyPair } from "@intx/types/runtime";
+import {
+  workflowRunKindHandler,
+  workflowRunAuthorize,
+  classifyTerminalEvent,
+  enqueueInbox,
+  dequeueToProcessing,
+  markConsumed,
+  parseEventSeq,
+  readCommittedWorkflowRunLifecycle,
+  scanRunsForBoot,
+  readWorkflowRunLifecycle,
+  replayProcessingToInbox,
+  WORKFLOW_RUN_GITIGNORE_PATH,
+  WORKFLOW_RUN_RUNS_PREFIX,
+  WORKFLOW_RUN_ADDRESSES_PREFIX,
+  WORKFLOW_RUN_INBOX_DIR,
+  WORKFLOW_RUN_PROCESSING_DIR,
+  WORKFLOW_RUN_CONSUMED_DIR,
+  WORKFLOW_RUN_BLOBS_DIR,
+  WORKFLOW_RUN_PARTS_DIR,
+  WORKFLOW_RUN_GRANTS_FILE,
+  WORKFLOW_RUN_AGENT_STATE_PREFIX,
+  WORKFLOW_RUN_WATERMARK_FILE,
+  WORKFLOW_RUN_MAILBOX_PREFIX,
+  WORKFLOW_RUN_MAILBOX_INBOX_DIR,
+  WORKFLOW_RUN_MAILBOX_INDEX_FILE,
+} from "./workflow-run-kind";
+import { createRepoStore } from "./repo-store";
+import type { KindHandler, Principal, RepoId } from "./repo-store";
+
+const REF = "refs/heads/events";
+
+function makeReadBlob(
+  files: Record<string, string>,
+): (path: string) => Promise<Uint8Array> {
+  return async (path) => {
+    const body = files[path];
+    if (body === undefined) {
+      throw new Error(`readBlob: ${path} not found`);
+    }
+    return new TextEncoder().encode(body);
+  };
+}
+
+function makeListDir(
+  files: Record<string, string>,
+): (path: string) => Promise<string[]> {
+  return async (path) => {
+    const prefix = path === "" ? "" : `${path}/`;
+    const names = new Set<string>();
+    for (const p of Object.keys(files)) {
+      if (prefix !== "" && !p.startsWith(prefix)) continue;
+      const rest = p.slice(prefix.length);
+      if (rest.length === 0) continue;
+      const slash = rest.indexOf("/");
+      names.add(slash === -1 ? rest : rest.substring(0, slash));
+    }
+    return Array.from(names);
+  };
+}
+
+function topLevels(files: Record<string, string>): string[] {
+  const names = new Set<string>();
+  for (const p of Object.keys(files)) {
+    const slash = p.indexOf("/");
+    names.add(slash === -1 ? p : p.substring(0, slash));
+  }
+  return Array.from(names);
+}
+
+function uniqueRepoId(prefix: string): RepoId {
+  const id = `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+  return { kind: "workflow-run", id };
+}
+
+function eventBody(
+  seq: number,
+  type: string,
+  extras: Record<string, unknown> = {},
+): string {
+  return JSON.stringify({ seq, type, ...extras });
+}
+
+const HUB_PRINCIPAL: Principal = { kind: "hub" };
+const SUPERVISOR_PRINCIPAL: Principal = { kind: "supervisor" };
+const WORKFLOW_PROCESS_PRINCIPAL_SHAPE = {
+  kind: "workflow-process",
+  anchorRunId: "test-deployment",
+};
+const WORKFLOW_PROCESS_PRINCIPAL: Principal = WORKFLOW_PROCESS_PRINCIPAL_SHAPE;
+const noPriorBlob = async (): Promise<Uint8Array | null> => null;
+const noPriorDir = async (): Promise<string[]> => [];
+
+type ValidateOpts = {
+  ref?: string;
+  principal?: Principal;
+  priorFiles?: Record<string, string>;
+  changedPathPrefixes?: ReadonlySet<string>;
+};
+
+async function validate(
+  files: Record<string, string>,
+  opts: ValidateOpts = {},
+) {
+  const repoId = uniqueRepoId("wfr");
+  const ref = opts.ref ?? REF;
+  const principal = opts.principal ?? HUB_PRINCIPAL;
+  const priorReadBlob =
+    opts.priorFiles === undefined
+      ? noPriorBlob
+      : makePriorReadBlob(opts.priorFiles);
+  const priorListDir =
+    opts.priorFiles === undefined ? noPriorDir : makeListDir(opts.priorFiles);
+  return workflowRunKindHandler.validatePush({
+    repoId,
+    ref,
+    principal,
+    topLevelTreePaths: topLevels(files),
+    readBlob: makeReadBlob(files),
+    listDir: makeListDir(files),
+    priorReadBlob,
+    priorListDir,
+    changedPathPrefixes: opts.changedPathPrefixes,
+  });
+}
+
+function makePriorReadBlob(
+  files: Record<string, string>,
+): (path: string) => Promise<Uint8Array | null> {
+  return async (path) => {
+    const body = files[path];
+    if (body === undefined) return null;
+    return new TextEncoder().encode(body);
+  };
+}
+
+describe("workflowRunKindHandler metadata", () => {
+  test("declares the workflow-run kind and workflow-runs directory prefix", () => {
+    expect(workflowRunKindHandler.kind).toBe("workflow-run");
+    expect(workflowRunKindHandler.directoryPrefix).toBe("workflow-runs");
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — accepts", () => {
+  test("accepts a .gitignore-only genesis tree", async () => {
+    const r = await validate({ [WORKFLOW_RUN_GITIGNORE_PATH]: "" });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a tree with a single run and a single non-terminal event", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a tree with multiple runs and many ordered events", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "StepStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/2.json`]: eventBody(
+        2,
+        "StepCompleted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a terminal event as the last event in the run", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunCompleted",
+      ),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a run carrying a per-run grants.json alongside its events", async () => {
+    // The hub's `run.grants` frame writes `runs/<runId>/grants.json` -- a
+    // sibling of the run's `events/` subtree -- ahead of the trigger. The
+    // handler must accept the grants file as a permitted run-dir child, not
+    // reject it as an unexpected entry, or the whole per-run grants channel
+    // fails at the substrate boundary.
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_GRANTS_FILE}`]:
+        JSON.stringify({ grants: [] }),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a grants-only run directory in the pre-first-event window", async () => {
+    // The grants frame lands BEFORE the child emits its first event, so
+    // there is a window where the run directory holds only `grants.json`
+    // with no `events/` subtree yet. The handler must carry that transient
+    // shape forward rather than reject it for a missing events subdirectory.
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_GRANTS_FILE}`]:
+        JSON.stringify({ grants: [] }),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a run whose grants.json survives alongside a sealed events.jsonl", async () => {
+    // Compaction folds a terminated run's `events/` into `events.jsonl` and
+    // leaves the sibling `grants.json` untouched. The resulting sealed shape
+    // -- combined events file plus grants file -- must validate.
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_GRANTS_FILE}`]:
+        JSON.stringify({ grants: [] }),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events.jsonl`]: `${eventBody(0, "RunStarted")}\n${eventBody(1, "RunCompleted")}\n`,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a CancelRequested event whose origin matches the signing principal kind", async () => {
+    const matrix: { origin: string; principal: Principal }[] = [
+      { origin: "self", principal: SUPERVISOR_PRINCIPAL },
+      { origin: "supervisor-drain", principal: SUPERVISOR_PRINCIPAL },
+      { origin: "supervisor-operator", principal: SUPERVISOR_PRINCIPAL },
+      { origin: "hub-admin", principal: HUB_PRINCIPAL },
+    ];
+    for (const { origin, principal } of matrix) {
+      const r = await validate(
+        {
+          [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+          [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+            0,
+            "RunStarted",
+          ),
+          [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+            1,
+            "CancelRequested",
+            { origin, reason: "operator pressed stop" },
+          ),
+        },
+        { principal },
+      );
+      expect(r.ok).toBe(true);
+    }
+  });
+
+  test("accepts a per-agent conversation snapshot under agent-state/", async () => {
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/step-1/conversation.json`]:
+          JSON.stringify({ turns: [], connectorState: null }),
+      },
+      { principal: WORKFLOW_PROCESS_PRINCIPAL },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts the two-tier WAL + checkpoint agent-state layout (Phase D1)", async () => {
+    // The durable conversation store no longer writes a single
+    // `conversation.json`; it writes a compacted `checkpoint.json` plus
+    // bucket-sharded `wal/<bucket>/<seq>.json` delta blobs. The validator
+    // enforces only that every `agent-state/<segment>` is a non-empty
+    // directory (not a dangling blob) and round-trips URL-encoding -- it
+    // says nothing about the files INSIDE, so the nested WAL layout must
+    // pass unchanged with no validator loosening.
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/step-1/checkpoint.json`]:
+          JSON.stringify({
+            turns: [],
+            pendingOperations: [],
+            tokenUsage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              thinking: 0,
+            },
+            connectorState: null,
+          }),
+        [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/step-1/checkpoint.meta.json`]:
+          JSON.stringify({
+            checkpointSeq: 0,
+            turnCount: 0,
+            pendingOperations: [],
+            tokenUsage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              thinking: 0,
+            },
+            connectorState: null,
+          }),
+        [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/step-1/wal/0/0.json`]:
+          JSON.stringify({
+            seq: 0,
+            turns: [{ role: "user", content: [], timestamp: 0 }],
+            metadata: {
+              pendingOperations: [],
+              tokenUsage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                thinking: 0,
+              },
+              connectorState: null,
+            },
+          }),
+      },
+      { principal: WORKFLOW_PROCESS_PRINCIPAL },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a mutated agent-state snapshot (subtree is mutable, not append-only)", async () => {
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/step-1/conversation.json`]:
+          JSON.stringify({ turns: ["second"], connectorState: null }),
+      },
+      {
+        principal: WORKFLOW_PROCESS_PRINCIPAL,
+        priorFiles: {
+          [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+          [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/step-1/conversation.json`]:
+            JSON.stringify({ turns: ["first"], connectorState: null }),
+        },
+      },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects an agent-state segment that does not round-trip URL-encoding", async () => {
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/bad%2segment/conversation.json`]:
+          "{}",
+      },
+      { principal: WORKFLOW_PROCESS_PRINCIPAL },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/agent-state segment/);
+  });
+
+  test("rejects a blob dangling directly under agent-state/", async () => {
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        // No `<agentKey>/` directory layer: the blob sits directly under
+        // the prefix, so it is not keyed by any agent.
+        [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/conversation.json`]: "{}",
+      },
+      { principal: WORKFLOW_PROCESS_PRINCIPAL },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/blob directly under/);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — newly-terminal signal", () => {
+  test("reports a run whose terminal event is newly added by this commit", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunCompleted",
+      ),
+    });
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    expect(r.newlyTerminalRuns).toEqual([
+      {
+        runId: "run-a",
+        status: "completed",
+        terminalEventJson: eventBody(1, "RunCompleted"),
+      },
+    ]);
+  });
+
+  test("reports a lone seq-1 RunFailed with no preceding RunStarted", async () => {
+    // The exact artifact the crash-loop guard's supervisor-authored tombstone
+    // produces: the anchor run's events subtree is empty when the guard
+    // latches, so the RunFailed lands as the sole event at seq 1 (the
+    // runtime's first-event convention) with no RunStarted ahead of it. The
+    // validator keys contiguity off the first filename seq, not a fixed 0, and
+    // enforces no "RunStarted precedes terminal" rule, so this is accepted and
+    // flips the run to `failed`.
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunFailed",
+      ),
+    });
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    expect(r.newlyTerminalRuns).toEqual([
+      {
+        runId: "run-a",
+        status: "failed",
+        terminalEventJson: eventBody(1, "RunFailed"),
+      },
+    ]);
+  });
+
+  test("reports no terminal run for a commit that adds only non-terminal events", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    });
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    expect(r.newlyTerminalRuns ?? []).toEqual([]);
+  });
+
+  test("does not re-report a terminal event already present in the prior tree", async () => {
+    const files = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunCompleted",
+      ),
+    };
+    // The prior tree already carries the terminal event, so a no-op
+    // re-validation -- and a later compaction commit that folds the
+    // events forward -- must not re-fire the signal.
+    const r = await validate(files, { priorFiles: files });
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    expect(r.newlyTerminalRuns ?? []).toEqual([]);
+  });
+
+  test("reports every run whose terminal event is newly added in one commit", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunCompleted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/1.json`]: eventBody(
+        1,
+        "RunCancelled",
+      ),
+    });
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    expect(r.newlyTerminalRuns).toEqual(
+      expect.arrayContaining([
+        {
+          runId: "run-a",
+          status: "completed",
+          terminalEventJson: eventBody(1, "RunCompleted"),
+        },
+        {
+          runId: "run-b",
+          status: "cancelled",
+          terminalEventJson: eventBody(1, "RunCancelled"),
+        },
+      ]),
+    );
+    expect(r.newlyTerminalRuns ?? []).toHaveLength(2);
+  });
+
+  test("reports only the run whose terminal event is new when another is carried forward", async () => {
+    const carried = {
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunCompleted",
+      ),
+    };
+    // run-a's terminal event is already in the prior tree (carried
+    // forward unchanged); only run-b's newly added terminal must fire.
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        ...carried,
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/1.json`]: eventBody(
+          1,
+          "RunCompleted",
+        ),
+      },
+      { priorFiles: { [WORKFLOW_RUN_GITIGNORE_PATH]: "", ...carried } },
+    );
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    expect(r.newlyTerminalRuns).toEqual([
+      {
+        runId: "run-b",
+        status: "completed",
+        terminalEventJson: eventBody(1, "RunCompleted"),
+      },
+    ]);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — compaction (events.jsonl)", () => {
+  const RUN = "run-a";
+  const eventsDir = `${WORKFLOW_RUN_RUNS_PREFIX}/${RUN}/events`;
+  const combinedPath = `${WORKFLOW_RUN_RUNS_PREFIX}/${RUN}/events.jsonl`;
+  const e0 = eventBody(0, "RunStarted");
+  const e1 = eventBody(1, "RunCompleted");
+  const perEventPrior: Record<string, string> = {
+    [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+    [`${eventsDir}/0.json`]: e0,
+    [`${eventsDir}/1.json`]: e1,
+  };
+  const fold = (...lines: string[]) => lines.join("\n") + "\n";
+
+  test("accepts a faithful byte-for-byte fold of the prior per-event files", async () => {
+    const r = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [combinedPath]: fold(e0, e1) },
+      { priorFiles: perEventPrior },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects a fold that mutates a historical event's bytes", async () => {
+    const tampered = fold(e0.replace("}", ',"tampered":1}'), e1);
+    const r = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [combinedPath]: tampered },
+      { priorFiles: perEventPrior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not fold its prior events verbatim/);
+  });
+
+  test("rejects a fold that drops a prior event", async () => {
+    const r = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [combinedPath]: fold(e1) },
+      { priorFiles: perEventPrior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not fold its prior events verbatim/);
+  });
+
+  test("rejects a fold that adds an event not in the prior tree", async () => {
+    const extra = fold(
+      e0,
+      eventBody(1, "StepStarted"),
+      eventBody(2, "RunCompleted"),
+    );
+    const r = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [combinedPath]: extra },
+      { priorFiles: perEventPrior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not fold its prior events verbatim/);
+  });
+
+  test("rejects a run carrying both a combined file and a per-event directory", async () => {
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [combinedPath]: fold(e0, e1),
+        [`${eventsDir}/0.json`]: e0,
+        [`${eventsDir}/1.json`]: e1,
+      },
+      { priorFiles: perEventPrior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/carries both/);
+  });
+
+  test("a re-pushed sealed run is immutable", async () => {
+    const sealedPrior = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [combinedPath]: fold(e0, e1),
+    };
+    const unchanged = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [combinedPath]: fold(e0, e1) },
+      { priorFiles: sealedPrior },
+    );
+    expect(unchanged.ok).toBe(true);
+    const mutated = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [combinedPath]: fold(e0.replace("}", ',"x":1}'), e1),
+      },
+      { priorFiles: sealedPrior },
+    );
+    expect(mutated.ok).toBe(false);
+  });
+
+  test("rejects a freshly-sealed run with no terminal event", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [combinedPath]: fold(
+        eventBody(0, "RunStarted"),
+        eventBody(1, "StepStarted"),
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/no terminal event/);
+  });
+
+  test("the compaction commit reports no newly-terminal run", async () => {
+    const r = await validate(
+      { [WORKFLOW_RUN_GITIGNORE_PATH]: "", [combinedPath]: fold(e0, e1) },
+      { priorFiles: perEventPrior },
+    );
+    if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
+    expect(r.newlyTerminalRuns ?? []).toEqual([]);
+  });
+
+  test("rejects a fold whose bytes differ from the prior blobs even if it decodes to the same content", async () => {
+    // The fold gate is BYTE equality, not decoded-string equality: each
+    // event is signed over its own bytes, so a sealed file that merely
+    // decodes to the prior content (here, a UTF-8 BOM prepended to the true
+    // fold) must be rejected. The string-based `validate` harness cannot
+    // express this, so drive the handler with raw bytes.
+    const enc = new TextEncoder();
+    const prospectiveKeys: Record<string, string> = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [combinedPath]: "",
+    };
+    const priorKeys: Record<string, string> = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${eventsDir}/0.json`]: "",
+      [`${eventsDir}/1.json`]: "",
+    };
+    const priorBytes: Record<string, Uint8Array> = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: enc.encode(""),
+      [`${eventsDir}/0.json`]: enc.encode(e0),
+      [`${eventsDir}/1.json`]: enc.encode(e1),
+    };
+    const trueFold = enc.encode(`${e0}\n${e1}\n`);
+    const bomFold = new Uint8Array([0xef, 0xbb, 0xbf, ...trueFold]);
+    const prospectiveBytes: Record<string, Uint8Array> = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: enc.encode(""),
+      [combinedPath]: bomFold,
+    };
+    const r = await workflowRunKindHandler.validatePush({
+      repoId: uniqueRepoId("wfr"),
+      ref: REF,
+      principal: HUB_PRINCIPAL,
+      topLevelTreePaths: topLevels(prospectiveKeys),
+      readBlob: async (p) => {
+        const b = prospectiveBytes[p];
+        if (b === undefined) throw new Error(`readBlob: ${p} not found`);
+        return b;
+      },
+      listDir: makeListDir(prospectiveKeys),
+      priorReadBlob: async (p) => priorBytes[p] ?? null,
+      priorListDir: makeListDir(priorKeys),
+      changedPathPrefixes: undefined,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not fold its prior events verbatim/);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — rejects top-level shape", () => {
+  test("rejects any path under control/ (unsupported subtree)", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      "control/policy.json": "{}",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/unsupported .*control\//);
+  });
+
+  test("rejects an arbitrary disallowed top-level entry and names agent-state in the allowed list", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      "stray.txt": "nope",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/unexpected top-level entry/);
+    // The allowed-list in the rejection message must enumerate every
+    // accepted top-level, including agent-state/ (Phase 4.5).
+    expect(r.reason).toContain(WORKFLOW_RUN_AGENT_STATE_PREFIX);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — rejects event shape", () => {
+  test("rejects when a run directory has no events subdirectory", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/notes.txt`]: "stray",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/contains unexpected entry/);
+  });
+
+  test("rejects a stray run-dir file and names grants.json in the allowed list", async () => {
+    // Permitting grants.json must not widen the run-dir allow-list to
+    // arbitrary files: a stray entry alongside grants.json is still
+    // rejected, and the rejection message enumerates grants.json among the
+    // accepted children.
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_GRANTS_FILE}`]:
+        JSON.stringify({ grants: [] }),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/stray.txt`]: "nope",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/contains unexpected entry/);
+    expect(r.reason).toContain(WORKFLOW_RUN_GRANTS_FILE);
+  });
+
+  test("rejects a run directory with a blobs subtree but no events and no grants", async () => {
+    // The grants-only carve-out is narrow: only a run dir whose SOLE child
+    // is grants.json skips the events requirement. A blobs-only run dir
+    // (no events, no grants) is still missing its required event log.
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_BLOBS_DIR}/${"a".repeat(64)}`]:
+        "payload",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/missing required "events" subdirectory/);
+  });
+
+  test("rejects an event file whose name is not <seq>.json", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/oops.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not match <seq>\.json/);
+  });
+
+  test("rejects an event whose body is not valid JSON", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: "{not-json",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/is not valid JSON/);
+  });
+
+  test("rejects an event missing the required seq and type envelope", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: JSON.stringify({
+        data: "no envelope",
+      }),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/envelope invalid/);
+  });
+
+  test("rejects an event whose body.seq does not match its filename seq", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        7,
+        "RunStarted",
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/body\.seq .* does not match filename seq/);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — terminal-phase lock", () => {
+  test("rejects an event whose seq is strictly greater than a prior terminal event's", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunCompleted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/2.json`]: eventBody(
+        2,
+        "StepStarted",
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/after terminal RunCompleted/);
+  });
+
+  test("rejects events after a RunFailed terminal event", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunFailed",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/2.json`]: eventBody(
+        2,
+        "StepStarted",
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/after terminal RunFailed/);
+  });
+
+  test("rejects events after a RunCancelled terminal event", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunCancelled",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/2.json`]: eventBody(
+        2,
+        "StepStarted",
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/after terminal RunCancelled/);
+  });
+
+  test("treats terminal lock per-run: another run is unaffected", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "RunCompleted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/1.json`]: eventBody(
+        1,
+        "StepStarted",
+      ),
+    });
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — CancelRequested origin", () => {
+  test("rejects a CancelRequested whose origin is not a CancelOrigin", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "CancelRequested",
+        { origin: "rogue-actor", reason: "spoof" },
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/origin .* is not a recognised CancelOrigin/);
+  });
+
+  test("rejects a CancelRequested missing the origin field", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "CancelRequested",
+        { reason: "no origin field" },
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/CancelRequested payload invalid/);
+  });
+
+  test("rejects a CancelRequested with an empty reason", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "CancelRequested",
+        { origin: "self", reason: "" },
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/CancelRequested payload invalid/);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — CancelRequested principal-vs-origin", () => {
+  // Only a `hub` principal may mint a `hub-admin` origin; only a
+  // `supervisor` principal may mint `self`, `supervisor-drain`, or
+  // `supervisor-operator`. The handler enforces the principal-vs-
+  // origin pairing at `validatePush`; these cases pin the boundary.
+
+  function cancelTree(origin: string): Record<string, string> {
+    return {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "CancelRequested",
+        { origin, reason: "cancel" },
+      ),
+    };
+  }
+
+  test("rejects CancelRequested{origin:hub-admin} signed by a workflow-process principal", async () => {
+    const r = await validate(cancelTree("hub-admin"), {
+      principal: WORKFLOW_PROCESS_PRINCIPAL,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /CancelRequested origin "hub-admin" requires principal\.kind="hub"/,
+    );
+    expect(r.reason).toMatch(/principal\.kind="workflow-process"/);
+  });
+
+  test("rejects CancelRequested{origin:hub-admin} signed by a supervisor principal", async () => {
+    const r = await validate(cancelTree("hub-admin"), {
+      principal: SUPERVISOR_PRINCIPAL,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/requires principal\.kind="hub"/);
+    expect(r.reason).toMatch(/principal\.kind="supervisor"/);
+  });
+
+  test("rejects CancelRequested{origin:self} signed by a hub principal", async () => {
+    const r = await validate(cancelTree("self"), { principal: HUB_PRINCIPAL });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/requires principal\.kind="supervisor"/);
+    expect(r.reason).toMatch(/principal\.kind="hub"/);
+  });
+
+  test("rejects CancelRequested{origin:supervisor-drain} signed by a hub principal", async () => {
+    const r = await validate(cancelTree("supervisor-drain"), {
+      principal: HUB_PRINCIPAL,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/requires principal\.kind="supervisor"/);
+  });
+
+  test("rejects CancelRequested{origin:supervisor-operator} signed by a workflow-process principal", async () => {
+    const r = await validate(cancelTree("supervisor-operator"), {
+      principal: WORKFLOW_PROCESS_PRINCIPAL,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/requires principal\.kind="supervisor"/);
+  });
+
+  test("accepts CancelRequested{origin:hub-admin} signed by a hub principal", async () => {
+    const r = await validate(cancelTree("hub-admin"), {
+      principal: HUB_PRINCIPAL,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts CancelRequested{origin:self} signed by a supervisor principal", async () => {
+    const r = await validate(cancelTree("self"), {
+      principal: SUPERVISOR_PRINCIPAL,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a workflow-process write that carries a supervisor-signed CancelRequested forward unchanged", async () => {
+    // The origin-vs-signer rule is a WRITE-TIME check on the commit that
+    // authors the CancelRequested. A run's own cascade write of RunCancelled
+    // is signed workflow-process and re-lists the whole events prefix, carrying
+    // the earlier supervisor-signed CancelRequested forward byte-for-byte. The
+    // handler must accept that; re-checking the carried-forward cancel's origin
+    // against the cascade write's signer would reject a legitimate terminal.
+    const cancel = eventBody(1, "CancelRequested", {
+      origin: "supervisor-operator",
+      reason: "cancel",
+    });
+    const prior = {
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: cancel,
+    };
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        ...prior,
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/2.json`]: eventBody(
+          2,
+          "RunCancelled",
+        ),
+      },
+      { principal: WORKFLOW_PROCESS_PRINCIPAL, priorFiles: prior },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  test("still rejects a workflow-process write that mutates a carried-forward CancelRequested", async () => {
+    // The carry-forward exemption is gated strictly on the blob being absent
+    // from the prior tree; a byte-DIVERGED carried-forward CancelRequested is
+    // not a carry-forward, so the append-only byte-equality check rejects it
+    // before the origin exemption is even reached.
+    const prior = {
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "CancelRequested",
+        { origin: "supervisor-operator", reason: "cancel" },
+      ),
+    };
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+          1,
+          "CancelRequested",
+          { origin: "supervisor-operator", reason: "tampered" },
+        ),
+      },
+      { principal: WORKFLOW_PROCESS_PRINCIPAL, priorFiles: prior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/append-only/);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — append-only via prior-tree", () => {
+  // The handler reads the parent commit's tree via `priorReadBlob`
+  // and rejects any event path whose prospective bytes diverge from
+  // the prior bytes. These cases pin that append-only boundary at
+  // `validatePush`.
+
+  test("rejects a prospective tree that mutates the bytes of an event present in the prior tree", async () => {
+    const prior = {
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+        { original: true },
+      ),
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+        { original: false },
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/1.json`]: eventBody(
+        1,
+        "StepStarted",
+      ),
+    };
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /event runs\/run-x\/events\/0\.json bytes diverge from the prior tree/,
+    );
+  });
+
+  test("accepts a prospective tree that appends a new event while preserving prior bytes", async () => {
+    const seq0 = eventBody(0, "RunStarted");
+    const prior = {
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: seq0,
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: seq0,
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/1.json`]: eventBody(
+        1,
+        "StepStarted",
+      ),
+    };
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts the first push (no prior tree) as inherently append-only", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects a prospective tree that truncates an existing event blob", async () => {
+    const prior = {
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+        { padding: "x".repeat(64) },
+      ),
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-x/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    };
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/bytes diverge from the prior tree/);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — blobs subtree", () => {
+  // The production `BlobSubstrate` adapter spills any output whose
+  // JSON-stringified form exceeds 1 MiB to
+  // `runs/<runId>/blobs/<sha256-hex>`. The key is a lowercase
+  // 64-character sha256 hex string. The blob value is opaque bytes;
+  // immutability is enforced by prior-tree byte-equality (mirroring
+  // the consumed-entry discipline in the claim-check subtree).
+  //
+  // The regression fixture below mirrors what the BlobSubstrate adapter
+  // commits when `recordOutput` is called with a value whose
+  // JSON-stringified length exceeds the inline threshold: a blob keyed
+  // by the sha256 of the payload bytes, sized comfortably above 1 MiB.
+
+  const BLOB_KEY_A =
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const BLOB_KEY_B =
+    "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+  const LARGE_BLOB_BYTES = "x".repeat(1_500_000);
+
+  function blobsTree(
+    runId: string,
+    blobs: Record<string, string>,
+  ): Record<string, string> {
+    const tree: Record<string, string> = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/${runId}/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    };
+    for (const [key, body] of Object.entries(blobs)) {
+      tree[
+        `${WORKFLOW_RUN_RUNS_PREFIX}/${runId}/${WORKFLOW_RUN_BLOBS_DIR}/${key}`
+      ] = body;
+    }
+    return tree;
+  }
+
+  test("regression: accepts a 1.5 MiB blob committed under runs/<runId>/blobs/<sha256>", async () => {
+    const tree = blobsTree("run-spill", { [BLOB_KEY_A]: LARGE_BLOB_BYTES });
+    const r = await validate(tree);
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a new blob whose key is a valid sha256 hex string", async () => {
+    const tree = blobsTree("run-a", { [BLOB_KEY_A]: "payload-bytes" });
+    const r = await validate(tree);
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects a blob whose key is not a 64-char lowercase sha256 hex string", async () => {
+    const tree = blobsTree("run-a", { "not-a-hash.bin": "payload-bytes" });
+    const r = await validate(tree);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/blob filename .* does not match/);
+  });
+
+  test("rejects a blob whose key has uppercase hex (non-canonical sha256)", async () => {
+    const upper = BLOB_KEY_A.toUpperCase();
+    const tree = blobsTree("run-a", { [upper]: "payload-bytes" });
+    const r = await validate(tree);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/blob filename .* does not match/);
+  });
+
+  test("rejects a mutated blob whose prior-tree bytes differ", async () => {
+    const prior = blobsTree("run-a", { [BLOB_KEY_A]: "original-bytes" });
+    const prospective = blobsTree("run-a", { [BLOB_KEY_A]: "mutated-bytes!" });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /blob runs\/run-a\/blobs\/.* bytes diverge from the prior tree/,
+    );
+  });
+
+  test("accepts an idempotent re-write of an existing blob with identical bytes", async () => {
+    const bytes = "stable-bytes";
+    const prior = blobsTree("run-a", { [BLOB_KEY_A]: bytes });
+    const prospective = blobsTree("run-a", { [BLOB_KEY_A]: bytes });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts appending a new blob alongside an existing immutable blob", async () => {
+    const prior = blobsTree("run-a", { [BLOB_KEY_A]: "first-bytes" });
+    const prospective = blobsTree("run-a", {
+      [BLOB_KEY_A]: "first-bytes",
+      [BLOB_KEY_B]: "second-bytes",
+    });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — mail parts subtree", () => {
+  // The workflow-host ingest commits inbound-mail mail part bytes as real
+  // files under `runs/<runId>/parts/<urlEncoded(messageId)>/<index>-<name>`,
+  // one directory per inbound message and one file per mail part. The bytes
+  // are opaque and immutable; immutability is enforced by prior-tree git-OID
+  // equality (the filename is not content-addressed, so a same-path rewrite
+  // must be caught by comparing content, and the OID compare avoids re-reading
+  // the bytes on every commit that touches the run).
+
+  const SEGMENT = encodeURIComponent("<msg-1@host>");
+  const SEGMENT_B = encodeURIComponent("<msg-2@host>");
+
+  function partsTree(
+    runId: string,
+    files: Record<string, string>,
+    opts: { withEvent?: boolean } = {},
+  ): Record<string, string> {
+    const tree: Record<string, string> = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+    };
+    if (opts.withEvent !== false) {
+      tree[`${WORKFLOW_RUN_RUNS_PREFIX}/${runId}/events/0.json`] = eventBody(
+        0,
+        "RunStarted",
+      );
+    }
+    for (const [rel, body] of Object.entries(files)) {
+      tree[
+        `${WORKFLOW_RUN_RUNS_PREFIX}/${runId}/${WORKFLOW_RUN_PARTS_DIR}/${rel}`
+      ] = body;
+    }
+    return tree;
+  }
+
+  test("accepts a valid mail part tree alongside the run's events", async () => {
+    const r = await validate(
+      partsTree("run-a", {
+        [`${SEGMENT}/0-photo.png`]: "png-bytes",
+        [`${SEGMENT}/1-report.pdf`]: "pdf-bytes",
+      }),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts mail parts in the pre-first-event window (grants.json, no events)", async () => {
+    // The supervisor commits mail part bytes before firing the trigger, so
+    // the mail parts land in a commit that carries no `events/` subtree yet.
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_GRANTS_FILE}`]: "{}",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_PARTS_DIR}/${SEGMENT}/0-photo.png`]:
+        "png-bytes",
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects a message segment that does not round-trip URL-encoding", async () => {
+    const r = await validate(
+      partsTree("run-a", { ["a b/0-photo.png"]: "png-bytes" }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mail part message segment .* does not round-trip/,
+    );
+  });
+
+  test("rejects a filename that does not match <index>-<name>", async () => {
+    const r = await validate(
+      partsTree("run-a", { [`${SEGMENT}/photo.png`]: "png-bytes" }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mail part filename .* does not match <index>-<name>/,
+    );
+  });
+
+  test("rejects a blob dangling directly at parts/<segment>", async () => {
+    // A blob committed at the message-segment path (no <index>-<name> file
+    // beneath it) lists as an empty directory and must be rejected, matching
+    // the agent-state dangling-blob guard.
+    const r = await validate(
+      partsTree("run-a", { [SEGMENT]: "not-a-directory" }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mail part message segment .* is not a directory carrying mail part files/,
+    );
+  });
+
+  test("rejects a message segment over the path-component byte limit", async () => {
+    const longSegment = "a".repeat(256);
+    const r = await validate(
+      partsTree("run-a", { [`${longSegment}/0-photo.png`]: "png-bytes" }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/exceeds the 255-byte path-component limit/);
+  });
+
+  test("rejects a mail part filename over the path-component byte limit", async () => {
+    const longName = `0-${"a".repeat(254)}`;
+    const r = await validate(
+      partsTree("run-a", { [`${SEGMENT}/${longName}`]: "png-bytes" }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/exceeds the 255-byte path-component limit/);
+  });
+
+  test("rejects a mutated mail part whose prior-tree bytes differ", async () => {
+    const prior = partsTree("run-a", {
+      [`${SEGMENT}/0-photo.png`]: "original-bytes",
+    });
+    const prospective = partsTree("run-a", {
+      [`${SEGMENT}/0-photo.png`]: "mutated-bytes!",
+    });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mail part runs\/run-a\/parts\/.* bytes diverge from the prior tree/,
+    );
+  });
+
+  test("accepts an idempotent re-write of a mail part with identical bytes", async () => {
+    const bytes = "stable-bytes";
+    const prior = partsTree("run-a", {
+      [`${SEGMENT}/0-photo.png`]: bytes,
+    });
+    const prospective = partsTree("run-a", {
+      [`${SEGMENT}/0-photo.png`]: bytes,
+    });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects deleting a prior mail part (append-only)", async () => {
+    const prior = partsTree("run-a", {
+      [`${SEGMENT}/0-photo.png`]: "png-bytes",
+    });
+    // Prospective keeps the run and its event but drops the mail part file.
+    const prospective = partsTree("run-a", {}, { withEvent: true });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mail part runs\/run-a\/parts\/.* present in the prior tree is missing/,
+    );
+  });
+
+  test("accepts appending a new mail part alongside an existing immutable one", async () => {
+    const prior = partsTree("run-a", {
+      [`${SEGMENT}/0-photo.png`]: "first-bytes",
+    });
+    const prospective = partsTree("run-a", {
+      [`${SEGMENT}/0-photo.png`]: "first-bytes",
+      [`${SEGMENT_B}/0-audio.mp3`]: "second-bytes",
+    });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects a nested directory in place of a mail part file", async () => {
+    // The `<index>-<name>` shape is permissive, so a directory named `0-foo`
+    // must be rejected rather than admitting a nested subtree.
+    const r = await validate(
+      partsTree("run-a", { [`${SEGMENT}/0-foo/deep.png`]: "png-bytes" }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mail part runs\/run-a\/parts\/.* is a directory; each mail part must be a single file/,
+    );
+  });
+
+  test("enforces mail part immutability under changedPathPrefixes scoping", async () => {
+    // The production write path validates a bounded change set; exercise the
+    // scoped path rather than only the validate-all path the cases above use.
+    const scope = new Set([`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/`]);
+    const prior = partsTree("run-a", {
+      [`${SEGMENT}/0-photo.png`]: "original-bytes",
+    });
+
+    const mutated = await validate(
+      partsTree("run-a", {
+        [`${SEGMENT}/0-photo.png`]: "mutated-bytes!",
+      }),
+      { priorFiles: prior, changedPathPrefixes: scope },
+    );
+    expect(mutated.ok).toBe(false);
+    if (mutated.ok) throw new Error("unreachable");
+    expect(mutated.reason).toMatch(/bytes diverge from the prior tree/);
+
+    const deleted = await validate(
+      partsTree("run-a", {}, { withEvent: true }),
+      { priorFiles: prior, changedPathPrefixes: scope },
+    );
+    expect(deleted.ok).toBe(false);
+    if (deleted.ok) throw new Error("unreachable");
+    expect(deleted.reason).toMatch(/present in the prior tree is missing/);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — mailbox subtree", () => {
+  // The substrate mailbox backing commits the warm agent's durable inbox
+  // under `mailbox/INBOX/`: a MUTABLE `index.json` rewritten on each flush
+  // plus `<uid>.eml` message blobs carrying raw signed bytes. `<uid>` is a
+  // decimal integer >= 1. A RETAINED message blob is held immutable via
+  // prior-tree byte equality, mirroring the `runs/<runId>/blobs/`
+  // discipline; a prior blob may be ABSENT (a legal expunge). The index is
+  // exempt from byte equality but must persist once it existed.
+
+  const INBOX = `${WORKFLOW_RUN_MAILBOX_PREFIX}/${WORKFLOW_RUN_MAILBOX_INBOX_DIR}`;
+
+  function mailboxTree(
+    entries: Record<string, string>,
+  ): Record<string, string> {
+    const tree: Record<string, string> = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+    };
+    for (const [rel, body] of Object.entries(entries)) {
+      tree[`${INBOX}/${rel}`] = body;
+    }
+    return tree;
+  }
+
+  test("accepts a well-formed mailbox with an index and a message", async () => {
+    const r = await validate(
+      mailboxTree({
+        [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: JSON.stringify({ messages: [1] }),
+        "1.eml": "raw-signed-message-bytes",
+      }),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a mailbox alongside runs and agent-state siblings", async () => {
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_AGENT_STATE_PREFIX}/step-1/conversation.json`]: "{}",
+        [`${INBOX}/${WORKFLOW_RUN_MAILBOX_INDEX_FILE}`]: JSON.stringify({
+          messages: [1, 2],
+        }),
+        [`${INBOX}/1.eml`]: "first",
+        [`${INBOX}/2.eml`]: "second",
+      },
+      { principal: WORKFLOW_PROCESS_PRINCIPAL },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a mutated index alongside an immutable message", async () => {
+    const prior = mailboxTree({
+      [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: JSON.stringify({ messages: [1] }),
+      "1.eml": "raw-bytes",
+    });
+    const prospective = mailboxTree({
+      [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: JSON.stringify({ messages: [1, 2] }),
+      "1.eml": "raw-bytes",
+      "2.eml": "more-bytes",
+    });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects an unexpected entry directly under mailbox/", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_MAILBOX_PREFIX}/OUTBOX/1.eml`]: "bytes",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/mailbox subtree contains unexpected entry/);
+  });
+
+  test("rejects an unexpected entry under mailbox/INBOX/", async () => {
+    const r = await validate(
+      mailboxTree({
+        [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: "{}",
+        "notes.txt": "stray",
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not match .* or <uid>\.eml/);
+  });
+
+  test("rejects a message uid of zero", async () => {
+    const r = await validate(mailboxTree({ "0.eml": "bytes" }));
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not match .* or <uid>\.eml/);
+  });
+
+  test("rejects a message uid with a leading zero", async () => {
+    const r = await validate(mailboxTree({ "01.eml": "bytes" }));
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not match .* or <uid>\.eml/);
+  });
+
+  test("rejects a nested directory in place of a message file", async () => {
+    const r = await validate(mailboxTree({ "1.eml/deep.bin": "bytes" }));
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mailbox message .* is a directory; each message must be a single \.eml file/,
+    );
+  });
+
+  test("rejects a directory in place of the index file", async () => {
+    const r = await validate(
+      mailboxTree({ [`${WORKFLOW_RUN_MAILBOX_INDEX_FILE}/nested.json`]: "{}" }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/the mailbox index must be a single file/);
+  });
+
+  test("rejects a blob dangling directly at mailbox/INBOX", async () => {
+    // A blob committed at `mailbox/INBOX` (no entries beneath it) lists as
+    // an empty directory and must be rejected, mirroring the agent-state
+    // and mail-parts dangling-blob guards.
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [INBOX]: "not-a-directory",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/is a blob, not a directory/);
+  });
+
+  test("rejects a mutated message whose prior-tree bytes differ", async () => {
+    const prior = mailboxTree({ "1.eml": "original-bytes" });
+    const prospective = mailboxTree({ "1.eml": "mutated-bytes!" });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mailbox message mailbox\/INBOX\/1\.eml bytes diverge from the prior tree/,
+    );
+  });
+
+  test("accepts an idempotent re-write of a message with identical bytes", async () => {
+    const bytes = "stable-bytes";
+    const prior = mailboxTree({ "1.eml": bytes });
+    const prospective = mailboxTree({ "1.eml": bytes });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts expunging a prior message while the index persists", async () => {
+    // The warm agent physically removes a message from the live INBOX. The
+    // index is rewritten (mutable) and retained; the `<uid>.eml` blob is
+    // dropped from the tree but survives in git history because a
+    // workflow-run repo is never GC'd.
+    const prior = mailboxTree({
+      [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: JSON.stringify({ messages: [1] }),
+      "1.eml": "raw-bytes",
+    });
+    // Prospective keeps the index but drops the message blob.
+    const prospective = mailboxTree({
+      [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: JSON.stringify({ messages: [] }),
+    });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("still holds a retained message immutable while its sibling is expunged", async () => {
+    // Expunging uid 1 is legal, but a co-committed mutation of the retained
+    // uid 2 must still be rejected -- expunge relaxes the deletion direction,
+    // not the byte-equality of messages that stay.
+    const prior = mailboxTree({
+      [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: JSON.stringify({ messages: [1, 2] }),
+      "1.eml": "first",
+      "2.eml": "second",
+    });
+    const prospective = mailboxTree({
+      [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: JSON.stringify({ messages: [2] }),
+      "2.eml": "second-mutated",
+    });
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /mailbox message mailbox\/INBOX\/2\.eml bytes diverge from the prior tree/,
+    );
+  });
+
+  test("rejects dropping the whole mailbox subtree (index continuity)", async () => {
+    // Dropping the whole `mailbox/` subtree removes the index, which would
+    // reset uidValidity/uidNext on the next open and force uid reuse from 1.
+    // A real backing keeps index.json even after expunging every message, so
+    // this rejects only the pathological whole-subtree drop.
+    const prior = mailboxTree({
+      [WORKFLOW_RUN_MAILBOX_INDEX_FILE]: JSON.stringify({ messages: [1] }),
+      "1.eml": "raw-bytes",
+    });
+    const prospective = { [WORKFLOW_RUN_GITIGNORE_PATH]: "" };
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/the mailbox index must persist/);
+  });
+});
+
+describe("workflowRunAuthorize — repoId guard", () => {
+  test("rejects calls when repoId.kind is not workflow-run", () => {
+    const r = workflowRunAuthorize(
+      { kind: "hub" } as Principal,
+      { kind: "agent-state", id: "dep-1" } as RepoId,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/non-workflow-run repo/);
+  });
+});
+
+describe("workflowRunAuthorize — hub principal", () => {
+  test("allowed for every action", () => {
+    const repo: RepoId = { kind: "workflow-run", id: "dep-1" };
+    for (const action of [
+      "init",
+      "writeTree",
+      "receivePack",
+      "createPack",
+      "resolveRef",
+    ] as const) {
+      const r = workflowRunAuthorize(
+        { kind: "hub" } as Principal,
+        repo,
+        REF,
+        action,
+      );
+      expect(r.allowed).toBe(true);
+    }
+  });
+});
+
+describe("workflowRunAuthorize — workflow-process principal", () => {
+  const REPO: RepoId = { kind: "workflow-run", id: "dep-1" };
+
+  test("allowed for full read+write on its own deployment", () => {
+    const principal = {
+      kind: "workflow-process",
+      anchorRunId: "dep-1",
+      runId: "run-a",
+    } as Principal;
+    for (const action of [
+      "init",
+      "writeTree",
+      "receivePack",
+      "createPack",
+      "resolveRef",
+    ] as const) {
+      const r = workflowRunAuthorize(principal, REPO, REF, action);
+      expect(r.allowed).toBe(true);
+    }
+  });
+
+  test("allowed without runId field (the per-call runId is optional)", () => {
+    const principal = {
+      kind: "workflow-process",
+      anchorRunId: "dep-1",
+    } as Principal;
+    const r = workflowRunAuthorize(principal, REPO, REF, "writeTree");
+    expect(r.allowed).toBe(true);
+  });
+
+  test("denied when targeting another deployment's repo", () => {
+    const principal = {
+      kind: "workflow-process",
+      anchorRunId: "dep-other",
+    } as Principal;
+    const r = workflowRunAuthorize(principal, REPO, REF, "writeTree");
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/cannot access workflow-run/);
+  });
+
+  test("malformed workflow-process principal is denied", () => {
+    const principal = { kind: "workflow-process" } as Principal;
+    const r = workflowRunAuthorize(principal, REPO, REF, "writeTree");
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/workflow-process principal is malformed/);
+  });
+});
+
+describe("workflowRunKindHandler.validatePush — workflow-process path-scope fail-closed", () => {
+  // The production substrate is wired against `workflowRunAuthorize`,
+  // which rejects malformed workflow-process principals at
+  // `gateAccess` BEFORE `validatePush` runs. A substrate wired with a
+  // permissive authorize (e.g. test harnesses using `allowAll`) can
+  // let a malformed principal reach `validatePush`; the path-scope
+  // helper must fail closed there instead of silently waving the
+  // principal through, since the runId scoping below depends on the
+  // parsed principal carrying a valid `anchorRunId`.
+  test("a malformed workflow-process principal reaching validatePush rejects with a structured reason", async () => {
+    const principal: Principal = { kind: "workflow-process" };
+    const events = {
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+        { consumedMessageId: "msg-1" },
+      ),
+    };
+    const result = await workflowRunKindHandler.validatePush({
+      repoId: uniqueRepoId("wfr"),
+      ref: REF,
+      principal,
+      topLevelTreePaths: topLevels(events),
+      readBlob: makeReadBlob(events),
+      listDir: makeListDir(events),
+      priorReadBlob: noPriorBlob,
+      priorListDir: noPriorDir,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(/workflow-process principal is malformed/);
+  });
+});
+
+describe("workflowRunAuthorize — supervisor principal", () => {
+  const REPO: RepoId = { kind: "workflow-run", id: "dep-1" };
+
+  test("allowed for full read+write on its own deployment", () => {
+    const principal = {
+      kind: "supervisor",
+      anchorRunId: "dep-1",
+    } as Principal;
+    for (const action of [
+      "init",
+      "writeTree",
+      "receivePack",
+      "createPack",
+      "resolveRef",
+    ] as const) {
+      const r = workflowRunAuthorize(principal, REPO, REF, action);
+      expect(r.allowed).toBe(true);
+    }
+  });
+
+  test("denied when targeting another deployment's repo", () => {
+    const principal = {
+      kind: "supervisor",
+      anchorRunId: "dep-other",
+    } as Principal;
+    const r = workflowRunAuthorize(principal, REPO, REF, "writeTree");
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/cannot access workflow-run/);
+  });
+
+  test("malformed supervisor principal is denied", () => {
+    const principal = { kind: "supervisor" } as Principal;
+    const r = workflowRunAuthorize(principal, REPO, REF, "writeTree");
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/supervisor principal is malformed/);
+  });
+});
+
+describe("workflowRunAuthorize — sidecar principal", () => {
+  const REPO: RepoId = { kind: "workflow-run", id: "dep-1" };
+
+  test("createPack / resolveRef allowed", () => {
+    const sidecar = { kind: "sidecar", agentId: "agent-1" } as Principal;
+    expect(workflowRunAuthorize(sidecar, REPO, REF, "createPack").allowed).toBe(
+      true,
+    );
+    expect(workflowRunAuthorize(sidecar, REPO, REF, "resolveRef").allowed).toBe(
+      true,
+    );
+  });
+
+  test("writeTree / receivePack / init denied", () => {
+    const sidecar = { kind: "sidecar", agentId: "agent-1" } as Principal;
+    for (const action of ["init", "writeTree", "receivePack"] as const) {
+      const r = workflowRunAuthorize(sidecar, REPO, REF, action);
+      expect(r.allowed).toBe(false);
+      if (r.allowed) throw new Error("unreachable");
+      expect(r.reason).toMatch(/sidecars may only read workflow-run/);
+    }
+  });
+
+  test("malformed sidecar principal is denied", () => {
+    const malformed = { kind: "sidecar" } as Principal;
+    const r = workflowRunAuthorize(malformed, REPO, REF, "createPack");
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/sidecar principal is malformed/);
+  });
+});
+
+describe("workflowRunAuthorize — user principal", () => {
+  const REPO: RepoId = { kind: "workflow-run", id: "dep-1" };
+
+  function farFuture(): number {
+    return Date.now() + 60_000;
+  }
+
+  function userPrincipal(
+    overrides: {
+      effect?: "allow" | "deny";
+      resource?: string;
+      grantVerb?: string;
+      refPattern?: string;
+      actions?: string[];
+      expiresAt?: number;
+    } = {},
+  ): Principal {
+    return {
+      kind: "user",
+      principalId: "user-1",
+      tenantId: "tenant-1",
+      authz: {
+        effect: overrides.effect ?? "allow",
+        resource: overrides.resource ?? "workflow-run:dep-1",
+        grantVerb: overrides.grantVerb ?? "read",
+      },
+      tokenClaims: {
+        refPattern: overrides.refPattern ?? "refs/heads/**",
+        actions: overrides.actions ?? ["createPack", "resolveRef"],
+        expiresAt: overrides.expiresAt ?? farFuture(),
+      },
+    } as Principal;
+  }
+
+  test("allowed when claims and verdict agree", () => {
+    const r = workflowRunAuthorize(userPrincipal(), REPO, REF, "createPack");
+    expect(r.allowed).toBe(true);
+  });
+
+  test("bulk read uses '*' ref and bypasses refPattern check", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ refPattern: "refs/heads/release-*" }),
+      REPO,
+      "*",
+      "resolveRef",
+    );
+    expect(r.allowed).toBe(true);
+  });
+
+  test("malformed user principal is denied", () => {
+    const badPrincipal = { kind: "user", principalId: "u" } as Principal;
+    const r = workflowRunAuthorize(badPrincipal, REPO, REF, "createPack");
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/user principal is malformed/);
+  });
+
+  test("denied when tokenClaims.actions does not include the requested action", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ actions: ["resolveRef"] }),
+      REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/token does not grant action createPack/);
+  });
+
+  test("denied when refPattern does not match the requested ref", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ refPattern: "refs/heads/release-*" }),
+      REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/refPattern .* does not match/);
+  });
+
+  test("denied when the token is expired", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ expiresAt: Date.now() - 1 }),
+      REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/token expired/);
+  });
+
+  test("denied when verdict.resource targets a different workflow-run id", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ resource: "workflow-run:dep-other" }),
+      REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/authz verdict resource .* does not match/);
+  });
+
+  test("denied when verdict.resource has the wrong kind prefix", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ resource: "workflow:dep-1" }),
+      REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/authz verdict resource .* does not match/);
+  });
+
+  test("denied when verdict.grantVerb does not match the action's verb", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ grantVerb: "write" }),
+      REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/authz verdict grantVerb .* does not match/);
+  });
+
+  test("denied when verdict effect is deny even though all sanity checks pass", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ effect: "deny" }),
+      REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/authz verdict denied/);
+  });
+
+  test("write action requires write grantVerb and matching claims", () => {
+    const r = workflowRunAuthorize(
+      userPrincipal({ actions: ["receivePack"], grantVerb: "write" }),
+      REPO,
+      REF,
+      "receivePack",
+    );
+    expect(r.allowed).toBe(true);
+  });
+});
+
+describe("workflowRunAuthorize — unknown principal", () => {
+  test("denied with a generic reason", () => {
+    const r = workflowRunAuthorize(
+      { kind: "robot" } as Principal,
+      { kind: "workflow-run", id: "dep-1" },
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/unknown principal kind/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Claim-check substrate tests.
+
+const ADDRESS = "alice@example.com";
+const ADDRESS_SEG = encodeURIComponent(ADDRESS);
+
+function inboxPathFor(seg: string, receivedAt: number, messageId: string) {
+  return `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${seg}/${WORKFLOW_RUN_INBOX_DIR}/${String(receivedAt)}-${messageId}.json`;
+}
+
+function processingPathFor(seg: string, receivedAt: number, messageId: string) {
+  return `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${seg}/${WORKFLOW_RUN_PROCESSING_DIR}/${String(receivedAt)}-${messageId}.json`;
+}
+
+function consumedPathFor(seg: string, messageId: string) {
+  return `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${seg}/${WORKFLOW_RUN_CONSUMED_DIR}/${messageId}.json`;
+}
+
+function watermarkPathFor(seg: string) {
+  return `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${seg}/${WORKFLOW_RUN_WATERMARK_FILE}`;
+}
+
+function watermarkBody(watermark: number): string {
+  return JSON.stringify({ watermark });
+}
+
+function inboxBody(
+  messageId: string,
+  receivedAt: number,
+  address = ADDRESS,
+): string {
+  return JSON.stringify({
+    messageId,
+    receivedAt,
+    address,
+    mailAuditRef: { store: "audit", path: `mail/${messageId}` },
+  });
+}
+
+function consumedBody(
+  messageId: string,
+  receivedAt: number,
+  runId: string,
+  consumedAt: number,
+  address = ADDRESS,
+): string {
+  return JSON.stringify({
+    messageId,
+    receivedAt,
+    address,
+    runId,
+    consumedAt,
+    mailAuditRef: { store: "audit", path: `mail/${messageId}` },
+  });
+}
+
+describe("workflowRunKindHandler.validatePush — claim-check subtree shape", () => {
+  test("accepts a single inbox entry with a well-formed envelope", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts inbox + a future processing entry only when prior tree carried the inbox", async () => {
+    const inboxEntry = inboxBody("msg-1", 100);
+    const prior = {
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxEntry,
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxEntry,
+    };
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("rejects an address segment that does not round-trip URL-encoding", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_ADDRESSES_PREFIX}/raw@addr/${WORKFLOW_RUN_INBOX_DIR}/100-msg-1.json`]:
+        inboxBody("msg-1", 100, "raw@addr"),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/does not round-trip URL-encoding/);
+  });
+
+  test("rejects an unexpected subdirectory under an address", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/stray/x.json`]: "{}",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/contains unexpected entry "stray"/);
+  });
+
+  test("rejects an inbox filename that does not match <receivedAt>-<messageId>.json", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/${WORKFLOW_RUN_INBOX_DIR}/no-receivedat.json`]:
+        inboxBody("msg-1", 100),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /inbox filename .* does not match <receivedAt>-<messageId>\.json/,
+    );
+  });
+
+  test("rejects an inbox body whose receivedAt does not match its filename", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 999),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/body\.receivedAt .* does not match filename/);
+  });
+
+  test("rejects an inbox body whose messageId does not match its filename", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-A")]: inboxBody("msg-B", 100),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/body\.messageId .* does not match filename/);
+  });
+
+  test("rejects an inbox body whose address does not match the decoded segment", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody(
+        "msg-1",
+        100,
+        "different@example.com",
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/body\.address .* does not match decoded address/);
+  });
+
+  test("rejects a consumed filename that is not <messageId>.json shape", async () => {
+    // Lay out a valid processing entry in the prior tree so we can
+    // exercise the consumed-only filename check rather than the
+    // transition check.
+    const prior = {
+      [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/${WORKFLOW_RUN_CONSUMED_DIR}/no.dot.json.bogus`]:
+        consumedBody("msg-1", 100, "run-1", 200),
+    };
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    // The malformed filename either trips the filename regex (no `.json`
+    // suffix) or trips the messageId-mismatch — either is a structural
+    // rejection at the consumed boundary.
+    expect(r.reason).toMatch(/consumed filename|consumed .* does not match/);
+  });
+
+  test("rejects a tree where the same messageId appears in inbox and processing", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+      [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/appears in multiple queue states/);
+  });
+
+  test("rejects a tree where the same messageId appears in inbox and consumed", async () => {
+    // Need a prior processing entry so the consumed entry passes the
+    // transition check long enough to fail the atomicity check.
+    const prior = {
+      [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+    };
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+        [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+          "msg-1",
+          100,
+          "run-1",
+          200,
+        ),
+      },
+      { priorFiles: prior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/appears in multiple queue states/);
+  });
+
+  test("rejects a processing entry that has no matching prior-tree inbox entry", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /processing .* prior tree has no matching inbox entry/,
+    );
+  });
+
+  test("rejects a consumed entry that has no matching prior-tree processing entry", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+        "msg-1",
+        100,
+        "run-1",
+        200,
+      ),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /consumed .* prior tree has no matching processing entry/,
+    );
+  });
+
+  test("rejects a consumed envelope whose receivedAt diverges from the prior processing entry", async () => {
+    const prior = {
+      [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+    };
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+          "msg-1",
+          999,
+          "run-1",
+          200,
+        ),
+      },
+      { priorFiles: prior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /body\.receivedAt .* does not match the prior processing entry's receivedAt/,
+    );
+  });
+
+  test("rejects a mutation to a consumed entry that already exists in the prior tree", async () => {
+    const prior = {
+      [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+        "msg-1",
+        100,
+        "run-1",
+        200,
+      ),
+    };
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+          "msg-1",
+          100,
+          "run-2",
+          200,
+        ),
+      },
+      { priorFiles: prior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/consumed .* bytes diverge from the prior tree/);
+  });
+
+  test("accepts a clean inbox→processing transition (atomic move via prospective tree)", async () => {
+    const inboxEntry = inboxBody("msg-1", 100);
+    const prior = {
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxEntry,
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxEntry,
+    };
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+
+  test("accepts a clean processing→consumed transition with matching receivedAt", async () => {
+    const prior = {
+      [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+        "msg-1",
+        100,
+        "run-1",
+        200,
+      ),
+    };
+    const r = await validate(prospective, { priorFiles: prior });
+    expect(r.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------
+// End-to-end claim-check API tests against a real on-disk RepoStore.
+
+const claimCheckTempDirs: string[] = [];
+
+async function makeClaimCheckTempDir(prefix: string): Promise<string> {
+  const d = await fs.promises.mkdtemp(path.join(os.tmpdir(), prefix));
+  claimCheckTempDirs.push(d);
+  return d;
+}
+
+let claimCheckSigningKey: KeyPair;
+
+beforeAll(async () => {
+  claimCheckSigningKey = await generateKeyPair();
+});
+
+afterAll(async () => {
+  for (const d of claimCheckTempDirs.splice(0)) {
+    await fs.promises.rm(d, { recursive: true, force: true }).catch((_e) => {
+      /* best effort cleanup */
+    });
+  }
+});
+
+async function makeClaimCheckStore(prefix: string): Promise<{
+  store: ReturnType<typeof createRepoStore>;
+  repoId: RepoId;
+  principal: Principal;
+}> {
+  const dataDir = await makeClaimCheckTempDir(prefix);
+  const store = createRepoStore({
+    dataDir,
+    signingKey: claimCheckSigningKey,
+    handlers: { "workflow-run": workflowRunKindHandler },
+    authorize: () => ({ allowed: true }),
+  });
+  const repoId: RepoId = {
+    kind: "workflow-run",
+    id: `dep-${Math.random().toString(36).slice(2, 10)}`,
+  };
+  await store.initRepo(repoId);
+  return { store, repoId, principal: HUB_PRINCIPAL };
+}
+
+describe("claim-check API — enqueueInbox", () => {
+  test("writes a single inbox entry with the expected filename and envelope", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-enq-");
+    const result = await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    expect(result.outcome).toBe("enqueued");
+    if (result.outcome !== "enqueued") throw new Error("expected enqueued");
+    expect(result.inboxKey).toBe("100-msg-1");
+    expect(result.envelope.messageId).toBe("msg-1");
+
+    const repoDir = store.getRepoDir(repoId);
+    const blob = await fs.promises.readFile(
+      path.join(repoDir, inboxPathFor(ADDRESS_SEG, 100, "msg-1")),
+      "utf-8",
+    );
+    const parsed: unknown = JSON.parse(blob);
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      !("messageId" in parsed) ||
+      !("address" in parsed) ||
+      !("receivedAt" in parsed)
+    ) {
+      throw new Error("unexpected inbox envelope shape");
+    }
+    expect(parsed.messageId).toBe("msg-1");
+    expect(parsed.address).toBe(ADDRESS);
+    expect(parsed.receivedAt).toBe(100);
+  });
+
+  test("two enqueueInbox calls coexist in the inbox subtree", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-enq2-");
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-2",
+      receivedAt: 200,
+      mailAuditRef: { store: "audit", path: "mail/msg-2" },
+    });
+    const repoDir = store.getRepoDir(repoId);
+    const inboxDir = path.join(
+      repoDir,
+      `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/${WORKFLOW_RUN_INBOX_DIR}`,
+    );
+    const entries = await fs.promises.readdir(inboxDir);
+    expect(entries.sort()).toEqual(["100-msg-1.json", "200-msg-2.json"]);
+  });
+
+  test("returns already-present for a messageId already in processing", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-enq-dup-");
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    const outcome = await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 300,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    expect(outcome).toEqual({
+      outcome: "already-present",
+      reason: "processing",
+    });
+  });
+});
+
+describe("claim-check API — markConsumed", () => {
+  test("atomic move from processing to consumed preserves originating receivedAt", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-mark-");
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    const result = await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      runId: "run-X",
+      consumedAt: 500,
+    });
+    expect(result.envelope.runId).toBe("run-X");
+    expect(result.envelope.receivedAt).toBe(100);
+
+    const repoDir = store.getRepoDir(repoId);
+    const processingDir = path.join(
+      repoDir,
+      `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/${WORKFLOW_RUN_PROCESSING_DIR}`,
+    );
+    const remaining: string[] = await fs.promises
+      .readdir(processingDir)
+      .catch((): string[] => []);
+    expect(remaining).toEqual([]);
+
+    const consumedPath = path.join(
+      repoDir,
+      consumedPathFor(ADDRESS_SEG, "msg-1"),
+    );
+    await fs.promises.access(consumedPath);
+  });
+
+  test("rejects a consume without a matching processing entry", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-mark-bad-");
+    await expect(
+      markConsumed(store, principal, repoId, {
+        address: ADDRESS,
+        messageId: "absent",
+        runId: "run-X",
+        consumedAt: 500,
+      }),
+    ).rejects.toThrow(/claim_check_processing_not_found/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Substrate-level FIFO unit test — validation criterion 4 (substrate
+// half). Two messages enqueued in order, dequeued twice, then a
+// mid-FIFO "crash" leaves a processing entry behind;
+// `replayProcessingToInbox` must restore it under its original key so
+// the next dequeue picks the same entry that the crashed worker had
+// claimed.
+
+describe("claim-check substrate FIFO invariant", () => {
+  test("dequeues two messages in receivedAt order and re-dequeues after crash replay with the original key", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-fifo-");
+
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-2",
+      receivedAt: 200,
+      mailAuditRef: { store: "audit", path: "mail/msg-2" },
+    });
+
+    const first = await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    expect(first).not.toBeNull();
+    if (first === null) throw new Error("unreachable");
+    expect(first.envelope.messageId).toBe("msg-1");
+    expect(first.key).toBe("100-msg-1");
+
+    await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      runId: "run-1",
+      consumedAt: 150,
+    });
+
+    const second = await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    expect(second).not.toBeNull();
+    if (second === null) throw new Error("unreachable");
+    expect(second.envelope.messageId).toBe("msg-2");
+    expect(second.key).toBe("200-msg-2");
+
+    // Mid-FIFO crash: msg-2 stays in processing, no consumed entry
+    // landed. The worker process is gone. The recovery path moves
+    // processing entries back to inbox preserving the filename key.
+    const replay = await replayProcessingToInbox(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(replay.replayedKeys).toEqual(["200-msg-2"]);
+
+    const reDequeue = await dequeueToProcessing(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(reDequeue).not.toBeNull();
+    if (reDequeue === null) throw new Error("unreachable");
+    expect(reDequeue.envelope.messageId).toBe("msg-2");
+    expect(reDequeue.key).toBe("200-msg-2");
+
+    await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-2",
+      runId: "run-2",
+      consumedAt: 300,
+    });
+
+    const finalDequeue = await dequeueToProcessing(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(finalDequeue).toBeNull();
+  });
+
+  test("replayProcessingToInbox is a no-op when processing is empty", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-replay-noop-");
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    const replay = await replayProcessingToInbox(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(replay.replayedKeys).toEqual([]);
+    // The inbox entry is untouched.
+    const next = await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    expect(next).not.toBeNull();
+    if (next === null) throw new Error("unreachable");
+    expect(next.envelope.messageId).toBe("msg-1");
+  });
+
+  // Regression: lexicographic-sort FIFO bug. Before the fix,
+  // dequeueToProcessing sorted inbox filenames as strings, so a
+  // later-received message with a longer receivedAt prefix dequeued
+  // ahead of an earlier-received message with a shorter prefix
+  // (e.g. "100-msg-B" < "99-msg-A" because '1' < '9'). After the
+  // fix the substrate sorts by parsed numeric receivedAt and the
+  // earlier message wins.
+  test("non-uniform receivedAt widths still respect FIFO (msg-A at 99 dequeues before msg-B at 100)", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-fifo-width-");
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-A",
+      receivedAt: 99,
+      mailAuditRef: { store: "audit", path: "mail/A" },
+    });
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-B",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/B" },
+    });
+    const first = await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    expect(first).not.toBeNull();
+    if (first === null) throw new Error("unreachable");
+    expect(first.envelope.messageId).toBe("msg-A");
+    expect(first.key).toBe("99-msg-A");
+    const second = await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    expect(second).not.toBeNull();
+    if (second === null) throw new Error("unreachable");
+    expect(second.envelope.messageId).toBe("msg-B");
+    expect(second.key).toBe("100-msg-B");
+  });
+});
+
+// A `processing/` entry whose run is still live (non-terminal durable
+// log) is owned by the recovery re-drive of that run after a crash.
+// `scanRunsForBoot` finds those runs' messageIds so the spawn-time
+// replay leaves them in `processing/` rather than re-admitting them to
+// `inbox/` and dispatching a colliding second run on the same runId. The
+// run logs live on the run-event ref (`refs/heads/main`); the claim-check
+// ref (`refs/heads/events`) cannot see them, so the caller reads them via
+// the working tree and hands the owned set to `replayProcessingToInbox`.
+describe("claim-check API — resume-owned processing entries survive replay", () => {
+  function runStartedBody(runId: string): string {
+    return JSON.stringify({
+      type: "RunStarted",
+      seq: 0,
+      at: "2026-01-01T00:00:00.000Z",
+      runId,
+      definitionHash: "x",
+      trigger: { type: "mail" },
+      consumedMessageId: runId,
+    });
+  }
+
+  function runCompletedBody(seq: number): string {
+    return JSON.stringify({
+      type: "RunCompleted",
+      seq,
+      at: "2026-01-01T00:00:01.000Z",
+    });
+  }
+
+  test("scanRunsForBoot returns non-terminal run messageIds and excludes terminal ones", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-owned-");
+    // A mail-triggered run's runId is its messageId. `live` is parked
+    // (RunStarted only); `done` reached RunCompleted.
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/live/events/0.json`]:
+          runStartedBody("live"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/done/events/0.json`]:
+          runStartedBody("done"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/done/events/1.json`]: runCompletedBody(1),
+      },
+      message: "seed one live and one terminal run",
+    });
+    const { ownedMessageIds: owned } = await scanRunsForBoot(store, repoId);
+    expect(owned.has("live")).toBe(true);
+    expect(owned.has("done")).toBe(false);
+  });
+
+  test("scanRunsForBoot proposes a terminal per-event run for sealing and drops it from owned", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-scan-");
+    // `live` is parked (RunStarted only). `done` reached RunCompleted but is
+    // still in per-event form -- the crash window an interrupted fold leaves
+    // behind. A single terminal run must appear in `pendingSealRunIds` and be
+    // absent from `ownedMessageIds`: the same event that ends a run stops it
+    // owning its message and makes it a seal candidate.
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/live/events/0.json`]:
+          runStartedBody("live"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/done/events/0.json`]:
+          runStartedBody("done"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/done/events/1.json`]: runCompletedBody(1),
+      },
+      message: "seed one live and one terminal per-event run",
+    });
+    const { ownedMessageIds, pendingSealRunIds } = await scanRunsForBoot(
+      store,
+      repoId,
+    );
+    expect(pendingSealRunIds).toEqual(["done"]);
+    expect(ownedMessageIds.has("done")).toBe(false);
+    expect(ownedMessageIds.has("live")).toBe(true);
+  });
+
+  test("scanRunsForBoot excludes an already-sealed run from pendingSealRunIds", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-scan-sealed-");
+    // A sealed run (combined events.jsonl, no per-event directory) is already
+    // folded, so it is not a seal candidate.
+    const sealed =
+      [runStartedBody("sealed"), runCompletedBody(1)].join("\n") + "\n";
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/sealed/events.jsonl`]: sealed,
+      },
+      message: "seed a sealed (terminated, compacted) run",
+    });
+    const { pendingSealRunIds } = await scanRunsForBoot(store, repoId);
+    expect(pendingSealRunIds).toEqual([]);
+  });
+
+  test("readWorkflowRunLifecycle distinguishes grants-only, live, and terminal logs", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-lifecycle-");
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/staged/grants.json`]: JSON.stringify({
+          stepGrants: [],
+        }),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/live/events/0.json`]:
+          runStartedBody("live-message"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/done/events/0.json`]:
+          runStartedBody("done-message"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/done/events/1.json`]: runCompletedBody(1),
+      },
+      message: "seed lifecycle states",
+    });
+
+    await expect(
+      readWorkflowRunLifecycle(store, repoId, "missing"),
+    ).resolves.toBe("absent");
+    await expect(
+      readWorkflowRunLifecycle(store, repoId, "staged"),
+    ).resolves.toBe("absent");
+    await expect(readWorkflowRunLifecycle(store, repoId, "live")).resolves.toBe(
+      "live",
+    );
+    await expect(readWorkflowRunLifecycle(store, repoId, "done")).resolves.toBe(
+      "terminal",
+    );
+  });
+
+  test("readCommittedWorkflowRunLifecycle reads the Git ref without a checkout", async () => {
+    const reads = {
+      async treeOid() {
+        return null;
+      },
+      async listDir(dirPath: string) {
+        if (dirPath === "runs/stable") {
+          return [{ name: "events", oid: "events", type: "tree" as const }];
+        }
+        if (dirPath === "runs/stable/events") {
+          return [
+            { name: "0.json", oid: "started", type: "blob" as const },
+            { name: "1.json", oid: "terminal", type: "blob" as const },
+          ];
+        }
+        return [];
+      },
+      async readBlobByOid(oid: string) {
+        return new TextEncoder().encode(
+          JSON.stringify(
+            oid === "terminal"
+              ? { type: "RunCompleted", seq: 1 }
+              : { type: "RunStarted", seq: 0 },
+          ),
+        );
+      },
+    };
+
+    await expect(
+      readCommittedWorkflowRunLifecycle(reads, "stable"),
+    ).resolves.toBe("terminal");
+    await expect(
+      readCommittedWorkflowRunLifecycle(reads, "missing"),
+    ).resolves.toBe("absent");
+  });
+
+  test("readWorkflowRunLifecycle and readCommittedWorkflowRunLifecycle agree across states", async () => {
+    // Both readers run one shared classification core over different read
+    // surfaces (working-tree fs vs committed git objects). Seed one tree and
+    // read every run BOTH ways to prove the two surfaces classify identically.
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-equiv-");
+    const sealedLog =
+      [runStartedBody("sealed"), runCompletedBody(1)].join("\n") + "\n";
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/staged/grants.json`]: JSON.stringify({
+          stepGrants: [],
+        }),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/live/events/0.json`]:
+          runStartedBody("live-message"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/done/events/0.json`]:
+          runStartedBody("done-message"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/done/events/1.json`]: runCompletedBody(1),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/sealed/events.jsonl`]: sealedLog,
+      },
+      message: "seed lifecycle states for the equivalence check",
+    });
+
+    const reads = await store.openCommittedReads(
+      principal,
+      repoId,
+      "refs/heads/main",
+    );
+    expect(reads).not.toBeNull();
+
+    const cases = [
+      ["missing", "absent"],
+      ["staged", "absent"],
+      ["live", "live"],
+      ["done", "terminal"],
+      ["sealed", "terminal"],
+    ] as const;
+    for (const [runId, expected] of cases) {
+      const fsResult = await readWorkflowRunLifecycle(store, repoId, runId);
+      const committedResult = await readCommittedWorkflowRunLifecycle(
+        reads,
+        runId,
+      );
+      expect(fsResult).toBe(expected);
+      expect(committedResult).toBe(expected);
+      expect(committedResult).toBe(fsResult);
+    }
+  });
+
+  test("readWorkflowRunLifecycle wraps an unreadable latest event", async () => {
+    // A validated write cannot store a corrupt event, so seed a valid live run
+    // and then corrupt its latest event on disk -- the storage-corruption case
+    // the reader must surface as `workflow_run_event_unreadable` rather than
+    // misclassify.
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-corrupt-fs-");
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/corrupt/events/0.json`]:
+          runStartedBody("corrupt"),
+      },
+      message: "seed a valid live run",
+    });
+    const eventPath = path.join(
+      store.getRepoDir(repoId),
+      WORKFLOW_RUN_RUNS_PREFIX,
+      "corrupt",
+      "events",
+      "0.json",
+    );
+    await fs.promises.writeFile(eventPath, "not valid json{");
+
+    await expect(
+      readWorkflowRunLifecycle(store, repoId, "corrupt"),
+    ).rejects.toThrow(/workflow_run_event_unreadable/);
+  });
+
+  test("readCommittedWorkflowRunLifecycle wraps an unreadable latest event", async () => {
+    // The committed reader reads git objects, so inject the corruption through
+    // a reads stub whose latest blob will not parse.
+    const reads = {
+      async treeOid() {
+        return null;
+      },
+      async listDir(dirPath: string) {
+        if (dirPath === "runs/corrupt/events") {
+          return [{ name: "0.json", oid: "corrupt", type: "blob" as const }];
+        }
+        return [];
+      },
+      async readBlobByOid(_oid: string) {
+        return new TextEncoder().encode("not valid json{");
+      },
+    };
+
+    await expect(
+      readCommittedWorkflowRunLifecycle(reads, "corrupt"),
+    ).rejects.toThrow(/workflow_run_event_unreadable/);
+  });
+
+  test("readWorkflowRunLifecycle surfaces a non-ENOENT events-directory read error", async () => {
+    // An absent events directory (ENOENT) classifies as absent, but a
+    // non-ENOENT read error must surface rather than be swallowed as absent.
+    // Seed the per-event `events` path as a file so readdir fails with ENOTDIR.
+    const { store, repoId } = await makeClaimCheckStore("cc-enotdir-");
+    const runDir = path.join(
+      store.getRepoDir(repoId),
+      WORKFLOW_RUN_RUNS_PREFIX,
+      "notdir",
+    );
+    await fs.promises.mkdir(runDir, { recursive: true });
+    await fs.promises.writeFile(path.join(runDir, "events"), "not a directory");
+
+    await expect(
+      readWorkflowRunLifecycle(store, repoId, "notdir"),
+    ).rejects.toThrow();
+  });
+
+  test("a CancelRequested-without-finalizer run is still owned (its message stays suppressed)", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore(
+      "cc-owned-cancelling-",
+    );
+    // A cancelling run: the operator requested cancel (CancelRequested)
+    // but the run has not yet reached its RunCancelled finalizer.
+    // CancelRequested is NOT terminal -- only RunCancelled is -- so the
+    // run still owns its message and must stay in the owned set, keeping
+    // its message suppressed on replay until the finalizer lands.
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/cancelling/events/0.json`]:
+          runStartedBody("cancelling"),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/cancelling/events/1.json`]:
+          JSON.stringify({
+            type: "CancelRequested",
+            seq: 1,
+            at: "2026-01-01T00:00:00.500Z",
+            origin: "hub-admin",
+            reason: "operator pressed stop",
+          }),
+      },
+      message: "seed a run with a pending cancel but no finalizer",
+    });
+    const { ownedMessageIds: owned } = await scanRunsForBoot(store, repoId);
+    expect(owned.has("cancelling")).toBe(true);
+  });
+
+  test("a run whose RunStarted omits consumedMessageId contributes nothing to the owned set", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-owned-no-msgid-");
+    // A child run (e.g. a spawned sub-run) starts without a
+    // consumedMessageId: it was not triggered by an inbound claim-check
+    // message. scanRunsForBoot only adds when consumedMessageId is a
+    // string, so this live run contributes no messageId to suppress.
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/child/events/0.json`]: JSON.stringify({
+          type: "RunStarted",
+          seq: 0,
+          at: "2026-01-01T00:00:00.000Z",
+          runId: "child",
+          definitionHash: "x",
+          trigger: { type: "spawn" },
+        }),
+      },
+      message: "seed a live child run with no consumedMessageId",
+    });
+    const { ownedMessageIds: owned } = await scanRunsForBoot(store, repoId);
+    expect(owned.size).toBe(0);
+  });
+
+  test("a sealed run (combined events.jsonl) is excluded from the owned set", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-owned-sealed-");
+    // A terminated run is sealed: its per-event `events/<seq>.json` blobs
+    // are folded into one combined `events.jsonl` file. Only a terminated
+    // run may be sealed, so a sealed run owns nothing even though its
+    // RunStarted still carries a consumedMessageId. scanRunsForBoot
+    // detects the sealed run by the combined file's presence and skips it
+    // without reading the (absent) per-event directory.
+    const sealed =
+      [runStartedBody("sealed"), runCompletedBody(1)].join("\n") + "\n";
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/sealed/events.jsonl`]: sealed,
+      },
+      message: "seed a sealed (terminated, compacted) run",
+    });
+    const { ownedMessageIds: owned } = await scanRunsForBoot(store, repoId);
+    expect(owned.has("sealed")).toBe(false);
+    expect(owned.size).toBe(0);
+  });
+
+  test("an absent runs directory yields an empty owned set", async () => {
+    const { store, repoId } = await makeClaimCheckStore("cc-owned-no-runs-");
+    // A freshly-initialised repo has only a `.gitignore` genesis tree and
+    // no `runs/` directory. readdir on the missing directory surfaces
+    // ENOENT, which scanRunsForBoot treats as an empty owned set
+    // rather than throwing.
+    const { ownedMessageIds: owned } = await scanRunsForBoot(store, repoId);
+    expect(owned.size).toBe(0);
+  });
+
+  test("replay leaves an owned entry in processing and re-admits the rest", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-owned-replay-");
+    // Two messages dequeued to processing (a crash mid-processing left
+    // both claimed). `live` is owned by a non-terminal run; `orphan` has
+    // no run. Route through the real enqueue+dequeue so the processing
+    // entries originate from prior-tree inbox entries.
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "live",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/live" },
+    });
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "orphan",
+      receivedAt: 200,
+      mailAuditRef: { store: "audit", path: "mail/orphan" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/live/events/0.json`]:
+          runStartedBody("live"),
+      },
+      message: "seed the live run for the owned entry",
+    });
+
+    const { ownedMessageIds: owned } = await scanRunsForBoot(store, repoId);
+    expect(owned).toEqual(new Set(["live"]));
+
+    const replay = await replayProcessingToInbox(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+      { ownedMessageIds: owned },
+    );
+    // Only the orphan is re-admitted; the owned entry stays in processing.
+    expect(replay.replayedKeys).toEqual(["200-orphan"]);
+
+    const repoDir = store.getRepoDir(repoId);
+    const processingDir = path.join(
+      repoDir,
+      `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/${WORKFLOW_RUN_PROCESSING_DIR}`,
+    );
+    const inboxDir = path.join(
+      repoDir,
+      `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/${WORKFLOW_RUN_INBOX_DIR}`,
+    );
+    expect((await fs.promises.readdir(processingDir)).sort()).toEqual([
+      "100-live.json",
+    ]);
+    expect((await fs.promises.readdir(inboxDir)).sort()).toEqual([
+      "200-orphan.json",
+    ]);
+  });
+
+  test("without the owned set (default), replay re-admits every processing entry", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-owned-default-");
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "live",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/live" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    await store.writeTree(principal, repoId, "refs/heads/main", {
+      files: {
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/live/events/0.json`]:
+          runStartedBody("live"),
+      },
+      message: "seed the live run",
+    });
+    // A caller that does not supply the owned set replays everything --
+    // the pre-existing recover-all-orphans behaviour is unchanged.
+    const replay = await replayProcessingToInbox(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(replay.replayedKeys).toEqual(["100-live"]);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Regression: per-messageId atomicity gap. Before the fix,
+// enqueueInbox only rejected a same-receivedAt collision and a
+// processing/consumed scan for the messageId — it did NOT scan the
+// inbox prefix for a same-messageId-at-different-receivedAt match.
+// The validatePush atomicity Set was keyed by kind, so two inbox
+// entries with the same messageId and different receivedAt produced
+// a single-element {"inbox"} Set and did not trip the check.
+// After the fix, the second enqueue is caught as already-present
+// (reason "already_inbox") and the inbox directory holds exactly one entry.
+
+describe("claim-check API — enqueueInbox per-messageId atomicity in inbox", () => {
+  test("returns already-present for a second enqueue of the same messageId at a different receivedAt", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-enq-dup-inbox-");
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-X",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/X" },
+    });
+    const outcome = await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-X",
+      receivedAt: 200,
+      mailAuditRef: { store: "audit", path: "mail/X" },
+    });
+    expect(outcome).toEqual({
+      outcome: "already-present",
+      reason: "already_inbox",
+    });
+    const repoDir = store.getRepoDir(repoId);
+    const inboxDir = path.join(
+      repoDir,
+      `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/${WORKFLOW_RUN_INBOX_DIR}`,
+    );
+    const entries = await fs.promises.readdir(inboxDir);
+    expect(entries.sort()).toEqual(["100-msg-X.json"]);
+  });
+
+  test("returns already-present for a duplicate enqueue of the same messageId at the same receivedAt", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-enq-dup-key-");
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-D",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/D" },
+    });
+    const outcome = await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-D",
+      receivedAt: 100,
+      mailAuditRef: { store: "audit", path: "mail/D" },
+    });
+    expect(outcome).toEqual({
+      outcome: "already-present",
+      reason: "duplicate",
+    });
+  });
+});
+
+// Regression at the validatePush layer for the same intra-state
+// atomicity gap. A prospective tree carrying two inbox entries for
+// the same messageId at distinct receivedAt values is structurally
+// invalid; the rejection lands on the same code path that catches
+// inbox+processing collisions.
+describe("workflowRunKindHandler.validatePush — claim-check intra-state atomicity", () => {
+  test("rejects a tree with two inbox entries sharing a messageId at different receivedAt", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-X")]: inboxBody("msg-X", 100),
+      [inboxPathFor(ADDRESS_SEG, 200, "msg-X")]: inboxBody("msg-X", 200),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/appears at multiple inbox positions/);
+  });
+});
+
+describe("claim-check API — replayProcessingToInbox collision guard", () => {
+  test("rejects when a processing entry collides with an existing inbox entry", async () => {
+    // The real handler's atomicity check forbids the same key in both
+    // inbox/ and processing/, so seed that (impossible-in-practice) state
+    // through a permissive handler and confirm replay refuses rather than
+    // clobbering the inbox entry.
+    const dataDir = await makeClaimCheckTempDir("cc-replay-collide-");
+    const store = createRepoStore({
+      dataDir,
+      signingKey: claimCheckSigningKey,
+      handlers: {
+        "workflow-run": {
+          kind: "workflow-run",
+          directoryPrefix: "workflow-runs",
+          validatePush: () => ({ ok: true }),
+          onRefUpdated: () => undefined,
+        },
+      },
+      authorize: () => ({ allowed: true }),
+    });
+    const repoId: RepoId = { kind: "workflow-run", id: "dep-replaycollide" };
+    await store.initRepo(repoId);
+    const body = inboxBody("msg-1", 100);
+    await store.writeTree(HUB_PRINCIPAL, repoId, "refs/heads/events", {
+      files: {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: body,
+        [processingPathFor(ADDRESS_SEG, 100, "msg-1")]: body,
+      },
+      message: "seed colliding inbox+processing state",
+    });
+    await expect(
+      replayProcessingToInbox(store, HUB_PRINCIPAL, repoId, ADDRESS),
+    ).rejects.toThrow(/claim_check_replay_collision/);
+  });
+});
+
+describe("claim-check API — dequeueToProcessing filename guard", () => {
+  test("rejects an inbox entry whose filename is not <receivedAt>-<messageId>.json", async () => {
+    // Seed a malformed inbox filename via a permissive handler (the real
+    // handler's shape check would reject it), then confirm the FIFO
+    // dequeue refuses it rather than mis-parsing.
+    const dataDir = await makeClaimCheckTempDir("cc-bad-inbox-fname-");
+    const store = createRepoStore({
+      dataDir,
+      signingKey: claimCheckSigningKey,
+      handlers: {
+        "workflow-run": {
+          kind: "workflow-run",
+          directoryPrefix: "workflow-runs",
+          validatePush: () => ({ ok: true }),
+          onRefUpdated: () => undefined,
+        },
+      },
+      authorize: () => ({ allowed: true }),
+    });
+    const repoId: RepoId = { kind: "workflow-run", id: "dep-badinboxfname" };
+    await store.initRepo(repoId);
+    await store.writeTree(HUB_PRINCIPAL, repoId, "refs/heads/events", {
+      files: {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_ADDRESSES_PREFIX}/${ADDRESS_SEG}/${WORKFLOW_RUN_INBOX_DIR}/bad.json`]:
+          "{}",
+      },
+      message: "seed malformed inbox filename",
+    });
+    await expect(
+      dequeueToProcessing(store, HUB_PRINCIPAL, repoId, ADDRESS),
+    ).rejects.toThrow(/claim_check_invalid_inbox_filename/);
+  });
+});
+
+// Regression for per-commit-walk pack validation. A single pack
+// carrying [enqueue, dequeue] commits — produced by the supervisor's
+// first-mail bootstrap — must validate cleanly against a fresh target
+// repo. Before the substrate walked per-commit, both commits were
+// validated against the ref's pre-pack tip (here: just the genesis),
+// so the dequeue commit's "newly added" processing entry had no
+// matching prior inbox entry and tripped a path_violation. After the
+// fix the dequeue's prior tree is the enqueue commit's tree, so the
+// inbox→processing transition lands inside the validator's
+// well-formed branch.
+describe("workflow-run substrate — per-commit pack validation", () => {
+  test("single pack with enqueue + dequeue validates cleanly on a fresh target", async () => {
+    const sourceDataDir = await makeClaimCheckTempDir("wfr-percommit-src-");
+    const sourceStore = createRepoStore({
+      dataDir: sourceDataDir,
+      signingKey: claimCheckSigningKey,
+      handlers: { "workflow-run": workflowRunKindHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    const repoId: RepoId = {
+      kind: "workflow-run",
+      id: `dep-${Math.random().toString(36).slice(2, 10)}`,
+    };
+    await sourceStore.initRepo(repoId);
+    const enqueueResult = await enqueueInbox(
+      sourceStore,
+      HUB_PRINCIPAL,
+      repoId,
+      {
+        address: ADDRESS,
+        messageId: "msg-1",
+        receivedAt: 100,
+        mailAuditRef: { store: "audit", path: "mail/msg-1" },
+      },
+    );
+    if (enqueueResult.outcome !== "enqueued") {
+      throw new Error("expected enqueued outcome");
+    }
+    const dequeued = await dequeueToProcessing(
+      sourceStore,
+      HUB_PRINCIPAL,
+      repoId,
+      ADDRESS,
+    );
+    if (dequeued === null) {
+      throw new Error("expected dequeue to find the enqueued entry");
+    }
+
+    const ref = "refs/heads/events";
+    const sourceDir = sourceStore.getRepoDir(repoId);
+    const tipSha = await sourceStore.resolveRef(HUB_PRINCIPAL, repoId, ref);
+    if (tipSha === null) {
+      throw new Error("expected source ref to resolve");
+    }
+    // Build a pack carrying BOTH the enqueue and the dequeue commits.
+    // `collectReachableObjects` walks one commit's tree (not its
+    // ancestor commits), so to feed the per-commit walker on the
+    // target a pack with every parent it needs, also include the
+    // genesis commit `initRepo` produced -- both the enqueue and
+    // the dequeue commits chain back to it. Mirrors the supervisor
+    // bootstrap shape the per-commit walker has to handle.
+    const genesisSha = await git.resolveRef({
+      fs,
+      dir: sourceDir,
+      ref: "HEAD",
+    });
+    const enqueueObjects = await collectReachableObjects(
+      sourceDir,
+      enqueueResult.commitSha,
+    );
+    const dequeueObjects = await collectReachableObjects(
+      sourceDir,
+      dequeued.commitSha,
+    );
+    const genesisObjects = await collectReachableObjects(sourceDir, genesisSha);
+    const oids = Array.from(
+      new Set([...genesisObjects, ...enqueueObjects, ...dequeueObjects]),
+    );
+    const packResult = await git.packObjects({
+      fs,
+      dir: sourceDir,
+      oids,
+      write: false,
+    });
+    if (packResult.packfile === undefined) {
+      throw new Error("git.packObjects returned no packfile");
+    }
+    const pack = packResult.packfile;
+
+    const targetDataDir = await makeClaimCheckTempDir("wfr-percommit-tgt-");
+    const targetStore = createRepoStore({
+      dataDir: targetDataDir,
+      signingKey: claimCheckSigningKey,
+      handlers: { "workflow-run": workflowRunKindHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    await targetStore.initRepo(repoId);
+    await targetStore.receivePack(
+      HUB_PRINCIPAL,
+      repoId,
+      ref,
+      pack,
+      dequeued.commitSha,
+      null,
+    );
+
+    const targetTip = await targetStore.resolveRef(HUB_PRINCIPAL, repoId, ref);
+    expect(targetTip).toBe(dequeued.commitSha);
+  });
+});
+
+// B3.3 per-run validatePush scoping. The substrate bounds a
+// prefix-preserving commit's change set via `changedPathPrefixes`; the
+// handler scopes its per-run event/blob walks to the runs under those
+// prefixes. These cases pin two properties: (1) scoping does not change
+// the verdict for the touched run -- every per-run violation still
+// rejects when the violating run is in scope; (2) the prospective tree a
+// scoped run-event commit produces validates identically whether the
+// substrate bounds the change set or not, so the commit the substrate
+// signs is byte-identical either way.
+describe("workflowRunKindHandler.validatePush — per-run scoping", () => {
+  const TWO_RUN_TREE: Record<string, string> = {
+    [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+    [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+      0,
+      "RunStarted",
+    ),
+    [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+      1,
+      "StepCompleted",
+    ),
+    [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+      0,
+      "RunStarted",
+    ),
+  };
+
+  test("a valid two-run tree is accepted under undefined and scoped change sets alike", async () => {
+    const unscoped = await validate(TWO_RUN_TREE);
+    expect(unscoped.ok).toBe(true);
+
+    const scopedToA = await validate(TWO_RUN_TREE, {
+      priorFiles: {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+      },
+      changedPathPrefixes: new Set([
+        `${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/`,
+      ]),
+    });
+    expect(scopedToA.ok).toBe(true);
+  });
+
+  test("an append-only overwrite in the TOUCHED run is still rejected under scoping", async () => {
+    const prior = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+        { tampered: true },
+      ),
+    };
+    const r = await validate(prospective, {
+      priorFiles: prior,
+      changedPathPrefixes: new Set([
+        `${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/`,
+      ]),
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  test("a sequence gap in the TOUCHED run is still rejected under scoping", async () => {
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/2.json`]: eventBody(
+          2,
+          "StepCompleted",
+        ),
+      },
+      {
+        changedPathPrefixes: new Set([
+          `${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/`,
+        ]),
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toContain("sequence gap");
+  });
+
+  test("a post-terminal event in the TOUCHED run is still rejected under scoping", async () => {
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunCompleted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+          1,
+          "StepStarted",
+        ),
+      },
+      {
+        changedPathPrefixes: new Set([
+          `${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/`,
+        ]),
+      },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toContain("after terminal");
+  });
+
+  test("dropping a prior event blob in the TOUCHED run is still rejected under scoping", async () => {
+    const prior = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/1.json`]: eventBody(
+        1,
+        "StepCompleted",
+      ),
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+    };
+    const r = await validate(prospective, {
+      priorFiles: prior,
+      changedPathPrefixes: new Set([
+        `${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/`,
+      ]),
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toContain("append-only");
+  });
+
+  test("a mutated content-addressed blob in the TOUCHED run is still rejected under scoping", async () => {
+    const sha = "a".repeat(64);
+    const prior = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_BLOBS_DIR}/${sha}`]:
+        "original",
+    };
+    const prospective = {
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+        0,
+        "RunStarted",
+      ),
+      [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_BLOBS_DIR}/${sha}`]:
+        "mutated",
+    };
+    const r = await validate(prospective, {
+      priorFiles: prior,
+      changedPathPrefixes: new Set([
+        `${WORKFLOW_RUN_RUNS_PREFIX}/run-a/${WORKFLOW_RUN_BLOBS_DIR}/`,
+      ]),
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  test("a bare runs/ change prefix falls back to validating every run", async () => {
+    // When the substrate can only say "runs/ changed" without naming the
+    // run, the scope must widen to validate-all so a violation in any run
+    // is still caught.
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/2.json`]: eventBody(
+          2,
+          "StepCompleted",
+        ),
+      },
+      { changedPathPrefixes: new Set([`${WORKFLOW_RUN_RUNS_PREFIX}/`]) },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toContain("sequence gap");
+  });
+
+  test("a claim-check-only change set scopes the run walk to nothing", async () => {
+    // A commit whose change prefix is entirely under addresses/ touches
+    // no run; the per-run walk legitimately validates nothing while the
+    // pre-existing runs are carried forward by the substrate.
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+      },
+      {
+        priorFiles: {
+          [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+          [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+            0,
+            "RunStarted",
+          ),
+        },
+        changedPathPrefixes: new Set([
+          `${WORKFLOW_RUN_ADDRESSES_PREFIX}/some-address/`,
+        ]),
+      },
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
+// B3.3 byte-identical-commit equivalence. validatePush only accepts or
+// rejects -- it never alters the tree git.commit builds -- so any commit
+// the scoped handler accepts is byte-identical to the same commit the
+// validate-all handler accepts. This drives the real substrate end to
+// end: an identical multi-run, multi-commit run-event sequence is
+// replayed into two stores, one running the production (scoped) handler
+// and one running a handler whose `changedPathPrefixes` is forced to
+// `undefined` (validate-all), and asserts every commit's tree object id
+// matches. A divergence would mean the scoping changed which writes were
+// accepted, hence the committed history -- the failure mode the gate
+// guards against.
+describe("workflowRunKindHandler — scoped vs validate-all byte-identity", () => {
+  const equivTempDirs: string[] = [];
+  let equivKey: KeyPair;
+
+  beforeAll(async () => {
+    equivKey = await generateKeyPair();
+  });
+  afterAll(async () => {
+    for (const d of equivTempDirs.splice(0)) {
+      await fs.promises.rm(d, { recursive: true, force: true }).catch(() => {
+        /* best effort */
+      });
+    }
+  });
+
+  const validateAllHandler: KindHandler = {
+    ...workflowRunKindHandler,
+    validatePush(args) {
+      // Force the validate-all path regardless of what the substrate
+      // computed, so this store is the un-scoped reference.
+      return workflowRunKindHandler.validatePush({
+        ...args,
+        changedPathPrefixes: undefined,
+      });
+    },
+  };
+
+  async function makeStore(
+    handler: KindHandler,
+  ): Promise<{ store: ReturnType<typeof createRepoStore>; dir: string }> {
+    const dataDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "wfr-equiv-"),
+    );
+    equivTempDirs.push(dataDir);
+    const store = createRepoStore({
+      dataDir,
+      signingKey: equivKey,
+      handlers: { "workflow-run": handler },
+      authorize: () => ({ allowed: true }),
+    });
+    return { store, dir: path.join(dataDir, handler.directoryPrefix, "") };
+  }
+
+  test("identical run-event sequences across two runs produce identical commit trees", async () => {
+    const repoId: RepoId = { kind: "workflow-run", id: "equiv-dep" };
+    const ref = REF;
+
+    // Each entry is one run-event bracket commit: the run whose
+    // `events/` prefix is preserved, plus the full event set for that
+    // run at that point. Interleaving run-a and run-b exercises the
+    // scoping deciding "this commit touched only run-X".
+    const commits: { runId: string; files: Record<string, string> }[] = [
+      {
+        runId: "run-a",
+        files: { "runs/run-a/events/0.json": eventBody(0, "RunStarted") },
+      },
+      {
+        runId: "run-b",
+        files: { "runs/run-b/events/0.json": eventBody(0, "RunStarted") },
+      },
+      {
+        runId: "run-a",
+        files: {
+          "runs/run-a/events/0.json": eventBody(0, "RunStarted"),
+          "runs/run-a/events/1.json": eventBody(1, "StepCompleted"),
+        },
+      },
+      {
+        runId: "run-b",
+        files: {
+          "runs/run-b/events/0.json": eventBody(0, "RunStarted"),
+          "runs/run-b/events/1.json": eventBody(1, "RunCompleted"),
+        },
+      },
+      {
+        runId: "run-a",
+        files: {
+          "runs/run-a/events/0.json": eventBody(0, "RunStarted"),
+          "runs/run-a/events/1.json": eventBody(1, "StepCompleted"),
+          "runs/run-a/events/2.json": eventBody(2, "RunCompleted"),
+        },
+      },
+    ];
+
+    const scoped = await makeStore(workflowRunKindHandler);
+    const reference = await makeStore(validateAllHandler);
+    await scoped.store.initRepo(repoId);
+    await reference.store.initRepo(repoId);
+
+    const scopedDir = path.join(scoped.dir, repoId.id);
+    const refDir = path.join(reference.dir, repoId.id);
+
+    for (const c of commits) {
+      const content = {
+        files: c.files,
+        clearPrefix: `runs/${c.runId}/events/`,
+        message: `bracket ${c.runId}`,
+      };
+      const s = await scoped.store.writeTree(
+        HUB_PRINCIPAL,
+        repoId,
+        ref,
+        content,
+      );
+      const r = await reference.store.writeTree(
+        HUB_PRINCIPAL,
+        repoId,
+        ref,
+        content,
+      );
+      const { commit: sCommit } = await git.readCommit({
+        fs,
+        dir: scopedDir,
+        oid: s.commitSha,
+      });
+      const { commit: rCommit } = await git.readCommit({
+        fs,
+        dir: refDir,
+        oid: r.commitSha,
+      });
+      // The tree object id is the content hash of the whole tree; equal
+      // tree oids means byte-identical trees.
+      expect(sCommit.tree).toBe(rCommit.tree);
+    }
+  });
+});
+
+// B3.3 pack-path per-run scope completeness. The byte-identity test
+// above drives single-run writeTree commits; production writes one run
+// per commit today, so the multi-run *pack* path -- where
+// computeChangedPathPrefixes derives the touched-run SET from a tree
+// OID diff (design 56c/61) -- is the load-bearing derivation site that
+// no other test exercises. These author commits directly into a source
+// git repo, pack them, and receivePack into the real scoped handler.
+describe("workflow-run substrate — pack-path per-run scope completeness", () => {
+  // Author a commit whose tree adds `files` on top of the index left by
+  // `parent`, parented on `parent`. receivePack validates the tree via
+  // validatePush, not the commit signature, so an unsigned source commit
+  // is sufficient.
+  async function authorCommit(
+    dir: string,
+    files: Record<string, string>,
+    parent: string[],
+    message: string,
+  ): Promise<string> {
+    for (const [rel, body] of Object.entries(files)) {
+      const full = path.join(dir, rel);
+      await fs.promises.mkdir(path.dirname(full), { recursive: true });
+      await fs.promises.writeFile(full, body);
+      await git.add({ fs, dir, filepath: rel });
+    }
+    return git.commit({
+      fs,
+      dir,
+      message,
+      author: { name: "probe", email: "probe@example.com" },
+      parent,
+      ref: REF,
+    });
+  }
+
+  // Author a commit whose tree is EXACTLY `files`: every currently
+  // tracked path is removed first, so paths absent from `files` are
+  // dropped. This is how a run deletion is expressed.
+  async function authorExactTree(
+    dir: string,
+    files: Record<string, string>,
+    parent: string[],
+    message: string,
+  ): Promise<string> {
+    const tracked = await git.listFiles({ fs, dir });
+    for (const rel of tracked) {
+      await git.remove({ fs, dir, filepath: rel });
+      await fs.promises.rm(path.join(dir, rel), { force: true });
+    }
+    for (const [rel, body] of Object.entries(files)) {
+      const full = path.join(dir, rel);
+      await fs.promises.mkdir(path.dirname(full), { recursive: true });
+      await fs.promises.writeFile(full, body);
+      await git.add({ fs, dir, filepath: rel });
+    }
+    return git.commit({
+      fs,
+      dir,
+      message,
+      author: { name: "probe", email: "probe@example.com" },
+      parent,
+      ref: REF,
+    });
+  }
+
+  async function packOids(dir: string, shas: string[]): Promise<Uint8Array> {
+    const oids = Array.from(
+      new Set(
+        (
+          await Promise.all(shas.map((s) => collectReachableObjects(dir, s)))
+        ).flat(),
+      ),
+    );
+    const packResult = await git.packObjects({ fs, dir, oids, write: false });
+    if (packResult.packfile === undefined) {
+      throw new Error("git.packObjects returned no packfile");
+    }
+    return packResult.packfile;
+  }
+
+  function makeTargetStore() {
+    const repoId: RepoId = {
+      kind: "workflow-run",
+      id: `dep-${Math.random().toString(36).slice(2, 10)}`,
+    };
+    return { repoId };
+  }
+
+  test("a seq gap in the SECOND run of a two-run pack commit is rejected", async () => {
+    // If computeChangedPathPrefixes under-reported run-b (the second
+    // changed run), the scoped walk would skip it and accept the gap.
+    const srcDir = await makeClaimCheckTempDir("wfr-multirun-src-");
+    await git.init({ fs, dir: srcDir, defaultBranch: "events" });
+    const genesis = await authorCommit(srcDir, { ".gitignore": "" }, [], "g");
+    const tip = await authorCommit(
+      srcDir,
+      {
+        ".gitignore": "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/2.json`]: eventBody(
+          2,
+          "StepCompleted",
+        ),
+      },
+      [genesis],
+      "two runs, gap in run-b",
+    );
+    const pack = await packOids(srcDir, [genesis, tip]);
+
+    const tgtDataDir = await makeClaimCheckTempDir("wfr-multirun-tgt-");
+    const store = createRepoStore({
+      dataDir: tgtDataDir,
+      signingKey: claimCheckSigningKey,
+      handlers: { "workflow-run": workflowRunKindHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    const { repoId } = makeTargetStore();
+    await store.initRepo(repoId);
+
+    let reason = "";
+    try {
+      await store.receivePack(HUB_PRINCIPAL, repoId, REF, pack, tip, null);
+      throw new Error("expected receivePack to reject the seq gap in run-b");
+    } catch (err) {
+      reason = err instanceof Error ? err.message : String(err);
+    }
+    expect(reason).toContain("sequence gap");
+    // The ref must not advance.
+    const tipAfter = await store.resolveRef(HUB_PRINCIPAL, repoId, REF);
+    expect(tipAfter).toBe(null);
+  });
+
+  test("a valid two-run pack commit is accepted (scope does not over-reject)", async () => {
+    const srcDir = await makeClaimCheckTempDir("wfr-multirun-ok-src-");
+    await git.init({ fs, dir: srcDir, defaultBranch: "events" });
+    const genesis = await authorCommit(srcDir, { ".gitignore": "" }, [], "g");
+    const tip = await authorCommit(
+      srcDir,
+      {
+        ".gitignore": "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/1.json`]: eventBody(
+          1,
+          "StepCompleted",
+        ),
+      },
+      [genesis],
+      "two valid runs",
+    );
+    const pack = await packOids(srcDir, [genesis, tip]);
+
+    const tgtDataDir = await makeClaimCheckTempDir("wfr-multirun-ok-tgt-");
+    const store = createRepoStore({
+      dataDir: tgtDataDir,
+      signingKey: claimCheckSigningKey,
+      handlers: { "workflow-run": workflowRunKindHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    const { repoId } = makeTargetStore();
+    await store.initRepo(repoId);
+    await store.receivePack(HUB_PRINCIPAL, repoId, REF, pack, tip, null);
+    expect(await store.resolveRef(HUB_PRINCIPAL, repoId, REF)).toBe(tip);
+  });
+
+  test("dropping a prior run while adding to another is rejected with the clean append-only reason", async () => {
+    // computeChangedPathPrefixes flags run-a (its subtree OID went
+    // present->absent), putting it in scope so the deletion-direction
+    // guard fires. The scoped prospective walk lists the now-absent
+    // run-a as empty -- via buildCommitTreeClosures.listDir returning []
+    // for a missing dir -- and skips it, so the rejection surfaces as the
+    // clean append-only path_violation rather than a raw substrate throw.
+    const srcDir = await makeClaimCheckTempDir("wfr-drop-src-");
+    await git.init({ fs, dir: srcDir, defaultBranch: "events" });
+    const parent = await authorExactTree(
+      srcDir,
+      {
+        ".gitignore": "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-a/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+      },
+      [],
+      "two runs",
+    );
+    const tip = await authorExactTree(
+      srcDir,
+      {
+        ".gitignore": "",
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/0.json`]: eventBody(
+          0,
+          "RunStarted",
+        ),
+        [`${WORKFLOW_RUN_RUNS_PREFIX}/run-b/events/1.json`]: eventBody(
+          1,
+          "StepCompleted",
+        ),
+      },
+      [parent],
+      "drop run-a, grow run-b",
+    );
+
+    const tgtDataDir = await makeClaimCheckTempDir("wfr-drop-tgt-");
+    const store = createRepoStore({
+      dataDir: tgtDataDir,
+      signingKey: claimCheckSigningKey,
+      handlers: { "workflow-run": workflowRunKindHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    const { repoId } = makeTargetStore();
+    await store.initRepo(repoId);
+
+    // Land the valid two-run parent first.
+    const parentPack = await packOids(srcDir, [parent]);
+    await store.receivePack(
+      HUB_PRINCIPAL,
+      repoId,
+      REF,
+      parentPack,
+      parent,
+      null,
+    );
+
+    // Push the tip that drops run-a. It must be rejected, fail-closed,
+    // with the clean append-only reason (not a raw listDir throw).
+    const tipPack = await packOids(srcDir, [tip]);
+    let reason = "";
+    try {
+      await store.receivePack(HUB_PRINCIPAL, repoId, REF, tipPack, tip, parent);
+      throw new Error("expected receivePack to reject the dropped run-a");
+    } catch (err) {
+      reason = err instanceof Error ? err.message : String(err);
+    }
+    // The ref must not advance past the parent.
+    expect(await store.resolveRef(HUB_PRINCIPAL, repoId, REF)).toBe(parent);
+    // The clean contract reason, not a raw "is not a directory" throw.
+    expect(reason).toContain("append-only");
+    expect(reason).not.toContain("is not a directory");
+  });
+});
+
+// =====================================================================
+// P2 — retention watermark: bound the consumed/ dedup index.
+//
+// The watermark is a per-address monotonic receivedAt horizon. A
+// markConsumed commit advances it and prunes consumed entries below it
+// (the oldest tail only); enqueueInbox refuses any inbound below it as
+// definitively-stale. These tests prove the gate items: the structural
+// contract relaxation (validate-level: below-watermark prune,
+// monotonic watermark, retained-floor) and the end-to-end
+// exactly-once + bounded behaviour against a real on-disk store.
+
+describe("workflowRunKindHandler.validatePush — retention watermark contract", () => {
+  // Gate 3: a watermark regression is rejected.
+  test("rejects a watermark that moves backward", async () => {
+    const prior = {
+      [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(500),
+      [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+        "msg-1",
+        600,
+        "run-1",
+        700,
+      ),
+    };
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(400),
+        [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+          "msg-1",
+          600,
+          "run-1",
+          700,
+        ),
+      },
+      { priorFiles: prior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(/watermark regressed/);
+  });
+
+  // A non-suffix deletion (drop a recent consumed entry while keeping
+  // an older one) is ACCEPTED when both entries sit below the
+  // watermark. The suffix relation is not enforced; a retained entry
+  // below the watermark only adds dedup (every resubmit in that region
+  // is stale-rejected at enqueue), so the prune opens no reprocess. The
+  // production markConsumed writer still prunes only the oldest tail,
+  // so a non-suffix tree never arises in practice.
+  test("accepts a non-suffix consumed prune below the watermark and locks the boundary", async () => {
+    const prior = {
+      [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(0),
+      [consumedPathFor(ADDRESS_SEG, "msg-old")]: consumedBody(
+        "msg-old",
+        100,
+        "run-old",
+        150,
+      ),
+      [consumedPathFor(ADDRESS_SEG, "msg-recent")]: consumedBody(
+        "msg-recent",
+        200,
+        "run-recent",
+        250,
+      ),
+    };
+    // Drop msg-recent (the younger one), keep msg-old (the older one).
+    // The writer claims a watermark above 200 so the dropped 200 is
+    // below it; the retained 100 is below it too. Both sit below the
+    // watermark, so every resubmit in that region is stale-rejected.
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(201),
+        [consumedPathFor(ADDRESS_SEG, "msg-old")]: consumedBody(
+          "msg-old",
+          100,
+          "run-old",
+          150,
+        ),
+      },
+      { priorFiles: prior },
+    );
+    // The consumed walk does NOT enforce the suffix relation: computing
+    // the min receivedAt over all retained entries would require
+    // reading every retained consumed blob, the O(retained) work the
+    // delta walk exists to avoid. Both the dropped (receivedAt 200) and
+    // retained (receivedAt 100) entries are strictly below the stored
+    // watermark (201), so `claim_check_stale_enqueue` refuses every
+    // resubmit in that region at the enqueue boundary regardless of the
+    // consumed/ shape -- the retained entry only adds dedup, so a
+    // non-suffix prune below the watermark cannot open a reprocess.
+    expect(r.ok).toBe(true);
+
+    // Boundary lock. The removed-check rejects a dropped entry at
+    // receivedAt >= watermark (strict, mirroring the strict
+    // `receivedAt < watermark` stale-reject so the entry AT the
+    // watermark is both retained and not stale-rejected -- no gap).
+    // Assert BOTH sides of the boundary so a later refactor cannot
+    // silently widen `>=` to `>` and drop the entry sitting exactly at
+    // the watermark, which would let a resubmit at that receivedAt miss
+    // dedup.
+    // (a) strictly above the watermark -> rejected.
+    const droppedAbove = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(200),
+      },
+      {
+        priorFiles: {
+          [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(200),
+          [consumedPathFor(ADDRESS_SEG, "msg-above")]: consumedBody(
+            "msg-above",
+            300,
+            "run-above",
+            350,
+          ),
+        },
+      },
+    );
+    expect(droppedAbove.ok).toBe(false);
+    if (droppedAbove.ok) throw new Error("unreachable");
+    expect(droppedAbove.reason).toMatch(/not below the retention watermark/);
+
+    // (b) exactly equal to the watermark -> rejected (the off-by-one
+    // that widening `>=` to `>` would open).
+    const droppedAtBoundary = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(200),
+      },
+      {
+        priorFiles: {
+          [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(200),
+          [consumedPathFor(ADDRESS_SEG, "msg-at")]: consumedBody(
+            "msg-at",
+            200,
+            "run-at",
+            250,
+          ),
+        },
+      },
+    );
+    expect(droppedAtBoundary.ok).toBe(false);
+    if (droppedAtBoundary.ok) throw new Error("unreachable");
+    expect(droppedAtBoundary.reason).toMatch(
+      /not below the retention watermark/,
+    );
+  });
+
+  // A dropped entry that the watermark has NOT passed is rejected (you
+  // may only prune what the watermark cleared).
+  test("rejects pruning a consumed entry the watermark has not passed", async () => {
+    const prior = {
+      [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(0),
+      [consumedPathFor(ADDRESS_SEG, "msg-1")]: consumedBody(
+        "msg-1",
+        100,
+        "run-1",
+        150,
+      ),
+    };
+    // Watermark stays at 0; dropping msg-1 (receivedAt 100 >= 0) is not
+    // a watermark-passed prune.
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(0),
+      },
+      { priorFiles: prior },
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.reason).toMatch(
+      /may be pruned only once the watermark has passed/,
+    );
+  });
+
+  // The suffix prune IS permitted: drop the oldest tail (below the
+  // advanced watermark), keep the rest at-or-above it.
+  test("accepts pruning the oldest consumed tail below the advanced watermark", async () => {
+    const prior = {
+      [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(0),
+      [consumedPathFor(ADDRESS_SEG, "msg-old")]: consumedBody(
+        "msg-old",
+        100,
+        "run-old",
+        150,
+      ),
+      [consumedPathFor(ADDRESS_SEG, "msg-new")]: consumedBody(
+        "msg-new",
+        300,
+        "run-new",
+        350,
+      ),
+    };
+    // Advance watermark to 200: prune msg-old (100 < 200), retain
+    // msg-new (300 >= 200).
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(200),
+        [consumedPathFor(ADDRESS_SEG, "msg-new")]: consumedBody(
+          "msg-new",
+          300,
+          "run-new",
+          350,
+        ),
+      },
+      { priorFiles: prior },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // The freshly-written consumed entry is exempt from the retained
+  // floor: a message consumed long after receipt may land below an
+  // already-advanced watermark (it is pruned on the next commit).
+  test("accepts a newly-added consumed entry below the watermark (slow-consumed message)", async () => {
+    const prior = {
+      [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(500),
+      [processingPathFor(ADDRESS_SEG, 100, "msg-slow")]: inboxBody(
+        "msg-slow",
+        100,
+      ),
+    };
+    // processing -> consumed for msg-slow whose receivedAt (100) is
+    // below the prior watermark (500). The transition is legal and the
+    // new entry is exempt from the floor.
+    const r = await validate(
+      {
+        [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+        [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(500),
+        [consumedPathFor(ADDRESS_SEG, "msg-slow")]: consumedBody(
+          "msg-slow",
+          100,
+          "run-slow",
+          600,
+        ),
+      },
+      { priorFiles: prior },
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // The address may carry a watermark.json file without tripping the
+  // unexpected-entry guard.
+  test("accepts a watermark.json file as a permitted address child", async () => {
+    const r = await validate({
+      [WORKFLOW_RUN_GITIGNORE_PATH]: "",
+      [watermarkPathFor(ADDRESS_SEG)]: watermarkBody(0),
+      [inboxPathFor(ADDRESS_SEG, 100, "msg-1")]: inboxBody("msg-1", 100),
+    });
+    expect(r.ok).toBe(true);
+  });
+});
+
+// End-to-end retention against a real on-disk store.
+function isEnoent(cause: unknown): boolean {
+  return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+}
+
+async function consumedCount(repoDir: string, seg: string): Promise<number> {
+  const dir = path.join(
+    repoDir,
+    WORKFLOW_RUN_ADDRESSES_PREFIX,
+    seg,
+    WORKFLOW_RUN_CONSUMED_DIR,
+  );
+  try {
+    const names = await fs.promises.readdir(dir);
+    return names.filter((n) => n.endsWith(".json")).length;
+  } catch (cause) {
+    if (isEnoent(cause)) return 0;
+    throw cause;
+  }
+}
+
+async function readWatermarkOnDisk(
+  repoDir: string,
+  seg: string,
+): Promise<number | null> {
+  const file = path.join(
+    repoDir,
+    WORKFLOW_RUN_ADDRESSES_PREFIX,
+    seg,
+    WORKFLOW_RUN_WATERMARK_FILE,
+  );
+  let raw: string;
+  try {
+    raw = await fs.promises.readFile(file, "utf8");
+  } catch (cause) {
+    if (isEnoent(cause)) return null;
+    throw cause;
+  }
+  const parsed: unknown = JSON.parse(raw);
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "watermark" in parsed &&
+    typeof parsed.watermark === "number"
+  ) {
+    return parsed.watermark;
+  }
+  throw new Error("watermark.json shape invalid");
+}
+
+describe("claim-check API — retention watermark exactly-once + bounded", () => {
+  // Gate 1(a): a duplicate WITHIN the window is still deduped (the
+  // consumed/ entry is retained, so a re-enqueue is rejected).
+  test("a duplicate within the retention window is deduped at enqueue", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-dup-window-");
+    const horizon = 10_000;
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 1000,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      runId: "run-1",
+      consumedAt: 2000,
+      retentionHorizonMs: horizon,
+    });
+    // Re-submit the same messageId still within the window (its
+    // consumed/ entry is retained). receivedAt is a fresh, later value
+    // but >= watermark, so the stale-reject does NOT fire; the
+    // consumed-dedup does, surfacing as an already-present outcome.
+    const outcome = await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-1",
+      receivedAt: 3000,
+      mailAuditRef: { store: "audit", path: "mail/msg-1" },
+    });
+    expect(outcome).toEqual({ outcome: "already-present", reason: "consumed" });
+  });
+
+  // Gate 1(b): a message whose receivedAt is below the watermark (its
+  // dedup entry may have been pruned) is rejected at enqueue as stale,
+  // NOT silently reprocessed.
+  test("a message below the watermark is rejected at enqueue as stale", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-stale-");
+    const horizon = 1000;
+    // Drive a message at a late time so the watermark advances well
+    // past an old receivedAt.
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-driver",
+      receivedAt: 100_000,
+      mailAuditRef: { store: "audit", path: "mail/msg-driver" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    const consumed = await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-driver",
+      runId: "run-driver",
+      consumedAt: 100_000,
+      retentionHorizonMs: horizon,
+    });
+    // Watermark advanced to consumedAt - horizon = 99_000.
+    expect(consumed.watermark).toBe(99_000);
+    // A stale message arriving with an old receivedAt (50_000 < 99_000)
+    // is refused loudly -- never reprocessed.
+    await expect(
+      enqueueInbox(store, principal, repoId, {
+        address: ADDRESS,
+        messageId: "msg-stale",
+        receivedAt: 50_000,
+        mailAuditRef: { store: "audit", path: "mail/msg-stale" },
+      }),
+    ).rejects.toThrow(/claim_check_stale_enqueue/);
+  });
+
+  // Gate 1(c): a brand-new message with receivedAt >= watermark is
+  // accepted normally.
+  test("a fresh message at or above the watermark is accepted", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-fresh-");
+    const horizon = 1000;
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-driver",
+      receivedAt: 100_000,
+      mailAuditRef: { store: "audit", path: "mail/msg-driver" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-driver",
+      runId: "run-driver",
+      consumedAt: 100_000,
+      retentionHorizonMs: horizon,
+    });
+    // watermark = 99_000; a new message at 100_500 is fine.
+    const r = await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "msg-fresh",
+      receivedAt: 100_500,
+      mailAuditRef: { store: "audit", path: "mail/msg-fresh" },
+    });
+    expect(r.outcome).toBe("enqueued");
+    if (r.outcome !== "enqueued") throw new Error("expected enqueued");
+    expect(r.inboxKey).toBe("100500-msg-fresh");
+  });
+
+  // Gate 4: after N >> horizon-worth of messages with advancing time,
+  // consumed/ holds ~one horizon's worth, not N.
+  // This case drives ~180 real isogit commits (60 messages, each through
+  // enqueue/dequeue/markConsumed). The boundedness logic keeps the work
+  // per commit small -- that is what it asserts -- but the commit count
+  // alone can exceed the 5s fast-suite default on a loaded machine, where
+  // pure-JS git commits slow down. Give it an explicit ceiling well above
+  // its normal sub-second runtime so load cannot turn a passing assertion
+  // into a timeout.
+  test("consumed/ stays bounded under many messages with advancing time", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-bounded-");
+    const repoDir = store.getRepoDir(repoId);
+    const seg = ADDRESS_SEG;
+    const horizon = 1000; // retain ~1000ms worth of entries
+    const step = 100; // a message every 100ms
+    const n = 60; // 60 messages span 6000ms >> horizon
+    for (let i = 0; i < n; i++) {
+      const t = 10_000 + i * step;
+      const messageId = `m-${String(i)}`;
+      await enqueueInbox(store, principal, repoId, {
+        address: ADDRESS,
+        messageId,
+        receivedAt: t,
+        mailAuditRef: { store: "audit", path: `mail/${messageId}` },
+      });
+      await dequeueToProcessing(store, principal, repoId, ADDRESS);
+      await markConsumed(store, principal, repoId, {
+        address: ADDRESS,
+        messageId,
+        runId: `r-${String(i)}`,
+        consumedAt: t,
+        retentionHorizonMs: horizon,
+      });
+    }
+    const count = await consumedCount(repoDir, seg);
+    // Bounded: at most ceil(horizon/step)+1 entries are retained
+    // (entries within [watermark, now]). It must NOT be ~N.
+    const bound = Math.ceil(horizon / step) + 2;
+    expect(count).toBeLessThanOrEqual(bound);
+    expect(count).toBeLessThan(n);
+    // The watermark advanced and tracks the prune boundary.
+    const wm = await readWatermarkOnDisk(repoDir, seg);
+    expect(wm).not.toBeNull();
+    if (wm === null) throw new Error("unreachable");
+    expect(wm).toBeGreaterThan(10_000);
+  }, 30_000);
+
+  // The watermark is monotonic across real commits: a later commit
+  // with an earlier consumedAt does not move it backward.
+  test("the watermark never regresses across markConsumed commits", async () => {
+    const { store, repoId, principal } = await makeClaimCheckStore("cc-mono-");
+    const repoDir = store.getRepoDir(repoId);
+    const horizon = 1000;
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "a",
+      receivedAt: 50_000,
+      mailAuditRef: { store: "audit", path: "mail/a" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "a",
+      runId: "ra",
+      consumedAt: 50_000,
+      retentionHorizonMs: horizon,
+    });
+    const wmAfterA = await readWatermarkOnDisk(repoDir, ADDRESS_SEG);
+    expect(wmAfterA).toBe(49_000);
+    // A second message that arrived earlier (clock skew) and is
+    // consumed with an earlier consumedAt must not drag the watermark
+    // back. Its receivedAt (49_500) is >= the current watermark so the
+    // enqueue is accepted.
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "b",
+      receivedAt: 49_500,
+      mailAuditRef: { store: "audit", path: "mail/b" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    const consumedB = await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "b",
+      runId: "rb",
+      consumedAt: 49_600,
+      retentionHorizonMs: horizon,
+    });
+    // horizonBoundary for b = 48_600 < priorWatermark 49_000, so the
+    // watermark holds at 49_000.
+    expect(consumedB.watermark).toBe(49_000);
+    const wmAfterB = await readWatermarkOnDisk(repoDir, ADDRESS_SEG);
+    expect(wmAfterB).toBe(49_000);
+  });
+
+  // Replay-vs-watermark regression (the path that becomes a silent
+  // message-loss bug if someone "tightens" replay with a watermark
+  // stale-check). A message that is already in processing/ -- past
+  // dedup -- whose receivedAt has fallen BELOW an advanced watermark
+  // must be re-admitted to inbox/ by replayProcessingToInbox (NOT
+  // rejected as stale), then dequeued and consumed exactly once (not
+  // lost, not double-processed).
+  test("replay re-admits a below-watermark in-flight message and it completes exactly once", async () => {
+    const { store, repoId, principal } =
+      await makeClaimCheckStore("cc-replay-wm-");
+    const repoDir = store.getRepoDir(repoId);
+    const horizon = 1000;
+
+    // 1. An in-flight message: enqueued at receivedAt 10_000 and moved
+    //    to processing (past dedup), left there to simulate a crash
+    //    mid-handling.
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "inflight",
+      receivedAt: 10_000,
+      mailAuditRef: { store: "audit", path: "mail/inflight" },
+    });
+    const inflightDequeue = await dequeueToProcessing(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(inflightDequeue?.envelope.messageId).toBe("inflight");
+
+    // 2. Advance the watermark well past 10_000 by consuming a much
+    //    newer message. consumedAt 100_000, horizon 1000 -> watermark
+    //    99_000. The in-flight processing entry (10_000) is now below
+    //    the watermark.
+    await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "newer",
+      receivedAt: 100_000,
+      mailAuditRef: { store: "audit", path: "mail/newer" },
+    });
+    await dequeueToProcessing(store, principal, repoId, ADDRESS);
+    const newerConsumed = await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "newer",
+      runId: "r-newer",
+      consumedAt: 100_000,
+      retentionHorizonMs: horizon,
+    });
+    expect(newerConsumed.watermark).toBe(99_000);
+    const wm = await readWatermarkOnDisk(repoDir, ADDRESS_SEG);
+    expect(wm).toBe(99_000);
+
+    // 3. Replay must re-admit the below-watermark in-flight entry to
+    //    inbox -- NOT reject it as stale. (A fresh enqueue at 10_000
+    //    WOULD be refused; replay is intentionally exempt.)
+    const replay = await replayProcessingToInbox(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(replay.replayedKeys).toContain("10000-inflight");
+    // The entry is back in inbox at its original filename key.
+    const inboxDir = path.join(
+      repoDir,
+      WORKFLOW_RUN_ADDRESSES_PREFIX,
+      ADDRESS_SEG,
+      WORKFLOW_RUN_INBOX_DIR,
+    );
+    const inboxEntries = await fs.promises.readdir(inboxDir);
+    expect(inboxEntries).toContain("10000-inflight.json");
+
+    // 4. It can be dequeued and consumed exactly once.
+    const reDequeue = await dequeueToProcessing(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(reDequeue?.envelope.messageId).toBe("inflight");
+    await markConsumed(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "inflight",
+      runId: "r-inflight",
+      consumedAt: 101_000,
+      retentionHorizonMs: horizon,
+    });
+    const consumedPath = path.join(
+      repoDir,
+      WORKFLOW_RUN_ADDRESSES_PREFIX,
+      ADDRESS_SEG,
+      WORKFLOW_RUN_CONSUMED_DIR,
+      "inflight.json",
+    );
+    await fs.promises.access(consumedPath);
+
+    // 5. No double-process: nothing remains to dequeue, and a
+    //    re-enqueue of the same content (fresh receivedAt >= watermark)
+    //    is now deduped by the retained consumed entry, surfacing as an
+    //    already-present outcome.
+    const drained = await dequeueToProcessing(
+      store,
+      principal,
+      repoId,
+      ADDRESS,
+    );
+    expect(drained).toBeNull();
+    const outcome = await enqueueInbox(store, principal, repoId, {
+      address: ADDRESS,
+      messageId: "inflight",
+      receivedAt: 102_000,
+      mailAuditRef: { store: "audit", path: "mail/inflight" },
+    });
+    expect(outcome).toEqual({ outcome: "already-present", reason: "consumed" });
+  });
+});
+
+describe("parseEventSeq", () => {
+  test("accepts canonical <seq>.json names", () => {
+    expect(parseEventSeq("0.json")).toBe(0);
+    expect(parseEventSeq("1.json")).toBe(1);
+    expect(parseEventSeq("42.json")).toBe(42);
+    expect(parseEventSeq("1000000.json")).toBe(1_000_000);
+  });
+
+  test("rejects leading zeros, wrong case, whitespace, and near-misses", () => {
+    // Every reader of the event log narrows filenames through this one
+    // function; these are the boundaries a naive `\d+` rewrite would
+    // silently break, so they are pinned by example.
+    for (const bad of [
+      "00.json",
+      "01.json",
+      "1.JSON",
+      " 1.json",
+      "1.json\n",
+      "-1.json",
+      "+1.json",
+      "1.5.json",
+      "1e3.json",
+      "0x1.json",
+      "1..json",
+      "1.json.bak",
+      "events.jsonl",
+      "1",
+      ".json",
+      "",
+    ]) {
+      expect(parseEventSeq(bad)).toBeNull();
+    }
+  });
+});
+
+describe("classifyTerminalEvent", () => {
+  test("maps each terminal event type to its run status", () => {
+    expect(classifyTerminalEvent("RunCompleted")).toEqual({
+      terminal: true,
+      status: "completed",
+    });
+    expect(classifyTerminalEvent("RunFailed")).toEqual({
+      terminal: true,
+      status: "failed",
+    });
+    expect(classifyTerminalEvent("RunCancelled")).toEqual({
+      terminal: true,
+      status: "cancelled",
+    });
+  });
+
+  test("treats non-terminal and unknown event types as not terminal", () => {
+    expect(classifyTerminalEvent("RunStarted")).toEqual({ terminal: false });
+    expect(classifyTerminalEvent("unknown-event-type")).toEqual({
+      terminal: false,
+    });
+  });
+});

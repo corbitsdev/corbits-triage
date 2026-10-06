@@ -1,0 +1,20 @@
+node_modules/
+apps/web/dist/
+*.tsbuildinfo
+.DS_Store
+tmp/
+mockups/
+.corbits/
+tooling/shots/
+.env
+.emulate-secrets.json
+packages/github-tool/dist/
+packages/github-write-tool/dist/
+
+# vendored interchange local state
+vendor/interchange/tmp/
+vendor/interchange/.env
+vendor/interchange/.env.hub
+vendor/interchange/.env.migrate
+vendor/interchange/.env.sidecar
+apps/web/public/workflows/

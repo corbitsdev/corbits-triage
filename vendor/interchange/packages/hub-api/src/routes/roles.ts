@@ -1,0 +1,379 @@
+import { eq, and } from "drizzle-orm";
+import { Hono } from "hono";
+import { describeRoute, validator } from "hono-openapi";
+
+import { role, principalRole, principal } from "@intx/db/schema";
+import type { DB } from "@intx/db";
+import {
+  CreateRole,
+  ErrorResponse,
+  UpdateRole,
+  RoleResponse,
+  paginatedSchema,
+} from "@intx/types";
+
+import type { TenantEnv } from "../context";
+import { errorResponse } from "../error-response";
+import { first, ts } from "../format";
+import { generateId } from "@intx/hub-common";
+import { idResource } from "../middleware/grant";
+import type { RequireGrant } from "../middleware/grant";
+import {
+  parsePageParams,
+  cursorCondition,
+  pageOrder,
+  paginatedResponse,
+  pageParameters,
+} from "../pagination";
+import { jsonResponse } from "../openapi";
+
+function formatRole(row: typeof role.$inferSelect) {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    name: row.name,
+    description: row.description ?? null,
+    isSystem: row.isSystem,
+    createdAt: ts(row.createdAt),
+    updatedAt: ts(row.updatedAt),
+  };
+}
+
+export type CreateRoleRoutesDeps = {
+  db: DB["db"];
+  requireGrant: RequireGrant;
+};
+
+export function createRoleRoutes({
+  db,
+  requireGrant,
+}: CreateRoleRoutesDeps): Hono<TenantEnv> {
+  const app = new Hono<TenantEnv>();
+
+  app.get(
+    "/",
+    requireGrant("role:*", "read"),
+    describeRoute({
+      tags: ["Roles"],
+      summary: "List roles in the tenant",
+      description:
+        "Lists both system roles (owner, admin, member) and custom roles.",
+      parameters: [...pageParameters],
+      responses: {
+        200: jsonResponse("List of roles", paginatedSchema(RoleResponse)),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const { limit, cursor } = parsePageParams({
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
+      });
+
+      const conditions = [eq(role.tenantId, tenantCtx.id)];
+      if (cursor) {
+        conditions.push(cursorCondition(role.createdAt, role.id, cursor));
+      }
+
+      const rows = await db.query.role.findMany({
+        where: and(...conditions),
+        orderBy: pageOrder(role.createdAt, role.id),
+        limit,
+      });
+
+      return c.json(paginatedResponse(rows.map(formatRole), rows, limit));
+    },
+  );
+
+  app.post(
+    "/",
+    requireGrant("role:*", "create"),
+    describeRoute({
+      tags: ["Roles"],
+      summary: "Create a custom role",
+      responses: {
+        201: jsonResponse("Role created", RoleResponse),
+        400: jsonResponse("Validation error", ErrorResponse),
+      },
+    }),
+    validator("json", CreateRole),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const body = c.req.valid("json");
+
+      const now = new Date();
+      const row = first(
+        await db
+          .insert(role)
+          .values({
+            id: generateId("role"),
+            tenantId: tenantCtx.id,
+            name: body.name,
+            description: body.description ?? null,
+            isSystem: false,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning(),
+      );
+
+      return c.json(formatRole(row), 201);
+    },
+  );
+
+  app.get(
+    "/:roleId",
+    requireGrant(idResource("role", "roleId"), "read"),
+    describeRoute({
+      tags: ["Roles"],
+      summary: "Get role details",
+      description: "Returns role details including attached grants.",
+      responses: {
+        200: jsonResponse("Role details", RoleResponse),
+        404: jsonResponse("Role not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const roleId = c.req.param("roleId");
+
+      const row = await db.query.role.findFirst({
+        where: and(eq(role.id, roleId), eq(role.tenantId, tenantCtx.id)),
+      });
+
+      if (!row) {
+        return errorResponse(c, "not_found", "Role not found");
+      }
+
+      return c.json(formatRole(row));
+    },
+  );
+
+  app.patch(
+    "/:roleId",
+    requireGrant(idResource("role", "roleId"), "manage"),
+    describeRoute({
+      tags: ["Roles"],
+      summary: "Update a role",
+      description:
+        "Update name or description. System roles cannot be modified.",
+      responses: {
+        200: jsonResponse("Role updated", RoleResponse),
+        403: jsonResponse("Cannot modify system role", ErrorResponse),
+      },
+    }),
+    validator("json", UpdateRole),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const roleId = c.req.param("roleId");
+      const body = c.req.valid("json");
+
+      const existing = await db.query.role.findFirst({
+        where: and(eq(role.id, roleId), eq(role.tenantId, tenantCtx.id)),
+      });
+
+      if (!existing) {
+        return errorResponse(c, "not_found", "Role not found");
+      }
+
+      if (existing.isSystem) {
+        return errorResponse(c, "forbidden", "Cannot modify system roles");
+      }
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.name !== undefined) updates["name"] = body.name;
+      if (body.description !== undefined)
+        updates["description"] = body.description;
+
+      const updated = first(
+        await db
+          .update(role)
+          .set(updates)
+          .where(eq(role.id, roleId))
+          .returning(),
+      );
+
+      return c.json(formatRole(updated));
+    },
+  );
+
+  app.delete(
+    "/:roleId",
+    requireGrant(idResource("role", "roleId"), "manage"),
+    describeRoute({
+      tags: ["Roles"],
+      summary: "Delete a custom role",
+      description:
+        "Deletes a custom role. Fails if principals are currently assigned to it. System roles cannot be deleted.",
+      responses: {
+        204: {
+          description: "Role deleted",
+        },
+        400: jsonResponse("Role still assigned to principals", ErrorResponse),
+        403: jsonResponse("Cannot delete system role", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const roleId = c.req.param("roleId");
+
+      const existing = await db.query.role.findFirst({
+        where: and(eq(role.id, roleId), eq(role.tenantId, tenantCtx.id)),
+      });
+
+      if (!existing) {
+        return errorResponse(c, "not_found", "Role not found");
+      }
+
+      if (existing.isSystem) {
+        return errorResponse(c, "forbidden", "Cannot delete system roles");
+      }
+
+      const assignments = await db.query.principalRole.findMany({
+        where: eq(principalRole.roleId, roleId),
+      });
+
+      if (assignments.length > 0) {
+        return errorResponse(
+          c,
+          "bad_request",
+          `Role is still assigned to ${assignments.length} principal(s)`,
+        );
+      }
+
+      await db.delete(role).where(eq(role.id, roleId));
+
+      return c.body(null, 204);
+    },
+  );
+
+  return app;
+}
+
+// Role assignment routes are mounted under principals
+export type CreateRoleAssignRoutesDeps = {
+  db: DB["db"];
+  requireGrant: RequireGrant;
+};
+
+export function createRoleAssignRoutes({
+  db,
+  requireGrant,
+}: CreateRoleAssignRoutesDeps): Hono<TenantEnv> {
+  const assignApp = new Hono<TenantEnv>();
+
+  assignApp.post(
+    "/:roleId",
+    requireGrant("role:*", "manage"),
+    describeRoute({
+      tags: ["Roles"],
+      summary: "Assign a role to a principal",
+      description:
+        "Assigns a role to a user or agent principal within the tenant.",
+      responses: {
+        204: {
+          description: "Role assigned",
+        },
+        404: jsonResponse("Principal or role not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const principalId = c.req.param("principalId") ?? "";
+      const roleId = c.req.param("roleId") ?? "";
+
+      const principalRow = await db.query.principal.findFirst({
+        where: and(
+          eq(principal.id, principalId),
+          eq(principal.tenantId, tenantCtx.id),
+        ),
+      });
+      if (!principalRow) {
+        return errorResponse(c, "not_found", "Principal not found");
+      }
+
+      const roleRow = await db.query.role.findFirst({
+        where: and(eq(role.id, roleId), eq(role.tenantId, tenantCtx.id)),
+      });
+      if (!roleRow) {
+        return errorResponse(c, "not_found", "Role not found");
+      }
+
+      const existing = await db.query.principalRole.findFirst({
+        where: and(
+          eq(principalRole.principalId, principalId),
+          eq(principalRole.roleId, roleId),
+        ),
+      });
+
+      if (!existing) {
+        await db.insert(principalRole).values({
+          principalId,
+          roleId,
+          createdAt: new Date(),
+        });
+      }
+
+      return c.body(null, 204);
+    },
+  );
+
+  assignApp.delete(
+    "/:roleId",
+    requireGrant("role:*", "manage"),
+    describeRoute({
+      tags: ["Roles"],
+      summary: "Remove a role from a principal",
+      responses: {
+        204: {
+          description: "Role removed",
+        },
+        404: jsonResponse("Assignment not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const principalId = c.req.param("principalId") ?? "";
+      const roleId = c.req.param("roleId") ?? "";
+
+      // Bind both the principal and the role to the caller's tenant before
+      // touching the join row. The grant authorizes the role id, not its
+      // tenant, so without this a role:* manage grant could unassign roles
+      // across tenants. Mirrors the assign path above.
+      const principalRow = await db.query.principal.findFirst({
+        where: and(
+          eq(principal.id, principalId),
+          eq(principal.tenantId, tenantCtx.id),
+        ),
+      });
+      if (!principalRow) {
+        return errorResponse(c, "not_found", "Principal not found");
+      }
+
+      const roleRow = await db.query.role.findFirst({
+        where: and(eq(role.id, roleId), eq(role.tenantId, tenantCtx.id)),
+      });
+      if (!roleRow) {
+        return errorResponse(c, "not_found", "Role not found");
+      }
+
+      const deleted = await db
+        .delete(principalRole)
+        .where(
+          and(
+            eq(principalRole.principalId, principalId),
+            eq(principalRole.roleId, roleId),
+          ),
+        )
+        .returning();
+
+      if (deleted.length === 0) {
+        return errorResponse(c, "not_found", "Assignment not found");
+      }
+
+      return c.body(null, 204);
+    },
+  );
+
+  return assignApp;
+}

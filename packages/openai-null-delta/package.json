@@ -1,0 +1,13 @@
+{
+  "name": "@corbits/openai-null-delta",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "module": "src/null-delta.ts",
+  "scripts": {},
+  "dependencies": {
+    "@intx/inference": "workspace:*",
+    "@intx/types": "workspace:*"
+  }
+}

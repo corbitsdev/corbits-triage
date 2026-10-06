@@ -1,0 +1,22 @@
+{
+  "name": "@intx/hub-app",
+  "description": "Interchange control-plane server process that wires the hub packages into one HTTP application",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": {
+      "intx-src": "./src/server.ts"
+    }
+  },
+  "dependencies": {
+    "@intx/crypto": "workspace:*",
+    "@intx/db": "workspace:*",
+    "@intx/hub-api": "workspace:*",
+    "@intx/hub-sessions": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/types": "workspace:*",
+    "hono": "catalog:"
+  }
+}

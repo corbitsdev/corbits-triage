@@ -1,0 +1,462 @@
+// Stale-cohort routing pinch-point verification.
+//
+// The supervisor's `pumpUpstreamControl` closes over the cohort
+// broadcaster captured at pump-start time, NOT a broadcaster resolved
+// dynamically per `terminal.event`. During a recycle, the supervisor
+// mints a fresh broadcaster for the new cohort and disposes the old
+// one. A `terminal.event` frame the OLD child emitted before its kill
+// landed sits in the OLD iterator's buffer; when the OLD pump
+// eventually consumes it, the notify routes to the OLD cohort's (now
+// disposed) broadcaster, whose `notify` is a no-op — so the frame does
+// NOT fan out to the NEW cohort's listeners.
+//
+// The realistic scenario:
+//   - A run is in-flight on cohort A under the stable runId (the
+//     deployment mail address, the stable id of its one top-level run).
+//   - Cohort A crashes mid-run before markConsumed → recycle.
+//   - The processing/ entry is replayed back to inbox/.
+//   - Cohort B dispatches the fresh mail under that same stable runId
+//     and subscribes cohort B's broadcaster for it.
+//   - Meanwhile, cohort A's iterator still has a buffered
+//     `terminal.event` for the stable runId from the previous
+//     incarnation.
+//   - The OLD pump dequeues the buffered frame and calls
+//     `notify(runId, staleEvent)` on cohort A's captured broadcaster,
+//     which is disposed, so the notify drops. Cohort B's listener is
+//     NOT settled early.
+//   - Cohort B's markConsumed stays gated on `waitForRunTerminalOrPark`
+//     and does not fire until cohort B emits the run's real terminal
+//     event.
+
+import { describe, test, expect } from "bun:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { generateKeyPair } from "@intx/crypto";
+import { base64Encode, hexEncode } from "@intx/types";
+import type { RepoId, RepoStore } from "@intx/hub-sessions";
+import {
+  createMemoryFrameStream,
+  createMemoryNdjsonStream,
+  createMockMailBus,
+  createChangeNotifier,
+  waitForTriggerFireRunIds,
+} from "@intx/workflow-host/testing";
+
+import {
+  createWorkflowSupervisor,
+  type InboxPrimitives,
+  type SignedPayload,
+  type SubprocessHandle,
+  type SubprocessSpawner,
+  type WorkflowSupervisorBindings,
+} from "./index";
+import { defaultStepRepoId, STEP_GRANTS_PATH } from "./credentials";
+import { createControlChannelSender } from "../ipc/index";
+
+async function makeTempDir(prefix: string): Promise<string> {
+  return fs.mkdtemp(path.join(os.tmpdir(), prefix));
+}
+
+function createStubRepoStore(baseDir: string): RepoStore {
+  const stub: Partial<RepoStore> = {
+    getRepoDir(repoId: RepoId): string {
+      return path.join(baseDir, repoId.kind, repoId.id);
+    },
+    async writeTreePreservingPrefix() {
+      return { commitSha: "deadbeefcafef00d", newlyTerminalRuns: [] };
+    },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- test stub; missing methods surface as a precise failure via the proxy
+  return new Proxy(stub as RepoStore, {
+    get(t, p, r) {
+      const v = Reflect.get(t, p, r);
+      if (v !== undefined) return v;
+      return () => {
+        throw new Error(`stub: ${String(p)}`);
+      };
+    },
+  });
+}
+
+async function seedStepGrants(
+  baseDir: string,
+  repoId: RepoId,
+  grants: unknown[],
+): Promise<void> {
+  const dir = path.join(baseDir, repoId.kind, repoId.id);
+  await fs.mkdir(path.join(dir, "state"), { recursive: true });
+  await fs.writeFile(
+    path.join(dir, STEP_GRANTS_PATH),
+    JSON.stringify({ grants }),
+  );
+}
+
+function createMemoryInbox(): InboxPrimitives & {
+  seedProcessing: (
+    address: string,
+    messageId: string,
+    receivedAt: number,
+  ) => void;
+} {
+  type E = {
+    messageId: string;
+    receivedAt: number;
+    mailAuditRef: { store: string; path: string };
+    rawMessage?: string;
+  };
+  const st = new Map<
+    string,
+    {
+      inbox: Map<string, E>;
+      processing: Map<string, E>;
+      consumed: Map<string, E>;
+    }
+  >();
+  function get(a: string) {
+    let e = st.get(a);
+    if (e === undefined) {
+      e = { inbox: new Map(), processing: new Map(), consumed: new Map() };
+      st.set(a, e);
+    }
+    return e;
+  }
+  function k(r: number, m: string): string {
+    return `${String(r)}-${m}`;
+  }
+  return {
+    async enqueueInbox(_s, _p, _r, args) {
+      const s = get(args.address);
+      const key = k(args.receivedAt, args.messageId);
+      const env: E = {
+        messageId: args.messageId,
+        receivedAt: args.receivedAt,
+        mailAuditRef: args.mailAuditRef,
+        ...(args.rawMessage !== undefined
+          ? { rawMessage: args.rawMessage }
+          : {}),
+      };
+      s.inbox.set(key, env);
+      return {
+        outcome: "enqueued",
+        commitSha: "memory",
+        inboxKey: key,
+        envelope: {
+          messageId: args.messageId,
+          receivedAt: args.receivedAt,
+          address: args.address,
+          mailAuditRef: args.mailAuditRef,
+        },
+      };
+    },
+    async dequeueToProcessing(_s, _p, _r, address) {
+      const s = get(address);
+      const sorted = [...s.inbox.entries()].sort(
+        ([, a], [, b]) => a.receivedAt - b.receivedAt,
+      );
+      const head = sorted[0];
+      if (head === undefined) return null;
+      const [key, env] = head;
+      s.inbox.delete(key);
+      s.processing.set(key, env);
+      return {
+        commitSha: "memory",
+        key,
+        envelope: {
+          messageId: env.messageId,
+          receivedAt: env.receivedAt,
+          address,
+          mailAuditRef: env.mailAuditRef,
+          ...(env.rawMessage !== undefined
+            ? { rawMessage: env.rawMessage }
+            : {}),
+        },
+      };
+    },
+    async markConsumed(_s, _p, _r, args) {
+      const s = get(args.address);
+      for (const [key, value] of s.processing) {
+        if (value.messageId === args.messageId) {
+          s.processing.delete(key);
+          s.consumed.set(args.messageId, value);
+          return {
+            commitSha: "memory",
+            envelope: {
+              messageId: value.messageId,
+              receivedAt: value.receivedAt,
+              address: args.address,
+              runId: args.runId,
+              consumedAt: args.consumedAt,
+              mailAuditRef: value.mailAuditRef,
+            },
+            watermark: 0,
+            prunedMessageIds: [],
+          };
+        }
+      }
+      throw new Error("processing not found");
+    },
+    async replayProcessingToInbox(_s, _p, _r, address) {
+      const s = get(address);
+      for (const [key, value] of s.processing) {
+        s.inbox.set(key, value);
+      }
+      s.processing.clear();
+      return { commitSha: "memory", replayedKeys: [] };
+    },
+    seedProcessing(address, messageId, receivedAt) {
+      const s = get(address);
+      const key = k(receivedAt, messageId);
+      s.processing.set(key, {
+        messageId,
+        receivedAt,
+        mailAuditRef: { store: "memory", path: messageId },
+        rawMessage: base64Encode(
+          new TextEncoder().encode(`Message-ID: ${messageId}\r\n\r\nbody`),
+        ),
+      });
+    },
+  };
+}
+
+type FakeChild = {
+  pid: number;
+  channelId: string | undefined;
+  s2c: ReturnType<typeof createMemoryNdjsonStream>;
+  c2s: ReturnType<typeof createMemoryNdjsonStream>;
+  events: ReturnType<typeof createMemoryFrameStream>;
+  resolveExit: ((c: number) => void) | undefined;
+  exited: Promise<number>;
+  killSignals: string[];
+  closeOnKill: boolean;
+};
+
+function createSpawnTracker() {
+  const children: FakeChild[] = [];
+  // Reports each spawn so a test can wait for the child rather than re-read
+  // the array on a timer.
+  const spawnChanges = createChangeNotifier();
+  const spawner: SubprocessSpawner = ({ env }) => {
+    const s2c = createMemoryNdjsonStream();
+    const c2s = createMemoryNdjsonStream();
+    const events = createMemoryFrameStream();
+    let resolveExit: ((c: number) => void) | undefined;
+    const exited = new Promise<number>((r) => {
+      resolveExit = r;
+    });
+    const child: FakeChild = {
+      pid: 4000 + children.length,
+      channelId: env.IPC_CHANNEL_ID,
+      s2c,
+      c2s,
+      events,
+      resolveExit,
+      exited,
+      killSignals: [],
+      closeOnKill: true,
+    };
+    children.push(child);
+    spawnChanges.notify();
+    const handle: SubprocessHandle = {
+      pid: child.pid,
+      controlWriter: s2c.writer,
+      controlReader: c2s.reader,
+      eventReader: events.reader,
+      kill: (signal) => {
+        const sig = typeof signal === "string" ? signal : String(signal ?? "");
+        child.killSignals.push(sig);
+        if (child.closeOnKill) {
+          events.close();
+          c2s.close();
+        }
+        child.resolveExit?.(0);
+      },
+      exited,
+    };
+    return handle;
+  };
+  return {
+    spawner,
+    children,
+    awaitChildren: (count: number) =>
+      spawnChanges.until(() => children.length >= count),
+  };
+}
+
+async function driveReady(
+  child: FakeChild,
+  ipcKp: { privateKey: Uint8Array; publicKey: Uint8Array },
+) {
+  if (child.channelId === undefined) throw new Error("no channelId");
+  const sender = createControlChannelSender({
+    privateKeySeed: ipcKp.privateKey,
+    channelId: child.channelId,
+    writer: {
+      write(line: string) {
+        child.c2s.inject(line);
+      },
+    },
+  });
+  await sender.send({
+    type: "ready",
+    data: {
+      childPid: child.pid,
+      childPublicKey: hexEncode(ipcKp.publicKey),
+    },
+  });
+  return sender;
+}
+
+describe("H-S2 stale-cohort routing pinch-point", () => {
+  test("a stale terminal.event from the OLD child does not leak into the NEW cohort's dispatch wait", async () => {
+    const baseDir = await makeTempDir("hs2-leak-");
+    const ipcKp = await generateKeyPair();
+    const mailBus = createMockMailBus();
+    const tracker = createSpawnTracker();
+    const inbox = createMemoryInbox();
+
+    await seedStepGrants(
+      baseDir,
+      defaultStepRepoId({ runId: "run_deployment-x", stepId: "step-1" }),
+      [{ resource: "thing", action: "read" }],
+    );
+
+    const consumedRecord: string[] = [];
+    // The markConsumed callback is the event; the poll it replaces re-read
+    // this array every ten milliseconds against a one-second deadline.
+    const consumedChanges = createChangeNotifier();
+    const wrappedInbox: InboxPrimitives = {
+      ...inbox,
+      async markConsumed(s, p, r, args) {
+        consumedRecord.push(args.messageId);
+        consumedChanges.notify();
+        return inbox.markConsumed(s, p, r, args);
+      },
+    };
+
+    const bindings: WorkflowSupervisorBindings = {
+      repoStore: createStubRepoStore(baseDir),
+      signAsPrincipal: async (): Promise<SignedPayload> => ({
+        sig: new Uint8Array(64),
+        principalKind: "supervisor",
+      }),
+      mailBus,
+      subprocessSpawner: tracker.spawner,
+      binaryPath: "/fake/bin",
+      substrateEnv: { DATA_DIR: baseDir },
+      dynamicSpawnEnv: () => ({}),
+      workflowRunRepoId: { kind: "workflow-run", id: "run_deployment-x" },
+      workflowRunRef: "refs/heads/main",
+      anchorRunId: "run_deployment-x",
+      stepCount: 1,
+      deploymentMailAddress: "run_deployment-x@example.com",
+      readPrincipal: { kind: "supervisor" },
+      deriveStepAddress: ({ runId, stepId }) =>
+        `${runId}-${stepId}@example.com`,
+      ipcKeyPairFactory: () => Promise.resolve(ipcKp),
+      inboxPrimitives: wrappedInbox,
+    };
+
+    const supervisor = createWorkflowSupervisor(bindings);
+    const spawnP = supervisor.spawn({
+      stepOrder: ["step-1"],
+      definitionHash: "def-hash",
+      warmKeep: false,
+
+      onInferenceEvent: () => undefined,
+    });
+    await tracker.awaitChildren(1);
+    const childA = tracker.children[0];
+    if (childA === undefined) throw new Error("tracker.children[0] missing");
+    // Disable closeOnKill on cohort A so we can inject stale frames AFTER kill.
+    childA.closeOnKill = false;
+    const senderA = await driveReady(childA, ipcKp);
+    await spawnP;
+
+    // Begin recycle; cohort A's iterator does NOT terminate on kill in
+    // this test (we want to keep it alive so the OLD pump can still
+    // dequeue frames after the recycle returns).
+    const recycleP = supervisor.recycle({ reason: "h-s2-probe" });
+    await tracker.awaitChildren(2);
+    const childB = tracker.children[1];
+    if (childB === undefined) throw new Error("tracker.children[1] missing");
+    const senderB = await driveReady(childB, ipcKp);
+    await recycleP;
+
+    // The recycle finished. State is now `running` with cohort B's
+    // broadcaster. Cohort A's pump is STILL ALIVE (we left c2s open)
+    // and waiting on the iterator.
+    //
+    // Deliver a fresh mail to cohort B and let it land in the inbox.
+    // The runtime body of cohort B has NOT processed it yet; the
+    // dispatch loop will dequeue it, subscribe cohort B's broadcaster
+    // for the stable runId (the deployment mail address), then forward
+    // trigger.fire. At that point, cohort B's broadcaster has a listener
+    // for that runId.
+    const TEST_MESSAGE =
+      "Message-ID: <stale-routing-probe@example.com>\r\n\r\nbody";
+    const TEST_MESSAGE_ID = "<stale-routing-probe@example.com>";
+    mailBus.deliver(
+      "run_deployment-x@example.com",
+      new TextEncoder().encode(TEST_MESSAGE),
+    );
+
+    // Wait until cohort B has forwarded the trigger.fire (which means
+    // the cohort B broadcaster has a listener for the stable runId).
+    await waitForTriggerFireRunIds(childB.s2c, 1);
+    expect(childB.s2c.flushed().some((f) => f.includes("trigger.fire"))).toBe(
+      true,
+    );
+
+    // Now inject a STALE `terminal.event` for the stable runId from the
+    // OLD child (cohort A). The OLD pump (still alive on A's iterator)
+    // picks it up. `pumpUpstreamControl` notifies the broadcaster it
+    // captured at pump-start — cohort A's, which the recycle disposed —
+    // so the notify drops and cohort B's listener is untouched.
+    const readsBeforeStale = childA.c2s.readCount();
+    await senderA.send({
+      type: "terminal.event",
+      data: {
+        runId: bindings.anchorRunId,
+        kind: "RunCompleted",
+        seq: 0,
+        at: "stale-from-cohort-A",
+      },
+    });
+
+    // The assertion below is that the stale frame changed nothing, which is
+    // only worth making once the old pump has actually read it. The stream
+    // reports the read, so that is the wait; a pause would have let the
+    // assertion run against a frame still sitting in the buffer, where
+    // "nothing happened" is true for the wrong reason.
+    await childA.c2s.awaitReadCount(readsBeforeStale + 1);
+
+    // Under unified dispatch markConsumed is gated on
+    // waitForRunTerminalOrPark.  The stale terminal.event from cohort A
+    // is routed to cohort A's own broadcaster (captured at pump-start
+    // time), NOT cohort B's, so it does NOT resolve cohort B's wait.
+    // The message therefore stays in processing/ until cohort B sends a
+    // real terminal event.
+    expect(consumedRecord).not.toContain(TEST_MESSAGE_ID);
+
+    // Settle the run legitimately from cohort B under the stable runId.
+    await senderB.send({
+      type: "terminal.event",
+      data: {
+        runId: bindings.anchorRunId,
+        kind: "RunCompleted",
+        seq: 0,
+        at: "real-from-cohort-B",
+      },
+    });
+
+    // The real terminal event from cohort B resolves
+    // waitForRunTerminalOrPark, allowing markConsumed to run.
+    await consumedChanges.until(() => consumedRecord.includes(TEST_MESSAGE_ID));
+    expect(consumedRecord).toContain(TEST_MESSAGE_ID);
+
+    childA.c2s.close();
+    await supervisor.shutdown();
+  });
+});

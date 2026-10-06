@@ -1,0 +1,26 @@
+{
+  "name": "@corbits/triage-workflows",
+  "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "module": "src/pr-triage.ts",
+  "interchange": {
+    "workflow": "./src/pr-triage.ts",
+    "directors": "./src/directors.ts",
+    "workflows": {
+      "pr-triage": "./src/pr-triage.ts",
+      "pr-triage-historical": "./src/pr-triage-historical.ts"
+    }
+  },
+  "scripts": {},
+  "dependencies": {
+    "@corbits/github-tool": "workspace:*",
+    "@corbits/rule-packs": "workspace:*",
+    "@corbits/triage-contracts": "workspace:*",
+    "@intx/agent": "workspace:*",
+    "@intx/workflow": "workspace:*",
+    "hono": "^4.11.9",
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:"
+  }
+}

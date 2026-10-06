@@ -1,0 +1,159 @@
+import { describe, test, expect } from "bun:test";
+import { type } from "arktype";
+import {
+  SUPPORT_MATRIX,
+  SupportEntry,
+  STRUCTURED_OUTPUT_CAPABILITIES,
+  assertNotesDiscipline,
+  getSessionDir,
+} from "./support-matrix";
+
+describe("SUPPORT_MATRIX validation", () => {
+  test("every entry parses as a SupportEntry", () => {
+    for (const entry of SUPPORT_MATRIX) {
+      const result = SupportEntry(entry);
+      expect(result instanceof type.errors).toBe(false);
+    }
+  });
+
+  test("contains at least 22 google-genai captured entries", () => {
+    const count = SUPPORT_MATRIX.filter(
+      (entry) =>
+        entry.provider === "google-genai" && entry.outcome === "captured",
+    ).length;
+    expect(count).toBeGreaterThanOrEqual(22);
+  });
+
+  test("contains at least 33 opencode-zen captured entries", () => {
+    const count = SUPPORT_MATRIX.filter(
+      (entry) =>
+        entry.provider === "opencode-zen" && entry.outcome === "captured",
+    ).length;
+    expect(count).toBeGreaterThanOrEqual(33);
+  });
+
+  test("contains at least one non-captured opencode-zen entry with notes", () => {
+    const nonCaptured = SUPPORT_MATRIX.filter(
+      (entry) =>
+        entry.provider === "opencode-zen" && entry.outcome !== "captured",
+    );
+    expect(nonCaptured.length).toBeGreaterThanOrEqual(1);
+    for (const entry of nonCaptured) {
+      expect(typeof entry.notes).toBe("string");
+      expect((entry.notes ?? "").length).toBeGreaterThan(0);
+    }
+  });
+
+  test("no duplicate (provider, model, capability) triples", () => {
+    const seen = new Set<string>();
+    for (const entry of SUPPORT_MATRIX) {
+      const key = `${entry.provider}|${entry.model}|${entry.capability}`;
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+    }
+  });
+});
+
+describe("assertNotesDiscipline", () => {
+  const base = {
+    provider: "opencode-zen",
+    model: "kimi-k3",
+    capability: "plain-text",
+  } as const;
+
+  const deviations = [
+    "misled",
+    "unsupported",
+    "refused",
+    "http-error",
+  ] as const;
+
+  test("accepts a captured row with no notes", () => {
+    expect(() =>
+      assertNotesDiscipline({ ...base, outcome: "captured" }),
+    ).not.toThrow();
+  });
+
+  test("rejects a captured row that carries notes", () => {
+    expect(() =>
+      assertNotesDiscipline({ ...base, outcome: "captured", notes: "oops" }),
+    ).toThrow(/must not carry notes/);
+  });
+
+  test("accepts every deviation outcome with a non-empty note", () => {
+    for (const outcome of deviations) {
+      expect(() =>
+        assertNotesDiscipline({ ...base, outcome, notes: "explained" }),
+      ).not.toThrow();
+    }
+  });
+
+  test("rejects a deviation outcome with no notes", () => {
+    for (const outcome of deviations) {
+      expect(() => assertNotesDiscipline({ ...base, outcome })).toThrow(
+        /requires a non-empty notes/,
+      );
+    }
+  });
+
+  test("rejects a deviation outcome with blank notes", () => {
+    expect(() =>
+      assertNotesDiscipline({ ...base, outcome: "unsupported", notes: "   " }),
+    ).toThrow(/requires a non-empty notes/);
+  });
+});
+
+describe("STRUCTURED_OUTPUT_CAPABILITIES", () => {
+  // Pins the shared constant's exact membership so that adding a member fails
+  // here loudly rather than silently fanning an extra row across every model
+  // that references it.
+  test("is exactly the two structured-output capabilities", () => {
+    expect(STRUCTURED_OUTPUT_CAPABILITIES).toEqual([
+      "structured-output",
+      "structured-output-streaming",
+    ]);
+  });
+});
+
+describe("getSessionDir", () => {
+  test("composes the anthropic package sessions path for a captured entry", () => {
+    const entry = SUPPORT_MATRIX.find(
+      (e) => e.provider === "anthropic" && e.outcome === "captured",
+    );
+    expect(entry).toBeDefined();
+    if (entry === undefined) return;
+    expect(getSessionDir(entry)).toBe(
+      `packages/inference-discovery-anthropic/sessions/anthropic/${entry.model}/${entry.capability}`,
+    );
+  });
+
+  test("composes the openai package sessions path for a captured opencode-zen entry", () => {
+    const entry = SUPPORT_MATRIX.find(
+      (e) => e.provider === "opencode-zen" && e.outcome === "captured",
+    );
+    expect(entry).toBeDefined();
+    if (entry === undefined) return;
+    expect(getSessionDir(entry)).toBe(
+      `packages/inference-discovery-openai/sessions/opencode-zen/${entry.model}/${entry.capability}`,
+    );
+  });
+
+  test("returns null for an entry without a fixture", () => {
+    const noFixture = SUPPORT_MATRIX.find(
+      (e) => e.outcome !== "captured" && e.outcome !== "misled",
+    );
+    expect(noFixture).toBeDefined();
+    if (noFixture === undefined) return;
+    expect(getSessionDir(noFixture)).toBeNull();
+  });
+
+  test("throws for a fixture-bearing entry whose provider has no root", () => {
+    const entry: SupportEntry = {
+      provider: "made-up-provider",
+      model: "some-model",
+      capability: "plain-text",
+      outcome: "captured",
+    };
+    expect(() => getSessionDir(entry)).toThrow(/no session root/);
+  });
+});

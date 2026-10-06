@@ -1,0 +1,664 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1771377177003,
+      "tag": "0000_brown_wither",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1771454692193,
+      "tag": "0001_white_aqueduct",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771459003764,
+      "tag": "0002_clever_falcon",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771541707112,
+      "tag": "0003_stiff_tyrannus",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771630000000,
+      "tag": "0004_rename_capability_to_offering",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1771630000000,
+      "tag": "0005_gigantic_cardiac",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771630000001,
+      "tag": "0006_sidecar",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1771630000002,
+      "tag": "0007_agent_running_session",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1771630000003,
+      "tag": "0008_session",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1771630000004,
+      "tag": "0009_session_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1771630000005,
+      "tag": "0010_agent_sidecar_pubkey",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776890951476,
+      "tag": "0011_session_message_from",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776909616212,
+      "tag": "0012_agent_instance",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1776917900630,
+      "tag": "0013_instance_session_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1776921400366,
+      "tag": "0014_drop_agent_runtime_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1776930080691,
+      "tag": "0015_add_instance_id_to_session_message",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1777049455797,
+      "tag": "0016_jazzy_gamma_corps",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1777050475351,
+      "tag": "0017_hesitant_marvex",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1777053065460,
+      "tag": "0018_natural_sinister_six",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1777180800000,
+      "tag": "0019_rename_grant_source_to_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1777085874297,
+      "tag": "0020_add_agent_role",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1777228941707,
+      "tag": "0021_acoustic_ozymandias",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1777229396694,
+      "tag": "0022_material_sleepwalker",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1777235039207,
+      "tag": "0023_flawless_scarlet_witch",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1780344351218,
+      "tag": "0024_bumpy_sharon_ventura",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1780357614241,
+      "tag": "0025_curvy_firestar",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780358149943,
+      "tag": "0026_keen_ultimo",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1780377246076,
+      "tag": "0027_git_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1780502952568,
+      "tag": "0028_wet_sugar_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1780694869983,
+      "tag": "0029_loose_warlock",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1780899731435,
+      "tag": "0030_session_asset_audit_split",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1781823077761,
+      "tag": "0031_gigantic_nicolaos",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781837038055,
+      "tag": "0032_lethal_misty_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1781838311284,
+      "tag": "0033_old_payback",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1782164862412,
+      "tag": "0034_sleepy_songbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1783373028980,
+      "tag": "0035_violet_giant_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1783998502613,
+      "tag": "0036_sharp_the_executioner",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1784193583232,
+      "tag": "0037_credential_use_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784229989017,
+      "tag": "0038_chilly_blacklash",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1784262044343,
+      "tag": "0039_quick_carnage",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1784290369159,
+      "tag": "0040_reshape_approval_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1784291992954,
+      "tag": "0041_make_approval_timeout_at_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1784385053475,
+      "tag": "0042_youthful_mantis",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1784574028729,
+      "tag": "0043_signal_correlation_deployment_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1784647908094,
+      "tag": "0044_model_offering_quirks",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1784683821134,
+      "tag": "0045_create_workflow_run",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1784685004809,
+      "tag": "0046_approval_signal_correlation_run_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1784837465838,
+      "tag": "0047_create_workflow_definition",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1784843439588,
+      "tag": "0048_workflow_definition_origin_agent_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1784874344480,
+      "tag": "0049_curly_omega_flight",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1784900369564,
+      "tag": "0050_late_crystal",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1784904262816,
+      "tag": "0051_funny_madelyne_pryor",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1784930942498,
+      "tag": "0052_drop_inference_turn_instance_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1784937859340,
+      "tag": "0053_session_mail_session_id_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1784954863099,
+      "tag": "0054_rekey_instance_grants_to_workflow_run",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1785022747684,
+      "tag": "0055_backfill_anchor_workflow_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1785077765166,
+      "tag": "0056_repoint_deployment_fks_to_anchor_run",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1785081029417,
+      "tag": "0057_drop_workflow_deployment_projection",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1785085643398,
+      "tag": "0058_repoint_offering_fk_to_definition",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1785087256544,
+      "tag": "0059_repoint_transaction_fk_to_run",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1785089581427,
+      "tag": "0060_drop_session_mail_instance_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1785089702623,
+      "tag": "0061_drop_session_asset_instance_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1785165557463,
+      "tag": "0062_drop_agent_asset_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1785167954461,
+      "tag": "0063_repoint_agent_role_fk_to_definition",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1785169484868,
+      "tag": "0064_repoint_agent_session_fk_to_definition",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1785179839765,
+      "tag": "0065_add_workflow_definition_model_requirements",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1785280000000,
+      "tag": "0066_rekey_agent_definition_principals_to_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1785400000000,
+      "tag": "0067_add_workflow_definition_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1785500000000,
+      "tag": "0068_drop_agent_tables_and_origin_agent_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1785337102704,
+      "tag": "0069_drop_workflow_definition_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1785519721882,
+      "tag": "0070_flashy_proteus",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1785788422511,
+      "tag": "0072_add_workflow_definition_credential_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1785791424774,
+      "tag": "0073_grant_target_exactly_one_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1785884353793,
+      "tag": "0074_add_provider_api_base_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1786055554289,
+      "tag": "0075_workflow_run_launch_spec",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1786055582673,
+      "tag": "0076_sidecar_allocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1786055601046,
+      "tag": "0077_workflow_run_dispatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1786055642946,
+      "tag": "0078_workflow_run_dispatch_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1786480852752,
+      "tag": "0079_rename_workflow_run_deployment_id_to_anchor_run_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1786481000000,
+      "tag": "0080_rename_correlation_approval_deployment_id_to_anchor_run_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1786665226312,
+      "tag": "0081_workflow_definition_content_hash_and_approved_wire_hash",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1787066175571,
+      "tag": "0082_blue_black_queen",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1787096121244,
+      "tag": "0083_replace_launch_spec_snapshot_with_frozen_bundle",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1787169492000,
+      "tag": "0084_delete_orphaned_credential_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1787528583748,
+      "tag": "0085_add_approval_run_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1788412751293,
+      "tag": "0086_cool_human_cannonball",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1787862143742,
+      "tag": "0087_drop_sidecar_placement",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1788200236163,
+      "tag": "0088_thick_sprite",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1788617577404,
+      "tag": "0089_tense_selene",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1788736070428,
+      "tag": "0090_tenant_domain_lower_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1788849155396,
+      "tag": "0091_workflow_run_dispatch_sender_address",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1788967084060,
+      "tag": "0092_sidecar_destroy_failed",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1789466440782,
+      "tag": "0093_sidecar_initialization",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1790350152048,
+      "tag": "0094_dark_old_lace",
+      "breakpoints": true
+    }
+  ]
+}

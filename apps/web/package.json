@@ -1,0 +1,35 @@
+{
+  "name": "@corbits/web",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "description": "Corbits Triage portal (Vite + React + React Router, GPL-2.0-only). The browser talks to Interchange through @intx/hub-client.",
+  "type": "module",
+  "scripts": {
+    "dev": "bun scripts/build-workflows.ts && vite",
+    "build": "bun scripts/build-workflows.ts && tsc -b && vite build",
+    "preview": "vite preview",
+    "workflows": "bun scripts/build-workflows.ts"
+  },
+  "dependencies": {
+    "@corbits/triage-contracts": "workspace:*",
+    "@intx/hub-client": "workspace:*",
+    "@isomorphic-git/lightning-fs": "^4.10.3",
+    "@tanstack/react-query": "^5.80.7",
+    "arktype": "catalog:",
+    "buffer": "^6.0.3",
+    "isomorphic-git": "catalog:",
+    "lucide-react": "^1.52.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "~5.9.3",
+    "vite": "^6.3.5"
+  }
+}

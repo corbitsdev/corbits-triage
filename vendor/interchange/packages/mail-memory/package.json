@@ -1,0 +1,31 @@
+{
+  "name": "@intx/mail-memory",
+  "description": "In-memory MessageTransport for single-process and test environments",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@intx/crypto": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/mailbox": "workspace:*",
+    "@intx/mime": "workspace:*",
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

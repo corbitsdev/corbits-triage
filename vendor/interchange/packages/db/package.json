@@ -1,0 +1,42 @@
+{
+  "name": "@intx/db",
+  "description": "Client, schema, migrations, and row parsers for the hub's PostgreSQL database",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "intx-src": "./src/schema/index.ts",
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    }
+  },
+  "dependencies": {
+    "@intx/authz": "workspace:*",
+    "@intx/crypto": "workspace:*",
+    "@intx/hub-common": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:",
+    "drizzle-orm": "catalog:",
+    "postgres": "catalog:"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.9"
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

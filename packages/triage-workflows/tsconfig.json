@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "customConditions": ["intx-src"],
+    "paths": {
+      "@corbits/rule-packs": ["../rule-packs/src/index.ts"],
+      "@corbits/triage-contracts": ["../triage-contracts/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

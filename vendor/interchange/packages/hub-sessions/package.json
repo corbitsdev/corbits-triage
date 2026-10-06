@@ -1,0 +1,46 @@
+{
+  "name": "@intx/hub-sessions",
+  "description": "Session-orchestration substrate for the hub: sidecar router, session, and asset services",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./substrate": {
+      "intx-src": "./src/substrate.ts",
+      "types": "./dist/substrate.d.ts",
+      "default": "./dist/substrate.js"
+    }
+  },
+  "dependencies": {
+    "@intx/agent": "workspace:*",
+    "@intx/crypto": "workspace:*",
+    "@intx/db": "workspace:*",
+    "@intx/hub-common": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/mime": "workspace:*",
+    "@intx/pack-transport": "workspace:*",
+    "@intx/storage-isogit": "workspace:*",
+    "@intx/tool-packaging": "workspace:*",
+    "@intx/types": "workspace:*",
+    "@intx/workflow": "workspace:*",
+    "@intx/workflow-deploy": "workspace:*",
+    "arktype": "catalog:",
+    "drizzle-orm": "catalog:",
+    "isomorphic-git": "catalog:",
+    "tar": "catalog:"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

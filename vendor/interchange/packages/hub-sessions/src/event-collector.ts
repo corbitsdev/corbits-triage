@@ -1,0 +1,485 @@
+// Persists assistant inference turns from the InferenceEvent stream.
+//
+// One collector per active session. Events are written eagerly to the DB
+// so data survives crashes. The collector does not block the websocket
+// message loop — callers should fire-and-forget and log errors.
+
+import { eq } from "drizzle-orm";
+
+import { inferenceTurn, turnPart } from "@intx/db/schema";
+import { getLogger } from "@intx/log";
+import type {
+  InferenceEvent,
+  ContentBlock,
+  TokenUsage,
+  LastCycleSource,
+} from "@intx/types/runtime";
+import { type DB, parseTurnPartType } from "@intx/db";
+
+import { generateId } from "@intx/hub-common";
+
+const log = getLogger(["hub", "event-collector"]);
+
+export type TurnToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+  result: string;
+  isError: boolean;
+};
+
+export type TurnFinalized = {
+  turnId: string;
+  status: "completed" | "failed";
+  text: string;
+  hadReply: boolean;
+  hadError: boolean;
+  errors: { category: string; message: string }[];
+  toolCalls: TurnToolCall[];
+  toolErrors: { name: string; content: string }[];
+};
+
+// Per-turn token usage, emitted once when a turn finalizes. Carries full run
+// identity so a host accounting sink never has to join against a separate
+// address-to-tenant map (which would go stale at run teardown).
+export type TurnUsage = {
+  tenantId: string;
+  sessionId: string;
+  runId: string;
+  turnId: string;
+  provider: string;
+  model: string;
+  usage: TokenUsage;
+};
+
+export type EventCollector = {
+  onEvent(event: InferenceEvent): Promise<void>;
+  abandon(): Promise<void>;
+  getAccumulatedText(): string;
+  getCurrentTurnId(): string | null;
+  getLastTurnId(): string | null;
+};
+
+export type EventCollectorConfig = {
+  db: DB["db"];
+  sessionId: string;
+  runId: string;
+  tenantId: string;
+  onTurnFinalized?: (turn: TurnFinalized) => void;
+  onUsage?: (usage: TurnUsage) => void;
+};
+
+export function createEventCollector(
+  config: EventCollectorConfig,
+): EventCollector {
+  const { db, sessionId, runId, tenantId, onTurnFinalized, onUsage } = config;
+
+  // Current inference turn being accumulated. A new turn is created on each
+  // inference.start. Finalized on connector.reply, reactor.done,
+  // reactor.error (fatal), or abandon. Null when no turn is active.
+  let currentTurnId: string | null = null;
+  // Most recent turn ID, set in beginTurn. Unlike currentTurnId this is NOT
+  // cleared on finalization — the SSE replay endpoint needs the turn ID
+  // after the turn commits but before the collector is removed.
+  let lastTurnId: string | null = null;
+  let ordinal = 0;
+  // Prevents double-finalization when reactor.done and abandon() race.
+  let finalized = false;
+  // Set when inference.error fires so connector.reply knows to persist its
+  // content (on normal turns, inference.done already persisted the text).
+  let pendingError = false;
+  // Accumulated visible text content for the current turn. Only text blocks
+  // from inference.done (not thinking/reasoning) are included. Reset on each
+  // new turn.
+  let accumulatedText = "";
+  // In-progress text from inference.text.delta events during the current
+  // inference step. Reset on inference.done (when accumulatedText takes over).
+  let streamingText = "";
+  // Set when inference.error fires. Unlike pendingError (which resets on
+  // connector.reply), this persists until finalization so the callback can
+  // report whether an inference error occurred during the turn.
+  let turnHadError = false;
+  // Structured error details accumulated during the turn for inclusion in
+  // TurnFinalized. Reset on each new turn.
+  let accumulatedErrors: { category: string; message: string }[] = [];
+  // Maps tool call IDs to tool names for correlating tool results with their
+  // originating calls. Populated from inference.done tool_call blocks.
+  const callNames = new Map<string, string>();
+  const callArgs = new Map<string, Record<string, unknown>>();
+  // Tool calls accumulated for TurnFinalized.
+  let accumulatedToolCalls: TurnToolCall[] = [];
+  // Tool results that reported isError, accumulated for TurnFinalized.
+  let accumulatedToolErrors: { name: string; content: string }[] = [];
+  // Final cumulative token usage for the current turn. `inference.usage` events
+  // carry a running cumulative total and fire multiple times per step, so these
+  // are OVERWRITTEN (not summed); the last value before finalize is the
+  // authoritative per-turn total. Both reset on each new turn.
+  let turnUsage: TokenUsage | null = null;
+  let turnSource: LastCycleSource | null = null;
+
+  async function onEvent(event: InferenceEvent): Promise<void> {
+    switch (event.type) {
+      case "inference.start":
+        await beginTurn(event.data.model);
+        await insertPart("step-start", null, { model: event.data.model });
+        break;
+      case "inference.text.delta":
+        streamingText += event.data.token;
+        break;
+      case "inference.done":
+        await handleInferenceDone(event.data.turn.content);
+        streamingText = "";
+        turnUsage = event.data.usage;
+        turnSource = event.data.source;
+        break;
+      case "tool.done": {
+        const callId = event.data.result.callId;
+        const isError = event.data.result.isError ?? false;
+        await insertPart("tool", null, {
+          kind: "result",
+          callId,
+          content: event.data.result.content,
+          isError,
+        });
+        const name = callNames.get(callId) ?? callId;
+        const raw = event.data.result.content;
+        const content = typeof raw === "string" ? raw : JSON.stringify(raw);
+        accumulatedToolCalls.push({
+          name,
+          arguments: callArgs.get(callId) ?? {},
+          result: content,
+          isError,
+        });
+        if (isError) {
+          accumulatedToolErrors.push({ name, content });
+        }
+        break;
+      }
+      case "inference.error":
+        pendingError = true;
+        turnHadError = true;
+        await insertPart("error", event.data.error.message, {
+          category: event.data.error.category,
+          ...(event.data.error.statusCode !== undefined
+            ? { statusCode: event.data.error.statusCode }
+            : {}),
+        });
+        accumulatedErrors.push({
+          category: event.data.error.category,
+          message: event.data.error.message,
+        });
+        break;
+      case "connector.reply":
+        if (finalized) break;
+        // Only persist reply content when it originated from an error path.
+        // On normal turns inference.done already persisted the text parts.
+        if (pendingError) {
+          accumulatedText += event.data.content;
+          await insertPart("text", event.data.content, null);
+          pendingError = false;
+        }
+        await finalizeTurn(turnHadError ? "failed" : "completed", true, true);
+        break;
+      case "reactor.done":
+        await finalizeTurn("completed", true, false);
+        break;
+      case "reactor.error":
+        if (event.data.fatal && !finalized) {
+          // The reactor failed before any inference started (e.g., context
+          // store load failure), but the user needs to see why their agent
+          // failed, and without a turn there is no container for the error.
+          if (currentTurnId === null) {
+            await beginTurn("unknown");
+          }
+          turnHadError = true;
+          // Push after beginTurn so the error survives the array reset.
+          accumulatedErrors.push({
+            category: "reactor_error",
+            message: event.data.error,
+          });
+          await insertPart("error", event.data.error, {
+            category: "reactor_error",
+          });
+          await finalizeTurn("failed", true, false);
+        } else if (!event.data.fatal && !finalized) {
+          if (currentTurnId === null) {
+            await beginTurn("unknown");
+          }
+          turnHadError = true;
+          accumulatedErrors.push({
+            category: "reactor_error",
+            message: event.data.error,
+          });
+          await insertPart("error", event.data.error, {
+            category: "reactor_error",
+          });
+        }
+        break;
+      case "inference.usage":
+        // Cumulative running total that fires several times per step; overwrite
+        // so the last value before finalize is the authoritative per-turn
+        // usage, emitted once via onUsage from finalizeTurn.
+        turnUsage = event.data.usage;
+        turnSource = event.data.source;
+        break;
+      default:
+        // reactor.start, streaming deltas, and other events are not persisted.
+        break;
+    }
+  }
+
+  async function beginTurn(model: string): Promise<void> {
+    // A previous turn is still open — this is normal in multi-step tool-use
+    // loops where inference.start fires again after tools return.
+    if (currentTurnId !== null && !finalized) {
+      await finalizeTurn("completed", true, false);
+    }
+
+    currentTurnId = generateId("inferenceTurn");
+    lastTurnId = currentTurnId;
+    ordinal = 0;
+    finalized = false;
+    pendingError = false;
+    accumulatedText = "";
+    streamingText = "";
+    turnHadError = false;
+    accumulatedErrors = [];
+    callNames.clear();
+    callArgs.clear();
+    accumulatedToolCalls = [];
+    accumulatedToolErrors = [];
+    turnUsage = null;
+    turnSource = null;
+
+    await db.insert(inferenceTurn).values({
+      id: currentTurnId,
+      sessionId,
+      runId,
+      tenantId,
+      model,
+      status: "running",
+      startedAt: new Date(),
+    });
+  }
+
+  async function handleInferenceDone(content: ContentBlock[]): Promise<void> {
+    for (const block of content) {
+      switch (block.type) {
+        case "text":
+          accumulatedText += block.text;
+          await insertPart("text", block.text, null);
+          break;
+        case "thinking":
+          await insertPart("reasoning", block.thinking, null);
+          break;
+        case "redacted_thinking":
+          // The opaque `data` blob is meaningless to humans and
+          // must be preserved verbatim for echo-back on follow-up
+          // turns; persisting it as a reasoning row would invite
+          // truncation or display. Skip and let the adapter layer
+          // own the round-trip.
+          break;
+        case "refusal":
+          // Refusal blocks carry human-readable text the model
+          // emitted when it declined a structured-output request.
+          // A dedicated `refusal` part kind keeps the signal
+          // distinct from ordinary `text` (the model produced
+          // schema-conformant content) and from `error` (the HTTP
+          // call failed or the protocol mismatched). Session
+          // readers can branch on the part type to render policy
+          // declines differently from regular assistant output.
+          await insertPart("refusal", block.reason, null);
+          break;
+        case "safety_rating":
+          // Structured safety signals (e.g. Gemini
+          // promptFeedback.blockReason). Persist the reason under a
+          // dedicated part kind so a blocked turn is not empty in
+          // the audit trail. Content is the provider-native reason
+          // string (observed: PROHIBITED_CONTENT).
+          await insertPart("safety_rating", block.blockReason, null);
+          break;
+        case "tool_call":
+          callNames.set(block.id, block.name);
+          callArgs.set(block.id, block.arguments);
+          await insertPart("tool", null, {
+            kind: "call",
+            callId: block.id,
+            name: block.name,
+            arguments: block.arguments,
+          });
+          break;
+        case "tool_result":
+          // Tool results in the content block are echoes of earlier
+          // tool.done events. Skip to avoid duplication.
+          break;
+        case "citation":
+          // Citations annotate model output by reference (URI or
+          // document index). Persistence semantics — whether the
+          // cited source warrants an audit row of its own — are not
+          // yet settled; skip until they are.
+          break;
+        case "code_execution_request":
+        case "code_execution_result":
+          // Server-side code execution requests and results.
+          // Persistence semantics — whether the code and its output
+          // warrant audit rows of their own, and how to relate the
+          // pair through the requestId back-pointer — are not yet
+          // settled; skip until they are.
+          break;
+        case "image":
+        case "audio":
+        case "video":
+        case "document": {
+          // All media block variants persist into the generic "file"
+          // part bucket. The block's own `type` distinguishes the
+          // semantic role; `mimeType` distinguishes the encoding; the
+          // MediaSource discriminant distinguishes inline vs reference.
+          const source = block.source;
+          if (source.kind === "base64") {
+            await insertPart("file", null, {
+              kind: "base64",
+              mimeType: source.mimeType,
+              dataLength: source.data.length,
+            });
+          } else if (source.kind === "file-reference") {
+            await insertPart("file", null, {
+              kind: "file-reference",
+              mimeType: source.mimeType,
+              reference: source.reference,
+            });
+          } else if (source.kind === "url") {
+            // The `url` MediaSource variant carries a self-contained
+            // dereferenceable HTTP(S) URL (Gemini accepts these in
+            // `fileData/fileUri`; other adapters route similarly).
+            // The session record keeps the URL on a distinct `url`
+            // field rather than reusing the `reference` slot that
+            // `file-reference` uses: a session reader that filters
+            // or joins on `metadata->>'reference'` should see
+            // provider-opaque file ids only, with public URLs
+            // surfaced under their own field. The discriminant
+            // `kind` is the structural source of truth, and the
+            // field-per-variant shape keeps naive substring queries
+            // honest.
+            await insertPart("file", null, {
+              kind: "url",
+              mimeType: source.mimeType,
+              url: source.url,
+            });
+          } else {
+            source satisfies never;
+            throw new Error(`unreachable: unknown MediaSource kind`);
+          }
+          break;
+        }
+      }
+    }
+
+    // Mark the end of this inference step.
+    await insertPart("step-finish", null, null);
+  }
+
+  async function finalizeTurn(
+    status: "completed" | "failed",
+    notify: boolean,
+    hadReply: boolean,
+  ): Promise<void> {
+    if (currentTurnId === null || finalized) return;
+    finalized = true;
+
+    const turnId = currentTurnId;
+
+    await db
+      .update(inferenceTurn)
+      .set({ status, endedAt: new Date() })
+      .where(eq(inferenceTurn.id, turnId));
+
+    if (notify && onTurnFinalized) {
+      onTurnFinalized({
+        turnId,
+        status,
+        text: accumulatedText,
+        hadReply,
+        hadError: turnHadError,
+        errors: [...accumulatedErrors],
+        toolCalls: [...accumulatedToolCalls],
+        toolErrors: [...accumulatedToolErrors],
+      });
+    }
+
+    // Report per-turn usage once, alongside the finalize notify. Gated on
+    // turnUsage being present so a turn that ran no inference emits nothing.
+    // NOTE: abandon() finalizes with notify=false, so a turn abandoned
+    // mid-step (e.g. a sidecar disconnect) reports no usage even if the
+    // provider already billed input tokens -- an accepted gap until durable
+    // usage persistence lands on the turn row.
+    if (notify && onUsage && turnUsage !== null && turnSource !== null) {
+      onUsage({
+        tenantId,
+        sessionId,
+        runId,
+        turnId,
+        provider: turnSource.provider,
+        model: turnSource.model,
+        usage: turnUsage,
+      });
+    }
+
+    currentTurnId = null;
+  }
+
+  async function abandon(): Promise<void> {
+    if (currentTurnId === null || finalized) return;
+
+    log.warn`Abandoning running turn ${currentTurnId} for session ${sessionId}`;
+
+    await finalizeTurn("failed", false, false);
+  }
+
+  async function insertPart(
+    partType: string,
+    content: string | null,
+    metadata: Record<string, unknown> | null,
+  ): Promise<void> {
+    if (currentTurnId === null) {
+      log.warn`Dropping ${partType} part: no active turn for session ${sessionId}`;
+      return;
+    }
+
+    const values: typeof turnPart.$inferInsert = {
+      id: generateId("turnPart"),
+      turnId: currentTurnId,
+      sessionId,
+      type: parseTurnPartType(partType),
+      ordinal: ordinal++,
+    };
+
+    if (content !== null) {
+      values.content = content;
+    }
+
+    if (metadata !== null) {
+      values.metadata = metadata;
+    }
+
+    await db.insert(turnPart).values(values);
+  }
+
+  function getAccumulatedText(): string {
+    return accumulatedText + streamingText;
+  }
+
+  function getCurrentTurnId(): string | null {
+    return currentTurnId;
+  }
+
+  function getLastTurnId(): string | null {
+    return lastTurnId;
+  }
+
+  return {
+    onEvent,
+    abandon,
+    getAccumulatedText,
+    getCurrentTurnId,
+    getLastTurnId,
+  };
+}

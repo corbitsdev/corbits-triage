@@ -1,0 +1,888 @@
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import git from "isomorphic-git";
+import { type } from "arktype";
+import { generateKeyPair } from "@intx/crypto";
+import { collectReachableObjects } from "@intx/storage-isogit/node";
+import type { KeyPair } from "@intx/types/runtime";
+import {
+  workflowKindHandler,
+  workflowAuthorize,
+  workflowDefinitionEnvelopeSchema,
+  WORKFLOW_JSON_PATH,
+  CAPABILITY_DECLARATIONS_JSON_PATH,
+  PACKAGE_JSON_PATH,
+  NODE_MODULES_PATH,
+  PNPM_WORKSPACE_PATH,
+} from "./workflow-kind";
+import { createRepoStore } from "./repo-store";
+import type {
+  KindHandler,
+  Principal,
+  RepoId,
+  ValidatePushResult,
+} from "./repo-store";
+
+const REF = "refs/heads/main";
+
+const HUB_PRINCIPAL: Principal = { kind: "hub" };
+const noPriorBlob = async (): Promise<Uint8Array | null> => null;
+const noPriorDir = async (): Promise<string[]> => [];
+
+function makeReadBlob(
+  files: Record<string, string>,
+): (path: string) => Promise<Uint8Array> {
+  return async (path) => {
+    const body = files[path];
+    if (body === undefined) {
+      throw new Error(`readBlob: ${path} not found`);
+    }
+    return new TextEncoder().encode(body);
+  };
+}
+
+function makeListDir(
+  files: Record<string, string>,
+): (path: string) => Promise<string[]> {
+  return async (path) => {
+    const prefix = path === "" ? "" : `${path}/`;
+    const names = new Set<string>();
+    for (const p of Object.keys(files)) {
+      if (prefix !== "" && !p.startsWith(prefix)) continue;
+      const rest = p.slice(prefix.length);
+      if (rest.length === 0) continue;
+      const slash = rest.indexOf("/");
+      names.add(slash === -1 ? rest : rest.substring(0, slash));
+    }
+    return Array.from(names);
+  };
+}
+
+function uniqueRepoId(prefix: string): RepoId {
+  const id = `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+  return { kind: "workflow", id };
+}
+
+function validWorkflowJSON(): string {
+  return JSON.stringify({
+    id: "my-workflow",
+    triggers: [{ type: "manual" }],
+    steps: {
+      first: { kind: "step", id: "first" },
+    },
+    stepOrder: ["first"],
+  });
+}
+
+describe("workflowKindHandler.validatePush", () => {
+  test("rejects a tree with no package.json", async () => {
+    const repoId = uniqueRepoId("no-pkg");
+    const files = {
+      ".gitignore": "",
+    };
+    const result = await workflowKindHandler.validatePush({
+      repoId,
+      ref: REF,
+      topLevelTreePaths: [".gitignore"],
+      readBlob: makeReadBlob(files),
+      listDir: makeListDir(files),
+      principal: HUB_PRINCIPAL,
+      priorReadBlob: noPriorBlob,
+      priorListDir: noPriorDir,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(
+      /must be a codebase declaring a package\.json/,
+    );
+  });
+
+  test("rejects a legacy workflow.json envelope tree", async () => {
+    const repoId = uniqueRepoId("legacy-envelope");
+    const files = {
+      [WORKFLOW_JSON_PATH]: validWorkflowJSON(),
+      [CAPABILITY_DECLARATIONS_JSON_PATH]: JSON.stringify({ declarations: [] }),
+    };
+    const result = await workflowKindHandler.validatePush({
+      repoId,
+      ref: REF,
+      topLevelTreePaths: [
+        WORKFLOW_JSON_PATH,
+        CAPABILITY_DECLARATIONS_JSON_PATH,
+      ],
+      readBlob: makeReadBlob(files),
+      listDir: makeListDir(files),
+      principal: HUB_PRINCIPAL,
+      priorReadBlob: noPriorBlob,
+      priorListDir: noPriorDir,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(
+      /workflow\.json envelope form is no longer supported/,
+    );
+  });
+});
+
+describe("workflowDefinitionEnvelopeSchema", () => {
+  // What declaring `grantRequirements` on the envelope buys is VALIDATION,
+  // not field survival. `.onUndeclaredKey("ignore")` is passthrough, so an
+  // undeclared field would survive the read regardless; only the declaration
+  // makes a malformed requirement fail at the deploy boundary. These tests
+  // assert that validation property. The rejection test fails if the
+  // `grantRequirements?` line is removed from the schema; a survival test
+  // would pass either way and prove nothing.
+  test("rejects a declared grantRequirement carrying an unknown source", () => {
+    const validated = workflowDefinitionEnvelopeSchema({
+      id: "my-workflow",
+      triggers: [{ type: "manual" }],
+      steps: { first: { kind: "step", id: "first" } },
+      stepOrder: ["first"],
+      grantRequirements: [
+        { resource: "tool:search", action: "invoke", source: "stranger" },
+      ],
+    });
+    expect(validated instanceof type.errors).toBe(true);
+  });
+
+  test("accepts and preserves a well-formed grantRequirement", () => {
+    const blob = {
+      id: "my-workflow",
+      triggers: [{ type: "manual" }],
+      steps: { first: { kind: "step", id: "first" } },
+      stepOrder: ["first"],
+      grantRequirements: [
+        {
+          resource: "credential:openai",
+          action: "use",
+          source: "creator" as const,
+        },
+        {
+          resource: "tool:search",
+          action: "invoke",
+          effect: "ask" as const,
+          source: "invoker" as const,
+        },
+      ],
+    };
+    const validated = workflowDefinitionEnvelopeSchema(blob);
+    if (validated instanceof type.errors) {
+      throw new Error(`unexpected validation error: ${validated.summary}`);
+    }
+    expect(validated.grantRequirements).toEqual(blob.grantRequirements);
+  });
+
+  // Same property for credentialBindings: declaring it on the envelope makes a
+  // malformed binding fail at the deploy boundary. This is the path launch-time
+  // resolution reads bindings back from, so a bad locator/authority must not
+  // pass through unchecked. The rejection test fails if the
+  // `credentialBindings?` line is removed from the schema.
+  test("rejects a declared credentialBinding carrying an unknown authority", () => {
+    const validated = workflowDefinitionEnvelopeSchema({
+      id: "my-workflow",
+      triggers: [{ type: "manual" }],
+      steps: { first: { kind: "step", id: "first" } },
+      stepOrder: ["first"],
+      credentialBindings: [
+        {
+          package: "@acme/tools",
+          handle: "gh",
+          provider: "github",
+          locator: "stranger",
+        },
+      ],
+    });
+    expect(validated instanceof type.errors).toBe(true);
+  });
+
+  test("accepts and preserves a well-formed credentialBinding", () => {
+    const blob = {
+      id: "my-workflow",
+      triggers: [{ type: "manual" }],
+      steps: { first: { kind: "step", id: "first" } },
+      stepOrder: ["first"],
+      credentialBindings: [
+        {
+          package: "@acme/tools",
+          handle: "gh",
+          provider: "github",
+          locator: "tenant" as const,
+        },
+      ],
+    };
+    const validated = workflowDefinitionEnvelopeSchema(blob);
+    if (validated instanceof type.errors) {
+      throw new Error(`unexpected validation error: ${validated.summary}`);
+    }
+    expect(validated.credentialBindings).toEqual(blob.credentialBindings);
+  });
+
+  // Same property for inboundMailPolicy: declaring it on the envelope makes a
+  // malformed policy fail at the deploy boundary. The policy keys on exactly
+  // the four author-controllable outcomes, so an unknown outcome key (a typo or
+  // a non-controllable outcome such as `clean`) must be rejected here rather
+  // than ride through to later admission resolution. The rejection test fails
+  // if the `inboundMailPolicy?` line is removed from the schema.
+  test("rejects a declared inboundMailPolicy carrying an unknown outcome key", () => {
+    const validated = workflowDefinitionEnvelopeSchema({
+      id: "my-workflow",
+      triggers: [{ type: "mail", to: "wf@acme.test" }],
+      steps: { first: { kind: "step", id: "first" } },
+      stepOrder: ["first"],
+      inboundMailPolicy: { clean: "admit" },
+    });
+    expect(validated instanceof type.errors).toBe(true);
+  });
+
+  test("rejects a declared inboundMailPolicy carrying a non reject/admit value", () => {
+    const validated = workflowDefinitionEnvelopeSchema({
+      id: "my-workflow",
+      triggers: [{ type: "mail", to: "wf@acme.test" }],
+      steps: { first: { kind: "step", id: "first" } },
+      stepOrder: ["first"],
+      inboundMailPolicy: { missing: "quarantine" },
+    });
+    expect(validated instanceof type.errors).toBe(true);
+  });
+
+  test("accepts and preserves a well-formed sparse inboundMailPolicy", () => {
+    const blob = {
+      id: "my-workflow",
+      triggers: [{ type: "mail", to: "wf@acme.test" }],
+      steps: { first: { kind: "step", id: "first" } },
+      stepOrder: ["first"],
+      inboundMailPolicy: {
+        untrustedFrom: "admit" as const,
+        missing: "reject" as const,
+      },
+    };
+    const validated = workflowDefinitionEnvelopeSchema(blob);
+    if (validated instanceof type.errors) {
+      throw new Error(`unexpected validation error: ${validated.summary}`);
+    }
+    expect(validated.inboundMailPolicy).toEqual(blob.inboundMailPolicy);
+    // The two unset outcomes stay absent -- the envelope does not populate a
+    // default for an outcome the author omitted.
+    expect(validated.inboundMailPolicy).not.toHaveProperty("invalid");
+    expect(validated.inboundMailPolicy).not.toHaveProperty("unknown");
+  });
+});
+
+describe("workflowKindHandler metadata", () => {
+  test("declares the workflow kind and assets/workflow directory prefix", () => {
+    expect(workflowKindHandler.kind).toBe("workflow");
+    expect(workflowKindHandler.directoryPrefix).toBe("assets/workflow");
+  });
+});
+
+describe("workflowAuthorize", () => {
+  const WORKFLOW_REPO: RepoId = { kind: "workflow", id: "wf-123" };
+  const AGENT_STATE_REPO: RepoId = { kind: "agent-state", id: "wf-123" };
+
+  function farFuture(): number {
+    return Date.now() + 60_000;
+  }
+
+  function userPrincipal(
+    overrides: {
+      effect?: "allow" | "deny";
+      resource?: string;
+      grantVerb?: string;
+      refPattern?: string;
+      actions?: string[];
+      expiresAt?: number;
+    } = {},
+  ): Principal {
+    return {
+      kind: "user",
+      principalId: "user-1",
+      tenantId: "tenant-1",
+      authz: {
+        effect: overrides.effect ?? "allow",
+        resource: overrides.resource ?? "asset:wf-123",
+        grantVerb: overrides.grantVerb ?? "read",
+      },
+      tokenClaims: {
+        refPattern: overrides.refPattern ?? "refs/heads/**",
+        actions: overrides.actions ?? ["createPack", "resolveRef"],
+        expiresAt: overrides.expiresAt ?? farFuture(),
+      },
+    } as Principal;
+  }
+
+  test("rejects calls when repoId.kind is not workflow", () => {
+    const r = workflowAuthorize(
+      { kind: "hub" } as Principal,
+      AGENT_STATE_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/non-workflow repo/);
+  });
+
+  test("hub principal: allowed for every action", () => {
+    for (const action of [
+      "init",
+      "writeTree",
+      "receivePack",
+      "createPack",
+      "resolveRef",
+    ] as const) {
+      const r = workflowAuthorize(
+        { kind: "hub" } as Principal,
+        WORKFLOW_REPO,
+        REF,
+        action,
+      );
+      expect(r.allowed).toBe(true);
+    }
+  });
+
+  test("sidecar principal: createPack / resolveRef allowed", () => {
+    const sidecar = { kind: "sidecar", agentId: "agent-1" } as Principal;
+    expect(
+      workflowAuthorize(sidecar, WORKFLOW_REPO, REF, "createPack").allowed,
+    ).toBe(true);
+    expect(
+      workflowAuthorize(sidecar, WORKFLOW_REPO, REF, "resolveRef").allowed,
+    ).toBe(true);
+  });
+
+  test("sidecar principal: writeTree / receivePack / init denied", () => {
+    const sidecar = { kind: "sidecar", agentId: "agent-1" } as Principal;
+    for (const action of ["init", "writeTree", "receivePack"] as const) {
+      const r = workflowAuthorize(sidecar, WORKFLOW_REPO, REF, action);
+      expect(r.allowed).toBe(false);
+      if (r.allowed) throw new Error("unreachable");
+      expect(r.reason).toMatch(/sidecars may only read workflow assets/);
+    }
+  });
+
+  test("sidecar principal: malformed principal is denied", () => {
+    const malformed = { kind: "sidecar" } as Principal;
+    const r = workflowAuthorize(malformed, WORKFLOW_REPO, REF, "createPack");
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/sidecar principal is malformed/);
+  });
+
+  test("user principal: allowed when claims and verdict agree", () => {
+    const r = workflowAuthorize(
+      userPrincipal(),
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(true);
+  });
+
+  test("user principal: bulk read uses '*' ref and bypasses refPattern check", () => {
+    const r = workflowAuthorize(
+      userPrincipal({ refPattern: "refs/heads/release-*" }),
+      WORKFLOW_REPO,
+      "*",
+      "resolveRef",
+    );
+    expect(r.allowed).toBe(true);
+  });
+
+  test("user principal: malformed principal is denied with structural reason", () => {
+    const badPrincipal = {
+      kind: "user",
+      principalId: "user-1",
+    } as Principal;
+    const r = workflowAuthorize(badPrincipal, WORKFLOW_REPO, REF, "createPack");
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/user principal is malformed/);
+  });
+
+  test("user principal: denied when tokenClaims.actions does not include the requested action", () => {
+    const r = workflowAuthorize(
+      userPrincipal({ actions: ["resolveRef"] }),
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/token does not grant action createPack/);
+  });
+
+  test("user principal: denied when refPattern does not match the requested ref", () => {
+    const r = workflowAuthorize(
+      userPrincipal({ refPattern: "refs/heads/release-*" }),
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/refPattern .* does not match/);
+  });
+
+  test("user principal: denied when the token is expired", () => {
+    const r = workflowAuthorize(
+      userPrincipal({ expiresAt: Date.now() - 1 }),
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/token expired/);
+  });
+
+  test("user principal: denied when verdict.resource targets a different workflow id", () => {
+    const r = workflowAuthorize(
+      userPrincipal({ resource: "asset:other-wf" }),
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/authz verdict resource .* does not match/);
+  });
+
+  test("user principal: denied when verdict.resource has the wrong kind prefix", () => {
+    const r = workflowAuthorize(
+      userPrincipal({ resource: "workflow:wf-123" }),
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/authz verdict resource .* does not match/);
+  });
+
+  test("user principal: denied when verdict.grantVerb does not match the action's verb", () => {
+    const r = workflowAuthorize(
+      userPrincipal({ grantVerb: "write" }),
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/authz verdict grantVerb .* does not match/);
+  });
+
+  test("user principal: denied when verdict effect is deny even though all sanity checks pass", () => {
+    const r = workflowAuthorize(
+      userPrincipal({ effect: "deny" }),
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/authz verdict denied/);
+  });
+
+  test("user principal: write action requires write grantVerb and matching claims", () => {
+    const r = workflowAuthorize(
+      userPrincipal({
+        actions: ["receivePack"],
+        grantVerb: "write",
+      }),
+      WORKFLOW_REPO,
+      REF,
+      "receivePack",
+    );
+    expect(r.allowed).toBe(true);
+  });
+
+  test("unknown principal kind is denied with a generic reason", () => {
+    const r = workflowAuthorize(
+      { kind: "robot" } as Principal,
+      WORKFLOW_REPO,
+      REF,
+      "createPack",
+    );
+    expect(r.allowed).toBe(false);
+    if (r.allowed) throw new Error("unreachable");
+    expect(r.reason).toMatch(/unknown principal kind/);
+  });
+});
+
+// The substrate's `receivePack` walks every new commit in the pack and
+// invokes the kind handler's `validatePush` once per commit, so a tree
+// that fails the workflow codebase validation on an intermediate commit
+// must reject the pack even when the tip is valid. The workflow handler
+// does not consult prior closures — every commit's tree is judged on
+// its own top-level paths. This regression pins that behaviour: the
+// per-commit walk catches an intermediate-state violation at the
+// offending commit, not by accidentally being lenient at the tip.
+describe("workflow per-commit pack walk", () => {
+  const tempDirs: string[] = [];
+  let signingKey: KeyPair;
+
+  beforeAll(async () => {
+    signingKey = await generateKeyPair();
+  });
+
+  afterAll(async () => {
+    for (const d of tempDirs.splice(0)) {
+      await fs.promises
+        .rm(d, { recursive: true, force: true })
+        .catch(() => undefined);
+    }
+  });
+
+  async function makeTempDir(prefix: string): Promise<string> {
+    const d = await fs.promises.mkdtemp(path.join(os.tmpdir(), prefix));
+    tempDirs.push(d);
+    return d;
+  }
+
+  const permissiveHandler: KindHandler = {
+    kind: "workflow",
+    directoryPrefix: "assets/workflow",
+    validatePush(): ValidatePushResult {
+      return { ok: true };
+    },
+    onRefUpdated() {
+      /* no-op */
+    },
+  };
+
+  const PRINCIPAL: Principal = { kind: "hub" };
+  // Push to a non-genesis ref so the source's `initRepo` genesis (on
+  // `refs/heads/main`) does not collide with the test's pack target.
+  // The workflow handler does not gate validation on ref name.
+  const REF = "refs/heads/deploy";
+
+  test("rejects a multi-commit pack whose second commit commits node_modules", async () => {
+    const sourceDataDir = await makeTempDir("workflow-percommit-src-");
+    const sourceStore = createRepoStore({
+      dataDir: sourceDataDir,
+      signingKey,
+      handlers: { workflow: permissiveHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    const repoId: RepoId = {
+      kind: "workflow",
+      id: `wf-${Math.random().toString(36).slice(2, 10)}`,
+    };
+    await sourceStore.initRepo(repoId);
+
+    const validPackage = codebasePackageJSON();
+    const entryModule = "export const workflow = {};";
+
+    const { commitSha: firstSha } = await sourceStore.writeTree(
+      PRINCIPAL,
+      repoId,
+      REF,
+      {
+        files: { [PACKAGE_JSON_PATH]: validPackage, "index.js": entryModule },
+        message: "valid workflow codebase",
+      },
+    );
+    const { commitSha: secondSha } = await sourceStore.writeTree(
+      PRINCIPAL,
+      repoId,
+      REF,
+      {
+        files: {
+          [PACKAGE_JSON_PATH]: validPackage,
+          "index.js": entryModule,
+          [`${NODE_MODULES_PATH}/dep/index.js`]: "module.exports = {};",
+        },
+        message: "intermediate violation: committed node_modules",
+      },
+    );
+
+    const sourceDir = sourceStore.getRepoDir(repoId);
+    const firstObjects = await collectReachableObjects(sourceDir, firstSha);
+    const secondObjects = await collectReachableObjects(sourceDir, secondSha);
+    const oids = Array.from(new Set([...firstObjects, ...secondObjects]));
+    const packResult = await git.packObjects({
+      fs,
+      dir: sourceDir,
+      oids,
+      write: false,
+    });
+    if (packResult.packfile === undefined) {
+      throw new Error("git.packObjects returned no packfile");
+    }
+    const pack = packResult.packfile;
+
+    const targetDataDir = await makeTempDir("workflow-percommit-tgt-");
+    const targetStore = createRepoStore({
+      dataDir: targetDataDir,
+      signingKey,
+      handlers: { workflow: workflowKindHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    await targetStore.initRepo(repoId);
+
+    await expect(
+      targetStore.receivePack(PRINCIPAL, repoId, REF, pack, secondSha, null),
+    ).rejects.toThrow(
+      /path_violation:.*committed top-level node_modules directory is not allowed/,
+    );
+
+    const resolvedAfter = await targetStore.resolveRef(PRINCIPAL, repoId, REF);
+    expect(resolvedAfter).toBeNull();
+  });
+
+  test("the same violation at the tip of a single-commit pack also rejects", async () => {
+    const sourceDataDir = await makeTempDir("workflow-tiponly-src-");
+    const sourceStore = createRepoStore({
+      dataDir: sourceDataDir,
+      signingKey,
+      handlers: { workflow: permissiveHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    const repoId: RepoId = {
+      kind: "workflow",
+      id: `wf-${Math.random().toString(36).slice(2, 10)}`,
+    };
+    await sourceStore.initRepo(repoId);
+    const { commitSha } = await sourceStore.writeTree(PRINCIPAL, repoId, REF, {
+      files: {
+        [PACKAGE_JSON_PATH]: codebasePackageJSON(),
+        "index.js": "export const workflow = {};",
+        [`${NODE_MODULES_PATH}/dep/index.js`]: "module.exports = {};",
+      },
+      message: "tip commits node_modules",
+    });
+    const { pack } = await sourceStore.createPack(PRINCIPAL, repoId, REF);
+
+    const targetDataDir = await makeTempDir("workflow-tiponly-tgt-");
+    const targetStore = createRepoStore({
+      dataDir: targetDataDir,
+      signingKey,
+      handlers: { workflow: workflowKindHandler },
+      authorize: () => ({ allowed: true }),
+    });
+    await targetStore.initRepo(repoId);
+    await expect(
+      targetStore.receivePack(PRINCIPAL, repoId, REF, pack, commitSha, null),
+    ).rejects.toThrow(
+      /path_violation:.*committed top-level node_modules directory is not allowed/,
+    );
+  });
+});
+
+function codebasePackageJSON(overrides?: Record<string, unknown>): string {
+  return JSON.stringify({
+    name: "@fixture/workflow-codebase",
+    version: "1.0.0",
+    interchange: { workflow: "./index.js" },
+    ...overrides,
+  });
+}
+
+describe("workflowKindHandler.validatePush codebase shape", () => {
+  async function validate(
+    repoId: RepoId,
+    topLevelTreePaths: string[],
+    files: Record<string, string>,
+  ): Promise<ValidatePushResult> {
+    return workflowKindHandler.validatePush({
+      repoId,
+      ref: REF,
+      topLevelTreePaths,
+      readBlob: makeReadBlob(files),
+      listDir: makeListDir(files),
+      principal: HUB_PRINCIPAL,
+      priorReadBlob: noPriorBlob,
+      priorListDir: noPriorDir,
+    });
+  }
+
+  test("accepts a single-package codebase with a contained entry", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: codebasePackageJSON(),
+      "index.js": "export const workflow = {};",
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-ok"),
+      [PACKAGE_JSON_PATH, "index.js"],
+      files,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("accepts a codebase carrying a non-envelope workflow.json source file", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: codebasePackageJSON(),
+      [WORKFLOW_JSON_PATH]: JSON.stringify({ arbitrary: "data" }),
+      "index.js": "export const workflow = {};",
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-wfjson-source"),
+      [PACKAGE_JSON_PATH, WORKFLOW_JSON_PATH, "index.js"],
+      files,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("rejects a package.json without an interchange.workflow entry", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: JSON.stringify({
+        name: "@fixture/no-entry",
+        version: "1.0.0",
+      }),
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-no-entry"),
+      [PACKAGE_JSON_PATH],
+      files,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(/non-empty "interchange\.workflow" entry/);
+  });
+
+  test("rejects an interchange.workflow entry that escapes the package", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: codebasePackageJSON({
+        interchange: { workflow: "../escape.js" },
+      }),
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-escape"),
+      [PACKAGE_JSON_PATH],
+      files,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(/does not escape the package/);
+  });
+
+  test("rejects a committed node_modules directory", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: codebasePackageJSON(),
+      "index.js": "export const workflow = {};",
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-node-modules"),
+      [PACKAGE_JSON_PATH, "index.js", NODE_MODULES_PATH],
+      files,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(
+      /committed top-level node_modules directory is not allowed/,
+    );
+  });
+
+  test("accepts a well-formed monorepo root without a root interchange.workflow", async () => {
+    // A private workspace root with globs and no `interchange.workflow`: the
+    // push validates root well-formedness only; the workflow member is selected
+    // and validated at resolve time.
+    const files = {
+      [PACKAGE_JSON_PATH]: JSON.stringify({
+        name: "@fixture/monorepo-root",
+        private: true,
+        workspaces: ["packages/*"],
+      }),
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-monorepo-ok"),
+      [PACKAGE_JSON_PATH],
+      files,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test("rejects the object form of workspaces", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: JSON.stringify({
+        name: "@fixture/monorepo-root",
+        private: true,
+        workspaces: { packages: ["packages/*"] },
+      }),
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-monorepo-object"),
+      [PACKAGE_JSON_PATH],
+      files,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(/must be an array of glob strings/);
+  });
+
+  test("rejects a pnpm-workspace.yaml monorepo layout", async () => {
+    // A pnpm root carries no package.json `workspaces` field (members live in
+    // pnpm-workspace.yaml), so it would fall through to the single-package
+    // check. The gate rejects the layout with a clear message instead.
+    const files = {
+      [PACKAGE_JSON_PATH]: JSON.stringify({
+        name: "@fixture/pnpm-root",
+        private: true,
+      }),
+      [PNPM_WORKSPACE_PATH]: "packages:\n  - packages/*\n",
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-pnpm"),
+      [PACKAGE_JSON_PATH, PNPM_WORKSPACE_PATH],
+      files,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(/pnpm workspace layout is not supported/);
+  });
+
+  test("rejects a monorepo root that also commits node_modules", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: JSON.stringify({
+        name: "@fixture/monorepo-root",
+        private: true,
+        workspaces: ["packages/*"],
+      }),
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-monorepo-nm"),
+      [PACKAGE_JSON_PATH, NODE_MODULES_PATH],
+      files,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(
+      /committed top-level node_modules directory is not allowed/,
+    );
+  });
+
+  test("rejects an ambiguous tree carrying both a package.json and an envelope-valid workflow.json", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: codebasePackageJSON(),
+      [WORKFLOW_JSON_PATH]: validWorkflowJSON(),
+      "index.js": "export const workflow = {};",
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-ambiguous"),
+      [PACKAGE_JSON_PATH, WORKFLOW_JSON_PATH, "index.js"],
+      files,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(
+      /must be a codebase or an envelope, not both/,
+    );
+  });
+
+  test("rejects an envelope-only capability-declarations.json in a codebase", async () => {
+    const files = {
+      [PACKAGE_JSON_PATH]: codebasePackageJSON(),
+      [CAPABILITY_DECLARATIONS_JSON_PATH]: JSON.stringify({ declarations: [] }),
+    };
+    const result = await validate(
+      uniqueRepoId("codebase-caps"),
+      [PACKAGE_JSON_PATH, CAPABILITY_DECLARATIONS_JSON_PATH],
+      files,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.reason).toMatch(/envelope-only artifact/);
+  });
+});

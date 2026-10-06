@@ -1,0 +1,53 @@
+# Vendor-diff allowlist (repo-relative path fragments, one per line).
+#
+# The CI vendor-diff gate (tooling/vendor-diff-check.sh) diffs
+# vendor/interchange against the pinned stock commit and fails on any
+# difference whose diff line does NOT contain one of these fragments.
+# Fragments must be full repo-relative paths: a bare filename would mask
+# same-named files elsewhere. Lines starting with `#` and blank lines are
+# ignored. Keep entries justified: each must cite the tracking issue for
+# its upstream resolution.
+#
+# Composite pin: stock 9febf699e1c8a01fd329927e5a14be7f94e9919e (main has
+# not moved) plus two allowlisted upstream deltas. Full rationale is in
+# vendor/VENDORED.md.
+#
+# PR #193 / INTR-581 production and regression subset, byte-identical to upstream commit
+# 13129bb5b23df2dd11d0437fc2c2511f29ac6960. Required by the custom director
+# in @corbits/triage-workflows. Remove by 2026-11-01 after re-pinning to a
+# stock commit containing PR #193.
+apps/sidecar/src/workflow-probe-handler.ts
+apps/sidecar/src/workflow-substrate-factory.ts
+apps/sidecar/src/workflow-substrate-factory-abort.test.ts
+apps/sidecar/src/workflow-substrate-factory-child-depth.test.ts
+apps/sidecar/src/workflow-substrate-factory-child-grants.test.ts
+apps/sidecar/src/workflow-substrate-factory-step-storage.test.ts
+apps/sidecar/src/workflow-substrate-factory-suspendable-child.test.ts
+packages/agent/src/index.ts
+packages/agent/src/namespace.ts
+packages/agent/src/namespace.test.ts
+packages/tool-packaging/src/loader.test.ts
+packages/tool-packaging/src/loader.ts
+packages/workflow/src/definition/extract-agent.ts
+packages/workflow/src/definition/index.ts
+packages/workflow-deploy/src/capability-walk.ts
+packages/workflow-deploy/src/inert-ontrigger-bodies.ts
+packages/workflow-host/src/child/index.ts
+packages/workflow-host/src/child/run-child.ts
+packages/workflow-host/src/index.ts
+packages/workflow-host/src/workflow-definition-loader.test.ts
+packages/workflow-host/src/workflow-definition-loader.ts
+
+# INTR-583 operator-plugin grammar, byte-identical to upstream commit
+# 44170ebbcf819e1f48e0ec4c7a0d9f682635d10d (branch tip 2d815607).
+# Remove by 2026-11-01 after re-pinning to a stock commit containing that
+# fix. Full rationale is in vendor/VENDORED.md.
+packages/types/src/catalog.ts
+packages/types/src/catalog.test.ts
+packages/db/src/schema/catalog.ts
+packages/db/src/parse-row.test.ts
+
+# INTR-647 local carry: keep tool-scoped credential grants in spawned
+# children (onTrigger bodies). Not upstream yet. Remove by 2026-11-01 or
+# when re-pinning to a stock commit that fixes INTR-647.
+apps/sidecar/src/child-grant-filter.ts

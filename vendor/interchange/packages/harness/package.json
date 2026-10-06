@@ -1,0 +1,35 @@
+{
+  "name": "@intx/harness",
+  "description": "Mail-transport composition layer over @intx/agent adding INBOX watch and connector routing",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@intx/agent": "workspace:*",
+    "@intx/authz": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@intx/inference-testing": "workspace:*",
+    "@intx/mime": "workspace:*",
+    "@intx/storage-isogit": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

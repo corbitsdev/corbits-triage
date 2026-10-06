@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+source "$(dirname -- "${BASH_SOURCE[0]}")/../bin/opsh"
+source "$SCRIPTDIR/lib.opsh"
+
+step::000::checkout-staging() {
+	STAGING_DIR=$(checkout-staging pre-commit)
+}
+
+step::010::lint-source() {
+	(cd "$STAGING_DIR" && make lint)
+}
+
+steps::run step
