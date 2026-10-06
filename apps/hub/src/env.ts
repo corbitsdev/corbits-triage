@@ -14,6 +14,8 @@ const HubEnvSchema = type({
   BETTER_AUTH_BASE_URL: "string.url",
   PORT: "string.integer",
   HUB_DATA_DIR: "string",
+  "PORTAL_DIR?": "string",
+  "PORTAL_ORIGIN?": "string.url",
   "GITHUB_API_ORIGIN?": "string.url",
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": "string.integer",

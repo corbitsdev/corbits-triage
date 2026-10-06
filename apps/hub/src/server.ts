@@ -36,6 +36,7 @@ import {
   type SpawnLocalSidecar,
 } from "./local-process-sidecar-provisioner.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
+import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { databaseConfig, githubApiOrigin, loadHubEnv, migrationEnv } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
@@ -127,8 +128,10 @@ function onShutdownSignal(): void {
 process.once("SIGINT", onShutdownSignal);
 process.once("SIGTERM", onShutdownSignal);
 
+const portalOrigin = env.PORTAL_ORIGIN === undefined ? [] : [new URL(env.PORTAL_ORIGIN).origin];
 const composition = await createInterchangeHub({
   database,
+  authConfig: { baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin },
   sidecarProvisioners: [local.provisioner],
   probeSidecarProvisioners: [local.provisioner],
 });
@@ -173,7 +176,7 @@ cronTicker = createCronTicker({
 cronTicker.start();
 await migrateGithubManifest(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
-const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin];
+const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
 async function authorizePortal(principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
   const result = await authorize(portalGrantStore, principalId, tenantId, resource, action, { time_window: timeWindowEvaluator });
   return result.effect === "allow";
@@ -251,7 +254,10 @@ function tenantHintFrom(req: Request, pathTenant: string | undefined): string | 
   return hint ?? req.headers.get("x-tenant-id") ?? url.searchParams.get("tenant") ?? undefined;
 }
 
+const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
+
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
+  if (servePortal && isPortalRequest(req)) return servePortal(req);
   const url = new URL(req.url);
   // Intercept before the stock Hono logger: callback query values include the
   // one-time GitHub code and must never enter request/access logs.
@@ -333,4 +339,7 @@ console.log(JSON.stringify({
   webhookMount: HOOK_MOUNT_PATH,
 }));
 
-export default { ...stock, fetch: routeRequest };
+export default {
+  ...stock,
+  fetch: env.PORTAL_ORIGIN === undefined ? routeRequest : withPortalCors(new URL(env.PORTAL_ORIGIN).origin, routeRequest),
+};

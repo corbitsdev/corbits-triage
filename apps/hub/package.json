@@ -28,6 +28,7 @@
     "@intx/log": "0.4.0",
     "@intx/types": "workspace:*",
     "arktype": "catalog:",
+    "better-auth": "catalog:",
     "drizzle-orm": "catalog:",
     "hono": "catalog:"
   }
