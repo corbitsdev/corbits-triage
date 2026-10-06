@@ -16,6 +16,9 @@ const HubEnvSchema = type({
   HUB_DATA_DIR: "string",
   "PORTAL_DIR?": "string",
   "PORTAL_ORIGIN?": "string.url",
+  "GOOGLE_CLIENT_ID?": "string",
+  "GOOGLE_CLIENT_SECRET?": "string",
+  "AUTH_ALLOWED_EMAILS?": "string",
   "GITHUB_API_ORIGIN?": "string.url",
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": "string.integer",
@@ -79,5 +82,29 @@ export function migrationEnv(db: DatabaseConfig): Record<string, string> {
     DB_PASSWORD: db.password,
     DB_NAME: db.database,
     DB_SSL: String(db.ssl === true),
+  };
+}
+
+export type SignInSettings = {
+  google?: { clientId: string; clientSecret: string };
+  allowedEmails?: string[];
+};
+
+/**
+ * An allowlist turns email/password off: those addresses are never verified,
+ * so only a provider that verifies email (Google) can satisfy it.
+ */
+export function signInSettings(env: HubEnv): SignInSettings {
+  const { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret, AUTH_ALLOWED_EMAILS: allowed } = env;
+  if ((clientId === undefined) !== (clientSecret === undefined)) {
+    throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together");
+  }
+  const allowedEmails = allowed?.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+  if (allowedEmails !== undefined && clientId === undefined) {
+    throw new Error("AUTH_ALLOWED_EMAILS requires Google sign-in (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)");
+  }
+  return {
+    ...(clientId !== undefined && clientSecret !== undefined && { google: { clientId, clientSecret } }),
+    ...(allowedEmails !== undefined && { allowedEmails }),
   };
 }
