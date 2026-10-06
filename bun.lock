@@ -42,6 +42,9 @@
         "drizzle-orm": "catalog:",
         "hono": "catalog:",
       },
+      "devDependencies": {
+        "@intx/harness": "workspace:*",
+      },
     },
     "apps/web": {
       "name": "@corbits/web",

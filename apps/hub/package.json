@@ -31,5 +31,8 @@
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:",
     "hono": "catalog:"
+  },
+  "devDependencies": {
+    "@intx/harness": "workspace:*"
   }
 }
