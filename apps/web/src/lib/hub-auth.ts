@@ -1,6 +1,6 @@
 // Same calls as Solutions Builder. No local session record stands in for the hub cookie.
 import { ApiError } from "@intx/hub-client";
-import { hubOrigin, requestOrigin } from "./hub-origin.ts";
+import { requestOrigin } from "./hub-origin.ts";
 
 export type HubUser = {
   id: string;
@@ -17,10 +17,6 @@ type AuthJson = {
 };
 
 async function hubAuth(path: string, init: RequestInit): Promise<{ response: Response; parsed: unknown }> {
-  const origin = hubOrigin();
-  if (!origin) {
-    throw new ApiError(0, "hub_not_configured", "The hub is not configured.");
-  }
   let response: Response;
   try {
     response = await fetch(`${requestOrigin()}/api/auth${path}`, { ...init, credentials: "include" });

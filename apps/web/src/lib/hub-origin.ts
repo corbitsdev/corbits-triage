@@ -22,26 +22,28 @@ function assertTrustedHubOrigin(origin: string): void {
   }
 }
 
-/** The hub origin from VITE_HUB_URL, with no trailing slash, or null when it is unset or blank. */
-export function hubOrigin(): string | null {
-  const trimmed = import.meta.env.VITE_HUB_URL?.trim().replace(/\/$/, "");
-  if (!trimmed) return null;
-  assertTrustedHubOrigin(trimmed);
-  return trimmed;
+/**
+ * Prefix for hub requests: VITE_HUB_URL when the hub is on another origin, or
+ * "" when this origin reaches it (the hub serves the portal, a host rewrite,
+ * or the Vite dev proxy).
+ */
+export function requestOrigin(): string {
+  const configured = import.meta.env.VITE_HUB_URL?.trim().replace(/\/$/, "");
+  if (!configured) return "";
+  assertTrustedHubOrigin(configured);
+  return configured;
+}
+
+/** Absolute origin GitHub and users reach the hub at. */
+export function hubOrigin(): string {
+  return requestOrigin() || window.location.origin;
 }
 
 export function hubConfigured(): boolean {
   try {
-    return hubOrigin() !== null;
+    requestOrigin();
+    return true;
   } catch {
     return false;
   }
-}
-
-/** In dev, browser calls stay on the portal origin because the hub sends no CORS headers; Vite forwards `/api` to it. */
-export function requestOrigin(): string {
-  if (typeof window !== "undefined" && window.location.port === "5173") return "";
-  const origin = hubOrigin();
-  if (!origin) throw new Error("VITE_HUB_URL is not configured.");
-  return origin;
 }
