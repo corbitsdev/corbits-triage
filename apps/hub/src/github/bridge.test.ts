@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { checkPackName, emptyPack, repoPolicy } from "@corbits/triage-contracts";
-import { createBridgeHandler, loadBridgeHook, MAX_BODY_BYTES, type BridgeDeps } from "./bridge.js";
+import { applyInstallationListing, createBridgeHandler, loadBridgeHook, MAX_BODY_BYTES, type BridgeDeps } from "./bridge.js";
+import { namesNeedingBacklog, repoRecords } from "./tenant-config.js";
 import { DeliveryCache } from "./dedupe.js";
 import { NoLiveDeploymentError } from "./deployment.js";
 import { verifySignature } from "./signature.js";
@@ -467,4 +468,17 @@ describe("bridge installation events", () => {
     expect(await retry.json()).toEqual({ status: "forwarded" });
     expect(sent).toEqual([backlogMail("octocat/hello")]);
   });
+});
+
+test("installation listing replaces stored repositories with what GitHub reports", () => {
+  const ns = {
+    repos: [
+      { name: "acme/kept", connected: true, installationId: 1 },
+      { name: "acme/removed", connected: true, installationId: 1 },
+      { name: "old/uninstalled", connected: true, installationId: 2 },
+    ],
+  };
+  const next = applyInstallationListing(ns, [{ fields: { installationId: 1, account: "acme" }, names: ["acme/kept", "acme/new"] }]);
+  expect(repoRecords(next).map((row) => row.name).sort()).toEqual(["acme/kept", "acme/new"]);
+  expect(namesNeedingBacklog(next, ["acme/new"])).toEqual(["acme/new"]);
 });
