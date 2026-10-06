@@ -10,7 +10,7 @@ Bun, TypeScript, Postgres, React + Vite. Interchange is consumed from
 | `src/env.ts` | Only reader of the environment. arktype schema; `databaseConfig` parses `DATABASE_URL`. |
 | `src/server.ts` | Composition root: loads env, runs migrations, builds every component and injects config. |
 | `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database config injected. |
-| `src/auth.ts` | better-auth config (stock settings plus `PORTAL_ORIGIN` as a trusted origin). |
+| `src/auth.ts` | better-auth config: stock settings, optional Google sign-in and email allowlist, `PORTAL_ORIGIN` as a trusted origin. |
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
 | `src/hooks.ts` | `@corbits/webhooks` mount and its migrations. |
 | `src/local-process-sidecar-provisioner.ts` | `SidecarProvisioner` that spawns sidecars as child processes with a minimal env. |
@@ -27,7 +27,7 @@ Required: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`,
 `PRINCIPAL_KEY_ENCRYPTION_KEY`, `SIDECAR_CREDENTIAL_ENCRYPTION_KEY`,
 `BETTER_AUTH_BASE_URL`, `PORT`, `HUB_DATA_DIR`.
 
-Optional: `PORTAL_DIR`, `PORTAL_ORIGIN`, `GITHUB_API_ORIGIN` (emulator), `HUB_SIDECAR_WEBSOCKET_URL`,
+Optional: `PORTAL_DIR`, `PORTAL_ORIGIN`, `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`, `AUTH_ALLOWED_EMAILS`, `GITHUB_API_ORIGIN` (emulator), `HUB_SIDECAR_WEBSOCKET_URL`,
 `HUB_MAX_TARBALL_BYTES`, `PG_SCHEMA`, `DB_STATEMENT_TIMEOUT_MS`.
 
 GitHub App credentials are not environment: they live in the hub vault as
