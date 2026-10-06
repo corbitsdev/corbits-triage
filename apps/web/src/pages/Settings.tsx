@@ -18,8 +18,10 @@ import { githubAppSlugFromCredentials, hasActiveGithubCredential, type HubCreden
 import { usePortal } from "../lib/portal.tsx";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 import { useSession } from "../lib/session.tsx";
+import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
+import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
 
-const TABS = ["Triage", "GitHub", "Integrations", "Inference", "Access", "Account"] as const;
+const TABS = ["Triage", "GitHub", "Integrations", "Model", "Access", "Account"] as const;
 type SettingsTab = (typeof TABS)[number];
 
 function tabId(tab: SettingsTab): string {
@@ -291,7 +293,7 @@ function CredentialRow({
 }
 
 export default function Settings() {
-  const { snapshot, replaceSecret, revoke, saveConfig, saveInferenceSecret, addGrant, removeGrant, refreshNow, readOnly } = usePortal();
+  const { snapshot, replaceSecret, revoke, saveConfig, addGrant, removeGrant, refreshNow, readOnly } = usePortal();
   const { session, signOut } = useSession();
   const params = useParams();
   const navigate = useNavigate();
@@ -300,10 +302,6 @@ export default function Settings() {
   const config = snapshot?.config ?? {};
   const savedFloor = String(config.confidenceFloor ?? 0.7);
   const [floor, setFloor] = useState(savedFloor);
-  const [inferenceEndpoint, setInferenceEndpoint] = useState(config.inference?.endpoint ?? "");
-  const [inferenceModel, setInferenceModel] = useState(config.inference?.model ?? "");
-  const [inferenceSecret, setInferenceSecret] = useState("");
-  const [savingInference, setSavingInference] = useState(false);
   const repos = snapshot?.repos ?? [];
   const grants = snapshot?.grants ?? [];
   const principals = snapshot?.principals ?? [];
@@ -313,14 +311,11 @@ export default function Settings() {
   const deniedRepos = snapshot?.denied.repos ?? false;
   const deniedGrants = snapshot?.denied.grants ?? false;
   const deniedCredentials = snapshot?.denied.credentials ?? false;
-  const inferenceStored = credentials.some(
-    (credential) => credential.name === "corbits-system-one" || credential.name.startsWith("corbits-system-one:"),
-  );
+  const modelStored = hasDecisionModelCredential(credentials);
   const githubReady = hasActiveGithubCredential(credentials);
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const { arm } = useGithubReturnSync(() => { void refreshNow(); });
   const triageDirty = floor !== savedFloor;
-  const inferenceDirty = inferenceEndpoint !== (config.inference?.endpoint ?? "") || inferenceModel !== (config.inference?.model ?? "") || inferenceSecret.length > 0;
 
   useEffect(function resetFloor() {
     setFloor(savedFloor);
@@ -359,44 +354,20 @@ export default function Settings() {
     }
   }
 
-  async function saveInference() {
-    setError("");
-    setSavingInference(true);
-    try {
-      await saveInferenceSecret({ endpoint: inferenceEndpoint, model: inferenceModel, secret: inferenceSecret });
-      setInferenceSecret("");
-    } catch (cause: unknown) {
-      setError(`Could not save inference. ${cause instanceof Error ? cause.message : String(cause)} Check the endpoint, model, and secret, then try again.`);
-    } finally {
-      setSavingInference(false);
-    }
-  }
-
   function submitTriage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void saveTriage();
   }
 
-  function submitInference(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void saveInference();
-  }
-
   function cancelEdits() {
     if (tab === "Triage") setFloor(savedFloor);
-    if (tab === "Inference") {
-      setInferenceEndpoint(config.inference?.endpoint ?? "");
-      setInferenceModel(config.inference?.model ?? "");
-      setInferenceSecret("");
-    }
   }
 
   function saveTab() {
     if (tab === "Triage") void saveTriage();
-    if (tab === "Inference") void saveInference();
   }
 
-  const dirty = (tab === "Triage" && triageDirty) || (tab === "Inference" && inferenceDirty);
+  const dirty = tab === "Triage" && triageDirty;
 
   return (
     <div className="main-shell">
@@ -471,25 +442,14 @@ export default function Settings() {
                 <p className="small muted">Not in v1.</p>
               </section>
             </div>
-            <div role="tabpanel" id={panelId("Inference")} aria-labelledby={tabId("Inference")} hidden={tab !== "Inference"}>
-              <form className="panel settings-panel" aria-label="Inference" onSubmit={submitInference}>
-                <h2>Inference</h2>
-                <p className="field-help">Bring your own endpoint, model, and secret.</p>
+            <div role="tabpanel" id={panelId("Model")} aria-labelledby={tabId("Model")} hidden={tab !== "Model"}>
+              <section className="panel settings-panel" aria-label="Decision model">
+                <h2>Decision model</h2>
+                <p className="field-help">{DECISION_MODEL_INTRO}</p>
                 {deniedCredentials && <DeniedNotice section="credentials" />}
-                <label className="field">Endpoint
-                  <span className="field-help">HTTPS URL for the model provider.</span>
-                  <input value={inferenceEndpoint} onChange={(event) => setInferenceEndpoint(event.target.value)} disabled={readOnly || savingInference} />
-                </label>
-                <label className="field">Model
-                  <span className="field-help">Name the provider expects.</span>
-                  <input value={inferenceModel} onChange={(event) => setInferenceModel(event.target.value)} disabled={readOnly || savingInference} />
-                </label>
-                <label className="field">Secret
-                  <span className="field-help">Stored once. You will not see it again after saving.</span>
-                  <input type="password" value={inferenceSecret} onChange={(event) => setInferenceSecret(event.target.value)} disabled={readOnly || savingInference} autoComplete="off" />
-                </label>
-                <p className="muted small-text">{inferenceStored ? "Inference secret stored." : "No GitHub App, webhook, or inference secret stored."}</p>
-              </form>
+                <p className="muted small-text">{modelStored ? "API key stored. Save again to replace it." : "No decision model connected."}</p>
+                <DecisionModelForm />
+              </section>
             </div>
             <div role="tabpanel" id={panelId("Access")} aria-labelledby={tabId("Access")} hidden={tab !== "Access"}>
               <AccessRules
@@ -531,7 +491,7 @@ export default function Settings() {
       {dirty && (
         <div className="dirty-bar">
           <button type="button" className="btn" onClick={cancelEdits}>Cancel</button>
-          <button type="button" className="btn primary" disabled={readOnly || savingInference} onClick={saveTab}>{savingInference ? "Saving…" : "Save"}</button>
+          <button type="button" className="btn primary" disabled={readOnly} onClick={saveTab}>Save</button>
         </div>
       )}
     </div>

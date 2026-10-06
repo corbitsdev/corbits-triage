@@ -8,6 +8,7 @@ import { DeniedNotice } from "./lib/denied.tsx";
 import type { PortalSnapshot } from "./lib/hub-api.ts";
 import Layout from "./components/Layout.tsx";
 import Connect from "./pages/Connect.tsx";
+import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { Welcome } from "./pages/Welcome.tsx";
 import Triage from "./pages/Triage.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
@@ -90,7 +91,7 @@ function Gate() {
   if (snapshot.denied.repos || snapshot.denied.credentials) {
     return <DeniedGate snapshot={snapshot} />;
   }
-  if (!connected || path === "/connect") return <Connect />;
+  if (!connected || !hasDecisionModelCredential(snapshot.credentials) || path === "/connect") return <Connect />;
 
   if (path === "/login" || path === "/") {
     return <Navigate to={snapshot.repos.length > 0 ? "/triage/action" : "/repositories"} replace />;

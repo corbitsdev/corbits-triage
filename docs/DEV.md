@@ -41,7 +41,7 @@ Hub on http://localhost:3000, portal on http://localhost:5173 (it proxies `/api`
 
 1. **Create an account** on the login page. Your workspace (tenant) is created on first sign-in.
 2. **Connect GitHub → Create GitHub App**, confirm the manifest on GitHub, and return. The App credentials go to the hub vault, not `.env`.
-3. **Settings → Inference**: save your System One endpoint, model (`jev-1.13-free`) and key. The portal creates the model offering, then pushes and deploys `pr-triage` and `pr-triage-historical`; a notice confirms it. Later visits skip the deploy unless the workflow source changed.
+3. **Add decision model** (last onboarding step, or Settings → Model): pick TypeSafe or Vercel AI Gateway and paste the key, or **Add my own provider** with base URL, model and key. The portal creates the model offering, then pushes and deploys `pr-triage` and `pr-triage-historical`; a notice confirms it. Saving a model always redeploys; otherwise visits skip the deploy unless the workflow source changed.
 4. **Choose repositories on GitHub**, then **Repositories → Refresh** and **Set up checks → Use recommended**.
 5. Open a pull request on the sandbox repo. It appears under **Triage**.
 
@@ -56,7 +56,7 @@ The App's webhook URL is built from the hub origin that starts the manifest flow
 1. Start the stack against it: `GITHUB_API_ORIGIN=http://localhost:4000 VITE_GITHUB_API_ORIGIN=http://localhost:4000 bun run dev`.
 2. Create an account and copy the webhook URL shown under Connect → **Connect an existing GitHub App instead**.
 3. Uncomment `webhook_url` in `emulate.config.yaml` with that URL, then start the emulator: `npx emulate start --service github --generated-secrets-file .emulate-secrets.json`.
-4. In Connect, enter App ID `12345`, slug `corbits-triage`, the PEM from `.emulate-secrets.json`, and webhook secret `emulate-webhook-secret`. Then save Settings → Inference (any HTTPS endpoint).
+4. In Connect, enter App ID `12345`, slug `corbits-triage`, the PEM from `.emulate-secrets.json`, and webhook secret `emulate-webhook-secret`. Then add a decision model (**Add my own provider**, any HTTPS endpoint).
 5. Register the repository by sending the installation event GitHub would send:
 
    ```sh
@@ -80,7 +80,7 @@ bun run check    # typecheck web, tooling, hub
 ## Troubleshooting
 
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
-- **"Triage needs a System One inference offering"**: save Settings → Inference.
+- **"No decision model offering found"**: save Settings → Model.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
 - **New PRs never reach triage**: the hub logs `stale_deployment` when the tenant has no live `pr-triage` deployment. Reload the portal to redeploy.
 - **Portal shows `HTTP 404` on Set up checks**: the hub process is older than the code. Restart `bun run dev`.

@@ -3,7 +3,7 @@ import { useEffect, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { CircleCheck, Sparkles, Upload } from "lucide-react";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, projectQueue, type RepoRecord } from "../lib/hub-api.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential, projectQueue, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { generateWebhookSecret, hasObservedInference, hasVerifiedWebhookDelivery, isPrivateKeyPem, pollUntil } from "../lib/connect-view.ts";
 import {
@@ -18,15 +18,24 @@ import {
   startGithubManifest,
 } from "../lib/github-manifest.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
+import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 
-type GuidedStep = "create" | "install" | "select";
+type GuidedStep = "create" | "install" | "select" | "model";
 
 const STEPS: Array<{ id: GuidedStep; label: string }> = [
   { id: "create", label: "Create GitHub App" },
   { id: "install", label: "Choose repositories on GitHub" },
   { id: "select", label: "See selected repositories" },
+  { id: "model", label: "Add decision model" },
 ];
+
+function startingStep(snapshot: PortalSnapshot | null, returnedFromGithub: boolean): GuidedStep {
+  if (returnedFromGithub) return "install";
+  if (!snapshot || !hasActiveGithubCredential(snapshot.credentials)) return "create";
+  return snapshot.repos.length > 0 ? "model" : "install";
+}
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -37,7 +46,8 @@ export default function Connect() {
   const navigate = useNavigate();
   const params = new URLSearchParams(window.location.search);
   const connected = params.get("github") === "connected";
-  const [step, setStep] = useState<GuidedStep>(connected ? "install" : "create");
+  const initialStep = startingStep(snapshot, connected);
+  const [step, setStep] = useState<GuidedStep>(initialStep);
   const [appSlug, setAppSlug] = useState(params.get("app") ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,6 +63,7 @@ export default function Connect() {
   const repos = snapshot?.repos ?? [];
   const items = snapshot ? projectQueue(snapshot) : [];
   const githubReady = repos.some((repo) => hasVerifiedWebhookDelivery(snapshot?.logs ?? [], repo.name));
+  const modelStored = hasDecisionModelCredential(snapshot?.credentials ?? []);
   const inferenceReady = hasObservedInference(items);
   const liveReady = githubReady && inferenceReady;
 
@@ -246,7 +257,7 @@ export default function Connect() {
   }
 
   const active = STEPS.findIndex((item) => item.id === step);
-  const progress = step === "select" ? "repos" : "install";
+  const progress = step === "model" ? "model" : step === "select" ? "repos" : "install";
 
   return <div className="app is-auth"><main className="connect-room">
     <div className="auth-mast">
@@ -256,12 +267,13 @@ export default function Connect() {
     <ol className="connect-progress">
       <li aria-current={progress === "install" ? "step" : undefined}><span className="step-index">01</span>Connect</li>
       <li aria-current={progress === "repos" ? "step" : undefined}><span className="step-index">02</span>Add repos</li>
+      <li aria-current={progress === "model" ? "step" : undefined}><span className="step-index">03</span>Decision model</li>
     </ol>
     <div className="connect-task">
     <section className="setup-coach" aria-labelledby="setup-title">
       <aside className="setup-progress">
         <h1 id="setup-title" tabIndex={-1}>{STEPS[active]?.label ?? "Connect GitHub"}</h1>
-        <p className="lede">Install the App on GitHub, then choose repositories.</p>
+        <p className="lede">{step === "model" ? DECISION_MODEL_INTRO : "Install the App on GitHub, then choose repositories."}</p>
       </aside>
 
       <section className="setup-task panel" aria-live="polite" aria-busy={busy}>
@@ -300,11 +312,21 @@ export default function Connect() {
             : null}
           {error && <p role="alert" className="error">{error}</p>}
           {repos.length > 0 && <div className="repository-list">{repos.map(renderInstallRow)}</div>}
-          {repos.length > 0 && githubReady && !inferenceReady && <p role="status">Inference not observed yet.</p>}
           <div className="task-actions">
-            <button type="button" className="btn primary" disabled={busy} onClick={() => void observeRepositories()}>{busy ? "Refreshing…" : "Refresh"}</button>
+            <button type="button" className="btn" disabled={busy} onClick={() => void observeRepositories()}>{busy ? "Refreshing…" : "Refresh"}</button>
             <button type="button" className="btn" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</button>
-            {repos.length > 0 && <button type="button" className="btn primary" disabled={!liveReady} title={!liveReady ? (!githubReady ? "Open triage is unavailable until GitHub webhook delivery is verified." : "Inference not observed yet.") : undefined} onClick={() => navigate("/triage/action")}>Open triage</button>}
+            {repos.length > 0 && <button type="button" className="btn primary" onClick={() => setStep("model")}>Next: add decision model</button>}
+          </div>
+        </>}
+
+        {step === "model" && <>
+          {modelStored
+            ? <div className="success-callout" role="status"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>Decision model connected</strong><p>Triage starts on the next pull request event.</p></div></div>
+            : <DecisionModelForm />}
+          {modelStored && !liveReady && <p role="status" className="muted">{githubReady ? "Waiting for the first triage run." : "Waiting for GitHub to deliver a webhook."}</p>}
+          <div className="task-actions">
+            <button type="button" className="btn" onClick={() => setStep("select")}>Back</button>
+            {modelStored && <button type="button" className="btn primary" disabled={!liveReady} onClick={() => navigate("/triage/action")}>Open triage</button>}
           </div>
         </>}
       </section>

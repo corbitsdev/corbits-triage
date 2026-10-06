@@ -4,7 +4,8 @@ import { githubRead, githubWrite } from "@corbits/github-tool";
 import { triageDirector } from "./directors.js";
 
 // Required by AgentDefinition. System One is the only inference, and only the judge director ever infers.
-const inference = { sources: [{ provider: "corbits-system-one", model: "jev-1.13-free" }] };
+// "decision" is a tenant catalog alias; the offering behind it picks the provider and wire model.
+const inference = { sources: [{ provider: "corbits-system-one", model: "decision" }] };
 
 // Source-ref lineage keys the credential consumer on the tool bundle id (factory.id), not the published package name.
 const CONSUMERS = [githubRead.id, githubWrite.id];
