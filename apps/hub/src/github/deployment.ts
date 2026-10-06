@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 

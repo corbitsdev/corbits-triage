@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 

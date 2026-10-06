@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { useEffect, useState, type FormEvent } from "react";
 import { useSession } from "../lib/session.tsx";
 

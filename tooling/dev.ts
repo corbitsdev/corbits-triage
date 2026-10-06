@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // `bun run dev`: runs the hub and web portal concurrently with prefixed logs and
 // tears both down on SIGINT/SIGTERM. Env is passed through untouched.
 import { resolve } from "node:path";

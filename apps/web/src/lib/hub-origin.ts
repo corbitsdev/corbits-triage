@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 function assertTrustedHubOrigin(origin: string): void {

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // PR text is data, never instructions: text that instructs the triage pipeline
 // scores high spam / low confidence so the downstream gate (spam >= 0.9 or
 // confidence < 0.5 => human-gated) routes it to a human. Shared by every

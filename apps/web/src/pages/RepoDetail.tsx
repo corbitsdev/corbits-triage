@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { emptyPack, recommendedPack, repoPolicy } from "@corbits/triage-contracts";

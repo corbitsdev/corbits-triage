@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { findArtifactByTitle, getArtifact, type ArtifactDb } from "@corbits/artifacts";
 import { checkPackName, parseCheckPack, type CheckPack } from "@corbits/triage-contracts";
 

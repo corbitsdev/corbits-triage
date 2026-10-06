@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import type { TriageState } from "@corbits/rule-packs";
 import {
   catalogCheckEnabled,

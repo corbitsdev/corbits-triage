@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Injection suite: scores every @corbits/triage-contracts injection case
 // through the real deterministic pipeline (triage-workflows deriveState +
 // rule-packs render, via tooling/facts.ts) and asserts the product invariant

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { useState, type FormEvent } from "react";
 import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "../lib/decision-models.ts";
 import { usePortal } from "../lib/portal.tsx";

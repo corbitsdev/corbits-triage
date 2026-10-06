@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { describe, expect, test } from "bun:test";
 import { isRepoCatchingUp } from "./backlog-status.ts";
 import type { HubRun, PortalSnapshot, RunLog } from "./hub-api.ts";

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Human-initiated pull request writes (comment, review, merge, close). The
 // operator's click is the approval, so these run synchronously in the hub
 // against the tenant's vaulted GitHub App credential instead of as workflows.

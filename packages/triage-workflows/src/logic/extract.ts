@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 export function asText(v: unknown) {
   return typeof v === "string" ? v : JSON.stringify(v ?? "");
 }

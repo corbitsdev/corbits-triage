@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
 export const CHECK_PACK_SCHEMA_VERSION = 1;
 export const CUSTOM_CHECK_CAP = 8;

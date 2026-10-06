@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { type, type ArkError } from "arktype";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 

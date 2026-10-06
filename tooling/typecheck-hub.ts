@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "..");

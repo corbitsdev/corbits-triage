@@ -1,6 +1,4 @@
 #!/bin/sh
-# SPDX-License-Identifier: GPL-2.0-only
-#
 # CI vendor-diff gate: files under vendor/interchange must match the pinned
 # stock Interchange commit, except for entries in
 # tooling/vendor-diff-allowlist.txt. Exits 0 when clean, 1 with the

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
 export type WorkflowPackage = {
   /** Workflow asset and definition name; the hub bridge routes mail by it. */
   name: string;

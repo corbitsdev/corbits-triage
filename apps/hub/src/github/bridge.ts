@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Legacy GitHub bridge under /api/hooks. The stock @corbits/webhooks routes
 // reject GitHub's X-Hub-Signature-256 HMAC with 401, so requests carrying that
 // header are verified here against the app-level hook credential

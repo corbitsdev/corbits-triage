@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { describe, expect, test } from "bun:test";
 import type { Transport } from "@intx/hub-client";
 import { GITHUB_MANIFEST_URL, postGithubManifest, saveExistingGithubApp, type ManifestStart } from "./github-manifest.ts";

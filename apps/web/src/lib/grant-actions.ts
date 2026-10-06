@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import type { HubGrant, HubPrincipal, HubRole } from "./hub-api.ts";
 
 export type GrantEffect = "allow" | "ask" | "deny";

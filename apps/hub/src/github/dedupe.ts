@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Persistent delivery-id cache for the legacy GitHub bridge. GitHub may
 // redeliver a webhook after a hub restart, so seen ids are journaled to a
 // bounded disk JSON file (array of [id, firstSeenMs] pairs) and reloaded on

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import { checkPackFromDraft, draftFromCheckPack, emptyDraft } from "../lib/check-catalog.ts";

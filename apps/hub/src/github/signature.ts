@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export function verifySignature(secret: string, body: string, header: string | null): boolean {

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { defineAgent } from "@intx/agent";
 import { githubRead, githubWrite } from "@corbits/github-tool";
 import { triageDirector } from "./directors.js";

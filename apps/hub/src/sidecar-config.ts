@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";

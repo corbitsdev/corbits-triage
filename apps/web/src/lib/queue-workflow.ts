@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
 const INTERACTIVE_SELECTOR = [
   "a",
   "button",

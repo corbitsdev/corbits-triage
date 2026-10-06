@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";

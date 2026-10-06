@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { Fragment, useState } from "react";
 import type { HubApproval } from "../lib/hub-api.ts";
 import { approvalHeadline, argsText, relativeTime } from "../lib/triage-view.ts";

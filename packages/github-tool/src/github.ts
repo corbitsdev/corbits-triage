@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { setTimeout as sleep } from "node:timers/promises";
 
 /** Authenticated fetch pinned to the GitHub API origin; takes a path. */

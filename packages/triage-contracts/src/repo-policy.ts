@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 export const CLEANUP_MODES = ["human-approved", "automated"] as const;
 export type CleanupMode = (typeof CLEANUP_MODES)[number];
 
