@@ -37,6 +37,7 @@ import {
 } from "./local-process-sidecar-provisioner.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
+import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
 import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
 import { databaseConfig, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
@@ -216,6 +217,16 @@ const sendBridgeMail: BridgeDeps["sendMail"] = async function sendBridgeMail(ten
 function readCheckPack(tenantId: string, repo: string) {
   return loadCheckPack(composition.db, tenantId, repo);
 }
+const syncInstallations = createInstallationSync({
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  getSession: composition.getSession,
+  trustedPortalOrigins,
+  githubApiOrigin: githubOrigin,
+  authorize: authorizePortal,
+  sendMail: sendBridgeMail,
+  readCheckPack,
+});
 const bridge = createBridgeHandler({
   db: hookDeps.db,
   cipher: hookDeps.cipher,
@@ -283,6 +294,15 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
     try {
       return githubManifest.start(req, decodeURIComponent(tenantId));
+    } catch {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+  }
+  if (url.pathname.startsWith(`${GITHUB_INSTALLATIONS_PATH}/`) && url.pathname.endsWith("/sync") && req.method === "POST") {
+    const tenantId = url.pathname.slice(GITHUB_INSTALLATIONS_PATH.length + 1, -"/sync".length);
+    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
+    try {
+      return syncInstallations(req, decodeURIComponent(tenantId));
     } catch {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
