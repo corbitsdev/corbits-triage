@@ -526,7 +526,7 @@ function pickProvider(providers: ProviderBody[], name: string): ProviderBody | u
   return [...matches].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
 }
 
-async function ensureGitHubProvider(transport: Transport, tenantId: string): Promise<string> {
+export async function ensureGitHubProvider(transport: Transport, tenantId: string): Promise<string> {
   const tid = enc(requireTenantId(tenantId));
   const existing = pickProvider(await listAll<ProviderBody>(transport, `/api/tenants/${tid}/providers`), GITHUB_PROVIDER);
   const apiBaseUrl = githubProviderApiBaseUrl();
