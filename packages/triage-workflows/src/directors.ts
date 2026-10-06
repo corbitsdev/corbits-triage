@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { defineDirector } from "@intx/agent";
 import type {
   AssistantTurn,

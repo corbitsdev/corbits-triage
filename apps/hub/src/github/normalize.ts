@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import type { RepoPolicy } from "@corbits/triage-contracts";
 
 const EVENTS = ["pull_request", "pull_request_review", "issue_comment", "check_run"] as const;

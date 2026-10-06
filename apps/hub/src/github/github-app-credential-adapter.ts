@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
 import { createHash, createSign } from "node:crypto";
 import { type } from "arktype";
 

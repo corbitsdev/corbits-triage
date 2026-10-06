@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { describe, expect, test } from "bun:test";
 import type { HubGrant, HubPrincipal, HubRole } from "./hub-api.ts";
 import {

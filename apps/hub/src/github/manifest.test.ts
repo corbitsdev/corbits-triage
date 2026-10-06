@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { describe, expect, test } from "bun:test";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import {

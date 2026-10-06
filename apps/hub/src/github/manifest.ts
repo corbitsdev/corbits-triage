@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { boolean, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";

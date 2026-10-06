@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "./session.tsx";

@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
 import type { AdapterFactory } from "@intx/inference";
 
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter";

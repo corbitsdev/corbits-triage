@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // The hub bridge finds deployments by workflow name, so each workflow is
 // redeployed only when its source changed, no live deployment exists, or the
 // decision model changed (a deployment resolves its offering when deployed).

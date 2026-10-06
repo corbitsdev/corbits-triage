@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Holdback replay: scores every @corbits/triage-contracts fixture through the
 // real deterministic pipeline (triage-workflows deriveState + rule-packs
 // render, via tooling/facts.ts) with wall-clock latency measured per PR.

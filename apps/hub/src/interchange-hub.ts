@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: LGPL-2.1-only
-//
 // UPSTREAM-SYNC: vendor/interchange/apps/hub/src/server.ts
 // Keep the bootstrap below synchronized with upstream. The Corbits-only delta is
 // the function name and return shape: this composition exposes the live router

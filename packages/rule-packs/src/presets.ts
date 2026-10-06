@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { PRIORITIES, TRIAGE_STATES, type Priority, type WorkflowState } from "@corbits/triage-contracts";
 
 export { TRIAGE_STATES, PRIORITIES };

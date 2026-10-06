@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import type { HubCredential } from "./hub-api.ts";
 
 type CredentialAction = "rotate" | "revoke";

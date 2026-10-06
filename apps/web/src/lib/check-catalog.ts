@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import {
   CHECK_PACK_KIND,
   CHECK_PACK_SCHEMA_VERSION,

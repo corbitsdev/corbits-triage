@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 // Bundles each workflow package into public/workflows/<name>/ so the portal can push it to the hub.
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";

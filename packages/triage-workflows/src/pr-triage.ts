@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { defineWorkflow, onTrigger, step } from "@intx/workflow";
 import { credentialBindings, grantRequirements, factsAgent, judgeAgent, mirrorAgent, renderAgent } from "./agents.js";
 

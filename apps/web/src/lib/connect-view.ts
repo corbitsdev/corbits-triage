@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
 type EventLike = { type?: unknown; body?: unknown };
 type LogLike = { events?: EventLike[] };
 

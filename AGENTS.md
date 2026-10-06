@@ -17,7 +17,7 @@
 
 ## Code
 
-- Match existing style. Keep the SPDX header on every source file.
+- Match existing style. No license headers in source files; LICENSE.md is the license.
 - Comments explain a non-obvious why, never what.
 - async/await with try/catch; no `.then`/`.catch`/`.finally` chains.
 - Named functions; no IIFEs or anonymous callbacks beyond one-line array methods.

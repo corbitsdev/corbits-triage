@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 // Same calls as Solutions Builder. No local session record stands in for the hub cookie.
 import { ApiError } from "@intx/hub-client";
 import { hubOrigin, requestOrigin } from "./hub-origin.ts";

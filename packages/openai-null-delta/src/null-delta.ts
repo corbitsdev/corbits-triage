@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Some OpenAI-compatible backends (glm-5.3-flash via OpenCode; INTR-595) emit
 // `delta.role: null` / `delta.tool_calls: null` where stock Interchange expects
 // the field absent, and the stock adapter drops those chunks as

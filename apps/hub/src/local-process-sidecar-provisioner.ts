@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Production copy of the provisioning logic in
 // vendor/interchange/tests/admin-ui-e2e/harness/local-process-sidecar-provisioner.ts.
 // The hub must not import from the vendor test harness: tests/ trees are not

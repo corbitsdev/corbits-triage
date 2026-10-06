@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPO_POLICY, emptyPack, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
 import { deriveState, type PrFacts } from "./checks.ts";

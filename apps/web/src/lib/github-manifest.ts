@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { type } from "arktype";
 import {
   configureGithubApp,

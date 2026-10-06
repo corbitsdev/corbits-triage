@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";

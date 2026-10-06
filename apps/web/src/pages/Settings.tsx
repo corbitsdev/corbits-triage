@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { DeniedNotice } from "../lib/denied.tsx";

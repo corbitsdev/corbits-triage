@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Pushes a flat file tree to a hub git asset from the browser. isomorphic-git
 // builds the objects and pack; receive-pack is spoken directly because the hub
 // answers report-status as bare pkt-lines that isomorphic-git's push rejects.

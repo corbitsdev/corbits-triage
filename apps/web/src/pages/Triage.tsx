@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { Search } from "lucide-react";

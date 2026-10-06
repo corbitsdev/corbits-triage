@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { ApiError, type Transport } from "@intx/hub-client";
 import { hubOrigin, requestOrigin } from "./hub-origin.ts";
 

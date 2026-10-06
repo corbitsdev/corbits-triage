@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // The live SidecarRouter (the one sessions and the websocket endpoint use) is
 // required here, so a hook route can never silently boot unroutable.
 import type { createPrincipalKeyStore, DB } from "@intx/db";

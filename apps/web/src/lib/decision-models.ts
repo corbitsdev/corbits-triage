@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
 
 export type DecisionModelPreset = {

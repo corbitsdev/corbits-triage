@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { resolveInlineRef, type HubApproval, type PrItem, type RunLog } from "./hub-api.ts";
 
 function obj(value: unknown): Record<string, unknown> {

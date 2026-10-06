@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
 import { defineTool, type BaseEnv } from "@intx/agent";
 import type { ToolDefinition } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";

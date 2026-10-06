@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import { render, type Priority, type Rendered, type TriageState, TRIAGE_STATES, PRIORITIES } from "@corbits/rule-packs";
 import type { DeterministicResult } from "./checks.js";
 import { asText, parseJsonText } from "./extract.js";

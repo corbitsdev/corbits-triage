@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Composition over the stock Interchange hub bootstrap (./interchange-hub.ts).
 // GitHub manifest start/callback and PR actions are custom domain routes
 // because GitHub must return a one-time code to a confidential server before

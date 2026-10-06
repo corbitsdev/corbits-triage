@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";

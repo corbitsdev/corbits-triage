@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 import type { PrFacts } from "./checks.js";
 
 export interface PrData {

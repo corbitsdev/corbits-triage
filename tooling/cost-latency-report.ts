@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-//
 // Cost/latency report: runs every @corbits/triage-contracts holdback PR
 // through the real deterministic pipeline (via tooling/facts.ts), measuring
 // wall-clock latency per PR. The fixtures contain no provider, wallet, or run
