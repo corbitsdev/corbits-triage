@@ -44,6 +44,13 @@ docker compose -f docs/compose.yml up --build
 
 Render is the same: a Postgres instance and one Docker web service with a disk at `HUB_DATA_DIR`.
 
+## Sign-in
+
+By default anyone who reaches the hub can create an account with email and password. Optional:
+
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` enable "Continue with Google". Create an OAuth client (Web application) in Google Cloud with the redirect URI `<BETTER_AUTH_BASE_URL>/api/auth/callback/google`.
+- `AUTH_ALLOWED_EMAILS` restricts new accounts to exact emails and `@domains`, for example `@corbits.dev,@abklabs.com`. It requires Google and turns email/password sign-in off, since only Google verifies the address. It is checked at every sign-in, so existing accounts outside it are locked out too.
+
 ## Portal hosted separately
 
 Build `apps/web` (`bun run --cwd apps/web build`) and host `apps/web/dist` anywhere that fits one of these:
