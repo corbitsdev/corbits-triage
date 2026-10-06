@@ -97,3 +97,30 @@ export async function signOutHub(): Promise<void> {
     throw new ApiError(response.status, "unknown", messageOf(parsed, "Could not sign out."));
   }
 }
+
+export type AuthMethods = { google: boolean; emailPassword: boolean };
+
+export async function getAuthMethods(): Promise<AuthMethods> {
+  const response = await fetch(`${requestOrigin()}/api/integrations/auth-methods`, { credentials: "include" });
+  if (!response.ok) throw new ApiError(response.status, "unknown", `Could not load sign-in options (HTTP ${response.status}).`);
+  const body = await response.json() as Partial<AuthMethods>;
+  if (typeof body.google !== "boolean" || typeof body.emailPassword !== "boolean") {
+    throw new ApiError(response.status, "unknown", "The hub returned malformed sign-in options.");
+  }
+  return { google: body.google, emailPassword: body.emailPassword };
+}
+
+/** Leaves the page for Google; the hub returns the browser here, with `?error=` on failure. */
+export async function signInWithGoogle(): Promise<void> {
+  const returnTo = `${window.location.origin}/`;
+  const { response, parsed } = await hubAuth("/sign-in/social", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider: "google", callbackURL: returnTo, errorCallbackURL: returnTo }),
+  });
+  const url = (parsed as { url?: unknown } | undefined)?.url;
+  if (!response.ok || typeof url !== "string") {
+    throw new ApiError(response.status, "unknown", messageOf(parsed, "Could not start Google sign-in."));
+  }
+  window.location.assign(url);
+}
