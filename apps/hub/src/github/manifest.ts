@@ -46,6 +46,8 @@ export type GithubAppManifest = {
   default_permissions: typeof GITHUB_APP_PERMISSIONS;
   default_events: typeof GITHUB_APP_EVENTS;
   request_oauth_on_install: false;
+  setup_url: string;
+  setup_on_update: true;
 };
 
 export function buildGithubAppManifest(portalOrigin: string, hookUrl: string, callbackUrl: string): GithubAppManifest {
@@ -58,6 +60,9 @@ export function buildGithubAppManifest(portalOrigin: string, hookUrl: string, ca
     default_permissions: GITHUB_APP_PERMISSIONS,
     default_events: GITHUB_APP_EVENTS,
     request_oauth_on_install: false,
+    // GitHub sends the browser back here after the App is installed or its repositories change.
+    setup_url: `${portalOrigin}/`,
+    setup_on_update: true,
   };
 }
 

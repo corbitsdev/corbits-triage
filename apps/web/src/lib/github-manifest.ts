@@ -30,6 +30,8 @@ const ManifestStart = type({
     default_permissions: "object",
     default_events: "string[]",
     request_oauth_on_install: "false",
+    setup_url: "string",
+    setup_on_update: "true",
   },
   state: "string > 0",
 });
@@ -101,6 +103,24 @@ export async function saveExistingGithubApp(input: {
     input.appSlug,
   );
   await configureGithubHook(transport, input.tenantId, input.webhookSecret);
+}
+
+const SyncResult = type({ repos: "string[]" });
+
+/** Asks the hub to read the App's installations from GitHub; returns the repositories it can see. */
+export async function syncGithubInstallations(tenantId: string): Promise<string[]> {
+  const response = await fetch(`${requestOrigin()}/api/integrations/github-installations/${encodeURIComponent(tenantId)}/sync`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const body: unknown = await response.json();
+  if (!response.ok) {
+    const failure = body as { error?: { message?: unknown } };
+    throw new Error(typeof failure.error?.message === "string" ? failure.error.message : `HTTP ${response.status}`);
+  }
+  return SyncResult.assert(body).repos;
 }
 
 export function githubAppPickerUrl(slug: string | null): string | null {
