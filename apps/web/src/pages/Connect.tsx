@@ -1,25 +1,24 @@
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { CircleCheck, Sparkles, Upload } from "lucide-react";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential, projectQueue, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
-import { generateWebhookSecret, hasObservedInference, hasVerifiedWebhookDelivery, isPrivateKeyPem, pollUntil } from "../lib/connect-view.ts";
+import { generateWebhookSecret, hasObservedInference, hasVerifiedWebhookDelivery, isPrivateKeyPem } from "../lib/connect-view.ts";
 import {
   ManifestStartError,
   cancelGithubManifest,
   githubWebhookUrl,
   githubAppPickerUrl,
   GITHUB_APP_PICKER_UNAVAILABLE,
-  openGithubInstallation,
   postGithubManifest,
   saveExistingGithubApp,
   startGithubManifest,
+  syncGithubInstallations,
 } from "../lib/github-manifest.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
-import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 
 type GuidedStep = "create" | "install" | "select" | "model";
 
@@ -30,7 +29,13 @@ const STEPS: Array<{ id: GuidedStep; label: string }> = [
   { id: "model", label: "Add decision model" },
 ];
 
+/** GitHub appends `installation_id` when it sends the browser back from installing the App. */
+function returnedFromInstall(): boolean {
+  return new URLSearchParams(window.location.search).has("installation_id");
+}
+
 function startingStep(snapshot: PortalSnapshot | null, returnedFromGithub: boolean): GuidedStep {
+  if (returnedFromInstall()) return "select";
   if (returnedFromGithub) return "install";
   if (!snapshot || !hasActiveGithubCredential(snapshot.credentials)) return "create";
   return snapshot.repos.length > 0 ? "model" : "install";
@@ -175,24 +180,33 @@ export default function Connect() {
     }
   }
 
-  async function observeRepositories() {
+  async function syncRepositories(tenantId: string) {
     setBusy(true);
     setError("");
     try {
-      const current = await refreshNow();
-      if ((current?.repos.length ?? 0) > 0) return;
-      async function hasRepos() {
-        const next = await refreshNow();
-        return (next?.repos.length ?? 0) > 0;
+      const repos = await syncGithubInstallations(tenantId);
+      await refreshNow();
+      if (returnedFromInstall()) window.history.replaceState(null, "", window.location.pathname);
+      if (repos.length > 0) {
+        setStep("model");
+      } else {
+        setStep("install");
+        setError("GitHub reports no repositories for this App yet. Choose repositories on GitHub.");
       }
-      const found = await pollUntil(hasRepos, { attempts: 24, delayMs: 500 });
-      if (!found) setError("Confirm the App is installed on GitHub, then Refresh.");
     } catch (cause) {
-      setError(`Could not refresh repositories. ${message(cause)}`);
+      setError(`Could not read your repositories from GitHub. ${message(cause)}`);
     } finally {
       setBusy(false);
     }
   }
+
+  const synced = useRef(false);
+  useEffect(function syncOnArrival() {
+    if (synced.current || !snapshot || !hasActiveGithubCredential(snapshot.credentials)) return;
+    if (!returnedFromInstall() && snapshot.repos.length > 0) return;
+    synced.current = true;
+    void syncRepositories(snapshot.workspace.tenantId);
+  }, [snapshot]);
 
   async function chooseRepositories() {
     if (!snapshot) return;
@@ -211,18 +225,11 @@ export default function Connect() {
           : "Save the GitHub App ID and private key first, then add repositories.");
         return;
       }
-      if (!openGithubInstallation(url)) {
-        setError("Your browser blocked the GitHub window. Allow popups for this page, then try again.");
-        return;
-      }
-      arm();
-      setStep("select");
+      window.location.assign(url);
     } catch (cause) {
       setError(`Could not open GitHub. ${message(cause)}`);
     }
   }
-
-  const { arm } = useGithubReturnSync(() => { void observeRepositories(); });
 
   useEffect(function markConnectRoom() {
     document.body.dataset.room = "connect";
@@ -292,7 +299,7 @@ export default function Connect() {
             <div className="pem-field"><span className="field-label">Private key</span><input className="sr-only" id="existing-app-pem" type="file" accept=".pem" onChange={(event) => void loadPem(event.target.files?.[0])} />{privateKey ? <div className="file-loaded"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>{pemName || "Pasted private key"}</strong><small>Ready</small></div><label className="btn" htmlFor="existing-app-pem">Replace</label><button type="button" className="btn ghost" onClick={clearPrivateKey}>Remove</button></div> : <label className="file-picker" htmlFor="existing-app-pem"><Upload strokeWidth={1.7} aria-hidden="true" /><span><strong>Choose .pem file</strong><small>Downloaded from GitHub App settings</small></span></label>}<details><summary>Paste key instead</summary><textarea aria-label="Private key" value={privateKey} onChange={pastePrivateKey} autoComplete="off" /></details></div>
             <label className="full-span">Webhook secret<div className="secret-input"><input type="password" value={webhookSecret} onChange={editWebhookSecret} autoComplete="new-password" /><button type="button" className="btn" aria-label="Generate and copy webhook secret" title="Generate and copy webhook secret" onClick={() => void generateAndCopyWebhookSecret()}><Sparkles strokeWidth={1.7} aria-hidden="true" /></button></div><small className="muted">Use the same secret in the GitHub App webhook settings.</small>{secretNotice && <small className="secret-notice" role="status">{secretNotice}</small>}</label>
             <div className="webhook-url-field"><span className="field-label">Webhook URL</span><div className="copy-field"><input aria-label="Webhook URL" readOnly value={webhookUrl} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="btn" onClick={() => void copyWebhookUrl()}>Copy</button></div>{webhookUrlNotice && <small role="status" className="secret-notice">{webhookUrlNotice}</small>}</div>
-            <details className="setup-help"><summary>GitHub App settings</summary><p>Grant read access to Checks and Metadata and read/write access to Contents, Issues and Pull requests. Set the active webhook URL to the value above, use the same secret, and subscribe to Pull request, Pull request review, Issue comment, Check run, Installation, and Installation repositories events.</p></details>
+            <details className="setup-help"><summary>GitHub App settings</summary><p>Grant read access to Checks and Metadata and read/write access to Contents, Issues and Pull requests. Set the active webhook URL to the value above, use the same secret, and subscribe to Pull request, Pull request review, Issue comment, Check run, Installation, and Installation repositories events. Set the Setup URL to <code>{`${window.location.origin}/`}</code> and check “Redirect on update” so GitHub returns you here after choosing repositories.</p></details>
             </div>
             <div className="task-actions"><button type="button" className="btn primary" disabled={busy || !appId.trim() || !appSlug.trim() || !privateKey.trim() || !webhookSecret.trim()} onClick={() => void saveManual()}>{busy ? "Connecting…" : "Connect GitHub App"}</button></div>
           </details>
@@ -306,13 +313,10 @@ export default function Connect() {
         </>}
 
         {step === "select" && <>
-                    {repos.length === 0
-            ? <div className="setup-waiting" role="status"><span className="activity-dot" aria-hidden="true" /><div><strong>Wait for GitHub to deliver the installation, then Refresh.</strong>{busy && <p>Refreshing…</p>}</div></div>
-            : null}
+          {busy && <div className="setup-waiting" role="status"><span className="activity-dot" aria-hidden="true" /><div><strong>Reading your repositories from GitHub…</strong></div></div>}
           {error && <p role="alert" className="error">{error}</p>}
           {repos.length > 0 && <div className="repository-list">{repos.map(renderInstallRow)}</div>}
           <div className="task-actions">
-            <button type="button" className="btn" disabled={busy} onClick={() => void observeRepositories()}>{busy ? "Refreshing…" : "Refresh"}</button>
             <button type="button" className="btn" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</button>
             {repos.length > 0 && <button type="button" className="btn primary" onClick={() => setStep("model")}>Next: add decision model</button>}
           </div>

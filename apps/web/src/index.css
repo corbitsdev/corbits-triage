@@ -2502,6 +2502,7 @@ textarea[aria-invalid="true"] {
 .setup-help > summary { cursor: pointer; font-weight: 600; }
 details.setup-help[open] { display: grid; gap: 12px; }
 .connection-fields { display: grid; gap: 14px; }
+.task-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .connection-fields > label,
 .pem-field,
 .webhook-url-field {
