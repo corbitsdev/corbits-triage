@@ -10,6 +10,8 @@ Bun, TypeScript, Postgres, React + Vite. Interchange is consumed from
 | `src/env.ts` | Only reader of the environment. arktype schema; `databaseConfig` parses `DATABASE_URL`. |
 | `src/server.ts` | Composition root: loads env, runs migrations, builds every component and injects config. |
 | `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database config injected. |
+| `src/auth.ts` | better-auth config (stock settings plus `PORTAL_ORIGIN` as a trusted origin). |
+| `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
 | `src/hooks.ts` | `@corbits/webhooks` mount and its migrations. |
 | `src/local-process-sidecar-provisioner.ts` | `SidecarProvisioner` that spawns sidecars as child processes with a minimal env. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
@@ -25,7 +27,7 @@ Required: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`,
 `PRINCIPAL_KEY_ENCRYPTION_KEY`, `SIDECAR_CREDENTIAL_ENCRYPTION_KEY`,
 `BETTER_AUTH_BASE_URL`, `PORT`, `HUB_DATA_DIR`.
 
-Optional: `GITHUB_API_ORIGIN` (emulator), `HUB_SIDECAR_WEBSOCKET_URL`,
+Optional: `PORTAL_DIR`, `PORTAL_ORIGIN`, `GITHUB_API_ORIGIN` (emulator), `HUB_SIDECAR_WEBSOCKET_URL`,
 `HUB_MAX_TARBALL_BYTES`, `PG_SCHEMA`, `DB_STATEMENT_TIMEOUT_MS`.
 
 GitHub App credentials are not environment: they live in the hub vault as
@@ -85,8 +87,8 @@ deployment resolves its offering when deployed.
 
 ## Deployment
 
-See [docs/DEPLOY.md](docs/DEPLOY.md). Images: `docs/Dockerfile` targets
-`hub` (Bun) and `web` (Caddy, `docs/Caddyfile`).
+See [docs/DEPLOY.md](docs/DEPLOY.md). One image (`docs/Dockerfile`): the hub,
+serving the built portal from `PORTAL_DIR`.
 
 ## Local development
 
