@@ -1,0 +1,47 @@
+{
+  "name": "@intx/log",
+  "description": "Structured logging with per-package loggers and pluggable development and production sinks",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./hono": {
+      "intx-src": "./src/hono.ts",
+      "types": "./dist/hono.d.ts",
+      "default": "./dist/hono.js"
+    }
+  },
+  "dependencies": {
+    "@logtape/hono": "^2.0.2",
+    "@logtape/logtape": "^2.0.2"
+  },
+  "peerDependencies": {
+    "hono": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "./src/index.ts",
+    "./src/hono.ts",
+    "./src/default-sink.ts",
+    "./dist/index.js",
+    "./dist/hono.js",
+    "./dist/default-sink.js"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

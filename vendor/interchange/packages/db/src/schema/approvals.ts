@@ -1,0 +1,63 @@
+import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+
+import { tenant } from "./tenants";
+import { workflowRun } from "./workflow-run";
+
+// Every approval originates from a workflow deployment, so the origin is
+// modeled as the deployment's anchor run -- the workflow_run whose id equals
+// the deployment id -- rather than a launched single agent. A workflow
+// deployment has no `agent_instance` or `agent` row, and the principal its run
+// executes under is a substrate principal, not a `principal`-table row -- so
+// none of those tables can hold a valid referent for an approval's origin.
+export const approval = pgTable(
+  "approval",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenant.id, { onDelete: "cascade" }),
+    anchorRunId: text("anchor_run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    // References the run this approval belongs to, making "this approval is for
+    // a real run of this deployment" a database invariant. Cascades on the
+    // run's delete; the `anchor_run_id` FK above stays as the lock and cascade
+    // anchor the co-write orders against.
+    runId: text("run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    agentAddress: text("agent_address").notNull(),
+    correlationId: text("correlation_id").notNull().unique(),
+    // Always populated: the ask rail is the sole co-writer and the register
+    // frame's required snapshot guarantees both fields at insert time.
+    toolDefinition: jsonb("tool_definition").notNull(),
+    toolArguments: jsonb("tool_arguments").notNull(),
+    scope: text("scope", { enum: ["once", "always"] }),
+    status: text("status", {
+      enum: ["pending", "approved", "rejected", "timeout", "expired"],
+    })
+      .notNull()
+      .default("pending"),
+    // Nullable so an approval that holds indefinitely can be recorded with no
+    // deadline. An agent-step suspend parks on its correlation's signal with no
+    // timeout (`parkOnSignal` is called without a `timeout`), so no `timeoutAt`
+    // reaches the sidecar frame that co-writes this row -- the deadline lives in
+    // the reactor's gate, which the hold-indefinitely suspend path never sets.
+    // A null `timeoutAt` is the hold-indefinitely case; a resolver that adds
+    // per-workflow expiry populates it when a deadline is configured. Parallels
+    // the tool-snapshot columns above, which are likewise deferred.
+    timeoutAt: timestamp("timeout_at"),
+    resolvedAt: timestamp("resolved_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("approval_tenant_status_idx").on(t.tenantId, t.status, t.createdAt),
+    index("approval_anchor_run_idx").on(t.anchorRunId),
+    // Reads that list a single run's approvals (the run-scoped approval and
+    // authorization views) filter on runId; the anchor_run index above does
+    // not serve them because a child run's approvals carry a runId distinct
+    // from the deployment's anchor.
+    index("approval_run_idx").on(t.runId),
+  ],
+);

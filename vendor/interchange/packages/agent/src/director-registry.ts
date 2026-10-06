@@ -1,0 +1,116 @@
+// Per-runtime director registry implementation.
+//
+// `createDirectorRegistry({ factories, defaultId })` builds a registry
+// from a flat list of `AnnotatedDirectorFactory` values and a designated
+// default id. Id collisions and a missing default fail at construction
+// rather than first lookup. `createDefaultDirectorRegistry()` is the
+// canonical built-ins-only registry the agent harness ships for callers
+// that do not author their own directors.
+
+import type {
+  AnnotatedDirectorFactory,
+  DirectorRef,
+  DirectorRegistry,
+} from "./director-types";
+import type { BaseEnv } from "./env";
+import { defaultDirectorFactory } from "./default-director";
+
+/**
+ * Erased annotated-factory shape the registry stores. `Config` is
+ * widened to `unknown` so factories with different configuration types
+ * can coexist in the same registry without contravariant assignment
+ * failures.
+ */
+type RegisteredFactory = AnnotatedDirectorFactory<unknown, BaseEnv>;
+
+/**
+ * Thrown by `DirectorRegistry.resolve` when the supplied ref names an
+ * id the registry does not contain. The error is named separately from
+ * `Error` so callers (specifically `validateEnv`) can distinguish an
+ * unknown-id failure from other runtime faults a custom `directors`
+ * implementation might raise. Custom `DirectorRegistry` implementations
+ * are expected to throw `UnknownDirectorIdError` on the unknown-id
+ * path; anything else propagates as a real failure.
+ */
+export class UnknownDirectorIdError extends Error {
+  readonly directorId: string;
+
+  constructor(directorId: string) {
+    super(`unknown director in registry: ${directorId}`);
+    this.name = "UnknownDirectorIdError";
+    this.directorId = directorId;
+  }
+}
+
+/**
+ * Build a director registry from a flat list of factories. Throws
+ * `Error` at construction on duplicate ids or when `defaultId` is not
+ * present in `factories`.
+ */
+export function createDirectorRegistry(opts: {
+  readonly factories: readonly RegisteredFactory[];
+  readonly defaultId: string;
+}): DirectorRegistry {
+  const byId = new Map<string, RegisteredFactory>();
+  for (const factory of opts.factories) {
+    if (byId.has(factory.id)) {
+      throw new Error(`director id collision in registry: ${factory.id}`);
+    }
+    byId.set(factory.id, factory);
+  }
+
+  const defaultFactory = byId.get(opts.defaultId);
+  if (defaultFactory === undefined) {
+    throw new Error(
+      `default director ${opts.defaultId} not in registry factories`,
+    );
+  }
+
+  return {
+    resolve(ref: DirectorRef): RegisteredFactory {
+      const factory = byId.get(ref.id);
+      if (factory === undefined) {
+        throw new UnknownDirectorIdError(ref.id);
+      }
+      return factory;
+    },
+    defaultFactory(): RegisteredFactory {
+      return defaultFactory;
+    },
+    buildDefaultRef(): DirectorRef {
+      // Construct fresh each call. There is no module-load constant for
+      // the default ref; the spec is explicit about avoiding implicit
+      // module-load side effects in the director surface.
+      return { id: defaultFactory.id, config: {} };
+    },
+  };
+}
+
+/**
+ * The canonical built-ins-only registry. Convenience for callers that
+ * do not ship their own director factories. Callers with custom
+ * factories pass them into `createDirectorRegistry` directly.
+ */
+export function createDefaultDirectorRegistry(): DirectorRegistry {
+  return createDirectorRegistry({
+    factories: [defaultDirectorFactory],
+    defaultId: defaultDirectorFactory.id,
+  });
+}
+
+/**
+ * Build the director registry for a workflow closure: the built-in default
+ * plus the closure's own `defineDirector` factories. A closure that ships no
+ * directors passes `loaded: []` and composes to `[defaultDirectorFactory]` --
+ * identical to `createDefaultDirectorRegistry`. A closure director whose id
+ * shadows the built-in (or another loaded director) throws at construction,
+ * the same fail-loud `createDirectorRegistry` applies to any duplicate.
+ */
+export function createWorkflowDirectorRegistry(
+  loaded: readonly AnnotatedDirectorFactory<unknown, BaseEnv>[],
+): DirectorRegistry {
+  return createDirectorRegistry({
+    factories: [defaultDirectorFactory, ...loaded],
+    defaultId: defaultDirectorFactory.id,
+  });
+}

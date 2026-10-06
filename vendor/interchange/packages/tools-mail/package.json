@@ -1,0 +1,42 @@
+{
+  "name": "@intx/tools-mail",
+  "description": "Mail tool runner giving agents mail_send, mail_reply, mail_search, mail_read, and mail_wait",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "interchange": {
+    "tools": "./dist/sidecar-bundle.js"
+  },
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./sidecar-bundle": {
+      "intx-src": "./src/sidecar-bundle.ts",
+      "types": "./dist/sidecar-bundle.d.ts",
+      "default": "./dist/sidecar-bundle.js"
+    }
+  },
+  "dependencies": {
+    "@intx/agent": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "@intx/crypto": "workspace:*",
+    "@intx/mail-memory": "workspace:*",
+    "@intx/storage-isogit": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

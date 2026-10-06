@@ -1,0 +1,476 @@
+import { eq, and } from "drizzle-orm";
+import { Hono } from "hono";
+import { describeRoute, validator } from "hono-openapi";
+
+import {
+  model,
+  modelProvider,
+  modelOffering,
+  modelPricing,
+} from "@intx/db/schema";
+import type { DB } from "@intx/db";
+import { parseModelOfferingRow } from "@intx/db";
+import {
+  CreateModelOffering,
+  ErrorResponse,
+  UpdateModelOffering,
+  CreatePricingRow,
+  ModelOfferingResponse,
+  PricingRowResponse,
+  paginatedSchema,
+} from "@intx/types";
+import {
+  pushSourceUpdatesSubtree,
+  type SidecarRouter,
+} from "@intx/hub-sessions";
+import type { CredentialCipher } from "@intx/types";
+
+import type { TenantEnv } from "../context";
+import { errorResponse } from "../error-response";
+import { first, ts } from "../format";
+import { generateId } from "@intx/hub-common";
+import { idResource } from "../middleware/grant";
+import type { RequireGrant } from "../middleware/grant";
+import {
+  parsePageParams,
+  cursorCondition,
+  pageOrder,
+  paginatedResponse,
+  pageParameters,
+} from "../pagination";
+import { jsonResponse } from "../openapi";
+
+export function formatModelOffering(row: typeof modelOffering.$inferSelect) {
+  // Validate the row once so the jsonb `quirks` is narrowed from `unknown`
+  // to a `Record | null` and `capabilities` is checked against the curated
+  // enum, mirroring how formatApproval formats a parsed row.
+  const parsed = parseModelOfferingRow(row);
+  return {
+    id: parsed.id,
+    tenantId: parsed.tenantId,
+    modelId: parsed.modelId,
+    providerId: parsed.providerId,
+    priority: parsed.priority,
+    deploymentTags: parsed.deploymentTags,
+    capabilities: parsed.capabilities,
+    quirks: parsed.quirks,
+    disabled: parsed.disabled,
+    createdAt: ts(parsed.createdAt),
+    updatedAt: ts(parsed.updatedAt),
+  };
+}
+
+export function formatPricingRow(row: typeof modelPricing.$inferSelect) {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    offeringId: row.offeringId,
+    currency: row.currency,
+    inputTokenPrice: row.inputTokenPrice,
+    outputTokenPrice: row.outputTokenPrice,
+    cacheReadTokenPrice: row.cacheReadTokenPrice,
+    cacheWriteTokenPrice: row.cacheWriteTokenPrice,
+    thinkingTokenPrice: row.thinkingTokenPrice,
+    perRequestFee: row.perRequestFee,
+    perImageFee: row.perImageFee,
+    perAudioFee: row.perAudioFee,
+    effectiveFrom: ts(row.effectiveFrom),
+    createdAt: ts(row.createdAt),
+  };
+}
+
+export type CreateModelOfferingRoutesDeps = {
+  db: DB["db"];
+  sidecarRouter: SidecarRouter;
+  requireGrant: RequireGrant;
+  credentialCipher: CredentialCipher;
+};
+
+export function createModelOfferingRoutes({
+  db,
+  sidecarRouter,
+  requireGrant,
+  credentialCipher,
+}: CreateModelOfferingRoutesDeps): Hono<TenantEnv> {
+  const app = new Hono<TenantEnv>();
+
+  app.get(
+    "/",
+    requireGrant("model-offering:*", "read"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "List model offerings owned by the tenant",
+      description:
+        "Lists the model offerings created directly on this tenant. Offerings inherited from ancestor tenants are not included; use the model discovery endpoint to see the resolved catalog.",
+      parameters: [...pageParameters],
+      responses: {
+        200: jsonResponse(
+          "List of model offerings",
+          paginatedSchema(ModelOfferingResponse),
+        ),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const { limit, cursor } = parsePageParams({
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
+      });
+
+      const conditions = [eq(modelOffering.tenantId, tenantCtx.id)];
+      if (cursor) {
+        conditions.push(
+          cursorCondition(modelOffering.createdAt, modelOffering.id, cursor),
+        );
+      }
+
+      const rows = await db.query.modelOffering.findMany({
+        where: and(...conditions),
+        orderBy: pageOrder(modelOffering.createdAt, modelOffering.id),
+        limit,
+      });
+      return c.json(
+        paginatedResponse(rows.map(formatModelOffering), rows, limit),
+      );
+    },
+  );
+
+  app.post(
+    "/",
+    requireGrant("model-offering:*", "create"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Create a model offering",
+      description:
+        "Pairs a tenant-owned model with a tenant-owned provider. To offer an inherited model or provider, first create a tenant-local copy of it (shadowing).",
+      responses: {
+        201: jsonResponse("Offering created", ModelOfferingResponse),
+        404: jsonResponse(
+          "Model or provider not found in this tenant",
+          ErrorResponse,
+        ),
+        409: jsonResponse(
+          "Offering already exists for this model and provider",
+          ErrorResponse,
+        ),
+      },
+    }),
+    validator("json", CreateModelOffering),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const body = c.req.valid("json");
+
+      const modelRow = await db.query.model.findFirst({
+        where: and(
+          eq(model.id, body.modelId),
+          eq(model.tenantId, tenantCtx.id),
+        ),
+      });
+      if (!modelRow) {
+        return errorResponse(c, "not_found", "Model not found in this tenant");
+      }
+
+      const providerRow = await db.query.modelProvider.findFirst({
+        where: and(
+          eq(modelProvider.id, body.providerId),
+          eq(modelProvider.tenantId, tenantCtx.id),
+        ),
+      });
+      if (!providerRow) {
+        return errorResponse(
+          c,
+          "not_found",
+          "Provider not found in this tenant",
+        );
+      }
+
+      const existing = await db.query.modelOffering.findFirst({
+        where: and(
+          eq(modelOffering.tenantId, tenantCtx.id),
+          eq(modelOffering.modelId, body.modelId),
+          eq(modelOffering.providerId, body.providerId),
+        ),
+      });
+      if (existing) {
+        return errorResponse(
+          c,
+          "conflict",
+          "An offering for this model and provider already exists",
+        );
+      }
+
+      const now = new Date();
+      const row = first(
+        await db
+          .insert(modelOffering)
+          .values({
+            id: generateId("modelOffering"),
+            tenantId: tenantCtx.id,
+            modelId: body.modelId,
+            providerId: body.providerId,
+            priority: body.priority ?? 0,
+            deploymentTags: body.deploymentTags ?? [],
+            capabilities: body.capabilities ?? [],
+            quirks: body.quirks ?? null,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning(),
+      );
+
+      void pushSourceUpdatesSubtree(
+        db,
+        sidecarRouter,
+        tenantCtx.id,
+        credentialCipher,
+      );
+      return c.json(formatModelOffering(row), 201);
+    },
+  );
+
+  app.get(
+    "/:offeringId",
+    requireGrant(idResource("model-offering", "offeringId"), "read"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Get a model offering",
+      responses: {
+        200: jsonResponse("Offering details", ModelOfferingResponse),
+        404: jsonResponse("Offering not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const offeringId = c.req.param("offeringId");
+      const row = await db.query.modelOffering.findFirst({
+        where: and(
+          eq(modelOffering.id, offeringId),
+          eq(modelOffering.tenantId, tenantCtx.id),
+        ),
+      });
+      if (!row) {
+        return errorResponse(c, "not_found", "Offering not found");
+      }
+      return c.json(formatModelOffering(row));
+    },
+  );
+
+  app.patch(
+    "/:offeringId",
+    requireGrant(idResource("model-offering", "offeringId"), "manage"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Update a model offering",
+      responses: {
+        200: jsonResponse("Offering updated", ModelOfferingResponse),
+        404: jsonResponse("Offering not found", ErrorResponse),
+      },
+    }),
+    validator("json", UpdateModelOffering),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const offeringId = c.req.param("offeringId");
+      const body = c.req.valid("json");
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.priority !== undefined) updates["priority"] = body.priority;
+      if (body.deploymentTags !== undefined)
+        updates["deploymentTags"] = body.deploymentTags;
+      if (body.capabilities !== undefined)
+        updates["capabilities"] = body.capabilities;
+      if (body.quirks !== undefined) updates["quirks"] = body.quirks;
+      if (body.disabled !== undefined) updates["disabled"] = body.disabled;
+
+      const [updated] = await db
+        .update(modelOffering)
+        .set(updates)
+        .where(
+          and(
+            eq(modelOffering.id, offeringId),
+            eq(modelOffering.tenantId, tenantCtx.id),
+          ),
+        )
+        .returning();
+
+      if (!updated) {
+        return errorResponse(c, "not_found", "Offering not found");
+      }
+
+      void pushSourceUpdatesSubtree(
+        db,
+        sidecarRouter,
+        tenantCtx.id,
+        credentialCipher,
+      );
+      return c.json(formatModelOffering(updated));
+    },
+  );
+
+  app.delete(
+    "/:offeringId",
+    requireGrant(idResource("model-offering", "offeringId"), "manage"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Delete a model offering",
+      description:
+        "Removes the offering and its pricing history. Running instances resolved through it fail over to the next eligible source.",
+      responses: {
+        204: { description: "Offering removed" },
+        404: jsonResponse("Offering not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const offeringId = c.req.param("offeringId");
+      const deleted = await db
+        .delete(modelOffering)
+        .where(
+          and(
+            eq(modelOffering.id, offeringId),
+            eq(modelOffering.tenantId, tenantCtx.id),
+          ),
+        )
+        .returning();
+      if (deleted.length === 0) {
+        return errorResponse(c, "not_found", "Offering not found");
+      }
+      void pushSourceUpdatesSubtree(
+        db,
+        sidecarRouter,
+        tenantCtx.id,
+        credentialCipher,
+      );
+      return c.body(null, 204);
+    },
+  );
+
+  app.get(
+    "/:offeringId/pricing",
+    requireGrant("model-pricing:*", "read"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "List an offering's pricing history",
+      description:
+        "Returns the full append-only pricing history for an offering, every currency and effective-from date, newest first.",
+      responses: {
+        200: jsonResponse("Pricing rows", PricingRowResponse.array()),
+        404: jsonResponse("Offering not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const offeringId = c.req.param("offeringId");
+
+      const offeringRow = await db.query.modelOffering.findFirst({
+        where: and(
+          eq(modelOffering.id, offeringId),
+          eq(modelOffering.tenantId, tenantCtx.id),
+        ),
+      });
+      if (!offeringRow) {
+        return errorResponse(c, "not_found", "Offering not found");
+      }
+
+      const rows = await db.query.modelPricing.findMany({
+        where: eq(modelPricing.offeringId, offeringId),
+        orderBy: (p, { desc }) => desc(p.effectiveFrom),
+      });
+      return c.json(rows.map(formatPricingRow));
+    },
+  );
+
+  app.post(
+    "/:offeringId/pricing",
+    requireGrant("model-pricing:*", "create"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Add a pricing row to an offering",
+      description:
+        "Appends a pricing row. Pricing is append-only: a price change inserts a new row with a later effective-from rather than editing an existing one, so historical cost attribution stays accurate.",
+      responses: {
+        201: jsonResponse("Pricing row created", PricingRowResponse),
+        400: jsonResponse(
+          "effectiveFrom is not a valid timestamp",
+          ErrorResponse,
+        ),
+        404: jsonResponse("Offering not found", ErrorResponse),
+        409: jsonResponse(
+          "A pricing row already exists for this currency and effective-from",
+          ErrorResponse,
+        ),
+      },
+    }),
+    validator("json", CreatePricingRow),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const offeringId = c.req.param("offeringId");
+      const body = c.req.valid("json");
+
+      const offeringRow = await db.query.modelOffering.findFirst({
+        where: and(
+          eq(modelOffering.id, offeringId),
+          eq(modelOffering.tenantId, tenantCtx.id),
+        ),
+      });
+      if (!offeringRow) {
+        return errorResponse(c, "not_found", "Offering not found");
+      }
+
+      let effectiveFrom = new Date();
+      if (body.effectiveFrom !== undefined) {
+        effectiveFrom = new Date(body.effectiveFrom);
+        if (Number.isNaN(effectiveFrom.valueOf())) {
+          return errorResponse(
+            c,
+            "invalid_request",
+            "effectiveFrom must be a valid ISO-8601 timestamp",
+          );
+        }
+      }
+
+      const existing = await db.query.modelPricing.findFirst({
+        where: and(
+          eq(modelPricing.offeringId, offeringId),
+          eq(modelPricing.currency, body.currency),
+          eq(modelPricing.effectiveFrom, effectiveFrom),
+        ),
+      });
+      if (existing) {
+        return errorResponse(
+          c,
+          "conflict",
+          "A pricing row already exists for this currency and effective-from",
+        );
+      }
+
+      const row = first(
+        await db
+          .insert(modelPricing)
+          .values({
+            id: generateId("modelPricing"),
+            tenantId: tenantCtx.id,
+            offeringId,
+            currency: body.currency,
+            inputTokenPrice: body.inputTokenPrice ?? null,
+            outputTokenPrice: body.outputTokenPrice ?? null,
+            cacheReadTokenPrice: body.cacheReadTokenPrice ?? null,
+            cacheWriteTokenPrice: body.cacheWriteTokenPrice ?? null,
+            thinkingTokenPrice: body.thinkingTokenPrice ?? null,
+            perRequestFee: body.perRequestFee ?? null,
+            perImageFee: body.perImageFee ?? null,
+            perAudioFee: body.perAudioFee ?? null,
+            effectiveFrom,
+            createdAt: new Date(),
+          })
+          .returning(),
+      );
+
+      // No source-update push: pricing is catalog metadata and does not
+      // participate in inference-source resolution, so a price change cannot
+      // alter any running instance's resolved sources.
+      return c.json(formatPricingRow(row), 201);
+    },
+  );
+
+  return app;
+}

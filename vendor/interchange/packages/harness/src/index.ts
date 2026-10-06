@@ -1,0 +1,51 @@
+export {
+  createHarness,
+  defineMailTools,
+  MAIL_FETCH_FAILED_FLAG,
+  type Harness,
+  type MailEnv,
+  type MailToolWrapper,
+} from "./harness";
+
+export { createHarnessRuntimeCapabilities } from "./runtime-capabilities";
+export type { HarnessRuntimeCapabilitiesOptions } from "./runtime-capabilities";
+
+export {
+  createCredentialProviderRegistry,
+  createHttpCredentialProvider,
+  builtinCredentialProviders,
+} from "./credential-providers";
+export type {
+  CredentialProviderRegistry,
+  FetchLike,
+  HttpCredentialProviderOptions,
+} from "./credential-providers";
+
+export {
+  createCredentialCapability,
+  reconcileDeclaredCredentials,
+} from "./credential-capability";
+export type {
+  CredentialCapabilityDeps,
+  HostCredentialCapability,
+  ResolvedCredentialBinding,
+} from "./credential-capability";
+
+export {
+  createConnectorRouter,
+  NoActiveConnectorThreadError,
+} from "./connector-router";
+export type {
+  ConnectorRouter,
+  ConnectorReplyParts,
+  ConnectorRouterOptions,
+  RouteDecision,
+} from "./connector-router";
+
+export { driveConnectorReplies } from "./reply-drain";
+export type {
+  AgentEventStream,
+  ConnectorReplyDrain,
+  ConnectorReplyDrainOpts,
+  ReplySettlement,
+} from "./reply-drain";

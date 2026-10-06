@@ -1,0 +1,846 @@
+import type {
+  MessageTransport,
+  OutboundMessage,
+  SendReceipt,
+  InboundMessage,
+  MessageRef,
+  Mailbox,
+  MailboxStatus,
+  SearchQuery,
+  Thread,
+  MessageHeaders,
+  BodyStructure,
+  MessagePart,
+  SyncState,
+  SyncResult,
+  ListInfo,
+  MailboxEvent,
+  Unsubscribe,
+  CryptoProvider,
+} from "@intx/types/runtime";
+import { MessageTransportError } from "@intx/types/runtime";
+import { buildMessageHeaders, parseHeaderSection } from "@intx/mime";
+import {
+  createInMemoryMailboxStore,
+  executeSearch,
+  executeThread,
+  fetchHeaders as doFetchHeaders,
+  fetchStructure as doFetchStructure,
+  fetchPart as doFetchPart,
+  fetchFull as doFetchFull,
+  requireMessage,
+  type StoredEnvelope,
+} from "@intx/mailbox";
+import { createAddressEntry, type AddressEntry } from "./mailbox";
+import {
+  executeSend,
+  type RemoteSendHandler,
+  type MessageSentHandler,
+} from "./send";
+
+/**
+ * The hub-side surface a transport must expose to coordinate per-agent
+ * registration, mail routing, and outbound-audit hooks. SessionManager
+ * and HubLink in `@intx/hub-agent` depend on this interface rather
+ * than on `InMemoryTransport` directly so custom hosts can supply
+ * their own backend (e.g. an SMTP/IMAP relay) without touching the
+ * package's seams.
+ */
+export interface HubTransport {
+  register(address: string, crypto: CryptoProvider): void;
+  unregister(address: string): void;
+  getTransportFor(address: string): MessageTransport;
+  setRemoteSendHandler(handler: RemoteSendHandler): void;
+  addMessageSentHandler(handler: MessageSentHandler): void;
+  /**
+   * Drop a hub-routed RFC 2822 message directly into an address's
+   * inbox. Used by the wire layer (HubLink) for inbound mail frames.
+   */
+  deliver(address: string, message: Uint8Array): void;
+}
+
+/**
+ * In-memory MessageTransport implementing full IMAP semantics within a
+ * single process. Messages are stored as real RFC 2822 MIME byte buffers.
+ *
+ * Every outbound message is PGP/MIME signed with the sender's CryptoProvider.
+ * Signature verification runs on fetchFull().
+ *
+ * Addresses must be registered before sending or receiving messages.
+ */
+export class InMemoryTransport implements MessageTransport, HubTransport {
+  readonly #entries = new Map<string, AddressEntry>();
+  #remoteSendHandler: RemoteSendHandler | undefined;
+  readonly #messageSentHandlers = new Set<MessageSentHandler>();
+
+  /**
+   * Set a handler for delivering messages to recipients not registered on
+   * this transport. The federation layer calls this to wire up the websocket
+   * connection to the hub. When set, send() forwards unregistered recipients
+   * to this handler instead of throwing.
+   */
+  setRemoteSendHandler(handler: RemoteSendHandler): void {
+    this.#remoteSendHandler = handler;
+  }
+
+  /**
+   * Register a handler that fires after every successful send(). Multiple
+   * handlers may be registered. The message is already delivered when
+   * handlers fire — a handler rejection does not mean the message was not
+   * delivered.
+   */
+  addMessageSentHandler(handler: MessageSentHandler): void {
+    this.#messageSentHandlers.add(handler);
+  }
+
+  /**
+   * Register an address with its CryptoProvider. Creates the default set
+   * of mailboxes (INBOX, Sent, Drafts, Archive, Trash).
+   *
+   * Throws if the address is already registered.
+   */
+  register(address: string, crypto: CryptoProvider): void {
+    if (this.#entries.has(address)) {
+      throw new Error(`Address "${address}" is already registered`);
+    }
+    this.#entries.set(address, createAddressEntry(crypto));
+  }
+
+  /**
+   * Remove an address's mailboxes and crypto provider. Called when a
+   * session is destroyed so the address can be re-registered later.
+   */
+  unregister(address: string): void {
+    this.#entries.delete(address);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Outbound
+  // ---------------------------------------------------------------------------
+
+  async send(
+    _message: OutboundMessage,
+    _signal?: AbortSignal,
+  ): Promise<SendReceipt> {
+    throw new Error(
+      "Use createInMemoryTransport().getTransportFor(address) to send messages",
+    );
+  }
+
+  async append(
+    _mailbox: string,
+    _message: InboundMessage,
+    _flags?: string[],
+    _signal?: AbortSignal,
+  ): Promise<MessageRef> {
+    throw new Error(
+      "Use createInMemoryTransport().getTransportFor(address) to append messages",
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mailbox management (per-address — use getTransportFor)
+  // ---------------------------------------------------------------------------
+
+  async listMailboxes(_signal?: AbortSignal): Promise<Mailbox[]> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async createMailbox(_name: string, _signal?: AbortSignal): Promise<Mailbox> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async deleteMailbox(_name: string, _signal?: AbortSignal): Promise<void> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async getMailboxStatus(
+    _name: string,
+    _signal?: AbortSignal,
+  ): Promise<MailboxStatus> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async search(
+    _mailbox: string,
+    _query: SearchQuery,
+    _signal?: AbortSignal,
+  ): Promise<MessageRef[]> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async thread(
+    _mailbox: string,
+    _algorithm: "references" | "orderedsubject",
+    _query?: SearchQuery,
+    _signal?: AbortSignal,
+  ): Promise<Thread[]> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async fetchHeaders(
+    _ref: MessageRef,
+    _signal?: AbortSignal,
+  ): Promise<MessageHeaders> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async fetchStructure(
+    _ref: MessageRef,
+    _signal?: AbortSignal,
+  ): Promise<BodyStructure> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async fetchPart(
+    _ref: MessageRef,
+    _partPath: string,
+    _signal?: AbortSignal,
+  ): Promise<MessagePart> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async fetchFull(
+    _ref: MessageRef,
+    _signal?: AbortSignal,
+  ): Promise<InboundMessage> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async setFlags(
+    _ref: MessageRef,
+    _flags: string[],
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async clearFlags(
+    _ref: MessageRef,
+    _flags: string[],
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async move(
+    _ref: MessageRef,
+    _toMailbox: string,
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async copy(
+    _ref: MessageRef,
+    _toMailbox: string,
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async expunge(
+    _mailbox: string,
+    _signal?: AbortSignal,
+  ): Promise<{ expungedUids: number[] }> {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  watch(
+    _mailbox: string,
+    _callback: (event: MailboxEvent) => void,
+  ): Unsubscribe {
+    throw new Error("Use getTransportFor(address) for per-address operations");
+  }
+
+  async sync(
+    _mailbox: string,
+    _knownState: SyncState,
+    _signal?: AbortSignal,
+  ): Promise<SyncResult> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "sync() (QRESYNC) is not implemented",
+    );
+  }
+
+  async createList(
+    _address: string,
+    _name: string,
+    _signal?: AbortSignal,
+  ): Promise<ListInfo> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "Distribution list management is not implemented",
+    );
+  }
+
+  async listMembers(
+    _address: string,
+    _signal?: AbortSignal,
+  ): Promise<string[]> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "Distribution list management is not implemented",
+    );
+  }
+
+  async subscribe(
+    _listAddress: string,
+    _subscriberAddress: string,
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "Distribution list management is not implemented",
+    );
+  }
+
+  async unsubscribe(
+    _listAddress: string,
+    _subscriberAddress: string,
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "Distribution list management is not implemented",
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inbound delivery from federation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Deliver a signed MIME message to an address's INBOX. Used by the
+   * federation layer when a message arrives from the hub over the
+   * websocket — the message is already assembled and signed by the
+   * originating sender, so no further processing is needed beyond
+   * envelope parsing and storage.
+   *
+   * Throws if the address is not registered.
+   */
+  deliver(address: string, message: Uint8Array): void {
+    const entry = this.#entries.get(address);
+    if (entry === undefined) {
+      throw new Error(
+        `Address "${address}" is not registered — cannot deliver mail`,
+      );
+    }
+    const inbox = entry.mailboxes.get("INBOX");
+    if (inbox === undefined) {
+      throw new Error(`Address "${address}" has no INBOX`);
+    }
+
+    const { headers } = parseHeaderSection(message);
+    // The stored envelope and the `exists` event below are built from one
+    // reading of these bytes, so the two cannot disagree about which headers
+    // the message carried. `buildMessageHeaders` is that reading: it applies
+    // the RFC rule that a present-but-blank `Date`, `Message-ID`, `From` or
+    // `In-Reply-To` names nothing, so a blank one arrives here as an absence.
+    const msgHeaders = buildMessageHeaders(headers);
+
+    const dateRaw = msgHeaders.date;
+    if (msgHeaders.messageId === undefined) {
+      throw new Error("Cannot deliver message: missing Message-ID header");
+    }
+    if (msgHeaders.from === undefined) {
+      throw new Error("Cannot deliver message: missing From header");
+    }
+    if (dateRaw === undefined) {
+      throw new Error("Cannot deliver message: missing Date header");
+    }
+
+    const envelope: StoredEnvelope = {
+      messageId: msgHeaders.messageId,
+      from: msgHeaders.from,
+      to: msgHeaders.to,
+      subject: msgHeaders.subject ?? "",
+      date: new Date(dateRaw),
+      inReplyTo: msgHeaders.inReplyTo,
+      references: msgHeaders.references ?? [],
+      // Read off the raw map rather than `msgHeaders`, which keeps this field
+      // only when it names a declared `InterchangeType`. The envelope mirrors
+      // what the message carried, so an unrecognized type is stored verbatim
+      // instead of being erased from the index.
+      interchangeType: headers.get("interchange-type"),
+      interchangeCorrelationId: msgHeaders.interchangeCorrelationId,
+    };
+
+    const uid = inbox.append(message, envelope, []);
+
+    const callbacks = entry.watchCallbacks.get("INBOX");
+    if (callbacks !== undefined && callbacks.size > 0) {
+      const event: import("@intx/types/runtime").MailboxEvent = {
+        type: "exists",
+        uid,
+        headers: msgHeaders,
+      };
+      for (const cb of callbacks) {
+        queueMicrotask(() => cb(event));
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal: per-address view
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns a MessageTransport scoped to the given address. Callers use
+   * this to send and read mail as that address.
+   */
+  getTransportFor(address: string): MessageTransport {
+    if (!this.#entries.has(address)) {
+      throw new Error(
+        `Address "${address}" is not registered — call register() first`,
+      );
+    }
+    return new ScopedMessageTransport(
+      address,
+      this.#entries,
+      () => this.#remoteSendHandler,
+      () => this.#messageSentHandlers,
+    );
+  }
+}
+
+/**
+ * MessageTransport scoped to a single address. All operations target that
+ * address's mailboxes. Constructed via InMemoryTransport.getTransportFor().
+ */
+class ScopedMessageTransport implements MessageTransport {
+  readonly #address: string;
+  readonly #entries: Map<string, AddressEntry>;
+  readonly #getRemoteSendHandler: () => RemoteSendHandler | undefined;
+  readonly #getMessageSentHandlers: () => Set<MessageSentHandler>;
+
+  constructor(
+    address: string,
+    entries: Map<string, AddressEntry>,
+    getRemoteSendHandler: () => RemoteSendHandler | undefined,
+    getMessageSentHandlers: () => Set<MessageSentHandler>,
+  ) {
+    this.#address = address;
+    this.#entries = entries;
+    this.#getRemoteSendHandler = getRemoteSendHandler;
+    this.#getMessageSentHandlers = getMessageSentHandlers;
+  }
+
+  get #entry(): AddressEntry {
+    const e = this.#entries.get(this.#address);
+    if (e === undefined) {
+      // `CANNOT` rather than a bare rejection: a rejection naming no condition
+      // leaves the outcome unknown, and an unknown outcome reads as worth
+      // retrying, which no retry through this handle clears. The lookup is
+      // against the live map, so registering the address again does revive the
+      // handle against the new entry -- but registration belongs to whoever
+      // owns the transport, not to the holder of a scoped handle.
+      throw new MessageTransportError(
+        "CANNOT",
+        `Address "${this.#address}" has been deregistered`,
+      );
+    }
+    return e;
+  }
+
+  #requireMailbox(name: string) {
+    const store = this.#entry.mailboxes.get(name);
+    if (store === undefined) {
+      throw new MessageTransportError(
+        "NONEXISTENT",
+        `Mailbox "${name}" does not exist for address "${this.#address}"`,
+      );
+    }
+    return store;
+  }
+
+  async send(
+    message: OutboundMessage,
+    _signal?: AbortSignal,
+  ): Promise<SendReceipt> {
+    // Trip the deregistered guard so callers using a stale scoped handle
+    // see a precise error rather than the generic "sender is not
+    // registered" thrown by executeSend.
+    void this.#entry;
+
+    const handlers = this.#getMessageSentHandlers();
+    const aggregatedHandler: MessageSentHandler | undefined =
+      handlers.size > 0
+        ? async (ctx) => {
+            await Promise.allSettled([...handlers].map((h) => h(ctx)));
+          }
+        : undefined;
+    return executeSend(
+      this.#address,
+      message,
+      this.#entries,
+      this.#getRemoteSendHandler(),
+      aggregatedHandler,
+    );
+  }
+
+  async append(
+    mailbox: string,
+    message: InboundMessage,
+    flags?: string[],
+    _signal?: AbortSignal,
+  ): Promise<MessageRef> {
+    const store = this.#requireMailbox(mailbox);
+    // For append, we need to convert InboundMessage back to raw bytes.
+    // Since InboundMessage may come from a prior fetchFull, we need the raw
+    // bytes. This is a design gap — append() takes InboundMessage but we
+    // need Uint8Array. We store a minimal representation.
+    //
+    // For now, serialize the InboundMessage as a minimal RFC 2822 message.
+    // The stored envelope keys the mailbox index on the id and serializes the
+    // date, so neither can be absent here. `deliver` refuses the same two on
+    // the same grounds. Checked before serializing so a message that cannot
+    // be stored is not encoded first and then discarded.
+    const { messageId, date } = message.headers;
+    if (messageId === undefined) {
+      throw new Error("Cannot append message: missing Message-ID header");
+    }
+    if (date === undefined) {
+      throw new Error("Cannot append message: missing Date header");
+    }
+    const raw = inboundMessageToRaw(message);
+    const envelope = {
+      messageId,
+      from: message.headers.from,
+      to: message.headers.to,
+      subject: message.headers.subject ?? "",
+      date: new Date(date),
+      inReplyTo: message.headers.inReplyTo,
+      references: message.headers.references ?? [],
+      interchangeType: message.headers.interchangeType,
+      interchangeCorrelationId: message.headers.interchangeCorrelationId,
+    };
+    const uid = store.append(raw, envelope, flags ?? []);
+    return { uid, mailbox };
+  }
+
+  async listMailboxes(_signal?: AbortSignal): Promise<Mailbox[]> {
+    return Array.from(this.#entry.mailboxes.keys()).map((name) => ({
+      name,
+    }));
+  }
+
+  async createMailbox(name: string, _signal?: AbortSignal): Promise<Mailbox> {
+    if (this.#entry.mailboxes.has(name)) {
+      throw new Error(
+        `Mailbox "${name}" already exists for address "${this.#address}"`,
+      );
+    }
+    this.#entry.mailboxes.set(name, createInMemoryMailboxStore());
+    return { name };
+  }
+
+  async deleteMailbox(name: string, _signal?: AbortSignal): Promise<void> {
+    if (!this.#entry.mailboxes.has(name)) {
+      throw new MessageTransportError(
+        "NONEXISTENT",
+        `Mailbox "${name}" does not exist for address "${this.#address}"`,
+      );
+    }
+    this.#entry.mailboxes.delete(name);
+  }
+
+  async getMailboxStatus(
+    name: string,
+    _signal?: AbortSignal,
+  ): Promise<MailboxStatus> {
+    const store = this.#requireMailbox(name);
+    const unseen = store.messages.filter((m) => !m.flags.has("\\Seen")).length;
+    return {
+      total: store.messages.length,
+      unseen,
+      recent: 0,
+      uidNext: store.uidNext,
+      uidValidity: store.uidValidity,
+      highestModSeq: store.highestModSeq,
+    };
+  }
+
+  async search(
+    mailbox: string,
+    query: SearchQuery,
+    _signal?: AbortSignal,
+  ): Promise<MessageRef[]> {
+    const store = this.#requireMailbox(mailbox);
+    return await executeSearch(mailbox, store, query);
+  }
+
+  async thread(
+    mailbox: string,
+    algorithm: "references" | "orderedsubject",
+    query?: SearchQuery,
+    _signal?: AbortSignal,
+  ): Promise<Thread[]> {
+    const store = this.#requireMailbox(mailbox);
+    return await executeThread(mailbox, store, algorithm, query);
+  }
+
+  async fetchHeaders(
+    ref: MessageRef,
+    _signal?: AbortSignal,
+  ): Promise<MessageHeaders> {
+    const store = this.#requireMailbox(ref.mailbox);
+    return await doFetchHeaders(ref, store);
+  }
+
+  async fetchStructure(
+    ref: MessageRef,
+    _signal?: AbortSignal,
+  ): Promise<BodyStructure> {
+    const store = this.#requireMailbox(ref.mailbox);
+    return await doFetchStructure(ref, store);
+  }
+
+  async fetchPart(
+    ref: MessageRef,
+    partPath: string,
+    _signal?: AbortSignal,
+  ): Promise<MessagePart> {
+    const store = this.#requireMailbox(ref.mailbox);
+    return await doFetchPart(ref, partPath, store);
+  }
+
+  async fetchFull(
+    ref: MessageRef,
+    _signal?: AbortSignal,
+  ): Promise<InboundMessage> {
+    const store = this.#requireMailbox(ref.mailbox);
+    return await doFetchFull(
+      ref,
+      store,
+      (addr) => this.#entries.get(addr)?.crypto,
+    );
+  }
+
+  async setFlags(
+    ref: MessageRef,
+    flags: string[],
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    const store = this.#requireMailbox(ref.mailbox);
+    const msg = store.addFlags(ref.uid, flags);
+    this.#fireWatchCallbacks(ref.mailbox, {
+      type: "flagsChanged",
+      uid: ref.uid,
+      flags: Array.from(msg.flags),
+    });
+  }
+
+  async clearFlags(
+    ref: MessageRef,
+    flags: string[],
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    const store = this.#requireMailbox(ref.mailbox);
+    const msg = store.removeFlags(ref.uid, flags);
+    this.#fireWatchCallbacks(ref.mailbox, {
+      type: "flagsChanged",
+      uid: ref.uid,
+      flags: Array.from(msg.flags),
+    });
+  }
+
+  async move(
+    ref: MessageRef,
+    toMailbox: string,
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    const fromStore = this.#requireMailbox(ref.mailbox);
+    const toStore = this.#requireMailbox(toMailbox);
+    const msg = requireMessage(fromStore, ref.uid, ref.mailbox);
+    const raw = await fromStore.readRaw(ref.uid);
+    fromStore.remove(ref.uid);
+
+    const newUid = toStore.append(raw, msg.envelope, Array.from(msg.flags));
+
+    this.#fireWatchCallbacks(ref.mailbox, {
+      type: "expunged",
+      uid: ref.uid,
+    });
+
+    // Notify watchers of the new message in the destination mailbox.
+    const { headers: parsedHeaders } = parseHeaderSection(raw);
+    const msgHeaders = this.#buildMessageHeaders(parsedHeaders);
+    this.#fireWatchCallbacks(toMailbox, {
+      type: "exists",
+      uid: newUid,
+      headers: msgHeaders,
+    });
+  }
+
+  async copy(
+    ref: MessageRef,
+    toMailbox: string,
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    const fromStore = this.#requireMailbox(ref.mailbox);
+    const toStore = this.#requireMailbox(toMailbox);
+    const msg = requireMessage(fromStore, ref.uid, ref.mailbox);
+    const raw = await fromStore.readRaw(ref.uid);
+
+    const newUid = toStore.append(raw, msg.envelope, Array.from(msg.flags));
+
+    const { headers: parsedHeaders } = parseHeaderSection(raw);
+    const msgHeaders = this.#buildMessageHeaders(parsedHeaders);
+    this.#fireWatchCallbacks(toMailbox, {
+      type: "exists",
+      uid: newUid,
+      headers: msgHeaders,
+    });
+  }
+
+  async expunge(
+    mailbox: string,
+    _signal?: AbortSignal,
+  ): Promise<{ expungedUids: number[] }> {
+    const store = this.#requireMailbox(mailbox);
+    const toExpunge = store.messages.filter((m) => m.flags.has("\\Deleted"));
+
+    for (const msg of toExpunge) {
+      store.remove(msg.uid);
+    }
+
+    for (const msg of toExpunge) {
+      this.#fireWatchCallbacks(mailbox, {
+        type: "expunged",
+        uid: msg.uid,
+      });
+    }
+
+    return { expungedUids: toExpunge.map((m) => m.uid) };
+  }
+
+  watch(mailbox: string, callback: (event: MailboxEvent) => void): Unsubscribe {
+    this.#requireMailbox(mailbox);
+    let callbacks = this.#entry.watchCallbacks.get(mailbox);
+    if (callbacks === undefined) {
+      callbacks = new Set();
+      this.#entry.watchCallbacks.set(mailbox, callbacks);
+    }
+    callbacks.add(callback);
+
+    return () => {
+      const cbs = this.#entry.watchCallbacks.get(mailbox);
+      cbs?.delete(callback);
+    };
+  }
+
+  async sync(
+    _mailbox: string,
+    _knownState: SyncState,
+    _signal?: AbortSignal,
+  ): Promise<SyncResult> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "sync() (QRESYNC) is not implemented",
+    );
+  }
+
+  async createList(
+    _address: string,
+    _name: string,
+    _signal?: AbortSignal,
+  ): Promise<ListInfo> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "Distribution list management is not implemented",
+    );
+  }
+
+  async listMembers(
+    _address: string,
+    _signal?: AbortSignal,
+  ): Promise<string[]> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "Distribution list management is not implemented",
+    );
+  }
+
+  async subscribe(
+    _listAddress: string,
+    _subscriberAddress: string,
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "Distribution list management is not implemented",
+    );
+  }
+
+  async unsubscribe(
+    _listAddress: string,
+    _subscriberAddress: string,
+    _signal?: AbortSignal,
+  ): Promise<void> {
+    throw new MessageTransportError(
+      "CANNOT",
+      "Distribution list management is not implemented",
+    );
+  }
+
+  #fireWatchCallbacks(mailbox: string, event: MailboxEvent): void {
+    const callbacks = this.#entry.watchCallbacks.get(mailbox);
+    if (callbacks === undefined || callbacks.size === 0) return;
+    for (const cb of callbacks) {
+      queueMicrotask(() => cb(event));
+    }
+  }
+
+  #buildMessageHeaders(
+    headers: Map<string, string>,
+  ): import("@intx/types/runtime").MessageHeaders {
+    return buildMessageHeaders(headers);
+  }
+}
+
+function inboundMessageToRaw(message: InboundMessage): Uint8Array {
+  const enc = new TextEncoder();
+  const CRLF = "\r\n";
+  let headers = "";
+  // A message with no originator gets no From line. Interpolating the absence
+  // would write the literal `From: undefined` into the RFC 2822 bytes, which
+  // reads back as an originator named "undefined".
+  if (message.headers.from !== undefined) {
+    headers += `From: ${message.headers.from}${CRLF}`;
+  }
+  headers += `To: ${message.headers.to.join(", ")}${CRLF}`;
+  if (message.headers.cc && message.headers.cc.length > 0) {
+    headers += `Cc: ${message.headers.cc.join(", ")}${CRLF}`;
+  }
+  // Omitted for the same reason as From above: interpolating an absent value
+  // writes the literal `Date: undefined` into the RFC 2822 bytes, which reads
+  // back as a real header. An omitted line is the honest encoding of a header
+  // the message never carried.
+  if (message.headers.date !== undefined) {
+    headers += `Date: ${message.headers.date}${CRLF}`;
+  }
+  if (message.headers.messageId !== undefined) {
+    headers += `Message-ID: ${message.headers.messageId}${CRLF}`;
+  }
+  if (message.headers.subject !== undefined) {
+    headers += `Subject: ${message.headers.subject}${CRLF}`;
+  }
+  if (message.headers.inReplyTo !== undefined) {
+    headers += `In-Reply-To: ${message.headers.inReplyTo}${CRLF}`;
+  }
+  if (message.headers.references && message.headers.references.length > 0) {
+    headers += `References: ${message.headers.references.join(" ")}${CRLF}`;
+  }
+  if (message.headers.interchangeType !== undefined) {
+    headers += `Interchange-Type: ${message.headers.interchangeType}${CRLF}`;
+  }
+
+  const body =
+    message.content ??
+    (message.payload !== undefined ? JSON.stringify(message.payload) : "");
+  headers += `Content-Type: text/plain${CRLF}`;
+  headers += `${CRLF}`;
+  return enc.encode(headers + body);
+}

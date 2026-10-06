@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: interchange
+      POSTGRES_PASSWORD: interchange
+      POSTGRES_DB: interchange
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "interchange"]
+      interval: 2s
+    restart: unless-stopped
+  hub:
+    build: { context: .., dockerfile: docs/Dockerfile, target: hub }
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://interchange:interchange@postgres:5432/interchange
+      HUB_DATA_DIR: /data
+      PORT: "3000"
+      BETTER_AUTH_BASE_URL: http://localhost:8080
+    volumes: [hub-data:/data]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: unless-stopped
+  web:
+    build:
+      context: ..
+      dockerfile: docs/Dockerfile
+      target: web
+      args: { VITE_HUB_URL: http://localhost:8080 }
+    environment:
+      HUB_UPSTREAM: hub:3000
+    ports: ["8080:8080"]
+    depends_on: [hub]
+    restart: unless-stopped
+volumes:
+  postgres:
+  hub-data:

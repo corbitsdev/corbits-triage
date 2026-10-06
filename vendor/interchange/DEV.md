@@ -1,0 +1,271 @@
+# Development
+
+## Prerequisites
+
+- [Bun](https://bun.sh/) (1.2+)
+- PostgreSQL (15+)
+- Git hooks configured: `git config core.hooksPath .githooks`
+
+## Quick Start
+
+After cloning, install workspace dependencies. The Makefile does not run this for you, and `make build` will fail with `TS2307: Cannot find module '@intx/...'` for any workspace package whose symlink under `node_modules/@intx/` has not been materialized yet:
+
+```bash
+bun install
+```
+
+If env files are already configured (see Environment Setup below):
+
+```bash
+bin/db-reset && bin/dev --seed
+```
+
+This drops and recreates the database, runs migrations, grants permissions, starts the Hub and admin UI, and seeds test data. After startup, the Hub is at `http://localhost:3000` and the admin UI is at `http://localhost:5173`. The production Hub composition registers no sidecar provisioner, so this stack cannot probe or deploy workflows until one is injected.
+
+Seed accounts (all use password `password123`):
+
+| User          | Email             | Role                                |
+| ------------- | ----------------- | ----------------------------------- |
+| Alice Admin   | alice@example.com | Owner of Acme Corp and Widget Labs  |
+| Bob Builder   | bob@example.com   | Member of Acme Corp and Widget Labs |
+| Carol Creator | carol@example.com | Admin of Widget Labs                |
+
+## Environment Setup
+
+Copy each example env file and fill in values:
+
+```bash
+cp .env.example .env
+cp .env.hub.example .env.hub
+cp .env.migrate.example .env.migrate
+```
+
+The example files contain working dev defaults for most values, but three secrets in `.env.hub` ship blank and you must generate each as a 32-byte hex value (`openssl rand -hex 32`): `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`, and `PRINCIPAL_KEY_ENCRYPTION_KEY`. The hub refuses to start without the two encryption keys.
+
+| File           | Contains                                                         |
+| -------------- | ---------------------------------------------------------------- |
+| `.env`         | Shared settings: database host/port/name, demo runner config     |
+| `.env.hub`     | Hub secrets: database credentials, auth secret, OAuth (optional) |
+| `.env.migrate` | Migration database credentials (DDL user)                        |
+
+### Optional Environment Overrides
+
+Beyond the values above, several operator-facing variables are read by
+code and have working defaults. All are optional; set them only to
+override the default behavior. They are commented out in the example
+files next to the matching service config.
+
+| Variable                             | Read by                                      | Default                             | Purpose                                                                                                                                              |
+| ------------------------------------ | -------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HUB_ADMIN_EMAIL`                    | `bin/dev.ts`, `bin/publish-tool-packages.ts` | `alice@example.com`                 | Admin identity `bin/dev.ts` uses to publish the seed tool packages.                                                                                  |
+| `HUB_ADMIN_PASSWORD`                 | `bin/dev.ts`, `bin/publish-tool-packages.ts` | `password123`                       | Password for that admin identity.                                                                                                                    |
+| `HUB_TENANT_SLUG`                    | `bin/dev.ts`                                 | `acme`                              | Tenant the seed tool packages are published into.                                                                                                    |
+| `HUB_TENANT_NAME`                    | `bin/dev.ts`                                 | `Acme Corp`                         | Display name for that tenant.                                                                                                                        |
+| `HUB_URL`                            | `bin/seed`                                   | `http://localhost:3000`             | Base URL `bin/seed` targets when seeding via the hub API.                                                                                            |
+| `HUB_MAX_TARBALL_BYTES`              | hub (`apps/hub`)                             | 10 MiB                              | Per-tarball cap for tool packages uploaded to the package registry.                                                                                  |
+| `DB_STATEMENT_TIMEOUT_MS`            | hub (`apps/hub`), db scripts (`bin/`)        | 60000 (60s)                         | Positive integer milliseconds, up to 2147483647. Cancels SQL statements exceeding this duration, including lock waits.                               |
+| `PG_SCHEMA`                          | hub (`apps/hub`)                             | unset                               | Pins the hub to a postgres schema. Integration-test-only; leave unset normally.                                                                      |
+| `CREDENTIAL_ENCRYPTION_KEY`          | hub (`apps/hub`)                             | none (required)                     | 32-byte hex key that seals credential secrets and OAuth client secrets at rest in the database. The hub refuses to start without it.                 |
+| `PRINCIPAL_KEY_ENCRYPTION_KEY`       | hub (`apps/hub`)                             | none (required)                     | 32-byte hex key that seals per-principal signing keys at rest, separate from `CREDENTIAL_ENCRYPTION_KEY`. The hub refuses to start without it.       |
+| `SIDECAR_CREDENTIAL_ENCRYPTION_KEY`  | sidecar (`apps/sidecar`)                     | none (required)                     | 32-byte hex key that seals credential material (inference apiKeys) at rest under `SIDECAR_DATA_DIR`. The sidecar refuses to start without it.        |
+| `SIDECAR_CACHE_DIR`                  | sidecar (`apps/sidecar`)                     | `<SIDECAR_DATA_DIR>/cache/tarballs` | Directory for the tool-package tarball cache.                                                                                                        |
+| `SIDECAR_CACHE_MAX_BYTES`            | sidecar (`apps/sidecar`)                     | 10 GiB                              | Maximum total size of the tarball cache.                                                                                                             |
+| `SIDECAR_REGISTRY_MAX_TARBALL_BYTES` | sidecar (`apps/sidecar`)                     | 10 MiB                              | Per-tarball cap enforced when pulling from upstream tool registries.                                                                                 |
+| `SIDECAR_TOOL_REGISTRIES`            | sidecar (`apps/sidecar`)                     | public npmjs                        | JSON array of `{name, url, auth?}` tool registries. Unset the variable to use npmjs; do not set it to an empty string.                               |
+| `SIDECAR_LATENCY_BENCH_FILE`         | sidecar (`apps/sidecar`)                     | unset (disabled)                    | When set to a file path, appends a per-operation latency line to that file. A dev latency-benchmarking hook; leave unset in normal use.              |
+| `SIDECAR_REPACK_EVERY_MESSAGES`      | sidecar (`apps/sidecar`)                     | unset (disabled)                    | Forces a git repack of the workflow-run repo every N messages (positive integer). A repack-cadence A/B toggle; leave unset in normal use.            |
+| `CONSUMED_RETENTION_MS`              | sidecar (`apps/sidecar`)                     | 24h                                 | Retention horizon in milliseconds (positive integer) for the workflow-run consumed-dedup index.                                                      |
+| `CHILD_READY_TIMEOUT_MS`             | sidecar (`apps/sidecar`)                     | 30s                                 | Milliseconds (positive integer) the supervisor waits for a spawned workflow-process child to signal ready before killing it and rejecting the spawn. |
+
+### Database Users
+
+The system uses two PostgreSQL users:
+
+- **Migration user** (configured in `.env.migrate`): Owns DDL privileges, creates and owns all tables. Used by `drizzle-kit migrate`.
+- **Hub user** (configured in `.env.hub`): Read/write application user. Needs explicit grants after migrations because it does not own the tables.
+
+Both users must exist in PostgreSQL before running the stack. `bin/db-reset` handles all the grant choreography automatically, but the users themselves must be created once:
+
+```bash
+psql -d postgres -c "CREATE USER \"interchange-migrate\" WITH PASSWORD 'migrate-dev-password';"
+psql -d postgres -c "CREATE USER \"interchange-hub\" WITH PASSWORD 'hub-dev-password';"
+```
+
+If you get "role already exists" errors, the users are already set up and you can proceed.
+
+## Running the Stack
+
+The dev orchestrator starts the Hub and admin UI in the correct order with colored log output:
+
+```bash
+bin/dev
+```
+
+This runs database migration, the Hub server (with `--watch` for auto-reload), and the admin UI dev server. Press Ctrl+C for graceful shutdown of all services.
+
+The Hub does not start or trust an ambient sidecar. Workflow probing and execution both require a configured sidecar provisioner; the provisioner receives a probe- or allocation-scoped identity and starts or reuses suitable capacity. The production composition registers no provisioner by default, so deployment is unavailable until one is injected. The admin UI E2E harness injects a test-only local-process provisioner.
+
+Options:
+
+| Flag                    | Effect                                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--seed`                | Seed the database after the hub is ready                                                                                                                            |
+| `--no-admin-ui`         | Skip the admin UI dev server                                                                                                                                        |
+| `--no-publish-builtins` | Skip publishing the built-in tool packages. Incompatible with `--seed` (errors out — the seed pins the built-ins, so the launch would fail with `tarball.missing`). |
+
+Default ports: hub on 3000 and admin UI on 5173. Provisioned sidecars connect outbound to `ws://localhost:3000/api/sidecars/ws` unless the provisioner is given another Hub WebSocket URL.
+
+## Database
+
+Migrations live in `packages/db`. The `bin/db-migrate` script runs `drizzle-kit generate` then `drizzle-kit migrate`. The dev orchestrator (`bin/dev.ts`) runs `drizzle-kit migrate` directly on startup, skipping the generate step.
+
+### Full Reset
+
+`bin/db-reset` performs a complete database teardown and rebuild as the local superuser:
+
+1. Drop the database
+2. Create a fresh database
+3. Grant database and schema access to both app users
+4. Run all migrations (as the migration user)
+5. Grant table and sequence access to the hub user
+
+This is the correct way to get a clean database. Do not attempt the steps manually.
+
+Pass `--clean` to additionally wipe the hub and sidecar on-disk state directories (`HUB_DATA_DIR`, `SIDECAR_DATA_DIR`) before resetting the database:
+
+```bash
+bin/db-reset --clean
+```
+
+Without `--clean`, the postgres tables are wiped but any provisioner-managed local sidecar data may remain on disk. A later worker must not reuse that state against a fresh database because its allocation identity no longer exists. Use `--clean` whenever you want a fresh stack with no leftover worker state.
+
+### Applying Migrations Only
+
+If the database already exists and you just need to apply new migrations:
+
+```bash
+bin/db-migrate
+```
+
+### One-time agent-fold migration (workflow_deployment dissolution)
+
+Migrations 0055–0057 dissolve the `workflow_deployment` projection onto
+first-class `workflow_run` anchor runs and promote `workflow_run.definition_id`
+to `NOT NULL`. Applying them on a populated database required a one-time,
+rows-only fold that projected a `workflow_definition` over every legacy agent
+and native workflow asset before the SQL migrations ran. That fold has run
+everywhere it needed to, and the tooling that performed it has been retired, so
+this is now a historical note: a fresh database applies these migrations with
+nothing to fold (they no-op over an empty `workflow_deployment`), and the
+populated environments are already migrated.
+
+Because that tooling is gone, two migrations fail loud rather than silently
+corrupting data if they ever meet a database that was never folded. Migration
+0055 aborts if any pre-fold deployment still lacks a folded
+`workflow_definition` (its reconstructed anchor run would be definition-less).
+Migration 0068 aborts before dropping the legacy agent tables if `agent_instance`
+still holds rows — that instance routing/mail/turn state was never folded into
+`workflow_run`, and no tool ever converted it, so a bare drop would destroy it.
+If either guard fires, the database predates the completed fold and there is no
+automated path back: reconcile it by hand — create the missing
+`workflow_definition` for the deployment's asset, or retire the remaining agent
+instances — before re-running the migration. On a fresh or already-migrated
+database neither guard fires.
+
+## Build Pipeline
+
+The Makefile is the canonical entry point for the build verbs. It runs
+each command directly and runs `bin/check-env` (via `.env-checked`) to
+verify the environment before each build.
+
+```bash
+make all            # lint + build + admin-ui bundle + test
+make build          # TypeScript type checking (tsc -b --noEmit --force)
+make build-admin-ui # admin-ui production bundle (vite build)
+make lint           # Prettier + ESLint + API docs freshness
+make format         # Prettier auto-fix
+make test           # All tests
+make test-e2e       # Admin UI browser end-to-end suite (excluded from all)
+make test-storage-browser # Storage IndexedDB browser suite (excluded from all)
+make docs           # Regenerate API documentation
+make clean          # Remove tsbuildinfo, dist directories, env stamp
+```
+
+The pre-commit hook checks out the staged tree into a temporary
+directory and runs `make lint` against it, so only committed content
+is validated.
+
+### End-to-End Suite
+
+`make test-e2e` runs the Playwright browser suite in `tests/admin-ui-e2e`.
+It builds the admin UI bundle (`make build-admin-ui`), brings up a
+hermetic stack headless -- a fresh per-run database, a hub, and a vite
+preview server serving the built admin UI -- and drives a real browser
+through a login against that UI. It is excluded from `make all` and
+`make test`; run it on its own.
+
+Local prerequisites:
+
+- An already-running PostgreSQL. The suite does not use docker.
+- A maintenance/superuser Postgres connection available through the
+  ambient `PG*` libpq environment (`PGHOST`, `PGPORT`, `PGUSER`, ...),
+  so the per-run provisioner can `CREATE DATABASE`. This is the same
+  superuser basis `bin/db-reset` relies on.
+- A one-time browser install: `bunx playwright install chromium`.
+
+The harness sets `ADMIN_UI_HUB_ORIGIN` for the run; the vite preview
+proxy reads it to point the admin UI's `/api` calls at that run's hub.
+You do not set it by hand.
+
+The storage browser suite is independent of Postgres and the admin UI. It
+bundles `@intx/storage-isogit/browser`, serves a small harness, and verifies
+single-owner IndexedDB storage plus clean reset on reload in Chromium:
+
+```bash
+make test-storage-browser
+```
+
+It requires the same one-time Chromium installation as the admin UI suite.
+
+## Bin Scripts
+
+All scripts live in `bin/`. The bash scripts source the bundled [opsh](https://github.com/alexanderguy/opsh) framework as a library from `bin/opsh`, so opsh does not need to be installed separately.
+
+| Script             | Usage                                            | Description                                                                                          |
+| ------------------ | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `bin/dev`          | `bin/dev [flags]`                                | Dev orchestrator (see above)                                                                         |
+| `bin/hub`          | `bin/hub`                                        | Run the hub server standalone (loads `.env` and `.env.hub`)                                          |
+| `bin/db-migrate`   | `bin/db-migrate`                                 | Generate and apply database migrations (loads `.env` and `.env.migrate`)                             |
+| `bin/db-reset`     | `bin/db-reset [--clean]`                         | Drop, recreate, migrate, and grant permissions. `--clean` also wipes Hub and local sidecar data.     |
+| `bin/seed`         | `bin/seed`                                       | Seed the database via the hub API (requires running hub, uses `HUB_URL`)                             |
+| `bin/add-package`  | `bin/add-package <name>`                         | Scaffold a new `@intx/<name>` package                                                                |
+| `bin/check-env`    | `bin/check-env`                                  | Verify git hooks are configured                                                                      |
+| `bin/audit`        | `bin/audit --dir <path> --session <id> [--json]` | Inspect an agent's tool authorization audit trail                                                    |
+| `bin/discover`     | `bin/discover --provider <name> [flags]`         | Run the wire-capture rig against a registered inference provider (needs provider credentials in env) |
+| `bin/gen-api-docs` | `bin/gen-api-docs`                               | Generate API documentation from route schemas                                                        |
+| `bin/posix-demo`   | `bin/posix-demo`                                 | Run the POSIX (alpha/beta) agent demo (auto-loads `.env`; reads `ALPHA_*`/`BETA_*`)                  |
+| `bin/ring-demo`    | `bin/ring-demo`                                  | Run the ring agent demo (auto-loads `.env`; reads `RING_*`)                                          |
+
+## Seed Data
+
+`bin/seed` creates the full dev dataset: users, tenants, agents, roles, grants, credentials, and offerings. It requires a running hub (the dev orchestrator handles this when `--seed` is passed). See the Quick Start section for seed account credentials.
+
+## Project Structure
+
+```
+apps/
+  hub/          Hub server (Hono, websocket, API routes)
+  sidecar/      Sidecar process (agent lifecycle, websocket client)
+  admin-ui/     Admin web UI (Vite + React)
+packages/
+  db/           Drizzle ORM schema and migrations
+  types/        Shared TypeScript types (arktype validators)
+  mail-memory/  In-memory IMAP-like message transport
+  storage-isogit/  Git-backed agent state (isomorphic-git)
+  inference/    LLM inference reactor
+  harness/      Agent harness (tools, transport, audit)
+  hub-sessions/  Hub session library (sidecar router, event collection)
+  ...
+bin/            Development and operational scripts
+.githooks/      Git hooks (pre-commit lint, commit-msg format)
+```

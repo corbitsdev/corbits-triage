@@ -1,0 +1,17 @@
+name: vendor-diff
+
+on:
+  pull_request:
+    paths:
+      - "vendor/**"
+      - "tooling/vendor-diff-allowlist.txt"
+      - "tooling/vendor-diff-check.sh"
+  workflow_dispatch:
+
+jobs:
+  vendor-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vendor-diff gate (fail on vendor/ drift from pinned stock)
+        run: sh tooling/vendor-diff-check.sh

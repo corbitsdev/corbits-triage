@@ -1,0 +1,46 @@
+{
+  "name": "corbits-triage",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "vendor/interchange/packages/*",
+    "vendor/interchange/apps/*",
+    "vendor/interchange/tests/admin-ui-e2e"
+  ],
+  "catalog": {
+    "@types/semver": "^7.7.1",
+    "@types/ssri": "^7.1.5",
+    "arktype": "^2.1.29",
+    "better-auth": "^1.4.18",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.11.9",
+    "isomorphic-git": "^1.27.2",
+    "postgres": "^3.4.8",
+    "semver": "^7.7.2",
+    "ssri": "^12.0.0",
+    "tar": "^7.5.1"
+  },
+  "scripts": {
+    "dev": "bun --conditions=intx-src tooling/dev.ts",
+    "test": "bun --conditions=intx-src test ./apps/ ./packages/ ./tooling/",
+    "check": "bunx tsc --noEmit -p tooling && bunx tsc -b apps/web && bun tooling/typecheck-hub.ts && bun build --conditions=intx-src apps/hub/src/server.ts --target bun --outfile /dev/null",
+    "holdback": "bun --conditions=intx-src tooling/holdback-replay.ts",
+    "injection": "bun --conditions=intx-src tooling/injection-run.ts",
+    "report": "bun --conditions=intx-src tooling/cost-latency-report.ts",
+    "hub": "bun --conditions=intx-src apps/hub/src/server.ts",
+    "vendor:health": "sh tooling/vendor-health-check.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@corbits/system-one": "0.3.0",
+    "@intx/hub-client": "workspace:*",
+    "@intx/inference": "workspace:*",
+    "@intx/types": "workspace:*"
+  }
+}

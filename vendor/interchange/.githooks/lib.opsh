@@ -1,0 +1,49 @@
+# shellcheck shell=bash
+lib::import git step-runner
+
+: "${GIT_HOOK_KEEP_STAGING:=false}"
+: "${GIT_SKIP_HOOKS:=false}"
+
+if $GIT_SKIP_HOOKS; then
+	log::warn "skipping git hooks"
+	exit 0
+fi
+
+if [[ ! -v _GIT_HOOK_STAGING_DIR ]]; then
+	# Stage OUTSIDE the worktree. An in-worktree copy of the tree is globbed
+	# by any concurrent test discovery, which then hits phantom ENOENT when
+	# this hook removes the copy mid-run. Land it beside opsh's $TMPDIR so it
+	# is out of the worktree yet out of opsh's own auto-cleaned tree, leaving
+	# the GIT_HOOK_KEEP_STAGING escape hatch below in control of its lifetime.
+	_GIT_HOOK_STAGING_DIR="$(mktemp -d "$(dirname "$TMPDIR")/git-hook-staging.XXXXXX")"
+	export _GIT_HOOK_STAGING_DIR
+	exit::trigger staging-cleanup
+fi
+
+staging-cleanup() {
+	if $GIT_HOOK_KEEP_STAGING; then
+		return 0
+	fi
+
+	if [[ ! -d $_GIT_HOOK_STAGING_DIR ]]; then
+		return 0
+	fi
+
+	log::info "cleaning up staging directories"
+	rm -rf "$_GIT_HOOK_STAGING_DIR"
+}
+
+checkout-staging() {
+	local dir hookname
+	hookname=$1
+	shift
+
+	dir="$_GIT_HOOK_STAGING_DIR/$hookname-$$"
+	git checkout-index -a --prefix="$dir/"
+	ln -s "$(realpath "$SCRIPTDIR/../node_modules")" "$dir/node_modules"
+	# Parent repo already passed bin/check-env; the staging dir is not
+	# a git repo so the check would fail there. Stamp it as checked so
+	# `make` can run inside the staging tree.
+	touch "$dir/.env-checked"
+	echo "$dir"
+}

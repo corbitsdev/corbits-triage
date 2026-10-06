@@ -1,0 +1,350 @@
+# @intx/workflow-host
+
+Production-host implementations for the abstract
+`WorkflowRuntimeEnv` from `@intx/workflow`.
+
+The host is the part of the workflow runtime that knows how to
+talk to real infrastructure: a `workflow-run` repo, the
+substrate's per-repo lock, an inference harness, child-workflow
+spawning. It is intentionally host-agnostic at the import layer —
+nothing in the package name or public API presumes a specific
+deployment context (sidecar, CLI, integration test harness, an
+out-of-process supervisor variant). Each is expected to instantiate
+the same package with its own dependency-injected bindings rather
+than fork another app.
+
+The package is organized along the abstract pieces it implements:
+
+- `adapters/` — concrete implementations of the four
+  `WorkflowRuntimeEnv` adapter slots. `repo-store.ts` wraps the
+  workflow-run substrate (with `seq_conflict` translated to a
+  single-writer-invariant programming error). `blob-substrate.ts`
+  spills above 1 MiB. `step-invoker.ts` constructs an in-process
+  agent per step. `spawn-child.ts` resolves a `definitionRef` and
+  delegates the spawn to a runtime-supplied callback.
+- `seams/` — the substrate-shaped seams. `scheduler.ts` runs both a
+  startup recovery walk and a live `subscribeKind` loop so a
+  `TimerSet` committed by an active workflow process fires without
+  waiting for a process restart. `signal-channel.ts` funnels live
+  `SignalReceived` commits into the matching awaiter. The channel
+  reads `unconsumedSignals` through its injected `readState`
+  reader, but every production call site passes an `emptyState`
+  reader, so that queue is always empty in production: a pre-await
+  signal resolves through the live `subscribeKind` tail, and
+  resume rehydration of a signal that arrived while the run was
+  offline is not wired. Plumbing the runtime body's own `RunState`
+  reader into the child is what that capability waits on.
+- `ipc/` — control and event channel implementations the
+  supervisor wraps. Threat model lives at the top of
+  `ipc/index.ts`; the supervisor uses these primitives directly.
+- `supervisor/` — the per-deployment supervisor. See the next
+  section.
+- `child/` — the workflow-process child entry function
+  (`runWorkflowChild`) plus the process-boundary helper
+  (`runWorkflowChildFromProcessEnv`) hosts use to compose their own
+  thin binary. The package no longer ships a `bin` entry; each host
+  owns the binary that wires its substrate factory into the
+  process-shaped boundary. See "Child Entry" and "Hosting the
+  workflow-process child" below.
+
+Public surface (the package barrel re-exports these):
+
+- `createWorkflowRunRepoStore` — the production `RepoStore` adapter.
+- `createWorkflowRunBlobSubstrate` — the production `BlobSubstrate`
+  adapter with 1 MiB inline-vs-blob spill threshold.
+- `createWorkflowStepInvoker` — the production `StepInvoker` adapter.
+- `createWorkflowSpawnChild` — the production `SpawnChildWorkflow`
+  adapter.
+- `createWorkflowSupervisor` — the per-deployment supervisor
+  factory. See "Supervisor" below for the bindings shape.
+- `assembleCredentialsSnapshot` — per-step grant assembly used by
+  the supervisor at spawn time and on every `grants-updated` push.
+- `commitCancelRequested` — low-level Q3 `CancelRequested` commit
+  primitive the supervisor invokes for every cancellation origin.
+
+Plus the relevant options and callback types (`StepEnvBase`,
+`RunChildWorkflow`, `ChildTerminalStatus`,
+`WorkflowSupervisorBindings`, `SubprocessSpawner`,
+`MailBusBindings`, `PrincipalSigner`, `SignedPayload`, etc.).
+
+## Supervisor
+
+`createWorkflowSupervisor(bindings)` returns a per-deployment
+supervisor that owns one workflow-process child for the lifetime of
+the deployment. The supervisor is host-agnostic library code; the
+host supplies its own concrete bindings.
+
+### `WorkflowSupervisorBindings`
+
+The constructor argument shape:
+
+- `repoStore` — substrate-shaped `RepoStore` handle. The supervisor
+  reads grants and commits events through this one handle. Per-
+  principal write-sites pass the principal kind explicitly; there
+  is no per-principal `RepoStore` view.
+- `signAsPrincipal: (kind, payload) => SignedPayload` — host-owned
+  per-principal signing callback. The supervisor never holds the
+  principal's private key; it asks the host to mint a signature
+  under the named principal's identity. Today the only kind the
+  supervisor signs as is `"supervisor"`, used for every
+  CancelRequested origin in the Q3 map except `hub-admin`.
+- `mailBus` — minimal `MailBusBindings` shape: `registerAddress`,
+  `unregisterAddress`, `subscribeMailForAddress`. The supervisor
+  registers the deployment's address at spawn time, subscribes to
+  inbound mail, and unregisters on teardown.
+- `subprocessSpawner` — invoked once per spawn to launch the
+  host-owned `bin/workflow-child` script. Production wires it
+  against `Bun.spawn`; tests inject a deterministic mock.
+- `binaryPath` — absolute path to the host-owned binary the
+  spawner invokes (resolved by the host via
+  `require.resolve` / `import.meta.resolve` against the host's own
+  package, `@intx/<host>`).
+- `substrateEnv`, `workflowRunRepoId`, `workflowRunRef`,
+  `anchorRunId`, `deploymentMailAddress`, `readPrincipal`,
+  `deriveStepAddress`, `deriveStepRepoId?`, `ipcKeyPairFactory?` —
+  per-deployment configuration the supervisor needs in its closure
+  state.
+
+### Deploy routing
+
+The sidecar's deploy router is the single ingress for inbound
+`agent.deploy` frames; its production wiring lives at
+`apps/sidecar/src/workflow-host-wiring.ts` in
+`createSidecarDeployRouter`. Every deploy stages through the
+workflow-run substrate, and the router decides between two frame
+shapes:
+
+- **Provision-step frame (`provisionStep: true`).** The router
+  primes the frame's per-step `agent-state` repo and records the
+  hub key, without constructing a supervisor or spawning a child.
+  The follow-up full-closure deploy pack then applies into the
+  primed repo and verifies against the recorded key.
+- **Workflow frame (carries a `WorkflowDefinition`).** The router
+  constructs a fresh per-deployment supervisor and drives its
+  `spawn(opts)` lifecycle: per-step `agent-state` repo
+  provisioning, key minting, child spawn via `subprocessSpawner`,
+  mail-bus registration, IPC handshake, and `credentialsSnapshot`
+  assembly.
+
+A frame carrying neither shape is rejected -- there is no
+in-process deploy path.
+
+### Lifecycle
+
+`spawn(opts)` performs the IPC handshake (mint channelId, mint HMAC
+key, mint IPC Ed25519 keypair, build spawn-time env, invoke the
+spawner, wait for the child's `ready` frame), assembles the
+`credentialsSnapshot` from each step's `agent-state` repo,
+registers the deployment's mail address, and begins forwarding
+inbound mail as `trigger.fire` control frames. The IPC private key
+never leaves the supervisor's closure — only the public key (as
+`HOST_PUBKEY`) ships in spawn-time env.
+
+`requestCancel(opts)` signs and commits a `CancelRequested` event
+through `signAsPrincipal("supervisor", ...)` for every origin in
+the Q3 map. The `self`-origin case carries the workflow-process's
+stated reason; the supervisor wraps it into the same supervisor-
+signed shape as the operator and drain origins.
+
+`shutdown()` unregisters the mail address, kills the child, and
+disposes subscriptions.
+
+`drain(opts)` sends the drain control mail and waits for in-flight
+runs to drain per each step's `drainBehavior`; on the drain-timeout it
+escalates to a signed `CancelRequested{origin: "supervisor-drain"}`.
+
+`recycle(opts)` tears the current child down and stands a fresh one up
+against the SAME deploy tree (same materialized source closure, same
+per-step credential repos). It is strictly orthogonal to redeploy,
+which mints a new deploy tree. Operator, supervisor-policy (max-uptime
+/ max-rss / grants-staleness), and workflow-process-self-initiated
+origins all funnel through the same path.
+
+### Respawn policy
+
+An UNEXPECTED child exit — a crash, OOM, panic, or signal, as opposed
+to a supervisor-initiated shutdown or recycle — is detected by watching
+the child process's `exited`, not the IPC channel: a clean process
+death ends the channel readers without a protocol-level crash callback,
+so `exited` is the only universal death signal. The supervisor
+classifies the exit by cohort generation and lifecycle phase — an exit
+of the current running cohort that no planned teardown owns is
+unexpected.
+
+On an unexpected exit the supervisor, with no external intervention:
+
+1. Replays any mail stranded mid-flight — entries the dead child's
+   in-flight dispatch left in the per-address `processing/` subtree —
+   back into `inbox/` under their original `<receivedAt>-<messageId>`
+   keys. Those keys sort ahead of any mail that arrived during the
+   kill/respawn gap, so the stranded entry is re-dispatched first and
+   FIFO ordering holds across the respawn boundary.
+2. Spawns a fresh workflow-process child against the same deploy tree
+   (reusing the recycle path's respawn machinery) and resumes dispatch.
+
+The respawn is bounded so a persistently-broken child cannot saturate
+the host. Every bound is operator-overridable via
+`WorkflowSupervisorBindings`; the defaults are:
+
+- **Exponential backoff.** Each respawn waits before spawning, starting
+  at `respawnBackoffInitialMs` (1s) and doubling to a
+  `respawnBackoffMaxMs` (30s) cap.
+- **Crash-loop guard.** If the child exits unexpectedly
+  `crashLoopMaxCount` (3) times within `crashLoopWindowMs` (60s), the
+  supervisor stops respawning and latches the deployment to a terminal
+  `crash-looping` state.
+- **Stable-run reset.** Once a crash-respawned child stays up for
+  `crashLoopStableResetMs` (60s), the crash counter and the backoff
+  reset, so a flap followed by stability does not permanently latch.
+
+`crash-looping` is an in-memory, per-process phase — no external reader
+observes it. The durable, externally-queryable signal is the run's
+status: on latch the supervisor (the sole writer of the workflow-run
+repo) commits a `RunFailed` for the deployment's stable run, flipping
+its `workflow_run.status` to `failed` through the same pack path every
+other terminal run uses. External automation that watches run status
+sees the crash-loop as a failed run.
+
+### Host wiring
+
+A host that wants to instantiate a supervisor constructs the
+bindings against its own infrastructure. The reference
+implementation for the in-tree sidecar lives at
+`apps/sidecar/src/workflow-host-wiring.ts` and is intentionally
+thin — anything that would benefit a future alternative-sidecar
+implementation belongs inside this package, not in the wiring.
+
+## Child Entry
+
+`runWorkflowChild` is the workflow-process child's runtime body.
+Each host ships a thin entry script that wires its substrate
+factory into the process boundary via
+`runWorkflowChildFromProcessEnv`; tests call `runWorkflowChild`
+directly with mock streams and an in-memory substrate.
+
+### Signature
+
+```ts
+runWorkflowChild(opts: {
+  env: SpawnTimeEnv;             // parsed via parseSpawnTimeEnv
+  controlReader: NdjsonReader;   // supervisor -> child
+  controlWriter: NdjsonWriter;   // child -> supervisor
+  eventWriter: FrameWriter;      // child -> supervisor (InferenceEvents)
+  bindings: RunWorkflowChildBindings;
+}): Promise<RunWorkflowChildResult>
+```
+
+Every I/O stream and every substrate handle is injected. Nothing
+inside the function reads `process.env` or reaches into a singleton
+— the binary owns the only crossing of that boundary. Injected I/O
+is the testability contract: an integration test instantiates the
+child against in-memory NDJSON streams, a memory-backed substrate,
+and a stub `StepInvoker`/`SpawnChildWorkflow` without ever
+forking a process.
+
+### Lifecycle
+
+1. Open the control channel and event channel via the IPC primitives.
+2. Construct a `WorkflowRuntimeEnv` from the production adapters
+   (`createWorkflowRunRepoStore`, `createWorkflowRunBlobSubstrate`)
+   and substrate-shaped seams (`createWorkflowHostSignalChannel`,
+   plus the host-process scheduler singleton carried on
+   `bindings.scheduler`).
+3. Self-discover in-flight runs by enumerating `runs/<runId>/` and
+   resuming any whose log lacks a terminal event.
+4. Emit `ready` on the control channel.
+5. Loop on `trigger.fire`, `grants-updated`, `drain`, `recycle`,
+   `shutdown`, and `signal.deliver` frames.
+
+### Authorize Closure
+
+The child's `WorkflowAuthorizeFn` closure is backed by a
+`CredentialsSnapshotRef`. A `grants-updated` control frame swaps
+the snapshot in place, so subsequent steps see fresh grants
+without reconstructing the env. The closure looks up the
+originating step's grants by `stepId` and delegates to a
+host-supplied `GrantEvaluator`.
+
+## Hosting the workflow-process child
+
+`@intx/workflow-host` ships the runtime body
+(`runWorkflowChild`) and the process-boundary helper
+(`runWorkflowChildFromProcessEnv`) as a library. The package
+itself does NOT ship a `bin` entry; each host owns the binary the
+supervisor's `subprocessSpawner` invokes.
+
+The contract is intentionally narrow:
+
+1. **The host owns the binary.** It is typically five lines: a
+   `bun` shebang, an `import` of
+   `runWorkflowChildFromProcessEnv`, an `import` of the host's
+   substrate factory, and an `await` of the helper. The supervisor's
+   `binaryPath` binding is resolved statically by the host's wiring
+   module (e.g. `import.meta.resolve("@intx/<host>/bin/workflow-child")`)
+   so the path is fixed at wiring-module load time, not via runtime
+   env.
+2. **The host owns the substrate factory.** A `SubstrateFactory`
+   is a callback that receives the typed `SubstrateFactoryEnv`
+   struct -- the parsed `SpawnTimeEnv` (IPC trust anchors +
+   deployment ids) plus a narrowed `substrateConfig` record carrying
+   only the keys the host listed in
+   `RunWorkflowChildFromProcessEnvOpts.substrateConfigKeys`. The
+   factory returns `RunWorkflowChildBindings`: substrate `RepoStore`,
+   principal, per-deployment repo ids, scheduler, step invoker, child
+   spawner, grant evaluator. The factory consumes the typed struct,
+   never `NodeJS.ProcessEnv` directly. Each spawner declares
+   `hasUpstreamSignalResolver` on the runtime env it builds: `true`
+   for a run an answer can reach -- the deployment's own addressable
+   run, or a suspendable body whose container relays a decision back
+   down -- and `false` for a terminal `childWorkflow` child, which
+   carries no address and is run to its terminal rather than driven
+   across parks. The field is required, so an omission is a compile
+   error; a wrong `true` is not. Declared on a terminal-child seam it
+   type-checks and reinstates the hang the flag exists to remove. The
+   in-tree seams show both answers: `buildRuntimeEnv` declares `true`
+   for the deployment's own run, while in the sidecar's substrate
+   factory `createSidecarRunChild` declares `false` and
+   `createSidecarSpawnSuspendableChild` declares `true`.
+3. **The helper fails loudly.** A missing or malformed spawn-time
+   env throws via `parseSpawnTimeEnv`; a substrate-config key the
+   host listed but the supervisor did not populate throws before the
+   factory runs; factory rejection and runtime-body rejection
+   propagate unchanged. The helper does not catch or coerce; the
+   host's binary decides the exit semantics (the convention is
+   `process.exit(1)` with a stderr message on rejection).
+
+Example host binary (`apps/<host>/bin/workflow-child`):
+
+```ts
+#!/usr/bin/env bun
+import { runWorkflowChildFromProcessEnv } from "@intx/workflow-host";
+import { createSubstrate } from "../src/workflow-substrate-factory";
+
+await runWorkflowChildFromProcessEnv(createSubstrate, {
+  substrateConfigKeys: ["SIDECAR_DATA_DIR" /* ... */],
+}).catch((cause) => {
+  process.stderr.write(
+    `workflow-child: ${cause instanceof Error ? cause.message : String(cause)}\n`,
+  );
+  process.exit(1);
+});
+```
+
+The reference in-tree implementation lives in `apps/sidecar`. An
+alternative-sidecar implementer follows the same pattern: write a
+substrate factory against its own infrastructure, ship a ~5-line
+entry script, and resolve the `binaryPath` binding to that script
+in its supervisor-wiring module.
+
+### Scheduler adapter
+
+The host-singleton `SchedulerHandle` returned by
+`createWorkflowHostScheduler` does not match the runtime's
+`Scheduler.scheduleIn` shape directly. `adaptHostScheduler(handle)`
+returns the runtime-shaped `Scheduler` the substrate factory hands
+to `RunWorkflowChildBindings.scheduler`. The adapter is a thin
+wrap: the host scheduler's live `TimerSet` ingest already queues
+the timer at commit time; `scheduleIn` returns a dispose that
+forwards to `handle.cancelQueued(runId, timerId)` so a runtime
+body that settles on a sibling event before the deadline cancels
+the queued entry cleanly.

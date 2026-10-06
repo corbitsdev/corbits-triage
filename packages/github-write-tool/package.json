@@ -1,0 +1,35 @@
+{
+  "name": "@corbits/github-write-tool",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "module": "dist/sidecar-bundle.js",
+  "exports": {
+    ".": "./dist/sidecar-bundle.js"
+  },
+  "interchange": {
+    "tools": "./dist/sidecar-bundle.js",
+    "credentials": [
+      {
+        "handle": "github"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "bun run build.ts"
+  },
+  "dependencies": {
+    "@intx/agent": "workspace:*",
+    "@intx/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "main": "dist/sidecar-bundle.js",
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "description": "GitHub mutation tools (mirror, review, comment, merge; approval: ask except github_mirror_auto)"
+}

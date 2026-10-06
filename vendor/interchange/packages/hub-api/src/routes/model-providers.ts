@@ -1,0 +1,356 @@
+import { eq, and, ne } from "drizzle-orm";
+import { Hono } from "hono";
+import { describeRoute, validator } from "hono-openapi";
+
+import { modelProvider } from "@intx/db/schema";
+import { resolveTenantOwnedCredentialById } from "@intx/db";
+import type { DB } from "@intx/db";
+import {
+  CreateModelProvider,
+  ErrorResponse,
+  UpdateModelProvider,
+  ModelProviderResponse,
+  paginatedSchema,
+} from "@intx/types";
+import {
+  pushSourceUpdatesSubtree,
+  type SidecarRouter,
+} from "@intx/hub-sessions";
+import type { CredentialCipher } from "@intx/types";
+
+import type { TenantEnv } from "../context";
+import { errorResponse } from "../error-response";
+import { first, ts } from "../format";
+import { generateId } from "@intx/hub-common";
+import { idResource } from "../middleware/grant";
+import type { RequireGrant } from "../middleware/grant";
+import {
+  parsePageParams,
+  cursorCondition,
+  pageOrder,
+  paginatedResponse,
+  pageParameters,
+} from "../pagination";
+import { jsonResponse } from "../openapi";
+
+export function formatModelProvider(row: typeof modelProvider.$inferSelect) {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    name: row.name,
+    plugin: row.plugin,
+    baseURL: row.baseURL,
+    credentialId: row.credentialId,
+    walletId: row.walletId,
+    disabled: row.disabled,
+    createdAt: ts(row.createdAt),
+    updatedAt: ts(row.updatedAt),
+  };
+}
+
+export type CreateModelProviderRoutesDeps = {
+  db: DB["db"];
+  sidecarRouter: SidecarRouter;
+  requireGrant: RequireGrant;
+  credentialCipher: CredentialCipher;
+};
+
+export function createModelProviderRoutes({
+  db,
+  sidecarRouter,
+  requireGrant,
+  credentialCipher,
+}: CreateModelProviderRoutesDeps): Hono<TenantEnv> {
+  const app = new Hono<TenantEnv>();
+
+  app.get(
+    "/",
+    requireGrant("model-provider:*", "read"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "List model providers owned by the tenant",
+      description:
+        "Lists the model providers created directly on this tenant. Providers inherited from ancestor tenants are not included.",
+      parameters: [...pageParameters],
+      responses: {
+        200: jsonResponse(
+          "List of model providers",
+          paginatedSchema(ModelProviderResponse),
+        ),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const { limit, cursor } = parsePageParams({
+        cursor: c.req.query("cursor"),
+        limit: c.req.query("limit"),
+      });
+
+      const conditions = [eq(modelProvider.tenantId, tenantCtx.id)];
+      if (cursor) {
+        conditions.push(
+          cursorCondition(modelProvider.createdAt, modelProvider.id, cursor),
+        );
+      }
+
+      const rows = await db.query.modelProvider.findMany({
+        where: and(...conditions),
+        orderBy: pageOrder(modelProvider.createdAt, modelProvider.id),
+        limit,
+      });
+      return c.json(
+        paginatedResponse(rows.map(formatModelProvider), rows, limit),
+      );
+    },
+  );
+
+  app.post(
+    "/",
+    requireGrant("model-provider:*", "create"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Create a model provider",
+      description:
+        "Registers an inference endpoint authenticated by exactly one of a credential or a wallet. Supplying both or neither is rejected.",
+      responses: {
+        201: jsonResponse("Provider created", ModelProviderResponse),
+        400: jsonResponse(
+          "Exactly one of credentialId or walletId is required",
+          ErrorResponse,
+        ),
+        404: jsonResponse("Credential not found in this tenant", ErrorResponse),
+        409: jsonResponse(
+          "Provider name already exists in this tenant",
+          ErrorResponse,
+        ),
+      },
+    }),
+    validator("json", CreateModelProvider),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const body = c.req.valid("json");
+
+      // Treat an empty string the same as absent: it is neither a usable
+      // credential reference nor a wallet reference, so it must not satisfy
+      // the XOR (which would otherwise let it through to a foreign-key
+      // violation instead of a clean 400).
+      const credentialId =
+        body.credentialId !== undefined &&
+        body.credentialId !== null &&
+        body.credentialId !== ""
+          ? body.credentialId
+          : null;
+      const walletId =
+        body.walletId !== undefined &&
+        body.walletId !== null &&
+        body.walletId !== ""
+          ? body.walletId
+          : null;
+      const hasCredential = credentialId !== null;
+      const hasWallet = walletId !== null;
+      if (hasCredential === hasWallet) {
+        return errorResponse(
+          c,
+          "invalid_request",
+          "Exactly one of credentialId or walletId must be provided",
+        );
+      }
+
+      // The credential must resolve within the tenant's ancestor chain, the
+      // same scope the launch-time resolver uses; otherwise the provider
+      // would store a reference that silently never resolves a source.
+      // A catalog provider delivers its credential's secret to any agent
+      // launched in the owning subtree, so the reference must be tenant-owned
+      // and reachable in this tenant's hierarchy -- the same ownership rule the
+      // launch enforces. Reject a principal-owned or out-of-chain reference here
+      // rather than let it write and then silently fail closed at launch.
+      // (Wallet-backed providers are not launchable this release, so their
+      // reference is not yet ownership-checked here -- tracked separately.)
+      if (credentialId !== null) {
+        const cred = await resolveTenantOwnedCredentialById(
+          db,
+          tenantCtx.id,
+          credentialId,
+        );
+        if (cred === null) {
+          return errorResponse(
+            c,
+            "not_found",
+            "Credential not found in this tenant, or not a tenant-owned credential (a catalog provider requires a tenant-owned credential)",
+          );
+        }
+      }
+
+      const existing = await db.query.modelProvider.findFirst({
+        where: and(
+          eq(modelProvider.tenantId, tenantCtx.id),
+          eq(modelProvider.name, body.name),
+        ),
+      });
+      if (existing) {
+        return errorResponse(
+          c,
+          "conflict",
+          "Provider name already exists in this tenant",
+        );
+      }
+
+      const now = new Date();
+      const row = first(
+        await db
+          .insert(modelProvider)
+          .values({
+            id: generateId("modelProvider"),
+            tenantId: tenantCtx.id,
+            name: body.name,
+            plugin: body.plugin,
+            baseURL: body.baseURL,
+            credentialId,
+            walletId,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning(),
+      );
+
+      return c.json(formatModelProvider(row), 201);
+    },
+  );
+
+  app.get(
+    "/:providerId",
+    requireGrant(idResource("model-provider", "providerId"), "read"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Get a model provider",
+      responses: {
+        200: jsonResponse("Provider details", ModelProviderResponse),
+        404: jsonResponse("Provider not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const providerId = c.req.param("providerId");
+      const row = await db.query.modelProvider.findFirst({
+        where: and(
+          eq(modelProvider.id, providerId),
+          eq(modelProvider.tenantId, tenantCtx.id),
+        ),
+      });
+      if (!row) {
+        return errorResponse(c, "not_found", "Provider not found");
+      }
+      return c.json(formatModelProvider(row));
+    },
+  );
+
+  app.patch(
+    "/:providerId",
+    requireGrant(idResource("model-provider", "providerId"), "manage"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Update a model provider",
+      description:
+        "Updates a provider's name, base URL, or disabled flag. Changing the authentication binding is not supported; delete and recreate the provider to repoint it.",
+      responses: {
+        200: jsonResponse("Provider updated", ModelProviderResponse),
+        404: jsonResponse("Provider not found", ErrorResponse),
+        409: jsonResponse(
+          "Provider name already exists in this tenant",
+          ErrorResponse,
+        ),
+      },
+    }),
+    validator("json", UpdateModelProvider),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const providerId = c.req.param("providerId");
+      const body = c.req.valid("json");
+
+      if (body.name !== undefined) {
+        const clash = await db.query.modelProvider.findFirst({
+          where: and(
+            eq(modelProvider.tenantId, tenantCtx.id),
+            eq(modelProvider.name, body.name),
+            ne(modelProvider.id, providerId),
+          ),
+        });
+        if (clash) {
+          return errorResponse(
+            c,
+            "conflict",
+            "Provider name already exists in this tenant",
+          );
+        }
+      }
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.name !== undefined) updates["name"] = body.name;
+      if (body.baseURL !== undefined) updates["baseURL"] = body.baseURL;
+      if (body.disabled !== undefined) updates["disabled"] = body.disabled;
+
+      const [updated] = await db
+        .update(modelProvider)
+        .set(updates)
+        .where(
+          and(
+            eq(modelProvider.id, providerId),
+            eq(modelProvider.tenantId, tenantCtx.id),
+          ),
+        )
+        .returning();
+
+      if (!updated) {
+        return errorResponse(c, "not_found", "Provider not found");
+      }
+
+      void pushSourceUpdatesSubtree(
+        db,
+        sidecarRouter,
+        tenantCtx.id,
+        credentialCipher,
+      );
+      return c.json(formatModelProvider(updated));
+    },
+  );
+
+  app.delete(
+    "/:providerId",
+    requireGrant(idResource("model-provider", "providerId"), "manage"),
+    describeRoute({
+      tags: ["Catalog"],
+      summary: "Delete a model provider",
+      description:
+        "Removes the provider and cascades to the offerings that reference it. Running instances resolved through those offerings fail over to the next eligible source.",
+      responses: {
+        204: { description: "Provider removed" },
+        404: jsonResponse("Provider not found", ErrorResponse),
+      },
+    }),
+    async (c) => {
+      const tenantCtx = c.get("tenant");
+      const providerId = c.req.param("providerId");
+      const deleted = await db
+        .delete(modelProvider)
+        .where(
+          and(
+            eq(modelProvider.id, providerId),
+            eq(modelProvider.tenantId, tenantCtx.id),
+          ),
+        )
+        .returning();
+      if (deleted.length === 0) {
+        return errorResponse(c, "not_found", "Provider not found");
+      }
+      void pushSourceUpdatesSubtree(
+        db,
+        sidecarRouter,
+        tenantCtx.id,
+        credentialCipher,
+      );
+      return c.body(null, 204);
+    },
+  );
+
+  return app;
+}

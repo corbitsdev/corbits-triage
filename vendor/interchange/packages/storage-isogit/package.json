@@ -1,0 +1,45 @@
+{
+  "name": "@intx/storage-isogit",
+  "description": "Git-backed ContextStore and AuditStore with pack send/receive for moving repositories over the wire",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "intx-src": "./src/node.ts",
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
+    "./browser": {
+      "intx-src": "./src/browser.ts",
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
+    }
+  },
+  "dependencies": {
+    "@intx/log": "workspace:*",
+    "@intx/mime": "workspace:*",
+    "@intx/types": "workspace:*",
+    "@isomorphic-git/lightning-fs": "4.7.0",
+    "arktype": "catalog:",
+    "buffer": "^6.0.3",
+    "isomorphic-git": "catalog:"
+  },
+  "devDependencies": {
+    "@intx/crypto": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

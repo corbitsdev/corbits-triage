@@ -1,0 +1,17 @@
+{
+  "name": "@intx/hub-client",
+  "description": "Browser-side client for the Interchange hub REST API and SSE instance sessions",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:"
+  }
+}

@@ -1,0 +1,1133 @@
+// Crash-resume durability for a suspended loop iteration body.
+//
+// A loop iteration runs through the suspendable-child seam, so a body parked on
+// an author `awaitSignal` (or an agent `step` on an approval gate) proxies its
+// park up onto the loop CONTAINER step as `awaiting-signal`. When the process
+// dies while parked, a fresh run re-drives the durable log: `runLoop` re-derives
+// its cursor, `planLoopResume` classifies the parked/mid-relay iteration, and
+// the drive re-links it -- re-establishing the container's signal-relay race,
+// relaying a signal delivered but not relayed before the crash, or re-adopting
+// an approval park -- WITHOUT re-running the body's already-completed pre-park
+// steps.
+//
+// Each test runs a body to a real park (a consistent store keeps both the parent
+// and child logs), captures that durable state, then resumes against a fresh
+// store seeded with it -- the faithful crash model.
+
+import { describe, test, expect } from "bun:test";
+
+import { createDefaultDirectorRegistry, defineAgent } from "@intx/agent";
+import { signalName } from "@intx/types";
+import type { ConversationTurn } from "@intx/types/runtime";
+
+import {
+  action,
+  awaitSignal,
+  createInMemoryBlobSubstrate,
+  createInMemoryRepoStore,
+  createInMemoryScheduler,
+  createInMemorySignalChannel,
+  createNoopDrainController,
+  createSpawnLoopIteration,
+  defineWorkflow,
+  enumerateInlineLoopBodies,
+  loop,
+  loopBodyRunId,
+  runtimeRun,
+  step,
+  type ActionInvoker,
+  type BlobSubstrate,
+  type LoopFn,
+  type RepoStore,
+  type SignalChannel,
+  type StepInvoker,
+  type WorkflowAuthorizeFn,
+  type WorkflowDefinition,
+  type WorkflowEvent,
+  type WorkflowRuntimeEnv,
+} from "@intx/workflow";
+import { waitForEvent, waitForNthEvent } from "@intx/workflow/testing";
+
+import { resolveDrainBehavior, type DrainController } from "./drain";
+
+const loopFns = (ref: string): LoopFn => {
+  // Converge after the first iteration; `carry` is unused but must resolve.
+  if (ref === "cont") return () => false;
+  // Continue while the threaded carry is still below 1, so a loop seeded at 0
+  // runs exactly two iterations (input 0, then the carried 1) before converging.
+  if (ref === "twice")
+    return (_o, currentInput) =>
+      (typeof currentInput === "number" ? currentInput : 0) < 1;
+  // Never converge on its own, so the loop runs until it hits maxIterations.
+  if (ref === "always") return () => true;
+  if (ref === "next")
+    return (_o, currentInput) =>
+      typeof currentInput === "number" ? currentInput + 1 : 0;
+  throw new Error(`unknown loop fn ${ref}`);
+};
+
+const noopInvokeStep: StepInvoker = () => {
+  throw new Error("loop suspend-resume test: invokeStep must not be called");
+};
+
+function buildEnv(args: {
+  parentDef: WorkflowDefinition;
+  repoStore: RepoStore;
+  blobs: BlobSubstrate;
+  signalChannel: SignalChannel;
+  invokeAction: ActionInvoker;
+  invokeStep?: StepInvoker;
+  drain?: DrainController;
+}): WorkflowRuntimeEnv {
+  const clock = (): Date => new Date();
+  const authorize: WorkflowAuthorizeFn = async () => ({
+    effect: "allow",
+    matchingGrants: [],
+    resolvedBy: null,
+  });
+  const env: WorkflowRuntimeEnv = {
+    repoStore: args.repoStore,
+    scheduler: createInMemoryScheduler({ repoStore: args.repoStore, clock }),
+    signalChannel: args.signalChannel,
+    blobs: args.blobs,
+    directors: createDefaultDirectorRegistry(),
+    authorize,
+    invokeStep: args.invokeStep ?? noopInvokeStep,
+    invokeAction: args.invokeAction,
+    spawnChild: async () => ({ terminalStatus: "completed" }),
+    clock,
+    newId: (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`,
+    drain: args.drain ?? createNoopDrainController(args.parentDef),
+    hasUpstreamSignalResolver: true,
+    loopFns,
+  };
+  const loopBodies = new Map(
+    enumerateInlineLoopBodies(args.parentDef).map((b) => [b.ref, b.definition]),
+  );
+  env.spawnLoopIteration = createSpawnLoopIteration(env, loopBodies);
+  return env;
+}
+
+// Wait for the container step's `count`-th park on the given kind, mirroring
+// on-trigger-run.test.ts's waitForPark. Strict equality on the optional
+// `parkKind` field: the reducer reads an absent parkKind as "approval", this
+// does not, and no caller here relies on the reducer's reading.
+async function waitForContainerPark(
+  repoStore: RepoStore,
+  runId: string,
+  parkKind: "approval" | "signal-relay",
+  count: number,
+): Promise<string> {
+  const event = await waitForNthEvent(
+    repoStore,
+    runId,
+    (e) => e.kind === "SignalAwaited" && e.parkKind === parkKind,
+    count,
+  );
+  if (event.kind !== "SignalAwaited") {
+    throw new Error(`expected SignalAwaited, got ${event.kind}`);
+  }
+  return event.signalName;
+}
+
+// Copy a captured child log verbatim into the resume store so the re-spawned
+// body re-adopts its parked gate (the drive reads runs/<childRunId> for the
+// child's resumeFromEvents), the consistent-store crash model.
+async function seedChildLog(
+  repoStore: RepoStore,
+  childRunId: string,
+  events: readonly WorkflowEvent[],
+): Promise<void> {
+  for (const event of events) {
+    await repoStore.append(childRunId, event);
+  }
+}
+
+// Reconstruct a pre-relay-flush crash window: drop a container's signal-relay
+// `SignalAwaited` (and everything after) so the container step is left in-flight
+// with no relay await, as if the crash landed before that flush.
+function truncateBeforeRelay(
+  log: readonly WorkflowEvent[],
+  containerStepId: string,
+): WorkflowEvent[] {
+  const idx = log.findIndex(
+    (e) =>
+      e.kind === "SignalAwaited" &&
+      e.parkKind === "signal-relay" &&
+      e.stepId === containerStepId,
+  );
+  if (idx < 0) {
+    throw new Error(`no signal-relay await for ${containerStepId} in the log`);
+  }
+  return log.slice(0, idx);
+}
+
+const awaitBody = defineWorkflow({
+  id: "await-body",
+  trigger: { type: "manual" },
+  steps: {
+    // A pre-park step whose completion must NOT be re-run on resume.
+    pre: action({ handler: "pre", input: { from: "trigger.payload" } }),
+    hold: awaitSignal({ name: "go", after: ["pre"] }),
+  },
+});
+
+const awaitParent = defineWorkflow({
+  id: "await-loop-parent",
+  trigger: { type: "manual" },
+  steps: {
+    rework: loop({
+      body: awaitBody,
+      while: "cont",
+      carry: "next",
+      input: { literal: 0 },
+      maxIterations: 3,
+      onExhausted: "escalate",
+    }),
+    escalate: action({ handler: "escalate", after: ["rework"] }),
+  },
+});
+
+function awaitInvokeAction(preRuns: { n: number }): ActionInvoker {
+  return async ({ handler }) => {
+    if (handler === "pre") {
+      preRuns.n += 1;
+      return { output: { ran: true } };
+    }
+    if (handler === "escalate") return { output: "escalated" };
+    throw new Error(`unknown handler ${handler}`);
+  };
+}
+
+// A loop that runs TWO iterations: `while` ("twice") continues while the carried
+// input is still below 1, and `carry` ("next") threads 0 -> 1. Convergence at
+// iteration 2 is reachable only if the carry survives a park between iterations.
+const carryParent = defineWorkflow({
+  id: "await-loop-parent-carry",
+  trigger: { type: "manual" },
+  steps: {
+    rework: loop({
+      body: awaitBody,
+      while: "twice",
+      carry: "next",
+      input: { literal: 0 },
+      maxIterations: 3,
+      onExhausted: "escalate",
+    }),
+    escalate: action({ handler: "escalate", after: ["rework"] }),
+  },
+});
+
+// A loop that can never converge on its own (`while` is "always") and is capped
+// at a single iteration, so once that iteration completes the loop exhausts and
+// routes to its onExhausted target.
+const exhaustParent = defineWorkflow({
+  id: "await-loop-parent-exhaust",
+  trigger: { type: "manual" },
+  steps: {
+    rework: loop({
+      body: awaitBody,
+      while: "always",
+      carry: "next",
+      input: { literal: 0 },
+      maxIterations: 1,
+      onExhausted: "escalate",
+    }),
+    escalate: action({ handler: "escalate", after: ["rework"] }),
+  },
+});
+
+// Replace a loop step's inline body -- a terse way to assemble a nested fixture.
+function withLoopBody(
+  wf: WorkflowDefinition,
+  loopStepId: string,
+  body: WorkflowDefinition,
+): WorkflowDefinition {
+  const primitive = wf.steps[loopStepId];
+  if (primitive?.kind !== "loop") {
+    throw new Error(`fixture: ${loopStepId} is not a loop`);
+  }
+  return {
+    ...wf,
+    steps: { ...wf.steps, [loopStepId]: { ...primitive, body } },
+  };
+}
+
+// A loop over the signal-await body, one nesting level down.
+const innerAwaitParent = defineWorkflow({
+  id: "inner-await-loop",
+  trigger: { type: "manual" },
+  steps: {
+    inner: loop({
+      body: awaitBody,
+      while: "cont",
+      carry: "next",
+      input: { literal: 0 },
+      maxIterations: 3,
+      onExhausted: "iescalate",
+    }),
+    iescalate: action({ handler: "escalate", after: ["inner"] }),
+  },
+});
+
+// outer loop -> inner loop -> signal-await body. Both loops converge after one
+// iteration, so a single "go" delivery services the whole chain.
+const nestedAwaitParent = withLoopBody(
+  defineWorkflow({
+    id: "nested-await-loop-parent",
+    trigger: { type: "manual" },
+    steps: {
+      outer: loop({
+        body: awaitBody,
+        while: "cont",
+        carry: "next",
+        input: { literal: 0 },
+        maxIterations: 3,
+        onExhausted: "escalate",
+      }),
+      escalate: action({ handler: "escalate", after: ["outer"] }),
+    },
+  }),
+  "outer",
+  innerAwaitParent,
+);
+
+// A loop body with TWO parallel author `awaitSignal` gates, so both park at
+// once -- the concurrent-park topology the resume planner does not support.
+const twoSignalBody = defineWorkflow({
+  id: "two-signal-body",
+  trigger: { type: "manual" },
+  steps: {
+    a: awaitSignal({ name: "goA" }),
+    b: awaitSignal({ name: "goB" }),
+  },
+});
+
+const twoSignalParent = defineWorkflow({
+  id: "two-signal-loop-parent",
+  trigger: { type: "manual" },
+  steps: {
+    rework: loop({
+      body: twoSignalBody,
+      while: "cont",
+      carry: "next",
+      input: { literal: 0 },
+      maxIterations: 3,
+      onExhausted: "escalate",
+    }),
+    escalate: action({ handler: "escalate", after: ["rework"] }),
+  },
+});
+
+describe("loop iteration suspend crash-resume", () => {
+  test("refuses to resume a body parked on two concurrent author signals", async () => {
+    const runId = "two-signal-run";
+    const repoStore1 = createInMemoryRepoStore();
+    const env1 = buildEnv({
+      parentDef: twoSignalParent,
+      repoStore: repoStore1,
+      blobs: createInMemoryBlobSubstrate(),
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction({ n: 0 }),
+    });
+    void runtimeRun(twoSignalParent, env1, { runId }).complete;
+
+    // Wait until BOTH body gates are durably parked, then until the container
+    // has relayed one (so there is a relay await to truncate before).
+    const bodyRunId = loopBodyRunId(runId, "rework", 0);
+    // Both gates park independently, so each commits its own SignalAwaited;
+    // awaiting them one after the other is order-independent.
+    await waitForEvent(
+      repoStore1,
+      bodyRunId,
+      (e) => e.kind === "SignalAwaited" && e.signalName === "goA",
+    );
+    await waitForEvent(
+      repoStore1,
+      bodyRunId,
+      (e) => e.kind === "SignalAwaited" && e.signalName === "goB",
+    );
+    await waitForContainerPark(repoStore1, runId, "signal-relay", 1);
+
+    const bodyLog = await repoStore1.read(bodyRunId);
+    // The crash lands before either gate's relay flushed: strip the container's
+    // relay await so the container step is in-flight with two un-relayed gates
+    // in the body.
+    const parentLog = truncateBeforeRelay(
+      await repoStore1.read(runId),
+      "rework",
+    );
+
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, bodyRunId, bodyLog);
+    const env2 = buildEnv({
+      parentDef: twoSignalParent,
+      repoStore: repoStore2,
+      blobs: createInMemoryBlobSubstrate(),
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction({ n: 0 }),
+    });
+
+    // The resume planner refuses the concurrent-park topology loudly rather than
+    // mis-recovering one gate and stranding the other.
+    const result = await runtimeRun(twoSignalParent, env2, {
+      runId,
+      resumeFromEvents: parentLog,
+    }).complete;
+    // The planner refuses the concurrent-park topology loudly: the loop step
+    // fails rather than mis-recovering one gate and stranding the other.
+    expect(result.terminalStatus).toBe("failed");
+    const resumedLog = await repoStore2.read(runId);
+    const failed = resumedLog.find(
+      (e) => e.kind === "StepFailed" && e.stepId === "rework",
+    );
+    expect(failed?.kind === "StepFailed" ? failed.error.message : "").toMatch(
+      /multiple concurrent author signals/,
+    );
+  });
+
+  test("re-establishes an awaitSignal park and resumes on a signal delivered after restart", async () => {
+    const runId = "await-run";
+    const blobs = createInMemoryBlobSubstrate();
+
+    // Run 1: drive to the body's awaitSignal park, then capture the durable
+    // parent + child logs at that point (the process "crashes" parked).
+    const repoStore1 = createInMemoryRepoStore();
+    const preRuns1 = { n: 0 };
+    const env1 = buildEnv({
+      parentDef: awaitParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns1),
+    });
+    void runtimeRun(awaitParent, env1, { runId }).complete;
+    await waitForContainerPark(repoStore1, runId, "signal-relay", 1);
+    const parentLog = await repoStore1.read(runId);
+    const childLog = await repoStore1.read(loopBodyRunId(runId, "rework", 0));
+    // The pre-park action ran once, and the body is parked (not complete).
+    expect(preRuns1.n).toBe(1);
+    expect(childLog.some((e) => e.kind === "ChildCompleted")).toBe(false);
+
+    // Run 2: resume against a fresh store seeded with the captured logs and a
+    // fresh signal channel; deliver the awaited signal after the restart.
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, loopBodyRunId(runId, "rework", 0), childLog);
+    const preRuns2 = { n: 0 };
+    const env2 = buildEnv({
+      parentDef: awaitParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns2),
+    });
+    const run2 = runtimeRun(awaitParent, env2, {
+      runId,
+      resumeFromEvents: parentLog,
+    });
+    // The in-memory channel queues the delivery until the re-established relay
+    // subscribes, so ordering against the resume drive does not matter.
+    await run2.signal("go", { done: true }, "sig-1");
+    const result = await run2.complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    // The resumed body re-adopted its parked gate: the pre-park action did NOT
+    // re-run on resume (0 executions in run 2, not a shared-ledger dedup).
+    expect(preRuns2.n).toBe(0);
+    // Converged after one iteration: onExhausted (escalate) is pruned and the
+    // loop reports its outcome.
+    expect("escalate" in result.outputs).toBe(false);
+    expect(result.outputs.rework).toMatchObject({
+      outcome: "converged",
+      iterations: 1,
+    });
+  });
+
+  test("resumes when the crash lands before the container relay await flushed", async () => {
+    // The crash window between the body's leaf `SignalAwaited` flush (on the
+    // body run) and the container's relay `SignalAwaited` flush (on the
+    // container run): the container step is in-flight with NO relay await. On a
+    // consistent store the body's parked gate is durable, so resume must
+    // recover the author name from the body's own state and drive the container
+    // relay FRESH. Without that, the re-adopted body re-parks silently and the
+    // container blocks forever on `child.next()`.
+    const runId = "pre-relay-flush-run";
+    const blobs = createInMemoryBlobSubstrate();
+
+    const repoStore1 = createInMemoryRepoStore();
+    const preRuns1 = { n: 0 };
+    const env1 = buildEnv({
+      parentDef: awaitParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns1),
+    });
+    void runtimeRun(awaitParent, env1, { runId }).complete;
+    // Let the live run reach the container relay await so ChildSpawned and the
+    // body's leaf park are durable, then reconstruct the EARLIER window by
+    // truncating the parent log to just before the container relay SignalAwaited.
+    await waitForContainerPark(repoStore1, runId, "signal-relay", 1);
+    const parentLogFull = await repoStore1.read(runId);
+    const childLog = await repoStore1.read(loopBodyRunId(runId, "rework", 0));
+    expect(
+      childLog.some((e) => e.kind === "SignalAwaited" && e.signalName === "go"),
+    ).toBe(true);
+    expect(childLog.some((e) => e.kind === "ChildCompleted")).toBe(false);
+
+    // Strip the container's signal-relay SignalAwaited (and everything after),
+    // leaving the container step in-flight with no relay await.
+    const relayIdx = parentLogFull.findIndex(
+      (e) => e.kind === "SignalAwaited" && e.parkKind === "signal-relay",
+    );
+    expect(relayIdx).toBeGreaterThan(-1);
+    const parentLog = parentLogFull.slice(0, relayIdx);
+    expect(parentLog.some((e) => e.kind === "ChildSpawned")).toBe(true);
+
+    // Resume against a consistent store (the body's parked child log survives).
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, loopBodyRunId(runId, "rework", 0), childLog);
+    const preRuns2 = { n: 0 };
+    const env2 = buildEnv({
+      parentDef: awaitParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns2),
+    });
+    const run2 = runtimeRun(awaitParent, env2, {
+      runId,
+      resumeFromEvents: parentLog,
+    });
+    await run2.signal("go", { done: true }, "sig-1");
+    const result = await run2.complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    // The body re-adopted its parked gate without re-running the pre-park action.
+    expect(preRuns2.n).toBe(0);
+  });
+
+  test("resumes a nested loop whose inner body is parked on a signal at the crash", async () => {
+    const runId = "nested-await-run";
+    const blobs = createInMemoryBlobSubstrate();
+
+    const repoStore1 = createInMemoryRepoStore();
+    const preRuns1 = { n: 0 };
+    const env1 = buildEnv({
+      parentDef: nestedAwaitParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns1),
+    });
+    void runtimeRun(nestedAwaitParent, env1, { runId }).complete;
+    // The outer container's relay await on the root fires only after the inner
+    // container AND the inner body have parked, so this waits for the whole
+    // nested chain to be durable. Without the container relay composing up via
+    // onSignalPark, the outer would never park here and this would time out.
+    await waitForContainerPark(repoStore1, runId, "signal-relay", 1);
+
+    const outerBodyRunId = loopBodyRunId(runId, "outer", 0);
+    const innerBodyRunId = loopBodyRunId(outerBodyRunId, "inner", 0);
+    const rootLog = await repoStore1.read(runId);
+    const outerBodyLog = await repoStore1.read(outerBodyRunId);
+    const innerBodyLog = await repoStore1.read(innerBodyRunId);
+    expect(preRuns1.n).toBe(1);
+    expect(
+      innerBodyLog.some(
+        (e) => e.kind === "SignalAwaited" && e.signalName === "go",
+      ),
+    ).toBe(true);
+
+    // Resume against a consistent store: reseed BOTH nested child logs.
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, outerBodyRunId, outerBodyLog);
+    await seedChildLog(repoStore2, innerBodyRunId, innerBodyLog);
+    const preRuns2 = { n: 0 };
+    const env2 = buildEnv({
+      parentDef: nestedAwaitParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns2),
+    });
+    const run2 = runtimeRun(nestedAwaitParent, env2, {
+      runId,
+      resumeFromEvents: rootLog,
+    });
+    await run2.signal("go", { done: true }, "sig-1");
+    const result = await run2.complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    // The inner body re-adopted its parked gate: the pre-park action did NOT
+    // re-run on resume -- the whole nested chain re-established from durable
+    // state and the delivery cascaded down both container relays.
+    expect(preRuns2.n).toBe(0);
+  });
+
+  test("resumes a nested loop when neither container relay flushed at the crash", async () => {
+    // Partial-park window: the crash lands after the inner body's leaf gate
+    // flushed but before EITHER container's relay await flushed. Neither
+    // container is parked, so the outer planner classifies undefined and
+    // forward-drives; re-adopting the outer body re-runs the inner loop, whose
+    // planner drives its container relay fresh from the leaf gate and surfaces
+    // it up so the outer's forward drive parks. It must still resume, once.
+    const runId = "nested-partial-both-run";
+    const blobs = createInMemoryBlobSubstrate();
+
+    const repoStore1 = createInMemoryRepoStore();
+    const preRuns1 = { n: 0 };
+    const env1 = buildEnv({
+      parentDef: nestedAwaitParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns1),
+    });
+    void runtimeRun(nestedAwaitParent, env1, { runId }).complete;
+    await waitForContainerPark(repoStore1, runId, "signal-relay", 1);
+
+    const outerBodyRunId = loopBodyRunId(runId, "outer", 0);
+    const innerBodyRunId = loopBodyRunId(outerBodyRunId, "inner", 0);
+    const rootLog = truncateBeforeRelay(await repoStore1.read(runId), "outer");
+    const outerBodyLog = truncateBeforeRelay(
+      await repoStore1.read(outerBodyRunId),
+      "inner",
+    );
+    const innerBodyLog = await repoStore1.read(innerBodyRunId);
+    expect(
+      innerBodyLog.some(
+        (e) => e.kind === "SignalAwaited" && e.signalName === "go",
+      ),
+    ).toBe(true);
+
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, outerBodyRunId, outerBodyLog);
+    await seedChildLog(repoStore2, innerBodyRunId, innerBodyLog);
+    const preRuns2 = { n: 0 };
+    const env2 = buildEnv({
+      parentDef: nestedAwaitParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns2),
+    });
+    const run2 = runtimeRun(nestedAwaitParent, env2, {
+      runId,
+      resumeFromEvents: rootLog,
+    });
+    await run2.signal("go", { done: true }, "sig-1");
+    const result = await run2.complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    expect(preRuns2.n).toBe(0);
+  });
+
+  test("resumes a nested loop when only the inner container relay flushed", async () => {
+    // Partial-park window: the inner container's relay await IS durable but the
+    // outer container's is not. The outer planner's scan of the outer body finds
+    // the inner container awaiting an author name and classifies it drive-fresh;
+    // re-adopting re-establishes the inner relay. It must resume, once.
+    const runId = "nested-partial-outer-run";
+    const blobs = createInMemoryBlobSubstrate();
+
+    const repoStore1 = createInMemoryRepoStore();
+    const preRuns1 = { n: 0 };
+    const env1 = buildEnv({
+      parentDef: nestedAwaitParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns1),
+    });
+    void runtimeRun(nestedAwaitParent, env1, { runId }).complete;
+    await waitForContainerPark(repoStore1, runId, "signal-relay", 1);
+
+    const outerBodyRunId = loopBodyRunId(runId, "outer", 0);
+    const innerBodyRunId = loopBodyRunId(outerBodyRunId, "inner", 0);
+    const rootLog = truncateBeforeRelay(await repoStore1.read(runId), "outer");
+    const outerBodyLog = await repoStore1.read(outerBodyRunId);
+    const innerBodyLog = await repoStore1.read(innerBodyRunId);
+
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, outerBodyRunId, outerBodyLog);
+    await seedChildLog(repoStore2, innerBodyRunId, innerBodyLog);
+    const preRuns2 = { n: 0 };
+    const env2 = buildEnv({
+      parentDef: nestedAwaitParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns2),
+    });
+    const run2 = runtimeRun(nestedAwaitParent, env2, {
+      runId,
+      resumeFromEvents: rootLog,
+    });
+    await run2.signal("go", { done: true }, "sig-1");
+    const result = await run2.complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    expect(preRuns2.n).toBe(0);
+  });
+
+  test("relays a signal delivered to the container but not relayed before the crash", async () => {
+    const runId = "relay-run";
+    const blobs = createInMemoryBlobSubstrate();
+
+    const repoStore1 = createInMemoryRepoStore();
+    const preRuns1 = { n: 0 };
+    const env1 = buildEnv({
+      parentDef: awaitParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns1),
+    });
+    void runtimeRun(awaitParent, env1, { runId }).complete;
+    const relayName = await waitForContainerPark(
+      repoStore1,
+      runId,
+      "signal-relay",
+      1,
+    );
+    const parkedLog = await repoStore1.read(runId);
+    const childLog = await repoStore1.read(loopBodyRunId(runId, "rework", 0));
+
+    // Force the delivered-but-unrelayed window: append the container's
+    // SignalReceived (the delivery that consumed the relay await, moving the
+    // container to in-flight) but NO relay into the body, exactly where a crash
+    // after delivery and before relay leaves the log.
+    const lastSeq = parkedLog[parkedLog.length - 1]?.seq ?? 0;
+    const delivered: WorkflowEvent = {
+      kind: "SignalReceived",
+      seq: lastSeq + 1,
+      at: new Date().toISOString(),
+      signalName: relayName,
+      signalId: "sig-pre",
+      payload: { done: true },
+    };
+    const parentLog = [...parkedLog, delivered];
+
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, loopBodyRunId(runId, "rework", 0), childLog);
+    const preRuns2 = { n: 0 };
+    const env2 = buildEnv({
+      parentDef: awaitParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns2),
+    });
+    // No post-restart delivery: the resume relays the pre-crash signal into the
+    // re-adopted body from the log.
+    const result = await runtimeRun(awaitParent, env2, {
+      runId,
+      resumeFromEvents: parentLog,
+    }).complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    expect(preRuns2.n).toBe(0);
+    // Converged after one iteration: onExhausted (escalate) is pruned.
+    expect("escalate" in result.outputs).toBe(false);
+    expect(result.outputs.rework).toMatchObject({
+      outcome: "converged",
+      iterations: 1,
+    });
+  });
+});
+
+const replyTurn: ConversationTurn = {
+  role: "assistant",
+  content: [{ type: "text", text: "done" }],
+  timestamp: 0,
+};
+
+const approvalAgent = defineAgent({
+  id: "gate-agent",
+  systemPrompt: "s",
+  tools: [],
+  capabilities: [],
+  inference: { sources: [{ provider: "anthropic", model: "m" }] },
+});
+
+const approvalBody = defineWorkflow({
+  id: "approval-body",
+  trigger: { type: "manual" },
+  steps: { s: step({ agent: approvalAgent }) },
+});
+
+const approvalParent = defineWorkflow({
+  id: "approval-loop-parent",
+  trigger: { type: "manual" },
+  steps: {
+    rework: loop({
+      body: approvalBody,
+      while: "cont",
+      carry: "next",
+      input: { literal: 0 },
+      maxIterations: 3,
+      onExhausted: "escalate",
+    }),
+    escalate: action({ handler: "escalate", after: ["rework"] }),
+  },
+});
+
+describe("loop iteration approval crash-resume", () => {
+  test("re-adopts an approval park and re-invokes the step with a grant delivered after restart", async () => {
+    const runId = "approval-run";
+    const blobs = createInMemoryBlobSubstrate();
+    const escalateAction: ActionInvoker = async ({ handler }) => {
+      if (handler === "escalate") return { output: "escalated" };
+      throw new Error(`unknown handler ${handler}`);
+    };
+    // Suspends the agent step on first invocation (no resume) and completes it
+    // when re-invoked with the delivered decision.
+    const makeInvokeStep = (
+      invocations: { resume: unknown }[],
+    ): StepInvoker => {
+      return async (req) => {
+        invocations.push({ resume: req.resume });
+        if (req.resume === undefined) {
+          return {
+            suspend: {
+              correlationId: "corr-1",
+              kind: "approval",
+              approvalSnapshot: {
+                name: "gate",
+                description: "gate",
+                inputSchema: { type: "object" },
+                arguments: {},
+              },
+            },
+          };
+        }
+        return { output: { reply: "done", turn: replyTurn } };
+      };
+    };
+
+    const repoStore1 = createInMemoryRepoStore();
+    const invocations1: { resume: unknown }[] = [];
+    const env1 = buildEnv({
+      parentDef: approvalParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: escalateAction,
+      invokeStep: makeInvokeStep(invocations1),
+    });
+    void runtimeRun(approvalParent, env1, { runId }).complete;
+    await waitForContainerPark(repoStore1, runId, "approval", 1);
+    const parentLog = await repoStore1.read(runId);
+    const childLog = await repoStore1.read(loopBodyRunId(runId, "rework", 0));
+    // The step was invoked once (the suspending original send) and is parked.
+    expect(invocations1).toHaveLength(1);
+
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, loopBodyRunId(runId, "rework", 0), childLog);
+    const invocations2: { resume: unknown }[] = [];
+    const channel2 = createInMemorySignalChannel();
+    const env2 = buildEnv({
+      parentDef: approvalParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: channel2,
+      invokeAction: escalateAction,
+      invokeStep: makeInvokeStep(invocations2),
+    });
+    const run2 = runtimeRun(approvalParent, env2, {
+      runId,
+      resumeFromEvents: parentLog,
+    });
+    await channel2.deliver(
+      signalName("corr-1"),
+      { outcome: "approved" },
+      "g-1",
+    );
+    const result = await run2.complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    // Exactly one invocation on resume: the re-invocation carrying the grant.
+    // The step re-parked without re-sending the original input.
+    expect(invocations2).toHaveLength(1);
+    expect(invocations2[0]?.resume).toEqual({
+      correlationId: "corr-1",
+      decision: { outcome: "approved" },
+      kind: "approval",
+    });
+    // Converged after one iteration: onExhausted (escalate) is pruned.
+    expect("escalate" in result.outputs).toBe(false);
+    expect(result.outputs.rework).toMatchObject({
+      outcome: "converged",
+      iterations: 1,
+    });
+  });
+});
+
+function createControllableDrain(
+  definition: WorkflowDefinition,
+): DrainController & { trigger: () => void } {
+  const controller = new AbortController();
+  return {
+    signal: controller.signal,
+    behaviorFor: (stepId) => resolveDrainBehavior(definition, stepId),
+    trigger: () => controller.abort(),
+  };
+}
+
+// A loop whose drainBehavior is the explicit `wait` an author sets for a
+// human-in-the-loop rework, distinct from the loop's `cancel` default.
+const awaitParentWait = defineWorkflow({
+  id: "await-loop-parent-wait",
+  trigger: { type: "manual" },
+  steps: {
+    rework: loop({
+      body: awaitBody,
+      while: "cont",
+      carry: "next",
+      input: { literal: 0 },
+      maxIterations: 3,
+      onExhausted: "escalate",
+      drainBehavior: "wait",
+    }),
+    escalate: action({ handler: "escalate", after: ["rework"] }),
+  },
+});
+
+describe("loop iteration drain", () => {
+  test("a parked iteration sheds on drain under the loop's default cancel behavior", async () => {
+    const runId = "drain-cancel-run";
+    const repoStore = createInMemoryRepoStore();
+    const drain = createControllableDrain(awaitParent);
+    const run = runtimeRun(
+      awaitParent,
+      buildEnv({
+        parentDef: awaitParent,
+        repoStore,
+        blobs: createInMemoryBlobSubstrate(),
+        signalChannel: createInMemorySignalChannel(),
+        invokeAction: awaitInvokeAction({ n: 0 }),
+        drain,
+      }),
+      { runId },
+    );
+    await waitForContainerPark(repoStore, runId, "signal-relay", 1);
+
+    // A loop container defaults to `drainBehavior: "cancel"`, so the main loop's
+    // drain observation aborts the container's step-local controller and the
+    // parked iteration sheds. As with any drained cancel-mode step, the runtime
+    // body commits StepFailed and the run terminates as failed -- no
+    // CancelRequested is issued here (the supervisor's drainTimeout escalation
+    // lives outside this layer).
+    drain.trigger();
+    const result = await run.complete;
+    expect(result.terminalStatus).toBe("failed");
+  });
+
+  test("a parked iteration sits through drain when the loop declares wait", async () => {
+    const runId = "drain-wait-run";
+    const repoStore = createInMemoryRepoStore();
+    const drain = createControllableDrain(awaitParentWait);
+    const run = runtimeRun(
+      awaitParentWait,
+      buildEnv({
+        parentDef: awaitParentWait,
+        repoStore,
+        blobs: createInMemoryBlobSubstrate(),
+        signalChannel: createInMemorySignalChannel(),
+        invokeAction: awaitInvokeAction({ n: 0 }),
+        drain,
+      }),
+      { runId },
+    );
+    await waitForContainerPark(repoStore, runId, "signal-relay", 1);
+
+    // Under an explicit `wait`, the drain observation leaves the container
+    // running, so the parked iteration keeps waiting rather than shedding.
+    drain.trigger();
+
+    // A signal delivered after the drain still resumes the iteration.
+    await run.signal("go", { done: true }, "sig-1");
+    const result = await run.complete;
+    expect(result.terminalStatus).toBe("completed");
+    expect(result.outputs.rework).toMatchObject({
+      outcome: "converged",
+      iterations: 1,
+    });
+
+    // The run was still live when the signal arrived, which is the property
+    // that separates `wait` from `cancel` here. It is asserted as an ordering
+    // fact in the durable log rather than inferred from elapsed time: the
+    // container consumed the relayed signal BEFORE the run reached its
+    // terminal event. A drain that settled the run early would leave the
+    // terminal first and the SignalReceived after it or absent -- and it would
+    // do so while `terminalStatus` was still `completed`, so the assertions
+    // above would not catch it on their own.
+    const log = await repoStore.read(runId);
+    const receivedIdx = log.findIndex((e) => e.kind === "SignalReceived");
+    const terminalIdx = log.findIndex(
+      (e) =>
+        e.kind === "RunCompleted" ||
+        e.kind === "RunFailed" ||
+        e.kind === "RunCancelled",
+    );
+    expect(receivedIdx).toBeGreaterThan(-1);
+    expect(terminalIdx).toBeGreaterThan(-1);
+    expect(receivedIdx).toBeLessThan(terminalIdx);
+  });
+
+  test("drain sheds a parked nested loop chain", async () => {
+    const runId = "drain-nested-run";
+    const repoStore = createInMemoryRepoStore();
+    const drain = createControllableDrain(nestedAwaitParent);
+    const run = runtimeRun(
+      nestedAwaitParent,
+      buildEnv({
+        parentDef: nestedAwaitParent,
+        repoStore,
+        blobs: createInMemoryBlobSubstrate(),
+        signalChannel: createInMemorySignalChannel(),
+        invokeAction: awaitInvokeAction({ n: 0 }),
+        drain,
+      }),
+      { runId },
+    );
+    // The whole nested chain parks (outer container -> inner container -> body
+    // gate). The outer loop defaults to cancel-on-drain, so the drain aborts the
+    // outer container and the abort cascades DOWN every nested suspendable-child
+    // level (localTeardown), shedding the parked chain -- the run fails.
+    await waitForContainerPark(repoStore, runId, "signal-relay", 1);
+
+    drain.trigger();
+    const result = await run.complete;
+    expect(result.terminalStatus).toBe("failed");
+
+    // The teardown reached the INNERMOST level, not just the top: the inner
+    // body run's parked gate failed as the abort cascaded through both
+    // container levels. This is what distinguishes cancel PROPAGATION through
+    // the nesting from a single-level shed.
+    const outerBodyRunId = loopBodyRunId(runId, "outer", 0);
+    const innerBodyRunId = loopBodyRunId(outerBodyRunId, "inner", 0);
+    const innerBodyLog = await repoStore.read(innerBodyRunId);
+    expect(innerBodyLog.some((e) => e.kind === "StepFailed")).toBe(true);
+  });
+});
+
+describe("loop iteration suspend crash-resume carry", () => {
+  test("threads carry across a durable park into a later iteration", async () => {
+    const runId = "carry-run";
+    const blobs = createInMemoryBlobSubstrate();
+
+    // Run 1: drive to iteration 0's awaitSignal park, then capture the durable
+    // parent + child logs (the process "crashes" parked on the first iteration).
+    const repoStore1 = createInMemoryRepoStore();
+    const env1 = buildEnv({
+      parentDef: carryParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction({ n: 0 }),
+    });
+    void runtimeRun(carryParent, env1, { runId }).complete;
+    await waitForContainerPark(repoStore1, runId, "signal-relay", 1);
+    const parentLog = await repoStore1.read(runId);
+    const childLog = await repoStore1.read(loopBodyRunId(runId, "rework", 0));
+    expect(childLog.some((e) => e.kind === "ChildCompleted")).toBe(false);
+
+    // Run 2: resume against a fresh store seeded with iteration 0's parked log.
+    // The first delivery resumes iteration 0; iteration 1 -- a fresh iteration
+    // whose input is the carry threaded across the park -- parks on its own await
+    // and the second delivery resumes it. The in-memory channel queues both
+    // until each relay subscribes, so delivering them up front is safe.
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, loopBodyRunId(runId, "rework", 0), childLog);
+    const preRuns2 = { n: 0 };
+    const env2 = buildEnv({
+      parentDef: carryParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction(preRuns2),
+    });
+    const run2 = runtimeRun(carryParent, env2, {
+      runId,
+      resumeFromEvents: parentLog,
+    });
+    await run2.signal("go", { done: true }, "sig-0");
+    await run2.signal("go", { done: true }, "sig-1");
+    const result = await run2.complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    // Iteration 0's pre-park action replayed from the seeded log (0 re-runs);
+    // only iteration 1's fresh pre action ran in run 2.
+    expect(preRuns2.n).toBe(1);
+    // Convergence at iteration 2 is reachable ONLY if the carry threaded 0 -> 1
+    // across the park: `while` ("twice") converges once the input reaches 1, so
+    // a dropped carry keeps the input at 0, re-parks iteration 2 on a `go` this
+    // test never delivers, and the run hangs (the assertions catch it as a
+    // timeout) rather than reaching this converged result.
+    expect("escalate" in result.outputs).toBe(false);
+    expect(result.outputs.rework).toMatchObject({
+      outcome: "converged",
+      iterations: 2,
+    });
+  });
+});
+
+describe("loop iteration suspend crash-resume exhaustion", () => {
+  test("routes to onExhausted after a parked iteration resumes into the cap", async () => {
+    const runId = "exhaust-run";
+    const blobs = createInMemoryBlobSubstrate();
+
+    // Run 1: drive to iteration 0's park -- the only iteration maxIterations=1
+    // allows -- and capture the durable logs.
+    const repoStore1 = createInMemoryRepoStore();
+    const env1 = buildEnv({
+      parentDef: exhaustParent,
+      repoStore: repoStore1,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction: awaitInvokeAction({ n: 0 }),
+    });
+    void runtimeRun(exhaustParent, env1, { runId }).complete;
+    await waitForContainerPark(repoStore1, runId, "signal-relay", 1);
+    const parentLog = await repoStore1.read(runId);
+    const childLog = await repoStore1.read(loopBodyRunId(runId, "rework", 0));
+
+    // Run 2: resume and deliver the signal. Iteration 0 completes, `while`
+    // ("always") still wants to continue, but the iteration cap is reached, so
+    // the loop exhausts and routes to onExhausted (escalate) -- the branch a
+    // converging loop prunes. The exhaustion decision is reached AFTER the park.
+    const repoStore2 = createInMemoryRepoStore();
+    await seedChildLog(repoStore2, loopBodyRunId(runId, "rework", 0), childLog);
+    const escalateRuns = { n: 0 };
+    const invokeAction: ActionInvoker = async ({ handler }) => {
+      if (handler === "pre") return { output: { ran: true } };
+      if (handler === "escalate") {
+        escalateRuns.n += 1;
+        return { output: "escalated" };
+      }
+      throw new Error(`unknown handler ${handler}`);
+    };
+    const env2 = buildEnv({
+      parentDef: exhaustParent,
+      repoStore: repoStore2,
+      blobs,
+      signalChannel: createInMemorySignalChannel(),
+      invokeAction,
+    });
+    const run2 = runtimeRun(exhaustParent, env2, {
+      runId,
+      resumeFromEvents: parentLog,
+    });
+    await run2.signal("go", { done: true }, "sig-0");
+    const result = await run2.complete;
+
+    expect(result.terminalStatus).toBe("completed");
+    // onExhausted ran exactly once and its output is present -- a converging
+    // loop would prune escalate instead (see the converged tests above).
+    expect(escalateRuns.n).toBe(1);
+    expect(result.outputs.escalate).toBe("escalated");
+    expect(result.outputs.rework).toMatchObject({ outcome: "exhausted" });
+  });
+});

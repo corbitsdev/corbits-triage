@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "customConditions": ["intx-src"],
+    "paths": {
+      "@intx/inference": ["../../vendor/interchange/packages/inference/src/index.ts"],
+      "@intx/inference/providers": ["../../vendor/interchange/packages/inference/src/providers/index.ts"],
+      "@intx/types/runtime": ["../../vendor/interchange/packages/types/src/runtime.ts"]
+    }
+  },
+  "include": ["src"]
+}

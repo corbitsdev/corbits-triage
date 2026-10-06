@@ -1,0 +1,13 @@
+node_modules/
+apps/web/dist/
+*.tsbuildinfo
+.DS_Store
+tmp/
+tooling/shots/
+mockups/
+# Never copy active environment files (including nested vendored files) into an image.
+.env*
+**/.env*
+!.env.example
+!**/.env.example
+!**/.env.*.example

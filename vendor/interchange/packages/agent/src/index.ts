@@ -1,0 +1,103 @@
+// @intx/agent — in-process agent runtime.
+//
+// Sits on top of `createReactorAssembly` from `@intx/inference` to
+// provide a code-driven agent surface: send a message, stream events,
+// project history, hot-swap inference sources. Peer to `@intx/harness`;
+// the harness drives the reactor from a mail transport (INBOX watch,
+// connector threads, outbound replies via MessageTransport) while the
+// agent drives it from in-process calls.
+
+export { AgentContextLockError } from "./lock";
+export {
+  type AgentTool,
+  type AgentToolRunner,
+  type AnnotatedPluginFactory,
+  type AnnotatedPluginMeta,
+  type AnnotatedToolFactory,
+  type PluginFactory,
+  type StringToolHandler,
+  type ToolBundle,
+  type ToolDeclaration,
+  type ToolFactory,
+  type ToolFactoryMeta,
+  type ToolHandler,
+  DuplicateToolError,
+  PLUGIN_MARKER,
+  TOOL_PLUGIN_KIND,
+  type ToolPluginKind,
+  createToolRunner,
+  defineTool,
+  definePlugin,
+  fromToolRunner,
+  isAnnotatedPluginFactory,
+  isToolPluginInstance,
+  stringTool,
+  tool,
+  toolApprovalEffect,
+} from "./tool";
+export {
+  type AuthorizeFn,
+  type BaseEnv,
+  type Dependencies,
+  AgentEnvError,
+} from "./env";
+export {
+  type AnnotatedDirectorFactory,
+  type DirectorAgentContext,
+  type DirectorConfigSchema,
+  type DirectorFactory,
+  type DirectorFactoryMeta,
+  type DirectorRef,
+  type DirectorRegistry,
+} from "./director-types";
+export {
+  createStaticCredentialResolver,
+  createUnconfiguredCredentialResolver,
+} from "./credential-resolver";
+export { isOwnedDirectorId, validateNamespacedId } from "./namespace";
+export { CanonicalizationError, canonicalizeForHash } from "./canonicalize";
+export {
+  type DefinedDirector,
+  defineDirector,
+  isAnnotatedDirectorFactory,
+} from "./director";
+export {
+  createDefaultDirectorRegistry,
+  createDirectorRegistry,
+  createWorkflowDirectorRegistry,
+  UnknownDirectorIdError,
+} from "./director-registry";
+export {
+  type DefaultDirectorConfig,
+  buildDefaultDirectorRef,
+  defaultDirectorFactory,
+} from "./default-director";
+export {
+  type SourceRegistry,
+  InvalidInferenceSourceError,
+  SourceNotFoundError,
+  createSourceRegistry,
+} from "./source";
+export {
+  type Agent,
+  type SendOptions,
+  type SendResult,
+  AgentClosedError,
+  GateSuspendedWithoutCorrelationError,
+  createAgent,
+} from "./agent";
+export {
+  type AgentDefinition,
+  type DefineAgentConfig,
+  type EnvRequiredByAll,
+  type InferencePreference,
+  defineAgent,
+} from "./definition";
+export {
+  effectiveDirectorRef,
+  getRequiredEnvKeys,
+  validateEnv,
+} from "./env-validation";
+export type { RequiredEnvKeys } from "./env-validation";
+export { SendQueueFullError } from "./send-queue";
+export { StreamBackpressureError } from "./stream";

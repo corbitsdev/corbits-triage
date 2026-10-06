@@ -1,0 +1,1152 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- test refs[0]! always follows expect(refs.length) checks */
+import { describe, test, expect } from "bun:test";
+import { generateKeyPair, createEd25519Crypto } from "@intx/crypto";
+import {
+  assembleSignedContent,
+  assembleMessage,
+  createDetachedSignatureFromProvider,
+  createInboundMessage,
+  generateMessageId,
+  type MessageHeaders,
+} from "@intx/mime";
+import { createInMemoryTransport } from "./index";
+import type {
+  MailboxEvent,
+  MessageRef,
+  MessageAttachment,
+} from "@intx/types/runtime";
+import { isMessageTransportError } from "@intx/types/runtime";
+import { waitUntil } from "@intx/types/testing";
+
+function conversationHeaders(): MessageHeaders {
+  return {
+    from: "alpha@test.interchange",
+    to: ["beta@test.interchange"],
+    cc: undefined,
+    date: new Date("2026-01-15T12:00:00Z"),
+    messageId: generateMessageId("alpha@test.interchange"),
+    subject: undefined,
+    inReplyTo: undefined,
+    references: undefined,
+    mimeVersion: "1.0",
+    interchangeType: "conversation.message",
+    interchangeCorrelationId: undefined,
+    interchangeTenantId: undefined,
+    interchangeAgentId: undefined,
+    interchangeSessionId: undefined,
+    interchangeOfferingId: undefined,
+    interchangeSchemaVersion: undefined,
+    traceparent: undefined,
+    tracestate: undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Test fixtures
+// ---------------------------------------------------------------------------
+
+async function createTestTransport() {
+  const transport = createInMemoryTransport();
+
+  const kpA = await generateKeyPair();
+  const kpB = await generateKeyPair();
+  const cryptoA = createEd25519Crypto(kpA);
+  const cryptoB = createEd25519Crypto(kpB);
+
+  transport.register("alpha@test.interchange", cryptoA);
+  transport.register("beta@test.interchange", cryptoB);
+
+  const alphaTransport = transport.getTransportFor("alpha@test.interchange");
+  const betaTransport = transport.getTransportFor("beta@test.interchange");
+
+  return { transport, alphaTransport, betaTransport, cryptoA, cryptoB };
+}
+
+// ---------------------------------------------------------------------------
+// Test 1: send + watch — verify async delivery
+// ---------------------------------------------------------------------------
+
+describe("send and watch", () => {
+  test("watch callback fires asynchronously after send returns", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    let callbackFired = false;
+    let receivedEvent: MailboxEvent | undefined;
+
+    const unwatch = betaTransport.watch("INBOX", (event) => {
+      callbackFired = true;
+      receivedEvent = event;
+    });
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      subject: "Hello",
+      content: "Hello from alpha",
+    });
+
+    // executeSend schedules each local recipient's watch callbacks with
+    // queueMicrotask, so the callback runs after send() returns rather than on
+    // its call stack. Wait for it to have run.
+    await waitUntil(() => callbackFired);
+
+    expect(callbackFired).toBe(true);
+    expect(receivedEvent?.type).toBe("exists");
+    if (receivedEvent?.type === "exists") {
+      expect(receivedEvent.headers.from).toBe("alpha@test.interchange");
+      expect(receivedEvent.headers.interchangeType).toBe(
+        "conversation.message",
+      );
+    }
+
+    unwatch();
+  });
+
+  test("unwatch prevents further callbacks", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    let count = 0;
+    const unwatch = betaTransport.watch("INBOX", () => {
+      count++;
+    });
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "first",
+    });
+    await waitUntil(() => count >= 1);
+    expect(count).toBe(1);
+
+    unwatch();
+
+    // A watcher registered now joins the same per-mailbox callback set, after
+    // the unwatched one. executeSend dispatches that set in insertion order
+    // via queueMicrotask, so this probe firing is ordered strictly after a
+    // still-registered stale callback would have fired -- if unwatch() had not
+    // removed it, `count` would already be 2 by the time the probe runs.
+    let probeFired = false;
+    const unwatchProbe = betaTransport.watch("INBOX", () => {
+      probeFired = true;
+    });
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "second",
+    });
+    await waitUntil(() => probeFired);
+    expect(count).toBe(1);
+
+    unwatchProbe();
+  });
+
+  test("remote delivery carries the registered sender address", async () => {
+    const { transport, alphaTransport } = await createTestTransport();
+    const deliveries: { senderAddress: string; recipients: string[] }[] = [];
+    transport.setRemoteSendHandler(
+      async (_rawMessage, recipients, senderAddress) => {
+        deliveries.push({ senderAddress, recipients });
+      },
+    );
+
+    await alphaTransport.send({
+      to: "remote@example.test",
+      type: "conversation.message",
+      content: "hello",
+    });
+
+    expect(deliveries).toEqual([
+      {
+        senderAddress: "alpha@test.interchange",
+        recipients: ["remote@example.test"],
+      },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 2: search by Interchange-Type header
+// ---------------------------------------------------------------------------
+
+describe("search", () => {
+  test("search by Interchange-Type header finds message", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "test content",
+    });
+
+    const refs = await betaTransport.search("INBOX", {
+      header: { field: "Interchange-Type", contains: "conversation.message" },
+    });
+
+    expect(refs.length).toBe(1);
+    expect(refs[0]!.mailbox).toBe("INBOX");
+  });
+
+  test("search for non-existing header returns empty", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "test",
+    });
+
+    const refs = await betaTransport.search("INBOX", {
+      header: { field: "Interchange-Type", contains: "offering.request" },
+    });
+
+    expect(refs.length).toBe(0);
+  });
+
+  test("search by hasFlags finds flagged messages", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "test",
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    expect(refs.length).toBe(1);
+
+    // Set the $Processed flag.
+    await betaTransport.setFlags(refs[0]!, ["$Processed"]);
+
+    // Should NOT find with missingFlags $Processed.
+    const unprocessed = await betaTransport.search("INBOX", {
+      missingFlags: ["$Processed"],
+    });
+    expect(unprocessed.length).toBe(0);
+
+    // Should find with hasFlags $Processed.
+    const processed = await betaTransport.search("INBOX", {
+      hasFlags: ["$Processed"],
+    });
+    expect(processed.length).toBe(1);
+  });
+
+  test("UNKEYWORD $Processed does not find processed messages (test 4 from plan)", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "processed message",
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    await betaTransport.setFlags(refs[0]!, ["$Processed"]);
+
+    const notFound = await betaTransport.search("INBOX", {
+      missingFlags: ["$Processed"],
+    });
+    expect(notFound.length).toBe(0);
+  });
+
+  test("search by from address", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "hello",
+    });
+
+    const found = await betaTransport.search("INBOX", {
+      from: "alpha@test.interchange",
+    });
+    expect(found.length).toBe(1);
+
+    const notFound = await betaTransport.search("INBOX", {
+      from: "nobody@test.interchange",
+    });
+    expect(notFound.length).toBe(0);
+  });
+
+  test("boolean AND composition", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "hello",
+    });
+
+    const found = await betaTransport.search("INBOX", {
+      and: [
+        { from: "alpha@test.interchange" },
+        {
+          header: {
+            field: "Interchange-Type",
+            contains: "conversation.message",
+          },
+        },
+      ],
+    });
+    expect(found.length).toBe(1);
+
+    const notFound = await betaTransport.search("INBOX", {
+      and: [
+        { from: "alpha@test.interchange" },
+        { header: { field: "Interchange-Type", contains: "offering.request" } },
+      ],
+    });
+    expect(notFound.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 3: fetchFull — verify signatureStatus is "valid"
+// ---------------------------------------------------------------------------
+
+describe("fetchFull", () => {
+  test("fetchFull returns signatureStatus valid for signed message", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "hello world",
+      subject: "Test",
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    expect(refs.length).toBe(1);
+
+    const msg = await betaTransport.fetchFull(refs[0]!);
+    expect(msg.signatureStatus).toBe("valid");
+    expect(msg.headers.from).toBe("alpha@test.interchange");
+    expect(msg.headers.interchangeType).toBe("conversation.message");
+  });
+
+  test("fetchFull parses conversation content", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "Hello, beta!",
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    const msg = await betaTransport.fetchFull(refs[0]!);
+    expect(msg.content).toBe("Hello, beta!");
+    expect(msg.payload).toBeUndefined();
+  });
+
+  test("fetchFull parses structured payload", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "offering.request",
+      payload: { offeringId: "code-review", parameters: { branch: "main" } },
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    const msg = await betaTransport.fetchFull(refs[0]!);
+    expect(msg.signatureStatus).toBe("valid");
+    expect(msg.payload).toBeDefined();
+    expect(msg.payload!.type).toBe("offering.request");
+    expect(msg.payload!.body["offeringId"]).toBe("code-review");
+  });
+
+  test("fetchFull populates attachments for a conversation message", async () => {
+    const { transport, betaTransport, cryptoA } = await createTestTransport();
+
+    const attachments: MessageAttachment[] = [
+      {
+        name: "shot.png",
+        contentType: "image/png",
+        data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      },
+    ];
+    const content = assembleSignedContent({
+      kind: "conversation",
+      text: "with image",
+      attachments,
+    });
+    const sig = await createDetachedSignatureFromProvider(content, cryptoA);
+    const raw = assembleMessage(conversationHeaders(), content, sig);
+
+    transport.deliver("beta@test.interchange", raw);
+    const refs = await betaTransport.search("INBOX", {});
+    expect(refs).toHaveLength(1);
+
+    const msg = await betaTransport.fetchFull(refs[0]!);
+    expect(msg.signatureStatus).toBe("valid");
+    expect(msg.content).toBe("with image");
+    expect(msg.attachments).toHaveLength(1);
+    const got = msg.attachments![0]!;
+    const orig = attachments[0]!;
+    expect(got.name).toBe("shot.png");
+    expect(got.contentType).toBe("image/png");
+    expect(Array.from(got.data)).toEqual(Array.from(orig.data));
+  });
+
+  test("fetchFull surfaces a malformed attachment instead of dropping it", async () => {
+    const { transport, betaTransport, cryptoA } = await createTestTransport();
+
+    const boundary = "mixed_bad_b64";
+    const badContent = new TextEncoder().encode(
+      `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: text/plain; charset=utf-8\r\n` +
+        `Content-Transfer-Encoding: 7bit\r\n\r\n` +
+        `hi\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: image/png\r\n` +
+        `Content-Transfer-Encoding: base64\r\n` +
+        `Content-Disposition: attachment; filename="bad.png"\r\n\r\n` +
+        `@@@not-valid-base64@@@\r\n` +
+        `--${boundary}--\r\n`,
+    );
+    const sig = await createDetachedSignatureFromProvider(badContent, cryptoA);
+    const raw = assembleMessage(conversationHeaders(), badContent, sig);
+
+    transport.deliver("beta@test.interchange", raw);
+    const refs = await betaTransport.search("INBOX", {});
+    expect(refs).toHaveLength(1);
+
+    await expect(betaTransport.fetchFull(refs[0]!)).rejects.toThrow();
+  });
+
+  test("fetchFull reads a bare text/plain signed conversation body", async () => {
+    // A plain signed email (no multipart/mixed wrapper) is a valid
+    // conversation message; fetchFull must read its body, not drop it.
+    const { transport, betaTransport, cryptoA } = await createTestTransport();
+
+    const bareContent = new TextEncoder().encode(
+      `Content-Type: text/plain; charset=utf-8\r\n` +
+        `Content-Transfer-Encoding: 7bit\r\n\r\n` +
+        `plain signed body`,
+    );
+    const sig = await createDetachedSignatureFromProvider(bareContent, cryptoA);
+    const raw = assembleMessage(conversationHeaders(), bareContent, sig);
+
+    transport.deliver("beta@test.interchange", raw);
+    const refs = await betaTransport.search("INBOX", {});
+    expect(refs).toHaveLength(1);
+
+    const msg = await betaTransport.fetchFull(refs[0]!);
+    expect(msg.content).toBe("plain signed body");
+    expect(msg.attachments).toBeUndefined();
+  });
+
+  test("fetchHeaders returns parsed headers", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "headers test",
+      subject: "Subject Line",
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    const headers = await betaTransport.fetchHeaders(refs[0]!);
+    expect(headers.from).toBe("alpha@test.interchange");
+    expect(headers.to).toContain("beta@test.interchange");
+    expect(headers.subject).toBe("Subject Line");
+    expect(headers.interchangeType).toBe("conversation.message");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 5: Threading — REFERENCES algorithm tree structure
+// ---------------------------------------------------------------------------
+
+describe("thread", () => {
+  test("3 messages in a thread produce correct tree structure", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    // Message A (root).
+    const receiptA = await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      subject: "Thread root",
+      content: "Message A",
+    });
+
+    // Message B (reply to A).
+    const receiptB = await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      subject: "Re: Thread root",
+      content: "Message B",
+      inReplyTo: receiptA.messageId,
+    });
+
+    // Message C (reply to B).
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      subject: "Re: Thread root",
+      content: "Message C",
+      inReplyTo: receiptB.messageId,
+    });
+
+    const threads = await betaTransport.thread("INBOX", "references");
+    expect(threads.length).toBeGreaterThan(0);
+
+    // The root thread should have children (a non-trivial tree).
+    const allRefs: MessageRef[] = [];
+    function collectRefs(nodes: typeof threads) {
+      for (const node of nodes) {
+        allRefs.push(node.ref);
+        collectRefs(node.children);
+      }
+    }
+    collectRefs(threads);
+    expect(allRefs.length).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 6: UID monotonicity
+// ---------------------------------------------------------------------------
+
+describe("UID ordering", () => {
+  test("UIDs are monotonically increasing (1, 2, 3)", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    for (let i = 0; i < 3; i++) {
+      await alphaTransport.send({
+        to: "beta@test.interchange",
+        type: "conversation.message",
+        content: `Message ${i + 1}`,
+      });
+    }
+
+    const refs = await betaTransport.search("INBOX", {});
+    expect(refs.length).toBe(3);
+
+    const uids = refs.map((r) => r.uid);
+    expect(uids[0]).toBe(1);
+    expect(uids[1]).toBe(2);
+    expect(uids[2]).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 7: MODSEQ increments on flag change
+// ---------------------------------------------------------------------------
+
+describe("MODSEQ", () => {
+  test("MODSEQ increments when flags change", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "modseq test",
+    });
+
+    const statusBefore = await betaTransport.getMailboxStatus("INBOX");
+    const modseqBefore = statusBefore.highestModSeq;
+
+    const refs = await betaTransport.search("INBOX", {});
+    await betaTransport.setFlags(refs[0]!, ["$Processed"]);
+
+    const statusAfter = await betaTransport.getMailboxStatus("INBOX");
+    expect(statusAfter.highestModSeq).toBeGreaterThan(modseqBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 8: Sending to unknown address throws
+// ---------------------------------------------------------------------------
+
+describe("error handling", () => {
+  test("send to unknown address throws", async () => {
+    const { alphaTransport } = await createTestTransport();
+
+    await expect(
+      alphaTransport.send({
+        to: "nobody@unknown.test",
+        type: "conversation.message",
+        content: "hello",
+      }),
+    ).rejects.toThrow(/not registered/);
+  });
+
+  test("send rejects a body that contradicts the declared type", async () => {
+    // The transport owns this invariant for its own callers -- the reply drain,
+    // the connector bridges, the examples -- not only for the mail tools, which
+    // refuse the same pair at their argument boundary. Both directions are
+    // asserted because the split they test is one predicate over the type
+    // union, so a mistake in it inverts both.
+    const { alphaTransport } = await createTestTransport();
+
+    await expect(
+      alphaTransport.send({
+        to: "beta@test.interchange",
+        type: "conversation.message",
+        payload: { a: 1 },
+      }),
+    ).rejects.toThrow(/must not carry a structured payload/);
+
+    await expect(
+      alphaTransport.send({
+        to: "beta@test.interchange",
+        type: "offering.request",
+        content: "text",
+      }),
+    ).rejects.toThrow(/must not carry a text content field/);
+  });
+
+  test("send rejects a blank inReplyTo rather than emitting an empty one", async () => {
+    // RFC 5322 defines `In-Reply-To` as `1*msg-id`, so a blank value names no
+    // parent. Accepting it would put an empty id on the `In-Reply-To` line, in
+    // the `References` chain and in the stored envelope, where it is an id
+    // every caller that did the same would share.
+    const { alphaTransport } = await createTestTransport();
+
+    await expect(
+      alphaTransport.send({
+        to: "beta@test.interchange",
+        type: "conversation.message",
+        content: "hello",
+        inReplyTo: "   ",
+      }),
+    ).rejects.toThrow(/inReplyTo/);
+  });
+
+  test("fetch non-existent UID throws", async () => {
+    const { betaTransport } = await createTestTransport();
+
+    await expect(
+      betaTransport.fetchFull({ uid: 9999, mailbox: "INBOX" }),
+    ).rejects.toThrow(/not found/);
+  });
+
+  test("register throws on duplicate registration", async () => {
+    const transport = createInMemoryTransport();
+    const kp = await generateKeyPair();
+    const crypto = createEd25519Crypto(kp);
+    transport.register("alpha@test.interchange", crypto);
+    expect(() => transport.register("alpha@test.interchange", crypto)).toThrow(
+      /already registered/,
+    );
+  });
+
+  test("getTransportFor throws for unregistered address", () => {
+    const transport = createInMemoryTransport();
+    expect(() => transport.getTransportFor("nobody@test.interchange")).toThrow(
+      /not registered/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Registration lifecycle — guards the single-entry-map invariant.
+// ---------------------------------------------------------------------------
+
+describe("registration lifecycle", () => {
+  test("unregister then re-register works (entry is fully removed)", async () => {
+    const transport = createInMemoryTransport();
+    const kp = await generateKeyPair();
+    const crypto = createEd25519Crypto(kp);
+
+    transport.register("alpha@test.interchange", crypto);
+    transport.unregister("alpha@test.interchange");
+    expect(() =>
+      transport.register("alpha@test.interchange", crypto),
+    ).not.toThrow();
+  });
+
+  test("send from a scoped transport whose address was deregistered throws", async () => {
+    const { transport, alphaTransport } = await createTestTransport();
+    transport.unregister("alpha@test.interchange");
+
+    await expect(
+      alphaTransport.send({
+        to: "beta@test.interchange",
+        type: "conversation.message",
+        content: "hi",
+      }),
+    ).rejects.toThrow(/deregistered|not registered/);
+  });
+
+  test("a deregistered scoped handle names a condition no retry can clear", async () => {
+    // No retry through the handle brings the entry back, so the rejection has
+    // to say so. Naming `CANNOT` is what separates it from a rejection carrying
+    // no condition, which leaves the outcome unknown and so reads as retriable.
+    const { transport, alphaTransport } = await createTestTransport();
+    transport.unregister("alpha@test.interchange");
+
+    const operations: [label: string, run: () => Promise<unknown>][] = [
+      [
+        "send",
+        () =>
+          alphaTransport.send({
+            to: "beta@test.interchange",
+            type: "conversation.message",
+            content: "hi",
+          }),
+      ],
+      ["search", () => alphaTransport.search("INBOX", {})],
+      ["listMailboxes", () => alphaTransport.listMailboxes()],
+    ];
+
+    for (const [label, run] of operations) {
+      const cause: unknown = await run().then(
+        () => undefined,
+        (err: unknown) => err,
+      );
+      if (cause === undefined) {
+        throw new Error(`${label}: expected the deregistered handle to reject`);
+      }
+      if (!isMessageTransportError(cause)) {
+        throw new Error(
+          `${label}: expected a condition, got ${String(cause)}`,
+          { cause },
+        );
+      }
+      expect(cause.condition).toBe("CANNOT");
+    }
+  });
+
+  test("an unimplemented method names the same condition as a dead handle", async () => {
+    // Nothing a caller changes about the call makes an unimplemented method
+    // arrive, which is the same thing `CANNOT` says about a handle whose
+    // registration is gone. No mail tool reaches these methods, so the
+    // condition is asserted here rather than through a tool.
+    const { alphaTransport } = await createTestTransport();
+
+    const operations: [label: string, run: () => Promise<unknown>][] = [
+      [
+        "sync",
+        () =>
+          alphaTransport.sync("INBOX", {
+            uidValidity: 1,
+            uidNext: 1,
+            highestModSeq: 0,
+          }),
+      ],
+      ["createList", () => alphaTransport.createList("list@test", "List")],
+      ["listMembers", () => alphaTransport.listMembers("list@test")],
+      [
+        "subscribe",
+        () => alphaTransport.subscribe("list@test", "alpha@test.interchange"),
+      ],
+      [
+        "unsubscribe",
+        () => alphaTransport.unsubscribe("list@test", "alpha@test.interchange"),
+      ],
+    ];
+
+    for (const [label, run] of operations) {
+      const cause: unknown = await run().then(
+        () => undefined,
+        (err: unknown) => err,
+      );
+      if (!isMessageTransportError(cause)) {
+        throw new Error(`${label}: expected a condition, got ${String(cause)}`);
+      }
+      expect(cause.condition).toBe("CANNOT");
+    }
+  });
+
+  test("fetchFull returns signatureStatus 'unknown' after sender is unregistered", async () => {
+    const { transport, alphaTransport, betaTransport } =
+      await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "hi",
+    });
+
+    // Local delivery appends to the recipient's INBOX inside executeSend, so
+    // the message is searchable once send() resolves; only the watch-callback
+    // dispatch is deferred, and this test does not use it.
+    const refs = await betaTransport.search("INBOX", {});
+    expect(refs.length).toBe(1);
+
+    transport.unregister("alpha@test.interchange");
+
+    const full = await betaTransport.fetchFull(refs[0]!);
+    expect(full.signatureStatus).toBe("unknown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Additional: mailbox management
+// ---------------------------------------------------------------------------
+
+describe("mailbox management", () => {
+  test("listMailboxes returns default mailboxes", async () => {
+    const { betaTransport } = await createTestTransport();
+    const mailboxes = await betaTransport.listMailboxes();
+    const names = mailboxes.map((m) => m.name);
+    expect(names).toContain("INBOX");
+    expect(names).toContain("Sent");
+    expect(names).toContain("Drafts");
+    expect(names).toContain("Archive");
+    expect(names).toContain("Trash");
+  });
+
+  test("sent copy appears in Sent mailbox", async () => {
+    const { alphaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "sent copy test",
+    });
+
+    const sentRefs = await alphaTransport.search("Sent", {});
+    expect(sentRefs.length).toBe(1);
+  });
+
+  test("expunge removes deleted messages", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "to be deleted",
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    expect(refs.length).toBe(1);
+
+    await betaTransport.setFlags(refs[0]!, ["\\Deleted"]);
+    const { expungedUids } = await betaTransport.expunge("INBOX");
+    // The sweep reports which uids it removed.
+    expect(expungedUids).toEqual([refs[0]!.uid]);
+
+    const remaining = await betaTransport.search("INBOX", {});
+    expect(remaining.length).toBe(0);
+  });
+
+  test("move transfers message to destination mailbox", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "to be archived",
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    await betaTransport.move(refs[0]!, "Archive");
+
+    const inboxRefs = await betaTransport.search("INBOX", {});
+    expect(inboxRefs.length).toBe(0);
+
+    const archiveRefs = await betaTransport.search("Archive", {});
+    expect(archiveRefs.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Signature round-trip
+// ---------------------------------------------------------------------------
+
+describe("signature round-trip", () => {
+  test("signature is valid even with structured message", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "offering.request",
+      payload: { offeringId: "test", parameters: {} },
+      summary: "Test offering",
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    const msg = await betaTransport.fetchFull(refs[0]!);
+    expect(msg.signatureStatus).toBe("valid");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deliver() — federation inbound delivery
+// ---------------------------------------------------------------------------
+
+describe("deliver", () => {
+  const VALID_MESSAGE = new TextEncoder().encode(
+    [
+      "From: sender@remote",
+      "To: alpha@test.interchange",
+      "Date: Thu, 17 Apr 2026 12:00:00 +0000",
+      "Message-ID: <fed-1@remote>",
+      "Subject: Hello",
+      "Content-Type: text/plain",
+      "",
+      "Body text",
+    ].join("\r\n"),
+  );
+
+  test("delivers a well-formed message to INBOX", async () => {
+    const { transport } = await createTestTransport();
+    const alphaTransport = transport.getTransportFor("alpha@test.interchange");
+
+    transport.deliver("alpha@test.interchange", VALID_MESSAGE);
+
+    const refs = await alphaTransport.search("INBOX", {});
+    expect(refs).toHaveLength(1);
+    const headers = await alphaTransport.fetchHeaders(refs[0]!);
+    expect(headers.messageId).toBe("<fed-1@remote>");
+    expect(headers.from).toBe("sender@remote");
+  });
+
+  test("a blank In-Reply-To threads nothing together", async () => {
+    // Two unrelated federated messages, each carrying an `In-Reply-To` its
+    // sender left blank. The header names no parent, so the threading
+    // algorithm links neither to the other. An empty id read as a value is one
+    // every such message shares, and sharing it gathers strangers into a
+    // single thread whose reply address is whichever of them spoke last.
+    const { transport } = await createTestTransport();
+    const alphaTransport = transport.getTransportFor("alpha@test.interchange");
+
+    const blankReplyFrom = (from: string, messageId: string): Uint8Array =>
+      new TextEncoder().encode(
+        [
+          `From: ${from}`,
+          "To: alpha@test.interchange",
+          "Date: Thu, 17 Apr 2026 12:00:00 +0000",
+          `Message-ID: ${messageId}`,
+          "In-Reply-To:   ",
+          "Content-Type: text/plain",
+          "",
+          "Body text",
+        ].join("\r\n"),
+      );
+
+    transport.deliver(
+      "alpha@test.interchange",
+      blankReplyFrom("one@remote", "<blank-a@remote>"),
+    );
+    transport.deliver(
+      "alpha@test.interchange",
+      blankReplyFrom("two@remote", "<blank-b@remote>"),
+    );
+
+    const refs = await alphaTransport.search("INBOX", {});
+    expect(refs).toHaveLength(2);
+
+    const threads = await alphaTransport.thread("INBOX", "references");
+    expect(threads).toHaveLength(2);
+    expect(threads.map((t) => t.children)).toEqual([[], []]);
+  });
+
+  test("does NOT dedup by Message-ID: redelivery appends a second copy", async () => {
+    // The federation inbound path performs NO Message-ID dedup:
+    // the mailbox store appends unconditionally, so delivering the same
+    // Message-ID twice yields two INBOX messages. This pins the baseline
+    // the supervisor FIFO + markConsumed dedup improves on.
+    const { transport } = await createTestTransport();
+    const alphaTransport = transport.getTransportFor("alpha@test.interchange");
+
+    transport.deliver("alpha@test.interchange", VALID_MESSAGE);
+    transport.deliver("alpha@test.interchange", VALID_MESSAGE);
+
+    const refs = await alphaTransport.search("INBOX", {});
+    expect(refs).toHaveLength(2);
+  });
+
+  test("fires watch callback on delivery", async () => {
+    const { transport } = await createTestTransport();
+    const alphaTransport = transport.getTransportFor("alpha@test.interchange");
+
+    const events: MailboxEvent[] = [];
+    alphaTransport.watch("INBOX", (event) => events.push(event));
+
+    transport.deliver("alpha@test.interchange", VALID_MESSAGE);
+
+    // Watch callbacks are scheduled via queueMicrotask.
+    await waitUntil(() => events.length >= 1);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("exists");
+  });
+
+  test("throws for unregistered address", async () => {
+    const { transport } = await createTestTransport();
+
+    expect(() =>
+      transport.deliver("nobody@test.interchange", VALID_MESSAGE),
+    ).toThrow(/not registered/);
+  });
+
+  test("throws for missing Message-ID header", async () => {
+    const { transport } = await createTestTransport();
+    const msg = new TextEncoder().encode(
+      ["From: x@y", "Date: Thu, 17 Apr 2026 12:00:00 +0000", "", "body"].join(
+        "\r\n",
+      ),
+    );
+
+    expect(() => transport.deliver("alpha@test.interchange", msg)).toThrow(
+      /Message-ID/,
+    );
+  });
+
+  test("throws for missing From header", async () => {
+    const { transport } = await createTestTransport();
+    const msg = new TextEncoder().encode(
+      [
+        "Message-ID: <x@y>",
+        "Date: Thu, 17 Apr 2026 12:00:00 +0000",
+        "",
+        "body",
+      ].join("\r\n"),
+    );
+
+    expect(() => transport.deliver("alpha@test.interchange", msg)).toThrow(
+      /From/,
+    );
+  });
+
+  test("throws for a blank From header", async () => {
+    // The header parser trims, so a present-but-blank From arrives as an
+    // empty string. Accepting it would store an empty sender, while the same
+    // bytes read through buildMessageHeaders report no originator at all.
+    const { transport } = await createTestTransport();
+    const msg = new TextEncoder().encode(
+      [
+        "From:   ",
+        "Message-ID: <blank-from@y>",
+        "Date: Thu, 17 Apr 2026 12:00:00 +0000",
+        "",
+        "body",
+      ].join("\r\n"),
+    );
+
+    expect(() => transport.deliver("alpha@test.interchange", msg)).toThrow(
+      /From/,
+    );
+  });
+
+  test("throws for missing Date header", async () => {
+    const { transport } = await createTestTransport();
+    const msg = new TextEncoder().encode(
+      ["From: x@y", "Message-ID: <x@y>", "", "body"].join("\r\n"),
+    );
+
+    expect(() => transport.deliver("alpha@test.interchange", msg)).toThrow(
+      /Date/,
+    );
+  });
+});
+
+describe("append", () => {
+  test("writes no From line for a message with no originator", async () => {
+    // The round trip goes through the RFC 2822 serializer: interpolating the
+    // absence would write `From: undefined`, which reads back as an originator
+    // literally named "undefined".
+    const { alphaTransport } = await createTestTransport();
+    const ref = await alphaTransport.append(
+      "INBOX",
+      createInboundMessage({
+        to: ["alpha@test.interchange"],
+        content: "no sender",
+        interchangeType: "conversation.message",
+      }),
+    );
+
+    const headers = await alphaTransport.fetchHeaders(ref);
+    expect(headers.from).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// References chain on send (INTR-480)
+// ---------------------------------------------------------------------------
+
+describe("References chain on send", () => {
+  test("ships the full References chain a reply carries", async () => {
+    // A threaded reply supplies the parent's own References plus the parent's
+    // Message-Id as `references`; the send path ships that full chain rather
+    // than deriving a single-element `[inReplyTo]`.
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    const root = generateMessageId("root@test.interchange");
+    const parent = generateMessageId("parent@test.interchange");
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "full chain reply",
+      inReplyTo: parent,
+      references: [root, parent],
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    const headers = await betaTransport.fetchHeaders(refs[0]!);
+    // The chain already ends with the parent (== inReplyTo), so it is not
+    // duplicated.
+    expect(headers.references).toEqual([root, parent]);
+    expect(headers.inReplyTo).toBe(parent);
+  });
+
+  test("appends inReplyTo when it is not already the tail of references", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    const a = generateMessageId("a@test.interchange");
+    const b = generateMessageId("b@test.interchange");
+    const parent = generateMessageId("parent@test.interchange");
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "append tail",
+      inReplyTo: parent,
+      references: [a, b],
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    const headers = await betaTransport.fetchHeaders(refs[0]!);
+    expect(headers.references).toEqual([a, b, parent]);
+  });
+
+  test("filters non-RFC identifiers out of the References header", async () => {
+    // Inbound mail can carry a headerless-derived Message-Id that is a valid
+    // claim-check key but not an RFC `<id@host>` identifier. Such a value must
+    // not leak into the emitted References header.
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    const root = generateMessageId("root@test.interchange");
+    const parent = generateMessageId("parent@test.interchange");
+    const nonRfc = "sha256:deadbeefcafef00d";
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "filtered chain",
+      inReplyTo: parent,
+      references: [root, nonRfc, parent],
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    const headers = await betaTransport.fetchHeaders(refs[0]!);
+    expect(headers.references).toEqual([root, parent]);
+  });
+
+  test("derives a single-element chain when no references are supplied", async () => {
+    // A bare reply (inReplyTo only, no references) keeps the pre-existing
+    // single-element behavior.
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    const parent = generateMessageId("parent@test.interchange");
+
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "bare reply",
+      inReplyTo: parent,
+    });
+
+    const refs = await betaTransport.search("INBOX", {});
+    const headers = await betaTransport.fetchHeaders(refs[0]!);
+    expect(headers.references).toEqual([parent]);
+  });
+});

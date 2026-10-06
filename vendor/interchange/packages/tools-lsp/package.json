@@ -1,0 +1,44 @@
+{
+  "name": "@intx/tools-lsp",
+  "description": "LSP-backed tool plugin exposing language servers to the agent harness",
+  "version": "0.4.0",
+  "license": "LGPL-2.1-only",
+  "type": "module",
+  "interchange": {
+    "tools": "./dist/sidecar-bundle.js"
+  },
+  "exports": {
+    ".": {
+      "intx-src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./sidecar-bundle": {
+      "intx-src": "./src/sidecar-bundle.ts",
+      "types": "./dist/sidecar-bundle.d.ts",
+      "default": "./dist/sidecar-bundle.js"
+    }
+  },
+  "dependencies": {
+    "@intx/agent": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/tools-posix": "workspace:*",
+    "@intx/types": "workspace:*",
+    "vscode-jsonrpc": "^9.0.1",
+    "vscode-languageserver-types": "^3.17.5",
+    "which": "^4.0.0"
+  },
+  "devDependencies": {
+    "@intx/storage-isogit": "workspace:*",
+    "@types/which": "^3.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

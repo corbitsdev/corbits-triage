@@ -1,0 +1,34 @@
+{
+  "name": "@corbits/hub",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "module": "src/server.ts",
+  "scripts": {
+    "start": "bun --conditions=intx-src src/server.ts"
+  },
+  "dependencies": {
+    "@corbits/artifacts": "0.2.0",
+    "@corbits/cron": "0.2.1",
+    "@corbits/github-tool": "workspace:*",
+    "@corbits/github-write-tool": "workspace:*",
+    "@corbits/rule-packs": "workspace:*",
+    "@corbits/triage-contracts": "workspace:*",
+    "@corbits/triage-workflows": "workspace:*",
+    "@corbits/webhooks": "0.2.0",
+    "@intx/authz": "workspace:*",
+    "@intx/crypto": "0.4.0",
+    "@intx/db": "workspace:*",
+    "@intx/hub-api": "0.4.0",
+    "@intx/hub-client": "workspace:*",
+    "@intx/hub-common": "workspace:*",
+    "@intx/hub-sessions": "0.4.0",
+    "@intx/inference": "workspace:*",
+    "@intx/log": "0.4.0",
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:",
+    "drizzle-orm": "catalog:",
+    "hono": "catalog:"
+  }
+}

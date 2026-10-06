@@ -1,0 +1,13 @@
+bun.lock
+dist
+docs/API.md
+test-results
+playwright-report
+*~
+*\#*
+
+# Recorded provider captures are verbatim/deterministic machine output written
+# by writeCapture (JSON.stringify), not hand-authored source; never reformat.
+packages/inference-discovery-*/sessions/
+packages/inference-discovery-*/example-sessions/
+packages/inference-discovery-*/live-sessions/

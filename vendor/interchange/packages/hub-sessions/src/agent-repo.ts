@@ -1,0 +1,284 @@
+import { createSSHSignature } from "@intx/crypto";
+import type { GCPolicy } from "@intx/storage-isogit/node";
+import type { ToolPackageManifest } from "@intx/types/tool-packages";
+
+import { createRepoStore } from "./repo-store";
+import type {
+  AuthorizeFn,
+  NewlyTerminalRun,
+  RepoId,
+  RepoStore,
+} from "./repo-store";
+import {
+  agentStateKindHandler,
+  agentStateAuthorize,
+  AGENT_STATE_DEPLOY_REF,
+  type AgentStateHubPrincipal,
+  type AgentStateSidecarPrincipal,
+} from "./agent-state-kind";
+import { skillKindHandler, skillAuthorize } from "./skill-kind";
+import {
+  packageRegistryKindHandler,
+  packageRegistryAuthorize,
+} from "./package-registry-kind";
+import { workflowKindHandler, workflowAuthorize } from "./workflow-kind";
+import {
+  workflowRunKindHandler,
+  workflowRunAuthorize,
+  type WorkflowRunSupervisorPrincipal,
+} from "./workflow-run-kind";
+
+export type DeployContent = {
+  systemPrompt: string;
+  /**
+   * Optional. When present, written to
+   * `deploy/tool-packages-manifest.json` so the sidecar's loader can
+   * materialize the pinned tool-package closure on apply.
+   */
+  toolPackageManifest?: ToolPackageManifest;
+  /**
+   * Optional. `assetId` → workspace-relative mount path for every
+   * asset id referenced by a `kind: "asset"` entry in
+   * `toolPackageManifest`. When present, written to
+   * `deploy/asset-mounts.json`; the sidecar's loader reads it back via
+   * `readDeployTree` and resolves asset-sourced tarballs against it.
+   * Empty maps and absent values produce no file on disk — both shapes
+   * read back as an empty mount table.
+   */
+  assetMounts?: ReadonlyMap<string, string>;
+};
+
+export type AgentRepoStore = {
+  /**
+   * Write deploy content into the agent's hub-side repo and commit on
+   * refs/heads/deploy. Creates the repo if it doesn't exist.
+   *
+   * The caller is responsible for serializing calls per agent.
+   */
+  writeDeployTree(
+    agentId: string,
+    content: DeployContent,
+  ): Promise<{ commitSha: string }>;
+
+  /**
+   * Produce a packfile from the agent's current deploy ref.
+   */
+  createDeployPack(
+    agentId: string,
+  ): Promise<{ pack: Uint8Array; commitSha: string; ref: string }>;
+
+  /**
+   * Receive and store an agent-state pack from a sidecar. Indexes the
+   * pack objects and updates the ref without materializing a working
+   * tree.
+   *
+   * `repoId.kind` must be `"agent-state"`. The `repoId.id` is used as
+   * the run address internally. Stamps an
+   * `AgentStateSidecarPrincipal` so the agent-state kind handler
+   * authorizes the receivePack as a per-agent sidecar write.
+   */
+  receiveAgentStatePack(
+    repoId: RepoId,
+    pack: Uint8Array,
+    ref: string,
+    commitSha: string,
+  ): Promise<void>;
+
+  /**
+   * Receive and store a workflow-run pack from a sidecar. Indexes the
+   * pack objects and updates the ref without materializing a working
+   * tree.
+   *
+   * `repoId.kind` must be `"workflow-run"`. Stamps a
+   * `WorkflowRunSupervisorPrincipal` whose `anchorRunId` equals
+   * `repoId.id`; the workflow-run kind handler denies sidecar-kind
+   * writes by design, so the supervisor branch is the correct path for
+   * sidecar-originated run-event commits (the supervisor lives on the
+   * sidecar and is the actual signer of the run events).
+   *
+   * Returns the runs the pack drove terminal, surfaced from the
+   * substrate's per-commit validation so a caller can flip the run's
+   * DB state without re-deriving terminal-ness.
+   */
+  receiveWorkflowRunPack(
+    repoId: RepoId,
+    pack: Uint8Array,
+    ref: string,
+    commitSha: string,
+  ): Promise<NewlyTerminalRun[]>;
+
+  /** Raw 32-byte Ed25519 public key used to sign deploy commits. */
+  getSigningPublicKey(): Uint8Array;
+
+  /**
+   * Underlying kind-keyed substrate. Exposed so callers that need to
+   * operate on non-agent-state kinds (e.g. the asset service writing
+   * skill repos) can share the same on-disk root and signing key
+   * without spinning up a parallel RepoStore.
+   */
+  readonly repoStore: RepoStore;
+};
+
+/**
+ * Repo kinds eligible for write-path object GC. Deliberately EXCLUDES
+ * "workflow-run". The warm-agent mailbox physically expunges `<uid>.eml`
+ * blobs from the live tree; the raw bytes then persist only through the
+ * parent commit in git history, and they survive a push ONLY because a
+ * `workflow-run` repo's objects are never GC'd. Adding "workflow-run"
+ * here -- above all with a retention other than "keep-history" -- would
+ * make an expunged message's bytes prunable and silently destroy the
+ * mailbox audit trail. The mailbox subtree contract in `workflow-run-kind`
+ * documents this dependency; `agent-repo.test.ts` pins it. Do not add
+ * "workflow-run" without replacing physical expunge with a tip-reachable
+ * retain-bytes scheme first.
+ */
+export const DEFAULT_GC_KINDS = ["agent-state"] as const;
+
+export function createAgentRepoStore(config: {
+  dataDir: string;
+  signingKey: { privateKey: Uint8Array; publicKey: Uint8Array };
+  /**
+   * Optional write-path GC policy for the agent-state repos this store
+   * owns. Scoped to the `agent-state` kind; the other kinds the
+   * underlying substrate services are left untouched.
+   */
+  gc?: GCPolicy;
+}): AgentRepoStore {
+  const { dataDir, signingKey, gc } = config;
+
+  const authorize: AuthorizeFn = (principal, incomingRepoId, ref, action) => {
+    switch (incomingRepoId.kind) {
+      case "agent-state":
+        return agentStateAuthorize(principal, incomingRepoId, ref, action);
+      case "skill":
+        return skillAuthorize(principal, incomingRepoId, ref, action);
+      case "package-registry":
+        return packageRegistryAuthorize(principal, incomingRepoId, ref, action);
+      case "workflow":
+        return workflowAuthorize(principal, incomingRepoId, ref, action);
+      case "workflow-run":
+        return workflowRunAuthorize(principal, incomingRepoId, ref, action);
+      default: {
+        const _exhaustive: never = incomingRepoId.kind;
+        return {
+          allowed: false,
+          reason: `no authorize registered for kind: ${String(_exhaustive)}`,
+        };
+      }
+    }
+  };
+
+  // The substrate's signingCallback bridges the agent-repo store's
+  // raw Ed25519 keypair to the storage layer's per-payload SSHSIG
+  // signer. Skill asset genesis commits and agent-state deploy
+  // commits both flow through this signer so that signed commits
+  // round-trip through the smart-HTTP layer and verify under
+  // `git log --show-signature` and `git verify-commit`.
+  const signer = async (payload: string) =>
+    createSSHSignature(payload, signingKey.privateKey, signingKey.publicKey);
+
+  const store = createRepoStore({
+    dataDir,
+    signingKey,
+    handlers: {
+      "agent-state": agentStateKindHandler,
+      skill: skillKindHandler,
+      "package-registry": packageRegistryKindHandler,
+      workflow: workflowKindHandler,
+      "workflow-run": workflowRunKindHandler,
+    },
+    authorize,
+    signingCallback: () => signer,
+    ...(gc === undefined
+      ? {}
+      : { gc: { kinds: [...DEFAULT_GC_KINDS], ...gc } }),
+  });
+
+  const hub: AgentStateHubPrincipal = { kind: "hub" };
+
+  function repoId(agentId: string): RepoId {
+    return { kind: "agent-state", id: agentId };
+  }
+
+  return {
+    async writeDeployTree(agentId, content) {
+      const id = repoId(agentId);
+      const files: Record<string, string> = {
+        "deploy/prompt.md": content.systemPrompt,
+      };
+      if (content.toolPackageManifest !== undefined) {
+        files["deploy/tool-packages-manifest.json"] = JSON.stringify(
+          content.toolPackageManifest,
+          null,
+          2,
+        );
+      }
+      if (content.assetMounts !== undefined && content.assetMounts.size > 0) {
+        files["deploy/asset-mounts.json"] = JSON.stringify(
+          { assetMounts: Object.fromEntries(content.assetMounts) },
+          null,
+          2,
+        );
+      }
+      return store.writeTree(hub, id, AGENT_STATE_DEPLOY_REF, {
+        files,
+        clearPrefix: "deploy/",
+        message: "Update deploy tree",
+      });
+    },
+
+    async createDeployPack(agentId) {
+      return store.createPack(hub, repoId(agentId), AGENT_STATE_DEPLOY_REF);
+    },
+
+    async receiveAgentStatePack(incomingRepoId, pack, ref, commitSha) {
+      if (incomingRepoId.kind !== "agent-state") {
+        throw new Error(
+          `AgentRepoStore.receiveAgentStatePack requires repoId.kind === "agent-state", got ${JSON.stringify(incomingRepoId.kind)}`,
+        );
+      }
+      const agentId = incomingRepoId.id;
+      const id = repoId(agentId);
+      const principal: AgentStateSidecarPrincipal = {
+        kind: "sidecar",
+        agentId,
+      };
+      const expectedOldSha = await store.resolveRef(principal, id, ref);
+      await store.receivePack(
+        principal,
+        id,
+        ref,
+        pack,
+        commitSha,
+        expectedOldSha,
+      );
+    },
+
+    async receiveWorkflowRunPack(incomingRepoId, pack, ref, commitSha) {
+      if (incomingRepoId.kind !== "workflow-run") {
+        throw new Error(
+          `AgentRepoStore.receiveWorkflowRunPack requires repoId.kind === "workflow-run", got ${JSON.stringify(incomingRepoId.kind)}`,
+        );
+      }
+      const principal: WorkflowRunSupervisorPrincipal = {
+        kind: "supervisor",
+        anchorRunId: incomingRepoId.id,
+      };
+      const expectedOldSha = await store.resolveRef(hub, incomingRepoId, ref);
+      return store.receivePack(
+        principal,
+        incomingRepoId,
+        ref,
+        pack,
+        commitSha,
+        expectedOldSha,
+      );
+    },
+
+    getSigningPublicKey() {
+      return signingKey.publicKey;
+    },
+
+    repoStore: store,
+  };
+}

@@ -1,0 +1,48 @@
+# Local GitHub API emulator seed (docs/DEV.md, "GitHub emulator"):
+#   npx emulate start --service github --generated-secrets-file .emulate-secrets.json
+# Serves GitHub at http://localhost:4000; set GITHUB_API_ORIGIN and
+# VITE_GITHUB_API_ORIGIN to it. Omitting private_key makes emulate generate one
+# into the secrets file; upload it in Connect -> "Connect an existing GitHub App".
+tokens:
+  octocat_token:
+    login: octocat
+    scopes: [repo, user]
+
+github:
+  users:
+    - login: octocat
+  orgs:
+    - login: acme
+      members:
+        - login: octocat
+          role: admin
+  repos:
+    - owner: acme
+      name: widgets
+      auto_init: true
+  apps:
+    - app_id: 12345
+      slug: corbits-triage
+      name: Corbits Triage
+      webhook_secret: emulate-webhook-secret
+      # Copy from Connect after sign-in; it carries your tenant id.
+      # webhook_url: http://localhost:3000/api/hooks/<tenant-id>/github-hook
+      permissions:
+        checks: read
+        issues: write
+        metadata: read
+        pull_requests: write
+        contents: write
+      events:
+        - pull_request
+        - pull_request_review
+        - issue_comment
+        - check_run
+        - installation
+        - installation_repositories
+      installations:
+        - installation_id: 100
+          account: acme
+          repository_selection: selected
+          repositories:
+            - acme/widgets
