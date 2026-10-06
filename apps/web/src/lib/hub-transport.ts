@@ -1,5 +1,5 @@
 import { ApiError, type Transport } from "@intx/hub-client";
-import { hubOrigin, requestOrigin } from "./hub-origin.ts";
+import { requestOrigin } from "./hub-origin.ts";
 
 export type { Transport };
 export { ApiError };
@@ -15,10 +15,6 @@ function assertAllowedEventName(eventName: string | undefined): string {
 }
 
 export function createHubTransport(): Transport {
-  const origin = hubOrigin();
-  if (!origin) {
-    throw new ApiError(0, "hub_not_configured", "The hub is not configured.");
-  }
   return {
     async fetch<T>(method: string, path: string, body?: unknown): Promise<T> {
       let response: Response;

@@ -16,9 +16,7 @@ export const GITHUB_APP_PICKER_UNAVAILABLE =
   "Could not open GitHub’s repository picker. Reload after the service restarts, then try again.";
 
 export function githubWebhookUrl(tenantId: string): string {
-  const origin = hubOrigin();
-  if (!origin) throw new Error("The hub URL is not configured");
-  return `${origin}/api/hooks/${encodeURIComponent(tenantId)}/github-hook`;
+  return `${hubOrigin()}/api/hooks/${encodeURIComponent(tenantId)}/github-hook`;
 }
 
 const ManifestStart = type({
