@@ -22,6 +22,7 @@ import { verifySignature } from "./signature.js";
 import {
   dropReposByInstallation,
   dropReposByName,
+  markBacklogMailed,
   markBacklogPending,
   namesNeedingBacklog,
   patchCorbitsTriage,
@@ -234,7 +235,7 @@ type InstallPatch = { ns: CorbitsTriageNs; truncated?: boolean };
 
 function catchupNames(before: CorbitsTriageNs, listed: readonly string[], added: readonly string[]): string[] {
   const addedSet = new Set(added);
-  return listed.filter((name) => addedSet.has(name) || owesBacklog(before, name));
+  return listed.filter((name) => addedSet.has(name) || owesBacklog(before, name, Date.now()));
 }
 
 function applyCreatedOrAdded(ns: CorbitsTriageNs, listed: { names: string[]; truncated: boolean }, fields: InstallationFields): InstallPatch {
@@ -277,17 +278,18 @@ export function applyInstallationListing(
   return { ns: markBacklogPending(next, added), added };
 }
 
-export type BacklogDeps = Pick<BridgeDeps, "sendMail" | "readCheckPack">;
+export type BacklogDeps = Pick<BridgeDeps, "sendMail" | "readCheckPack"> & Pick<BridgeDeps, "db">;
 
 /** Mails backlog catch-up for each repository that owes one and has a check pack; returns the repositories mailed. */
 export async function sendBacklog(d: BacklogDeps, tenantId: string, ns: CorbitsTriageNs, names: readonly string[]): Promise<string[]> {
   const mailed: string[] = [];
-  for (const repo of namesNeedingBacklog(ns, names)) {
+  for (const repo of namesNeedingBacklog(ns, names, Date.now())) {
     const pack = await resolvedPack(d.readCheckPack, tenantId, repo);
     if (!pack) continue;
     const row = repoRecords(ns).find((item) => item.name === repo);
     await d.sendMail(tenantId, BACKLOG_WORKFLOW, mailPayload("backlog", repo, repoPolicy(row), pack));
     mailed.push(repo);
+    await patchCorbitsTriage(d.db, tenantId, (current) => markBacklogMailed(current, [repo], Date.now()));
   }
   return mailed;
 }
