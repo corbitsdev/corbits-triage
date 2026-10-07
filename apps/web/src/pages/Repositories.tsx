@@ -2,11 +2,12 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { backlogSyncFromConfig, githubAppSlugFromCredentials, hasActiveGithubCredential, projectQueue, type RepoRecord } from "../lib/hub-api.ts";
+import { backlogSyncFromConfig, githubAppSlugFromCredentials, hasActiveGithubCredential, type RepoRecord } from "../lib/hub-api.ts";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE } from "../lib/github-manifest.ts";
 import { repoNeedsCheckSetup } from "../lib/check-pack.ts";
 import { useGithubSync } from "../lib/github-sync.ts";
+import { useQueueItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 
 export default function Repositories() {
@@ -17,7 +18,7 @@ export default function Repositories() {
   const [error, setError] = useState("");
   const backlogSync = useMemo(() => backlogSyncFromConfig(snapshot?.config), [snapshot?.config]);
   const retryableBacklog = repos.filter((repo) => backlogSync[repo.name]?.status === "failed");
-  const items = snapshot ? projectQueue(snapshot) : [];
+  const items = useQueueItems();
 
   const sync = useGithubSync(Boolean(snapshot && hasActiveGithubCredential(snapshot.credentials)));
 
