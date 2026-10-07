@@ -91,8 +91,12 @@ export type LocalSidecarManifest = {
   readonly token: string;
 };
 
+export type IsLocalSidecarLive = (manifest: LocalSidecarManifest) => Promise<boolean>;
+
 export interface LocalProcessSidecarProvisioner {
   readonly provisioner: SidecarProvisioner;
+  /** Respawns every manifest `isLive` accepts and removes the rest. */
+  restore(isLive: IsLocalSidecarLive): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -193,6 +197,27 @@ export async function readLocalSidecarManifests(
     manifests.push({ ...stored, token: decryptToken(key, stored.token) });
   }
   return manifests;
+}
+
+async function readStoredDataDir(dataRoot: string, allocationId: string): Promise<string | null> {
+  try {
+    const stored = JSON.parse(await fs.readFile(manifestPath(dataRoot, allocationId), "utf8")) as StoredManifest;
+    return stored.dataDir;
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
+function logAllocation(msg: string, manifest: LocalSidecarManifest): void {
+  console.log(JSON.stringify({
+    ts: new Date().toISOString(),
+    level: "info",
+    msg,
+    allocationId: manifest.allocationId,
+    generation: manifest.generation,
+    sidecarId: manifest.sidecarId,
+  }));
 }
 
 function errorMessage(error: unknown): string {
@@ -299,13 +324,17 @@ export function createLocalProcessSidecarProvisioner({
     }
   }
 
+  async function removeStored(allocationId: string, dataDir: string): Promise<void> {
+    await fs.rm(manifestPath(dataRoot, allocationId), { force: true });
+    await fs.rm(dataDir, { recursive: true, force: true });
+  }
+
   async function stopAndRemove(
     allocationId: string,
     state: Extract<AllocationState, { kind: "live" }>,
   ): Promise<void> {
     await stopProcess(state);
-    await fs.rm(manifestPath(dataRoot, allocationId), { force: true });
-    await fs.rm(state.dataDir, { recursive: true, force: true });
+    await removeStored(allocationId, state.dataDir);
   }
 
   async function ensureAllocation(request: EnsureSidecarRequest): Promise<EnsureSidecarResult> {
@@ -418,12 +447,48 @@ export function createLocalProcessSidecarProvisioner({
     if (existing?.kind === "live") {
       await stopAndRemove(request.allocationId, existing);
     }
+    if (existing === undefined) {
+      // A previous hub process may have left this allocation's state on disk.
+      const dataDir = await readStoredDataDir(dataRoot, request.allocationId);
+      if (dataDir !== null) await removeStored(request.allocationId, dataDir);
+    }
     allocations.set(request.allocationId, {
       kind: "destroyed",
       generation: request.generation,
       sidecarId: request.sidecarId,
     });
     return { kind: "destroyed" as const };
+  }
+
+  // Ensure or destroy may reach an allocation before restore does; their
+  // outcome wins.
+  async function restoreAllocation(
+    { manifest, isLive }: { readonly allocationId: string; readonly manifest: LocalSidecarManifest; readonly isLive: IsLocalSidecarLive },
+  ): Promise<void> {
+    if (allocations.has(manifest.allocationId)) return;
+    if (!(await isLive(manifest))) {
+      await removeStored(manifest.allocationId, manifest.dataDir);
+      logAllocation("local_sidecar_removed", manifest);
+      return;
+    }
+    const handle = spawnSidecar({ request: manifest, dataDir: manifest.dataDir });
+    const managed: ManagedProcess = { handle, exited: false };
+    void trackExit(managed);
+    allocations.set(manifest.allocationId, {
+      kind: "live",
+      generation: manifest.generation,
+      sidecarId: manifest.sidecarId,
+      dataDir: manifest.dataDir,
+      process: managed,
+    });
+    logAllocation("local_sidecar_respawned", manifest);
+  }
+
+  async function restore(isLive: IsLocalSidecarLive): Promise<void> {
+    const manifests = await readLocalSidecarManifests(dataRoot, manifestEncryptionKey);
+    for (const manifest of manifests) {
+      await serialize({ allocationId: manifest.allocationId, manifest, isLive }, restoreAllocation);
+    }
   }
 
   const provisioner: SidecarProvisioner = {
@@ -464,6 +529,7 @@ export function createLocalProcessSidecarProvisioner({
 
   return {
     provisioner,
+    restore,
     shutdown() {
       shutdownPromise ??= stopAll();
       return shutdownPromise;

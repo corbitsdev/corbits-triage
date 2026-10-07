@@ -12,7 +12,7 @@
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
 import { createGrantStore, schema } from "@intx/db";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant } from "@intx/hub-api";
 import {
   createRunTriggerDeliverer,
@@ -33,6 +33,7 @@ import { runCronMigrations } from "@corbits/cron/migrations";
 import { createInterchangeHub } from "./interchange-hub.js";
 import {
   createLocalProcessSidecarProvisioner,
+  type LocalSidecarManifest,
   type SpawnLocalSidecar,
 } from "./local-process-sidecar-provisioner.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
@@ -145,6 +146,22 @@ const composition = await createInterchangeHub({
   probeSidecarProvisioners: [local.provisioner],
 });
 const stock = composition.server;
+
+async function isLocalSidecarLive(manifest: LocalSidecarManifest): Promise<boolean> {
+  const row = await composition.db.query.sidecarAllocation.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(schema.sidecarAllocation.id, manifest.allocationId),
+      eq(schema.sidecarAllocation.provisionerId, local.provisioner.id),
+      eq(schema.sidecarAllocation.status, "allocated"),
+      eq(schema.sidecarAllocation.generation, manifest.generation),
+      eq(schema.sidecarAllocation.sidecarId, manifest.sidecarId),
+      isNull(schema.sidecarAllocation.initializationLeaseId),
+    ),
+  });
+  return row !== undefined;
+}
+await local.restore(isLocalSidecarLive);
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },
