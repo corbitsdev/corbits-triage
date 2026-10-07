@@ -36,7 +36,7 @@ function only(check: keyof RepoPolicy["checks"]): RepoPolicy {
 }
 
 describe("deriveState policy", () => {
-  test("default policy matches current all-on behavior", () => {
+  test("default policy runs every check but reviewers", () => {
     expect(deriveState(noisy)).toEqual(deriveState(noisy, DEFAULT_REPO_POLICY));
     expect(deriveState(noisy)).toEqual(deriveState(noisy, repoPolicy(undefined)));
     expect(deriveState(noisy).findings.map((finding) => finding.check)).toEqual([
@@ -44,7 +44,6 @@ describe("deriveState policy", () => {
       "checks",
       "duplicate",
       "conflicts",
-      "reviewers",
       "drift",
     ]);
   });
@@ -107,11 +106,11 @@ describe("deriveState check pack", () => {
       "checks",
       "duplicate",
       "conflicts",
-      "reviewers",
       "drift",
       "size",
+      "issue",
     ]);
     expect(result.sources?.custom).toEqual([{ name: "Bomb", group: "pull-request", instruction: "process.exit(1)" }]);
-    expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused", "issue", "tests"]);
+    expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused", "tests"]);
   });
 });

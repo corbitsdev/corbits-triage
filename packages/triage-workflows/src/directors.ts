@@ -12,8 +12,9 @@ import { type } from "arktype";
 import { repoPolicy, type CheckPack, type CleanupMode } from "@corbits/triage-contracts";
 import { deriveState, NEEDS_SETUP_REASON, packFromInput, type DeterministicResult, type PrFacts } from "./logic/checks.js";
 import { asText, parseJsonText } from "./logic/extract.js";
+import { qualityQuestions, qualityState } from "./logic/quality.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
-import { degradedVerdict, parseDecision, renderVerdict, summarize, toMirrorRequest, type MirrorRequest, type RenderOutput } from "./logic/render.js";
+import { degradedVerdict, parseAnswers, renderVerdict, summarize, toMirrorRequest, type MirrorRequest, type RenderOutput } from "./logic/render.js";
 
 export type Role = "facts" | "judge" | "render" | "mirror";
 
@@ -25,6 +26,7 @@ interface Item {
   facts: PrFacts;
   det: DeterministicResult;
   judge?: string;
+  judgeError?: string;
   cleanupMode?: CleanupMode;
   pack?: CheckPack;
 }
@@ -90,7 +92,7 @@ function cleanupModeOf(v: Record<string, unknown>): CleanupMode | undefined {
 function itemsOf(input: Record<string, unknown>): { items: Item[]; batch: boolean } {
   return Array.isArray(input.items)
     ? { items: input.items as Item[], batch: true }
-    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, cleanupMode: cleanupModeOf(input) }], batch: false };
+    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, judgeError: input.judgeError as string | undefined, cleanupMode: cleanupModeOf(input) }], batch: false };
 }
 
 function verdictsOf(input: Record<string, unknown>): { verdicts: Verdict[]; batch: boolean } {
@@ -150,6 +152,10 @@ function pathOf(file: ChangedFile): string[] {
   return typeof name === "string" && name.length > 0 ? [name] : [];
 }
 
+function firstLine(commit: { message?: string }): string {
+  return (commit.message ?? "").split("\n", 1)[0]!;
+}
+
 function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   function fail(reason: string) {
@@ -161,11 +167,8 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       return [
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
         call("github_get_reviews", { repo, number: n }, `reviews:${n}`),
-        ...(batch ? [] : [
-          call("github_list_pr_commits", { repo, number: n }, `commits:${n}`),
-          call("github_list_pr_files", { repo, number: n }, `files:${n}`),
-          call("github_list_issue_comments", { repo, number: n }, `comments:${n}`),
-        ]),
+        call("github_list_pr_commits", { repo, number: n }, `commits:${n}`),
+        call("github_list_pr_files", { repo, number: n }, `files:${n}`),
       ];
     }
 
@@ -183,11 +186,10 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           if (!pr) return degradedItem(`github_get_pr failed for #${n}`);
           const checks = data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [];
           const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
-          const files = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`));
-          const facts = buildFacts(repo, n, pr, checks, reviews, openPrs);
-          const paths = files?.files?.flatMap(pathOf) ?? [];
-          const withPaths = paths.length > 0 ? { ...facts, paths } : facts;
-          return { facts: withPaths, det: deriveState(withPaths, policy, pack), cleanupMode: policy.cleanupMode, pack };
+          const paths = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files?.flatMap(pathOf) ?? [];
+          const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
+          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs), paths, commits };
+          return { facts, det: deriveState(facts, policy, pack), cleanupMode: policy.cleanupMode, pack };
         }
         const items = numbers.map(itemFor);
         return caps.reply(JSON.stringify(batch ? { items } : items[0]));
@@ -253,7 +255,8 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
     if (next === undefined) return caps.reply(JSON.stringify(batch ? { items } : items[0]));
     current = next;
     const { facts, det } = items[current];
-    return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: { facts, det, sources: det.sources } } } });
+    const questions = qualityQuestions(det.sources!);
+    return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: qualityState(facts), questions } } });
   }
 
   return {
@@ -270,6 +273,7 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
           items[current] = { ...items[current], judge: turnText(event.turn) };
           return ask();
         case "inference.error":
+          items[current] = { ...items[current], judgeError: event.error.message };
           return ask();
         case "abort":
           return caps.reply(JSON.stringify(batch ? { items } : (items[0] ?? degradedItem("judge aborted"))));
@@ -283,8 +287,8 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
 function renderDirector(caps: ReactorCapabilities): ReactorDirector {
   function verdictOf(it: Item): Verdict {
     try {
-      const decision = it.det.needsJudgment && it.judge !== undefined ? parseDecision(it.judge) : null;
-      const verdict = { repo: it.facts.repo, number: it.facts.number, ...renderVerdict({ author: it.facts.author, det: it.det, decision }), cleanupMode: it.cleanupMode };
+      const answers = it.judge !== undefined ? parseAnswers(it.judge) : null;
+      const verdict = { repo: it.facts.repo, number: it.facts.number, ...renderVerdict({ author: it.facts.author, det: it.det, answers, judgeError: it.judgeError }), cleanupMode: it.cleanupMode };
       return { ...verdict, request: toMirrorRequest(verdict) };
     } catch (e) {
       const verdict = { repo: it.facts?.repo ?? "", number: it.facts?.number ?? 0, ...degradedVerdict(`render failed: ${errorText(e)}`), cleanupMode: it.cleanupMode };
