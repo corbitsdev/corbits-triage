@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Toaster } from "sonner";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { PortalProvider, usePortal } from "./lib/portal.tsx";
 import { SessionProvider, useSession } from "./lib/session.tsx";
@@ -159,6 +160,7 @@ export function AppShell() {
     <SessionProvider>
       <PortalProvider>
         <Gate />
+        <Toaster position="bottom-right" />
       </PortalProvider>
     </SessionProvider>
   );

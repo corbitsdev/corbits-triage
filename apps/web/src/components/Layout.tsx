@@ -14,26 +14,13 @@ function readCollapsed(): boolean {
   }
 }
 
-function productNotice(message: string): string {
-  const lower = message.toLowerCase();
-  if (
-    lower.includes("offline fallback") ||
-    lower.includes("hub not connected") ||
-    lower.includes("hub connected")
-  ) {
-    return "";
-  }
-  return message;
-}
-
 export default function Layout({ children }: { children: ReactNode }) {
-  const { snapshot, status } = usePortal();
+  const { snapshot } = usePortal();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const items = snapshot ? projectQueue(snapshot) : [];
   const actionCount = items.filter((item) => item.needsHuman).length;
   const mergeCount = items.filter((item) => item.state === "ready").length;
-  const notice = productNotice(status);
   const path = location.pathname;
   const isPr = path.startsWith("/triage/pr/");
   const room = path.startsWith("/settings")
@@ -137,11 +124,6 @@ export default function Layout({ children }: { children: ReactNode }) {
           Settings
         </NavLink>
       </nav>
-      {notice ? (
-        <div className="toast" role="status">
-          {notice}
-        </div>
-      ) : null}
     </div>
   );
 }
