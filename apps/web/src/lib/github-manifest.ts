@@ -96,10 +96,11 @@ export async function saveExistingGithubApp(input: {
   await configureGithubHook(transport, input.tenantId, input.webhookSecret);
 }
 
-const SyncResult = type({ repos: "string[]" });
+const SyncResult = type({ repos: "string[]", backlogFailed: "string[]" });
+export type SyncResult = typeof SyncResult.infer;
 
-/** Asks the hub to read the App's installations from GitHub; returns the repositories it can see. */
-export async function syncGithubInstallations(tenantId: string): Promise<string[]> {
+/** Asks the hub to read the App's installations from GitHub and store the repositories it can see. */
+export async function syncGithubInstallations(tenantId: string): Promise<SyncResult> {
   const response = await fetch(`${requestOrigin()}/api/integrations/github-installations/${encodeURIComponent(tenantId)}/sync`, {
     method: "POST",
     credentials: "include",
@@ -111,7 +112,7 @@ export async function syncGithubInstallations(tenantId: string): Promise<string[
     const failure = body as { error?: { message?: unknown } };
     throw new Error(typeof failure.error?.message === "string" ? failure.error.message : `HTTP ${response.status}`);
   }
-  return SyncResult.assert(body).repos;
+  return SyncResult.assert(body);
 }
 
 export function githubAppPickerUrl(slug: string | null): string | null {

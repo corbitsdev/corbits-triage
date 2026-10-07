@@ -14,7 +14,6 @@ import {
   postGithubManifest,
   saveExistingGithubApp,
   startGithubManifest,
-  syncGithubInstallations,
 } from "../lib/github-manifest.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
@@ -35,9 +34,9 @@ function returnedFromInstall(): boolean {
 }
 
 function startingStep(snapshot: PortalSnapshot | null, returnedFromGithub: boolean): GuidedStep {
-  if (returnedFromInstall()) return "select";
   if (returnedFromGithub) return "install";
   if (!snapshot || !hasActiveGithubCredential(snapshot.credentials)) return "create";
+  if (returnedFromInstall()) return "select";
   return snapshot.repos.length > 0 ? "model" : "install";
 }
 
@@ -46,7 +45,7 @@ function message(cause: unknown): string {
 }
 
 export default function Connect() {
-  const { snapshot, refreshNow } = usePortal();
+  const { snapshot, refreshNow, syncFromGithub } = usePortal();
   const navigate = useNavigate();
   const params = new URLSearchParams(window.location.search);
   const connected = params.get("github") === "connected";
@@ -55,6 +54,7 @@ export default function Connect() {
   const [appSlug, setAppSlug] = useState(params.get("app") ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [syncFailed, setSyncFailed] = useState(false);
   const [setupInProgress, setSetupInProgress] = useState(false);
   const [manualSaved, setManualSaved] = useState(false);
   const [appId, setAppId] = useState("");
@@ -180,20 +180,22 @@ export default function Connect() {
     }
   }
 
-  async function syncRepositories(tenantId: string) {
+  async function syncRepositories() {
+    const fromGithub = returnedFromInstall();
     setBusy(true);
     setError("");
+    setSyncFailed(false);
     try {
-      const repos = await syncGithubInstallations(tenantId);
-      await refreshNow();
-      if (returnedFromInstall()) window.history.replaceState(null, "", window.location.pathname);
+      const { repos } = await syncFromGithub();
+      if (fromGithub) window.history.replaceState(null, "", window.location.pathname);
       if (repos.length > 0) {
         setStep("model");
-      } else {
-        setStep("install");
-        setError("GitHub reports no repositories for this App yet. Choose repositories on GitHub.");
+        return;
       }
+      setStep("install");
+      if (fromGithub) setError("GitHub reports no repositories for this App yet. Choose repositories on GitHub.");
     } catch (cause) {
+      setSyncFailed(true);
       setError(`Could not read your repositories from GitHub. ${message(cause)}`);
     } finally {
       setBusy(false);
@@ -205,7 +207,7 @@ export default function Connect() {
     if (synced.current || !snapshot || !hasActiveGithubCredential(snapshot.credentials)) return;
     if (!returnedFromInstall() && snapshot.repos.length > 0) return;
     synced.current = true;
-    void syncRepositories(snapshot.workspace.tenantId);
+    void syncRepositories();
   }, [snapshot]);
 
   async function chooseRepositories() {
@@ -309,12 +311,14 @@ export default function Connect() {
                     <div className="success-callout" role="status"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>GitHub App connected</strong><p>{connected ? "The private key was exchanged by the hub and never sent to this browser." : "The GitHub App ID and private key were saved."}</p></div></div>
           <p>GitHub will ask which account and repositories this App can access. Repository selection stays on GitHub.</p>
           {error && <p role="alert" className="error">{error}</p>}
+          {syncFailed && <div className="task-actions"><button type="button" className="btn" disabled={busy} onClick={() => void syncRepositories()}>Try again</button></div>}
           <div className="task-actions"><button type="button" className="btn primary" onClick={() => void chooseRepositories()}>Choose repositories on GitHub</button></div>
         </>}
 
         {step === "select" && <>
           {busy && <div className="setup-waiting" role="status"><span className="activity-dot" aria-hidden="true" /><div><strong>Reading your repositories from GitHub…</strong></div></div>}
           {error && <p role="alert" className="error">{error}</p>}
+          {syncFailed && <div className="task-actions"><button type="button" className="btn" disabled={busy} onClick={() => void syncRepositories()}>Try again</button></div>}
           {repos.length > 0 && <div className="repository-list">{repos.map(renderInstallRow)}</div>}
           <div className="task-actions">
             <button type="button" className="btn" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</button>
