@@ -301,11 +301,13 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
   if (url.pathname.startsWith(`${GITHUB_INSTALLATIONS_PATH}/`) && url.pathname.endsWith("/sync") && req.method === "POST") {
     const tenantId = url.pathname.slice(GITHUB_INSTALLATIONS_PATH.length + 1, -"/sync".length);
     if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
+    let decoded: string;
     try {
-      return syncInstallations(req, decodeURIComponent(tenantId));
+      decoded = decodeURIComponent(tenantId);
     } catch {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
+    return syncInstallations(req, decoded);
   }
   if (url.pathname.startsWith(`${GITHUB_PR_ACTIONS_PATH}/`) && req.method === "POST") {
     const tenantId = url.pathname.slice(GITHUB_PR_ACTIONS_PATH.length + 1);

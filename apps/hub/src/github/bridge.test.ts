@@ -470,15 +470,25 @@ describe("bridge installation events", () => {
   });
 });
 
-test("installation listing replaces stored repositories with what GitHub reports", () => {
+test("installation listing mirrors GitHub and reports only new repositories", () => {
   const ns = {
     repos: [
       { name: "acme/kept", connected: true, installationId: 1 },
       { name: "acme/removed", connected: true, installationId: 1 },
       { name: "old/uninstalled", connected: true, installationId: 2 },
+      { name: "paused/repo", connected: true, installationId: 3 },
+      { name: "manual/repo", connected: true },
     ],
   };
-  const next = applyInstallationListing(ns, [{ fields: { installationId: 1, account: "acme" }, names: ["acme/kept", "acme/new"] }]);
-  expect(repoRecords(next).map((row) => row.name).sort()).toEqual(["acme/kept", "acme/new"]);
-  expect(namesNeedingBacklog(next, ["acme/new"])).toEqual(["acme/new"]);
+  const listings = [
+    { fields: { installationId: 1, account: "acme" }, suspended: false as const, names: ["acme/kept", "acme/new"] },
+    { fields: { installationId: 3 }, suspended: true as const },
+  ];
+  const first = applyInstallationListing(ns, listings);
+  expect(repoRecords(first.ns).map((row) => row.name).sort()).toEqual(["acme/kept", "acme/new", "manual/repo", "paused/repo"]);
+  expect(repoRecords(first.ns).find((row) => row.name === "paused/repo")?.connected).toBe(false);
+  expect(first.added).toEqual(["acme/new"]);
+  expect(namesNeedingBacklog(first.ns, ["acme/new", "acme/kept"])).toEqual(["acme/new"]);
+
+  expect(applyInstallationListing(first.ns, listings).added).toEqual([]);
 });
