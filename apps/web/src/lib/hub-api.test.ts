@@ -504,7 +504,7 @@ describe("access grant transport", () => {
 });
 
 describe("repository policy config", () => {
-  test("reposFromConfig defaults missing policy fields to all-on", () => {
+  test("reposFromConfig defaults missing policy fields to the defaults", () => {
     expect(reposFromConfig({
       corbitsTriage: { repos: [{ name: "acme/widgets", connected: true }] },
     })).toEqual([expect.objectContaining({
@@ -517,7 +517,7 @@ describe("repository policy config", () => {
         ci: true,
         duplicate: true,
         conflicts: true,
-        reviewers: true,
+        reviewers: false,
         drift: true,
       },
     })]);
