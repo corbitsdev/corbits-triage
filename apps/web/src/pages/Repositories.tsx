@@ -10,7 +10,7 @@ import { repoNeedsCheckSetup } from "../lib/check-pack.ts";
 import { usePortal } from "../lib/portal.tsx";
 
 export default function Repositories() {
-  const { snapshot, refreshNow, runBacklog, readOnly } = usePortal();
+  const { snapshot, syncFromGithub, runBacklog, readOnly } = usePortal();
   const repos = snapshot?.repos ?? [];
   const denied = snapshot?.denied.repos ?? false;
   const [pending, setPending] = useState<"refresh" | "add" | "retry" | null>(null);
@@ -23,9 +23,9 @@ export default function Repositories() {
     setPending("refresh");
     setError("");
     try {
-      await refreshNow();
+      await syncFromGithub();
     } catch (cause) {
-      setError(`Could not refresh repositories. ${cause instanceof Error ? cause.message : String(cause)}`);
+      setError(`Could not read your repositories from GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
     } finally {
       setPending(null);
     }

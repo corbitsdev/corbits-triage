@@ -34,6 +34,7 @@ import {
 import type { CreateGrantInput } from "./grant-actions.ts";
 import { ensureWorkflows, suggestOfferings } from "./workflow-deploy.ts";
 import { hasDecisionModelCredential } from "./decision-models.ts";
+import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
 import type { RepoPolicy } from "@corbits/triage-contracts";
 
 interface PortalContextValue {
@@ -47,6 +48,7 @@ interface PortalContextValue {
   notify: (message: string) => void;
   refresh: () => void;
   refreshNow: () => Promise<PortalSnapshot | null>;
+  syncFromGithub: () => Promise<SyncResult>;
   configureApp: (secret: string) => Promise<void>;
   configureHook: (secret: string) => Promise<string>;
   connect: (repo: string) => Promise<void>;
@@ -365,6 +367,17 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [refresh, requireSnapshot],
   );
 
+  /** Reads the App's repositories from GitHub, so returning from GitHub never waits on a webhook. */
+  const syncFromGithub = useCallback(async function syncFromGithub() {
+    const current = requireSnapshot();
+    const result = await syncGithubInstallations(current.workspace.tenantId);
+    await refreshNow();
+    if (result.backlogFailed.length > 0) {
+      notify(`Could not start catch-up for ${result.backlogFailed.join(", ")}. Retry it from Repositories.`);
+    }
+    return result;
+  }, [notify, refreshNow, requireSnapshot]);
+
   const saveInferenceSecret = useCallback(
     async function saveInferenceSecret(input: { endpoint: string; model: string; secret: string }) {
       const current = requireSnapshot();
@@ -389,6 +402,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         notify,
         refresh,
         refreshNow,
+        syncFromGithub,
         configureApp,
         configureHook,
         connect,
@@ -418,6 +432,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       notify,
       refresh,
       refreshNow,
+      syncFromGithub,
       configureApp,
       configureHook,
       connect,

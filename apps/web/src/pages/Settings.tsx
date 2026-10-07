@@ -292,7 +292,7 @@ function CredentialRow({
 }
 
 export default function Settings() {
-  const { snapshot, replaceSecret, revoke, saveConfig, addGrant, removeGrant, refreshNow, readOnly } = usePortal();
+  const { snapshot, replaceSecret, revoke, saveConfig, addGrant, removeGrant, syncFromGithub, readOnly } = usePortal();
   const { session, signOut } = useSession();
   const params = useParams();
   const navigate = useNavigate();
@@ -313,7 +313,14 @@ export default function Settings() {
   const modelStored = hasDecisionModelCredential(credentials);
   const githubReady = hasActiveGithubCredential(credentials);
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
-  const { arm } = useGithubReturnSync(() => { void refreshNow(); });
+  async function syncAfterGithub() {
+    try {
+      await syncFromGithub();
+    } catch (cause) {
+      setError(`Could not read your repositories from GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  }
+  const { arm } = useGithubReturnSync(() => { void syncAfterGithub(); });
   const triageDirty = floor !== savedFloor;
 
   useEffect(function resetFloor() {
