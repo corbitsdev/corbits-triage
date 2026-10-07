@@ -100,6 +100,29 @@ Allowed files:
 Kill date: **2026-11-01**. Remove when the stock pin contains a fix for
 INTR-647.
 
+### Run-scoped onTrigger body run ids (CL-10178)
+
+Local carry, not upstream. Stock names each `onTrigger` body run
+`<stepId>__<eventIndex>` with no parent run id, while the hub keys
+`workflow_run` by run id globally. A second deployment of the same workflow
+mints the same child id; the hub's lazy mint no-ops on the existing row, then
+drops the child's terminal event because the row anchors to the first
+deployment. The patch prefixes the child id with the container run id
+(`<runId>__<stepId>__<eventIndex>`), matching loop bodies (`loopBodyRunId`),
+and the crash-resume scan reads the same prefix. The two test files only
+update their child-id fixtures to the new shape.
+
+Allowed files:
+
+- `packages/workflow/src/runtime/run.ts`
+- `packages/workflow/src/runtime/on-trigger-run.test.ts`
+- `packages/workflow/src/runtime/on-trigger-tolerate-abort.test.ts`
+
+Upstream status: to be filed.
+
+Kill date: **2026-11-01**. Remove when the stock pin scopes onTrigger body
+run ids to their container run.
+
 ## Reverted historical drift
 
 On 2026-10-02 the following local changes were removed and restored to stock
