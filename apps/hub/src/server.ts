@@ -46,6 +46,7 @@ import { DeliveryCache } from "./github/dedupe.js";
 import { NoLiveDeploymentError, resolveLiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, GITHUB_OPEN_PULLS_PATH } from "./github/open-pulls.js";
 import { createGithubPrActions, GITHUB_PR_ACTIONS_PATH } from "./github/pr-actions.js";
+import { createGithubPrDetails, GITHUB_PR_DETAILS_PATH } from "./github/pr-details.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import {
   GITHUB_MANIFEST_CALLBACK_PATH,
@@ -202,6 +203,14 @@ const githubPrActions = createGithubPrActions({
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
 });
+const githubPrDetails = createGithubPrDetails({
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  getSession: composition.getSession,
+  trustedPortalOrigins,
+  githubApiOrigin: githubOrigin,
+  authorize: authorizePortal,
+});
 
 const githubOpenPulls = createGithubOpenPulls({
   db: composition.db,
@@ -334,6 +343,15 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
     try {
       return githubOpenPulls(req, decodeURIComponent(tenantId));
+    } catch {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+  }
+  if (url.pathname.startsWith(`${GITHUB_PR_DETAILS_PATH}/`) && req.method === "GET") {
+    const tenantId = url.pathname.slice(GITHUB_PR_DETAILS_PATH.length + 1);
+    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
+    try {
+      return githubPrDetails(req, decodeURIComponent(tenantId));
     } catch {
       return Response.json({ error: "not_found" }, { status: 404 });
     }

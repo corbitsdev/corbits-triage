@@ -231,6 +231,37 @@ export async function listIssueComments(gh: GithubFetch, repo: string, number: n
   }
 }
 
+export type LinkedIssue = {
+  number: number;
+  title: string;
+  state: string;
+  body: string;
+  url: string;
+};
+
+const ISSUE_REF = /(?:^|[\s(])#(\d+)\b/g;
+
+/** Same-repo `#n` references in the text that GitHub resolves to issues, not pull requests. */
+export async function listReferencedIssues(gh: GithubFetch, repo: string, number: number, text: string): Promise<LinkedIssue[]> {
+  const refs = [...new Set([...text.matchAll(ISSUE_REF)].map((m) => Number(m[1])))].filter((n) => n !== number);
+  const issues: LinkedIssue[] = [];
+  for (const ref of refs) {
+    const res = await gh(`/repos/${repo}/issues/${ref}`, { headers: { accept: "application/vnd.github+json" } });
+    if (res.status === 404) continue;
+    if (!res.ok) throw new Error(`github GET /repos/${repo}/issues/${ref} -> ${res.status}`);
+    const row = await res.json() as Record<string, any>;
+    if (row.pull_request) continue;
+    issues.push({
+      number: ref,
+      title: typeof row.title === "string" ? row.title : "",
+      state: typeof row.state === "string" ? row.state : "",
+      body: typeof row.body === "string" ? row.body : "",
+      url: typeof row.html_url === "string" ? row.html_url : "",
+    });
+  }
+  return issues;
+}
+
 export interface MirrorInput {
   repo: string;
   number: number;
