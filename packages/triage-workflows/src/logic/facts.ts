@@ -2,6 +2,7 @@ import type { PrFacts } from "./checks.js";
 
 export interface PrData {
   title?: string;
+  body?: string | null;
   author?: string;
   sha?: string;
   state?: string;
@@ -65,5 +66,6 @@ export function buildFacts(
     additions: Number(pr.additions ?? 0),
     deletions: Number(pr.deletions ?? 0),
     paths: [],
+    body: pr.body ?? "",
   };
 }

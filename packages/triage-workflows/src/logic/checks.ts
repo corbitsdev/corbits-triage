@@ -5,6 +5,7 @@ import {
   parseCheckPack,
   repoPolicy,
   type CheckPack,
+  type IssueTracker,
 } from "@corbits/triage-contracts";
 
 export interface PrFacts {
@@ -25,6 +26,8 @@ export interface PrFacts {
   additions?: number;
   deletions?: number;
   paths?: string[];
+  body?: string;
+  commits?: string[];
 }
 
 export interface Finding {
@@ -97,15 +100,34 @@ function rankTop(findings: Finding[]): Finding | null {
 
 function finish(findings: Finding[], duplicateOf: number | null, facts: PrFacts, pack?: CheckPack): DeterministicResult {
   const top = rankTop(findings);
+  const sources = pack ? classificationSources(pack) : undefined;
   const state = top?.state ?? "ready-monitoring";
   return {
     state,
     reason: top?.reason ?? "all deterministic checks passed",
     findings,
     duplicateOf,
-    needsJudgment: facts.state === "open" && state === "awaiting-review",
-    ...(pack ? { sources: classificationSources(pack) } : {}),
+    needsJudgment: facts.state === "open" && JUDGED_STATES.has(state) && hasModelChecks(sources),
+    ...(sources ? { sources } : {}),
   };
+}
+
+const JUDGED_STATES = new Set<TriageState>(["ready-monitoring", "awaiting-review"]);
+
+function hasModelChecks(sources: DeterministicResult["sources"]): boolean {
+  return sources !== undefined && (sources.quality.length > 0 || sources.custom.length > 0);
+}
+
+const GITHUB_ISSUE_REF = /(^|[\s(])#\d+\b|github\.com\/[^\s/]+\/[^\s/]+\/issues\/\d+/;
+const LINEAR_ISSUE_REF = /\b[A-Z][A-Z0-9]+-\d+\b|linear\.app\/\S+\/issue\//;
+
+export function referencesIssue(facts: Pick<PrFacts, "title" | "body" | "commits">, tracker: IssueTracker): boolean {
+  const text = [facts.title, facts.body ?? "", ...(facts.commits ?? [])].join("\n");
+  const github = GITHUB_ISSUE_REF.test(text);
+  const linear = LINEAR_ISSUE_REF.test(text);
+  if (tracker === "github") return github;
+  if (tracker === "linear") return linear;
+  return github || linear;
 }
 
 function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
@@ -142,6 +164,10 @@ function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
     const paths = facts.paths ?? [];
     if (on("paths") && globs.length > 0 && paths.some((path) => globs.some((glob) => globMatch(path, glob)))) {
       add("paths", "needs-author-update", "pull request touches a forbidden path");
+    }
+    const tracker = pack.checks.issue?.tracker ?? "either";
+    if (on("issue") && tracker !== "off" && !referencesIssue(facts, tracker)) {
+      add("issue", "needs-author-update", "pull request does not reference an issue");
     }
   }
 

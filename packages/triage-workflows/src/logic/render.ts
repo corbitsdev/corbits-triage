@@ -1,37 +1,12 @@
-import { render, type Priority, type Rendered, type TriageState, TRIAGE_STATES, PRIORITIES } from "@corbits/rule-packs";
+import { render, type Rendered } from "@corbits/rule-packs";
 import type { DeterministicResult } from "./checks.js";
-import { asText, parseJsonText } from "./extract.js";
-
-export interface Decision {
-  state: TriageState;
-  priority?: Priority;
-  confidence: number;
-  reasons: string[];
-  route?: string;
-  effort?: string;
-  worth?: string;
-}
-
-export const DEFAULT_CONFIDENCE_FLOOR = 0.5;
-
-function toDecision(d: Partial<Decision> | undefined): Decision | null {
-  if (!d || !TRIAGE_STATES.includes(d.state as TriageState) || typeof d.confidence !== "number") return null;
-  return {
-    ...d,
-    state: d.state as TriageState,
-    priority: PRIORITIES.includes(d.priority as Priority) ? d.priority : undefined,
-    confidence: d.confidence,
-    reasons: Array.isArray(d.reasons) ? d.reasons.map(String) : [],
-  };
-}
+import { asText } from "./extract.js";
+import { failureText, qualityQuestions } from "./quality.js";
 
 interface JevDecision {
   id: string;
   type: string;
-  choice?: string;
-  confidence?: number;
   noul?: number;
-  probabilities?: Record<string, number>;
 }
 
 /** The adapter emits one JSON decision object per delta, concatenated in the reply. */
@@ -60,44 +35,18 @@ function jevDecisions(text: string): JevDecision[] {
   return out;
 }
 
-function summary(d: JevDecision) {
-  return `${d.id}: ${Object.entries(d.probabilities ?? { [d.choice ?? ""]: d.confidence ?? 0 })
-    .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${k} ${v.toFixed(2)}`)
-    .join(", ")}`;
-}
-
-function fromJev(text: string): Decision | null {
-  const byId = new Map(jevDecisions(text).map((d) => [d.id, d]));
-  const state = byId.get("state");
-  const priority = byId.get("priority");
-  const route = byId.get("route");
-  return toDecision({
-    state: state?.choice as TriageState,
-    confidence: state?.confidence,
-    priority: priority?.choice as Priority,
-    route: route?.choice,
-    reasons: [
-      ...(state ? [`classified as ${String(state.choice)} with confidence ${Number(state.confidence ?? 0).toFixed(2)}${route ? ` (route: ${String(route.choice)})` : ""}`] : []),
-      ...[state, priority, route].filter((d): d is JevDecision => d !== undefined).map(summary),
-    ],
-  });
-}
-
-/** Accepts a System One reply (decision lines) or free-text JSON, in that order. */
-export function parseDecision(reply: unknown): Decision | null {
-  const text = asText(reply);
-  const jev = fromJev(text);
-  if (jev) return jev;
-  const parsed = parseJsonText(text) as (Partial<Decision> & { decision?: Partial<Decision> }) | undefined;
-  return toDecision(parsed?.decision ?? parsed);
+/** Each answer is the probability that the pull request passes that check. */
+export function parseAnswers(reply: unknown): Record<string, number> {
+  const answers: Record<string, number> = {};
+  for (const d of jevDecisions(asText(reply))) if (d.type === "noul" && typeof d.noul === "number") answers[d.id] = d.noul;
+  return answers;
 }
 
 export interface RenderInput {
   author: string;
   det: DeterministicResult;
-  decision?: Decision | null;
-  confidenceFloor?: number;
+  answers?: Record<string, number> | null;
+  judgeError?: string;
 }
 
 export interface RenderOutput extends Rendered {
@@ -106,27 +55,29 @@ export interface RenderOutput extends Rendered {
   /** Only a human-confirmed duplicate closes a PR; no automated path sets this. */
   close: boolean;
   confidence: number | "unknown";
-  degraded: "inference-outage" | "low-confidence" | "error" | null;
+  degraded: "inference-outage" | "error" | null;
 }
 
-export function renderVerdict({ author, det, decision, confidenceFloor = DEFAULT_CONFIDENCE_FLOOR }: RenderInput): RenderOutput {
-  if (!det.needsJudgment) {
+export function renderVerdict({ author, det, answers, judgeError }: RenderInput): RenderOutput {
+  if (!det.needsJudgment || !det.sources) {
     const duplicate = det.duplicateOf !== null && det.state === "needs-decision";
     const rendered = render(det.state, { author, reason: det.reason, duplicate });
     return { ...rendered, mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown", degraded: null };
   }
-  if (!decision) {
-    return { ...render("needs-decision", { author, reason: det.reason, humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "inference-outage" };
+  const sources = det.sources;
+  const asked = qualityQuestions(sources).map((q) => q.id);
+  const passes = asked.map((id) => answers?.[id]);
+  if (judgeError !== undefined || passes.some((p) => p === undefined)) {
+    const reason = `decision model unavailable: ${judgeError ?? "no answer"}`;
+    return { ...render(det.state, { author, reason, humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "inference-outage" };
   }
-  if (decision.confidence < confidenceFloor) {
-    return {
-      ...render("needs-decision", { author, reason: `confidence ${decision.confidence} below ${confidenceFloor}`, humanGated: true }),
-      mirror: false, duplicate: false, close: false, confidence: decision.confidence, degraded: "low-confidence",
-    };
-  }
-  const reason = decision.reasons[0] ?? det.reason;
-  const rendered = render(decision.state, { author, reason, priority: decision.priority });
-  return { ...rendered, mirror: true, duplicate: false, close: false, confidence: decision.confidence, degraded: null };
+  const scores = passes as number[];
+  const confidence = Math.round(Math.min(...scores.map((p) => Math.max(p, 1 - p))) * 100) / 100;
+  const failing = asked.filter((_, i) => scores[i]! < 0.5);
+  const rendered = failing.length
+    ? render("needs-author-update", { author, reason: failing.map((id) => failureText(id, sources)).join("; ") })
+    : render(det.state, { author, reason: det.reason });
+  return { ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null };
 }
 
 export function degradedVerdict(reason: string, author = ""): RenderOutput {
