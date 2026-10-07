@@ -245,25 +245,36 @@ function applyCreatedOrAdded(ns: CorbitsTriageNs, listed: { names: string[]; tru
   };
 }
 
-export type InstallationListing = { fields: InstallationFields; names: string[] };
+/** A suspended installation keeps its repositories, disconnected; GitHub will not list them. */
+export type InstallationListing =
+  | { fields: InstallationFields; suspended: false; names: string[] }
+  | { fields: InstallationFields; suspended: true };
 
-/** Makes the stored repositories match what GitHub reports for every installation of the App. */
-export function applyInstallationListing(ns: CorbitsTriageNs, listings: readonly InstallationListing[]): CorbitsTriageNs {
+/** Makes the stored repositories match what GitHub reports; returns the repositories that are new. */
+export function applyInstallationListing(
+  ns: CorbitsTriageNs,
+  listings: readonly InstallationListing[],
+): { ns: CorbitsTriageNs; added: string[] } {
   const live = new Set(listings.map((listing) => listing.fields.installationId));
   let next = ns;
   for (const row of repoRecords(ns)) {
     if (row.installationId !== undefined && !live.has(row.installationId)) next = dropReposByInstallation(next, row.installationId);
   }
   const added: string[] = [];
-  for (const { fields, names } of listings) {
-    const listed = new Set(names);
-    const gone = repoRecords(next).filter((row) => row.installationId === fields.installationId && !listed.has(row.name));
+  for (const listing of listings) {
+    const { installationId } = listing.fields;
+    if (listing.suspended) {
+      next = setConnectedForInstallation(next, installationId, false);
+      continue;
+    }
+    const listed = new Set(listing.names);
+    const gone = repoRecords(next).filter((row) => row.installationId === installationId && !listed.has(row.name));
     next = dropReposByName(next, gone.map((row) => row.name));
-    const upserted = upsertConnectedRepos(next, names, fields);
+    const upserted = upsertConnectedRepos(next, listing.names, listing.fields);
     next = upserted.ns;
     added.push(...upserted.added);
   }
-  return markBacklogPending(next, catchupNames(ns, listings.flatMap((listing) => listing.names), added));
+  return { ns: markBacklogPending(next, added), added };
 }
 
 export type BacklogDeps = Pick<BridgeDeps, "sendMail" | "readCheckPack">;
