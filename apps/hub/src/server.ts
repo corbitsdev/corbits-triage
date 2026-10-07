@@ -112,7 +112,11 @@ const spawnSidecar: SpawnLocalSidecar = function spawnSidecar({ request, dataDir
   };
 };
 
-const local = createLocalProcessSidecarProvisioner({ dataRoot: `${env.HUB_DATA_DIR}/local-sidecars`, spawnSidecar });
+const local = createLocalProcessSidecarProvisioner({
+  dataRoot: `${env.HUB_DATA_DIR}/local-sidecars`,
+  spawnSidecar,
+  manifestEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
+});
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
