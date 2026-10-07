@@ -440,13 +440,6 @@ export default function Settings() {
                 <p className="live-mark"><i />Live</p>
                 <p>{githubReady ? `Installed. ${repos.length} repositories.` : "Not connected yet."}</p>
               </section>
-              <section className="integration">
-                <h2>Slack</h2>
-                <p>Not in v1.</p>
-                <p className="field-help">Would connect one workspace and post into one channel when a person has to act.</p>
-                <button className="btn primary" type="button" disabled>Connect Slack</button>
-                <p className="small muted">Not in v1.</p>
-              </section>
             </div>
             <div role="tabpanel" id={panelId("Model")} aria-labelledby={tabId("Model")} hidden={tab !== "Model"}>
               <section className="panel settings-panel" aria-label="Decision model">
