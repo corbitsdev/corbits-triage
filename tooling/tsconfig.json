@@ -11,7 +11,8 @@
     }
   },
   "include": [
-    "*.ts"
+    "*.ts",
+    "e2e/*.ts"
   ],
   "exclude": [
     "vendor-health.test.ts"
