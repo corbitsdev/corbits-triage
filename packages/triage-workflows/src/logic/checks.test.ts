@@ -99,7 +99,7 @@ describe("deriveState check pack", () => {
       group: "pull-request",
       instruction: "process.exit(1)",
     }];
-    const sized: PrFacts = { ...noisy, changedFiles: 80, additions: 10, deletions: 10, paths: ["src/a.ts"] };
+    const sized: PrFacts = { ...noisy, changedFiles: 80, additions: 10, deletions: 10, paths: ["src/a.ts"], changesRequested: ["maintainer"] };
     const result = deriveState(sized, allOff, pack);
     expect(result.findings.map((finding) => finding.check)).toEqual([
       "draft",
@@ -107,9 +107,14 @@ describe("deriveState check pack", () => {
       "duplicate",
       "conflicts",
       "drift",
+      "review",
       "size",
       "issue",
     ]);
+    expect(result.checks.find((check) => check.check === "review")).toMatchObject({
+      result: "fail",
+      evidence: ["changes requested by @maintainer"],
+    });
     expect(result.checks.find((check) => check.check === "size")).toEqual({
       check: "size",
       kind: "machine",
