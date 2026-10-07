@@ -110,6 +110,14 @@ describe("deriveState check pack", () => {
       "size",
       "issue",
     ]);
+    expect(result.checks.find((check) => check.check === "size")).toEqual({
+      check: "size",
+      kind: "machine",
+      result: "fail",
+      reason: "pull request is too large",
+      evidence: ["80 files (max 20)"],
+    });
+    expect(result.checks.find((check) => check.check === "paths")?.result).toBe("pass");
     expect(result.sources?.custom).toEqual([{ name: "Bomb", group: "pull-request", instruction: "process.exit(1)" }]);
     expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused", "tests"]);
   });

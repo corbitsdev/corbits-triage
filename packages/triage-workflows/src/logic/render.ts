@@ -1,7 +1,7 @@
 import { render, type Rendered } from "@corbits/rule-packs";
-import type { DeterministicResult } from "./checks.js";
+import type { CheckResult, DeterministicResult } from "./checks.js";
 import { asText } from "./extract.js";
-import { failureText, qualityQuestions } from "./quality.js";
+import { failureText, passText, qualityQuestions } from "./quality.js";
 
 interface JevDecision {
   id: string;
@@ -56,20 +56,40 @@ export interface RenderOutput extends Rendered {
   close: boolean;
   confidence: number | "unknown";
   degraded: "inference-outage" | "error" | null;
+  checks: CheckResult[];
+}
+
+function modelChecks(sources: NonNullable<DeterministicResult["sources"]>, answers: Record<string, number> | null | undefined, unavailable: string): CheckResult[] {
+  return qualityQuestions(sources).map(({ id }) => {
+    const p = answers?.[id];
+    if (p === undefined) return { check: id, kind: "model", result: "unconfirmed", reason: unavailable, evidence: [] };
+    const failed = p < 0.5;
+    return { check: id, kind: "model", result: failed ? "fail" : "pass", reason: failed ? failureText(id, sources) : passText(id, sources), evidence: [] };
+  });
+}
+
+/** A failing check replaces the preset comment with one line per failure and its evidence. */
+function withChecks<T extends Rendered>(rendered: T, checks: CheckResult[]): T & { checks: CheckResult[] } {
+  const failing = checks.filter((c) => c.result === "fail");
+  if (!failing.length) return { ...rendered, checks };
+  const feedback = failing.map((c) => `- ${c.reason}${c.evidence.length ? `: ${c.evidence.join(", ")}` : ""}`).join("\n");
+  return { ...rendered, feedback, checks };
 }
 
 export function renderVerdict({ author, det, answers, judgeError }: RenderInput): RenderOutput {
   if (!det.needsJudgment || !det.sources) {
     const duplicate = det.duplicateOf !== null && det.state === "needs-decision";
     const rendered = render(det.state, { author, reason: det.reason, duplicate });
-    return { ...rendered, mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown", degraded: null };
+    const checks = [...det.checks, ...(det.sources ? modelChecks(det.sources, null, "not asked") : [])];
+    return withChecks({ ...rendered, mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null }, checks);
   }
   const sources = det.sources;
   const asked = qualityQuestions(sources).map((q) => q.id);
   const passes = asked.map((id) => answers?.[id]);
   if (judgeError !== undefined || passes.some((p) => p === undefined)) {
     const reason = `decision model unavailable: ${judgeError ?? "no answer"}`;
-    return { ...render(det.state, { author, reason, humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "inference-outage" };
+    const checks = [...det.checks, ...modelChecks(sources, judgeError === undefined ? answers : null, "decision model unavailable")];
+    return withChecks({ ...render(det.state, { author, reason, humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: "inference-outage" as const }, checks);
   }
   const scores = passes as number[];
   const confidence = Math.round(Math.min(...scores.map((p) => Math.max(p, 1 - p))) * 100) / 100;
@@ -77,11 +97,11 @@ export function renderVerdict({ author, det, answers, judgeError }: RenderInput)
   const rendered = failing.length
     ? render("needs-author-update", { author, reason: failing.map((id) => failureText(id, sources)).join("; ") })
     : render(det.state, { author, reason: det.reason });
-  return { ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null };
+  return withChecks({ ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null }, [...det.checks, ...modelChecks(sources, answers, "decision model unavailable")]);
 }
 
 export function degradedVerdict(reason: string, author = ""): RenderOutput {
-  return { ...render("stale-unknown", { author, reason }), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "error" };
+  return { ...render("stale-unknown", { author, reason }), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "error", checks: [] };
 }
 
 export interface MirrorRequest {

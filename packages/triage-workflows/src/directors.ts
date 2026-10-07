@@ -45,7 +45,7 @@ const NO_FACTS: PrFacts = {
 function degradedItem(reason: string): Item {
   return {
     facts: NO_FACTS,
-    det: { state: "stale-unknown", reason, findings: [], duplicateOf: null, needsJudgment: false },
+    det: { state: "stale-unknown", reason, findings: [], checks: [], duplicateOf: null, needsJudgment: false },
   };
 }
 
