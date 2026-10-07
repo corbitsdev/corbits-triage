@@ -12,6 +12,8 @@
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
 import { createGrantStore, schema } from "@intx/db";
+import { createEnvKeyCredentialCipher } from "@intx/crypto";
+import { hexDecode } from "@intx/types";
 import { eq } from "drizzle-orm";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant } from "@intx/hub-api";
 import {
@@ -85,6 +87,7 @@ await migrateWebhooks(database);
   console.log("cron migrations applied");
 }
 
+const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
 const local = createLocalProcessSidecarProvisioner({
   dataRoot: localSidecarDataRoot,
@@ -95,7 +98,7 @@ const local = createLocalProcessSidecarProvisioner({
   }),
   manifests: createLocalSidecarManifestStore({
     dataRoot: localSidecarDataRoot,
-    encryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
+    cipher: credentialCipher,
   }),
 });
 
@@ -122,6 +125,7 @@ const signIn = signInSettings(env);
 const composition = await createInterchangeHub({
   database,
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin },
+  credentialCipher,
   sidecarProvisioners: [local.provisioner],
   probeSidecarProvisioners: [local.provisioner],
 });
