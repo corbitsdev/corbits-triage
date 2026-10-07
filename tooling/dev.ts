@@ -11,7 +11,7 @@ type Proc = {
 
 const ROOT = resolve(import.meta.dir, "..");
 
-// The Vite dev portal (:5173) proxies /api to the hub, which must trust its origin.
+// The Vite dev portal (:5173) proxies /api to the hub, which must trust its origin; a developer's own env wins.
 const SERVICES: Array<{ name: string; cmd: string[]; cwd: string; env: Record<string, string> }> = [
   { name: "hub", cmd: ["bun", "--conditions=intx-src", "src/server.ts"], cwd: `${ROOT}/apps/hub`, env: { PORTAL_ORIGIN: "http://localhost:5173" } },
   { name: "web", cmd: ["bun", "run", "dev"], cwd: `${ROOT}/apps/web`, env: {} },
@@ -67,7 +67,7 @@ function spawnAll(): void {
   for (const svc of SERVICES) {
     const child = Bun.spawn(svc.cmd, {
       cwd: svc.cwd,
-      env: { ...process.env, ...svc.env },
+      env: { ...svc.env, ...process.env },
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
