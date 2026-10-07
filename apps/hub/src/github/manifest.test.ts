@@ -140,7 +140,8 @@ describe("GitHub manifest authorization", () => {
         getSession: signedInSession,
         authorizeCredential: deny,
         trustedPortalOrigins: [],
-        githubApiOrigin: GITHUB_API_ORIGIN, publicOrigin: "https://hub.example.com",
+        githubApiOrigin: GITHUB_API_ORIGIN,
+        publicOrigin: "https://hub.example.com",
       });
       const response = await integration.start(startRequest(), "tnt_one");
       expect(response.status).toBe(403);
@@ -169,7 +170,8 @@ describe("GitHub manifest authorization", () => {
       getSession: signedInSession,
       authorizeCredential: deny,
       trustedPortalOrigins: [],
-      githubApiOrigin: GITHUB_API_ORIGIN, publicOrigin: "https://hub.example.com",
+      githubApiOrigin: GITHUB_API_ORIGIN,
+      publicOrigin: "https://hub.example.com",
       fetchImpl: Object.assign(exchangeSpy, { preconnect: noPreconnect }),
     });
     const response = await integration.callback(new Request("https://hub.example/api/integrations/github-manifest/callback?state=state&code=code"));

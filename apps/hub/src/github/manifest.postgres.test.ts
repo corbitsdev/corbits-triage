@@ -7,6 +7,7 @@ import { createDB, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { createGithubManifestIntegration, migrateGithubManifest } from "./manifest.js";
 
+const PUBLIC_ORIGIN = "https://hub.example.com";
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const GITHUB_API_ORIGIN = "https://api.github.com";
 
@@ -49,21 +50,25 @@ test("PostgreSQL: a canonical insert after start is preserved and remains decryp
       cipher,
       getSession: signedInSession,
       authorizeCredential: allow,
-      trustedPortalOrigins: [],
-      githubApiOrigin: GITHUB_API_ORIGIN, publicOrigin: "https://hub.example.com",
+      trustedPortalOrigins: [PUBLIC_ORIGIN],
+      githubApiOrigin: GITHUB_API_ORIGIN,
+      publicOrigin: PUBLIC_ORIGIN,
       fetchImpl: Object.assign(convertManifest, { preconnect: noPreconnect }),
     });
 
+    // Behind a TLS-terminating proxy the hub sees plain http; GitHub must get the public https URLs.
     const start = await integration.start(new Request(
-      "https://hub.example/api/integrations/github-manifest/tnt_manifest/start",
+      "http://hub.example.com/api/integrations/github-manifest/tnt_manifest/start",
       {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "https://hub.example", "sec-fetch-site": "same-origin" },
-        body: JSON.stringify({ portalOrigin: "https://hub.example", replace: false }),
+        headers: { "content-type": "application/json", origin: PUBLIC_ORIGIN, "sec-fetch-site": "same-origin" },
+        body: JSON.stringify({ portalOrigin: PUBLIC_ORIGIN, replace: false }),
       },
     ), "tnt_manifest");
     expect(start.status).toBe(201);
-    const { state } = await start.json() as { state: string };
+    const { state, manifest } = await start.json() as { state: string; manifest: { redirect_url: string; hook_attributes: { url: string } } };
+    expect(manifest.redirect_url).toBe(`${PUBLIC_ORIGIN}/api/integrations/github-manifest/callback`);
+    expect(manifest.hook_attributes.url).toBe(`${PUBLIC_ORIGIN}/api/hooks/tnt_manifest/github-hook`);
 
     const appId = "crd_concurrent_app";
     const hookId = "crd_concurrent_hook";
