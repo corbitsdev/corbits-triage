@@ -9,6 +9,7 @@ describe("duplicate rendering", () => {
         state: "needs-decision",
         reason: "matches #7",
         findings: [],
+        checks: [],
         duplicateOf: 7,
         needsJudgment: false,
       },

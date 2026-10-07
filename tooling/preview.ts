@@ -73,7 +73,8 @@ for (const { number } of open.sort((a, b) => a.number - b.number)) {
     priority: v.priority,
     model: det.needsJudgment ? "asked" : "-",
     score: v.confidence === "unknown" ? "-" : v.confidence,
-    comment: v.feedback.replace(/^Thanks @\S+ /, ""),
+    failing: v.checks.filter((c) => c.result === "fail").map((c) => c.check).join(", "),
+    comment: v.feedback.replace(/^Thanks @\S+ /, "").replaceAll("\n", " | "),
     degraded: v.degraded ?? "",
   });
 }
