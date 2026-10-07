@@ -16,10 +16,11 @@ import {
 import { loadCheckPack, repoNeedsCheckSetup, saveCheckPack } from "../lib/check-pack.ts";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { backlogSyncFromConfig, githubAppSlugFromCredentials, hasActiveGithubCredential, projectQueue } from "../lib/hub-api.ts";
+import { backlogSyncFromConfig, githubAppSlugFromCredentials, hasActiveGithubCredential } from "../lib/hub-api.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
+import { useQueueItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 
 function ownerAndName(raw: string): { owner: string; name: string } | null {
@@ -113,7 +114,7 @@ export default function RepoDetail() {
   const [needsSetup, setNeedsSetup] = useState(() => repoNeedsCheckSetup(config));
   const [customizing, setCustomizing] = useState(false);
   const deniedRepos = snapshot?.denied.repos ?? false;
-  const items = snapshot ? projectQueue(snapshot).filter((item) => item.repo === (config?.name ?? label)) : [];
+  const items = useQueueItems().filter((item) => item.repo === (config?.name ?? label));
   const needs = items.filter((item) => item.needsHuman).length;
   const ready = items.filter((item) => item.state === "ready").length;
   const receivingEvents = config ? hasVerifiedWebhookDelivery(snapshot?.logs ?? [], config.name) : false;
