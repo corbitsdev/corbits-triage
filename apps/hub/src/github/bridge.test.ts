@@ -45,6 +45,17 @@ type Row = {
 
 type StubDb = BridgeDeps["db"] & { tenantConfig(): unknown };
 
+const APP_ROW = { id: "crd_app", tenantId: TENANT_ID, name: "github", metadata: { appSlug: "corbits-triage" } };
+
+/** True when a drizzle where clause binds `name` as a parameter. */
+function asksForName(node: unknown, name: string): boolean {
+  if (node === name) return true;
+  if (!node || typeof node !== "object") return false;
+  const chunks = (node as { queryChunks?: unknown[]; value?: unknown }).queryChunks;
+  if (Array.isArray(chunks)) return chunks.some((chunk) => asksForName(chunk, name));
+  return asksForName((node as { value?: unknown }).value, name);
+}
+
 function stubDb(rows: Row[], config: unknown = CONNECTED_HELLO, opts: { missingTenant?: boolean } = {}): StubDb {
   const box = { config };
   function tenantRows() {
@@ -69,8 +80,8 @@ function stubDb(rows: Row[], config: unknown = CONNECTED_HELLO, opts: { missingT
   return {
     query: {
       credential: {
-        async findFirst() {
-          return rows[0];
+        async findFirst(args?: { where?: unknown }) {
+          return asksForName(args?.where, "github") ? APP_ROW : rows[0];
         },
       },
       tenant: {
@@ -248,6 +259,16 @@ describe("bridge handler", () => {
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
+  });
+
+  test("events sent by the workspace's own app bot are ignored", async () => {
+    const sent: Sent[] = [];
+    const own = JSON.stringify({ ...JSON.parse(prPayload), action: "labeled", sender: { type: "Bot", login: "corbits-triage[bot]" } });
+    const res = await bridge({ sent })(githubRequest(own), TARGET);
+    expect(await res.json()).toEqual({ status: "ignored" });
+    const other = JSON.stringify({ ...JSON.parse(prPayload), action: "labeled", sender: { type: "Bot", login: "dependabot[bot]" } });
+    expect(await (await bridge({ sent })(githubRequest(other, { delivery: "del-2" }), TARGET)).json()).toEqual({ status: "forwarded" });
+    expect(sent).toHaveLength(1);
   });
 
   test("unconfigured repositories are 202 ignored", async () => {
