@@ -13,7 +13,7 @@ Bun, TypeScript, Postgres, React + Vite. Interchange is consumed from
 | `src/auth.ts` | better-auth config: stock settings, optional Google sign-in and email allowlist, `PORTAL_ORIGIN` as a trusted origin. |
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
 | `src/hooks.ts` | `@corbits/webhooks` mount and its migrations. |
-| `src/local-process-sidecar-provisioner.ts` | `SidecarProvisioner` that spawns sidecars as child processes with a minimal env. |
+| `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`, PR events → run-trigger deliverer. |
 | `src/github/deployment.ts` | `resolveLiveDeployment(db, tenantId, name)`. |

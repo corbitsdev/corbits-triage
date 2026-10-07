@@ -12,7 +12,7 @@
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
 import { createGrantStore, schema } from "@intx/db";
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant } from "@intx/hub-api";
 import {
   createRunTriggerDeliverer,
@@ -31,11 +31,10 @@ import {
 } from "@corbits/cron";
 import { runCronMigrations } from "@corbits/cron/migrations";
 import { createInterchangeHub } from "./interchange-hub.js";
-import {
-  createLocalProcessSidecarProvisioner,
-  type LocalSidecarManifest,
-  type SpawnLocalSidecar,
-} from "./local-process-sidecar-provisioner.js";
+import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
+import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
+import { restoreLocalSidecars } from "./sidecar/restore.js";
+import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
@@ -86,37 +85,18 @@ await migrateWebhooks(database);
   console.log("cron migrations applied");
 }
 
-const spawnSidecar: SpawnLocalSidecar = function spawnSidecar({ request, dataDir }) {
-  const child = Bun.spawn(["bun", "--conditions=intx-src", "apps/sidecar/src/index.ts"], {
-    cwd: V,
-    env: {
-      PATH: process.env["PATH"],
-      HOME: process.env["HOME"],
-      TMPDIR: process.env["TMPDIR"],
-      HUB_WS_URL: request.hubWebSocketUrl,
-      SIDECAR_ID: request.sidecarId,
-      SIDECAR_TOKEN: request.token,
-      SIDECAR_DATA_DIR: dataDir,
-      SIDECAR_CREDENTIAL_ENCRYPTION_KEY: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
-      SIDECAR_ADAPTER_MANIFEST: sidecarAdapterManifest,
-    },
-    stdin: "ignore",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  return {
-    pid: child.pid,
-    exited: child.exited,
-    kill(signal) {
-      child.kill(signal);
-    },
-  };
-};
-
+const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
 const local = createLocalProcessSidecarProvisioner({
-  dataRoot: `${env.HUB_DATA_DIR}/local-sidecars`,
-  spawnSidecar,
-  manifestEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
+  dataRoot: localSidecarDataRoot,
+  spawnSidecar: createSpawnLocalSidecar({
+    interchangeDir: V,
+    credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
+    adapterManifest: sidecarAdapterManifest,
+  }),
+  manifests: createLocalSidecarManifestStore({
+    dataRoot: localSidecarDataRoot,
+    encryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
+  }),
 });
 
 let shuttingDown = false;
@@ -147,21 +127,7 @@ const composition = await createInterchangeHub({
 });
 const stock = composition.server;
 
-async function isLocalSidecarLive(manifest: LocalSidecarManifest): Promise<boolean> {
-  const row = await composition.db.query.sidecarAllocation.findFirst({
-    columns: { id: true },
-    where: and(
-      eq(schema.sidecarAllocation.id, manifest.allocationId),
-      eq(schema.sidecarAllocation.provisionerId, local.provisioner.id),
-      eq(schema.sidecarAllocation.status, "allocated"),
-      eq(schema.sidecarAllocation.generation, manifest.generation),
-      eq(schema.sidecarAllocation.sidecarId, manifest.sidecarId),
-      isNull(schema.sidecarAllocation.initializationLeaseId),
-    ),
-  });
-  return row !== undefined;
-}
-await local.restore(isLocalSidecarLive);
+await restoreLocalSidecars(composition.db, local);
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },
