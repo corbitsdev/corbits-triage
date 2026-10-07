@@ -1541,6 +1541,12 @@ body[data-rail="collapsed"] .nav-count {
 .check-chip.fail .check-result { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--rule)); }
 .check-item.wait .check-result,
 .check-chip.wait .check-result { color: var(--heat); border-color: color-mix(in srgb, var(--heat) 40%, var(--rule)); }
+.verdict-checks { list-style: none; margin: 0; padding: 0; }
+.verdict-check {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding-left: 0;
+}
+.verdict-check .check-fact { grid-column: 1 / -1; }
 .pr-posting {
   display: grid;
   gap: 8px;

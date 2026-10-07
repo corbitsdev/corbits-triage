@@ -1354,6 +1354,7 @@ export type PrItem = {
   nextAction: string | null;
   confidence: number | null;
   evidence: string[];
+  checks: CheckResult[];
   labels: string[];
   comment: string | null;
   sha: string | null;
@@ -1366,6 +1367,27 @@ export type PrItem = {
   pendingClose: boolean;
   href: string;
 };
+
+export type CheckResult = {
+  check: string;
+  kind: "machine" | "model";
+  result: "pass" | "fail" | "unconfirmed";
+  reason: string;
+  evidence: string[];
+};
+
+function checkResults(value: unknown): CheckResult[] {
+  if (!Array.isArray(value)) return [];
+  const out: CheckResult[] = [];
+  for (const entry of value) {
+    const c = obj(entry);
+    if (typeof c.check !== "string") continue;
+    if (c.kind !== "machine" && c.kind !== "model") continue;
+    if (c.result !== "pass" && c.result !== "fail" && c.result !== "unconfirmed") continue;
+    out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : "", evidence: strings(c.evidence) });
+  }
+  return out;
+}
 
 function canonicalPrHref(repo: string, number: number): string {
   const [owner, name] = repo.split("/");
@@ -1537,6 +1559,7 @@ export function projectQueue(snapshot: PortalSnapshot, openPulls?: OpenPulls): P
         nextAction: typeof r.nextAction === "string" ? r.nextAction : null,
         confidence: typeof r.confidence === "number" ? r.confidence : null,
         evidence: v.evidence,
+        checks: checkResults(r.checks),
         labels: strings(r.labels),
         comment: typeof r.feedback === "string" ? r.feedback : null,
         sha: triggered && typeof sha === "string" ? sha : null,
@@ -1594,6 +1617,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
         nextAction: null,
         confidence: null,
         evidence: [],
+        checks: [],
         labels: pr.labels,
         comment: null,
         sha: pr.sha,
