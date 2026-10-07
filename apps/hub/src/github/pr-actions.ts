@@ -4,7 +4,7 @@
 import { type } from "arktype";
 import { createIssueComment, createReview, mergePr, mirror } from "@corbits/github-tool/github";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { appGithubFetch, failure, githubCredentialForPortal, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
@@ -29,11 +29,13 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
   return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const access = await githubCredentialForPortal(deps, req, tenantId);
-    if (access instanceof Response) return access;
+    const principalId = await portalMember(deps, req, tenantId);
+    if (principalId instanceof Response) return principalId;
     const body = ActionBody(await readJson(req));
     if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
-    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, access.appJson);
+    const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
+    if (appJson instanceof Response) return appJson;
+    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
 
     try {
       const { repo, number } = body;
@@ -44,7 +46,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
           : body.action === "merge"
             ? await mergePr(gh, { repo, number })
             : await mirror(gh, { repo, number, labels: body.labels, comment: body.comment, close: true });
-      console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "github_pr_action", tenantId, principalId: access.principalId, action: body.action, repo, number }));
+      console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number }));
       return Response.json(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
