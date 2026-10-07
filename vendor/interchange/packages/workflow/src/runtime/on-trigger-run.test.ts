@@ -1441,6 +1441,132 @@ describe("runOnTrigger", () => {
     await run.cancel("supervisor-operator", "test done");
     await run.complete.catch(() => undefined);
   });
+
+  test("resumes an idle section whose body children use the pre-run-scoped id", async () => {
+    const runId = "sec-legacy-idle";
+    const ch = signalName("corr-legacy-rearm");
+    const seed: WorkflowEvent[] = [
+      {
+        kind: "RunStarted",
+        seq: 1,
+        at,
+        runId,
+        definitionHash: "x",
+        trigger: { type: "manual", payload: { text: "event-0" } },
+      },
+      {
+        kind: "StepStarted",
+        seq: 2,
+        at,
+        stepId: "section",
+        attempt: 1,
+        input: { ref: "inline:null" },
+      },
+      {
+        kind: "ChildSpawned",
+        seq: 3,
+        at,
+        stepId: "section",
+        childRunId: "section__0",
+        childDefinitionRef: "body-ref",
+      },
+      {
+        kind: "ChildCompleted",
+        seq: 4,
+        at,
+        childRunId: "section__0",
+        terminalStatus: "completed",
+      },
+      {
+        kind: "SignalAwaited",
+        seq: 5,
+        at,
+        stepId: "section",
+        signalName: ch,
+        parkKind: "input",
+      },
+    ];
+    const repoStore = createInMemoryRepoStore();
+    const channel = createInMemorySignalChannel();
+    const spawnInputs: unknown[] = [];
+    const spawnSuspendableChild: SpawnSuspendableChild = async ({ input }) => {
+      spawnInputs.push(input);
+      return {
+        next: async () => ({ kind: "terminal", terminalStatus: "completed" }),
+        resume: async () => undefined,
+        deliverSignal: async () => undefined,
+      };
+    };
+    const def = sectionWorkflow();
+    const run = runtimeRun(
+      def,
+      buildEnv({
+        def,
+        repoStore,
+        signalChannel: channel,
+        spawnSuspendableChild,
+      }),
+      { runId, resumeFromEvents: seed },
+    );
+
+    await channel.deliver(ch, { text: "event-1" }, "sig-legacy");
+    await waitForPark(repoStore, runId, "input", 2);
+
+    const log = await repoStore.read(runId);
+    expect(spawnInputs).toEqual([{ text: "event-1" }]);
+    expect(
+      log.flatMap((e) => (e.kind === "ChildSpawned" ? [e.childRunId] : [])),
+    ).toEqual(["section__0", `${runId}__section__1`]);
+
+    await run.cancel("supervisor-operator", "test done");
+    await run.complete.catch(() => undefined);
+  });
+
+  test("re-adopts an in-flight body under its pre-run-scoped id", async () => {
+    const runId = "sec-legacy-sleep";
+    const seed = midSleepSeed(runId).map((e) =>
+      e.kind === "ChildSpawned" ? { ...e, childRunId: "section__0" } : e,
+    );
+    const repoStore = createInMemoryRepoStore();
+    await repoStore.appendBatch(runId, seed);
+    await repoStore.appendBatch(
+      "section__0",
+      bodyChildLog("section__0", { phase: "awaiting-timer" }),
+    );
+    const channel = createInMemorySignalChannel();
+    const spawnedIds: string[] = [];
+    const spawnSuspendableChild: SpawnSuspendableChild = async ({
+      childRunId,
+    }) => {
+      spawnedIds.push(childRunId);
+      return {
+        next: async () => ({ kind: "terminal", terminalStatus: "completed" }),
+        resume: async () => undefined,
+        deliverSignal: async () => undefined,
+      };
+    };
+    const def = sectionWorkflow();
+    const run = runtimeRun(
+      def,
+      buildEnv({
+        def,
+        repoStore,
+        signalChannel: channel,
+        spawnSuspendableChild,
+      }),
+      { runId, resumeFromEvents: seed },
+    );
+
+    await waitForPark(repoStore, runId, "input", 1);
+    expect(spawnedIds).toEqual(["section__0"]);
+    const log = await repoStore.read(runId);
+    expect(
+      log.flatMap((e) => (e.kind === "ChildCompleted" ? [e.childRunId] : [])),
+    ).toEqual(["section__0"]);
+
+    await run.cancel("supervisor-operator", "test done");
+    await run.complete.catch(() => undefined);
+  });
 });
 
 describe("runOnTrigger onBodyFailure: tolerate", () => {
