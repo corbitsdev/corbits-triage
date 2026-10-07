@@ -3,6 +3,7 @@
 // The hub must not import from the vendor test harness: tests/ trees are not
 // shipped and may change without notice. Unlike the harness, the caller always
 // supplies the spawn so the child env is built from validated hub config.
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -63,7 +64,31 @@ export type SpawnLocalSidecar = (args: {
 export type CreateLocalProcessSidecarProvisionerOpts = {
   readonly dataRoot: string;
   readonly spawnSidecar: SpawnLocalSidecar;
+  /** 32 bytes as 64 hex characters; encrypts sidecar tokens at rest in manifests. */
+  readonly manifestEncryptionKey: string;
   readonly stopTimeoutMs?: number;
+};
+
+type EncryptedToken = {
+  readonly iv: string;
+  readonly tag: string;
+  readonly ciphertext: string;
+};
+
+type StoredManifest = Omit<LocalSidecarManifest, "token"> & {
+  readonly token: EncryptedToken;
+};
+
+/** What a hub restart needs to re-spawn an allocation identically. */
+export type LocalSidecarManifest = {
+  readonly allocationId: string;
+  readonly generation: number;
+  readonly sidecarId: string;
+  readonly tenantId: string;
+  readonly anchorRunId: string;
+  readonly hubWebSocketUrl: string;
+  readonly dataDir: string;
+  readonly token: string;
 };
 
 export interface LocalProcessSidecarProvisioner {
@@ -89,6 +114,86 @@ type AllocationState =
       readonly generation: number;
       readonly sidecarId: string;
     };
+
+function manifestsDir(dataRoot: string): string {
+  return path.join(dataRoot, "manifests");
+}
+
+function manifestPath(dataRoot: string, allocationId: string): string {
+  return path.join(manifestsDir(dataRoot), `${allocationId}.json`);
+}
+
+function parseKey(hex: string): Buffer {
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error("Local sidecar manifest encryption key must be 32 bytes encoded as 64 hexadecimal characters");
+  }
+  return Buffer.from(hex, "hex");
+}
+
+function encryptToken(key: Buffer, token: string): EncryptedToken {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
+  return {
+    iv: iv.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+  };
+}
+
+function decryptToken(key: Buffer, token: EncryptedToken): string {
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(token.iv, "base64"));
+  decipher.setAuthTag(Buffer.from(token.tag, "base64"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(token.ciphertext, "base64")),
+    decipher.final(),
+  ]).toString("utf8");
+}
+
+async function writeManifest(
+  dataRoot: string,
+  key: Buffer,
+  manifest: LocalSidecarManifest,
+): Promise<void> {
+  const target = manifestPath(dataRoot, manifest.allocationId);
+  const temp = `${target}.${randomBytes(6).toString("hex")}.tmp`;
+  const stored: StoredManifest = { ...manifest, token: encryptToken(key, manifest.token) };
+  await fs.mkdir(manifestsDir(dataRoot), { recursive: true });
+  try {
+    await fs.writeFile(temp, JSON.stringify(stored), { mode: 0o600 });
+    await fs.rename(temp, target);
+  } catch (error) {
+    await fs.rm(temp, { force: true });
+    throw error;
+  }
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+/** Reads and decrypts every allocation manifest a previous hub process left behind. */
+export async function readLocalSidecarManifests(
+  dataRoot: string,
+  manifestEncryptionKey: string,
+): Promise<LocalSidecarManifest[]> {
+  const key = parseKey(manifestEncryptionKey);
+  let entries: string[];
+  try {
+    entries = await fs.readdir(manifestsDir(dataRoot));
+  } catch (error) {
+    if (isMissing(error)) return [];
+    throw error;
+  }
+  const manifests: LocalSidecarManifest[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const file = path.join(manifestsDir(dataRoot), entry);
+    const stored = JSON.parse(await fs.readFile(file, "utf8")) as StoredManifest;
+    manifests.push({ ...stored, token: decryptToken(key, stored.token) });
+  }
+  return manifests;
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -134,11 +239,13 @@ async function settle(operation: Promise<unknown>): Promise<void> {
 export function createLocalProcessSidecarProvisioner({
   dataRoot,
   spawnSidecar,
+  manifestEncryptionKey,
   stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
 }: CreateLocalProcessSidecarProvisionerOpts): LocalProcessSidecarProvisioner {
   if (stopTimeoutMs <= 0) {
     throw new Error("Local sidecar stop timeout must be positive");
   }
+  const key = parseKey(manifestEncryptionKey);
 
   const allocations = new Map<string, AllocationState>();
   const operations = new Map<string, Promise<void>>();
@@ -172,7 +279,7 @@ export function createLocalProcessSidecarProvisioner({
     return pending;
   }
 
-  async function stopAndRemove(
+  async function stopProcess(
     state: Extract<AllocationState, { kind: "live" }>,
   ): Promise<void> {
     if (!state.process.exited) {
@@ -190,6 +297,14 @@ export function createLocalProcessSidecarProvisioner({
         }
       }
     }
+  }
+
+  async function stopAndRemove(
+    allocationId: string,
+    state: Extract<AllocationState, { kind: "live" }>,
+  ): Promise<void> {
+    await stopProcess(state);
+    await fs.rm(manifestPath(dataRoot, allocationId), { force: true });
     await fs.rm(state.dataDir, { recursive: true, force: true });
   }
 
@@ -242,28 +357,45 @@ export function createLocalProcessSidecarProvisioner({
       };
     }
     if (existing?.kind === "live") {
-      await stopAndRemove(existing);
+      await stopAndRemove(request.allocationId, existing);
     }
 
     await fs.mkdir(dataRoot, { recursive: true });
     const dataDir = await fs.mkdtemp(
       path.join(dataRoot, `${request.allocationId}-`),
     );
+    let live: Extract<AllocationState, { kind: "live" }> | undefined;
     try {
       request.signal?.throwIfAborted();
       const handle = spawnSidecar({ request, dataDir });
       const managed: ManagedProcess = { handle, exited: false };
       void trackExit(managed);
-      allocations.set(request.allocationId, {
+      live = {
         kind: "live",
         generation: request.generation,
         sidecarId: request.sidecarId,
         dataDir,
         process: managed,
+      };
+      allocations.set(request.allocationId, live);
+      await writeManifest(dataRoot, key, {
+        allocationId: request.allocationId,
+        generation: request.generation,
+        sidecarId: request.sidecarId,
+        tenantId: request.tenantId,
+        anchorRunId: request.anchorRunId,
+        hubWebSocketUrl: request.hubWebSocketUrl,
+        dataDir,
+        token: request.token,
       });
       return { kind: "accepted" as const, externalRef: String(handle.pid) };
     } catch (error) {
-      await fs.rm(dataDir, { recursive: true, force: true });
+      if (live === undefined) {
+        await fs.rm(dataDir, { recursive: true, force: true });
+      } else {
+        allocations.delete(request.allocationId);
+        await stopAndRemove(request.allocationId, live);
+      }
       return {
         kind: "rejected" as const,
         code: "spawn_failed",
@@ -284,7 +416,7 @@ export function createLocalProcessSidecarProvisioner({
       return { kind: "destroyed" as const };
     }
     if (existing?.kind === "live") {
-      await stopAndRemove(existing);
+      await stopAndRemove(request.allocationId, existing);
     }
     allocations.set(request.allocationId, {
       kind: "destroyed",
@@ -309,19 +441,19 @@ export function createLocalProcessSidecarProvisioner({
     },
   };
 
+  // Data dirs and manifests survive shutdown so the next hub boot can respawn.
   async function stopAll(): Promise<void> {
     await Promise.all(operations.values());
     const failures: unknown[] = [];
     for (const state of allocations.values()) {
       if (state.kind !== "live") continue;
       try {
-        await stopAndRemove(state);
+        await stopProcess(state);
       } catch (error) {
         failures.push(error);
       }
     }
     allocations.clear();
-    await fs.rm(dataRoot, { recursive: true, force: true });
     if (failures.length > 0) {
       throw new AggregateError(
         failures,
