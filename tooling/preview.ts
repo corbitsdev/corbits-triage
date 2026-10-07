@@ -34,6 +34,7 @@ function factsFor(n: number, openPrs: Pull[]): PrFacts {
   const pr: PrData = {
     title: p.title, body: p.body, author: p.user?.login, sha: p.head?.sha, state: p.state, draft: p.draft,
     mergeable: p.mergeable, requestedReviewers: (p.requested_reviewers?.length ?? 0) + (p.requested_teams?.length ?? 0),
+    reviewers: [...(p.requested_reviewers ?? []).map((u: any) => u.login), ...(p.requested_teams ?? []).map((t: any) => t.slug)],
     additions: p.additions, deletions: p.deletions, changedFiles: p.changed_files,
   };
   const checks = ghOne<{ check_runs: CheckRun[] }>(`repos/${repo}/commits/${p.head.sha}/check-runs`).check_runs;
@@ -65,7 +66,7 @@ const rows = [];
 for (const { number } of open.sort((a, b) => a.number - b.number)) {
   const facts = factsFor(number, open);
   const det = deriveState(facts, undefined, pack);
-  const v = renderVerdict({ author: facts.author, det, ...(await judge(facts, det)) });
+  const v = renderVerdict({ author: facts.author, det, reviewers: facts.reviewers, ...(await judge(facts, det)) });
   rows.push({
     pr: `#${number}`,
     title: facts.title.slice(0, 40),
@@ -74,7 +75,8 @@ for (const { number } of open.sort((a, b) => a.number - b.number)) {
     model: det.needsJudgment ? "asked" : "-",
     score: v.confidence === "unknown" ? "-" : v.confidence,
     failing: v.checks.filter((c) => c.result === "fail").map((c) => c.check).join(", "),
-    comment: v.feedback.replace(/^Thanks @\S+ /, "").replaceAll("\n", " | "),
+    next: `${v.actor}: ${v.nextAction}`,
+    comment: v.feedback ? v.feedback.replaceAll("\n", " | ") : "none",
     degraded: v.degraded ?? "",
   });
 }

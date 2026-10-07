@@ -9,6 +9,7 @@ export interface PrData {
   draft?: boolean;
   mergeable?: boolean | null;
   requestedReviewers?: number;
+  reviewers?: string[];
   additions?: number;
   deletions?: number;
   changedFiles?: number;
@@ -71,6 +72,7 @@ export function buildFacts(
     checks: summarizeChecks(checks),
     failingChecks: checks.filter(failed).flatMap((r) => (r.name ? [r.name] : [])),
     requestedReviewers: Number(pr.requestedReviewers ?? 0),
+    reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested: reviewersWith(latest, "CHANGES_REQUESTED"),
     openPrs,

@@ -22,6 +22,7 @@ export interface PrFacts {
   checks: "success" | "failure" | "pending" | "none";
   failingChecks?: string[];
   requestedReviewers: number;
+  reviewers?: string[];
   approvals: number;
   changesRequested?: string[];
   openPrs: Array<{ number: number; title: string }>;
