@@ -72,6 +72,7 @@ const PortalContext = createContext<PortalContextValue | null>(null);
 
 const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
   comment: "Commented on",
+  labels: "Labeled",
   review: "Reviewed",
   merge: "Merged",
   close: "Closed",

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
@@ -260,6 +261,57 @@ function SliverTabButton({ id, label, current, onSelect }: { id: SliverTab; labe
   );
 }
 
+function RecommendedComment({ item, posted, onPosted, onDismiss }: {
+  item: PrItem;
+  posted: boolean;
+  onPosted: () => void;
+  onDismiss: () => void;
+}) {
+  const { writeGithub } = usePortal();
+  const queryClient = useQueryClient();
+  const [body, setBody] = useState(item.comment ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function post() {
+    if (item.number === null) return;
+    if (!body.trim()) {
+      setError("Comment must not be empty.");
+      return;
+    }
+    setBusy(true);
+    try {
+      setError("");
+      await writeGithub({ action: "comment", repo: item.repo, number: item.number, body });
+      if (item.labels.length > 0) await writeGithub({ action: "labels", repo: item.repo, number: item.number, labels: item.labels });
+      onPosted();
+      await queryClient.invalidateQueries({ queryKey: ["github-pull"] });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (posted) return <p role="status" className="pr-composer muted">Recommended comment posted.</p>;
+  return (
+    <section className="pr-composer" aria-label="Recommended comment">
+      <h2>Recommended comment</h2>
+      <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={5} aria-label="Recommended comment" />
+      {item.labels.length > 0 ? (
+        <div className="chips" aria-label="Recommended labels">
+          {item.labels.map((label) => <span className="chip" key={label}>{label}</span>)}
+        </div>
+      ) : null}
+      {error && <p role="alert" className="error">{error}</p>}
+      <div className="pr-actions-row">
+        <button type="button" className="btn primary" disabled={busy} onClick={() => void post()}>Post</button>
+        <button type="button" className="btn" disabled={busy} onClick={onDismiss}>Dismiss</button>
+      </div>
+    </section>
+  );
+}
+
 export default function PRDetail() {
   const params = useParams();
   const { snapshot, decide, closeDuplicate, writeGithub, readOnly } = usePortal();
@@ -284,6 +336,15 @@ export default function PRDetail() {
   const floor = snapshot?.config?.confidenceFloor ?? 0.7;
   const mergeable = pull.data?.pr.mergeable ?? item?.mergeable ?? null;
   const canMerge = mergeable === true && (pull.data?.pr.draft ?? item?.draft) !== true;
+  const [handled, setHandled] = useState<Record<string, "posted" | "dismissed">>({});
+  const head = pull.data?.pr.sha ?? item?.sha ?? "";
+  const handledKey = `${item?.key}@${head}`;
+  const repoRecord = snapshot?.repos.find((row) => row.name === item?.repo);
+  const recommended = item?.comment?.trim() ?? "";
+  const showRecommended = Boolean(
+    recommended && item?.number && !readOnly && repoRecord?.cleanupMode !== "automated" && handled[handledKey] !== "dismissed",
+  );
+  const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
   const moreRef = useRef<HTMLDetailsElement>(null);
   const score = item?.confidence === null || item?.confidence === undefined
     ? "No score"
@@ -505,6 +566,15 @@ export default function PRDetail() {
               <button type="button" className="btn" disabled={busy} onClick={() => setComposer(null)}>Cancel</button>
             </div>
           </form>
+        ) : null}
+        {showRecommended ? (
+          <RecommendedComment
+            key={handledKey}
+            item={item}
+            posted={recommendedPosted}
+            onPosted={() => setHandled({ ...handled, [handledKey]: "posted" })}
+            onDismiss={() => setHandled({ ...handled, [handledKey]: "dismissed" })}
+          />
         ) : null}
         {error && <p role="alert" className="error">{error}</p>}
         <main id="main" className="content content-pr-shell">
