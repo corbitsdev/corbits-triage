@@ -165,6 +165,19 @@ export async function loadBridgeHook(
   return { credentialId: row.id, credentialName: row.name, tenantId: row.tenantId, secret, workflow };
 }
 
+async function appBotLogin(db: DB["db"], tenantId: string): Promise<string> {
+  const { credential } = schema;
+  const row = await db.query.credential.findFirst({ where: and(eq(credential.tenantId, tenantId), eq(credential.name, "github")) });
+  const slug = asRecord(row?.metadata)?.["appSlug"];
+  if (typeof slug !== "string" || slug === "") throw new Error("github app credential has no appSlug");
+  return `${slug}[bot]`;
+}
+
+function isSentBy(payload: unknown, login: string): boolean {
+  const sender = asRecord(asRecord(payload)?.["sender"]);
+  return sender?.["type"] === "Bot" && sender["login"] === login;
+}
+
 function json(status: number, body: unknown): Response {
   return Response.json(body, { status });
 }
@@ -455,6 +468,18 @@ export function createBridgeHandler(d: BridgeDeps) {
     const mail = normalize(event, delivery, payload as Record<string, unknown>);
     if (!mail || mail.prNumber === null) {
       log({ level: "info", msg: "ignored", delivery, event, hook: loaded.credentialId });
+      return json(202, { status: "ignored" });
+    }
+    let botLogin: string;
+    try {
+      botLogin = await appBotLogin(d.db, loaded.tenantId);
+    } catch (err) {
+      d.cache.forget(`${loaded.credentialId}:${delivery}`);
+      log({ level: "error", msg: "app_slug_unavailable", delivery, event, hook: loaded.credentialId, error: String(err) });
+      return json(500, { error: "app_slug_unavailable" });
+    }
+    if (isSentBy(payload, botLogin)) {
+      log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "own_event" });
       return json(202, { status: "ignored" });
     }
     let tenantConfig: unknown;
