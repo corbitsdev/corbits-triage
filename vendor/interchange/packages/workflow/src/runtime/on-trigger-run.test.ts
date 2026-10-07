@@ -73,7 +73,7 @@ function midApprovalSeed(
       seq: 3,
       at,
       stepId: "section",
-      childRunId: "section__0",
+      childRunId: `${runId}__section__0`,
       childDefinitionRef: "body-ref",
     },
     {
@@ -132,7 +132,7 @@ function midSignalRelaySeed(
       seq: 3,
       at,
       stepId: "section",
-      childRunId: "section__0",
+      childRunId: `${runId}__section__0`,
       childDefinitionRef: "body-ref",
     },
     {
@@ -186,7 +186,7 @@ function midSleepSeed(runId: string): WorkflowEvent[] {
       seq: 3,
       at,
       stepId: "section",
-      childRunId: "section__0",
+      childRunId: `${runId}__section__0`,
       childDefinitionRef: "body-ref",
     },
   ];
@@ -384,7 +384,7 @@ describe("runOnTrigger", () => {
     expect(spawnInputs).toEqual([{ text: "event-0" }, { text: "event-1" }]);
     expect(
       log.flatMap((e) => (e.kind === "ChildSpawned" ? [e.childRunId] : [])),
-    ).toEqual(["section__0", "section__1"]);
+    ).toEqual([`${runId}__section__0`, `${runId}__section__1`]);
 
     await run.cancel("supervisor-operator", "test done");
     await run.complete.catch(() => undefined);
@@ -549,8 +549,8 @@ describe("runOnTrigger", () => {
     await repoStore.appendBatch(runId, seed);
     // The body child's own log leaves its sleep step parked in `awaiting-timer`.
     await repoStore.appendBatch(
-      "section__0",
-      bodyChildLog("section__0", { phase: "awaiting-timer" }),
+      `${runId}__section__0`,
+      bodyChildLog(`${runId}__section__0`, { phase: "awaiting-timer" }),
     );
     const channel = createInMemorySignalChannel();
     let spawned = false;
@@ -602,8 +602,8 @@ describe("runOnTrigger", () => {
     const repoStore = createInMemoryRepoStore();
     await repoStore.appendBatch(runId, seed);
     await repoStore.appendBatch(
-      "section__0",
-      bodyChildLog("section__0", { phase: "in-flight-fired" }),
+      `${runId}__section__0`,
+      bodyChildLog(`${runId}__section__0`, { phase: "in-flight-fired" }),
     );
     const channel = createInMemorySignalChannel();
     let spawned = false;
@@ -647,8 +647,8 @@ describe("runOnTrigger", () => {
     // relay await never flushed. Re-adopting it would re-park the body on a
     // signal the container never relays -- a hang -- so resume must fail loud.
     await repoStore.appendBatch(
-      "section__0",
-      bodyChildLog("section__0", {
+      `${runId}__section__0`,
+      bodyChildLog(`${runId}__section__0`, {
         phase: "awaiting-signal",
         signalName: "author-go",
       }),
@@ -700,8 +700,8 @@ describe("runOnTrigger", () => {
     // case, re-adopting it re-parks the body silently on a decision the container
     // will never relay -- a hang -- so resume must fail loud, not re-adopt.
     await repoStore.appendBatch(
-      "section__0",
-      bodyChildLog("section__0", {
+      `${runId}__section__0`,
+      bodyChildLog(`${runId}__section__0`, {
         phase: "awaiting-signal",
         signalName: signalName("body-corr"),
       }),
@@ -752,8 +752,8 @@ describe("runOnTrigger", () => {
     // re-throws that rejection, so it is loud -- `tolerate` re-arms only on a
     // RETURNED failed terminal, never on a rejection.
     await repoStore.appendBatch(
-      "section__0",
-      bodyChildLog("section__0", { phase: "in-flight" }),
+      `${runId}__section__0`,
+      bodyChildLog(`${runId}__section__0`, { phase: "in-flight" }),
     );
     const channel = createInMemorySignalChannel();
     const spawnSuspendableChild: SpawnSuspendableChild = async () => ({
@@ -868,14 +868,14 @@ describe("runOnTrigger", () => {
         seq: 3,
         at,
         stepId: "section",
-        childRunId: "section__0",
+        childRunId: `${runId}__section__0`,
         childDefinitionRef: "body-ref",
       },
       {
         kind: "ChildCompleted",
         seq: 4,
         at,
-        childRunId: "section__0",
+        childRunId: `${runId}__section__0`,
         terminalStatus: "completed",
       },
       {
@@ -928,7 +928,7 @@ describe("runOnTrigger", () => {
     const log = await repoStore.read(runId);
     expect(
       log.flatMap((e) => (e.kind === "ChildSpawned" ? [e.childRunId] : [])),
-    ).toEqual(["section__0", "section__1"]);
+    ).toEqual([`${runId}__section__0`, `${runId}__section__1`]);
     expect(log.filter((e) => e.kind === "ChildSpawned").length).toBe(2);
 
     await run.cancel("supervisor-operator", "test done");
@@ -966,14 +966,14 @@ describe("runOnTrigger", () => {
         seq: 3,
         at,
         stepId: "section",
-        childRunId: "section__0",
+        childRunId: `${runId}__section__0`,
         childDefinitionRef: "body-ref",
       },
       {
         kind: "ChildCompleted",
         seq: 4,
         at,
-        childRunId: "section__0",
+        childRunId: `${runId}__section__0`,
         terminalStatus: "completed",
       },
       {
@@ -997,14 +997,14 @@ describe("runOnTrigger", () => {
         seq: 7,
         at,
         stepId: "section",
-        childRunId: "section__1",
+        childRunId: `${runId}__section__1`,
         childDefinitionRef: "body-ref",
       },
       {
         kind: "ChildCompleted",
         seq: 8,
         at,
-        childRunId: "section__1",
+        childRunId: `${runId}__section__1`,
         terminalStatus: "completed",
       },
     ];
@@ -1040,7 +1040,7 @@ describe("runOnTrigger", () => {
     const mid = await repoStore.read(runId);
     expect(
       mid.flatMap((e) => (e.kind === "ChildSpawned" ? [e.childRunId] : [])),
-    ).toEqual(["section__0", "section__1"]);
+    ).toEqual([`${runId}__section__0`, `${runId}__section__1`]);
     expect(spawnInputs).toEqual([]);
 
     // A genuinely new event-2 delivery on the fresh channel spawns section__2.
@@ -1049,7 +1049,11 @@ describe("runOnTrigger", () => {
     const log = await repoStore.read(runId);
     expect(
       log.flatMap((e) => (e.kind === "ChildSpawned" ? [e.childRunId] : [])),
-    ).toEqual(["section__0", "section__1", "section__2"]);
+    ).toEqual([
+      `${runId}__section__0`,
+      `${runId}__section__1`,
+      `${runId}__section__2`,
+    ]);
     expect(spawnInputs).toEqual([{ text: "event-2" }]);
 
     await run.cancel("supervisor-operator", "test done");
@@ -1564,14 +1568,14 @@ describe("runOnTrigger onBodyFailure: tolerate", () => {
         seq: 3,
         at,
         stepId: "section",
-        childRunId: "section__0",
+        childRunId: `${runId}__section__0`,
         childDefinitionRef: "body-ref",
       },
       {
         kind: "ChildCompleted",
         seq: 4,
         at,
-        childRunId: "section__0",
+        childRunId: `${runId}__section__0`,
         terminalStatus: "failed",
       },
       {
@@ -1618,7 +1622,7 @@ describe("runOnTrigger onBodyFailure: tolerate", () => {
     expect(log.some((e) => e.kind === "RunFailed")).toBe(false);
     expect(
       log.flatMap((e) => (e.kind === "ChildSpawned" ? [e.childRunId] : [])),
-    ).toContain("section__1");
+    ).toContain(`${runId}__section__1`);
 
     await run.cancel("supervisor-operator", "test done");
     await run.complete.catch(() => undefined);

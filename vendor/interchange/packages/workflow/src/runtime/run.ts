@@ -2484,7 +2484,7 @@ async function runOnTrigger(
     // after a crash. Reconstruct the drive position from the reduced state and
     // the log rather than re-running from event 0.
     const log = await env.repoStore.read(runId);
-    const plan = await planOnTriggerResume(env, primitive, initial, log);
+    const plan = await planOnTriggerResume(env, runId, primitive, initial, log);
     switch (plan.kind) {
       case "fresh":
         eventIndex = 0;
@@ -2494,7 +2494,7 @@ async function runOnTrigger(
         // The body already ended non-`completed` before the crash; end the
         // section the same way the steady-state loop does.
         throw new Error(
-          `onTrigger ${primitive.id} body run ${primitive.id}__${String(plan.eventIndex)} ended ${plan.terminalStatus}`,
+          `onTrigger ${primitive.id} body run ${runId}__${primitive.id}__${String(plan.eventIndex)} ended ${plan.terminalStatus}`,
         );
       case "reestablish-approval":
         eventIndex = plan.eventIndex;
@@ -2573,7 +2573,7 @@ async function runOnTrigger(
   }
 
   while (true) {
-    const childRunId = `${primitive.id}__${String(eventIndex)}`;
+    const childRunId = `${runId}__${primitive.id}__${String(eventIndex)}`;
     let resume: SuspendableOccurrenceResume | undefined;
     if (resumeApproval !== undefined) {
       resume = {
@@ -2977,11 +2977,12 @@ function bodyParkedSignals(childState: RunState): {
 
 async function planOnTriggerResume(
   env: WorkflowRuntimeEnv,
+  runId: string,
   primitive: OnTriggerPrimitive,
   state: RunState,
   log: readonly WorkflowEvent[],
 ): Promise<OnTriggerResumePlan> {
-  const prefix = `${primitive.id}__`;
+  const prefix = `${runId}__${primitive.id}__`;
   let eventIndex = -1;
   for (const childRunId of state.children.keys()) {
     if (!childRunId.startsWith(prefix)) continue;
