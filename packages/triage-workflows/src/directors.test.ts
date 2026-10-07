@@ -157,13 +157,7 @@ describe("mirror director cleanup mode", () => {
     ]]);
   });
 
-  test("human-approved still uses the ask tool", async () => {
-    expect(await mirrorCalls({ ...verdict, cleanupMode: "human-approved" })).toEqual([[
-      {
-        id: "github_mirror:acme/widgets#8",
-        name: "github_mirror",
-        arguments: request,
-      },
-    ]]);
+  test("human-approved never calls a tool", async () => {
+    expect(await mirrorCalls({ ...verdict, cleanupMode: "human-approved" })).toEqual([]);
   });
 });

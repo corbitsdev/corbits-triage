@@ -134,11 +134,7 @@ function batcher(caps: ReactorCapabilities) {
     results.set(result.callId, result);
     return --outstanding > 0 ? [] : then(results);
   }
-  function expect(n: number) {
-    outstanding = n;
-    results = new Map();
-  }
-  return { run, settle, expect };
+  return { run, settle };
 }
 
 function call(name: string, args: Record<string, unknown>, id = name): ToolCall {
@@ -316,7 +312,7 @@ function renderDirector(caps: ReactorCapabilities): ReactorDirector {
   };
 }
 
-/** github_mirror is approval-gated, so the parked call's outcome can arrive after a director rebuild; results are keyed by call id alone. */
+/** Only automated repos mirror: a run parked on approval loses state across restarts, so other verdicts leave `request` for the portal to post. */
 function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   let batch = false;
@@ -327,9 +323,8 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   }
 
   function mirrorCall(v: Verdict): ToolCall {
-    const tool = v.cleanupMode === "automated" ? "github_mirror_auto" : "github_mirror";
     const r = v.request;
-    return call(tool, { repo: r.repo, number: r.number, labels: r.labels, comment: r.comment, close: false }, `${tool}:${r.repo}#${r.number}`);
+    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, comment: r.comment, close: false }, `github_mirror_auto:${r.repo}#${r.number}`);
   }
 
   return {
@@ -340,17 +335,11 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
           if (!input) return caps.reply(JSON.stringify({ skipped: true, reason: "mirror: input is not JSON" }));
           const parsed = verdictsOf(input);
           batch = parsed.batch;
-          const mirrored = parsed.verdicts.filter((v) => v.mirror === true && v.request);
+          const mirrored = parsed.verdicts.filter((v) => v.mirror === true && v.request && v.cleanupMode === "automated");
           if (!mirrored.length) return caps.reply(JSON.stringify({ skipped: true }));
           return b.run(mirrored.map(mirrorCall), finish);
         }
         case "tool.done":
-          return b.settle(event.result);
-        case "resume.execute_tools":
-          b.expect(event.calls.length);
-          return caps.executeTools(event.calls, false, true);
-        case "resume.tool_result":
-          b.expect(1);
           return b.settle(event.result);
         case "abort":
         case "inference.error":
