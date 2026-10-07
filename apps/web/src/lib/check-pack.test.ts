@@ -79,7 +79,7 @@ describe("check-pack client", () => {
     };
     const pack = recommendedPack("acme/widgets");
     await saveCheckPack(transport(store), "tenant", "acme/widgets", pack, { cleanupMode: "human-approved" });
-    expect(JSON.parse(store.artifacts[0]!.content).checks.size).toEqual({ enabled: true, maxFiles: 40, maxLines: 500 });
+    expect(JSON.parse(store.artifacts[0]!.content).checks.size).toEqual({ enabled: true, maxFiles: 20, maxLines: 500 });
     const ns = store.config.corbitsTriage as { repos: Array<Record<string, unknown>> };
     expect(ns.repos[0]).toMatchObject({
       name: "acme/widgets",

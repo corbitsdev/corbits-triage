@@ -189,7 +189,7 @@ describe("bridge handler", () => {
         policy: expect.objectContaining({
           cleanupMode: "human-approved",
           classificationAuthorized: true,
-          checks: { draft: true, ci: true, duplicate: true, conflicts: true, reviewers: true, drift: true },
+          checks: { draft: true, ci: true, duplicate: true, conflicts: true, reviewers: false, drift: true },
         }),
       }),
     }]);

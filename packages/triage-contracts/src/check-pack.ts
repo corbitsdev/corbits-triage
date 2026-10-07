@@ -21,10 +21,10 @@ export const CATALOG_IDS = [
 ] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
-export const MACHINE_CHECK_IDS = ["draft", "size", "duplicate", "reviewers", "conflicts", "drift", "ci", "paths"] as const;
+export const MACHINE_CHECK_IDS = ["draft", "size", "duplicate", "issue", "reviewers", "conflicts", "drift", "ci", "paths"] as const;
 export type MachineCheckId = (typeof MACHINE_CHECK_IDS)[number];
 
-export const QUALITY_CHECK_IDS = ["focused", "docs", "issue", "tests"] as const;
+export const QUALITY_CHECK_IDS = ["focused", "docs", "tests"] as const;
 export type QualityCheckId = (typeof QUALITY_CHECK_IDS)[number];
 
 export const ISSUE_TRACKERS = ["github", "linear", "either", "off"] as const;
@@ -36,7 +36,7 @@ export const CHECK_CATALOG: Record<CatalogId, { group: CheckPackGroup; kind: "ma
   duplicate: { group: "pull-request", kind: "machine" },
   focused: { group: "pull-request", kind: "quality" },
   docs: { group: "pull-request", kind: "quality" },
-  issue: { group: "issue", kind: "quality" },
+  issue: { group: "issue", kind: "machine" },
   reviewers: { group: "around", kind: "machine" },
   conflicts: { group: "around", kind: "machine" },
   drift: { group: "around", kind: "machine" },
@@ -45,7 +45,7 @@ export const CHECK_CATALOG: Record<CatalogId, { group: CheckPackGroup; kind: "ma
   paths: { group: "code-vs-ci", kind: "machine" },
 };
 
-export const RECOMMENDED_SIZE = { maxFiles: 40, maxLines: 500 } as const;
+export const RECOMMENDED_SIZE = { maxFiles: 20, maxLines: 500 } as const;
 export const RECOMMENDED_DRIFT = { maxBehindBy: 50 } as const;
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either", requireLabel: false, label: "" } as const;
@@ -129,7 +129,7 @@ export function recommendedPack(repo: string): CheckPack {
         requireLabel: RECOMMENDED_ISSUE.requireLabel,
         label: RECOMMENDED_ISSUE.label,
       },
-      reviewers: { enabled: true },
+      reviewers: { enabled: false },
       conflicts: { enabled: true },
       drift: { enabled: true, maxBehindBy: RECOMMENDED_DRIFT.maxBehindBy },
       ci: { enabled: true },
