@@ -317,6 +317,11 @@ export async function createIssueComment(gh: GithubFetch, input: CreateIssueComm
   return { commentId: posted.id };
 }
 
+export async function addLabels(gh: GithubFetch, input: { repo: string; number: number; labels: string[] }) {
+  await json(gh, `/repos/${input.repo}/issues/${input.number}/labels`, send("POST", { labels: input.labels }));
+  return { labels: input.labels };
+}
+
 export type MergePrInput = {
   repo: string;
   number: number;
