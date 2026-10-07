@@ -20,6 +20,12 @@ const FAILURES: Record<QualityCheckId, string> = {
   tests: "tests are not added or updated",
 };
 
+const PASSES: Record<QualityCheckId, string> = {
+  focused: "makes one focused change",
+  docs: "documentation is up to date",
+  tests: "tests cover the change",
+};
+
 const MAX_BODY = 4000;
 const MAX_PATHS = 200;
 const MAX_COMMITS = 50;
@@ -51,4 +57,10 @@ export function failureText(id: string, sources: NonNullable<DeterministicResult
   if (id in FAILURES) return FAILURES[id as QualityCheckId];
   const custom = sources.custom[Number(id.slice("custom-".length)) - 1];
   return custom ? `does not meet "${custom.name}"` : `does not pass ${id}`;
+}
+
+export function passText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {
+  if (id in PASSES) return PASSES[id as QualityCheckId];
+  const custom = sources.custom[Number(id.slice("custom-".length)) - 1];
+  return custom ? `meets "${custom.name}"` : `passes ${id}`;
 }

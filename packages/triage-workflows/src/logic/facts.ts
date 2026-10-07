@@ -14,6 +14,7 @@ export interface PrData {
   changedFiles?: number;
 }
 export interface CheckRun {
+  name?: string;
   status?: string;
   conclusion?: string | null;
 }
@@ -24,9 +25,13 @@ export interface Review {
 
 const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required"]);
 
+function failed(run: CheckRun): boolean {
+  return run.conclusion !== undefined && run.conclusion !== null && FAILED.has(run.conclusion);
+}
+
 export function summarizeChecks(runs: CheckRun[]): PrFacts["checks"] {
   if (!runs.length) return "none";
-  if (runs.some((r) => r.conclusion && FAILED.has(r.conclusion))) return "failure";
+  if (runs.some(failed)) return "failure";
   if (runs.some((r) => r.status !== "completed")) return "pending";
   return "success";
 }
@@ -59,6 +64,7 @@ export function buildFacts(
     mergeable: pr.mergeable ?? null,
     baseBehindBy: 0,
     checks: summarizeChecks(checks),
+    failingChecks: checks.filter(failed).flatMap((r) => (r.name ? [r.name] : [])),
     requestedReviewers: Number(pr.requestedReviewers ?? 0),
     approvals: countApprovals(reviews),
     openPrs,

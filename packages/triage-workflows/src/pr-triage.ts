@@ -4,6 +4,8 @@ import { credentialBindings, grantRequirements, factsAgent, judgeAgent, mirrorAg
 // Transient failures must not fail the body; the section also tolerates a failed body and re-arms for the next mail.
 const STEP = { retry: { maxAttempts: 3, initialBackoffMs: 5_000, maxBackoffMs: 60_000 }, timeout: 15 * 60_000 } as const;
 
+export type { CheckResult } from "./logic/checks.js";
+
 export const PR_TRIAGE_ADDRESS = "pr-triage";
 
 // Each step's output is `{ reply, turn }`; the JSON travels in `reply`, so downstream steps project it whole.
