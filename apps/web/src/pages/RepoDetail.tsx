@@ -89,7 +89,7 @@ function CheckControl({ spec, row, onChange }: { spec: CatalogCheck; row: DraftC
 export default function RepoDetail() {
   const params = useParams();
   const navigate = useNavigate();
-  const { snapshot, refreshNow, runBacklog, readOnly } = usePortal();
+  const { snapshot, refreshNow, syncFromGithub, runBacklog, readOnly } = usePortal();
   const fromId = params.id ? ownerAndName(params.id) : null;
   const setupTab = params.tab === "setup";
   const paired = !fromId && params.id && params.tab && params.tab !== "setup"
@@ -120,7 +120,14 @@ export default function RepoDetail() {
   const catchingUp = snapshot ? isRepoCatchingUp(snapshot, config?.name ?? label) : false;
   const backlogFailed = snapshot ? backlogSyncFromConfig(snapshot.config)[config?.name ?? label]?.status === "failed" : false;
   const dirty = packJson(pack) !== packJson(saved) || (needsSetup && customizing);
-  const { arm } = useGithubReturnSync(() => { void refreshNow(); });
+  async function syncAfterGithub() {
+    try {
+      await syncFromGithub();
+    } catch (cause) {
+      setError(`Could not read your repositories from GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  }
+  const { arm } = useGithubReturnSync(() => { void syncAfterGithub(); });
   const tenantId = snapshot?.workspace.tenantId;
 
   useEffect(function loadPack() {

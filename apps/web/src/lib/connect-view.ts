@@ -47,18 +47,3 @@ export function hasVerifiedWebhookDelivery(logs: LogLike[], repo: string): boole
 export function hasObservedInference(items: Array<{ confidence: number | null }>): boolean {
   return items.some((item) => typeof item.confidence === "number" && Number.isFinite(item.confidence));
 }
-
-export async function pollUntil(
-  ready: () => Promise<boolean>,
-  options: { attempts?: number; delayMs?: number } = {},
-): Promise<boolean> {
-  const attempts = options.attempts ?? 24;
-  const delayMs = options.delayMs ?? 500;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (await ready()) return true;
-    if (attempt < attempts - 1 && delayMs > 0) {
-      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-  return false;
-}

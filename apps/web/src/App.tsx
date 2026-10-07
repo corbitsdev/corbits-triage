@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { PortalProvider, usePortal } from "./lib/portal.tsx";
 import { SessionProvider, useSession } from "./lib/session.tsx";
 import { DeniedNotice } from "./lib/denied.tsx";
@@ -42,6 +42,34 @@ function HubOutage({ message }: { message: string }) {
       </section>
     </div>
   );
+}
+
+/** GitHub's Setup URL return for a workspace that is already set up (often inside the install popup). */
+function GithubReturn() {
+  const { syncFromGithub } = usePortal();
+  const navigate = useNavigate();
+  const [error, setError] = useState("");
+  const started = useRef(false);
+
+  useEffect(function syncReturnedInstall() {
+    if (started.current) return;
+    started.current = true;
+    async function finish() {
+      try {
+        await syncFromGithub();
+        if (window.opener) {
+          window.close();
+          return;
+        }
+        navigate("/repositories", { replace: true });
+      } catch (cause) {
+        setError(`Could not read your repositories from GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+    }
+    void finish();
+  }, [navigate, syncFromGithub]);
+
+  return error ? <HubOutage message={error} /> : <LoadingGate />;
 }
 
 function LoadingGate() {
@@ -92,6 +120,7 @@ function Gate() {
   }
   if (!connected || !hasDecisionModelCredential(snapshot.credentials) || path === "/connect") return <Connect />;
 
+  if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;
   if (path === "/login" || path === "/") {
     return <Navigate to={snapshot.repos.length > 0 ? "/triage/action" : "/repositories"} replace />;
   }
