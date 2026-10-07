@@ -6,7 +6,7 @@ import {
   githubRead,
   githubWrite,
 } from "../../../../packages/github-tool/src/sidecar-bundle";
-import { createGithubAppCredentialFetch } from "./github-app-credential-adapter";
+import { createGithubAppCredentialFetch, toRequest } from "./github-app-credential-adapter";
 
 const API = "https://api.github.com";
 
@@ -32,7 +32,7 @@ describe("GitHub App credential adapter", () => {
     const apiAuthorizations: string[] = [];
     const calls: string[] = [];
     async function baseFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      const request = new Request(input, init);
+      const request = toRequest(input, init);
       const url = new URL(request.url);
       calls.push(`${request.method} ${url.pathname}${url.search}`);
       const authorization = request.headers.get("authorization") ?? "";
@@ -125,7 +125,7 @@ describe("GitHub App credential adapter", () => {
     const secret = appSecret();
     const calls: string[] = [];
     async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      const request = new Request(input, init);
+      const request = toRequest(input, init);
       const path = new URL(request.url).pathname;
       calls.push(`${request.method} ${path}`);
       if (path === "/repos/acme/one/installation") return Response.json({ id: 101 });
@@ -157,7 +157,7 @@ describe("GitHub App credential adapter", () => {
     const secret = appSecret();
     let mints = 0;
     async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      const request = new Request(input, init);
+      const request = toRequest(input, init);
       const path = new URL(request.url).pathname;
       if (path === "/orgs/acme/installation") return Response.json({ id: 303 });
       if (path === "/app/installations/303/access_tokens") {
@@ -196,7 +196,7 @@ describe("GitHub App credential adapter", () => {
   test("preserves an ordinary non-App bearer for a non-GitHub origin", async () => {
     const authorizations: Array<string | null> = [];
     async function recordAuthorization(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      authorizations.push(new Request(input, init).headers.get("authorization"));
+      authorizations.push(toRequest(input, init).headers.get("authorization"));
       return noContent();
     }
     const adapted = createGithubAppCredentialFetch({ apiOrigin: API, fetch: recordAuthorization });
@@ -211,7 +211,7 @@ describe("GitHub App credential adapter", () => {
     const secret = appSecret();
     const observed: string[] = [];
     async function observe(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      const request = new Request(input, init);
+      const request = toRequest(input, init);
       observed.push(`${request.url}\n${request.headers.get("authorization") ?? ""}`);
       return noContent();
     }
@@ -229,7 +229,7 @@ describe("GitHub App credential adapter", () => {
     const secret = appSecret();
     const seen: Array<{ path: string; authorization: string; selector: string | null }> = [];
     async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      const request = new Request(input, init);
+      const request = toRequest(input, init);
       const path = new URL(request.url).pathname;
       seen.push({ path, authorization: request.headers.get("authorization") ?? "", selector: request.headers.get("x-corbits-github-installation-id") });
       if (path === "/app") return Response.json({ slug: "corbits" });
@@ -251,7 +251,7 @@ describe("GitHub App credential adapter", () => {
     const secret = appSecret();
     const seen: string[] = [];
     async function emulator(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      const request = new Request(input, init);
+      const request = toRequest(input, init);
       seen.push(`${request.method} ${request.url}\n${request.headers.get("authorization") ?? ""}`);
       if (new URL(request.url).pathname === "/app") return Response.json({ slug: "corbits-triage" });
       throw new Error(`unexpected ${request.url}`);
