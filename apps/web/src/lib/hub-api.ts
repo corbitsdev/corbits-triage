@@ -993,7 +993,7 @@ export type GithubPullDetail = {
     sha: string;
     base: string;
     mergeable: boolean | null;
-    requestedReviewers: string[];
+    requestedReviewers: number;
     additions: number;
     deletions: number;
     changedFiles: number;
