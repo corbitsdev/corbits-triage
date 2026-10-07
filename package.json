@@ -26,7 +26,7 @@
   "scripts": {
     "dev": "bun --conditions=intx-src tooling/dev.ts",
     "test": "bun --conditions=intx-src test ./apps/ ./packages/ ./tooling/",
-    "check": "bunx tsc --noEmit -p tooling && bunx tsc -b apps/web && bun tooling/typecheck-hub.ts && bun build --conditions=intx-src apps/hub/src/server.ts --target bun --outfile /dev/null",
+    "check": "tsc --noEmit -p tooling && tsc -b apps/web && tsc --noEmit -p apps/hub && bun build --conditions=intx-src apps/hub/src/server.ts --target bun --outfile /dev/null",
     "holdback": "bun --conditions=intx-src tooling/holdback-replay.ts",
     "injection": "bun --conditions=intx-src tooling/injection-run.ts",
     "report": "bun --conditions=intx-src tooling/cost-latency-report.ts",
@@ -34,7 +34,7 @@
     "vendor:health": "sh tooling/vendor-health-check.sh"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.2",
+    "@types/bun": "1.3.9",
     "typescript": "^7.0.2"
   },
   "dependencies": {
@@ -42,5 +42,8 @@
     "@intx/hub-client": "workspace:*",
     "@intx/inference": "workspace:*",
     "@intx/types": "workspace:*"
+  },
+  "overrides": {
+    "arktype": "2.2.7"
   }
 }

@@ -54,7 +54,7 @@ async function judge(facts: PrFacts, det: RenderInput["det"]): Promise<Pick<Rend
     questions: qualityQuestions(det.sources),
     config: { endpoint, timeoutMs: 30_000 },
   });
-  if ("fallback" in result) return { judgeError: `${result.reason}${result.detail ? `: ${result.detail}` : ""}` };
+  if (result.fallback) return { judgeError: `${result.reason}${result.detail ? `: ${result.detail}` : ""}` };
   const answers: Record<string, number> = {};
   for (const d of result.decisions) if (d.type === "noul") answers[d.id] = d.noul;
   return { answers };
