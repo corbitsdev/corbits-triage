@@ -126,6 +126,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     queryKey: PORTAL_QUERY_KEY,
     enabled,
     refetchOnWindowFocus: true,
+    refetchInterval: 10_000,
     retry: false,
     queryFn: loadSnapshot,
   });

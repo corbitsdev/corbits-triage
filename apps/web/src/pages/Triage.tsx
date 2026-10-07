@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { Search } from "lucide-react";
-import { projectQueue, QUEUE_STATE_LABEL, type PrItem } from "../lib/hub-api.ts";
+import { QUEUE_STATE_LABEL, type PrItem } from "../lib/hub-api.ts";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import { actionLane, filterTriageItems, prHref, relativeTime, sortTriageItems, type TriageBoardView } from "../lib/triage-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
+import { useQueueItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 
@@ -51,7 +52,7 @@ export default function Triage() {
   const view = viewFromPath(location.pathname);
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  const allItems = useMemo(() => (snapshot ? projectQueue(snapshot) : []), [snapshot]);
+  const allItems = useQueueItems();
   const shown = useMemo(function filterShown() {
     const normalized = query.trim().toLowerCase();
     function matchesQuery(item: PrItem): boolean {
@@ -89,11 +90,13 @@ export default function Triage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const triaged = shown.filter((item) => item.state !== "new");
   const board = (
     <div className="board">
-      <Lane title="P0 / P1" items={shown.filter((item) => actionLane(item) === "p01")} />
-      <Lane title="P2" items={shown.filter((item) => actionLane(item) === "p2")} />
-      <Lane title="P3" items={shown.filter((item) => actionLane(item) === "p3")} />
+      <Lane title="P0 / P1" items={triaged.filter((item) => actionLane(item) === "p01")} />
+      <Lane title="P2" items={triaged.filter((item) => actionLane(item) === "p2")} />
+      <Lane title="P3" items={triaged.filter((item) => actionLane(item) === "p3")} />
+      <Lane title="New" items={shown.filter((item) => item.state === "new")} />
     </div>
   );
   const stack = <div className="card-stack">{shown.map((item) => <Card key={item.key} item={item} />)}</div>;

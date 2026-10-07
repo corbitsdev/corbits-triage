@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
-import { projectQueue, QUEUE_STATE_LABEL, type PrItem } from "../lib/hub-api.ts";
+import { useQueueItems } from "../lib/open-pulls.ts";
+import { QUEUE_STATE_LABEL, type PrItem } from "../lib/hub-api.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import {
   approvalHeadline,
@@ -215,7 +216,8 @@ export default function PRDetail() {
   const [filePath, setFilePath] = useState("");
   const [composer, setComposer] = useState<null | { kind: "comment" | "approve" | "changes"; body: string }>(null);
   const id = params.id ?? params.number ?? "";
-  const item = snapshot ? findPrItem(projectQueue(snapshot), params) : undefined;
+  const queueItems = useQueueItems();
+  const item = snapshot ? findPrItem(queueItems, params) : undefined;
   const approval = snapshot?.approvals.find((row) => row.id === (item?.pendingApprovalId ?? id));
   const denied = snapshot?.denied.approvals ?? false;
   const facts = snapshot && item?.number !== null && item ? factsForPr(snapshot.logs, item.repo, item.number) : factsForPr([], "", 0);
