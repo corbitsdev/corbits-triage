@@ -54,7 +54,7 @@ interface PortalContextValue {
   connect: (repo: string) => Promise<void>;
   removeRepo: (repo: string) => Promise<void>;
   changeRepo: (previousRepo: string, repo: string) => Promise<void>;
-  runBacklog: (repo: string) => Promise<void>;
+  runBacklog: (repo: string, message?: string) => Promise<void>;
   runPullRequest: (pullRequest: string, refreshAfter?: boolean) => Promise<void>;
   closeDuplicate: (item: PrItem) => Promise<void>;
   writeGithub: (input: PrGithubWriteInput) => Promise<void>;
@@ -245,11 +245,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   );
 
   const runBacklog = useCallback(
-    async function runBacklog(repo: string) {
+    async function runBacklog(repo: string, message = "Backlog triage started.") {
       const current = requireSnapshot();
       const transport = createHubTransport();
       await startBacklogTriage(transport, current.workspace.tenantId, repo);
-      notify("Backlog triage started.");
+      notify(message);
       refresh();
     },
     [notify, refresh, requireSnapshot],

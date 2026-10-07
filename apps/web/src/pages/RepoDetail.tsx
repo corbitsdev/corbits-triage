@@ -277,6 +277,16 @@ export default function RepoDetail() {
     }
   }
 
+  async function triageAgain() {
+    if (!config) return;
+    setError("");
+    try {
+      await runBacklog(config.name, `Triaging ${items.length} open pull request${items.length === 1 ? "" : "s"}`);
+    } catch (cause) {
+      setError(`Could not triage again. ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  }
+
   async function persist(artifact: ReturnType<typeof checkPackFromDraft>, draft: DraftPack, completingSetup: boolean) {
     if (!snapshot || !config) return;
     setSaving(true);
@@ -548,6 +558,7 @@ export default function RepoDetail() {
                     </dl>
                     <div className="repo-side-actions">
                       <Link className={`btn${needs ? " primary" : ""}`} to={`/triage/action`}>Open triage</Link>
+                      <button type="button" className="btn" disabled={readOnly || deniedRepos || !config} onClick={() => void triageAgain()}>Triage again</button>
                       <button type="button" className="btn" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</button>
                       {config ? <a className="ghost-link" href={`https://github.com/${config.name}`} target="_blank" rel="noreferrer">View on GitHub</a> : null}
                     </div>
