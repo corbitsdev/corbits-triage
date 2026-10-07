@@ -1,4 +1,4 @@
-// Shared gate for portal requests that act on GitHub as the workspace's App.
+// Shared gates for portal requests that act on GitHub as the workspace's App.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
@@ -19,12 +19,8 @@ export function failure(status: number, code: string, message: string): Response
   return Response.json({ error: { code, message } }, { status });
 }
 
-/** The caller's principal and the decrypted App credential, or the error response to return. */
-export async function githubCredentialForPortal(
-  d: PortalCredentialDeps,
-  req: Request,
-  tenantId: string,
-): Promise<{ principalId: string; appJson: string } | Response> {
+/** The signed-in member's principal id, or the error response to return. */
+export async function portalMember(d: PortalCredentialDeps, req: Request, tenantId: string): Promise<string | Response> {
   const trusted = new Set([new URL(req.url).origin, ...d.trustedPortalOrigins]);
   if (!validManifestMutationRequest(req, trusted)) return failure(403, "forbidden", "This request did not come from the portal.");
   const session = await d.getSession(req.headers);
@@ -38,15 +34,24 @@ export async function githubCredentialForPortal(
     ),
   });
   if (!member) return failure(401, "unauthorized", "You are not a member of this workspace.");
+  return member.id;
+}
+
+/** The decrypted App credential when the member holds `action` on it, or the error response to return. */
+export async function githubAppCredential(
+  d: PortalCredentialDeps,
+  principalId: string,
+  tenantId: string,
+  action: "use" | "manage",
+): Promise<string | Response> {
   const credential = await d.db.query.credential.findFirst({
     where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.name, "github"), eq(schema.credential.status, "active")),
   });
   if (!credential) return failure(409, "github_not_connected", "Connect GitHub first.");
-  if (!(await d.authorize(member.id, tenantId, `credential:${credential.id}`, "use"))) {
+  if (!(await d.authorize(principalId, tenantId, `credential:${credential.id}`, action))) {
     return failure(403, "forbidden", "You do not have access to the GitHub App credential.");
   }
-  const appJson = await d.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
-  return { principalId: member.id, appJson };
+  return d.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
 }
 
 /** GitHub fetch that the App credential adapter turns into App-JWT or installation-token calls. */
