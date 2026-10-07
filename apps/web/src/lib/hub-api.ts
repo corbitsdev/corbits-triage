@@ -406,6 +406,20 @@ async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: s
   return parseCheckPack(detail.artifact?.content, repo);
 }
 
+/** The artifact is the source of truth; the config pointer can be lost when a sync re-adds a repository row. */
+async function withPackPointers(transport: Transport, tenantId: string, repos: RepoRecord[]): Promise<RepoRecord[]> {
+  const tid = enc(requireTenantId(tenantId));
+  return Promise.all(repos.map(async function linkExistingPack(repo) {
+    if (repo.checkPack?.name?.trim()) return repo;
+    const title = checkPackName(repo.name);
+    const page = await transport.fetch<{ artifacts?: Array<{ title: string }> }>(
+      "GET",
+      `/api/tenants/${tid}/artifacts?query=${enc(title)}&limit=100`,
+    );
+    return (page.artifacts ?? []).some((row) => row.title === title) ? { ...repo, checkPack: { name: title } } : repo;
+  }));
+}
+
 async function loadRepoPolicy(transport: Transport, tenantId: string, repo: string): Promise<RepoPolicy> {
   const tid = enc(requireTenantId(tenantId));
   const tenant = await transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`);
@@ -1247,7 +1261,7 @@ export async function loadPortal(transport: Transport, workspace: Workspace): Pr
   return {
     workspace,
     tenantName: tenant.value.name,
-    repos: reposFromConfig(tenant.value.config),
+    repos: tenant.denied ? [] : await withPackPointers(transport, tenantId, reposFromConfig(tenant.value.config)),
     config: appConfig(tenant.value.config),
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
