@@ -8,6 +8,7 @@ import {
   GITHUB_CREDENTIAL_NAME,
   GITHUB_HOOK_CREDENTIAL_NAME,
   type HubCredential,
+  type OpenPulls,
 } from "./hub-api.ts";
 import { hubOrigin, requestOrigin } from "./hub-origin.ts";
 import { createHubTransport, type Transport } from "./hub-transport.ts";
@@ -122,6 +123,20 @@ export async function syncGithubInstallations(tenantId: string): Promise<SyncRes
     throw new Error(typeof failure.error?.message === "string" ? failure.error.message : `HTTP ${response.status}`);
   }
   return SyncResult.assert(body);
+}
+
+/** Lists the open pull requests of every connected repository, read live from GitHub. */
+export async function loadOpenPulls(tenantId: string): Promise<OpenPulls> {
+  const response = await fetch(`${requestOrigin()}/api/integrations/github-open-pulls/${encodeURIComponent(tenantId)}`, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  const body: unknown = await response.json();
+  if (!response.ok) {
+    const failure = body as { error?: { message?: unknown } };
+    throw new Error(typeof failure.error?.message === "string" ? failure.error.message : `HTTP ${response.status}`);
+  }
+  return body as OpenPulls;
 }
 
 export function githubAppPickerUrl(slug: string | null): string | null {

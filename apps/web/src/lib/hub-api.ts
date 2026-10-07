@@ -958,6 +958,14 @@ export async function startPullRequestTriage(
   return { runId };
 }
 
+export type OpenPulls = {
+  repos: Array<{
+    repo: string;
+    prs: Array<{ number: number; title: string; author: string; draft: boolean; sha: string; updatedAt: string; labels: string[] }>;
+    error?: string;
+  }>;
+};
+
 export type PrGithubWriteInput =
   | { action: "comment"; repo: string; number: number; body: string }
   | { action: "review"; repo: string; number: number; event: "APPROVE" | "REQUEST_CHANGES"; body: string }
@@ -1270,7 +1278,8 @@ export type QueueState =
   | "needs-author-update"
   | "blocked"
   | "ready"
-  | "stale";
+  | "stale"
+  | "new";
 
 export const QUEUE_STATE_ORDER: QueueState[] = [
   "needs-decision",
@@ -1279,6 +1288,7 @@ export const QUEUE_STATE_ORDER: QueueState[] = [
   "blocked",
   "ready",
   "stale",
+  "new",
 ];
 
 export const QUEUE_STATE_LABEL: Record<QueueState, string> = {
@@ -1288,6 +1298,7 @@ export const QUEUE_STATE_LABEL: Record<QueueState, string> = {
   blocked: "Blocked",
   ready: "Ready · monitoring",
   stale: "Stale — rechecking",
+  new: "Not triaged yet",
 };
 
 export type PrItem = {
@@ -1457,9 +1468,10 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
 /**
  * Queue projection from StepCompleted outputs read inline from the run event
  * logs. Latest run wins per repo#number. Pending github_mirror approvals only
- * overlay needs-human; they never decide the verdict.
+ * overlay needs-human; they never decide the verdict. With the open pull
+ * requests, unseen ones join as "new" and verdicts of closed ones stop needing a human.
  */
-export function projectQueue(snapshot: PortalSnapshot): PrItem[] {
+export function projectQueue(snapshot: PortalSnapshot, openPulls?: OpenPulls): PrItem[] {
   const items = new Map<string, PrItem>();
   const logs = snapshot.logs.map((log, i) => ({ log, i })).sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i);
   for (const { log } of logs) {
@@ -1515,7 +1527,48 @@ export function projectQueue(snapshot: PortalSnapshot): PrItem[] {
       waitingSince: approval.createdAt ?? item.waitingSince,
     });
   }
+  if (openPulls) joinOpenPulls(items, openPulls);
   return [...items.values()];
+}
+
+function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
+  for (const { repo, prs, error } of openPulls.repos) {
+    if (error) continue;
+    const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
+    for (const item of items.values()) {
+      if (item.repo === repo && !open.has(item.key)) items.set(item.key, { ...item, needsHuman: false });
+    }
+    for (const pr of prs) {
+      const key = `${repo}#${pr.number}`;
+      if (items.has(key)) continue;
+      items.set(key, {
+        key,
+        repo,
+        number: pr.number,
+        title: pr.title,
+        author: pr.author,
+        draft: pr.draft,
+        mergeable: null,
+        state: "new",
+        priority: null,
+        owner: null,
+        nextAction: null,
+        confidence: null,
+        evidence: [],
+        labels: pr.labels,
+        comment: null,
+        sha: pr.sha,
+        degraded: null,
+        needsHuman: false,
+        pendingApprovalId: null,
+        runId: null,
+        waitingSince: pr.updatedAt,
+        canClose: false,
+        pendingClose: false,
+        href: canonicalPrHref(repo, pr.number),
+      });
+    }
+  }
 }
 
 function priorityRank(priority: string | null): number {
