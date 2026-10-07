@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "./session.tsx";
@@ -44,7 +45,6 @@ interface PortalContextValue {
   connected: boolean;
   snapshot: PortalSnapshot | null;
   loadError: string;
-  status: string;
   notify: (message: string) => void;
   refresh: () => void;
   refreshNow: () => Promise<PortalSnapshot | null>;
@@ -68,8 +68,6 @@ interface PortalContextValue {
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
 }
 
-const NOTICE_MS = 6000;
-
 const PortalContext = createContext<PortalContextValue | null>(null);
 
 const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
@@ -88,7 +86,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const configured = hubConfigured();
   const queryClient = useQueryClient();
   const enabled = configured && Boolean(session);
-  const [status, setStatus] = useState("");
 
   const loadSnapshot = useCallback(async function loadSnapshot() {
     async function signOutQuietly() {
@@ -122,18 +119,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     });
   }, [loadSnapshot, queryClient]);
   const notify = useCallback(function notify(message: string) {
-    setStatus(message);
+    toast(message);
   }, []);
-
-  useEffect(function dismissNotice() {
-    if (!status) return;
-    const timer = setTimeout(function clearNotice() {
-      setStatus("");
-    }, NOTICE_MS);
-    return function cancelDismiss() {
-      clearTimeout(timer);
-    };
-  }, [status]);
 
   const portalQuery = useQuery({
     queryKey: PORTAL_QUERY_KEY,
@@ -407,7 +394,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         connected: snapshot ? portalConnected(snapshot) : false,
         snapshot,
         loadError,
-        status,
         notify,
         refresh,
         refreshNow,
@@ -437,7 +423,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       readOnly,
       snapshot,
       loadError,
-      status,
       notify,
       refresh,
       refreshNow,

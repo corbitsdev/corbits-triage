@@ -2323,22 +2323,6 @@ textarea {
   letter-spacing: -0.02em;
 }
 
-.toast {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 30;
-  min-height: 40px;
-  padding: 10px 14px;
-  background: var(--rail);
-  color: var(--rail-text);
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  box-shadow: 0 8px 20px rgba(10, 12, 17, 0.28);
-  border-left: 0;
-}
-.toast[hidden] { display: none; }
-body:has(.dirty-bar) .toast { bottom: 80px; }
 
 .mobile-nav { display: none; }
 
