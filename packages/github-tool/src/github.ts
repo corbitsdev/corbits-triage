@@ -128,6 +128,7 @@ export async function getPr(gh: GithubFetch, repo: string, number: number) {
     mergeable: p.mergeable,
     mergeableState: p.mergeable_state,
     requestedReviewers: (p.requested_reviewers?.length ?? 0) + (p.requested_teams?.length ?? 0),
+    reviewers: [...(p.requested_reviewers ?? []).map((u: any) => u.login), ...(p.requested_teams ?? []).map((t: any) => t.slug)],
     additions: p.additions,
     deletions: p.deletions,
     changedFiles: p.changed_files,
@@ -273,8 +274,14 @@ export interface MirrorInput {
 export async function mirror(gh: GithubFetch, i: MirrorInput) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
-  const marker = markerFor(repo, number, pr.head.sha);
-  const body = `${marker}\n${i.comment}`;
+  const posted = i.comment ? await postComment(gh, repo, number, markerFor(repo, number, pr.head.sha), i.comment) : null;
+  await json(gh, `/repos/${repo}/issues/${number}/labels`, send("PUT", { labels: i.labels }));
+  if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
+  return { commentId: posted?.id ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha };
+}
+
+async function postComment(gh: GithubFetch, repo: string, number: number, marker: string, comment: string) {
+  const body = `${marker}\n${comment}`;
   const comments = await json(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
   const existing = comments.find((c: any) => c.body?.startsWith(marker));
   const prior = comments.find((c: any) => c.body?.startsWith(MARKER_PREFIX));
@@ -282,9 +289,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput) {
   const posted = target
     ? await json(gh, `/repos/${repo}/issues/comments/${target.id}`, send("PATCH", { body }))
     : await json(gh, `/repos/${repo}/issues/${number}/comments`, send("POST", { body }));
-  await json(gh, `/repos/${repo}/issues/${number}/labels`, send("PUT", { labels: i.labels }));
-  if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
-  return { commentId: posted.id, updated: Boolean(target), closed: i.close, sha: pr.head.sha };
+  return { id: posted.id, updated: Boolean(target) };
 }
 
 export const REVIEW_EVENTS = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const;
