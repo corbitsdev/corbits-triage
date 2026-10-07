@@ -1,0 +1,3 @@
+{
+  "ignorePatterns": ["vendor/**", "**/dist/**", "**/generated/**", "apps/web/public/workflows/**"]
+}
