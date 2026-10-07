@@ -3,15 +3,14 @@ import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
-import { projectQueue, QUEUE_STATE_LABEL, type PrItem } from "../lib/hub-api.ts";
+import { projectQueue, QUEUE_STATE_LABEL, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
+import { useGithubPull } from "../lib/github-pull.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import {
   approvalHeadline,
-  factsForPr,
   findPrItem,
   formatConfidence,
   relativeTime,
-  type PrFileFact,
 } from "../lib/triage-view.ts";
 
 type SliverTab = "about" | "files" | "commits" | "issue" | "conversation";
@@ -55,7 +54,9 @@ function parseDiff(hunk: string): Array<{ header: string; rows: Array<{ type: st
   return hunks.filter((hk) => hk.rows.length || hk.header);
 }
 
-function DiffViewer({ file }: { file: PrFileFact | undefined }) {
+type PullFile = GithubPullDetail["files"][number];
+
+function DiffViewer({ file }: { file: PullFile | undefined }) {
   if (!file) return <div className="diff-empty"><p>Select a file</p></div>;
   const hunks = parseDiff(file.patch ?? "");
   return (
@@ -88,16 +89,40 @@ function DiffViewer({ file }: { file: PrFileFact | undefined }) {
   );
 }
 
+function errorText(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function IssueList({ issues, pending, error }: { issues: GithubPullDetail["issues"]; pending: boolean; error: unknown }) {
+  if (pending) return <p className="muted">Loading issues…</p>;
+  if (error) return <p className="muted">Could not load issues. {errorText(error)}</p>;
+  if (issues.length === 0) return <p className="muted">No linked issue.</p>;
+  return (
+    <ul>
+      {issues.map((issue) => (
+        <li key={issue.number}>
+          <a href={issue.url} target="_blank" rel="noreferrer">#{issue.number} {issue.title}</a> <span className="state-chip">{issue.state}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function About({ item, floor }: { item: PrItem; floor: number }) {
   const { snapshot } = usePortal();
-  const facts = snapshot && item.number !== null ? factsForPr(snapshot.logs, item.repo, item.number) : factsForPr([], item.repo, 0);
-  const title = facts.title ?? item.title ?? item.key;
-  const author = facts.author ?? item.author;
-  const draft = facts.draft ?? item.draft;
-  const fileCount = facts.changedFiles ?? (facts.files.length || null);
-  const fail = facts.checks.filter((row) => /fail/i.test(row.status)).length;
-  const wait = facts.checks.filter((row) => /pend|wait/i.test(row.status)).length;
-  const pass = facts.checks.filter((row) => /pass|success/i.test(row.status)).length;
+  const pull = useGithubPull(item.repo, item.number);
+  const pr = pull.data?.pr;
+  const checks = (pull.data?.checks ?? []).map((row) => ({ name: row.name, status: row.conclusion ?? row.status }));
+  const approvals = [...new Set((pull.data?.reviews ?? []).filter((row) => row.state.toUpperCase() === "APPROVED").map((row) => row.reviewer))];
+  const issues = pull.data?.issues ?? [];
+  const title = pr?.title ?? item.title ?? item.key;
+  const author = pr?.author ?? item.author;
+  const draft = pr?.draft ?? item.draft;
+  const fileCount = pr?.changedFiles ?? null;
+  const fail = checks.filter((row) => /fail/i.test(row.status)).length;
+  const wait = checks.filter((row) => /pend|wait|progress|queued/i.test(row.status)).length;
+  const pass = checks.filter((row) => /pass|success/i.test(row.status)).length;
+  const pending = pull.isPending && pull.fetchStatus !== "idle";
   const repo = snapshot?.repos.find((row) => row.name === item.repo);
   const low = item.confidence !== null && item.confidence < floor;
   return (
@@ -117,10 +142,10 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
         <dl className="facts">
           {author ? <div><dt>Author</dt><dd>{author}</dd></div> : null}
           <div><dt>Age</dt><dd>{relativeTime(item.waitingSince)}</dd></div>
-          {facts.additions === undefined && facts.deletions === undefined ? null : (
+          {pr === undefined ? null : (
             <div>
               <dt>Size</dt>
-              <dd className="mono"><span className="add">+{facts.additions ?? 0}</span> <span className="del">−{facts.deletions ?? 0}</span></dd>
+              <dd className="mono"><span className="add">+{pr.additions}</span> <span className="del">−{pr.deletions}</span></dd>
             </div>
           )}
           {fileCount === null ? null : <div><dt>Files</dt><dd>{fileCount}</dd></div>}
@@ -129,7 +154,7 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
       </section>
       <section className="brief">
         <h2>Issue</h2>
-        <p className="muted">No linked issue.</p>
+        <IssueList issues={issues} pending={pending} error={pull.error} />
       </section>
       <section className="brief">
         <h2>Repository</h2>
@@ -149,7 +174,7 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
       </section>
       <section className="brief">
         <h2>CI</h2>
-        {facts.checks.length === 0 ? <p className="muted">No checks reported.</p> : (
+        {pending ? <p className="muted">Loading checks…</p> : pull.error ? <p className="muted">Could not load checks.</p> : checks.length === 0 ? <p className="muted">No checks reported.</p> : (
           <>
           <p className="check-counts">
             <span className="fail">{fail} fail</span>
@@ -157,7 +182,7 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
             <span className="pass">{pass} pass</span>
           </p>
           <div className="brief-chips">
-            {facts.checks.map((job) => (
+            {checks.map((job) => (
               <span className="state-chip" key={job.name}>{job.name} · {job.status}</span>
             ))}
           </div>
@@ -167,8 +192,8 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
       <section className="brief">
         <h2>Reviews</h2>
         <dl className="facts">
-          <div><dt>Requested</dt><dd>{facts.requestedReviewers.join(", ") || "None requested"}</dd></div>
-          <div><dt>Approvals</dt><dd>{facts.approvals.join(", ") || "None yet"}</dd></div>
+          <div><dt>Requested</dt><dd>{pr?.requestedReviewers.join(", ") || (pending ? "Loading…" : pull.error ? "Unavailable" : "None requested")}</dd></div>
+          <div><dt>Approvals</dt><dd>{approvals.join(", ") || (pending ? "Loading…" : pull.error ? "Unavailable" : "None yet")}</dd></div>
         </dl>
       </section>
       <section className="brief">
@@ -218,13 +243,17 @@ export default function PRDetail() {
   const item = snapshot ? findPrItem(projectQueue(snapshot), params) : undefined;
   const approval = snapshot?.approvals.find((row) => row.id === (item?.pendingApprovalId ?? id));
   const denied = snapshot?.denied.approvals ?? false;
-  const facts = snapshot && item?.number !== null && item ? factsForPr(snapshot.logs, item.repo, item.number) : factsForPr([], "", 0);
-  const selected = useMemo(() => facts.files.find((file) => file.path === filePath) ?? facts.files[0], [facts.files, filePath]);
+  const pull = useGithubPull(item?.repo ?? "", item?.number ?? null);
+  const pullPending = pull.isPending && pull.fetchStatus !== "idle";
+  const files = pull.data?.files ?? [];
+  const commits = pull.data?.commits ?? [];
+  const comments = pull.data?.comments ?? [];
+  const selected = useMemo(() => files.find((file) => file.path === filePath) ?? files[0], [files, filePath]);
   const pending = approval?.status.toLowerCase() === "pending";
   const gated = Boolean(item?.needsHuman && pending);
   const floor = snapshot?.config?.confidenceFloor ?? 0.7;
-  const mergeable = facts.mergeable ?? item?.mergeable ?? null;
-  const canMerge = mergeable === true && (facts.draft ?? item?.draft) !== true;
+  const mergeable = pull.data?.pr.mergeable ?? item?.mergeable ?? null;
+  const canMerge = mergeable === true && (pull.data?.pr.draft ?? item?.draft) !== true;
   const moreRef = useRef<HTMLDetailsElement>(null);
   const score = item?.confidence === null || item?.confidence === undefined
     ? "No score"
@@ -355,28 +384,37 @@ export default function PRDetail() {
 
   const github = item.number ? `https://github.com/${item.repo}/pull/${item.number}` : null;
   let pane: ReactNode = <About item={item} floor={floor} />;
-  if (tab === "files") pane = facts.files.length ? <DiffViewer file={selected} /> : <div className="diff-empty"><p>No files loaded.</p></div>;
+  const loadState = pullPending
+    ? <p className="muted">Loading from GitHub…</p>
+    : pull.error ? <p role="alert" className="error">Could not load from GitHub. {errorText(pull.error)}</p> : null;
+  if (tab === "files") {
+    pane = loadState ? <div className="diff-empty">{loadState}</div>
+      : files.length ? <DiffViewer file={selected} /> : <div className="diff-empty"><p>No files changed.</p></div>;
+  }
   if (tab === "commits") {
     pane = (
       <div className="pr-pane" aria-label="Commits">
         <h1>Commits</h1>
-        {facts.commits.length === 0 ? <p className="muted">No commits loaded.</p> : facts.commits.map((commit) => (
+        {loadState ?? (commits.length === 0 ? <p className="muted">No commits.</p> : commits.map((commit) => (
           <div className="commit-row" key={commit.sha}>
             <span className="mono">{commit.sha.slice(0, 7)}</span>
-            <strong>{commit.message ?? commit.sha}</strong>
+            <strong>{commit.message.split("\n")[0]}</strong>
+            <span className="muted">{commit.author} · {relativeTime(commit.committedAt)}</span>
           </div>
-        ))}
+        )))}
       </div>
     );
   }
-  if (tab === "issue") pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><p className="muted">No linked issue.</p></div>;
+  if (tab === "issue") {
+    pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><IssueList issues={pull.data?.issues ?? []} pending={pullPending} error={pull.error} /></div>;
+  }
   if (tab === "conversation") {
     pane = (
       <div className="pr-pane" aria-label="Talk">
         <h1>Talk</h1>
-        {facts.comments.length === 0 ? <p className="muted">No conversation loaded.</p> : facts.comments.map((comment, index) => (
-          <p key={index}><strong>{comment.author ?? "Unknown"}</strong> {comment.body}</p>
-        ))}
+        {loadState ?? (comments.length === 0 ? <p className="muted">No comments yet.</p> : comments.map((comment) => (
+          <p key={comment.id}><strong>{comment.author}</strong> <span className="muted">{relativeTime(comment.createdAt)}</span><br />{comment.body}</p>
+        )))}
       </div>
     );
   }
@@ -453,21 +491,23 @@ export default function PRDetail() {
         </div>
         <div className="sliver-body">
           {tab === "files" ? (
-            facts.files.length === 0
-              ? <p className="sliver-empty">No files loaded.</p>
-              : <div className="sliver-list">
-                  {facts.files.map((file) => (
-                    <button type="button" className={`sliver-file${selected?.path === file.path ? " is-on" : ""}`} key={file.path} onClick={() => selectFile(file.path)}>
-                      <span className="sliver-file-name">{file.path}</span>
-                    </button>
-                  ))}
-                </div>
+            loadState
+              ? <p className="sliver-empty">{pullPending ? "Loading files…" : "Could not load files."}</p>
+              : files.length === 0
+                ? <p className="sliver-empty">No files changed.</p>
+                : <div className="sliver-list">
+                    {files.map((file) => (
+                      <button type="button" className={`sliver-file${selected?.path === file.path ? " is-on" : ""}`} key={file.path} onClick={() => selectFile(file.path)}>
+                        <span className="sliver-file-name">{file.path}</span>
+                      </button>
+                    ))}
+                  </div>
           ) : tab === "commits" ? (
-            <p className="sliver-empty">{facts.commits.length ? `${facts.commits.length} commits` : "No commits loaded."}</p>
+            <p className="sliver-empty">{pullPending ? "Loading commits…" : pull.error ? "Could not load commits." : `${commits.length} commits`}</p>
           ) : tab === "issue" ? (
-            <p className="sliver-empty">No linked issue.</p>
+            <p className="sliver-empty">{pullPending ? "Loading issues…" : pull.error ? "Could not load issues." : `${pull.data?.issues.length ?? 0} linked issues`}</p>
           ) : tab === "conversation" ? (
-            <p className="sliver-empty">{facts.comments.length ? `${facts.comments.length} comments` : "No conversation loaded."}</p>
+            <p className="sliver-empty">{pullPending ? "Loading conversation…" : pull.error ? "Could not load conversation." : `${comments.length} comments`}</p>
           ) : (
             <p className="sliver-empty">Overview of this pull request.</p>
           )}

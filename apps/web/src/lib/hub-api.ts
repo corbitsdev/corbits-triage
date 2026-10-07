@@ -974,6 +974,45 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
   await transport.fetch("POST", `/api/integrations/github-actions/${enc(requireTenantId(tenantId))}`, { ...input, repo });
 }
 
+export type GithubPullDetail = {
+  pr: {
+    number: number;
+    title: string;
+    body: string | null;
+    state: string;
+    draft: boolean;
+    author: string;
+    sha: string;
+    base: string;
+    mergeable: boolean | null;
+    requestedReviewers: string[];
+    additions: number;
+    deletions: number;
+    changedFiles: number;
+    labels: string[];
+    updatedAt: string;
+  };
+  files: Array<{ path: string; status: string; additions: number; deletions: number; patch?: string }>;
+  commits: Array<{ sha: string; message: string; author: string; committedAt: string }>;
+  comments: Array<{ id: number | string; author: string; body: string; createdAt: string }>;
+  issues: Array<{ number: number; title: string; state: string; body: string | null; url: string }>;
+  checks: Array<{ name: string; status: string; conclusion: string | null }>;
+  reviews: Array<{ reviewer: string; state: string; submittedAt: string; commitId: string }>;
+};
+
+export async function loadGithubPull(
+  transport: Transport,
+  tenantId: string,
+  repo: string,
+  number: number,
+): Promise<GithubPullDetail> {
+  if (!Number.isInteger(number) || number < 1) throw new Error("Pull request number must be a positive integer.");
+  return transport.fetch<GithubPullDetail>(
+    "GET",
+    `/api/integrations/github-pull/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`,
+  );
+}
+
 const connectChains = new Map<string, Promise<unknown>>();
 
 function serializePerTenant<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
