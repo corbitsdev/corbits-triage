@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
@@ -6,36 +6,20 @@ import { backlogSyncFromConfig, githubAppSlugFromCredentials, hasActiveGithubCre
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE } from "../lib/github-manifest.ts";
 import { repoNeedsCheckSetup } from "../lib/check-pack.ts";
+import { useGithubSync } from "../lib/github-sync.ts";
 import { usePortal } from "../lib/portal.tsx";
 
 export default function Repositories() {
-  const { snapshot, syncFromGithub, runBacklog, readOnly } = usePortal();
+  const { snapshot, runBacklog, readOnly } = usePortal();
   const repos = snapshot?.repos ?? [];
   const denied = snapshot?.denied.repos ?? false;
-  const [pending, setPending] = useState<"sync" | "add" | "retry" | null>(null);
+  const [pending, setPending] = useState<"add" | "retry" | null>(null);
   const [error, setError] = useState("");
   const backlogSync = useMemo(() => backlogSyncFromConfig(snapshot?.config), [snapshot?.config]);
   const retryableBacklog = repos.filter((repo) => backlogSync[repo.name]?.status === "failed");
   const items = snapshot ? projectQueue(snapshot) : [];
 
-  async function syncRepositories() {
-    setPending("sync");
-    setError("");
-    try {
-      await syncFromGithub();
-    } catch (cause) {
-      setError(`Could not read your repositories from GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
-    } finally {
-      setPending(null);
-    }
-  }
-
-  const synced = useRef(false);
-  useEffect(function syncOnOpen() {
-    if (synced.current || !snapshot || !hasActiveGithubCredential(snapshot.credentials)) return;
-    synced.current = true;
-    void syncRepositories();
-  }, [snapshot]);
+  const sync = useGithubSync(Boolean(snapshot && hasActiveGithubCredential(snapshot.credentials)));
 
   /** GitHub's Setup URL brings the browser back here after the change. */
   async function manageOnGithub() {
@@ -128,8 +112,9 @@ export default function Repositories() {
                 <button type="button" className="btn" disabled={readOnly || denied || busy} onClick={() => void retryFailed()}>Retry failed backlog</button>
               </div>
             )}
-            {pending === "sync" && repos.length === 0 && <p className="field-help" role="status">Reading your repositories from GitHub…</p>}
-            {repos.length === 0 && !denied && pending !== "sync" && <div className="empty">No repositories yet. Use Manage repositories on GitHub to add some.</div>}
+            {sync.error && <p role="alert" className="error">Could not read your repositories from GitHub. {sync.error.message}</p>}
+            {sync.isFetching && repos.length === 0 && <p className="field-help" role="status">Reading your repositories from GitHub…</p>}
+            {repos.length === 0 && !denied && !sync.isFetching && <div className="empty">No repositories yet. Use Manage repositories on GitHub to add some.</div>}
             <div className="repo-grid">
               {repos.map(renderRepoCard)}
             </div>
