@@ -57,6 +57,8 @@ export interface RenderOutput extends Rendered {
   confidence: number | "unknown";
   degraded: "inference-outage" | "error" | null;
   checks: CheckResult[];
+  /** The reason the verdict was rendered with. */
+  reason: string;
 }
 
 function modelChecks(sources: NonNullable<DeterministicResult["sources"]>, answers: Record<string, number> | null | undefined, unavailable: string): CheckResult[] {
@@ -81,7 +83,7 @@ export function renderVerdict({ author, det, answers, judgeError }: RenderInput)
     const duplicate = det.duplicateOf !== null && det.state === "needs-decision";
     const rendered = render(det.state, { author, reason: det.reason, duplicate });
     const checks = [...det.checks, ...(det.sources ? modelChecks(det.sources, null, "not asked") : [])];
-    return withChecks({ ...rendered, mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null }, checks);
+    return withChecks({ ...rendered, mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null, reason: det.reason }, checks);
   }
   const sources = det.sources;
   const asked = qualityQuestions(sources).map((q) => q.id);
@@ -89,19 +91,18 @@ export function renderVerdict({ author, det, answers, judgeError }: RenderInput)
   if (judgeError !== undefined || passes.some((p) => p === undefined)) {
     const reason = `decision model unavailable: ${judgeError ?? "no answer"}`;
     const checks = [...det.checks, ...modelChecks(sources, judgeError === undefined ? answers : null, "decision model unavailable")];
-    return withChecks({ ...render(det.state, { author, reason, humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: "inference-outage" as const }, checks);
+    return withChecks({ ...render(det.state, { author, reason, humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: "inference-outage" as const, reason }, checks);
   }
   const scores = passes as number[];
   const confidence = Math.round(Math.min(...scores.map((p) => Math.max(p, 1 - p))) * 100) / 100;
   const failing = asked.filter((_, i) => scores[i]! < 0.5);
-  const rendered = failing.length
-    ? render("needs-author-update", { author, reason: failing.map((id) => failureText(id, sources)).join("; ") })
-    : render(det.state, { author, reason: det.reason });
-  return withChecks({ ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null }, [...det.checks, ...modelChecks(sources, answers, "decision model unavailable")]);
+  const reason = failing.length ? failing.map((id) => failureText(id, sources)).join("; ") : det.reason;
+  const rendered = render(failing.length ? "needs-author-update" : det.state, { author, reason });
+  return withChecks({ ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null, reason }, [...det.checks, ...modelChecks(sources, answers, "decision model unavailable")]);
 }
 
 export function degradedVerdict(reason: string, author = ""): RenderOutput {
-  return { ...render("stale-unknown", { author, reason }), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "error", checks: [] };
+  return { ...render("stale-unknown", { author, reason }), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "error", checks: [], reason };
 }
 
 export interface MirrorRequest {
