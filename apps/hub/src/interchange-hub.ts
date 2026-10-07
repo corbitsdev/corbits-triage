@@ -1,9 +1,10 @@
 // UPSTREAM-SYNC: vendor/interchange/apps/hub/src/server.ts
 // Keep the bootstrap below synchronized with upstream. The Corbits-only delta is
-// the function name and return shape: this composition exposes the live router
-// and its shared hook dependencies alongside the stock Bun server options, and
-// returns the Hono `app` so extra tenant routes mount on the same instance as
-// `resolveTenant`.
+// the function name, return shape and injected credential cipher: this
+// composition exposes the live router and its shared hook dependencies alongside
+// the stock Bun server options, and returns the Hono `app` so extra tenant
+// routes mount on the same instance as `resolveTenant`. The caller builds the
+// credential cipher so sidecar provisioners created before the hub share it.
 import {
   createDB,
   createGrantStore,
@@ -14,7 +15,7 @@ import {
   resolveSenderKey,
 } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
-import { hexDecode, type SidecarCapabilityRule } from "@intx/types";
+import { hexDecode, type CredentialCipher, type SidecarCapabilityRule } from "@intx/types";
 import {
   createApp,
   createMailTriggeredRunGrantsMaterializer,
@@ -53,6 +54,8 @@ import { createHubAuth, type HubAuthConfig } from "./auth.js";
 export type CreateHubServerOpts = {
   readonly database: DatabaseConfig;
   readonly authConfig: HubAuthConfig;
+  /** Encrypts credential secrets at rest (stock: built from CREDENTIAL_ENCRYPTION_KEY). */
+  readonly credentialCipher: CredentialCipher;
   /** Provisioners eligible to host frozen workflow deployments. */
   readonly sidecarProvisioners?: readonly SidecarProvisioner[];
   /** Selects among matching deployment provisioners. Defaults to the first. */
@@ -71,6 +74,7 @@ export type CreateHubServerOpts = {
 export async function createInterchangeHub({
   database,
   authConfig,
+  credentialCipher,
   sidecarProvisioners = [],
   sidecarProvisionerChooser,
   probeSidecarProvisioners = [],
@@ -92,23 +96,6 @@ export async function createInterchangeHub({
   if (!hubDataDir) {
     throw new Error("HUB_DATA_DIR environment variable is required");
   }
-
-  // Credential secrets are encrypted at rest under this operator-provided key.
-  // Required at boot: a missing or wrong-length key fails loudly here rather than
-  // letting the hub run and store secrets it cannot protect. 32 bytes, hex --
-  // e.g. `openssl rand -hex 32`, the same shape as BETTER_AUTH_SECRET.
-  const credentialEncryptionKeyHex = process.env["CREDENTIAL_ENCRYPTION_KEY"];
-  if (
-    credentialEncryptionKeyHex === undefined ||
-    credentialEncryptionKeyHex.trim() === ""
-  ) {
-    throw new Error(
-      "CREDENTIAL_ENCRYPTION_KEY environment variable is required",
-    );
-  }
-  const credentialCipher = createEnvKeyCredentialCipher(
-    hexDecode(credentialEncryptionKeyHex),
-  );
 
   // Per-principal signing keys are sealed at rest under their own operator key,
   // separate from CREDENTIAL_ENCRYPTION_KEY so the two rotate independently.

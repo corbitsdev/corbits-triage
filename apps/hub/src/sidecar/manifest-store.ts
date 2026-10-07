@@ -1,6 +1,7 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { CredentialCipher } from "@intx/types";
 
 /** What a hub restart needs to re-spawn an allocation identically. */
 export type LocalSidecarManifest = {
@@ -24,45 +25,19 @@ export interface LocalSidecarManifestStore {
 
 export type CreateLocalSidecarManifestStoreOpts = {
   readonly dataRoot: string;
-  /** 32 bytes as 64 hex characters; encrypts sidecar tokens at rest in manifests. */
-  readonly encryptionKey: string;
+  readonly cipher: CredentialCipher;
 };
 
-type EncryptedToken = {
-  readonly iv: string;
-  readonly tag: string;
-  readonly ciphertext: string;
-};
+/** `token` holds the cipher blob, not the plaintext. */
+type StoredManifest = LocalSidecarManifest;
 
-type StoredManifest = Omit<LocalSidecarManifest, "token"> & {
-  readonly token: EncryptedToken;
-};
-
-function parseKey(hex: string): Buffer {
-  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
-    throw new Error("Local sidecar manifest encryption key must be 32 bytes encoded as 64 hexadecimal characters");
-  }
-  return Buffer.from(hex, "hex");
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-function encryptToken(key: Buffer, token: string): EncryptedToken {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ciphertext = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
-  return {
-    iv: iv.toString("base64"),
-    tag: cipher.getAuthTag().toString("base64"),
-    ciphertext: ciphertext.toString("base64"),
-  };
-}
-
-function decryptToken(key: Buffer, token: EncryptedToken): string {
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(token.iv, "base64"));
-  decipher.setAuthTag(Buffer.from(token.tag, "base64"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(token.ciphertext, "base64")),
-    decipher.final(),
-  ]).toString("utf8");
+/** Domain-separated from `credentialAad` so a manifest token never decrypts as a credential secret. */
+function manifestTokenAad(allocationId: string): string {
+  return JSON.stringify(["sidecar-manifest-token", allocationId]);
 }
 
 function isMissing(error: unknown): boolean {
@@ -71,9 +46,8 @@ function isMissing(error: unknown): boolean {
 
 export function createLocalSidecarManifestStore({
   dataRoot,
-  encryptionKey,
+  cipher,
 }: CreateLocalSidecarManifestStoreOpts): LocalSidecarManifestStore {
-  const key = parseKey(encryptionKey);
   const dir = path.join(dataRoot, "manifests");
 
   function manifestPath(allocationId: string): string {
@@ -83,7 +57,10 @@ export function createLocalSidecarManifestStore({
   async function write(manifest: LocalSidecarManifest): Promise<void> {
     const target = manifestPath(manifest.allocationId);
     const temp = `${target}.${randomBytes(6).toString("hex")}.tmp`;
-    const stored: StoredManifest = { ...manifest, token: encryptToken(key, manifest.token) };
+    const stored: StoredManifest = {
+      ...manifest,
+      token: await cipher.encrypt(manifest.token, manifestTokenAad(manifest.allocationId)),
+    };
     await fs.mkdir(dir, { recursive: true });
     try {
       await fs.writeFile(temp, JSON.stringify(stored), { mode: 0o600 });
@@ -105,10 +82,32 @@ export function createLocalSidecarManifestStore({
     const manifests: LocalSidecarManifest[] = [];
     for (const entry of entries) {
       if (!entry.endsWith(".json")) continue;
-      const stored = JSON.parse(await fs.readFile(path.join(dir, entry), "utf8")) as StoredManifest;
-      manifests.push({ ...stored, token: decryptToken(key, stored.token) });
+      const manifest = await readEntry(path.join(dir, entry));
+      if (manifest !== null) manifests.push(manifest);
     }
     return manifests;
+  }
+
+  // An unreadable manifest cannot be respawned, so it is treated as not live.
+  async function readEntry(file: string): Promise<LocalSidecarManifest | null> {
+    let stored: StoredManifest | undefined;
+    try {
+      stored = JSON.parse(await fs.readFile(file, "utf8")) as StoredManifest;
+      return { ...stored, token: await cipher.decrypt(stored.token, manifestTokenAad(stored.allocationId)) };
+    } catch (error) {
+      await fs.rm(file, { force: true });
+      if (typeof stored?.dataDir === "string" && path.dirname(path.resolve(stored.dataDir)) === path.resolve(dataRoot)) {
+        await fs.rm(stored.dataDir, { recursive: true, force: true });
+      }
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "warn",
+        msg: "local_sidecar_manifest_unreadable_removed",
+        file,
+        error: errorMessage(error),
+      }));
+      return null;
+    }
   }
 
   async function readDataDir(allocationId: string): Promise<string | null> {
