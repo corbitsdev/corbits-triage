@@ -22,6 +22,8 @@ const HubEnvSchema = type({
   "GITHUB_API_ORIGIN?": "string.url",
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": "string.integer",
+  "HUB_SIDECAR_STOP_TIMEOUT_MS?": type("string.integer").narrow((value, ctx) =>
+    Number(value) > 0 || ctx.mustBe("a positive integer")),
   "PG_SCHEMA?": "string",
   "DB_STATEMENT_TIMEOUT_MS?": "string.integer",
 });

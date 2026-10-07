@@ -21,6 +21,7 @@ The hub runs sidecars as local child processes, one per live deployment, on its 
    - `BETTER_AUTH_BASE_URL`: the public URL (`https://triage.example.com`)
    - `HUB_DATA_DIR` on a persistent volume
    - `PORT` (3000 in the image)
+   - `HUB_SIDECAR_STOP_TIMEOUT_MS` (optional, default 25000): how long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. Sidecars stop in parallel, so shutdown takes about one timeout. The platform's drain time must exceed it: on Railway set `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` (for example 30).
 4. Terminate TLS in front of the hub.
 5. Sign up in the portal and follow [SELF_HOST.md](SELF_HOST.md).
 
