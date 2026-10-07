@@ -44,7 +44,6 @@ function credentialGrant(pkg: string) {
 export const grantRequirements = [
   ...CONSUMERS.map(credentialGrant),
   { resource: `tool:${githubRead.id}:*`, action: "invoke", source: "creator" },
-  { resource: `tool:${githubWrite.id}:github_mirror`, action: "invoke", source: "creator" },
   { resource: `tool:${githubWrite.id}:github_mirror_auto`, action: "invoke", source: "creator" },
 ] as const;
 
