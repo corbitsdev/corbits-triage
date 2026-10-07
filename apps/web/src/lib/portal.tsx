@@ -68,6 +68,8 @@ interface PortalContextValue {
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
 }
 
+const NOTICE_MS = 6000;
+
 const PortalContext = createContext<PortalContextValue | null>(null);
 
 const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
@@ -123,6 +125,16 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     setStatus(message);
   }, []);
 
+  useEffect(function dismissNotice() {
+    if (!status) return;
+    const timer = setTimeout(function clearNotice() {
+      setStatus("");
+    }, NOTICE_MS);
+    return function cancelDismiss() {
+      clearTimeout(timer);
+    };
+  }, [status]);
+
   const portalQuery = useQuery({
     queryKey: PORTAL_QUERY_KEY,
     enabled,
@@ -157,10 +169,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         const offerings = await suggestOfferings(transport, id);
         if (!offerings) throw new Error("No decision model offering found. Save it again in Settings → Model.");
         const deployed = await ensureWorkflows(transport, id, offerings, redeploy);
-        if (deployed.length) {
-          notify(`Deployed ${deployed.join(" and ")}.`);
-          refresh();
-        }
+        if (deployed.length) refresh();
       } catch (cause: unknown) {
         convergedTenants.delete(id);
         notify(`Could not deploy triage workflows. ${cause instanceof Error ? cause.message : String(cause)}`);
