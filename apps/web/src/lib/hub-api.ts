@@ -1520,7 +1520,7 @@ function runVerdicts(log: RunLog): Verdict[] {
       const render = obj(item);
       if (typeof render.repo !== "string" || !render.repo || typeof render.number !== "number" || render.number < 1) continue;
       const key = `${render.repo}#${render.number}`;
-      verdicts.push({ repo: render.repo, number: render.number, render, evidence: evidence.get(key) ?? [], facts: prFacts.get(key) ?? {} });
+      verdicts.push({ repo: render.repo, number: render.number, render, evidence: typeof render.reason === "string" && render.reason ? [render.reason] : (evidence.get(key) ?? []), facts: prFacts.get(key) ?? {} });
     }
   }
   return verdicts;
