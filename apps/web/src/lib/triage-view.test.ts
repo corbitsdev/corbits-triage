@@ -30,6 +30,7 @@ function item(repo: string, number: number): PrItem {
     nextAction: null,
     confidence: null,
     evidence: [],
+    checks: [],
     labels: [],
     comment: null,
     sha: null,
