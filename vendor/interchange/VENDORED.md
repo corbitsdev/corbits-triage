@@ -109,8 +109,14 @@ mints the same child id; the hub's lazy mint no-ops on the existing row, then
 drops the child's terminal event because the row anchors to the first
 deployment. The patch prefixes the child id with the container run id
 (`<runId>__<stepId>__<eventIndex>`), matching loop bodies (`loopBodyRunId`),
-and the crash-resume scan reads the same prefix. The two test files only
-update their child-id fixtures to the new shape.
+and the crash-resume scan reads the same prefix. The two test files update
+their child-id fixtures to the new shape.
+
+Resume stays backward compatible with sections that span the upgrade: the
+scan also recognizes the old `<stepId>__<eventIndex>` ids, takes the highest
+event index across both forms, and re-drives an in-flight old-format body
+under its durable old id. Every newly spawned body uses the run-scoped id.
+`on-trigger-run.test.ts` covers an idle and an in-flight old-format resume.
 
 Allowed files:
 
