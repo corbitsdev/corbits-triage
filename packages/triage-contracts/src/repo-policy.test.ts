@@ -17,7 +17,7 @@ describe("repoPolicy", () => {
         ci: false,
         duplicate: true,
         conflicts: true,
-        reviewers: true,
+        reviewers: false,
         drift: true,
       },
     });
@@ -32,7 +32,7 @@ describe("repoPolicy", () => {
         ci: true,
         duplicate: true,
         conflicts: true,
-        reviewers: true,
+        reviewers: false,
         drift: false,
       },
     });

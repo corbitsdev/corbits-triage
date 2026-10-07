@@ -23,7 +23,7 @@ export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
   ci: true,
   duplicate: true,
   conflicts: true,
-  reviewers: true,
+  reviewers: false,
   drift: true,
 };
 
@@ -57,7 +57,7 @@ export function repoPolicy(raw: unknown): RepoPolicy {
       ci: flag(checks.ci, true),
       duplicate: flag(checks.duplicate, true),
       conflicts: flag(checks.conflicts, true),
-      reviewers: flag(checks.reviewers, true),
+      reviewers: flag(checks.reviewers, false),
       drift: flag(checks.drift, true),
     },
     ...(pointerName.length > 0 ? { checkPack: { name: pointerName } } : {}),
