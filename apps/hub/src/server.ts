@@ -91,6 +91,7 @@ const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_E
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
 const local = createLocalProcessSidecarProvisioner({
   dataRoot: localSidecarDataRoot,
+  ...(env.HUB_SIDECAR_STOP_TIMEOUT_MS !== undefined && { stopTimeoutMs: Number(env.HUB_SIDECAR_STOP_TIMEOUT_MS) }),
   spawnSidecar: createSpawnLocalSidecar({
     interchangeDir: V,
     credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,

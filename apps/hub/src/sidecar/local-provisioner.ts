@@ -48,7 +48,7 @@ export interface SidecarProvisioner {
   destroy(request: DestroySidecarRequest): Promise<DestroySidecarResult>;
 }
 
-const DEFAULT_STOP_TIMEOUT_MS = 1_000;
+const DEFAULT_STOP_TIMEOUT_MS = 25_000;
 
 export interface LocalSidecarProcess {
   readonly pid: number;
@@ -396,15 +396,9 @@ export function createLocalProcessSidecarProvisioner({
   // Data dirs and manifests survive shutdown so the next hub boot can respawn.
   async function stopAll(): Promise<void> {
     await Promise.all(operations.values());
-    const failures: unknown[] = [];
-    for (const state of allocations.values()) {
-      if (state.kind !== "live") continue;
-      try {
-        await stopProcess(state);
-      } catch (error) {
-        failures.push(error);
-      }
-    }
+    const live = [...allocations.values()].filter((state) => state.kind === "live");
+    const results = await Promise.allSettled(live.map(stopProcess));
+    const failures = results.filter((result) => result.status === "rejected").map((result) => result.reason);
     allocations.clear();
     if (failures.length > 0) {
       throw new AggregateError(
