@@ -23,6 +23,7 @@ export interface PrFacts {
   failingChecks?: string[];
   requestedReviewers: number;
   approvals: number;
+  changesRequested?: string[];
   openPrs: Array<{ number: number; title: string }>;
   changedFiles?: number;
   additions?: number;
@@ -155,7 +156,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
   function add(check: string, state: TriageState, reason: string) {
     findings.push({ check, state, reason });
   }
-  function result(check: CatalogId, failed: boolean | null, reason: string, evidence: string[] = []) {
+  function result(check: CatalogId | "review", failed: boolean | null, reason: string, evidence: string[] = []) {
     checks.push({ check, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence });
   }
   const on = rules.enabled;
@@ -187,6 +188,9 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       if (drifted) add("drift", "needs-decision", `base has drifted ${facts.baseBehindBy} commits`);
       result("drift", drifted, drifted ? "base has drifted" : "base is current", [`${facts.baseBehindBy} commits behind (max ${rules.maxBehindBy})`]);
     }
+    const requested = facts.changesRequested ?? [];
+    if (requested.length) add("review", "needs-author-update", "a reviewer requested changes");
+    result("review", requested.length > 0, requested.length ? "a reviewer requested changes" : "no changes requested", requested.map((login) => `changes requested by @${login}`));
     if (on("conflicts") && !findings.length && facts.mergeable === null) add("conflicts", "stale-unknown", "mergeability not yet computed");
     if (on("conflicts")) {
       const conflicted = facts.mergeable === null ? null : !facts.mergeable;

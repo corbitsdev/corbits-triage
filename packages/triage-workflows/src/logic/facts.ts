@@ -36,13 +36,17 @@ export function summarizeChecks(runs: CheckRun[]): PrFacts["checks"] {
   return "success";
 }
 
-/** Counts a reviewer's latest decisive review only. */
-export function countApprovals(reviews: Review[]): number {
+/** Each reviewer's latest decisive review state, by login. */
+function latestDecisive(reviews: Review[]): Map<string, string> {
   const latest = new Map<string, string>();
   for (const r of reviews) {
     if (r.reviewer && r.state && r.state !== "COMMENTED" && r.state !== "PENDING") latest.set(r.reviewer, r.state);
   }
-  return [...latest.values()].filter((s) => s === "APPROVED").length;
+  return latest;
+}
+
+function reviewersWith(latest: Map<string, string>, state: string): string[] {
+  return [...latest].flatMap(([login, s]) => (s === state ? [login] : []));
 }
 
 export function buildFacts(
@@ -53,6 +57,7 @@ export function buildFacts(
   reviews: Review[],
   openPrs: PrFacts["openPrs"],
 ): PrFacts {
+  const latest = latestDecisive(reviews);
   return {
     repo,
     number,
@@ -66,7 +71,8 @@ export function buildFacts(
     checks: summarizeChecks(checks),
     failingChecks: checks.filter(failed).flatMap((r) => (r.name ? [r.name] : [])),
     requestedReviewers: Number(pr.requestedReviewers ?? 0),
-    approvals: countApprovals(reviews),
+    approvals: reviewersWith(latest, "APPROVED").length,
+    changesRequested: reviewersWith(latest, "CHANGES_REQUESTED"),
     openPrs,
     changedFiles: Number(pr.changedFiles ?? 0),
     additions: Number(pr.additions ?? 0),
