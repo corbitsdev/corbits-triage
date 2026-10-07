@@ -225,7 +225,7 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
       <section className="brief">
         <h2>Reviews</h2>
         <dl className="facts">
-          <div><dt>Requested</dt><dd>{pr?.requestedReviewers.join(", ") || (pending ? "Loading…" : pull.error ? "Unavailable" : "None requested")}</dd></div>
+          <div><dt>Requested</dt><dd>{pr ? (pr.requestedReviewers > 0 ? `${pr.requestedReviewers} requested` : "None requested") : pending ? "Loading…" : "Unavailable"}</dd></div>
           <div><dt>Approvals</dt><dd>{approvals.join(", ") || (pending ? "Loading…" : pull.error ? "Unavailable" : "None yet")}</dd></div>
         </dl>
       </section>
