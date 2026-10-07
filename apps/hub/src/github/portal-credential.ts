@@ -20,9 +20,14 @@ export function failure(status: number, code: string, message: string): Response
 }
 
 /** The signed-in member's principal id, or the error response to return. */
+// Browsers omit Origin on same-origin GETs, and reads change nothing, so they only need to not be cross-site.
+function fromPortal(req: Request, trustedOrigins: readonly string[]): boolean {
+  if (req.method === "GET") return req.headers.get("sec-fetch-site")?.toLowerCase() !== "cross-site";
+  return validManifestMutationRequest(req, new Set([new URL(req.url).origin, ...trustedOrigins]));
+}
+
 export async function portalMember(d: PortalCredentialDeps, req: Request, tenantId: string): Promise<string | Response> {
-  const trusted = new Set([new URL(req.url).origin, ...d.trustedPortalOrigins]);
-  if (!validManifestMutationRequest(req, trusted)) return failure(403, "forbidden", "This request did not come from the portal.");
+  if (!fromPortal(req, d.trustedPortalOrigins)) return failure(403, "forbidden", "This request did not come from the portal.");
   const session = await d.getSession(req.headers);
   if (!session) return failure(401, "unauthorized", "Sign in again.");
   const member = await d.db.query.principal.findFirst({
