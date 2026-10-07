@@ -384,6 +384,8 @@ export async function createInterchangeHub({
     plugins: sidecarPlugins,
     router: sidecarRouter,
     hubWebSocketUrl: hubSidecarWebSocketUrl,
+    // Triage workflows keep no sidecar filesystem state across runs.
+    enableAutomaticReplacementRecovery: true,
     ...(sidecarOperationTimeoutMs !== undefined
       ? { operationTimeoutMs: sidecarOperationTimeoutMs }
       : {}),
