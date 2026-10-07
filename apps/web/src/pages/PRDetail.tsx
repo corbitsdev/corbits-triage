@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
-import { projectQueue, QUEUE_STATE_LABEL, type PrItem } from "../lib/hub-api.ts";
+import { projectQueue, QUEUE_STATE_LABEL, type CheckResult, type PrItem } from "../lib/hub-api.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import {
   approvalHeadline,
@@ -85,6 +85,38 @@ function DiffViewer({ file }: { file: PrFileFact | undefined }) {
         ))}
       </div>
     </article>
+  );
+}
+
+function CheckRow({ check }: { check: CheckResult }) {
+  const tone = check.result === "unconfirmed" ? "wait" : check.result;
+  return (
+    <li className={`verdict-check check-item ${tone}`}>
+      <strong>{check.check}</strong>
+      <span className="muted">{check.kind}</span>
+      <span className="check-result">{check.result}</span>
+      {check.reason ? <span className="check-fact">{check.reason}</span> : null}
+      {check.evidence.map((line) => <span className="check-fact mono small-text" key={line}>{line}</span>)}
+    </li>
+  );
+}
+
+function CheckList({ checks, fallback }: { checks: CheckResult[]; fallback: string[] }) {
+  if (checks.length === 0) {
+    return fallback.length === 0 ? <p className="muted">No triage findings.</p> : <ul>{fallback.map((reason) => <li key={reason}>{reason}</li>)}</ul>;
+  }
+  const open = checks.filter((c) => c.result === "fail").concat(checks.filter((c) => c.result === "unconfirmed"));
+  const passed = checks.filter((c) => c.result === "pass");
+  return (
+    <>
+      {open.length > 0 ? <ul className="verdict-checks">{open.map((c) => <CheckRow key={c.check} check={c} />)}</ul> : null}
+      {passed.length > 0 ? (
+        <details className="check-group">
+          <summary>{passed.length} checks passed</summary>
+          <ul className="verdict-checks">{passed.map((c) => <CheckRow key={c.check} check={c} />)}</ul>
+        </details>
+      ) : null}
+    </>
   );
 }
 
@@ -173,11 +205,7 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
       </section>
       <section className="brief">
         <h2>Checks</h2>
-        {item.evidence.length === 0 ? <p className="muted">No triage findings.</p> : (
-          <ul>
-            {item.evidence.map((reason) => <li key={reason}>{reason}</li>)}
-          </ul>
-        )}
+        <CheckList checks={item.checks} fallback={item.evidence} />
         {item.labels.length > 0 && (
           <div className="row wrap">
             {item.labels.map((label) => <span key={label} className="badge">{label}</span>)}
