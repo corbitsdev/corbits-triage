@@ -2,16 +2,17 @@
 // operator's click is the approval, so these run synchronously in the hub
 // against the tenant's vaulted GitHub App credential instead of as workflows.
 import { type } from "arktype";
-import { createIssueComment, createReview, mergePr, mirror } from "@corbits/github-tool/github";
+import { addLabels, createIssueComment, createReview, mergePr, mirror } from "@corbits/github-tool/github";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
-const VERB = { comment: "comment on", review: "review", merge: "merge", close: "close" } as const;
+const VERB = { comment: "comment on", labels: "label", review: "review", merge: "merge", close: "close" } as const;
 
 const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" }).and(
   type({ action: "'comment'", body: "string > 0" })
+    .or({ action: "'labels'", labels: "string[] > 0" })
     .or({ action: "'review'", event: "'APPROVE' | 'REQUEST_CHANGES'", body: "string" })
     .or({ action: "'merge'" })
     .or({ action: "'close'", labels: "string[]", comment: "string" }),
@@ -41,11 +42,13 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
       const { repo, number } = body;
       const result = body.action === "comment"
         ? await createIssueComment(gh, { repo, number, body: body.body })
-        : body.action === "review"
-          ? await createReview(gh, { repo, number, body: body.body, event: body.event })
-          : body.action === "merge"
-            ? await mergePr(gh, { repo, number })
-            : await mirror(gh, { repo, number, labels: body.labels, comment: body.comment, close: true });
+        : body.action === "labels"
+          ? await addLabels(gh, { repo, number, labels: body.labels })
+          : body.action === "review"
+            ? await createReview(gh, { repo, number, body: body.body, event: body.event })
+            : body.action === "merge"
+              ? await mergePr(gh, { repo, number })
+              : await mirror(gh, { repo, number, labels: body.labels, comment: body.comment, close: true });
       console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number }));
       return Response.json(result);
     } catch (err) {

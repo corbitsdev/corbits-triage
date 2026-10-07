@@ -982,6 +982,7 @@ export type OpenPulls = {
 
 export type PrGithubWriteInput =
   | { action: "comment"; repo: string; number: number; body: string }
+  | { action: "labels"; repo: string; number: number; labels: string[] }
   | { action: "review"; repo: string; number: number; event: "APPROVE" | "REQUEST_CHANGES"; body: string }
   | { action: "merge"; repo: string; number: number }
   | { action: "close"; repo: string; number: number; labels: string[]; comment: string };
