@@ -488,7 +488,7 @@ test("installation listing mirrors GitHub and reports only new repositories", ()
   expect(repoRecords(first.ns).map((row) => row.name).sort()).toEqual(["acme/kept", "acme/new", "manual/repo", "paused/repo"]);
   expect(repoRecords(first.ns).find((row) => row.name === "paused/repo")?.connected).toBe(false);
   expect(first.added).toEqual(["acme/new"]);
-  expect(namesNeedingBacklog(first.ns, ["acme/new", "acme/kept"])).toEqual(["acme/new"]);
+  expect(namesNeedingBacklog({ ...first.ns, backlogSync: { "acme/kept": { status: "succeeded" } } }, ["acme/new", "acme/kept"], 0)).toEqual(["acme/new"]);
 
   expect(applyInstallationListing(first.ns, listings).added).toEqual([]);
 });

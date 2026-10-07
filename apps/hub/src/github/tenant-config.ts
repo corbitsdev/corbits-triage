@@ -175,10 +175,21 @@ function backlogSyncMap(ns: CorbitsTriageNs): Record<string, Record<string, unkn
   return next;
 }
 
-/** Pending or failed: not yet succeeded. */
-export function owesBacklog(ns: CorbitsTriageNs, name: string): boolean {
-  const status = backlogSyncMap(ns)[name]?.["status"];
-  return status === "pending" || status === "failed";
+// The hub cannot see run completion (the portal derives it from run logs), so a
+// mailed backlog is treated as in flight for a while, then retried a few times.
+const BACKLOG_INFLIGHT_MS = 15 * 60 * 1000;
+const BACKLOG_MAX_MAILS = 3;
+
+/** No sync recorded, failed, never mailed, or mailed long enough ago to have been lost. */
+export function owesBacklog(ns: CorbitsTriageNs, name: string, now: number): boolean {
+  const row = backlogSyncMap(ns)[name];
+  const status = row?.["status"];
+  if (status === undefined || status === "failed") return true;
+  if (status !== "pending") return false;
+  const mailedAt = typeof row?.["mailedAt"] === "string" ? Date.parse(row["mailedAt"]) : Number.NaN;
+  if (Number.isNaN(mailedAt)) return true;
+  const mails = typeof row?.["mails"] === "number" ? row["mails"] : 1;
+  return mails < BACKLOG_MAX_MAILS && now - mailedAt >= BACKLOG_INFLIGHT_MS;
 }
 
 /** Never downgrades a succeeded sync. */
@@ -198,6 +209,16 @@ export function markBacklogFailed(ns: CorbitsTriageNs, names: readonly string[])
   return { ...ns, backlogSync: sync };
 }
 
-export function namesNeedingBacklog(ns: CorbitsTriageNs, names: readonly string[]): string[] {
-  return names.filter((name) => owesBacklog(ns, name));
+export function markBacklogMailed(ns: CorbitsTriageNs, names: readonly string[], now: number): CorbitsTriageNs {
+  const sync = backlogSyncMap(ns);
+  for (const name of names) {
+    const prev = sync[name] ?? {};
+    const mails = typeof prev["mails"] === "number" ? prev["mails"] : 0;
+    sync[name] = { ...prev, status: "pending", mailedAt: new Date(now).toISOString(), mails: mails + 1 };
+  }
+  return { ...ns, backlogSync: sync };
+}
+
+export function namesNeedingBacklog(ns: CorbitsTriageNs, names: readonly string[], now: number): string[] {
+  return names.filter((name) => owesBacklog(ns, name, now));
 }

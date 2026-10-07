@@ -4,7 +4,7 @@ import { type } from "arktype";
 import { createGithubAppCredentialFetch, INSTALLATION_SELECTOR_HEADER } from "./github-app-credential-adapter.js";
 import { applyInstallationListing, sendBacklog, type BacklogDeps, type InstallationListing } from "./bridge.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
-import { markBacklogFailed, patchCorbitsTriage, type CorbitsTriageNs } from "./tenant-config.js";
+import { markBacklogFailed, patchCorbitsTriage, repoRecords, type CorbitsTriageNs } from "./tenant-config.js";
 import type { GithubFetch } from "@corbits/github-tool/github";
 
 export const GITHUB_INSTALLATIONS_PATH = "/api/integrations/github-installations";
@@ -70,17 +70,18 @@ async function listingFor(gh: GithubFetch, installation: Installation): Promise<
 export function createInstallationSync(deps: PortalCredentialDeps & BacklogDeps & { githubApiOrigin: string }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
-  async function mailNewRepositories(tenantId: string, ns: CorbitsTriageNs, added: readonly string[]): Promise<string[]> {
+  async function mailRepositories(tenantId: string, ns: CorbitsTriageNs, names: readonly string[]): Promise<{ mailed: string[]; failed: string[] }> {
+    const mailed: string[] = [];
     const failed: string[] = [];
-    for (const repo of added) {
+    for (const repo of names) {
       try {
-        await sendBacklog(deps, tenantId, ns, [repo]);
+        mailed.push(...await sendBacklog(deps, tenantId, ns, [repo]));
       } catch (err) {
         logJson({ level: "warn", msg: "backlog_mail_failed", tenantId, repo, error: String(err) });
         failed.push(repo);
       }
     }
-    return failed;
+    return { mailed, failed };
   }
 
   return async function syncInstallations(req: Request, tenantId: string): Promise<Response> {
@@ -98,17 +99,15 @@ export function createInstallationSync(deps: PortalCredentialDeps & BacklogDeps 
       return failure(502, "github_failed", `Could not read the App's installations from GitHub: ${err instanceof Error ? err.message : String(err)}.`);
     }
 
-    let added: string[] = [];
     const next = await patchCorbitsTriage(deps.db, tenantId, function reconcile(ns) {
-      const result = applyInstallationListing(ns, listings);
-      added = result.added;
-      return result.ns;
+      return applyInstallationListing(ns, listings).ns;
     });
     if (next === undefined) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
 
-    const failed = await mailNewRepositories(tenantId, next, added);
+    const connected = repoRecords(next).filter((row) => row.connected).map((row) => row.name);
+    const { mailed, failed } = await mailRepositories(tenantId, next, connected);
     if (failed.length > 0) await patchCorbitsTriage(deps.db, tenantId, (ns) => markBacklogFailed(ns, failed));
     const repos = listings.flatMap((listing) => (listing.suspended ? [] : listing.names));
-    return Response.json({ installations: listings.length, repos, backlogFailed: failed });
+    return Response.json({ installations: listings.length, repos, backlogMailed: mailed, backlogFailed: failed });
   };
 }
