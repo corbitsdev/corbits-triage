@@ -20,6 +20,12 @@ const FAILURES: Record<QualityCheckId, string> = {
   tests: "tests are not added or updated",
 };
 
+const ACTIONS: Record<QualityCheckId, string> = {
+  focused: "Split out unrelated changes",
+  docs: "Update the documentation",
+  tests: "Add or update tests",
+};
+
 const PASSES: Record<QualityCheckId, string> = {
   focused: "makes one focused change",
   docs: "documentation is up to date",
@@ -57,6 +63,12 @@ export function failureText(id: string, sources: NonNullable<DeterministicResult
   if (id in FAILURES) return FAILURES[id as QualityCheckId];
   const custom = sources.custom[Number(id.slice("custom-".length)) - 1];
   return custom ? `does not meet "${custom.name}"` : `does not pass ${id}`;
+}
+
+export function actionText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {
+  if (id in ACTIONS) return ACTIONS[id as QualityCheckId];
+  const custom = sources.custom[Number(id.slice("custom-".length)) - 1];
+  return custom ? `Meet "${custom.name}"` : `Pass ${id}`;
 }
 
 export function passText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {

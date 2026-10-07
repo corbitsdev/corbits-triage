@@ -1,7 +1,7 @@
 import { render, type Rendered } from "@corbits/rule-packs";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import { asText } from "./extract.js";
-import { failureText, passText, qualityQuestions } from "./quality.js";
+import { actionText, failureText, passText, qualityQuestions } from "./quality.js";
 
 interface JevDecision {
   id: string;
@@ -47,7 +47,11 @@ export interface RenderInput {
   det: DeterministicResult;
   answers?: Record<string, number> | null;
   judgeError?: string;
+  /** Logins of requested reviewers. */
+  reviewers?: string[];
 }
+
+export type Actor = "author" | "maintainer" | "system";
 
 export interface RenderOutput extends Rendered {
   mirror: boolean;
@@ -59,9 +63,23 @@ export interface RenderOutput extends Rendered {
   checks: CheckResult[];
   /** The reason the verdict was rendered with. */
   reason: string;
+  nextAction: string;
+  actor: Actor;
+  /** The comment to post for the author; empty when nothing is required of them. */
+  feedback: string;
 }
 
-function modelChecks(sources: NonNullable<DeterministicResult["sources"]>, answers: Record<string, number> | null | undefined, unavailable: string): CheckResult[] {
+type Sources = DeterministicResult["sources"];
+
+interface Step {
+  actor: Actor;
+  action: string;
+}
+
+const ACTOR_ORDER: Actor[] = ["author", "maintainer", "system"];
+const MAX_ACTIONS = 2;
+
+function modelChecks(sources: NonNullable<Sources>, answers: Record<string, number> | null | undefined, unavailable: string): CheckResult[] {
   return qualityQuestions(sources).map(({ id }) => {
     const p = answers?.[id];
     if (p === undefined) return { check: id, kind: "model", result: "unconfirmed", reason: unavailable, evidence: [] };
@@ -70,20 +88,63 @@ function modelChecks(sources: NonNullable<DeterministicResult["sources"]>, answe
   });
 }
 
-/** A failing check replaces the preset comment with one line per failure and its evidence. */
-function withChecks<T extends Rendered>(rendered: T, checks: CheckResult[]): T & { checks: CheckResult[] } {
-  const failing = checks.filter((c) => c.result === "fail");
-  if (!failing.length) return { ...rendered, checks };
-  const feedback = failing.map((c) => `- ${c.reason}${c.evidence.length ? `: ${c.evidence.join(", ")}` : ""}`).join("\n");
-  return { ...rendered, feedback, checks };
+function withoutLimit(evidence: string[]): string {
+  return evidence.map((e) => e.replace(/ \(max .*\)$/, "")).join(", ");
 }
 
-export function renderVerdict({ author, det, answers, judgeError }: RenderInput): RenderOutput {
+function failedStep(c: CheckResult, sources: Sources): Step {
+  switch (c.check) {
+    case "draft": return { actor: "author", action: "Mark ready for review" };
+    case "ci": return { actor: "author", action: c.evidence.length ? `Fix failing CI: ${c.evidence.join(", ")}` : "Fix failing CI" };
+    case "conflicts": return { actor: "author", action: "Resolve merge conflicts" };
+    case "paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
+    case "size": return { actor: "author", action: `Split into smaller pull requests (${withoutLimit(c.evidence)})` };
+    case "issue": return { actor: "author", action: "Link an issue" };
+    case "review": return { actor: "author", action: `Address requested changes from ${c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ")}` };
+    case "duplicate": return { actor: "maintainer", action: `Confirm duplicate of ${c.evidence.join(", ")} or keep` };
+    case "reviewers": return { actor: "maintainer", action: "Assign a reviewer" };
+    case "drift": return { actor: "maintainer", action: `Decide on base drift (${withoutLimit(c.evidence)})` };
+    default: return { actor: "author", action: c.kind === "model" && sources ? actionText(c.check, sources) : `Fix ${c.check}` };
+  }
+}
+
+function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
+  if (c.check === "conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
+  if (c.kind === "model" && sources && c.reason !== "not asked") return [{ actor: "maintainer", action: `Confirm ${passText(c.check, sources)}` }];
+  return [];
+}
+
+function nextStep(checks: CheckResult[], sources: Sources, reviewers: string[]): { actor: Actor; nextAction: string } {
+  const failing = checks.filter((c) => c.result === "fail").map((c) => failedStep(c, sources));
+  const steps = failing.length ? failing : checks.filter((c) => c.result === "unconfirmed").flatMap((c) => unconfirmedSteps(c, sources));
+  if (!steps.length) {
+    const requested = reviewers.length ? ` — ${reviewers.map((r) => `@${r}`).join(", ")} requested` : "";
+    return { actor: "maintainer", nextAction: `Review and merge${requested}` };
+  }
+  const ordered = ACTOR_ORDER.flatMap((actor) => steps.filter((s) => s.actor === actor));
+  const actions = ordered.map((s) => s.action);
+  const more = actions.length > MAX_ACTIONS ? ` and ${actions.length - MAX_ACTIONS} more` : "";
+  return { actor: ordered[0]!.actor, nextAction: `${actions.slice(0, MAX_ACTIONS).join("; ")}${more}` };
+}
+
+/** Only checks the author can fix are posted; everything else is for maintainers in the portal. */
+function authorComment(author: string, checks: CheckResult[], sources: Sources): string {
+  const mine = checks.filter((c) => c.result === "fail" && failedStep(c, sources).actor === "author");
+  if (!mine.length) return "";
+  const lines = mine.map((c) => `- ${c.reason}${c.evidence.length ? `: ${c.evidence.join(", ")}` : ""}`);
+  return [`@${author}, please address the following:`, ...lines].join("\n");
+}
+
+function withChecks<T extends Rendered>(rendered: T, checks: CheckResult[], { author, sources, reviewers }: { author: string; sources: Sources; reviewers: string[] }) {
+  return { ...rendered, ...nextStep(checks, sources, reviewers), feedback: authorComment(author, checks, sources), checks };
+}
+
+export function renderVerdict({ author, det, answers, judgeError, reviewers = [] }: RenderInput): RenderOutput {
+  const ctx = { author, sources: det.sources, reviewers };
   if (!det.needsJudgment || !det.sources) {
     const duplicate = det.duplicateOf !== null && det.state === "needs-decision";
-    const rendered = render(det.state, { author, reason: det.reason, duplicate });
     const checks = [...det.checks, ...(det.sources ? modelChecks(det.sources, null, "not asked") : [])];
-    return withChecks({ ...rendered, mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null, reason: det.reason }, checks);
+    return withChecks({ ...render(det.state), mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null, reason: det.reason }, checks, ctx);
   }
   const sources = det.sources;
   const asked = qualityQuestions(sources).map((q) => q.id);
@@ -91,18 +152,18 @@ export function renderVerdict({ author, det, answers, judgeError }: RenderInput)
   if (judgeError !== undefined || passes.some((p) => p === undefined)) {
     const reason = `decision model unavailable: ${judgeError ?? "no answer"}`;
     const checks = [...det.checks, ...modelChecks(sources, judgeError === undefined ? answers : null, "decision model unavailable")];
-    return withChecks({ ...render(det.state, { author, reason, humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: "inference-outage" as const, reason }, checks);
+    return withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: "inference-outage" as const, reason }, checks, ctx);
   }
   const scores = passes as number[];
   const confidence = Math.round(Math.min(...scores.map((p) => Math.max(p, 1 - p))) * 100) / 100;
   const failing = asked.filter((_, i) => scores[i]! < 0.5);
   const reason = failing.length ? failing.map((id) => failureText(id, sources)).join("; ") : det.reason;
-  const rendered = render(failing.length ? "needs-author-update" : det.state, { author, reason });
-  return withChecks({ ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null, reason }, [...det.checks, ...modelChecks(sources, answers, "decision model unavailable")]);
+  const rendered = render(failing.length ? "needs-author-update" : det.state);
+  return withChecks({ ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null, reason }, [...det.checks, ...modelChecks(sources, answers, "decision model unavailable")], ctx);
 }
 
-export function degradedVerdict(reason: string, author = ""): RenderOutput {
-  return { ...render("stale-unknown", { author, reason }), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "error", checks: [], reason };
+export function degradedVerdict(reason: string): RenderOutput {
+  return { ...render("stale-unknown"), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "error", checks: [], reason, nextAction: "Retry when data is available", actor: "system", feedback: "" };
 }
 
 export interface MirrorRequest {

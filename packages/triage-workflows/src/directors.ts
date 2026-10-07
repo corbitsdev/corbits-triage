@@ -284,7 +284,7 @@ function renderDirector(caps: ReactorCapabilities): ReactorDirector {
   function verdictOf(it: Item): Verdict {
     try {
       const answers = it.judge !== undefined ? parseAnswers(it.judge) : null;
-      const verdict = { repo: it.facts.repo, number: it.facts.number, ...renderVerdict({ author: it.facts.author, det: it.det, answers, judgeError: it.judgeError }), cleanupMode: it.cleanupMode };
+      const verdict = { repo: it.facts.repo, number: it.facts.number, ...renderVerdict({ author: it.facts.author, det: it.det, answers, judgeError: it.judgeError, reviewers: it.facts.reviewers }), cleanupMode: it.cleanupMode };
       return { ...verdict, request: toMirrorRequest(verdict) };
     } catch (e) {
       const verdict = { repo: it.facts?.repo ?? "", number: it.facts?.number ?? 0, ...degradedVerdict(`render failed: ${errorText(e)}`), cleanupMode: it.cleanupMode };
