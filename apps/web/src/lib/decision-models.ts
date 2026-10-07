@@ -1,7 +1,7 @@
 import { INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
 
 export type DecisionModelPreset = {
-  id: "typesafe" | "vercel" | "custom";
+  id: "typesafe" | "vercel" | "opencode" | "custom";
   label: string;
   endpoint: string;
   model: string;
@@ -11,14 +11,17 @@ export type DecisionModelPreset = {
 export const DECISION_MODEL_PRESETS = [
   { id: "typesafe", label: "TypeSafe (Jev)", endpoint: "https://api.typesafe.ai/v1", model: "jev-latest", keyLabel: "TypeSafe API key" },
   { id: "vercel", label: "Vercel AI Gateway (Jev)", endpoint: "https://ai-gateway.vercel.sh/typesafe/v1", model: "typesafe-ai/jev", keyLabel: "AI Gateway API key" },
+  { id: "opencode", label: "OpenCode Zen (Jev)", endpoint: "https://opencode.ai/zen/v1", model: "jev-1.13", keyLabel: "OpenCode Zen API key" },
   { id: "custom", label: "Add my own provider", endpoint: "", model: "", keyLabel: "API key" },
 ] as const satisfies readonly DecisionModelPreset[];
+
+const CUSTOM_PRESET: DecisionModelPreset = DECISION_MODEL_PRESETS.find((preset) => preset.id === "custom")!;
 
 /** A workspace with no saved model starts on TypeSafe; a saved model that matches no preset is custom. */
 export function presetFor(saved: { endpoint: string; model: string } | undefined): DecisionModelPreset {
   if (!saved) return DECISION_MODEL_PRESETS[0];
   const match = DECISION_MODEL_PRESETS.find((preset) => preset.endpoint === saved.endpoint && preset.model === saved.model);
-  return match ?? DECISION_MODEL_PRESETS[2];
+  return match ?? CUSTOM_PRESET;
 }
 
 export function hasDecisionModelCredential(credentials: ReadonlyArray<HubCredential>): boolean {
