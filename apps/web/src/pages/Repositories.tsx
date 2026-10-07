@@ -66,7 +66,7 @@ export default function Repositories() {
     const backlog = backlogSync[repo.name];
     const catchingUp = snapshot ? isRepoCatchingUp(snapshot, repo.name) : false;
     const failed = backlog?.status === "failed";
-    const status = needsSetup ? "Needs setup" : failed ? "Backlog failed" : catchingUp ? "Catching up open pull requests" : receivingEvents ? "Receiving events" : "Needs setup";
+    const status = needsSetup ? "Needs setup" : failed ? "Backlog failed" : catchingUp ? "Catching up open pull requests" : receivingEvents ? "Receiving events" : "Ready";
     const open = items.filter((item) => item.repo === repo.name);
     const needs = open.filter((item) => item.needsHuman).length;
     const prLine = open.length === 0 ? "No open pull requests" : open.length === 1 ? "1 open" : `${open.length} open`;
