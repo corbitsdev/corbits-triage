@@ -2469,6 +2469,7 @@ async function runOnTrigger(
     | { kind: "reestablish"; name: string; awaitSeq: number }
     | { kind: "relay"; name: string; payload: unknown; signalId: string }
     | undefined;
+  let resumedChild: OnTriggerChild | undefined;
 
   if (!initial.steps.has(primitive.id)) {
     await emitStepStartedWithValue(env, runId, primitive.id, {
@@ -2484,7 +2485,14 @@ async function runOnTrigger(
     // after a crash. Reconstruct the drive position from the reduced state and
     // the log rather than re-running from event 0.
     const log = await env.repoStore.read(runId);
-    const plan = await planOnTriggerResume(env, runId, primitive, initial, log);
+    resumedChild = latestOnTriggerChild(runId, primitive, initial);
+    const plan = await planOnTriggerResume(
+      env,
+      primitive,
+      initial,
+      log,
+      resumedChild,
+    );
     switch (plan.kind) {
       case "fresh":
         eventIndex = 0;
@@ -2494,7 +2502,7 @@ async function runOnTrigger(
         // The body already ended non-`completed` before the crash; end the
         // section the same way the steady-state loop does.
         throw new Error(
-          `onTrigger ${primitive.id} body run ${runId}__${primitive.id}__${String(plan.eventIndex)} ended ${plan.terminalStatus}`,
+          `onTrigger ${primitive.id} body run ${plan.childRunId} ended ${plan.terminalStatus}`,
         );
       case "reestablish-approval":
         eventIndex = plan.eventIndex;
@@ -2573,7 +2581,10 @@ async function runOnTrigger(
   }
 
   while (true) {
-    const childRunId = `${runId}__${primitive.id}__${String(eventIndex)}`;
+    const childRunId =
+      resumedChild?.eventIndex === eventIndex
+        ? resumedChild.childRunId
+        : `${runId}__${primitive.id}__${String(eventIndex)}`;
     let resume: SuspendableOccurrenceResume | undefined;
     if (resumeApproval !== undefined) {
       resume = {
@@ -2933,6 +2944,7 @@ type OnTriggerResumePlan =
   | {
       kind: "terminal-is-final";
       eventIndex: number;
+      childRunId: string;
       terminalStatus: "failed" | "cancelled";
     };
 
@@ -2975,25 +2987,44 @@ function bodyParkedSignals(childState: RunState): {
   return { author, controlPlane };
 }
 
-async function planOnTriggerResume(
-  env: WorkflowRuntimeEnv,
+type OnTriggerChild = { eventIndex: number; childRunId: string };
+
+/**
+ * The section's highest-indexed body child. Children spawned before body ids
+ * were run-scoped carry the bare `<stepId>__<eventIndex>` id; a section that
+ * spans that upgrade must still resume them under their durable id.
+ */
+function latestOnTriggerChild(
   runId: string,
   primitive: OnTriggerPrimitive,
   state: RunState,
-  log: readonly WorkflowEvent[],
-): Promise<OnTriggerResumePlan> {
-  const prefix = `${runId}__${primitive.id}__`;
-  let eventIndex = -1;
+): OnTriggerChild | undefined {
+  const prefixes = [`${runId}__${primitive.id}__`, `${primitive.id}__`];
+  let latest: OnTriggerChild | undefined;
   for (const childRunId of state.children.keys()) {
-    if (!childRunId.startsWith(prefix)) continue;
+    const prefix = prefixes.find((p) => childRunId.startsWith(p));
+    if (prefix === undefined) continue;
     const parsed = Number.parseInt(childRunId.slice(prefix.length), 10);
-    if (Number.isInteger(parsed) && parsed > eventIndex) eventIndex = parsed;
+    if (!Number.isInteger(parsed)) continue;
+    if (latest === undefined || parsed > latest.eventIndex) {
+      latest = { eventIndex: parsed, childRunId };
+    }
   }
-  if (eventIndex === -1) {
+  return latest;
+}
+
+async function planOnTriggerResume(
+  env: WorkflowRuntimeEnv,
+  primitive: OnTriggerPrimitive,
+  state: RunState,
+  log: readonly WorkflowEvent[],
+  latest: OnTriggerChild | undefined,
+): Promise<OnTriggerResumePlan> {
+  if (latest === undefined) {
     // The container `StepStarted` is durable but no body was ever spawned.
     return { kind: "fresh" };
   }
-  const childRunId = `${prefix}${String(eventIndex)}`;
+  const { eventIndex, childRunId } = latest;
   const child = state.children.get(childRunId);
   if (child === undefined) {
     throw new Error(
@@ -3026,6 +3057,7 @@ async function planOnTriggerResume(
     return {
       kind: "terminal-is-final",
       eventIndex,
+      childRunId,
       terminalStatus: child.terminalStatus,
     };
   }
