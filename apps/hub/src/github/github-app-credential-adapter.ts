@@ -20,6 +20,12 @@ const InstallationToken = type({
   expires_at: "string > 0",
 });
 
+// Bun's Request constructor does not accept a string | URL | Request union.
+export function toRequest(input: string | URL | Request, init?: RequestInit): Request {
+  if (input instanceof Request) return new Request(input, init);
+  return new Request(String(input), init);
+}
+
 type FetchLike = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -180,7 +186,7 @@ export function createGithubAppCredentialFetch({
   }
 
   return async function githubAppCredentialFetch(input, init) {
-    const original = new Request(input, init);
+    const original = toRequest(input, init);
     const authorization = original.headers.get("authorization");
     if (new URL(original.url).origin !== apiOrigin) {
       if (authorization?.startsWith("Bearer ") && isGithubAppJson(authorization.slice("Bearer ".length))) {
@@ -195,10 +201,10 @@ export function createGithubAppCredentialFetch({
     const credential = parseAppCredential(authorization.slice("Bearer ".length));
     const url = new URL(original.url);
     if (url.pathname === "/app" || url.pathname === "/app/installations") {
-      const headers = new Headers(original.headers);
-      headers.delete(INSTALLATION_SELECTOR_HEADER);
-      headers.set("authorization", `Bearer ${appJwt(credential, now())}`);
-      return fetchImpl(new Request(original, { headers, redirect: "manual" }));
+      const forwarded = new Request(original, { redirect: "manual" });
+      forwarded.headers.delete(INSTALLATION_SELECTOR_HEADER);
+      forwarded.headers.set("authorization", `Bearer ${appJwt(credential, now())}`);
+      return fetchImpl(forwarded);
     }
     const selected = original.headers.get(INSTALLATION_SELECTOR_HEADER);
     const installationId = selected === null
@@ -208,13 +214,19 @@ export function createGithubAppCredentialFetch({
       throw new Error("GitHub installation selector must be a positive safe integer");
     }
 
+    const body = await original.clone().arrayBuffer();
+
     async function send(force: boolean): Promise<Response> {
       const { token } = await mint(credential, installationId, force);
-      const request = original.clone();
-      const headers = new Headers(request.headers);
-      headers.delete(INSTALLATION_SELECTOR_HEADER);
-      headers.set("authorization", `Bearer ${token}`);
-      return fetchImpl(new Request(request, { headers, redirect: "manual" }));
+      const request = new Request(original.url, {
+        method: original.method,
+        headers: original.headers,
+        body: body.byteLength === 0 ? null : body,
+        redirect: "manual",
+      });
+      request.headers.delete(INSTALLATION_SELECTOR_HEADER);
+      request.headers.set("authorization", `Bearer ${token}`);
+      return fetchImpl(request);
     }
 
     const response = await send(false);

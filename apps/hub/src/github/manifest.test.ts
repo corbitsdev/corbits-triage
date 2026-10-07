@@ -110,7 +110,7 @@ function startRequest(): Request {
   });
 }
 
-function mutationRequest(headers: HeadersInit): Request {
+function mutationRequest(headers: Bun.HeadersInit): Request {
   return new Request(START_URL, { method: "POST", headers, body: "{}" });
 }
 
@@ -218,7 +218,7 @@ describe("GitHub manifest authorization", () => {
 
   test("exchanges the code against the configured GitHub origin", async () => {
     let seen = "";
-    async function recordConversion(input: RequestInfo | URL) {
+    async function recordConversion(input: string | URL | Request) {
       seen = String(input);
       return Response.json({ id: 1, slug: "app", pem: "pem", webhook_secret: "secret" });
     }

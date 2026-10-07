@@ -337,7 +337,7 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     if (decodeSegments(rest) === null) return Response.json({ error: "unknown_hook" }, { status: 404 });
     const target = new URL(req.url);
     target.pathname = rest === "" || rest === "/" ? "/" : rest;
-    return hookApp.fetch(new Request(target, req));
+    return hookApp.fetch(new Request(target.href, req));
   }
   if (req.method === "PATCH") {
     const tenantMatch = /^\/api\/tenants\/([^/]+)$/.exec(url.pathname);
