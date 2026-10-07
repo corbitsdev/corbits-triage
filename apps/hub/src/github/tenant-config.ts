@@ -192,6 +192,12 @@ export function markBacklogPending(ns: CorbitsTriageNs, names: readonly string[]
   return { ...ns, backlogSync: sync };
 }
 
+export function markBacklogFailed(ns: CorbitsTriageNs, names: readonly string[]): CorbitsTriageNs {
+  const sync = backlogSyncMap(ns);
+  for (const name of names) sync[name] = { ...sync[name], status: "failed" };
+  return { ...ns, backlogSync: sync };
+}
+
 export function namesNeedingBacklog(ns: CorbitsTriageNs, names: readonly string[]): string[] {
   return names.filter((name) => owesBacklog(ns, name));
 }
