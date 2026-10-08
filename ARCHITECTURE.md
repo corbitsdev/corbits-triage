@@ -42,8 +42,9 @@ executes and ends.
 
 - `pr-triage`: one PR event → facts, deterministic checks, classification,
   GitHub mirror.
-- `pr-triage-historical`: catch-up over open PRs when a repository is added
-  or on request.
+- `pr-triage-historical`: catch-up over open PRs when a user enables triage
+  for a repository, or on Triage again. Installed repositories are recorded
+  disabled; nothing runs until a user enables one.
 
 The bridge finds the target by workflow name per tenant; no deployment ids
 are configured anywhere.

@@ -22,11 +22,7 @@ import { verifySignature } from "./signature.js";
 import {
   dropReposByInstallation,
   dropReposByName,
-  markBacklogMailed,
-  markBacklogPending,
-  namesNeedingBacklog,
   patchCorbitsTriage,
-  owesBacklog,
   repoRecords,
   setConnectedForInstallation,
   upsertConnectedRepos,
@@ -182,14 +178,13 @@ function json(status: number, body: unknown): Response {
   return Response.json(body, { status });
 }
 
-const BACKLOG_WORKFLOW = "pr-triage-historical";
 const INSTALL_EVENTS = new Set(["installation", "installation_repositories"]);
 const REPO_LIST_CAP = 50;
 
-function mailPayload(kind: "pr" | "backlog", repo: string, policy: RepoPolicy, pack: CheckPack, extra: Record<string, unknown> = {}) {
+function mailPayload(repo: string, policy: RepoPolicy, pack: CheckPack, extra: Record<string, unknown>) {
   return {
     ...extra,
-    kind,
+    kind: "pr",
     repo,
     policy: { ...policy, checkPack: { name: checkPackName(repo) } },
     checkPack: pack,
@@ -246,17 +241,8 @@ function listedRepos(list: unknown, truncatedFlag: unknown): { names: string[]; 
 
 type InstallPatch = { ns: CorbitsTriageNs; truncated?: boolean };
 
-function catchupNames(before: CorbitsTriageNs, listed: readonly string[], added: readonly string[]): string[] {
-  const addedSet = new Set(added);
-  return listed.filter((name) => addedSet.has(name) || owesBacklog(before, name, Date.now()));
-}
-
 function applyCreatedOrAdded(ns: CorbitsTriageNs, listed: { names: string[]; truncated: boolean }, fields: InstallationFields): InstallPatch {
-  const upserted = upsertConnectedRepos(ns, listed.names, fields);
-  return {
-    ns: markBacklogPending(upserted.ns, catchupNames(ns, listed.names, upserted.added)),
-    truncated: listed.truncated,
-  };
+  return { ns: upsertConnectedRepos(ns, listed.names, fields), truncated: listed.truncated };
 }
 
 /** A suspended installation keeps its repositories, disconnected; GitHub will not list them. */
@@ -264,17 +250,13 @@ export type InstallationListing =
   | { fields: InstallationFields; suspended: false; names: string[] }
   | { fields: InstallationFields; suspended: true };
 
-/** Makes the stored repositories match what GitHub reports; returns the repositories that are new. */
-export function applyInstallationListing(
-  ns: CorbitsTriageNs,
-  listings: readonly InstallationListing[],
-): { ns: CorbitsTriageNs; added: string[] } {
+/** Makes the stored repositories match what GitHub reports. */
+export function applyInstallationListing(ns: CorbitsTriageNs, listings: readonly InstallationListing[]): CorbitsTriageNs {
   const live = new Set(listings.map((listing) => listing.fields.installationId));
   let next = ns;
   for (const row of repoRecords(ns)) {
     if (row.installationId !== undefined && !live.has(row.installationId)) next = dropReposByInstallation(next, row.installationId);
   }
-  const added: string[] = [];
   for (const listing of listings) {
     const { installationId } = listing.fields;
     if (listing.suspended) {
@@ -284,27 +266,9 @@ export function applyInstallationListing(
     const listed = new Set(listing.names);
     const gone = repoRecords(next).filter((row) => row.installationId === installationId && !listed.has(row.name));
     next = dropReposByName(next, gone.map((row) => row.name));
-    const upserted = upsertConnectedRepos(next, listing.names, listing.fields);
-    next = upserted.ns;
-    added.push(...upserted.added);
+    next = upsertConnectedRepos(next, listing.names, listing.fields);
   }
-  return { ns: markBacklogPending(next, added), added };
-}
-
-export type BacklogDeps = Pick<BridgeDeps, "sendMail" | "readCheckPack"> & Pick<BridgeDeps, "db">;
-
-/** Mails backlog catch-up for each repository that owes one and has a check pack; returns the repositories mailed. */
-export async function sendBacklog(d: BacklogDeps, tenantId: string, ns: CorbitsTriageNs, names: readonly string[]): Promise<string[]> {
-  const mailed: string[] = [];
-  for (const repo of namesNeedingBacklog(ns, names, Date.now())) {
-    const pack = await resolvedPack(d.readCheckPack, tenantId, repo);
-    if (!pack) continue;
-    const row = repoRecords(ns).find((item) => item.name === repo);
-    await d.sendMail(tenantId, BACKLOG_WORKFLOW, mailPayload("backlog", repo, repoPolicy(row), pack));
-    mailed.push(repo);
-    await patchCorbitsTriage(d.db, tenantId, (current) => markBacklogMailed(current, [repo], Date.now()));
-  }
-  return mailed;
+  return next;
 }
 
 function applyInstallAction(
@@ -337,12 +301,6 @@ function applyInstallAction(
     return { ns: setConnectedForInstallation(ns, fields.installationId, true) };
   }
   return undefined;
-}
-
-function payloadCatchupNames(event: string, action: string, payload: Record<string, unknown>): string[] {
-  if (event === "installation" && action === "created") return repoFullNames(payload["repositories"]);
-  if (event === "installation_repositories" && action === "added") return repoFullNames(payload["repositories_added"]);
-  return [];
 }
 
 function mailFailure(err: unknown): Response {
@@ -401,25 +359,8 @@ async function handleInstallEvent(
     });
   }
 
-  let mailed: string[] = [];
-  try {
-    mailed = await sendBacklog(d, loaded.tenantId, nextNs, payloadCatchupNames(event, action, payload));
-  } catch (err) {
-    d.cache.forget(`${loaded.credentialId}:${delivery}`);
-    log({ level: "error", msg: "forward_failed", delivery, event, action, error: String(err) });
-    return mailFailure(err);
-  }
-  log({
-    level: "info",
-    msg: mailed.length > 0 ? "forwarded" : "accepted",
-    delivery,
-    event,
-    action,
-    added: mailed,
-    workflow: BACKLOG_WORKFLOW,
-    hook: loaded.credentialId,
-  });
-  return json(202, { status: mailed.length > 0 ? "forwarded" : "accepted" });
+  log({ level: "info", msg: "accepted", delivery, event, action, hook: loaded.credentialId, reason: "recorded_only" });
+  return json(202, { status: "accepted" });
 }
 
 function logJson(entry: Record<string, unknown>): void {
@@ -493,13 +434,13 @@ export function createBridgeHandler(d: BridgeDeps) {
       return json(500, { error: "tenant_config_unavailable" });
     }
     if (!configuredRepos(tenantConfig).has(mail.repo)) {
-      log({ level: "info", msg: "ignored_unconfigured_repo", delivery, event, repo: mail.repo, hook: loaded.credentialId });
+      log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
       return json(202, { status: "ignored" });
     }
     const policy = policyForRepo(tenantConfig, mail.repo);
-    if (!policy.classificationAuthorized) {
-      log({ level: "info", msg: "paused", delivery, event, repo: mail.repo, hook: loaded.credentialId });
-      return json(202, { status: "paused" });
+    if (!policy.enabled) {
+      log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
+      return json(202, { status: "ignored" });
     }
     const pack = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo);
     if (!pack) {
@@ -510,7 +451,7 @@ export function createBridgeHandler(d: BridgeDeps) {
       await d.sendMail(
         loaded.tenantId,
         loaded.workflow,
-        mailPayload("pr", mail.repo, policy, pack, mail as unknown as Record<string, unknown>),
+        mailPayload(mail.repo, policy, pack, mail as unknown as Record<string, unknown>),
       );
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);

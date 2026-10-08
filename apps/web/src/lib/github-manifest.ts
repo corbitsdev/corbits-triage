@@ -106,7 +106,7 @@ export async function saveExistingGithubApp(input: {
   await configureGithubHook(transport, input.tenantId, input.webhookSecret);
 }
 
-const SyncResult = type({ repos: "string[]", backlogFailed: "string[]" });
+const SyncResult = type({ repos: "string[]" });
 export type SyncResult = typeof SyncResult.infer;
 
 /** Asks the hub to read the App's installations from GitHub and store the repositories it can see. */
