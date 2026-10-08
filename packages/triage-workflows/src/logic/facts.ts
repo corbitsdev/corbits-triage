@@ -5,6 +5,7 @@ export interface PrData {
   body?: string | null;
   author?: string;
   sha?: string;
+  branch: string;
   state?: string;
   draft?: boolean;
   mergeable?: boolean | null;
@@ -81,5 +82,6 @@ export function buildFacts(
     deletions: Number(pr.deletions ?? 0),
     paths: [],
     body: pr.body ?? "",
+    branch: pr.branch,
   };
 }
