@@ -57,22 +57,10 @@ export type RepoRecord = {
   installationUrl?: string;
   selection?: "all" | "selected";
   cleanupMode?: RepoPolicy["cleanupMode"];
-  classificationAuthorized?: boolean;
+  enabled?: boolean;
   checks?: RepoCheckFlags;
   checkPack?: { name: string };
 };
-
-export type BacklogSyncState = {
-  status: "pending" | "succeeded" | "failed";
-  operationId: string;
-  runId?: string;
-  error?: string;
-};
-
-export type BacklogSyncResult =
-  | { repo: string; status: "succeeded"; runId: string }
-  | { repo: string; status: "pending" }
-  | { repo: string; status: "failed"; error: string };
 
 export function githubAppInstallUrl(slug: string): string {
   const clean = slug.trim();
@@ -287,7 +275,6 @@ export const CONFIG_KEY = "corbitsTriage";
 
 export type AppConfig = {
   repos?: unknown[];
-  backlogSync?: Record<string, BacklogSyncState>;
   confidenceFloor?: number;
   allowlist?: Record<string, string[]>;
   labelMap?: Record<string, string>;
@@ -298,24 +285,6 @@ export type AppConfig = {
   };
   rev?: number;
 };
-
-export function backlogSyncFromConfig(config: AppConfig | null | undefined): Record<string, BacklogSyncState> {
-  const raw = config?.backlogSync;
-  if (!raw || typeof raw !== "object") return {};
-  const parsed: Record<string, BacklogSyncState> = {};
-  for (const [repo, value] of Object.entries(raw)) {
-    if (!value || typeof value !== "object") continue;
-    const row = value as Record<string, unknown>;
-    if ((row.status !== "pending" && row.status !== "succeeded" && row.status !== "failed") || typeof row.operationId !== "string") continue;
-    parsed[repo] = {
-      status: row.status,
-      operationId: row.operationId,
-      ...(typeof row.runId === "string" ? { runId: row.runId } : {}),
-      ...(typeof row.error === "string" ? { error: row.error } : {}),
-    };
-  }
-  return parsed;
-}
 
 export function appConfig(config: unknown): AppConfig {
   if (!config || typeof config !== "object") return {};
@@ -427,9 +396,9 @@ async function loadRepoPolicy(transport: Transport, tenantId: string, repo: stri
   return repoPolicy(row);
 }
 
-function assertClassificationAuthorized(policy: RepoPolicy): void {
-  if (!policy.classificationAuthorized) {
-    throw new Error("Classification is paused for this repository.");
+function assertRepoEnabled(policy: RepoPolicy): void {
+  if (!policy.enabled) {
+    throw new Error("Triage is disabled for this repository. Enable it first.");
   }
 }
 
@@ -811,17 +780,6 @@ async function ensureInferenceOffering(
   }
 }
 
-async function rememberRepo(transport: Transport, tenantId: string, repo: string): Promise<void> {
-  await patchAppConfig(transport, tenantId, function addRepo(current) {
-    const prior = (current.repos ?? []).find((row) => rowName(row) === repo);
-    const kept = (current.repos ?? []).filter((row) => rowName(row) !== repo);
-    return {
-      ...current,
-      repos: [...kept, { ...(prior && typeof prior === "object" ? prior : {}), name: repo, connected: true }],
-    };
-  });
-}
-
 async function forgetRepo(transport: Transport, tenantId: string, repo: string): Promise<void> {
   await patchAppConfig(transport, tenantId, function dropRepo(current) {
     return { ...current, repos: (current.repos ?? []).filter((row) => rowName(row) !== repo) };
@@ -945,7 +903,7 @@ export async function startBacklogTriage(
 ): Promise<{ runId: string }> {
   const clean = validateRepo(repo);
   const policy = await loadRepoPolicy(transport, tenantId, clean);
-  assertClassificationAuthorized(policy);
+  assertRepoEnabled(policy);
   const pack = await loadRepoCheckPack(transport, tenantId, clean);
   if (!pack) throw new Error("This repository still needs check setup.");
   const { runId } = await triggerNamedWorkflow(
@@ -967,7 +925,7 @@ export async function startPullRequestTriage(
   const parsed = tryJson(clean);
   const repo = typeof parsed.repo === "string" ? parsed.repo : "";
   const policy = repo ? await loadRepoPolicy(transport, tenantId, repo) : undefined;
-  if (policy) assertClassificationAuthorized(policy);
+  if (policy) assertRepoEnabled(policy);
   const pack = repo ? await loadRepoCheckPack(transport, tenantId, repo) : null;
   if (repo && !pack) throw new Error("This repository still needs check setup.");
   const content = repo
@@ -1065,20 +1023,6 @@ function serializePerTenant<T>(tenantId: string, work: () => Promise<T>): Promis
 }
 
 /** The portal does not call GitHub. A missing workflow deployment is an error, not seed data. */
-export async function connectRepository(
-  transport: Transport,
-  tenantId: string,
-  input: { repo: string },
-): Promise<{ runId: string }> {
-  const repo = validateRepo(input.repo);
-  const key = requireTenantId(tenantId);
-  return serializePerTenant(key, async function connect() {
-    await rememberRepo(transport, tenantId, repo);
-    const { runId } = await startBacklogTriage(transport, tenantId, repo);
-    return { runId };
-  });
-}
-
 export async function removeRepository(
   transport: Transport,
   tenantId: string,
@@ -1088,30 +1032,6 @@ export async function removeRepository(
   const key = requireTenantId(tenantId);
   await serializePerTenant(key, function remove() {
     return forgetRepo(transport, tenantId, clean);
-  });
-}
-
-export async function changeRepository(
-  transport: Transport,
-  tenantId: string,
-  input: { previousRepo: string; repo: string },
-): Promise<{ runId: string }> {
-  const previousRepo = validateRepo(input.previousRepo);
-  const repo = validateRepo(input.repo);
-  const key = requireTenantId(tenantId);
-  function replaceRepo(current: AppConfig): AppConfig {
-    return {
-      ...current,
-      repos: [
-        ...(current.repos ?? []).filter((row) => rowName(row) !== previousRepo && rowName(row) !== repo),
-        { name: repo, connected: true },
-      ],
-    };
-  }
-  return serializePerTenant(key, async function change() {
-    await patchAppConfig(transport, tenantId, replaceRepo);
-    const { runId } = await startBacklogTriage(transport, tenantId, repo);
-    return { runId };
   });
 }
 

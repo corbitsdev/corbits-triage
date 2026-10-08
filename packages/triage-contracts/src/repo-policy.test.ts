@@ -11,7 +11,7 @@ describe("repoPolicy", () => {
   test("fills partial check flags and nested policy objects", () => {
     expect(repoPolicy({ cleanupMode: "automated", checks: { ci: false } })).toEqual({
       cleanupMode: "automated",
-      classificationAuthorized: true,
+      enabled: false,
       checks: {
         draft: true,
         ci: false,
@@ -23,10 +23,10 @@ describe("repoPolicy", () => {
     });
     expect(repoPolicy({
       name: "acme/widgets",
-      policy: { classificationAuthorized: false, checks: { draft: false, drift: false } },
+      policy: { enabled: false, checks: { draft: false, drift: false } },
     })).toEqual({
       cleanupMode: "human-approved",
-      classificationAuthorized: false,
+      enabled: false,
       checks: {
         draft: false,
         ci: true,

@@ -62,7 +62,7 @@ describe("facts director policy", () => {
     expect(body.det?.findings.map((finding) => finding.check) ?? []).not.toContain("draft");
   });
 
-  test("paused classification replies a degraded item without fetching", async () => {
+  test("a disabled repository replies a degraded item without fetching", async () => {
     const calls: ToolCall[][] = [];
     const replies: string[] = [];
     const caps = {
@@ -78,7 +78,7 @@ describe("facts director policy", () => {
             kind: "pr",
             repo: "acme/widgets",
             prNumber: 8,
-            policy: { classificationAuthorized: false },
+            policy: { enabled: false },
           }),
         },
       } as ReactorInboundEvent,
@@ -87,7 +87,7 @@ describe("facts director policy", () => {
     );
     expect(calls).toEqual([]);
     expect(JSON.parse(replies[0] ?? "{}")).toMatchObject({
-      det: { state: "stale-unknown", reason: "Classification is paused for this repository.", needsJudgment: false },
+      det: { state: "stale-unknown", reason: "Triage is disabled for this repository.", needsJudgment: false },
     });
   });
 
@@ -107,6 +107,7 @@ describe("facts director policy", () => {
             kind: "pr",
             repo: "acme/widgets",
             prNumber: 8,
+            policy: { enabled: true },
           }),
         },
       } as ReactorInboundEvent,

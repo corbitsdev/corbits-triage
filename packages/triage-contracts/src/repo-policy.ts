@@ -12,7 +12,7 @@ export type RepoCheckFlags = {
 
 export type RepoPolicy = {
   cleanupMode: CleanupMode;
-  classificationAuthorized: boolean;
+  enabled: boolean;
   checks: RepoCheckFlags;
   /** Pointer at the per-repo check-pack artifact. Not params. */
   checkPack?: { name: string };
@@ -29,7 +29,7 @@ export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
 
 export const DEFAULT_REPO_POLICY: RepoPolicy = {
   cleanupMode: "human-approved",
-  classificationAuthorized: true,
+  enabled: false,
   checks: { ...DEFAULT_REPO_CHECKS },
 };
 
@@ -51,7 +51,7 @@ export function repoPolicy(raw: unknown): RepoPolicy {
   const pointerName = typeof pointer.name === "string" ? pointer.name.trim() : "";
   return {
     cleanupMode: source.cleanupMode === "automated" ? "automated" : "human-approved",
-    classificationAuthorized: flag(source.classificationAuthorized, true),
+    enabled: flag(source.enabled, false),
     checks: {
       draft: flag(checks.draft, true),
       ci: flag(checks.ci, true),

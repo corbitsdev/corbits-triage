@@ -202,7 +202,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     const repo = input?.repo;
     const policy = repoPolicy(input?.policy);
     if (typeof repo !== "string") return fail("facts: input has no repo");
-    if (!policy.classificationAuthorized) return fail("Classification is paused for this repository.");
+    if (!policy.enabled) return fail("Triage is disabled for this repository.");
     const pack = packFromInput(input?.checkPack);
     if (!pack) return fail(NEEDS_SETUP_REASON);
     if (input?.kind === "backlog") {

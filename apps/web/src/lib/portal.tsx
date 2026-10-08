@@ -5,11 +5,9 @@ import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
 import { ApiError, createHubTransport } from "./hub-transport.ts";
 import {
-  changeRepository,
   configureGithubApp,
   hasActiveGithubCredential,
   configureGithubHook,
-  connectRepository,
   createGrant,
   deleteGrant,
   ensureWorkspace,
@@ -51,9 +49,7 @@ interface PortalContextValue {
   syncFromGithub: () => Promise<SyncResult>;
   configureApp: (secret: string) => Promise<void>;
   configureHook: (secret: string) => Promise<string>;
-  connect: (repo: string) => Promise<void>;
   removeRepo: (repo: string) => Promise<void>;
-  changeRepo: (previousRepo: string, repo: string) => Promise<void>;
   runBacklog: (repo: string, message?: string) => Promise<void>;
   runPullRequest: (pullRequest: string, refreshAfter?: boolean) => Promise<void>;
   closeDuplicate: (item: PrItem) => Promise<void>;
@@ -194,17 +190,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const connect = useCallback(
-    async function connect(repo: string) {
-      const current = requireSnapshot();
-      const transport = createHubTransport();
-      await connectRepository(transport, current.workspace.tenantId, { repo });
-      notify(`Backlog triage started for ${repo}.`);
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
   const configureHook = useCallback(
     async function configureHook(secret: string) {
       const current = requireSnapshot();
@@ -226,19 +211,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       const current = requireSnapshot();
       await removeRepository(createHubTransport(), current.workspace.tenantId, repo);
       notify(`Removed ${repo}.`);
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
-  const changeRepo = useCallback(
-    async function changeRepo(previousRepo: string, repo: string) {
-      const current = requireSnapshot();
-      await changeRepository(createHubTransport(), current.workspace.tenantId, {
-        previousRepo,
-        repo,
-      });
-      notify(`Changed ${previousRepo} to ${repo} and started backlog triage.`);
       refresh();
     },
     [notify, refresh, requireSnapshot],
@@ -370,11 +342,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     const current = requireSnapshot();
     const result = await syncGithubInstallations(current.workspace.tenantId);
     await refreshNow();
-    if (result.backlogFailed.length > 0) {
-      notify(`Could not start catch-up for ${result.backlogFailed.join(", ")}. Retry it from Repositories.`);
-    }
     return result;
-  }, [notify, refreshNow, requireSnapshot]);
+  }, [refreshNow, requireSnapshot]);
 
   const saveInferenceSecret = useCallback(
     async function saveInferenceSecret(input: { endpoint: string; model: string; secret: string }) {
@@ -402,9 +371,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         syncFromGithub,
         configureApp,
         configureHook,
-        connect,
         removeRepo,
-        changeRepo,
         runBacklog,
         runPullRequest,
         closeDuplicate,
@@ -431,9 +398,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       syncFromGithub,
       configureApp,
       configureHook,
-      connect,
       removeRepo,
-      changeRepo,
       runBacklog,
       runPullRequest,
       closeDuplicate,

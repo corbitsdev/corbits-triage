@@ -12,7 +12,7 @@ export type RepoRecord = {
   installationUrl?: string;
   selection?: "all" | "selected";
   cleanupMode?: RepoPolicy["cleanupMode"];
-  classificationAuthorized?: boolean;
+  enabled?: boolean;
   checks?: RepoPolicy["checks"];
 };
 
@@ -28,7 +28,6 @@ export type CorbitsTriageNs = {
   confidenceFloor?: unknown;
   allowlist?: unknown;
   labelMap?: unknown;
-  backlogSync?: unknown;
   rev?: number;
   [key: string]: unknown;
 };
@@ -79,6 +78,32 @@ export async function patchCorbitsTriage(
   });
 }
 
+type LegacyRepoRecord = RepoRecord & { classificationAuthorized?: unknown };
+
+function hasLegacyFlag(row: unknown): boolean {
+  return asRecord(row)?.["classificationAuthorized"] !== undefined;
+}
+
+function renameLegacyFlag(row: LegacyRepoRecord): RepoRecord {
+  if (!hasLegacyFlag(row)) return row;
+  const { classificationAuthorized, ...rest } = row;
+  if (rest.enabled !== undefined || typeof classificationAuthorized !== "boolean") return rest;
+  return { ...rest, enabled: classificationAuthorized };
+}
+
+function renameLegacyFlags(ns: CorbitsTriageNs): CorbitsTriageNs {
+  return Array.isArray(ns.repos) ? { ...ns, repos: ns.repos.map(renameLegacyFlag) } : ns;
+}
+
+/** One-time rewrite of repo rows stored before `classificationAuthorized` was renamed to `enabled`. */
+export async function migrateRepoEnabledFlag(db: DB["db"]): Promise<void> {
+  const tenants = await db.select({ id: schema.tenant.id, config: schema.tenant.config }).from(schema.tenant);
+  for (const tenant of tenants) {
+    const repos = triageNs(tenant.config).repos;
+    if (Array.isArray(repos) && repos.some(hasLegacyFlag)) await patchCorbitsTriage(db, tenant.id, renameLegacyFlags);
+  }
+}
+
 function cloneWithBody(req: Request, body: string): Request {
   const headers = new Headers(req.headers);
   headers.delete("content-length");
@@ -123,18 +148,17 @@ export async function prepareCorbitsTriagePatch(
   }));
 }
 
+/** Repositories new to the config are recorded disabled: nothing runs until a user enables one. */
 export function upsertConnectedRepos(
   ns: CorbitsTriageNs,
   names: readonly string[],
   fields: InstallationFields,
-): { ns: CorbitsTriageNs; added: string[] } {
+): CorbitsTriageNs {
   const repos = [...repoRecords(ns)];
   const index = new Map(repos.map((row, i) => [row.name, i]));
-  const added: string[] = [];
   for (const name of names) {
     const at = index.get(name);
     if (at === undefined) {
-      added.push(name);
       index.set(name, repos.length);
       repos.push({ name, connected: true, ...fields, ...repoPolicy(undefined) });
       continue;
@@ -142,7 +166,7 @@ export function upsertConnectedRepos(
     const prev = repos[at]!;
     repos[at] = { ...prev, connected: true, ...fields };
   }
-  return { ns: { ...ns, repos }, added };
+  return { ...ns, repos };
 }
 
 export function dropReposByName(ns: CorbitsTriageNs, names: readonly string[]): CorbitsTriageNs {
@@ -163,62 +187,4 @@ export function setConnectedForInstallation(
     ...ns,
     repos: repoRecords(ns).map((row) => (row.installationId === installationId ? { ...row, connected } : row)),
   };
-}
-
-function backlogSyncMap(ns: CorbitsTriageNs): Record<string, Record<string, unknown>> {
-  const raw = asRecord(ns.backlogSync) ?? {};
-  const next: Record<string, Record<string, unknown>> = {};
-  for (const [name, value] of Object.entries(raw)) {
-    const row = asRecord(value);
-    if (row) next[name] = row;
-  }
-  return next;
-}
-
-// The hub cannot see run completion (the portal derives it from run logs), so a
-// mailed backlog is treated as in flight for a while, then retried a few times.
-const BACKLOG_INFLIGHT_MS = 15 * 60 * 1000;
-const BACKLOG_MAX_MAILS = 3;
-
-/** No sync recorded, failed, never mailed, or mailed long enough ago to have been lost. */
-export function owesBacklog(ns: CorbitsTriageNs, name: string, now: number): boolean {
-  const row = backlogSyncMap(ns)[name];
-  const status = row?.["status"];
-  if (status === undefined || status === "failed") return true;
-  if (status !== "pending") return false;
-  const mailedAt = typeof row?.["mailedAt"] === "string" ? Date.parse(row["mailedAt"]) : Number.NaN;
-  if (Number.isNaN(mailedAt)) return true;
-  const mails = typeof row?.["mails"] === "number" ? row["mails"] : 1;
-  return mails < BACKLOG_MAX_MAILS && now - mailedAt >= BACKLOG_INFLIGHT_MS;
-}
-
-/** Never downgrades a succeeded sync. */
-export function markBacklogPending(ns: CorbitsTriageNs, names: readonly string[]): CorbitsTriageNs {
-  const sync = backlogSyncMap(ns);
-  for (const name of names) {
-    const prev = sync[name] ?? {};
-    if (prev["status"] === "succeeded") continue;
-    sync[name] = { ...prev, status: "pending" };
-  }
-  return { ...ns, backlogSync: sync };
-}
-
-export function markBacklogFailed(ns: CorbitsTriageNs, names: readonly string[]): CorbitsTriageNs {
-  const sync = backlogSyncMap(ns);
-  for (const name of names) sync[name] = { ...sync[name], status: "failed" };
-  return { ...ns, backlogSync: sync };
-}
-
-export function markBacklogMailed(ns: CorbitsTriageNs, names: readonly string[], now: number): CorbitsTriageNs {
-  const sync = backlogSyncMap(ns);
-  for (const name of names) {
-    const prev = sync[name] ?? {};
-    const mails = typeof prev["mails"] === "number" ? prev["mails"] : 0;
-    sync[name] = { ...prev, status: "pending", mailedAt: new Date(now).toISOString(), mails: mails + 1 };
-  }
-  return { ...ns, backlogSync: sync };
-}
-
-export function namesNeedingBacklog(ns: CorbitsTriageNs, names: readonly string[], now: number): string[] {
-  return names.filter((name) => owesBacklog(ns, name, now));
 }

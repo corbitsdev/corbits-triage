@@ -56,7 +56,7 @@ import {
   createGithubManifestIntegration,
   migrateGithubManifest,
 } from "./github/manifest.js";
-import { prepareCorbitsTriagePatch } from "./github/tenant-config.js";
+import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch } from "./github/tenant-config.js";
 import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "../../../packages/triage-workflows/src/pr-triage-historical.js";
 import { githubRead, githubWrite } from "../../../packages/github-tool/src/index.js";
@@ -173,6 +173,7 @@ cronTicker = createCronTicker({
 });
 cronTicker.start();
 await migrateGithubManifest(composition.db);
+await migrateRepoEnabledFlag(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
 async function authorizePortal(principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
@@ -237,8 +238,6 @@ const syncInstallations = createInstallationSync({
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
-  sendMail: sendBridgeMail,
-  readCheckPack,
 });
 const bridge = createBridgeHandler({
   db: hookDeps.db,
