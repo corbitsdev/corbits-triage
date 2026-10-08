@@ -64,9 +64,9 @@ export default function Triage() {
   const denied = snapshot?.denied.logs ?? false;
   const connectedRepos = snapshot?.repos.filter((repo) => repo.connected) ?? [];
   const catchingUp = snapshot ? connectedRepos.some((repo) => isRepoCatchingUp(snapshot, repo.name)) : false;
-  const title = view === "action" ? "Requires Action" : view === "merge" ? "Ready to Merge" : "All PRs";
+  const title = view === "action" ? "Triaged" : view === "merge" ? "Ready to Merge" : "All PRs";
   const lede = view === "action"
-    ? "Human-gated: confirm a recommendation, or decide a duplicate. Ranked by priority."
+    ? "Every triaged pull request, ranked by priority."
     : view === "merge"
       ? "Checks are green and GitHub says these can merge. Merge is a maintainer action, not auto."
       : "Every pull request that went through checks. Human-needed first.";
@@ -90,13 +90,11 @@ export default function Triage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const triaged = shown.filter((item) => item.state !== "new");
   const board = (
     <div className="board">
-      <Lane title="P0 / P1" items={triaged.filter((item) => actionLane(item) === "p01")} />
-      <Lane title="P2" items={triaged.filter((item) => actionLane(item) === "p2")} />
-      <Lane title="P3" items={triaged.filter((item) => actionLane(item) === "p3")} />
-      <Lane title="New" items={shown.filter((item) => item.state === "new")} />
+      <Lane title="P0 / P1" items={shown.filter((item) => actionLane(item) === "p01")} />
+      <Lane title="P2" items={shown.filter((item) => actionLane(item) === "p2")} />
+      <Lane title="P3" items={shown.filter((item) => actionLane(item) === "p3")} />
     </div>
   );
   const stack = <div className="card-stack">{shown.map((item) => <Card key={item.key} item={item} />)}</div>;
@@ -127,7 +125,7 @@ export default function Triage() {
             </div>
           </div>
           <nav className="view-tabs" aria-label="Triage views">
-            <NavLink to="/triage/action">Requires Action</NavLink>
+            <NavLink to="/triage/action">Triaged</NavLink>
             <NavLink to="/triage/merge">Ready to Merge</NavLink>
             <NavLink to="/triage/all">All PRs</NavLink>
           </nav>

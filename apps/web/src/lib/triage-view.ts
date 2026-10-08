@@ -146,7 +146,7 @@ export function priorityRank(priority: string | null): number {
 }
 
 export function filterTriageItems(items: PrItem[], view: TriageBoardView): PrItem[] {
-  if (view === "action") return items.filter((item) => item.needsHuman || item.state === "new");
+  if (view === "action") return items.filter((item) => item.state !== "new");
   if (view === "merge") return items.filter((item) => item.state === "ready");
   return items;
 }

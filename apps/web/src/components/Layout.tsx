@@ -19,7 +19,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const items = useQueueItems();
-  const actionCount = items.filter((item) => item.needsHuman).length;
+  const actionCount = items.filter((item) => item.state !== "new").length;
   const mergeCount = items.filter((item) => item.state === "ready").length;
   const path = location.pathname;
   const isPr = path.startsWith("/triage/pr/");
@@ -78,9 +78,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           <div className="nav-section">
             <p className="nav-section-label" id="nav-triage-label">Triage</p>
             <div className="nav-sub" role="group" aria-labelledby="nav-triage-label">
-              <NavLink to="/triage/action" title="Requires Action" className={({ isActive }) => `nav-item sub${isActive || (triageActive && path === "/triage") ? " is-on" : ""}`}>
+              <NavLink to="/triage/action" title="Triaged" className={({ isActive }) => `nav-item sub${isActive || (triageActive && path === "/triage") ? " is-on" : ""}`}>
                 <Inbox strokeWidth={1.7} aria-hidden="true" />
-                <span className="nav-label">Requires Action</span>
+                <span className="nav-label">Triaged</span>
                 <span className="nav-count">{actionCount}</span>
               </NavLink>
               <NavLink to="/triage/merge" title="Ready to Merge" className={({ isActive }) => `nav-item sub${isActive ? " is-on" : ""}`}>
