@@ -1,4 +1,4 @@
-// PortalSnapshot.denied marks sections the hub refused with 403, distinct from
+// A denied flag marks sections the hub refused with 403, distinct from
 // an empty list, so callers render this instead of their empty-list copy.
 export function DeniedNotice({ section }: { section: string }) {
   return (

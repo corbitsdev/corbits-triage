@@ -159,9 +159,6 @@ export type Awaiting = {
 export type SectionDenied = {
   repos: boolean;
   credentials: boolean;
-  grants: boolean;
-  approvals: boolean;
-  runs: boolean;
 };
 
 export type PortalSnapshot = {
@@ -171,11 +168,6 @@ export type PortalSnapshot = {
   config?: AppConfig;
   configVersion?: string;
   credentials: HubCredential[];
-  grants: HubGrant[];
-  principals: HubPrincipal[];
-  roles: HubRole[];
-  approvals: HubApproval[];
-  runs: HubRun[];
   denied: SectionDenied;
 };
 
@@ -356,15 +348,21 @@ export function reposFromConfig(config: unknown): RepoRecord[] {
   return parsed;
 }
 
-async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPack | null> {
-  const title = checkPackName(repo);
+export type ArtifactListItem = { id: string; title: string; kind?: string };
+
+export async function findArtifactByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
   const tid = enc(requireTenantId(tenantId));
-  const page = await transport.fetch<{ artifacts?: Array<{ id: string; title: string }> }>(
+  const page = await transport.fetch<{ artifacts?: ArtifactListItem[] }>(
     "GET",
     `/api/tenants/${tid}/artifacts?query=${enc(title)}&limit=100`,
   );
-  const listed = (page.artifacts ?? []).find((row) => row.title === title);
+  return (page.artifacts ?? []).find((row) => row.title === title) ?? null;
+}
+
+export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPack | null> {
+  const listed = await findArtifactByTitle(transport, tenantId, checkPackName(repo));
   if (!listed) return null;
+  const tid = enc(requireTenantId(tenantId));
   const detail = await transport.fetch<{ artifact?: { content?: string } }>(
     "GET",
     `/api/tenants/${tid}/artifacts/${enc(listed.id)}`,
@@ -372,17 +370,12 @@ async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: s
   return parseCheckPack(detail.artifact?.content, repo);
 }
 
-/** The artifact is the source of truth; the config pointer can be lost when a sync re-adds a repository row. */
-async function withPackPointers(transport: Transport, tenantId: string, repos: RepoRecord[]): Promise<RepoRecord[]> {
-  const tid = enc(requireTenantId(tenantId));
+export type CheckPackLookup = (repo: string) => Promise<boolean>;
+
+async function withPackPointers(repos: RepoRecord[], hasPack: CheckPackLookup): Promise<RepoRecord[]> {
   return Promise.all(repos.map(async function linkExistingPack(repo) {
     if (repo.checkPack?.name?.trim()) return repo;
-    const title = checkPackName(repo.name);
-    const page = await transport.fetch<{ artifacts?: Array<{ title: string }> }>(
-      "GET",
-      `/api/tenants/${tid}/artifacts?query=${enc(title)}&limit=100`,
-    );
-    return (page.artifacts ?? []).some((row) => row.title === title) ? { ...repo, checkPack: { name: title } } : repo;
+    return (await hasPack(repo.name)) ? { ...repo, checkPack: { name: checkPackName(repo.name) } } : repo;
   }));
 }
 
@@ -1095,37 +1088,40 @@ async function tolerateSection<T>(work: Promise<T>, fallback: T): Promise<{ valu
   }
 }
 
-export async function loadPortal(transport: Transport, workspace: Workspace): Promise<PortalSnapshot> {
+export async function listGrants(transport: Transport, tenantId: string): Promise<HubGrant[]> {
+  const tid = enc(requireTenantId(tenantId));
+  return listAll<HubGrant>(transport, `/api/tenants/${tid}/grants`);
+}
+
+export async function listApprovals(transport: Transport, tenantId: string): Promise<HubApproval[]> {
+  const tid = enc(requireTenantId(tenantId));
+  return listAll<HubApproval>(transport, `/api/tenants/${tid}/approvals`);
+}
+
+export async function listRuns(transport: Transport, tenantId: string): Promise<HubRun[]> {
+  const tid = enc(requireTenantId(tenantId));
+  return listAll<HubRun>(transport, `/api/tenants/${tid}/workflows/runs`);
+}
+
+/** Only what the gate needs; approvals, runs and access rules are read by the pages that show them. */
+export async function loadPortal(transport: Transport, workspace: Workspace, hasPack: CheckPackLookup): Promise<PortalSnapshot> {
   const tenantId = requireTenantId(workspace.tenantId);
   const tid = enc(tenantId);
   const tenantFallback: TenantBody = { id: tenantId, name: "", slug: WORKSPACE_SLUG };
-  const [tenant, credentials, grants, principals, roles, approvals, runs] = await Promise.all([
+  const [tenant, credentials] = await Promise.all([
     tolerateSection(transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`), tenantFallback),
     tolerateSection(listAll<HubCredential>(transport, `/api/tenants/${tid}/credentials`), []),
-    tolerateSection(listAll<HubGrant>(transport, `/api/tenants/${tid}/grants`), []),
-    tolerateSection(listPrincipals(transport, tenantId), []),
-    tolerateSection(listRoles(transport, tenantId), []),
-    tolerateSection(listAll<HubApproval>(transport, `/api/tenants/${tid}/approvals`), []),
-    tolerateSection(listAll<HubRun>(transport, `/api/tenants/${tid}/workflows/runs`), []),
   ]);
   return {
     workspace,
     tenantName: tenant.value.name,
-    repos: tenant.denied ? [] : await withPackPointers(transport, tenantId, reposFromConfig(tenant.value.config)),
+    repos: tenant.denied ? [] : await withPackPointers(reposFromConfig(tenant.value.config), hasPack),
     config: appConfig(tenant.value.config),
     configVersion: configFingerprint(tenant.value.config),
     credentials: credentials.value,
-    grants: grants.value,
-    principals: principals.value,
-    roles: roles.value,
-    approvals: approvals.value,
-    runs: runs.value,
     denied: {
       repos: tenant.denied,
       credentials: credentials.denied,
-      grants: grants.denied,
-      approvals: approvals.denied,
-      runs: runs.denied,
     },
   };
 }
