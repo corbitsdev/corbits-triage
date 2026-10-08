@@ -348,31 +348,26 @@ export function reposFromConfig(config: unknown): RepoRecord[] {
   return parsed;
 }
 
-async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPack | null> {
-  const title = checkPackName(repo);
+export type ArtifactListItem = { id: string; title: string; kind?: string };
+
+export async function findArtifactByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
   const tid = enc(requireTenantId(tenantId));
-  const page = await transport.fetch<{ artifacts?: Array<{ id: string; title: string }> }>(
+  const page = await transport.fetch<{ artifacts?: ArtifactListItem[] }>(
     "GET",
     `/api/tenants/${tid}/artifacts?query=${enc(title)}&limit=100`,
   );
-  const listed = (page.artifacts ?? []).find((row) => row.title === title);
+  return (page.artifacts ?? []).find((row) => row.title === title) ?? null;
+}
+
+export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPack | null> {
+  const listed = await findArtifactByTitle(transport, tenantId, checkPackName(repo));
   if (!listed) return null;
+  const tid = enc(requireTenantId(tenantId));
   const detail = await transport.fetch<{ artifact?: { content?: string } }>(
     "GET",
     `/api/tenants/${tid}/artifacts/${enc(listed.id)}`,
   );
   return parseCheckPack(detail.artifact?.content, repo);
-}
-
-/** True when the repository's check pack artifact exists; the config pointer can be lost when a sync re-adds a repository row. */
-export async function hasCheckPackArtifact(transport: Transport, tenantId: string, repo: string): Promise<boolean> {
-  const tid = enc(requireTenantId(tenantId));
-  const title = checkPackName(repo);
-  const page = await transport.fetch<{ artifacts?: Array<{ title: string }> }>(
-    "GET",
-    `/api/tenants/${tid}/artifacts?query=${enc(title)}&limit=100`,
-  );
-  return (page.artifacts ?? []).some((row) => row.title === title);
 }
 
 export type CheckPackLookup = (repo: string) => Promise<boolean>;

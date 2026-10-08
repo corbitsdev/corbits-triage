@@ -1,4 +1,4 @@
-import { skipToken, useQuery } from "@tanstack/react-query";
+import { skipToken, useIsFetching, useQuery } from "@tanstack/react-query";
 import { ApiError, type Transport } from "@intx/hub-client";
 import {
   listApprovals,
@@ -20,14 +20,18 @@ import {
   ROLES_QUERY_KEY,
   RUNS_QUERY_KEY,
   usePortal,
+  useSignOutWhenRejected,
 } from "./portal.tsx";
 
 const LIVE_REFRESH_MS = 10_000;
 const DIRECTORY_REFRESH_MS = 60_000;
 const NO_ROWS: never[] = [];
 
-/** `loading` holds a page's empty state until the first read lands; `denied` replaces it when the hub refuses with 403. */
-export type TenantSection<T> = { rows: T[]; loading: boolean; denied: boolean };
+/**
+ * `loading` and `unavailable` hold a page's empty state until a read lands;
+ * `denied` replaces it when the hub refuses with 403.
+ */
+export type TenantSection<T> = { rows: T[]; loading: boolean; denied: boolean; unavailable: boolean };
 
 function useTenantSection<T>(
   key: string,
@@ -35,17 +39,36 @@ function useTenantSection<T>(
   refetchInterval: number,
 ): TenantSection<T> {
   const { snapshot } = usePortal();
+  const signOutWhenRejected = useSignOutWhenRejected();
   const tenantId = snapshot?.workspace.tenantId;
   const query = useQuery({
     queryKey: [key, tenantId],
-    queryFn: tenantId === undefined ? skipToken : () => list(createHubTransport(), tenantId),
+    queryFn: tenantId === undefined ? skipToken : async function readSection() {
+      try {
+        return await list(createHubTransport(), tenantId);
+      } catch (cause: unknown) {
+        signOutWhenRejected(cause);
+        throw cause;
+      }
+    },
     refetchInterval,
   });
+  const denied = query.error instanceof ApiError && query.error.status === 403;
   return {
     rows: query.data ?? NO_ROWS,
     loading: query.isLoading,
-    denied: query.error instanceof ApiError && query.error.status === 403,
+    denied,
+    unavailable: query.isError && !denied,
   };
+}
+
+function isFirstRead(query: { state: { data: unknown } }): boolean {
+  return query.state.data === undefined;
+}
+
+/** True while approvals are read for the first time, without subscribing, so it adds no polling of its own. */
+export function useApprovalsFirstLoad(): boolean {
+  return useIsFetching({ queryKey: [APPROVALS_QUERY_KEY], predicate: isFirstRead }) > 0;
 }
 
 export function useApprovals(): TenantSection<HubApproval> {

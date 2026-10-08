@@ -457,8 +457,8 @@ export default function Settings() {
                 grants={grants.rows}
                 people={principals.rows}
                 roles={roles.rows}
-                loading={grants.loading || principals.loading || roles.loading}
-                denied={grants.denied}
+                loading={[grants, principals, roles].some((section) => section.loading || section.unavailable)}
+                denied={grants.denied || principals.denied || roles.denied}
                 readOnly={readOnly}
                 addGrant={addGrant}
                 removeGrant={removeGrant}

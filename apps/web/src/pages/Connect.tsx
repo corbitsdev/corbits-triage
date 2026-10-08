@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
@@ -64,7 +64,7 @@ export default function Connect() {
   const { logs } = useRunLogs();
   const approvals = useApprovals();
   const runs = useRuns();
-  const items = projectQueue(logs, runs.rows, approvals.rows);
+  const items = useMemo(() => projectQueue(logs, runs.rows, approvals.rows), [logs, runs.rows, approvals.rows]);
   const githubReady = repos.some((repo) => hasVerifiedWebhookDelivery(logs, repo.name));
   const modelStored = hasDecisionModelCredential(snapshot?.credentials ?? []);
   const inferenceReady = hasObservedInference(items);
