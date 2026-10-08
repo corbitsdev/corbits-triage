@@ -104,7 +104,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
       setError("");
       if (kind === "reply") {
         if (!reply.trim()) throw new Error("The reply must not be empty.");
-        await writeGithub({ action: "comment", repo: item.repo, number: item.number, body: reply });
+        await writeGithub({ action: "reply", repo: item.repo, number: item.number, body: reply });
         if (item.labels.length > 0) await writeGithub({ action: "labels", repo: item.repo, number: item.number, labels: item.labels });
         setDone(`Posted to GitHub on #${item.number}.`);
       } else if (kind === "approve") {

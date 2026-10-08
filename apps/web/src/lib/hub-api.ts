@@ -908,6 +908,7 @@ export type OpenPulls = {
 
 export type PrGithubWriteInput =
   | { action: "comment"; repo: string; number: number; body: string }
+  | { action: "reply"; repo: string; number: number; body: string }
   | { action: "labels"; repo: string; number: number; labels: string[] }
   | { action: "review"; repo: string; number: number; event: "APPROVE" | "REQUEST_CHANGES"; body: string }
   | { action: "merge"; repo: string; number: number }
@@ -916,7 +917,7 @@ export type PrGithubWriteInput =
 export async function githubPrAction(transport: Transport, tenantId: string, input: PrGithubWriteInput): Promise<void> {
   const repo = validateRepo(input.repo);
   if (!Number.isInteger(input.number) || input.number < 1) throw new Error("Pull request number must be a positive integer.");
-  if (input.action === "comment" && !input.body.trim()) throw new Error("Comment must not be empty.");
+  if ((input.action === "comment" || input.action === "reply") && !input.body.trim()) throw new Error("Comment must not be empty.");
   if (input.action === "review" && input.event !== "APPROVE" && !input.body.trim()) {
     throw new Error("Review body must not be empty.");
   }
