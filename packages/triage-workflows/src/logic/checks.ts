@@ -32,6 +32,7 @@ export interface PrFacts {
   paths?: string[];
   body?: string;
   commits?: string[];
+  branch?: string;
 }
 
 export interface Finding {
@@ -134,12 +135,25 @@ function hasModelChecks(sources: DeterministicResult["sources"]): boolean {
 
 const GITHUB_ISSUE_REF = /(^|[\s(])#\d+\b|github\.com\/[^\s/]+\/[^\s/]+\/issues\/\d+/;
 const LINEAR_ISSUE_REF = /\b[A-Z][A-Z0-9]+-\d+\b|linear\.app\/\S+\/issue\//;
+// GitHub's "create a branch" names branches `123-title`; Linear's are `cl-123-title`.
+const GITHUB_BRANCH_REF = /^(\d+)-/;
+const LINEAR_BRANCH_REF = /\b([a-z][a-z0-9]+-\d+)\b/i;
 
-export function issueReference(facts: Pick<PrFacts, "title" | "body" | "commits">, tracker: IssueTracker): string | null {
+export function issueReference(facts: Pick<PrFacts, "title" | "body" | "commits" | "branch">, tracker: IssueTracker): string | null {
   const text = [facts.title, facts.body ?? "", ...(facts.commits ?? [])].join("\n");
-  const github = tracker === "linear" ? null : GITHUB_ISSUE_REF.exec(text)?.[0].trim().replace(/^\(/, "");
-  const linear = tracker === "github" ? null : LINEAR_ISSUE_REF.exec(text)?.[0];
-  return github ?? linear ?? null;
+  if (tracker !== "linear") {
+    const inText = GITHUB_ISSUE_REF.exec(text);
+    if (inText) return inText[0].trim().replace(/^\(/, "");
+    const inBranch = facts.branch === undefined ? null : GITHUB_BRANCH_REF.exec(facts.branch);
+    if (inBranch) return `#${inBranch[1]}`;
+  }
+  if (tracker !== "github") {
+    const inText = LINEAR_ISSUE_REF.exec(text);
+    if (inText) return inText[0];
+    const inBranch = facts.branch === undefined ? null : LINEAR_BRANCH_REF.exec(facts.branch);
+    if (inBranch) return inBranch[1].toUpperCase();
+  }
+  return null;
 }
 
 interface CheckRules {
