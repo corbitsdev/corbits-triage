@@ -1,27 +1,58 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { repoPolicy } from "@corbits/triage-contracts";
-import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
+import { useState, type MouseEvent, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { ExternalLink } from "lucide-react";
+import { enabledCheckCount, useCheckPacks, type PackState } from "../lib/check-packs.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, type RepoRecord } from "../lib/hub-api.ts";
-import { isRepoCatchingUp } from "../lib/backlog-status.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential } from "../lib/hub-api.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE } from "../lib/github-manifest.ts";
-import { repoNeedsCheckSetup } from "../lib/check-pack.ts";
 import { useGithubSync } from "../lib/github-sync.ts";
-import { useQueueItems } from "../lib/open-pulls.ts";
+import { useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { repoRows, type RepoHealth, type RepoRow } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
-import { useRuns } from "../lib/tenant-entities.ts";
+import { relativeTime } from "../lib/triage-view.ts";
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function listed(words: string[]): string {
+  if (words.length <= 1) return words.join("");
+  return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+function checksLabel(row: RepoRow, state: PackState | undefined): string {
+  if (row.needsSetup) return "Not set up";
+  if (!state || state.pending) return "";
+  if (state.error) return "Could not read";
+  return state.pack ? `${plural(enabledCheckCount(state.pack), "check")} on` : "Not set up";
+}
+
+function ownersLabel(owners: string[]): string {
+  if (owners.length === 0) return "No owner";
+  return owners.length === 1 ? owners[0]! : `${owners[0]} · ${owners.length - 1} more`;
+}
+
+function HealthMark({ health }: { health: RepoHealth }) {
+  const mark = health.tone === "ok"
+    ? <span className="dot ready" />
+    : health.tone === "warn" ? <span className="mk flag">!</span> : <span className="dot hollow" />;
+  return <span className={`hl ${health.tone}`}>{mark}{health.label}</span>;
+}
 
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
   const { logs } = useRunLogs();
-  const runs = useRuns();
+  const navigate = useNavigate();
   const repos = snapshot?.repos ?? [];
   const denied = snapshot?.denied.repos ?? false;
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
   const items = useQueueItems();
+  const loading = useQueueLoading();
+  const packs = useCheckPacks(repos.filter((repo) => repo.checkPack).map((repo) => repo.name));
+  const rows = repoRows(repos, items, logs, snapshot?.runs ?? []);
+  const accounts = [...new Set(repos.map((repo) => repo.name.split("/")[0]!))];
 
   const sync = useGithubSync(Boolean(snapshot && hasActiveGithubCredential(snapshot.credentials)));
 
@@ -46,61 +77,72 @@ export default function Repositories() {
     }
   }
 
-  const pendingSetup = repos.filter((repo) => repoNeedsCheckSetup(repo)).length;
+  /** Cells read from run logs and open pull requests stay blank until those have loaded once. */
+  function live(value: ReactNode): ReactNode {
+    return loading ? null : value;
+  }
 
-  function renderRepoCard(repo: RepoRecord) {
-    const needsSetup = repoNeedsCheckSetup(repo);
-    const to = `/repositories/${encodeURIComponent(repo.name)}${needsSetup ? "/setup" : ""}`;
-    const receivingEvents = hasVerifiedWebhookDelivery(logs, repo.name);
-    const catchingUp = isRepoCatchingUp(logs, runs.rows, repo.name);
-    const disabled = !needsSetup && !repoPolicy(repo).enabled;
-    const status = needsSetup ? "Needs setup" : disabled ? "Disabled" : catchingUp ? "Catching up open pull requests" : receivingEvents ? "Receiving events" : "Ready";
-    const open = items.filter((item) => item.repo === repo.name);
-    const needs = open.filter((item) => item.needsHuman).length;
-    const prLine = open.length === 0 ? "No open pull requests" : open.length === 1 ? "1 open" : `${open.length} open`;
-    const needsLine = needs === 0 ? "None need action" : needs === 1 ? "1 needs action" : `${needs} need action`;
-    const mode = repo.cleanupMode === "automated" ? "Automated" : "Human approved";
+  function renderRow(row: RepoRow) {
+    function openRow(event: MouseEvent<HTMLTableRowElement>) {
+      if (!event.defaultPrevented) navigate(row.href);
+    }
     return (
-      <Link key={repo.name} className="repo-card" to={to}>
-        <h2 className="mono">{repo.name}</h2>
-        <span className={`status${needsSetup || disabled ? " needs-setup" : catchingUp ? " catching" : ""}`}><i />{status}</span>
-        {needsSetup
-          ? <p className="small muted"><span className="repo-needs">Set up checks</span> · not classifying yet</p>
-          : <p className="small muted">{prLine} · <span className={needs ? "repo-needs" : ""}>{needsLine}</span> · {mode}</p>}
-      </Link>
+      <tr key={row.name} onClick={openRow}>
+        <td className="c-name"><Link to={row.href}><b title={row.name}>{row.name}</b></Link></td>
+        <td className="c-n mono">{live(row.open)}</td>
+        <td className="c-n mono">{live(row.needsYou)}</td>
+        <td className="c-post">{row.posting}</td>
+        <td className="c-checks">{checksLabel(row, packs.get(row.name))}</td>
+        <td className="c-own" title={row.owners.join(", ")}>{live(ownersLabel(row.owners))}</td>
+        <td className="c-act">{live(row.lastActivity ? relativeTime(row.lastActivity) : "None")}</td>
+        <td className="c-health">{row.health.tone === "warn" ? <HealthMark health={row.health} /> : live(<HealthMark health={row.health} />)}</td>
+      </tr>
     );
   }
 
   return (
     <div className="main-shell">
-      <div className="workspace">
-        <header className="workspace-head">
-          <div className="page-heading">
-            <div>
+      <div className="repos">
+        <section className="rl" aria-label="Repositories">
+          <div className="lh">
+            <div className="lh-top">
               <h1>Repositories</h1>
-              <p className="lede">
-                {pendingSetup === 0
-                  ? "Repositories the GitHub App can see. Open one to change its checks."
-                  : `${pendingSetup === 1 ? "1 repository needs" : `${pendingSetup} repositories need`} check setup before triage classifies pull requests.`}
-              </p>
+              {snapshot && <span className="n">{repos.length}</span>}
+              <span className="sp" />
+              <button type="button" className="btn btn-sm" disabled={readOnly || denied || opening || !snapshot} onClick={() => void manageOnGithub()}>
+                {opening ? "Opening GitHub…" : "Manage repositories on GitHub"}
+                <ExternalLink size={13} strokeWidth={1.6} aria-hidden="true" />
+              </button>
             </div>
-            <button type="button" className="btn primary" disabled={readOnly || denied || opening || !snapshot} onClick={() => void manageOnGithub()}>
-              {opening ? "Opening GitHub…" : "Manage repositories on GitHub"}
-            </button>
           </div>
-        </header>
-        <main id="main" className="scroller">
-          <div className="content-wide">
+          <main id="main" className="scroll">
             {denied && <DeniedNotice section="repositories" />}
-            {error && <p role="alert" className="error">{error}</p>}
-            {sync.error && <p role="alert" className="error">Could not read your repositories from GitHub. {sync.error.message}</p>}
-            {sync.isFetching && repos.length === 0 && <p className="field-help" role="status">Reading your repositories from GitHub…</p>}
-            {repos.length === 0 && !denied && !sync.isFetching && <div className="empty">No repositories yet. Use Manage repositories on GitHub to add some.</div>}
-            <div className="repo-grid">
-              {repos.map(renderRepoCard)}
-            </div>
-          </div>
-        </main>
+            {error && <p role="alert" className="rt-note error">{error}</p>}
+            {sync.error && <p role="alert" className="rt-note error">Could not read your repositories from GitHub. {sync.error.message}</p>}
+            {sync.isFetching && repos.length === 0 && <p className="rt-empty" role="status">Reading your repositories from GitHub…</p>}
+            {repos.length === 0 && !denied && !sync.isFetching && <p className="rt-empty">No repositories yet. Use Manage repositories on GitHub to add some.</p>}
+            {rows.length > 0 && (
+              <>
+                <table className="rt">
+                  <thead>
+                    <tr>
+                      <th className="c-name">Repository</th>
+                      <th className="c-n">Open</th>
+                      <th className="c-n">Needs you</th>
+                      <th className="c-post">Posting</th>
+                      <th className="c-checks">Checks</th>
+                      <th className="c-own">Owners</th>
+                      <th className="c-act">Last activity</th>
+                      <th className="c-health">Health</th>
+                    </tr>
+                  </thead>
+                  <tbody>{rows.map(renderRow)}</tbody>
+                </table>
+                <p className="rt-note">Triage sees the repositories its GitHub app is installed on, in {listed(accounts)}. Open one to change its posting and checks.</p>
+              </>
+            )}
+          </main>
+        </section>
       </div>
     </div>
   );
