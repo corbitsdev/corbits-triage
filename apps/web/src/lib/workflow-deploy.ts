@@ -4,7 +4,7 @@
 import { ApiError, deployWorkflow, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { pushFiles } from "./git-push.ts";
 import { requestOrigin } from "./hub-origin.ts";
-import { DECISION_MODEL_ALIAS, isDeployed, isLiveDeployment } from "./hub-api.ts";
+import { DECISION_MODEL_ALIAS, isLiveDeployment } from "./hub-api.ts";
 import { WORKFLOW_PACKAGES, workflowPackageFiles, type WorkflowPackage } from "./workflow-packages.ts";
 
 /** Provider plugin the triage agents infer through (packages/triage-workflows/src/agents.ts). */
@@ -87,15 +87,11 @@ function newestFirst(a: WorkflowDeployment, b: WorkflowDeployment): number {
   return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
 }
 
-/**
- * Cancels every live deployment older than the newest `deployed` one. Older
- * ones stay up while a newer deployment is still pending, and every converge
- * runs this again, so a failed cancel is retried.
- */
-async function cancelSuperseded(transport: Transport, tenantId: string, newestFirstDeployments: WorkflowDeployment[]): Promise<void> {
-  const newestDeployed = newestFirstDeployments.findIndex((d) => isDeployed(d.status));
-  if (newestDeployed === -1) return;
-  for (const old of newestFirstDeployments.slice(newestDeployed + 1)) {
+/** Cancels every live deployment of the asset except the newest; a failed cancel is retried on the next converge. */
+async function cancelSuperseded(transport: Transport, tenantId: string, assetId: string): Promise<void> {
+  const deployments = await listWorkflowDeployments(transport, tenantId);
+  const ofAsset = deployments.filter((d) => d.definitionAssetId === assetId).sort(newestFirst);
+  for (const old of ofAsset.slice(1)) {
     if (isLiveDeployment(old.status)) await cancelDeployment(transport, tenantId, old.id);
   }
 }
@@ -118,7 +114,7 @@ export async function ensureWorkflows(transport: Transport, tenantId: string, of
       });
       deployed.push(workflow.name);
     }
-    await cancelSuperseded(transport, tenantId, ofAsset);
+    await cancelSuperseded(transport, tenantId, asset.id);
   }
   return deployed;
 }
