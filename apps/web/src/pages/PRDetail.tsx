@@ -163,7 +163,7 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
     <article className="pr-overview" aria-label="About">
       <header className="brief brief-lead">
         <h1>{title}</h1>
-        <p className="verdict-why">{item.evidence[0] ?? item.nextAction ?? "No evidence recorded."}</p>
+        <p className="verdict-why">{item.triaging ? "Triage in progress" : (item.evidence[0] ?? item.nextAction ?? "No evidence recorded.")}</p>
         {item.comment ? <pre className="mono small-text">{item.comment}</pre> : null}
         {low ? (
           <p role="note" className="badge attention">

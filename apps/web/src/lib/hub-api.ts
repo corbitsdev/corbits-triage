@@ -1299,6 +1299,7 @@ export type PrItem = {
   waitingSince: string | null;
   canClose: boolean;
   pendingClose: boolean;
+  triaging: boolean;
   href: string;
 };
 
@@ -1460,6 +1461,8 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
     || tool === "github_merge_pr";
 }
 
+const TERMINAL_RUN_EVENTS = new Set(["RunCompleted", "RunFailed", "RunCancelled"]);
+
 /**
  * Queue projection from StepCompleted outputs read inline from the run event
  * logs. Latest run wins per repo#number. Pending github_mirror approvals only
@@ -1468,13 +1471,21 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
  */
 export function projectQueue(snapshot: PortalSnapshot, openPulls?: OpenPulls): PrItem[] {
   const items = new Map<string, PrItem>();
+  const triaging = new Set<string>();
   const logs = snapshot.logs.map((log, i) => ({ log, i })).sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i);
   for (const { log } of logs) {
     const started = log.events.find((e) => e.type === "RunStarted");
     const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
     const payload = eventStep ? obj(eventStep.output) : tryJson(obj(obj(started?.body).trigger).payload);
     const at = logTime(log) || null;
-    for (const v of runVerdicts(log)) {
+    const verdicts = runVerdicts(log);
+    const runKey = `${payload.repo}#${payload.prNumber}`;
+    const active = started && !log.events.some((e) => TERMINAL_RUN_EVENTS.has(e.type)) && !verdicts.some((v) => `${v.repo}#${v.number}` === runKey);
+    if (typeof payload.repo === "string" && typeof payload.prNumber === "number") {
+      if (active) triaging.add(runKey);
+      else triaging.delete(runKey);
+    }
+    for (const v of verdicts) {
       const key = `${v.repo}#${v.number}`;
       const r = v.render;
       const triggered = payload.repo === v.repo && payload.prNumber === v.number;
@@ -1505,6 +1516,7 @@ export function projectQueue(snapshot: PortalSnapshot, openPulls?: OpenPulls): P
         waitingSince: at,
         canClose: r.duplicate === true,
         pendingClose: false,
+        triaging: false,
         href: canonicalPrHref(v.repo, v.number),
       });
     }
@@ -1525,7 +1537,7 @@ export function projectQueue(snapshot: PortalSnapshot, openPulls?: OpenPulls): P
     });
   }
   if (openPulls) joinOpenPulls(items, openPulls);
-  return [...items.values()];
+  return [...items.values()].map((item) => (triaging.has(item.key) ? { ...item, triaging: true } : item));
 }
 
 function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
@@ -1564,6 +1576,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
         waitingSince: pr.updatedAt,
         canClose: false,
         pendingClose: false,
+        triaging: false,
         href: canonicalPrHref(repo, pr.number),
       });
     }
