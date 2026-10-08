@@ -786,15 +786,13 @@ async function forgetRepo(transport: Transport, tenantId: string, repo: string):
   });
 }
 
-const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "pending", "recovering", "allocated", "active"]);
+// Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and
+// flips to `running` on its first trigger. The db package that defines it is
+// server-only, so the set is repeated here.
+const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
 
 export function isLiveDeployment(status: string): boolean {
-  return LIVE_DEPLOYMENT_STATUSES.has(status.trim().toLowerCase());
-}
-
-/** Provisioned and reachable, unlike a `pending` or `recovering` live deployment. */
-export function isDeployed(status: string): boolean {
-  return status.trim().toLowerCase() === "deployed";
+  return LIVE_DEPLOYMENT_STATUSES.has(status);
 }
 
 export const SERVICE_NOT_RUNNING = "The service is not running. Restart the hub, then try again.";
@@ -834,17 +832,11 @@ export function withWorkflowNames(runs: HubRun[], logs: RunLog[]): HubRun[] {
   return runs.map((run) => ({ ...run, definitionName: names.get(run.definitionId) ?? run.definitionName }));
 }
 
-function deployedRank(status: string): number {
-  return Number(isDeployed(status));
-}
-
 function byPreferredDeployment(
-  a: { status: string; createdAt: string; id: string },
-  b: { status: string; createdAt: string; id: string },
+  a: { createdAt: string; id: string },
+  b: { createdAt: string; id: string },
 ): number {
-  return deployedRank(b.status) - deployedRank(a.status)
-    || b.createdAt.localeCompare(a.createdAt)
-    || b.id.localeCompare(a.id);
+  return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
 }
 
 async function triggerNamedWorkflow(
