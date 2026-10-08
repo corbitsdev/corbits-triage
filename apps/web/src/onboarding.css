@@ -1,0 +1,232 @@
+/* Mockup D (mockups/redesign/d-inbox-pulse) sign-in and setup screens, scoped to their roots. */
+.signin,
+.setup-flow {
+  --white: #ffffff;
+  --ink: #000000;
+  --green: #7b9974;
+  --rule: rgba(92, 85, 85, 0.18);
+  --rule-strong: rgba(92, 85, 85, 0.45);
+  --fill: rgba(92, 85, 85, 0.06);
+  --fill-hover: rgba(92, 85, 85, 0.1);
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --focus: 0 0 0 3px rgba(233, 132, 40, 0.35);
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  background: var(--white);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.5;
+}
+body:has(.signin, .setup-flow),
+.app.is-auth:has(.signin, .setup-flow) { background: #ffffff; }
+
+.onboarding-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 17px;
+}
+.onboarding-brand img { width: 26px; height: 26px; }
+
+.signin :focus-visible,
+.setup-flow :focus-visible { outline: none; box-shadow: var(--focus); }
+.signin .btn,
+.setup-flow .btn {
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule-strong);
+  background: var(--white);
+  color: var(--ink);
+  font-size: 14px;
+}
+.signin .btn:hover,
+.setup-flow .btn:hover { background: var(--fill); }
+.signin .btn.primary,
+.setup-flow .btn.primary { background: var(--heat); border-color: var(--heat); color: var(--ink); }
+.signin .btn.primary:hover,
+.setup-flow .btn.primary:hover { background: var(--heat-hover); border-color: var(--heat-hover); }
+.signin .btn.ghost,
+.setup-flow .btn.ghost { border-color: transparent; background: transparent; }
+.signin .btn.ghost:hover,
+.setup-flow .btn.ghost:hover { background: var(--fill-hover); }
+.signin .btn:disabled,
+.setup-flow .btn:disabled { opacity: 0.45; background: var(--white); color: var(--ink); border-color: var(--rule-strong); }
+.signin .btn.primary:disabled,
+.setup-flow .btn.primary:disabled { background: var(--heat); border-color: var(--heat); }
+.signin .btn.large { min-height: 46px; padding: 0 22px; font-size: 15px; }
+.signin input:not(.sr-only),
+.setup-flow input:not(.sr-only),
+.setup-flow textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule-strong);
+  background: var(--white);
+  font-size: 14px;
+}
+.setup-flow textarea { padding: 10px 12px; min-height: 96px; }
+.signin input:focus,
+.setup-flow input:focus,
+.setup-flow textarea:focus { outline: none; border-color: var(--heat); box-shadow: var(--focus); }
+.signin input[aria-invalid="true"] { border-color: var(--bad); }
+
+/* Sign in */
+/* Fills the viewport even where the mobile .app collapses to its content, so margin: auto centres the form at every width. */
+.signin {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding: 32px 56px;
+}
+.signin-form {
+  margin: auto 0;
+  width: 100%;
+  max-width: 360px;
+  display: grid;
+  gap: 14px;
+}
+.signin-form h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+.signin-form > p { margin: -4px 0 10px; font-size: 15px; }
+.signin-form .field { font-size: 14px; font-weight: 600; }
+.signin-or { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.signin-or::before,
+.signin-or::after { content: ""; height: 1px; flex: 1; background: var(--rule); }
+.signin-switch {
+  justify-self: start;
+  min-height: 38px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* Setup */
+.setup-flow { padding: 24px 32px 56px; }
+.setup {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  padding-top: 32px;
+}
+.setup h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin-bottom: 8px; }
+.setup-lede { font-size: 15px; margin-bottom: 26px; }
+.setup-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-lg);
+}
+.setup-step {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px 20px;
+}
+.setup-step + .setup-step { border-top: 1px solid var(--rule); }
+.setup-step-no {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px solid var(--rule-strong);
+  display: grid;
+  place-items: center;
+  font: 700 12px var(--mono);
+}
+.setup-step-no svg { width: 15px; height: 15px; }
+.setup-step.is-done .setup-step-no { background: var(--green); border-color: var(--green); }
+.setup-step.is-active .setup-step-no { border: 2px solid var(--ink); }
+.setup-step h2 { margin: 3px 0 2px; font-size: 15px; font-weight: 700; }
+.setup-step p { font-size: 13px; }
+.setup-step-body { display: grid; gap: 14px; min-width: 0; }
+.setup-flow .task-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
+.setup-flow .setup-help {
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  background: var(--white);
+}
+.setup-flow .setup-help > summary { font-size: 14px; }
+.setup-flow details.setup-help[open] { gap: 14px; }
+.setup-flow .setup-help > p { margin-bottom: 8px; }
+.setup-flow .setup-help > .task-actions { margin-top: 8px; }
+.setup-flow .connection-fields > label { align-content: start; }
+.setup-flow .pem-field { position: relative; }
+.setup-flow .setup-help .connection-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+.setup-flow .connection-fields > .full-span { grid-column: 1 / -1; }
+.setup-flow .file-picker,
+.setup-flow .file-loaded,
+.setup-flow .setup-waiting,
+.setup-flow .success-callout { border-radius: var(--r-md); background: var(--white); border-color: var(--rule-strong); }
+.setup-flow .success-callout svg,
+.setup-flow .file-loaded svg { color: var(--green); }
+.setup-flow .repository-list { border: 1px solid var(--rule); border-radius: var(--r-md); }
+.setup-flow .install-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+.setup-flow .install-row + .install-row { border-top: 1px solid var(--rule); }
+
+/* Decision model presets as radio cards; resets the stock radiogroup pill. */
+.setup-flow .segmented[role="radiogroup"] {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+}
+.setup-flow .segmented[role="radiogroup"] button[role="radio"] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-md);
+  background: var(--white);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+}
+.setup-flow .segmented[role="radiogroup"] button[role="radio"]::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--rule-strong);
+}
+.setup-flow .segmented[role="radiogroup"] button[role="radio"]:hover { background: var(--fill); }
+.setup-flow .segmented[role="radiogroup"] button[aria-checked="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+  background: var(--white);
+  color: var(--ink);
+}
+.setup-flow .segmented[role="radiogroup"] button[aria-checked="true"]::before { border: 5px solid var(--ink); }
+
+@media (max-width: 720px) {
+  .signin { padding: 24px 16px 40px; }
+  .setup-flow { padding: 20px 16px 40px; }
+  .setup { padding-top: 24px; }
+  .setup-step { gap: 12px; padding: 16px; }
+  .setup-flow .setup-help .connection-fields { grid-template-columns: minmax(0, 1fr); }
+}

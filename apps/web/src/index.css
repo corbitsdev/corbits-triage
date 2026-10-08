@@ -32,7 +32,7 @@
   --heat-hover: #dd7a20;
   --heat-press: #bf6b20;
   --heat-ink: #1c0b06;
-  --heat-wash: #ead0c4;
+  --heat-wash: #fbe1c9;
   --rail: #0a0c11;
   --rail-text: #e8eaf0;
   --rail-mute: #8b909c;
@@ -40,7 +40,7 @@
   --rail-line: #16181e;
   --ok: #1d6b42;
   --bad: #b1352c;
-  --ring: #b83a0c;
+  --ring: #bf6b20;
   --background: var(--paper);
   --surface: var(--sheet);
   --surface-subtle: var(--inset);
@@ -2208,116 +2208,6 @@ textarea {
   flex-direction: column;
 }
 
-body[data-room="login"] .app,
-body[data-room="connect"] .app {
-  grid-template-columns: minmax(0, 1fr);
-}
-body[data-room="login"] .sidebar,
-body[data-room="login"] .mobile-nav,
-body[data-room="login"] .pr-sliver,
-body[data-room="connect"] .sidebar,
-body[data-room="connect"] .mobile-nav,
-body[data-room="connect"] .pr-sliver {
-  display: none;
-}
-
-.login-room,
-.connect-room {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  height: 100%;
-}
-.auth-mast {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 52px;
-  flex-shrink: 0;
-  padding: 8px 16px;
-  color: var(--ink);
-}
-.auth-mast strong {
-  font-weight: 650;
-  font-size: 14px;
-  letter-spacing: -0.04em;
-}
-
-.login-stage {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 24px 24px 48px;
-}
-.login-form {
-  width: min(24rem, 100%);
-  display: grid;
-  gap: 16px;
-}
-body[data-room="login"],
-body[data-room="login"] .app.is-auth {
-  background: var(--rail);
-  color: var(--rail-text);
-}
-.login-mark {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: min(24rem, 100%);
-  margin-bottom: 40px;
-}
-.login-mark img { border-radius: var(--radius-md); }
-.login-mark strong {
-  font-size: 22px;
-  font-weight: 650;
-  letter-spacing: -0.04em;
-}
-.login-head {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.login-head h1 {
-  font-size: 2rem;
-  font-weight: 650;
-  letter-spacing: -0.045em;
-  line-height: 1.1;
-}
-.login-head p {
-  color: var(--rail-mute);
-  font-size: 14px;
-}
-body[data-room="login"] .field { color: var(--rail-text); }
-body[data-room="login"] .field input {
-  background: var(--night-field);
-  border-color: var(--night-line);
-  color: var(--rail-text);
-}
-body[data-room="login"] .field input:hover { border-color: var(--rail-mute); }
-body[data-room="login"] .field input:focus { border-color: var(--heat); }
-body[data-room="login"] .field-error { color: var(--night-bad); }
-body[data-room="login"] input[aria-invalid="true"] { border-color: var(--night-bad); }
-.login-form .btn.primary { min-height: 44px; margin-top: 8px; }
-.login-form .btn.primary:disabled { background: var(--night-line); color: var(--rail-mute); }
-.login-switch {
-  justify-self: center;
-  min-height: 44px;
-  border: 0;
-  background: transparent;
-  color: var(--rail-mute);
-  font-size: 14px;
-  font-weight: 600;
-  transition: color var(--duration) var(--ease);
-}
-.login-switch:hover { color: var(--rail-text); }
 .field-error {
   color: var(--bad);
   font-size: 13px;
@@ -2329,18 +2219,6 @@ textarea[aria-invalid="true"] {
   border-color: var(--bad);
 }
 
-.setup-coach {
-  display: grid;
-  gap: 8px;
-  padding-top: 24px;
-}
-.setup-progress h1 {
-  font-size: 2rem;
-  font-weight: 650;
-  letter-spacing: -0.045em;
-  line-height: 1.1;
-}
-.setup-task.panel { margin-top: 16px; }
 .setup-help > summary { cursor: pointer; font-weight: 600; }
 details.setup-help[open] { display: grid; gap: 12px; }
 .connection-fields { display: grid; gap: 14px; }
@@ -2369,112 +2247,6 @@ details.setup-help[open] { display: grid; gap: 12px; }
 .file-picker > span { display: grid; }
 .file-picker small { font-size: 12px; color: var(--ink-mute); }
 .file-loaded small { color: var(--ok); }
-.connect-task {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  width: min(36rem, 100%);
-  margin: 0 auto;
-}
-.connect-progress {
-  display: flex;
-  justify-content: center;
-  align-items: stretch;
-  gap: 8px 28px;
-  list-style: none;
-  margin: 0;
-  padding: 4px 16px 0;
-  border-bottom: 1px solid var(--rule);
-  flex-shrink: 0;
-}
-.connect-progress li {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 560;
-  color: var(--ink-mute);
-  padding: 0 4px 8px;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-.connect-progress .step-index {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-  color: inherit;
-}
-.connect-progress li[aria-current="step"] {
-  color: var(--heat);
-  font-weight: 650;
-  border-bottom-color: var(--heat);
-}
-.connect-panel {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  overflow: auto;
-  padding: 28px 16px 20px;
-}
-.connect-copy {
-  display: grid;
-  gap: 12px;
-  text-align: center;
-}
-.connect-copy h1 {
-  font-size: 1.5rem;
-  font-weight: 650;
-  letter-spacing: -0.04em;
-  line-height: 1.15;
-}
-.connect-copy .field-error,
-.connect-copy .note,
-.connect-copy .connect-wait {
-  text-align: left;
-}
-.connect-wait {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  color: var(--ink-soft);
-}
-.connect-wait i {
-  width: 8px;
-  height: 8px;
-  border-radius: 99px;
-  background: var(--heat);
-  flex-shrink: 0;
-  animation: live-pulse 1.4s ease-in-out infinite;
-}
-.connect-actions {
-  flex-shrink: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 16px 20px;
-  border-top: 1px solid var(--rule);
-  background: var(--paper);
-}
-.connect-actions .hint {
-  width: 100%;
-  text-align: center;
-  font-size: 13px;
-  color: var(--ink-mute);
-}
-.connect-panel .repo-grid {
-  margin-top: 8px;
-  text-align: left;
-}
-
 .hook-url {
   display: grid;
   gap: 6px;
@@ -2634,7 +2406,7 @@ details.setup-help[open] { display: grid; gap: 12px; }
     min-height: 100dvh;
     overflow: visible;
   }
-  .topbar, .content, .workspace-head, .scroller, .connect-panel, .connect-actions, .connect-progress, .pr-workspace {
+  .topbar, .content, .workspace-head, .scroller, .pr-workspace {
     padding-left: 16px;
     padding-right: 16px;
   }
@@ -2758,46 +2530,6 @@ details.setup-help[open] { display: grid; gap: 12px; }
     padding-bottom: calc(8px + env(safe-area-inset-bottom));
   }
   body:has(.dirty-bar) .toast { bottom: 148px; }
-
-  body[data-room="login"] .mobile-nav,
-  body[data-room="connect"] .mobile-nav {
-    display: none;
-  }
-  body[data-room="login"] .toast,
-  body[data-room="connect"] .toast {
-    bottom: 24px;
-  }
-  body[data-room="login"] .scroller,
-  body[data-room="connect"] .scroller,
-  body[data-room="connect"] .connect-panel {
-    padding-bottom: 24px;
-  }
-  .login-room,
-  .connect-room {
-    height: auto;
-    min-height: 100dvh;
-  }
-  .login-stage {
-    padding: 28px 16px 48px;
-    justify-content: flex-start;
-    overflow: visible;
-  }
-  .connect-task { display: flex; width: 100%; }
-  .connect-progress {
-    gap: 8px 16px;
-    padding-top: 8px;
-  }
-  .connect-progress li {
-    min-height: 40px;
-    flex: 1;
-    max-width: 10rem;
-  }
-  .connect-panel { overflow: visible; }
-  .connect-actions {
-    position: sticky;
-    bottom: 0;
-    padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  }
 }
 
 
@@ -2926,7 +2658,6 @@ textarea { min-height: 88px; resize: vertical; }
 }
 .success-callout svg,
 .file-loaded svg { color: var(--ok); }
-.connect-progress .step-index svg { width: 14px; height: 14px; }
 .setup-help {
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
