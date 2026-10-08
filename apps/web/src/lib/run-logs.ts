@@ -1,11 +1,10 @@
 import { queryOptions, skipToken, useQueries, useQuery, type Query, type UseQueryResult } from "@tanstack/react-query";
-import { ApiError, listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents, type Transport } from "@intx/hub-client";
+import { ApiError, isTerminalRunEvents, listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents, type Transport } from "@intx/hub-client";
 import type { RunLog } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { RUN_IDS_QUERY_KEY, RUN_LOG_QUERY_KEY, usePortal } from "./portal.tsx";
 
 const LIVE_REFRESH_MS = 10_000;
-const TERMINAL_EVENTS = new Set(["RunCompleted", "RunFailed", "RunCancelled"]);
 
 type RunRef = { anchorRunId: string; runId: string };
 
@@ -35,25 +34,21 @@ async function readLog(transport: Transport, tenantId: string, ref: RunRef): Pro
   return { runId: log.runId, anchorRunId: ref.anchorRunId, events: log.events };
 }
 
-/** A finished run's log never changes again, so it is read once and kept. */
-function isFinished(log: RunLog): boolean {
-  return log.events.some((event) => TERMINAL_EVENTS.has(event.type));
-}
-
 function isRunLog(value: unknown): value is RunLog {
   return typeof value === "object" && value !== null && "events" in value && Array.isArray(value.events);
 }
 
 export function isFinishedRunLogQuery(query: Query): boolean {
-  return query.queryKey[0] === RUN_LOG_QUERY_KEY && isRunLog(query.state.data) && isFinished(query.state.data);
+  return query.queryKey[0] === RUN_LOG_QUERY_KEY && isRunLog(query.state.data) && isTerminalRunEvents(query.state.data.events);
 }
 
 function runLogQuery(tenantId: string, ref: RunRef) {
   return queryOptions({
     queryKey: [RUN_LOG_QUERY_KEY, tenantId, ref.anchorRunId, ref.runId],
     queryFn: () => readLog(createHubTransport(), tenantId, ref),
-    staleTime: (query) => (query.state.data !== undefined && isFinished(query.state.data) ? Infinity : 0),
-    refetchInterval: (query) => (query.state.data !== undefined && isFinished(query.state.data) ? false : LIVE_REFRESH_MS),
+    // A finished run's log never changes again, so it is read once and kept.
+    staleTime: (query) => (query.state.data !== undefined && isTerminalRunEvents(query.state.data.events) ? Infinity : 0),
+    refetchInterval: (query) => (query.state.data !== undefined && isTerminalRunEvents(query.state.data.events) ? false : LIVE_REFRESH_MS),
     gcTime: Infinity,
   });
 }

@@ -16,6 +16,7 @@ import {
   primaryLabel,
   regroupInbox,
   rowActionLabel,
+  rowWhy,
   type InboxAction,
   type InboxGrouping,
   type InboxPile,
@@ -43,10 +44,11 @@ function dotClass(item: PrItem, action: InboxAction | null): string {
 
 function Row({ item, selected }: { item: PrItem; selected: boolean }) {
   const action = inboxAction(item);
+  const why = rowWhy(item);
   return (
     <Link className="row" role="option" aria-selected={selected} to={inboxHref(item)} data-inbox-row={item.key}>
       <span className={dotClass(item, action)} />
-      <span className="tw"><b>{item.title ?? item.key}</b>{item.running ? <span className="why">Running</span> : item.evidence[0] ? <span className="why">{item.evidence[0]}</span> : null}</span>
+      <span className="tw"><b>{item.title ?? item.key}</b>{why ? <span className="why">{why}</span> : null}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
       {action === null ? null : <span className="act">{rowActionLabel(primaryAction(item, action))}</span>}
     </Link>
@@ -81,7 +83,8 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const github = item.number === null ? null : `https://github.com/${item.repo}/pull/${item.number}`;
   const floor = snapshot?.config?.confidenceFloor;
   const author = pr?.author ?? item.author;
-  const canWrite = item.number !== null && !readOnly && !busy;
+  // A running pull request's verdict is about to be superseded, so nothing acts on it.
+  const canWrite = item.number !== null && !item.running && !readOnly && !busy;
   const canMerge = canWrite && (pr?.mergeable ?? item.mergeable) === true && (pr?.draft ?? item.draft) !== true;
   const ciChecks = pull.data?.checks ?? [];
   const ciPassing = ciChecks.length > 0 && ciChecks.every((check) => /pass|success|neutral|skipped/i.test(check.conclusion ?? check.status));
@@ -97,7 +100,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   }, [menu]);
 
   async function run(kind: PrimaryAction) {
-    if (item.number === null) return;
+    if (item.number === null || item.running) return;
     setMenu(false);
     if (kind === "comment" || kind === "changes") {
       setComposer({ kind, body: composer?.kind === kind ? composer.body : "" });
@@ -130,7 +133,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
 
   async function submitComposer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (item.number === null || !composer) return;
+    if (item.number === null || item.running || !composer) return;
     if (!composer.body.trim()) {
       setError("The comment must not be empty.");
       return;
@@ -208,7 +211,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
             </div>
           </div>
           <section className="verdict">
-            <p className="vh">{item.nextAction ?? item.evidence[0] ?? inboxStatus(item)}</p>
+            <p className="vh">{item.running ? inboxStatus(item) : (item.nextAction ?? item.evidence[0] ?? inboxStatus(item))}</p>
             <div className="vm">
               <span><span className="st"><span className={dotClass(item, action)} />{inboxStatus(item)}</span></span>
               {item.priority ? <span><b>{item.priority}</b></span> : null}
@@ -273,7 +276,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
         )}
         <span className="sp" />
         <div className="menu-wrap" ref={menuRef}>
-          <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
+          <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
           {menu ? (
             <div className="menu up" role="menu">
               {more.filter((row) => row.shown && row.kind !== primary).map((row) => (

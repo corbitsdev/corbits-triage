@@ -1398,6 +1398,22 @@ function triggeredPull(log: RunLog): string | null {
   return payload.kind === "pr" && typeof payload.repo === "string" && typeof payload.prNumber === "number" ? `${payload.repo}#${payload.prNumber}` : null;
 }
 
+// Hub run statuses, in both the lifecycle and the run-view vocabulary, after which a run makes no progress.
+const SETTLED_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "error", "stopped"]);
+
+/** Pull requests whose latest pr-triage run has started, has not rendered and has not settled in its log or on the hub. */
+function runningPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, runs: HubRun[]): Set<string> {
+  const settled = new Set(runs.filter((run) => SETTLED_RUN_STATUSES.has(run.status)).map((run) => run.id));
+  const running = new Set<string>();
+  for (const { log, verdicts } of logs) {
+    const pull = triggeredPull(log);
+    if (pull && !isTerminalRunEvents(log.events) && !settled.has(log.runId) && !settled.has(log.anchorRunId)) running.add(pull);
+    else if (pull) running.delete(pull);
+    for (const v of verdicts) running.delete(`${v.repo}#${v.number}`);
+  }
+  return running;
+}
+
 function isGithubWriteApproval(approval: HubApproval): boolean {
   const tool = obj(approval.toolDefinition).name;
   return tool === "github_mirror"
@@ -1412,23 +1428,22 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
  * logs. Latest run wins per repo#number. Pending github_mirror approvals only
  * overlay needs-human; they never decide the verdict. With the open pull
  * requests, unseen ones join as "new" and verdicts of closed ones stop needing a human.
- * A pull request whose latest pr-triage run has started but not rendered is running.
+ * A pull request whose latest pr-triage run has started but neither rendered nor settled is running.
  */
-export function projectQueue(runLogs: RunLog[], approvals: HubApproval[], openPulls?: OpenPulls): PrItem[] {
+export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubApproval[], openPulls?: OpenPulls): PrItem[] {
   const items = new Map<string, PrItem>();
-  const running = new Map<string, boolean>();
-  const logs = runLogs.map((log, i) => ({ log, i })).sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i);
-  for (const { log } of logs) {
+  const logs = runLogs
+    .map((log, i) => ({ log, i }))
+    .sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i)
+    .map(({ log }) => ({ log, verdicts: runVerdicts(log) }));
+  const running = runningPulls(logs, runs);
+  for (const { log, verdicts } of logs) {
     const started = log.events.find((e) => e.type === "RunStarted");
     const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
     const payload = eventStep ? obj(eventStep.output) : tryJson(obj(obj(started?.body).trigger).payload);
     const at = logTime(log) || null;
-    const verdicts = runVerdicts(log);
-    const pull = triggeredPull(log);
-    if (pull) running.set(pull, !isTerminalRunEvents(log.events));
     for (const v of verdicts) {
       const key = `${v.repo}#${v.number}`;
-      running.set(key, false);
       const r = v.render;
       const triggered = payload.repo === v.repo && payload.prNumber === v.number;
       const sha = payload.headSha ?? payload.sha;
@@ -1458,7 +1473,7 @@ export function projectQueue(runLogs: RunLog[], approvals: HubApproval[], openPu
         waitingSince: at,
         canClose: r.duplicate === true,
         pendingClose: false,
-        running: false,
+        running: running.has(key),
         href: canonicalPrHref(v.repo, v.number),
       });
     }
@@ -1478,15 +1493,11 @@ export function projectQueue(runLogs: RunLog[], approvals: HubApproval[], openPu
       waitingSince: approval.createdAt ?? item.waitingSince,
     });
   }
-  if (openPulls) joinOpenPulls(items, openPulls);
-  for (const [key, isRunning] of running) {
-    const item = items.get(key);
-    if (item && isRunning) items.set(key, { ...item, running: true });
-  }
+  if (openPulls) joinOpenPulls(items, openPulls, running);
   return [...items.values()];
 }
 
-function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
+function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running: Set<string>): void {
   for (const { repo, prs, error } of openPulls.repos) {
     if (error) continue;
     const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
@@ -1522,7 +1533,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
         waitingSince: pr.updatedAt,
         canClose: false,
         pendingClose: false,
-        running: false,
+        running: running.has(key),
         href: canonicalPrHref(repo, pr.number),
       });
     }

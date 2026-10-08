@@ -28,6 +28,11 @@ export function inboxStatus(item: Pick<PrItem, "running" | "state">): string {
   return item.running ? "Running" : INBOX_STATUS_LABEL[item.state];
 }
 
+/** The row's one-line reason: the running status, else the verdict's first piece of evidence. */
+export function rowWhy(item: Pick<PrItem, "running" | "state" | "evidence">): string | null {
+  return item.running ? inboxStatus(item) : (item.evidence[0] ?? null);
+}
+
 export type PrimaryAction = "reply" | "comment" | "approve" | "changes" | "close" | "merge";
 
 const PRIMARY_LABEL: Record<PrimaryAction, string> = {

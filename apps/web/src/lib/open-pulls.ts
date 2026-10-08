@@ -24,7 +24,7 @@ export function usePullRequestItems(): PrItem[] {
   const { snapshot } = usePortal();
   const { logs } = useRunLogs();
   const { data } = useOpenPulls();
-  return useMemo(() => (snapshot ? projectQueue(logs, snapshot.approvals, data) : []), [logs, snapshot, data]);
+  return useMemo(() => (snapshot ? projectQueue(logs, snapshot.runs, snapshot.approvals, data) : []), [logs, snapshot, data]);
 }
 
 /** True until every source the queue is projected from has loaded once; the lists are not meaningful before that. */

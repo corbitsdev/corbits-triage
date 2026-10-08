@@ -45,6 +45,6 @@ function bodyRunsForRepo(logs: RunLog[], runs: HubRun[], repoName: string): HubR
  * projected queue has no item for it yet.
  */
 export function isRepoCatchingUp(logs: RunLog[], runs: HubRun[], repoName: string): boolean {
-  if (projectQueue(logs, []).some((item) => item.repo === repoName)) return false;
+  if (projectQueue(logs, runs, []).some((item) => item.repo === repoName)) return false;
   return bodyRunsForRepo(logs, runs, repoName).some((run) => isLiveStatus(run.status));
 }

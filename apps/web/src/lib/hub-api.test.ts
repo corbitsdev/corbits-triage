@@ -18,6 +18,7 @@ import {
   startPullRequestTriage,
   patchAppConfig,
   type HubApproval,
+  type HubRun,
   type PortalSnapshot,
   type RunLog,
 } from "./hub-api.ts";
@@ -75,7 +76,7 @@ const snapshot = (approvals: HubApproval[]): PortalSnapshot => ({
 });
 
 const queue = (approvals: HubApproval[], logs: RunLog[] = [duplicateLog], openPulls?: Parameters<typeof projectQueue>[2]) =>
-  projectQueue(logs, approvals, openPulls);
+  projectQueue(logs, [], approvals, openPulls);
 
 describe("duplicate close projection", () => {
   test("starts open and exposes a human close action even when the ordinary mirror approval has close:false", () => {
@@ -115,14 +116,14 @@ describe("needs-human queue sources", () => {
       events: [{ seq: 4, type: "SignalAwaited", body: { signalName: "maintainer" } }],
     };
 
-    expect(projectQueue([duplicateLog, waiting], approvals).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
+    expect(projectQueue([duplicateLog, waiting], [], approvals).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
     expect(queueRows([duplicateLog, waiting], approvals, true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
   });
 });
 
 describe("All-view queue sources", () => {
   test("does not surface listener deployments as pull requests when the project queue is empty", () => {
-    expect(projectQueue([], [])).toEqual([]);
+    expect(projectQueue([], [], [])).toEqual([]);
     expect(queueRows([], [], false)).toEqual([]);
   });
 
@@ -180,7 +181,7 @@ describe("projectQueue reply unwrap", () => {
         },
       ],
     };
-    expect(projectQueue([single, listed], [])).toEqual([
+    expect(projectQueue([single, listed], [], [])).toEqual([
       expect.objectContaining({ key: "acme/widgets#8", confidence: 0.9, needsHuman: true }),
       expect.objectContaining({ key: "acme/gadgets#3", confidence: 0.4, state: "ready" }),
     ]);
@@ -200,13 +201,22 @@ describe("projectQueue running pull requests", () => {
     const started: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
     const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
     const rerun: RunLog = { runId: "run-8b", anchorRunId: "pr", events: [prStarted(8)] };
-    const items = projectQueue([duplicateLog, rerun, started, failed], [], openPulls);
+    const items = projectQueue([duplicateLog, rerun, started, failed], [], [], openPulls);
     expect(items.map(({ key, state, running }) => ({ key, state, running }))).toEqual([
       { key: "acme/widgets#8", state: "needs-decision", running: true },
       { key: "acme/widgets#9", state: "new", running: true },
       { key: "acme/widgets#10", state: "new", running: false },
     ]);
-    expect(projectQueue([rerun, duplicateLog], [], openPulls).find((item) => item.key === "acme/widgets#8")?.running).toBe(false);
+    expect(projectQueue([rerun, duplicateLog], [], [], openPulls).find((item) => item.key === "acme/widgets#8")?.running).toBe(false);
+  });
+
+  test("a run the hub settled without a terminal event is not running", () => {
+    const started: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
+    const row = (id: string, status: string): HubRun => ({ id, definitionId: "def", definitionName: "pr-triage", status, createdAt: "2026-10-01T00:00:00.000Z" });
+    const runningOf = (runs: HubRun[]) => projectQueue([started], runs, [], openPulls).find((item) => item.key === "acme/widgets#9")?.running;
+    expect(runningOf([row("pr", "running")])).toBe(true);
+    expect(runningOf([row("run-9", "failed")])).toBe(false);
+    expect(runningOf([row("pr", "stopped")])).toBe(false);
   });
 });
 
