@@ -11,8 +11,8 @@ import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import {
   approvalHeadline,
   findPrItem,
-  formatConfidence,
   relativeTime,
+  scoreText,
 } from "../lib/triage-view.ts";
 
 type SliverTab = "about" | "files" | "commits" | "issue" | "conversation";
@@ -167,7 +167,7 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
         {item.comment ? <pre className="mono small-text">{item.comment}</pre> : null}
         {low ? (
           <p role="note" className="badge attention">
-            Needs review: confidence {formatConfidence(item.confidence)} is below {formatConfidence(floor)}. No GitHub comment was posted.
+            Needs review. {scoreText(item, floor)}. No GitHub comment was posted.
           </p>
         ) : null}
       </header>
@@ -347,9 +347,6 @@ export default function PRDetail() {
   );
   const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
   const moreRef = useRef<HTMLDetailsElement>(null);
-  const score = item?.confidence === null || item?.confidence === undefined
-    ? "No score"
-    : `${Math.round(item.confidence * 100)}/${Math.round(floor * 100)}`;
 
   async function act(decision: "once" | "deny") {
     if (!approval) return;
@@ -526,7 +523,7 @@ export default function PRDetail() {
               <span className="state-chip">{QUEUE_STATE_LABEL[item.state]}</span>
               {closed ? <span className="state-chip">{pull.data?.pr.merged ? "Merged" : "Closed"}</span>
                 : mergeable === null ? null : <span className="state-chip">{mergeable ? "Mergeable" : "Not mergeable"}</span>}
-              <span className="state-chip">{score}</span>
+              <span className="state-chip">{scoreText(item, floor)}</span>
               {github ? <a className="ghost-link" href={github} target="_blank" rel="noreferrer">View on GitHub</a> : null}
             </div>
           </div>
