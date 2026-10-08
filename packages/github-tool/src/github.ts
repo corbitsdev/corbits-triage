@@ -9,13 +9,40 @@ export function markerFor(repo: string, number: number, sha: string) {
 
 const MARKER_PREFIX = "<!-- corbits-triage:";
 
-async function json(gh: GithubFetch, path: string, init?: RequestInit): Promise<any> {
+async function request(gh: GithubFetch, path: string, init?: RequestInit): Promise<Response> {
   const res = await gh(path, {
     ...init,
     headers: { accept: "application/vnd.github+json", ...init?.headers },
   });
   if (!res.ok) throw new Error(`github ${init?.method ?? "GET"} ${path} -> ${res.status}`);
+  return res;
+}
+
+async function json(gh: GithubFetch, path: string, init?: RequestInit): Promise<any> {
+  const res = await request(gh, path, init);
   return res.status === 204 ? null : res.json();
+}
+
+const NEXT_LINK = /<([^>]+)>;\s*rel="next"/;
+
+type PageOptions<T> = { init?: RequestInit; items?: (page: unknown) => T[] };
+
+export async function jsonAll<T = unknown>(gh: GithubFetch, path: string, { init, items = (page) => page as T[] }: PageOptions<T> = {}): Promise<T[]> {
+  const { pathname } = new URL(path, "https://github.invalid");
+  const rows: T[] = [];
+  const requested = new Set([path]);
+  let next: string | undefined = path;
+  while (next) {
+    const res = await request(gh, next, init);
+    const page = items(await res.json());
+    if (!Array.isArray(page)) throw new Error(`github returned an invalid page for ${path}`);
+    rows.push(...page);
+    const link = NEXT_LINK.exec(res.headers.get("link") ?? "")?.[1];
+    next = link ? pathname + new URL(link).search : undefined;
+    if (next && requested.has(next)) throw new Error(`github pagination for ${path} repeated ${next}`);
+    if (next) requested.add(next);
+  }
+  return rows;
 }
 
 export type GithubInstallation = {
@@ -32,36 +59,27 @@ export async function getApp(gh: GithubFetch): Promise<{ slug: string }> {
 }
 
 export async function listInstallations(gh: GithubFetch): Promise<GithubInstallation[]> {
-  const installations: GithubInstallation[] = [];
-  for (let page = 1; ; page += 1) {
-    const rows = await json(gh, `/app/installations?per_page=100&page=${page}`) as Array<Record<string, unknown>>;
-    if (!Array.isArray(rows)) throw new Error("github returned an invalid installations page");
-    for (const row of rows) {
-      const account = row.account as Record<string, unknown> | undefined;
-      if (!Number.isSafeInteger(row.id) || typeof account?.login !== "string" || typeof row.html_url !== "string" ||
-        (row.repository_selection !== "all" && row.repository_selection !== "selected")) {
-        throw new Error("github returned an invalid installation");
-      }
-      installations.push({ id: row.id as number, account: account.login, htmlUrl: row.html_url, selection: row.repository_selection });
+  const rows = await jsonAll<Record<string, unknown>>(gh, "/app/installations?per_page=100");
+  return rows.map((row) => {
+    const account = row.account as Record<string, unknown> | undefined;
+    if (!Number.isSafeInteger(row.id) || typeof account?.login !== "string" || typeof row.html_url !== "string" ||
+      (row.repository_selection !== "all" && row.repository_selection !== "selected")) {
+      throw new Error("github returned an invalid installation");
     }
-    if (rows.length < 100) return installations;
-  }
+    return { id: row.id as number, account: account.login, htmlUrl: row.html_url, selection: row.repository_selection };
+  });
 }
 
 export async function listInstallationRepositories(gh: GithubFetch, installationId: number): Promise<string[]> {
   if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new Error("installationId must be a positive integer");
-  const repositories: string[] = [];
-  for (let page = 1; ; page += 1) {
-    const result = await json(gh, `/installation/repositories?per_page=100&page=${page}`, {
-      headers: { "x-corbits-github-installation-id": String(installationId) },
-    }) as { repositories?: Array<{ full_name?: unknown }> };
-    if (!Array.isArray(result.repositories)) throw new Error("github returned an invalid installation repositories page");
-    for (const repository of result.repositories) {
-      if (typeof repository.full_name !== "string" || !repository.full_name) throw new Error("github returned an invalid repository");
-      repositories.push(repository.full_name);
-    }
-    if (result.repositories.length < 100) return repositories;
-  }
+  const repositories = await jsonAll(gh, "/installation/repositories?per_page=100", {
+    init: { headers: { "x-corbits-github-installation-id": String(installationId) } },
+    items: (page) => (page as { repositories?: Array<{ full_name?: unknown }> } | null)?.repositories as Array<{ full_name?: unknown }>,
+  });
+  return repositories.map((repository) => {
+    if (typeof repository.full_name !== "string" || !repository.full_name) throw new Error("github returned an invalid repository");
+    return repository.full_name;
+  });
 }
 
 function send(method: string, body: unknown): RequestInit {
@@ -73,7 +91,7 @@ function send(method: string, body: unknown): RequestInit {
 }
 
 export async function listOpenPrs(gh: GithubFetch, repo: string) {
-  const prs = await json(gh, `/repos/${repo}/pulls?state=open&per_page=100`);
+  const prs = await jsonAll<any>(gh, `/repos/${repo}/pulls?state=open&per_page=100`);
   return prs.map((p: any) => ({
     number: p.number,
     title: p.title,
@@ -94,15 +112,8 @@ export async function listOrgMembersForRepo(gh: GithubFetch, repo: string): Prom
     throw new Error(`${repo} is not owned by a GitHub organization`);
   }
 
-  const members: string[] = [];
-  for (let page = 1; ; page += 1) {
-    const rows = await json(gh, `/orgs/${encodeURIComponent(owner.login)}/members?per_page=100&page=${page}`) as Array<{ login?: unknown }>;
-    if (!Array.isArray(rows)) throw new Error(`github returned an invalid members page for ${owner.login}`);
-    for (const row of rows) {
-      if (typeof row.login === "string" && row.login.length > 0) members.push(row.login);
-    }
-    if (rows.length < 100) break;
-  }
+  const rows = await jsonAll<{ login?: unknown }>(gh, `/orgs/${encodeURIComponent(owner.login)}/members?per_page=100`);
+  const members = rows.flatMap((row) => typeof row.login === "string" && row.login.length > 0 ? [row.login] : []);
   return { organization: owner.login, members: [...new Set(members)].sort((a, b) => a.localeCompare(b)) };
 }
 
@@ -139,8 +150,8 @@ export async function getPr(gh: GithubFetch, repo: string, number: number) {
 }
 
 export async function getChecks(gh: GithubFetch, repo: string, sha: string) {
-  const r = await json(gh, `/repos/${repo}/commits/${sha}/check-runs?per_page=100`);
-  return r.check_runs.map((c: any) => ({
+  const runs = await jsonAll<any>(gh, `/repos/${repo}/commits/${sha}/check-runs?per_page=100`, { items: (page) => (page as { check_runs: any[] }).check_runs });
+  return runs.map((c: any) => ({
     name: c.name,
     status: c.status,
     conclusion: c.conclusion,
@@ -148,8 +159,8 @@ export async function getChecks(gh: GithubFetch, repo: string, sha: string) {
 }
 
 export async function getReviews(gh: GithubFetch, repo: string, number: number) {
-  const r = await json(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
-  return r.map((v: any) => ({
+  const reviews = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+  return reviews.map((v: any) => ({
     reviewer: v.user?.login,
     state: v.state,
     submittedAt: v.submitted_at,
@@ -180,57 +191,40 @@ export type IssueComment = {
 };
 
 export async function listPrCommits(gh: GithubFetch, repo: string, number: number): Promise<PrCommit[]> {
-  const commits: PrCommit[] = [];
-  for (let page = 1; ; page += 1) {
-    const rows = await json(gh, `/repos/${repo}/pulls/${number}/commits?per_page=100&page=${page}`) as Array<Record<string, any>>;
-    if (!Array.isArray(rows)) throw new Error("github returned an invalid pull request commits page");
-    for (const row of rows) {
-      const commit = row.commit ?? {};
-      commits.push({
-        sha: typeof row.sha === "string" ? row.sha : "",
-        message: typeof commit.message === "string" ? commit.message : "",
-        author: typeof row.author?.login === "string" ? row.author.login : (typeof commit.author?.name === "string" ? commit.author.name : ""),
-        committedAt: typeof commit.committer?.date === "string" ? commit.committer.date : (typeof commit.author?.date === "string" ? commit.author.date : ""),
-      });
-    }
-    if (rows.length < 100) return commits;
-  }
+  const rows = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/commits?per_page=100`);
+  return rows.map((row) => {
+    const commit = row.commit ?? {};
+    return {
+      sha: typeof row.sha === "string" ? row.sha : "",
+      message: typeof commit.message === "string" ? commit.message : "",
+      author: typeof row.author?.login === "string" ? row.author.login : (typeof commit.author?.name === "string" ? commit.author.name : ""),
+      committedAt: typeof commit.committer?.date === "string" ? commit.committer.date : (typeof commit.author?.date === "string" ? commit.author.date : ""),
+    };
+  });
 }
 
 export async function listPrFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFile[]> {
-  const files: PrFile[] = [];
-  for (let page = 1; ; page += 1) {
-    const rows = await json(gh, `/repos/${repo}/pulls/${number}/files?per_page=100&page=${page}`) as Array<Record<string, any>>;
-    if (!Array.isArray(rows)) throw new Error("github returned an invalid pull request files page");
-    for (const row of rows) {
-      const file: PrFile = {
-        path: typeof row.filename === "string" ? row.filename : "",
-        status: typeof row.status === "string" ? row.status : "",
-        additions: typeof row.additions === "number" ? row.additions : 0,
-        deletions: typeof row.deletions === "number" ? row.deletions : 0,
-      };
-      if (typeof row.patch === "string") file.patch = row.patch;
-      files.push(file);
-    }
-    if (rows.length < 100) return files;
-  }
+  const rows = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/files?per_page=100`);
+  return rows.map((row) => {
+    const file: PrFile = {
+      path: typeof row.filename === "string" ? row.filename : "",
+      status: typeof row.status === "string" ? row.status : "",
+      additions: typeof row.additions === "number" ? row.additions : 0,
+      deletions: typeof row.deletions === "number" ? row.deletions : 0,
+    };
+    if (typeof row.patch === "string") file.patch = row.patch;
+    return file;
+  });
 }
 
 export async function listIssueComments(gh: GithubFetch, repo: string, number: number): Promise<IssueComment[]> {
-  const comments: IssueComment[] = [];
-  for (let page = 1; ; page += 1) {
-    const rows = await json(gh, `/repos/${repo}/issues/${number}/comments?per_page=100&page=${page}`) as Array<Record<string, any>>;
-    if (!Array.isArray(rows)) throw new Error("github returned an invalid issue comments page");
-    for (const row of rows) {
-      comments.push({
-        id: typeof row.id === "number" ? row.id : 0,
-        author: typeof row.user?.login === "string" ? row.user.login : "",
-        body: typeof row.body === "string" ? row.body : "",
-        createdAt: typeof row.created_at === "string" ? row.created_at : "",
-      });
-    }
-    if (rows.length < 100) return comments;
-  }
+  const rows = await jsonAll<any>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
+  return rows.map((row) => ({
+    id: typeof row.id === "number" ? row.id : 0,
+    author: typeof row.user?.login === "string" ? row.user.login : "",
+    body: typeof row.body === "string" ? row.body : "",
+    createdAt: typeof row.created_at === "string" ? row.created_at : "",
+  }));
 }
 
 export type LinkedIssue = {
@@ -283,7 +277,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput) {
 
 async function postComment(gh: GithubFetch, repo: string, number: number, marker: string, comment: string) {
   const body = `${marker}\n${comment}`;
-  const comments = await json(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
+  const comments = await jsonAll<any>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
   const existing = comments.find((c: any) => c.body?.startsWith(marker));
   const prior = comments.find((c: any) => c.body?.startsWith(MARKER_PREFIX));
   const target = existing ?? prior;

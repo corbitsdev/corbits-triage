@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { githubWrite } from "./sidecar-bundle.js";
-import { mergePr, mirror, type GithubFetch } from "./github.js";
+import { listOpenPrs, mergePr, mirror, type GithubFetch } from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
 
@@ -86,5 +86,26 @@ describe("mergePr", () => {
     });
     await expect(mergePr(gh, { repo: "acme/widgets", number: 8 })).rejects.toThrow("pull request is not mergeable");
     expect(requests).toEqual([{ path: "/repos/acme/widgets/pulls/8", method: "GET", body: null }]);
+  });
+});
+
+describe("listOpenPrs", () => {
+  test("follows the Link rel=next header across pages", async () => {
+    const all = Array.from({ length: 150 }, (_, i) => ({ number: i + 1, title: `pr ${i + 1}`, head: { sha: `sha${i + 1}` } }));
+    async function gh(path: string): Promise<Response> {
+      const url = new URL(path, "https://api.github.com");
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const size = Number(url.searchParams.get("per_page"));
+      const headers: Record<string, string> = {};
+      if (page * size < all.length) {
+        url.searchParams.set("page", String(page + 1));
+        headers.link = `<https://api.github.com${url.pathname}${url.search}>; rel="next"`;
+      }
+      return Response.json(all.slice((page - 1) * size, page * size), { headers });
+    }
+    const paths: string[] = [];
+    const prs = await listOpenPrs(async (path) => (paths.push(path), gh(path)), "acme/widgets");
+    expect(paths[1]).toBe("/repos/acme/widgets/pulls?state=open&per_page=100&page=2");
+    expect(prs.map((pr) => pr.number)).toEqual(all.map((pr) => pr.number));
   });
 });
