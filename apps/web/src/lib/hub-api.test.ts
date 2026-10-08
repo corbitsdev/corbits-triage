@@ -25,6 +25,7 @@ import {
   type RunLog,
 } from "./hub-api.ts";
 
+import { repoRows } from "./repo-rows.ts";
 const inline = (value: unknown) => ({ ref: `inline:${JSON.stringify(value)}` });
 
 const duplicateLog: RunLog = {
@@ -698,5 +699,26 @@ describe("pending maintainer write approvals", () => {
     };
     const [item] = queue([merge]);
     expect(item).toMatchObject({ pendingApprovalId: "merge", pendingClose: false, needsHuman: true });
+  });
+});
+
+describe("open pull request activity join", () => {
+  test("stamps GitHub updatedAt onto log-derived items and surfaces it as repository last activity", () => {
+    const openPulls = {
+      repos: [{
+        repo: "acme/widgets",
+        prs: [{ number: 8, title: "PR 8", author: "ada", draft: false, sha: "abc", updatedAt: "2026-10-01T01:00:00.000Z", labels: [] }],
+      }],
+    };
+    const items = projectQueue([duplicateLog], [], [], openPulls, NOW);
+    expect(items.find((item) => item.key === "acme/widgets#8")?.updatedAt).toBe("2026-10-01T01:00:00.000Z");
+    const [row] = repoRows([{ name: "acme/widgets", connected: true }], items, [], [], openPulls);
+    expect(row?.lastActivity).toBe("2026-10-01T01:00:00.000Z");
+
+    const errored = { repos: [{ repo: "acme/widgets", prs: [], error: "rate limited" }] };
+    const erroredItems = projectQueue([duplicateLog], [], [], errored, NOW);
+    expect(erroredItems.find((item) => item.key === "acme/widgets#8")?.updatedAt).toBeNull();
+    const [erroredRow] = repoRows([{ name: "acme/widgets", connected: true }], erroredItems, [], [], errored);
+    expect(erroredRow?.lastActivity).toBeUndefined();
   });
 });

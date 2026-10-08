@@ -2,7 +2,7 @@ import { repoPolicy } from "@corbits/triage-contracts";
 import { isRepoCatchingUp } from "./backlog-status.ts";
 import { repoNeedsCheckSetup } from "./check-pack.ts";
 import { hasVerifiedWebhookDelivery } from "./connect-view.ts";
-import type { HubRun, PrItem, RepoRecord, RunLog } from "./hub-api.ts";
+import type { HubRun, OpenPulls, PrItem, RepoRecord, RunLog } from "./hub-api.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
 
@@ -14,7 +14,8 @@ export type RepoRow = {
   needsYou: number;
   posting: "Ask me" | "Post automatically";
   owners: string[];
-  lastActivity: string | null;
+  /** Undefined until GitHub's open pull requests for this repository have loaded. */
+  lastActivity: string | null | undefined;
   health: RepoHealth;
 };
 
@@ -30,7 +31,8 @@ function newest(times: Array<string | null>): string | null {
   return times.reduce<string | null>((latest, at) => (at && (!latest || Date.parse(at) > Date.parse(latest)) ? at : latest), null);
 }
 
-export function repoRows(repos: RepoRecord[], items: PrItem[], logs: RunLog[], runs: HubRun[]): RepoRow[] {
+export function repoRows(repos: RepoRecord[], items: PrItem[], logs: RunLog[], runs: HubRun[], openPulls: OpenPulls | undefined): RepoRow[] {
+  const listed = new Set(openPulls?.repos.filter((row) => !row.error).map((row) => row.repo));
   return repos.map(function repoRow(repo) {
     const needsSetup = repoNeedsCheckSetup(repo);
     const open = items.filter((item) => item.repo === repo.name && !item.closed);
@@ -42,7 +44,7 @@ export function repoRows(repos: RepoRecord[], items: PrItem[], logs: RunLog[], r
       needsYou: open.filter((item) => item.needsHuman).length,
       posting: repoPolicy(repo).cleanupMode === "automated" ? "Post automatically" : "Ask me",
       owners: [...new Set(open.flatMap((item) => (item.owner ? [item.owner] : [])))],
-      lastActivity: newest(open.map((item) => item.waitingSince)),
+      lastActivity: listed.has(repo.name) ? newest(open.map((item) => item.updatedAt)) : undefined,
       health: repoHealth(repo, logs, runs),
     };
   });
