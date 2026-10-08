@@ -11,6 +11,7 @@ import {
   createGrant,
   deleteGrant,
   ensureWorkspace,
+  hasCheckPackArtifact,
   loadPortal,
   legacyHookCredentials,
   legacyGithubCredentials,
@@ -78,7 +79,22 @@ const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
 export const PORTAL_QUERY_KEY = ["portal"] as const;
 export const RUN_IDS_QUERY_KEY = "run-ids";
 export const RUN_LOG_QUERY_KEY = "run-log";
-const REFRESH_QUERY_KEYS = [PORTAL_QUERY_KEY, [RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY]];
+export const APPROVALS_QUERY_KEY = "approvals";
+export const RUNS_QUERY_KEY = "runs";
+export const GRANTS_QUERY_KEY = "grants";
+export const PRINCIPALS_QUERY_KEY = "principals";
+export const ROLES_QUERY_KEY = "roles";
+const PACK_POINTER_QUERY_KEY = "pack-pointer";
+const REFRESH_QUERY_KEYS = [
+  PORTAL_QUERY_KEY,
+  [RUN_IDS_QUERY_KEY],
+  [RUN_LOG_QUERY_KEY],
+  [APPROVALS_QUERY_KEY],
+  [RUNS_QUERY_KEY],
+  [GRANTS_QUERY_KEY],
+  [PRINCIPALS_QUERY_KEY],
+  [ROLES_QUERY_KEY],
+];
 
 const convergedTenants = new Set<string>();
 
@@ -100,14 +116,24 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     const transport = createHubTransport();
     try {
       const workspace = await ensureWorkspace(transport);
-      return loadPortal(transport, workspace);
+      const tenantId = workspace.tenantId;
+      /** Saving a check pack writes the config pointer, so an artifact search per repository is only needed once. */
+      function hasPack(repo: string) {
+        return queryClient.fetchQuery({
+          queryKey: [PACK_POINTER_QUERY_KEY, tenantId, repo],
+          queryFn: () => hasCheckPackArtifact(transport, tenantId, repo),
+          staleTime: Infinity,
+          gcTime: Infinity,
+        });
+      }
+      return loadPortal(transport, workspace, hasPack);
     } catch (cause: unknown) {
       if (cause instanceof ApiError && cause.status === 401) {
         void signOutQuietly();
       }
       throw cause;
     }
-  }, [signOut]);
+  }, [queryClient, signOut]);
 
   const refresh = useCallback(function refresh() {
     for (const queryKey of REFRESH_QUERY_KEYS) void queryClient.invalidateQueries({ queryKey });

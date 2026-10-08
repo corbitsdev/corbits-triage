@@ -16,6 +16,7 @@ import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallati
 import { githubAppSlugFromCredentials, hasActiveGithubCredential, type HubCredential, type HubGrant, type HubPrincipal, type HubRole } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
+import { useGrants, usePrincipals, useRoles } from "../lib/tenant-entities.ts";
 import { useSession } from "../lib/session.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
@@ -79,6 +80,7 @@ function AccessRules({
   grants,
   people,
   roles,
+  loading,
   denied,
   readOnly,
   addGrant,
@@ -88,6 +90,7 @@ function AccessRules({
   grants: HubGrant[];
   people: HubPrincipal[];
   roles: HubRole[];
+  loading: boolean;
   denied: boolean;
   readOnly: boolean;
   addGrant: (input: ReturnType<typeof grantCreateInputFromForm>) => Promise<void>;
@@ -141,7 +144,7 @@ function AccessRules({
       <h2>Who can sign in</h2>
       <p className="field-help">People who may use this app. This is not who reviews pull requests on GitHub.</p>
       {denied && <DeniedNotice section="access rules" />}
-      {!denied && grants.length === 0 && <p className="muted">No access rules.</p>}
+      {!denied && !loading && grants.length === 0 && <p className="muted">No access rules.</p>}
       {!denied && grants.length > 0 && (
         <div className="table-scroll">
           <table className="data-table">
@@ -302,13 +305,12 @@ export default function Settings() {
   const savedFloor = String(config.confidenceFloor ?? 0.7);
   const [floor, setFloor] = useState(savedFloor);
   const repos = snapshot?.repos ?? [];
-  const grants = snapshot?.grants ?? [];
-  const principals = snapshot?.principals ?? [];
-  const roles = snapshot?.roles ?? [];
+  const grants = useGrants();
+  const principals = usePrincipals();
+  const roles = useRoles();
   const credentials = snapshot?.credentials ?? [];
   const secretNames = uniqueSecretDisplayNames(credentials);
   const deniedRepos = snapshot?.denied.repos ?? false;
-  const deniedGrants = snapshot?.denied.grants ?? false;
   const deniedCredentials = snapshot?.denied.credentials ?? false;
   const modelStored = hasDecisionModelCredential(credentials);
   const githubReady = hasActiveGithubCredential(credentials);
@@ -452,10 +454,11 @@ export default function Settings() {
             </div>
             <div role="tabpanel" id={panelId("Access")} aria-labelledby={tabId("Access")} hidden={tab !== "Access"}>
               <AccessRules
-                grants={grants}
-                people={principals}
-                roles={roles}
-                denied={deniedGrants}
+                grants={grants.rows}
+                people={principals.rows}
+                roles={roles.rows}
+                loading={grants.loading || principals.loading || roles.loading}
+                denied={grants.denied}
                 readOnly={readOnly}
                 addGrant={addGrant}
                 removeGrant={removeGrant}

@@ -5,6 +5,7 @@ import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type Lucid
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
 import { usePullRequestItems, useQueueLoading } from "../lib/open-pulls.ts";
+import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
@@ -324,8 +325,9 @@ export default function PRDetail() {
   const queueItems = usePullRequestItems();
   const loading = useQueueLoading();
   const item = snapshot ? findPrItem(queueItems, params) : undefined;
-  const approval = snapshot?.approvals.find((row) => row.id === (item?.pendingApprovalId ?? id));
-  const denied = snapshot?.denied.approvals ?? false;
+  const approvals = useApprovals();
+  const approval = approvals.rows.find((row) => row.id === (item?.pendingApprovalId ?? id));
+  const denied = approvals.denied;
   const pull = useGithubPull(item?.repo ?? "", item?.number ?? null);
   const pullPending = pull.isPending && pull.fetchStatus !== "idle";
   const files = pull.data?.files ?? [];

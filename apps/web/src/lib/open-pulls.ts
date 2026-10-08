@@ -4,6 +4,7 @@ import { projectQueue, type PrItem } from "./hub-api.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
 import { usePortal } from "./portal.tsx";
 import { useRunLogs } from "./run-logs.ts";
+import { useApprovals, useRuns } from "./tenant-entities.ts";
 
 /** Reads the open pull requests from GitHub, so PRs without a verdict still show up. */
 export function useOpenPulls() {
@@ -21,17 +22,19 @@ export function useOpenPulls() {
 
 /** Every pull request with a verdict, including closed ones, for the pull request page. */
 export function usePullRequestItems(): PrItem[] {
-  const { snapshot } = usePortal();
   const { logs } = useRunLogs();
+  const runs = useRuns();
+  const approvals = useApprovals();
   const { data } = useOpenPulls();
-  return useMemo(() => (snapshot ? projectQueue(logs, snapshot.runs, snapshot.approvals, data) : []), [logs, snapshot, data]);
+  return useMemo(() => projectQueue(logs, runs.rows, approvals.rows, data), [logs, runs.rows, approvals.rows, data]);
 }
 
 /** True until every source the queue is projected from has loaded once; the lists are not meaningful before that. */
 export function useQueueLoading(): boolean {
   const { pending } = useRunLogs();
+  const approvals = useApprovals();
   const openPulls = useOpenPulls();
-  return pending || openPulls.isLoading;
+  return pending || approvals.loading || openPulls.isLoading;
 }
 
 /** The inbox: every open pull request, with its verdict when it has one. */

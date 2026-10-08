@@ -23,6 +23,7 @@ import { createHubTransport } from "../lib/hub-transport.ts";
 import { useQueueItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useRunLogs } from "../lib/run-logs.ts";
+import { useRuns } from "../lib/tenant-entities.ts";
 
 function ownerAndName(raw: string): { owner: string; name: string } | null {
   let value = raw;
@@ -120,8 +121,9 @@ export default function RepoDetail() {
   const needs = items.filter((item) => item.needsHuman).length;
   const ready = items.filter((item) => item.state === "ready").length;
   const { logs } = useRunLogs();
+  const runs = useRuns();
   const receivingEvents = config ? hasVerifiedWebhookDelivery(logs, config.name) : false;
-  const catchingUp = snapshot ? isRepoCatchingUp(logs, snapshot.runs, config?.name ?? label) : false;
+  const catchingUp = isRepoCatchingUp(logs, runs.rows, config?.name ?? label);
   const dirty = packJson(pack) !== packJson(saved) || (needsSetup && customizing);
   async function syncAfterGithub() {
     try {
