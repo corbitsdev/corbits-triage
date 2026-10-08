@@ -14,7 +14,7 @@ import { authorize, timeWindowEvaluator } from "@intx/authz";
 import { createGrantStore, schema } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant } from "@intx/hub-api";
 import {
   createRunTriggerDeliverer,
@@ -41,15 +41,20 @@ import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
 import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
-import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings } from "./env.js";
+import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageReconcileIntervalMs } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
-import { createBridgeHandler, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
+import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { NoLiveDeploymentError, resolveLiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, GITHUB_OPEN_PULLS_PATH } from "./github/open-pulls.js";
 import { createGithubPrActions, GITHUB_PR_ACTIONS_PATH } from "./github/pr-actions.js";
 import { createGithubPrDetails, GITHUB_PR_DETAILS_PATH } from "./github/pr-details.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
+import { createReconcileLoop } from "./github/reconcile-loop.js";
+import { DEFAULT_RECONCILE_POLICY } from "./github/reconcile-plan.js";
+import { createTriageReconciler } from "./github/triage-reconciler.js";
+import { createTriageRuns } from "./github/triage-runs.js";
+import { createTriageStateStore } from "./github/triage-state-store.js";
 import {
   GITHUB_MANIFEST_CALLBACK_PATH,
   GITHUB_MANIFEST_PATH,
@@ -105,10 +110,12 @@ const local = createLocalProcessSidecarProvisioner({
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
+let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   cronTicker?.stop();
+  triageLoop?.stop();
   try {
     await local.shutdown();
   } finally {
@@ -151,6 +158,10 @@ async function tenantDomain(tenantId: string): Promise<string> {
   if (!row) throw new Error("tenant not found");
   return row.domain;
 }
+const systemSender = createTenantSystemSender({
+  db: composition.db,
+  principalKeyStore: composition.principalKeyStore,
+});
 function runTriggerDeliverer(senderLocalPart: string) {
   return createRunTriggerDeliverer({
     router: composition.sidecarRouter,
@@ -161,10 +172,7 @@ function runTriggerDeliverer(senderLocalPart: string) {
     }),
     tenantDomain,
     senderLocalPart,
-    systemSender: createTenantSystemSender({
-      db: composition.db,
-      principalKeyStore: composition.principalKeyStore,
-    }),
+    systemSender,
   });
 }
 cronTicker = createCronTicker({
@@ -222,7 +230,8 @@ const hookApp = createStockHookApp(
   composition.sidecarRouter,
 );
 
-const githubDeliverer = runTriggerDeliverer("github");
+const GITHUB_SENDER = "github";
+const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 const sendBridgeMail: BridgeDeps["sendMail"] = async function sendBridgeMail(tenantId, workflow, payload) {
   const live = await resolveLiveDeployment(composition.db, tenantId, workflow);
   if (!live) throw new NoLiveDeploymentError(workflow);
@@ -231,6 +240,32 @@ const sendBridgeMail: BridgeDeps["sendMail"] = async function sendBridgeMail(ten
 function readCheckPack(tenantId: string, repo: string) {
   return loadCheckPack(composition.db, tenantId, repo);
 }
+/** Hub-written triage state is recorded as the tenant's GitHub system sender. */
+async function githubSenderPrincipal(tenantId: string): Promise<string> {
+  await systemSender.resolve({ tenantId, domain: await tenantDomain(tenantId), localPart: GITHUB_SENDER });
+  const row = await composition.db.query.principal.findFirst({
+    where: and(eq(schema.principal.tenantId, tenantId), eq(schema.principal.kind, "user"), eq(schema.principal.refId, GITHUB_SENDER)),
+  });
+  if (!row) throw new Error(`no ${GITHUB_SENDER} system principal in tenant ${tenantId}`);
+  return row.id;
+}
+function now(): Date {
+  return new Date();
+}
+const reconcileTriage = createTriageReconciler({
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  githubApiOrigin: githubOrigin,
+  workflowName: prTriageWorkflow.id,
+  store: createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal }),
+  observeRuns: createTriageRuns({ db: composition.db, runReader: composition.runReader, workflowName: prTriageWorkflow.id }),
+  readCheckPack,
+  sendMail: sendBridgeMail,
+  policy: DEFAULT_RECONCILE_POLICY,
+  now,
+  log: logJson,
+});
+triageLoop = createReconcileLoop(reconcileTriage, triageReconcileIntervalMs(env), logJson);
 const syncInstallations = createInstallationSync({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -238,6 +273,7 @@ const syncInstallations = createInstallationSync({
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
+  onSynced: triageLoop.kick,
 });
 const bridge = createBridgeHandler({
   db: hookDeps.db,
@@ -384,6 +420,8 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
   }
   return stock.fetch(req, server);
 }
+
+triageLoop.start();
 
 console.log(JSON.stringify({
   ts: new Date().toISOString(),

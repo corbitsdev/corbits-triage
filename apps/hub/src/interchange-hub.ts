@@ -292,9 +292,10 @@ export async function createInterchangeHub({
       : {}),
   });
   const sidecarAllocationStore = createSidecarAllocationStore(db);
+  const runReader = createWorkflowRunReader(agentRepoStore.repoStore);
   const workflowLifecycleService = createWorkflowLifecycleService({
     db,
-    runReader: createWorkflowRunReader(agentRepoStore.repoStore),
+    runReader,
     historyReceives: workflowHistoryReceives,
     sendControl: (target, command, timeoutMs) =>
       sidecarRouter.sendWorkflowControl(target, command, timeoutMs),
@@ -490,5 +491,6 @@ export async function createInterchangeHub({
     credentialCipher,
     principalKeyStore,
     getSession,
+    runReader,
   };
 }
