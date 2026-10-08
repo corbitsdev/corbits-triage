@@ -59,3 +59,8 @@ packages/workflow/src/runtime/on-trigger-tolerate-abort.test.ts
 packages/hub-sessions/src/workflow-run-kind.ts
 packages/hub-sessions/src/substrate.ts
 packages/workflow-host/src/supervisor/supervisor.ts
+
+# CL-10211 local carry: a reconnect-cancelled pack push must not fail the
+# deployment's next local write. Not upstream yet. Remove by 2026-11-01 or
+# when re-pinning to a stock commit that fixes it.
+packages/workflow-host/src/deploy/workflow-run-pack-client.ts

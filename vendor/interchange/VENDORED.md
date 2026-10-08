@@ -4,7 +4,7 @@
 
 - Upstream: <https://github.com/faremeter/interchange>
 - Stock ref: `779b47f59c47026b14f02eb54eefa90e15b7fd9a`
-- Composite pin: stock `779b47f5` plus allowlisted PR #193 at `13129bb5` (rebased), INTR-583 at `44170ebb`, and the local CL-10178 and CL-10210 carries. Do not treat any delta as a new stock pin.
+- Composite pin: stock `779b47f5` plus allowlisted PR #193 at `13129bb5` (rebased), INTR-583 at `44170ebb`, and the local CL-10178, CL-10210 and CL-10211 carries. Do not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -142,6 +142,26 @@ Upstream status: to be filed.
 
 Kill date: **2026-11-01**. Remove when the stock pin consumes or skips a
 replayed signal mail the run already recorded.
+
+### Keep a reconnect-cancelled pack push from failing the next write (CL-10211)
+
+Local carry, not upstream. When the sidecar's hub link cycles on reconnect it
+cancels in-flight pack pushes with "Connection lost". The pack-pushing store
+latched that like a receiver rejection and threw it on the deployment's next
+local write before committing, so a write landing between the cancel and the
+reconnect re-drive (in production, `markConsumed` 90 ms later) failed, the
+mail stayed in `processing/`, and the deployment idled. The patch keeps the
+slot dirty for the re-drive instead of throwing when the latched error is the
+disconnect cancel; receiver rejections still surface on the next write.
+
+Allowed files:
+
+- `packages/workflow-host/src/deploy/workflow-run-pack-client.ts`
+
+Upstream status: to be filed.
+
+Kill date: **2026-11-01**. Remove when the stock pin no longer surfaces a
+reconnect-cancelled push as a local write failure.
 
 ## Dropped deltas
 

@@ -790,6 +790,21 @@ export function createWorkflowRunPackPushingRepoStore(
     startLoop(slot, repoId, ref);
   }
 
+  // The reason hub-link's `packSender.cancelAll` rejects an in-flight transfer
+  // with when the link cycles on reconnect (`CONNECTION_LOST_REASON` in
+  // @intx/hub-agent). Such a push failed on the link, not at the receiver: the
+  // reconnect re-drive re-ships it, so a local write that lands before the
+  // re-drive keeps the slot dirty instead of failing on the stale cancel.
+  const CONNECTION_LOST_REASON = "Connection lost";
+
+  function surfaceLatchedError(repoId: RepoId, ref: string): void {
+    const latched = takeLatchedError(repoId, ref);
+    if (latched === null) return;
+    if (latched.message !== CONNECTION_LOST_REASON) throw latched;
+    const slot = slots.get(slotKey(repoId, ref));
+    if (slot !== undefined) slot.dirty = true;
+  }
+
   function takeLatchedError(repoId: RepoId, ref: string): Error | null {
     const slot = slots.get(slotKey(repoId, ref));
     if (slot === undefined) return null;
@@ -896,12 +911,7 @@ export function createWorkflowRunPackPushingRepoStore(
     markAddressUnroutable,
     reportWorkflowRunRefTips,
     async writeTreePreservingPrefix(principal, repoId, ref, args) {
-      if (repoId.kind === "workflow-run") {
-        const latched = takeLatchedError(repoId, ref);
-        if (latched !== null) {
-          throw latched;
-        }
-      }
+      if (repoId.kind === "workflow-run") surfaceLatchedError(repoId, ref);
       const result = await underlying.writeTreePreservingPrefix(
         principal,
         repoId,
@@ -921,12 +931,7 @@ export function createWorkflowRunPackPushingRepoStore(
       return result;
     },
     async writeTreeDelta(principal, repoId, ref, args) {
-      if (repoId.kind === "workflow-run") {
-        const latched = takeLatchedError(repoId, ref);
-        if (latched !== null) {
-          throw latched;
-        }
-      }
+      if (repoId.kind === "workflow-run") surfaceLatchedError(repoId, ref);
       const result = await underlying.writeTreeDelta(
         principal,
         repoId,
