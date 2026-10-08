@@ -289,13 +289,13 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("a disabled repo is accepted without mailing", async () => {
+  test("a disabled repo is 202 ignored", async () => {
     const sent: Sent[] = [];
     const db = stubDb([hookRow()], {
       corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: false }] },
     });
     const res = await bridge({ db, sent })(githubRequest(prPayload), TARGET);
-    expect(await res.json()).toEqual({ status: "paused" });
+    expect(await res.json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
   });
 

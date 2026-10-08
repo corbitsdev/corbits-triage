@@ -434,13 +434,13 @@ export function createBridgeHandler(d: BridgeDeps) {
       return json(500, { error: "tenant_config_unavailable" });
     }
     if (!configuredRepos(tenantConfig).has(mail.repo)) {
-      log({ level: "info", msg: "ignored_unconfigured_repo", delivery, event, repo: mail.repo, hook: loaded.credentialId });
+      log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
       return json(202, { status: "ignored" });
     }
     const policy = policyForRepo(tenantConfig, mail.repo);
     if (!policy.enabled) {
-      log({ level: "info", msg: "paused", delivery, event, repo: mail.repo, hook: loaded.credentialId });
-      return json(202, { status: "paused" });
+      log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
+      return json(202, { status: "ignored" });
     }
     const pack = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo);
     if (!pack) {
