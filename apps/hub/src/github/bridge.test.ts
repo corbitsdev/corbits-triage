@@ -253,6 +253,16 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(1);
   });
 
+  test("closed pull requests are 202 ignored", async () => {
+    const sent: Sent[] = [];
+    const base = JSON.parse(prPayload);
+    const closed = JSON.stringify({ ...base, pull_request: { ...base.pull_request, state: "closed" } });
+    const res = await bridge({ sent })(githubRequest(closed), TARGET);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ status: "ignored" });
+    expect(sent).toHaveLength(0);
+  });
+
   test("unactionable events are 202 ignored", async () => {
     const sent: Sent[] = [];
     const res = await bridge({ sent })(githubRequest(JSON.stringify({ zen: "hi" }), { event: "ping" }), TARGET);

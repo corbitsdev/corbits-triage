@@ -121,6 +121,7 @@ export async function getPr(gh: GithubFetch, repo: string, number: number) {
     title: p.title,
     body: p.body,
     state: p.state,
+    merged: p.merged,
     draft: p.draft,
     author: p.user?.login,
     sha: p.head?.sha,
