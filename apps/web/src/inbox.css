@@ -185,3 +185,7 @@
   .inbox.has-selection .panel.list, .inbox:not(.has-selection) .panel.pane { display: none; }
   .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }
 }
+
+/* With nothing selected the list takes the whole width; the pane only appears for a selection. */
+.inbox:not(.has-selection) { grid-template-columns: minmax(0, 1fr); }
+.inbox:not(.has-selection) .panel.pane { display: none; }
