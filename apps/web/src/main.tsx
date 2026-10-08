@@ -1,7 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
-import "sonner/dist/styles.css";
 import "@corbits/react-ui/styles.css";
 import "./index.css";
 import "./inbox.css";
