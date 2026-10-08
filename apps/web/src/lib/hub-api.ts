@@ -834,6 +834,11 @@ export function isLiveDeployment(status: string): boolean {
   return LIVE_DEPLOYMENT_STATUSES.has(status.trim().toLowerCase());
 }
 
+/** Provisioned and reachable, unlike a `pending` or `recovering` live deployment. */
+export function isDeployed(status: string): boolean {
+  return status.trim().toLowerCase() === "deployed";
+}
+
 export const SERVICE_NOT_RUNNING = "The service is not running. Restart the hub, then try again.";
 
 function isTerminalMailFailure(cause: unknown): boolean {
@@ -872,7 +877,7 @@ export function withWorkflowNames(runs: HubRun[], logs: RunLog[]): HubRun[] {
 }
 
 function deployedRank(status: string): number {
-  return Number(status.trim().toLowerCase() === "deployed");
+  return Number(isDeployed(status));
 }
 
 function byPreferredDeployment(
