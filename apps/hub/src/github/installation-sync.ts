@@ -49,7 +49,7 @@ async function listingFor(gh: GithubFetch, installation: Installation): Promise<
   return { fields, suspended: false, names: await listRepositories(gh, installation.id) };
 }
 
-export function createInstallationSync(deps: PortalCredentialDeps & { githubApiOrigin: string }) {
+export function createInstallationSync(deps: PortalCredentialDeps & { githubApiOrigin: string; onSynced: (tenantId: string) => void }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
   return async function syncInstallations(req: Request, tenantId: string): Promise<Response> {
@@ -71,6 +71,7 @@ export function createInstallationSync(deps: PortalCredentialDeps & { githubApiO
       return applyInstallationListing(ns, listings);
     });
     if (next === undefined) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
+    deps.onSynced(tenantId);
 
     const repos = listings.flatMap((listing) => (listing.suspended ? [] : listing.names));
     return Response.json({ installations: listings.length, repos });

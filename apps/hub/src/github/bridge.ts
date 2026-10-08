@@ -181,7 +181,7 @@ function json(status: number, body: unknown): Response {
 const INSTALL_EVENTS = new Set(["installation", "installation_repositories"]);
 const REPO_LIST_CAP = 50;
 
-function mailPayload(repo: string, policy: RepoPolicy, pack: CheckPack, extra: Record<string, unknown>) {
+export function mailPayload(repo: string, policy: RepoPolicy, pack: CheckPack, extra: Record<string, unknown>) {
   return {
     ...extra,
     kind: "pr",
@@ -363,7 +363,7 @@ async function handleInstallEvent(
   return json(202, { status: "accepted" });
 }
 
-function logJson(entry: Record<string, unknown>): void {
+export function logJson(entry: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
 }
 

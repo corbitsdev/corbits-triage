@@ -14,7 +14,7 @@ import { authorize, timeWindowEvaluator } from "@intx/authz";
 import { createGrantStore, schema } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createMailTriggeredRunGrantsMaterializer, createRequireGrant } from "@intx/hub-api";
 import {
   createRunTriggerDeliverer,
@@ -41,15 +41,21 @@ import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
 import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
-import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings } from "./env.js";
+import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageReconcileIntervalMs } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
-import { createBridgeHandler, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
+import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { NoLiveDeploymentError, resolveLiveDeployment } from "./github/deployment.js";
 import { createGithubOpenPulls, GITHUB_OPEN_PULLS_PATH } from "./github/open-pulls.js";
 import { createGithubPrActions, GITHUB_PR_ACTIONS_PATH } from "./github/pr-actions.js";
 import { createGithubPrDetails, GITHUB_PR_DETAILS_PATH } from "./github/pr-details.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
+import { createReconcileLoop } from "./github/reconcile-loop.js";
+import { DEFAULT_RECONCILE_POLICY } from "./github/reconcile-plan.js";
+import { createTriageReconciler } from "./github/triage-reconciler.js";
+import { createTenantOpenHeads } from "./github/tenant-open-heads.js";
+import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
+import { createTriageStateStore } from "./github/triage-state-store.js";
 import {
   GITHUB_MANIFEST_CALLBACK_PATH,
   GITHUB_MANIFEST_PATH,
@@ -69,6 +75,8 @@ const EXPECTED_DEPLOYMENT_SET = {
   tools: [githubRead.id, githubWrite.id],
 };
 
+// Runs whose trigger and outcome the reconciler remembers between passes.
+const TRIAGE_KNOWN_RUNS = 10_000;
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
@@ -105,10 +113,12 @@ const local = createLocalProcessSidecarProvisioner({
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
+let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   cronTicker?.stop();
+  triageLoop?.stop();
   try {
     await local.shutdown();
   } finally {
@@ -151,6 +161,10 @@ async function tenantDomain(tenantId: string): Promise<string> {
   if (!row) throw new Error("tenant not found");
   return row.domain;
 }
+const systemSender = createTenantSystemSender({
+  db: composition.db,
+  principalKeyStore: composition.principalKeyStore,
+});
 function runTriggerDeliverer(senderLocalPart: string) {
   return createRunTriggerDeliverer({
     router: composition.sidecarRouter,
@@ -161,10 +175,7 @@ function runTriggerDeliverer(senderLocalPart: string) {
     }),
     tenantDomain,
     senderLocalPart,
-    systemSender: createTenantSystemSender({
-      db: composition.db,
-      principalKeyStore: composition.principalKeyStore,
-    }),
+    systemSender,
   });
 }
 cronTicker = createCronTicker({
@@ -222,15 +233,59 @@ const hookApp = createStockHookApp(
   composition.sidecarRouter,
 );
 
-const githubDeliverer = runTriggerDeliverer("github");
+const GITHUB_SENDER = "github";
+const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
+async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
+  await githubDeliverer.to(address, JSON.stringify(payload), tenantId, undefined);
+}
 const sendBridgeMail: BridgeDeps["sendMail"] = async function sendBridgeMail(tenantId, workflow, payload) {
   const live = await resolveLiveDeployment(composition.db, tenantId, workflow);
   if (!live) throw new NoLiveDeploymentError(workflow);
-  await githubDeliverer.to(live.address, JSON.stringify(payload), tenantId, undefined);
+  await deliverToDeployment(tenantId, live.address, payload);
 };
 function readCheckPack(tenantId: string, repo: string) {
   return loadCheckPack(composition.db, tenantId, repo);
 }
+// A tenant's system principal never changes once minted.
+const githubSenderPrincipals = new Map<string, string>();
+/** Hub-written triage state is recorded as the tenant's GitHub system sender. */
+async function githubSenderPrincipal(tenantId: string): Promise<string> {
+  const cached = githubSenderPrincipals.get(tenantId);
+  if (cached !== undefined) return cached;
+  await systemSender.resolve({ tenantId, domain: await tenantDomain(tenantId), localPart: GITHUB_SENDER });
+  const row = await composition.db.query.principal.findFirst({
+    where: and(eq(schema.principal.tenantId, tenantId), eq(schema.principal.kind, "user"), eq(schema.principal.refId, GITHUB_SENDER)),
+  });
+  if (!row) throw new Error(`no ${GITHUB_SENDER} system principal in tenant ${tenantId}`);
+  githubSenderPrincipals.set(tenantId, row.id);
+  return row.id;
+}
+function now(): Date {
+  return new Date();
+}
+function reconcileTenants() {
+  return composition.db.select({ id: schema.tenant.id, domain: schema.tenant.domain, config: schema.tenant.config }).from(schema.tenant);
+}
+function livePrTriageDeployment(tenantId: string) {
+  return resolveLiveDeployment(composition.db, tenantId, prTriageWorkflow.id);
+}
+const reconcileTriage = createTriageReconciler({
+  tenants: reconcileTenants,
+  liveDeployment: livePrTriageDeployment,
+  openHeadsFor: createTenantOpenHeads({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  observeRuns: createTriageRuns({
+    runReader: composition.runReader,
+    readSettled: createSettledStatusReader(composition.db),
+    maxKnownRuns: TRIAGE_KNOWN_RUNS,
+  }),
+  store: createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson }),
+  readCheckPack,
+  deliver: deliverToDeployment,
+  policy: DEFAULT_RECONCILE_POLICY,
+  now,
+  log: logJson,
+});
+triageLoop = createReconcileLoop(reconcileTriage, triageReconcileIntervalMs(env), logJson);
 const syncInstallations = createInstallationSync({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -238,6 +293,7 @@ const syncInstallations = createInstallationSync({
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
+  onSynced: triageLoop.kick,
 });
 const bridge = createBridgeHandler({
   db: hookDeps.db,
@@ -384,6 +440,8 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
   }
   return stock.fetch(req, server);
 }
+
+triageLoop.start();
 
 console.log(JSON.stringify({
   ts: new Date().toISOString(),

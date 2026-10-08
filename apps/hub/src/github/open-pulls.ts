@@ -12,7 +12,7 @@ export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
 type OpenPrs = Awaited<ReturnType<typeof listOpenPrs>>;
 type RepoPulls = { repo: string; prs: OpenPrs; error?: string };
 
-function forInstallation(gh: GithubFetch, installationId: number | undefined): GithubFetch {
+export function forInstallation(gh: GithubFetch, installationId: number | undefined): GithubFetch {
   if (installationId === undefined) return gh;
   return function installationFetch(path, init) {
     const headers = new Headers(init?.headers);
