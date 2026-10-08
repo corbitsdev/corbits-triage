@@ -4,6 +4,7 @@ import App from "./App.tsx";
 import "@corbits/react-ui/styles.css";
 import "./index.css";
 import "./inbox.css";
+import "./onboarding.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Portal root missing.");
