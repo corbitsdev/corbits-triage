@@ -32,7 +32,7 @@ type Pull = { number: number; title: string };
 function factsFor(n: number, openPrs: Pull[]): PrFacts {
   const p = ghOne<any>(`repos/${repo}/pulls/${n}`);
   const pr: PrData = {
-    title: p.title, body: p.body, author: p.user?.login, sha: p.head?.sha, state: p.state, draft: p.draft,
+    title: p.title, body: p.body, author: p.user?.login, sha: p.head?.sha, branch: p.head.ref, state: p.state, draft: p.draft,
     mergeable: p.mergeable, requestedReviewers: (p.requested_reviewers?.length ?? 0) + (p.requested_teams?.length ?? 0),
     reviewers: [...(p.requested_reviewers ?? []).map((u: any) => u.login), ...(p.requested_teams ?? []).map((t: any) => t.slug)],
     additions: p.additions, deletions: p.deletions, changedFiles: p.changed_files,
