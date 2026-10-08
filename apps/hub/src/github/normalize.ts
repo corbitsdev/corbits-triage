@@ -30,6 +30,7 @@ export function normalize(event: string, deliveryId: string, p: Json): PrMail | 
   } else if (event === "check_run") {
     pr = p.check_run?.pull_requests?.[0];
   }
+  if (pr?.state === "closed") return null;
   return {
     kind: "pr",
     repo,
