@@ -14,7 +14,7 @@ import { useRunLogs } from "../lib/run-logs.ts";
 
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
-  const { logs } = useRunLogs(snapshot?.workspace.tenantId);
+  const { logs } = useRunLogs();
   const repos = snapshot?.repos ?? [];
   const denied = snapshot?.denied.repos ?? false;
   const [opening, setOpening] = useState(false);

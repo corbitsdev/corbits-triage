@@ -22,10 +22,9 @@ export function useOpenPulls() {
 /** Every pull request with a verdict, including closed ones, for the pull request page. */
 export function usePullRequestItems(): PrItem[] {
   const { snapshot } = usePortal();
-  const { logs } = useRunLogs(snapshot?.workspace.tenantId);
-  const approvals = snapshot?.approvals;
+  const { logs } = useRunLogs();
   const { data } = useOpenPulls();
-  return useMemo(() => (approvals ? projectQueue(logs, approvals, data) : []), [logs, approvals, data]);
+  return useMemo(() => (snapshot ? projectQueue(logs, snapshot.approvals, data) : []), [logs, snapshot, data]);
 }
 
 /** The inbox: every open pull request, with its verdict when it has one. */

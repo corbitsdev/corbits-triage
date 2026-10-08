@@ -62,7 +62,7 @@ export default function Triage() {
     }
     return sortTriageItems(filterTriageItems(allItems, view).filter(matchesQuery));
   }, [allItems, query, view]);
-  const { logs, denied } = useRunLogs(snapshot?.workspace.tenantId);
+  const { logs, denied } = useRunLogs();
   const connectedRepos = snapshot?.repos.filter((repo) => repo.connected) ?? [];
   const catchingUp = snapshot ? connectedRepos.some((repo) => isRepoCatchingUp(logs, snapshot.runs, repo.name)) : false;
   const title = view === "action" ? "Triaged" : view === "merge" ? "Ready to Merge" : "All PRs";

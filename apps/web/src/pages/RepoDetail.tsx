@@ -119,7 +119,7 @@ export default function RepoDetail() {
   const items = useQueueItems().filter((item) => item.repo === (config?.name ?? label));
   const needs = items.filter((item) => item.needsHuman).length;
   const ready = items.filter((item) => item.state === "ready").length;
-  const { logs } = useRunLogs(snapshot?.workspace.tenantId);
+  const { logs } = useRunLogs();
   const receivingEvents = config ? hasVerifiedWebhookDelivery(logs, config.name) : false;
   const catchingUp = snapshot ? isRepoCatchingUp(logs, snapshot.runs, config?.name ?? label) : false;
   const dirty = packJson(pack) !== packJson(saved) || (needsSetup && customizing);

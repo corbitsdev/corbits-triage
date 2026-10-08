@@ -1,109 +1,78 @@
-import { useQueries, useQuery, type Query, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
-import {
-  ApiError,
-  listWorkflowDeployments,
-  listWorkflowRuns,
-  readWorkflowRunEvents,
-  type Transport,
-} from "@intx/hub-client";
+import { queryOptions, skipToken, useQueries, useQuery, type Query, type UseQueryResult } from "@tanstack/react-query";
+import { ApiError, listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents, type Transport } from "@intx/hub-client";
 import type { RunLog } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
+import { RUN_IDS_QUERY_KEY, RUN_LOG_QUERY_KEY, usePortal } from "./portal.tsx";
 
-const RUN_IDS_QUERY_KEY = "run-ids";
-export const RUN_LOG_QUERY_KEY = "run-log";
 const LIVE_REFRESH_MS = 10_000;
 const TERMINAL_EVENTS = new Set(["RunCompleted", "RunFailed", "RunCancelled"]);
 
 type RunRef = { anchorRunId: string; runId: string };
 
-function isMissing(cause: unknown): boolean {
-  return cause instanceof ApiError && (cause.status === 404 || cause.status === 403);
-}
-
-async function listRunRefs(transport: Transport, tenantId: string): Promise<RunRef[]> {
-  const deployments = await listWorkflowDeployments(transport, tenantId);
-  const perDeployment = await Promise.all(deployments.map(async function runsOf(deployment) {
-    try {
-      const runIds = await listWorkflowRuns(transport, tenantId, deployment.id);
-      return runIds.map((runId) => ({ anchorRunId: deployment.id, runId }));
-    } catch (cause) {
-      if (isMissing(cause)) return [];
-      throw cause;
-    }
-  }));
-  const seen = new Set<string>();
-  return perDeployment.flat().filter((ref) => !seen.has(ref.runId) && seen.add(ref.runId));
-}
-
-async function readLog(transport: Transport, tenantId: string, ref: RunRef): Promise<RunLog | null> {
+/** A deployment the caller cannot read, or one removed since it was listed, contributes no runs. */
+async function runsOf(transport: Transport, tenantId: string, anchorRunId: string): Promise<RunRef[]> {
   try {
-    const log = await readWorkflowRunEvents(transport, tenantId, ref.anchorRunId, ref.runId);
-    return { runId: log.runId, anchorRunId: ref.anchorRunId, events: log.events };
+    const runIds = await listWorkflowRuns(transport, tenantId, anchorRunId);
+    return runIds.map((runId) => ({ anchorRunId, runId }));
   } catch (cause) {
-    if (isMissing(cause)) return null;
+    if (cause instanceof ApiError && (cause.status === 403 || cause.status === 404)) return [];
     throw cause;
   }
 }
 
+async function listRunRefs(transport: Transport, tenantId: string): Promise<RunRef[]> {
+  const deployments = await listWorkflowDeployments(transport, tenantId);
+  const refs = await Promise.all(deployments.map((deployment) => runsOf(transport, tenantId, deployment.id)));
+  const byRunId = new Map<string, RunRef>();
+  for (const ref of refs.flat()) {
+    if (!byRunId.has(ref.runId)) byRunId.set(ref.runId, ref);
+  }
+  return [...byRunId.values()];
+}
+
+async function readLog(transport: Transport, tenantId: string, ref: RunRef): Promise<RunLog> {
+  const log = await readWorkflowRunEvents(transport, tenantId, ref.anchorRunId, ref.runId);
+  return { runId: log.runId, anchorRunId: ref.anchorRunId, events: log.events };
+}
+
 /** A finished run's log never changes again, so it is read once and kept. */
-export function isFinishedLog(log: RunLog | null | undefined): boolean {
-  return log?.events.some((event) => TERMINAL_EVENTS.has(event.type)) ?? false;
+function isFinished(log: RunLog): boolean {
+  return log.events.some((event) => TERMINAL_EVENTS.has(event.type));
+}
+
+function isRunLog(value: unknown): value is RunLog {
+  return typeof value === "object" && value !== null && "events" in value && Array.isArray(value.events);
 }
 
 export function isFinishedRunLogQuery(query: Query): boolean {
-  return query.queryKey[0] === RUN_LOG_QUERY_KEY && query.state.status === "success" && isFinishedLog(query.state.data as RunLog | null);
+  return query.queryKey[0] === RUN_LOG_QUERY_KEY && isRunLog(query.state.data) && isFinished(query.state.data);
 }
 
-function staleTimeOf(query: Query): number {
-  return isFinishedLog(query.state.data as RunLog | null) ? Infinity : 0;
+function runLogQuery(tenantId: string, ref: RunRef) {
+  return queryOptions({
+    queryKey: [RUN_LOG_QUERY_KEY, tenantId, ref.anchorRunId, ref.runId],
+    queryFn: () => readLog(createHubTransport(), tenantId, ref),
+    staleTime: (query) => (query.state.data !== undefined && isFinished(query.state.data) ? Infinity : 0),
+    refetchInterval: (query) => (query.state.data !== undefined && isFinished(query.state.data) ? false : LIVE_REFRESH_MS),
+    gcTime: Infinity,
+  });
 }
 
-function refetchIntervalOf(query: Query): number | false {
-  return isFinishedLog(query.state.data as RunLog | null) ? false : LIVE_REFRESH_MS;
+function loadedLogs(results: Array<UseQueryResult<RunLog>>): RunLog[] {
+  return results.flatMap((result) => (result.data === undefined ? [] : [result.data]));
 }
 
-export type RunLogs = { logs: RunLog[]; pending: boolean; denied: boolean };
-
-function combineLogs(results: Array<UseQueryResult<RunLog | null>>): { logs: RunLog[]; pending: boolean } {
-  return {
-    logs: results.map((result) => result.data).filter((log): log is RunLog => log !== null && log !== undefined),
-    pending: results.some((result) => result.isPending),
-  };
-}
-
-export function useRunLogs(tenantId: string | undefined): RunLogs {
+export function useRunLogs(): { logs: RunLog[]; denied: boolean } {
+  const { snapshot } = usePortal();
+  const tenantId = snapshot?.workspace.tenantId;
   const refs = useQuery({
     queryKey: [RUN_IDS_QUERY_KEY, tenantId],
-    queryFn: async function fetchRunRefs() {
-      return listRunRefs(createHubTransport(), tenantId as string);
-    },
-    enabled: tenantId !== undefined,
+    queryFn: tenantId === undefined ? skipToken : () => listRunRefs(createHubTransport(), tenantId),
     refetchInterval: LIVE_REFRESH_MS,
   });
   const logs = useQueries({
-    queries: (refs.data ?? []).map(function logQuery(ref) {
-      return {
-        queryKey: [RUN_LOG_QUERY_KEY, tenantId, ref.anchorRunId, ref.runId],
-        queryFn: async function fetchLog() {
-          return readLog(createHubTransport(), tenantId as string, ref);
-        },
-        staleTime: staleTimeOf,
-        refetchInterval: refetchIntervalOf,
-        gcTime: Infinity,
-      };
-    }),
-    combine: combineLogs,
+    queries: tenantId === undefined || refs.data === undefined ? [] : refs.data.map((ref) => runLogQuery(tenantId, ref)),
+    combine: loadedLogs,
   });
-  return {
-    logs: logs.logs,
-    pending: refs.isPending || logs.pending,
-    denied: refs.error instanceof ApiError && refs.error.status === 403,
-  };
-}
-
-export async function invalidateRunLogs(queryClient: QueryClient): Promise<void> {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: [RUN_IDS_QUERY_KEY] }),
-    queryClient.invalidateQueries({ queryKey: [RUN_LOG_QUERY_KEY] }),
-  ]);
+  return { logs, denied: refs.error instanceof ApiError && refs.error.status === 403 };
 }

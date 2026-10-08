@@ -67,7 +67,7 @@ export default function Connect() {
   const [webhookUrlNotice, setWebhookUrlNotice] = useState("");
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
-  const { logs } = useRunLogs(snapshot?.workspace.tenantId);
+  const { logs } = useRunLogs();
   const items = snapshot ? projectQueue(logs, snapshot.approvals) : [];
   const githubReady = repos.some((repo) => hasVerifiedWebhookDelivery(logs, repo.name));
   const modelStored = hasDecisionModelCredential(snapshot?.credentials ?? []);
