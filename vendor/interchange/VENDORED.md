@@ -4,7 +4,7 @@
 
 - Upstream: <https://github.com/faremeter/interchange>
 - Stock ref: `779b47f59c47026b14f02eb54eefa90e15b7fd9a`
-- Composite pin: stock `779b47f5` plus allowlisted PR #193 at `13129bb5` (rebased), INTR-583 at `44170ebb`, and the local CL-10178 carry. Do not treat any delta as a new stock pin.
+- Composite pin: stock `779b47f5` plus allowlisted PR #193 at `13129bb5` (rebased), INTR-583 at `44170ebb`, and the local CL-10178 and CL-10210 carries. Do not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -119,6 +119,29 @@ Upstream status: to be filed.
 
 Kill date: **2026-11-01**. Remove when the stock pin scopes onTrigger body
 run ids to their container run.
+
+### Consume signal mail the run already recorded (CL-10210)
+
+Local carry, not upstream. A signal mail can stay in `processing/` after the
+run recorded it: a restart between the run's `SignalReceived` and
+`markConsumed`, or a failed dispatch. Boot replay re-admits it (only
+`RunStarted` message ids count as owned), the supervisor re-sends it, the
+child drops the duplicate without re-parking, the terminal-or-park backstop
+fails the dispatch, and that mail and every newer one stay unconsumed. The
+patch makes `dispatchOne` consume a mail whose message id the run log already
+records as a `SignalReceived`, without redelivering it or dropping the run's
+input channel. `hasRecordedSignal` reads the run's event log for that check.
+
+Allowed files:
+
+- `packages/hub-sessions/src/workflow-run-kind.ts`
+- `packages/hub-sessions/src/substrate.ts`
+- `packages/workflow-host/src/supervisor/supervisor.ts`
+
+Upstream status: to be filed.
+
+Kill date: **2026-11-01**. Remove when the stock pin consumes or skips a
+replayed signal mail the run already recorded.
 
 ## Dropped deltas
 
