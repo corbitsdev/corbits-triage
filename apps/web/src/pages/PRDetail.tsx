@@ -573,7 +573,7 @@ export default function PRDetail() {
         ) : null}
         {showRecommended ? (
           <RecommendedComment
-            key={handledKey}
+            key={`${handledKey}@${item.runId}`}
             item={item}
             posted={recommendedPosted}
             onPosted={() => setHandled({ ...handled, [handledKey]: "posted" })}
