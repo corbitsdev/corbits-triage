@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { githubWrite } from "./sidecar-bundle.js";
-import { listOpenPrs, mergePr, mirror, type GithubFetch } from "./github.js";
+import { listOpenPrs, mergePr, mirror, upsertTriageComment, type GithubFetch } from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
 
@@ -17,38 +17,69 @@ function recorder(respond: (path: string, init?: RequestInit) => unknown) {
   return { gh: gh satisfies GithubFetch, requests };
 }
 
-function mirrorResponse(comments: unknown[]) {
-  return function respond(path: string, init?: RequestInit) {
+type FakeComment = { id: number; user: { login: string }; body: string };
+
+const APP_LOGIN = "corbits-triage[bot]";
+
+/** GitHub that keeps pull request 8's issue comments, so repeated runs see each other's writes. */
+function fakeGithub(comments: FakeComment[] = []) {
+  let nextId = 100;
+  const { gh, requests } = recorder(function respond(path, init) {
+    const body = typeof init?.body === "string" ? JSON.parse(init.body).body : undefined;
+    if (path === "/app") return { slug: "corbits-triage" };
     if (path.endsWith("/pulls/8") && !init?.method) return { head: { sha: "abc123" } };
     if (path.includes("/comments?per_page")) return comments;
+    if (path.endsWith("/issues/8/comments") && init?.method === "POST") {
+      const created = { id: nextId++, user: { login: APP_LOGIN }, body };
+      comments.push(created);
+      return created;
+    }
+    const edit = /\/issues\/comments\/(\d+)$/.exec(path);
+    if (edit && init?.method === "PATCH") {
+      const target = comments.find((comment) => comment.id === Number(edit[1]));
+      if (!target) throw new Error(`no comment ${edit[1]}`);
+      target.body = body;
+      return target;
+    }
     return { id: 1 };
-  };
+  });
+  return { gh, requests, comments };
 }
 
 const MIRROR = { repo: "acme/widgets", number: 8, labels: ["needs-decision"], comment: "Duplicate" };
 
-describe("github mirror", () => {
-  test("posts a marker comment and leaves the pull request open", async () => {
-    const { gh, requests } = recorder(mirrorResponse([]));
+describe("triage comment", () => {
+  test("first run creates it, later runs edit the same one", async () => {
+    const { gh, comments } = fakeGithub();
+    const first = await upsertTriageComment(gh, { repo: "acme/widgets", number: 8, body: "First" });
+    const second = await mirror(gh, { ...MIRROR, comment: "Second", close: false });
+    const third = await upsertTriageComment(gh, { repo: "acme/widgets", number: 8, body: "Third" });
+    expect(first).toEqual({ commentId: 100, updated: false });
+    expect(second).toMatchObject({ commentId: 100, updated: true });
+    expect(third).toEqual({ commentId: 100, updated: true });
+    expect(comments).toEqual([{ id: 100, user: { login: APP_LOGIN }, body: "<!-- corbits-triage -->\nThird" }]);
+  });
+
+  test("edits a comment carrying the earlier per-head marker", async () => {
+    const { gh, requests, comments } = fakeGithub([
+      { id: 42, user: { login: APP_LOGIN }, body: "<!-- corbits-triage:acme/widgets#8@old -->\nOld" },
+    ]);
     await mirror(gh, { ...MIRROR, close: false });
-    expect(requests).toContainEqual({
-      path: "/repos/acme/widgets/issues/8/comments",
-      method: "POST",
-      body: { body: "<!-- corbits-triage:acme/widgets#8@abc123 -->\nDuplicate" },
-    });
-    expect(requests.some((request) => request.path.endsWith("/pulls/8") && request.method === "PATCH")).toBe(false);
-  });
-
-  test("updates a prior marker comment instead of posting another", async () => {
-    const { gh, requests } = recorder(mirrorResponse([{ id: 42, body: "<!-- corbits-triage:acme/widgets#8@old -->\nOld" }]));
-    const result = await mirror(gh, { ...MIRROR, close: false });
-    expect(result.updated).toBe(true);
-    expect(requests.some((request) => request.path === "/repos/acme/widgets/issues/comments/42" && request.method === "PATCH")).toBe(true);
     expect(requests.some((request) => request.method === "POST")).toBe(false);
+    expect(comments).toEqual([{ id: 42, user: { login: APP_LOGIN }, body: "<!-- corbits-triage -->\nDuplicate" }]);
   });
 
+  test("ignores a marked comment written by someone else", async () => {
+    const foreign = { id: 7, user: { login: "mallory" }, body: "<!-- corbits-triage -->\nNot ours" };
+    const { gh, comments } = fakeGithub([{ ...foreign }]);
+    expect(await upsertTriageComment(gh, { repo: "acme/widgets", number: 8, body: "Ours" })).toEqual({ commentId: 100, updated: false });
+    expect(comments).toEqual([foreign, { id: 100, user: { login: APP_LOGIN }, body: "<!-- corbits-triage -->\nOurs" }]);
+  });
+});
+
+describe("github mirror", () => {
   test("close:true closes and never merges", async () => {
-    const { gh, requests } = recorder(mirrorResponse([]));
+    const { gh, requests } = fakeGithub();
     await mirror(gh, { ...MIRROR, close: true });
     expect(requests).toContainEqual({ path: "/repos/acme/widgets/pulls/8", method: "PATCH", body: { state: "closed" } });
     expect(requests.some((request) => request.path.includes("/merge"))).toBe(false);

@@ -44,6 +44,12 @@ describe("GitHub App credential adapter", () => {
         return Response.json({ id: 456 });
       }
 
+      if (url.pathname === "/app") {
+        expect(request.method).toBe("GET");
+        expect(authorization).toMatch(/^Bearer eyJ/);
+        return Response.json({ slug: "corbits" });
+      }
+
       if (url.pathname === "/app/installations/456/access_tokens") {
         expect(request.method).toBe("POST");
         expect(authorization).toMatch(/^Bearer eyJ/);
