@@ -3982,6 +3982,57 @@ export async function readWorkflowRunLifecycle(
   });
 }
 
+/**
+ * Whether a run's event log already records a `SignalReceived` for
+ * `signalId`. A restart or failed dispatch can leave a mail the run already
+ * took up in `processing/`; redelivering it is a duplicate the runtime drops
+ * without re-parking, so the supervisor checks this first and consumes it.
+ */
+export async function hasRecordedSignal(
+  store: RepoStore,
+  repoId: RepoId,
+  runId: string,
+  signalId: string,
+): Promise<boolean> {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const eventsDir = path.join(
+    store.getRepoDir(repoId),
+    WORKFLOW_RUN_RUNS_PREFIX,
+    runId,
+    WORKFLOW_RUN_EVENTS_DIR,
+  );
+  let files: string[];
+  try {
+    files = await fs.readdir(eventsDir);
+  } catch (cause) {
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      cause.code === "ENOENT"
+    ) {
+      return false;
+    }
+    throw cause;
+  }
+  for (const file of files) {
+    if (parseEventSeq(file) === null) continue;
+    const eventPath = path.join(eventsDir, file);
+    let event: { type?: unknown; signalId?: unknown };
+    try {
+      event = JSON.parse(await fs.readFile(eventPath, "utf8"));
+    } catch (cause) {
+      throw new Error(`workflow_run_event_unreadable: ${eventPath}`, {
+        cause,
+      });
+    }
+    if (event.type === "SignalReceived" && event.signalId === signalId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export type ReplayProcessingToInboxOpts = {
   /**
    * MessageIds whose run is still LIVE (non-terminal) and therefore owns

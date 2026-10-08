@@ -52,3 +52,10 @@ packages/db/src/parse-row.test.ts
 packages/workflow/src/runtime/run.ts
 packages/workflow/src/runtime/on-trigger-run.test.ts
 packages/workflow/src/runtime/on-trigger-tolerate-abort.test.ts
+
+# CL-10210 local carry: consume a replayed signal mail the run already
+# recorded instead of wedging the deployment inbox. Not upstream yet.
+# Remove by 2026-11-01 or when re-pinning to a stock commit that fixes it.
+packages/hub-sessions/src/workflow-run-kind.ts
+packages/hub-sessions/src/substrate.ts
+packages/workflow-host/src/supervisor/supervisor.ts

@@ -57,6 +57,7 @@ import {
   markConsumed as defaultMarkConsumed,
   scanRunsForBoot,
   readWorkflowRunLifecycle,
+  hasRecordedSignal,
   replayProcessingToInbox as defaultReplayProcessingToInbox,
   StaleInboxEnqueueError,
   DEFAULT_CONSUMED_RETENTION_MS,
@@ -3652,6 +3653,22 @@ export function createWorkflowSupervisor(
           }
           const inputChannel = runInputChannels.get(runId);
           if (inputChannel !== undefined) {
+            // A mail the run already recorded (left in processing/ by a
+            // restart or failed dispatch) is a duplicate the runtime drops
+            // without re-parking, so waiting would wedge it and every newer
+            // mail; consume it instead (break to the post-loop markConsumed)
+            // and keep the run's current input channel.
+            if (
+              await hasRecordedSignal(
+                bindings.repoStore,
+                bindings.workflowRunRepoId,
+                runId,
+                envelope.messageId,
+              )
+            ) {
+              logger.warn`signal.deliver for run ${runId}: ${envelope.messageId} was already recorded; consuming it without redelivery`;
+              break;
+            }
             // Resolve the inbound mail to the run's input HERE, the single site
             // that knows this payload's provenance is mail, applying the SAME
             // preparation the turn-1 trigger does. The signal.deliver frame's
