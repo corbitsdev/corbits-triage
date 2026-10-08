@@ -32,6 +32,7 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
+  "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -101,6 +102,11 @@ export function migrationEnv(db: DatabaseConfig): Record<string, string> {
     DB_NAME: db.database,
     DB_SSL: String(db.ssl === true),
   };
+}
+
+/** How often the hub re-queues open pull requests whose head is not triaged. */
+export function triageReconcileIntervalMs(env: HubEnv): number {
+  return env.TRIAGE_RECONCILE_INTERVAL_MS === undefined ? 5 * 60_000 : Number(env.TRIAGE_RECONCILE_INTERVAL_MS);
 }
 
 export type SignInSettings = {
