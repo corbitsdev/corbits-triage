@@ -1,25 +1,31 @@
-// Shared by the Vite dev server and the hub when it serves the built portal.
+// The single source of the portal's policy: vite.config.ts injects the meta policy into index.html and sets the
+// dev/preview headers, and the hub sends the header policy when it serves the built portal.
 
 // sonner appends an empty <style> at import and then fills it with its stylesheet; each step is checked against style-src.
+// These hashes pin sonner's exact CSS, so security-headers.test.ts and the exact sonner pin in package.json go together.
 export const SONNER_STYLE_HASHES = [
   "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='",
   "'sha256-StEaX+se6YS7pqjzrzMIA0KaX9zF/8zAhvQXZAe5epY='",
 ];
 
-function contentSecurityPolicy(scriptSrc: string, styleSrc: string): string {
-  return `default-src 'self'; script-src ${scriptSrc}; style-src ${styleSrc}; font-src 'self'; img-src 'self' data:; connect-src 'self' http://localhost:3000 https: ws: wss:; form-action https://github.com; base-uri 'self'`;
+export type CspMode = "production" | "development";
+
+const INLINE_SOURCES: Record<CspMode, { script: string; style: string }> = {
+  production: { script: "", style: ` ${SONNER_STYLE_HASHES.join(" ")}` },
+  development: { script: " 'unsafe-inline'", style: " 'unsafe-inline'" },
+};
+
+export function contentSecurityPolicy({ mode, meta }: { mode: CspMode; meta: boolean }): string {
+  const inline = INLINE_SOURCES[mode];
+  const policy = `default-src 'self'; script-src 'self'${inline.script}; style-src 'self'${inline.style}; font-src 'self'; img-src 'self' data:; connect-src 'self' http://localhost:3000 https: ws: wss:; form-action https://github.com; base-uri 'self'`;
+  // Browsers ignore frame-ancestors in a <meta> policy and warn about it.
+  return meta ? policy : `${policy}; frame-ancestors 'none'`;
 }
 
-// Browsers ignore frame-ancestors in a <meta> policy and warn about it, so index.html carries the policy without it.
-export const PRODUCTION_META_CSP = contentSecurityPolicy("'self'", `'self' ${SONNER_STYLE_HASHES.join(" ")}`);
-export const DEVELOPMENT_META_CSP = contentSecurityPolicy("'self' 'unsafe-inline'", "'self' 'unsafe-inline'");
-export const PRODUCTION_CSP = `${PRODUCTION_META_CSP}; frame-ancestors 'none'`;
-export const DEVELOPMENT_CSP = `${DEVELOPMENT_META_CSP}; frame-ancestors 'none'`;
-
-export function securityHeaders(csp = PRODUCTION_CSP): Record<string, string> {
+export function securityHeaders(mode: CspMode = "production"): Record<string, string> {
   return {
     "Referrer-Policy": "no-referrer",
-    "Content-Security-Policy": csp,
+    "Content-Security-Policy": contentSecurityPolicy({ mode, meta: false }),
     "X-Content-Type-Options": "nosniff",
   };
 }

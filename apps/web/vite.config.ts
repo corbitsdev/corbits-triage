@@ -1,24 +1,27 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import { DEVELOPMENT_CSP, DEVELOPMENT_META_CSP, PRODUCTION_META_CSP, securityHeaders } from "./src/security-headers.ts";
+import { contentSecurityPolicy, securityHeaders } from "./src/security-headers.ts";
 
 export default defineConfig(({ command }) => ({
   plugins: [
     react(),
-    ...(command === "serve"
-      ? [{
-          name: "corbits-dev-csp",
-          transformIndexHtml(html: string) {
-            return html.replaceAll(PRODUCTION_META_CSP, DEVELOPMENT_META_CSP);
-          },
-        }]
-      : []),
+    {
+      name: "corbits-meta-csp",
+      transformIndexHtml() {
+        const mode = command === "serve" ? "development" : "production";
+        return [{
+          tag: "meta",
+          attrs: { "http-equiv": "Content-Security-Policy", content: contentSecurityPolicy({ mode, meta: true }) },
+          injectTo: "head-prepend" as const,
+        }];
+      },
+    },
   ],
   preview: {
     headers: securityHeaders(),
   },
   server: {
-    headers: securityHeaders(DEVELOPMENT_CSP),
+    headers: securityHeaders("development"),
     fs: { allow: [".."] },
     port: 5173,
     proxy: {
