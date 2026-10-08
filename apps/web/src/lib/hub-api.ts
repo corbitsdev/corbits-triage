@@ -57,7 +57,7 @@ export type RepoRecord = {
   installationUrl?: string;
   selection?: "all" | "selected";
   cleanupMode?: RepoPolicy["cleanupMode"];
-  classificationAuthorized?: boolean;
+  enabled?: boolean;
   checks?: RepoCheckFlags;
   checkPack?: { name: string };
 };
@@ -427,9 +427,9 @@ async function loadRepoPolicy(transport: Transport, tenantId: string, repo: stri
   return repoPolicy(row);
 }
 
-function assertClassificationAuthorized(policy: RepoPolicy): void {
-  if (!policy.classificationAuthorized) {
-    throw new Error("Classification is paused for this repository.");
+function assertRepoEnabled(policy: RepoPolicy): void {
+  if (!policy.enabled) {
+    throw new Error("Triage is disabled for this repository. Enable it first.");
   }
 }
 
@@ -945,7 +945,7 @@ export async function startBacklogTriage(
 ): Promise<{ runId: string }> {
   const clean = validateRepo(repo);
   const policy = await loadRepoPolicy(transport, tenantId, clean);
-  assertClassificationAuthorized(policy);
+  assertRepoEnabled(policy);
   const pack = await loadRepoCheckPack(transport, tenantId, clean);
   if (!pack) throw new Error("This repository still needs check setup.");
   const { runId } = await triggerNamedWorkflow(
@@ -967,7 +967,7 @@ export async function startPullRequestTriage(
   const parsed = tryJson(clean);
   const repo = typeof parsed.repo === "string" ? parsed.repo : "";
   const policy = repo ? await loadRepoPolicy(transport, tenantId, repo) : undefined;
-  if (policy) assertClassificationAuthorized(policy);
+  if (policy) assertRepoEnabled(policy);
   const pack = repo ? await loadRepoCheckPack(transport, tenantId, repo) : null;
   if (repo && !pack) throw new Error("This repository still needs check setup.");
   const content = repo

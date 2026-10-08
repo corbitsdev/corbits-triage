@@ -497,7 +497,7 @@ export function createBridgeHandler(d: BridgeDeps) {
       return json(202, { status: "ignored" });
     }
     const policy = policyForRepo(tenantConfig, mail.repo);
-    if (!policy.classificationAuthorized) {
+    if (!policy.enabled) {
       log({ level: "info", msg: "paused", delivery, event, repo: mail.repo, hook: loaded.credentialId });
       return json(202, { status: "paused" });
     }

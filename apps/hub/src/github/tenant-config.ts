@@ -12,7 +12,7 @@ export type RepoRecord = {
   installationUrl?: string;
   selection?: "all" | "selected";
   cleanupMode?: RepoPolicy["cleanupMode"];
-  classificationAuthorized?: boolean;
+  enabled?: boolean;
   checks?: RepoPolicy["checks"];
 };
 
@@ -77,6 +77,32 @@ export async function patchCorbitsTriage(
       .where(eq(schema.tenant.id, tenantId));
     return nextNs;
   });
+}
+
+type LegacyRepoRecord = RepoRecord & { classificationAuthorized?: unknown };
+
+function hasLegacyFlag(row: unknown): boolean {
+  return asRecord(row)?.["classificationAuthorized"] !== undefined;
+}
+
+function renameLegacyFlag(row: LegacyRepoRecord): RepoRecord {
+  if (!hasLegacyFlag(row)) return row;
+  const { classificationAuthorized, ...rest } = row;
+  if (rest.enabled !== undefined || typeof classificationAuthorized !== "boolean") return rest;
+  return { ...rest, enabled: classificationAuthorized };
+}
+
+function renameLegacyFlags(ns: CorbitsTriageNs): CorbitsTriageNs {
+  return Array.isArray(ns.repos) ? { ...ns, repos: ns.repos.map(renameLegacyFlag) } : ns;
+}
+
+/** One-time rewrite of repo rows stored before `classificationAuthorized` was renamed to `enabled`. */
+export async function migrateRepoEnabledFlag(db: DB["db"]): Promise<void> {
+  const tenants = await db.select({ id: schema.tenant.id, config: schema.tenant.config }).from(schema.tenant);
+  for (const tenant of tenants) {
+    const repos = triageNs(tenant.config).repos;
+    if (Array.isArray(repos) && repos.some(hasLegacyFlag)) await patchCorbitsTriage(db, tenant.id, renameLegacyFlags);
+  }
 }
 
 function cloneWithBody(req: Request, body: string): Request {

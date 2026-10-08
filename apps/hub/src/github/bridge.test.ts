@@ -199,7 +199,7 @@ describe("bridge handler", () => {
         prNumber: 7,
         policy: expect.objectContaining({
           cleanupMode: "human-approved",
-          classificationAuthorized: true,
+          enabled: true,
           checks: { draft: true, ci: true, duplicate: true, conflicts: true, reviewers: false, drift: true },
         }),
       }),
@@ -289,10 +289,10 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("paused classification accepts without mailing", async () => {
+  test("a disabled repo is accepted without mailing", async () => {
     const sent: Sent[] = [];
     const db = stubDb([hookRow()], {
-      corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, classificationAuthorized: false }] },
+      corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: false }] },
     });
     const res = await bridge({ db, sent })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "paused" });
@@ -361,7 +361,7 @@ describe("bridge installation events", () => {
           connected: true,
           installationId: 42,
           cleanupMode: "automated",
-          classificationAuthorized: false,
+          enabled: false,
           checks: { draft: false, ci: true, duplicate: true, conflicts: true, reviewers: true, drift: true },
         }],
       },
@@ -381,7 +381,7 @@ describe("bridge installation events", () => {
         installationUrl: "https://github.com/settings/installations/42",
         selection: "selected",
         cleanupMode: "automated",
-        classificationAuthorized: false,
+        enabled: false,
         checks: expect.objectContaining({ draft: false }),
       }),
       expect.objectContaining({ name: "octocat/world", connected: true, installationId: 42, account: "octocat", selection: "selected" }),

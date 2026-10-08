@@ -516,7 +516,7 @@ describe("repository policy config", () => {
       name: "acme/widgets",
       connected: true,
       cleanupMode: "human-approved",
-      classificationAuthorized: true,
+      enabled: true,
       checks: {
         draft: true,
         ci: true,
@@ -555,7 +555,7 @@ describe("repository policy config", () => {
 
     await saveRepoPolicy(transport, "tenant", "acme/one", {
       cleanupMode: "automated",
-      classificationAuthorized: false,
+      enabled: false,
       checks: {
         draft: true,
         ci: false,
@@ -574,17 +574,17 @@ describe("repository policy config", () => {
       connected: true,
       installationId: 9,
       cleanupMode: "automated",
-      classificationAuthorized: false,
+      enabled: false,
       checks: { ci: false, draft: true },
     });
     expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, cleanupMode: "automated" });
   });
 });
 
-describe("paused classification triggers", () => {
-  const pausedConfig = {
+describe("disabled repository triggers", () => {
+  const disabledConfig = {
     corbitsTriage: {
-      repos: [{ name: "acme/widgets", connected: true, classificationAuthorized: false }],
+      repos: [{ name: "acme/widgets", connected: true, enabled: false }],
     },
   };
 
@@ -592,7 +592,7 @@ describe("paused classification triggers", () => {
     return {
       fetch: async (method, path, body) => {
         if (method === "GET" && path === "/api/tenants/tenant") {
-          return { id: "tenant", name: "Tenant", slug: "tenant", config: pausedConfig } as never;
+          return { id: "tenant", name: "Tenant", slug: "tenant", config: disabledConfig } as never;
         }
         if (method === "GET" && path === "/api/tenants/tenant/workflows/deployments") {
           return [{
@@ -622,7 +622,7 @@ describe("paused classification triggers", () => {
   test("startBacklogTriage throws and does not mail", async () => {
     const posted: unknown[] = [];
     await expect(startBacklogTriage(transport(posted), "tenant", "acme/widgets")).rejects.toThrow(
-      "Classification is paused for this repository.",
+      "Triage is disabled for this repository. Enable it first.",
     );
     expect(posted).toEqual([]);
   });
@@ -630,7 +630,7 @@ describe("paused classification triggers", () => {
   test("startPullRequestTriage throws and does not mail", async () => {
     const posted: unknown[] = [];
     await expect(startPullRequestTriage(transport(posted), "tenant", JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8 }))).rejects.toThrow(
-      "Classification is paused for this repository.",
+      "Triage is disabled for this repository. Enable it first.",
     );
     expect(posted).toEqual([]);
   });
