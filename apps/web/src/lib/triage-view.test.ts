@@ -36,6 +36,7 @@ function item(repo: string, number: number): PrItem {
     sha: null,
     degraded: null,
     needsHuman: true,
+    closed: false,
     pendingApprovalId: `approval-${repo}`,
     runId: `run-${repo}`,
     waitingSince: null,

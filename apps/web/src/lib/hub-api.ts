@@ -1376,6 +1376,7 @@ export type PrItem = {
   sha: string | null;
   degraded: string | null;
   needsHuman: boolean;
+  closed: boolean;
   pendingApprovalId: string | null;
   runId: string | null;
   waitingSince: string | null;
@@ -1581,6 +1582,7 @@ export function projectQueue(snapshot: PortalSnapshot, openPulls?: OpenPulls): P
         sha: triggered && typeof sha === "string" ? sha : null,
         degraded: typeof r.degraded === "string" ? r.degraded : null,
         needsHuman: r.humanGated === true,
+        closed: false,
         pendingApprovalId: null,
         runId: log.runId,
         waitingSince: at,
@@ -1614,7 +1616,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
     if (error) continue;
     const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
     for (const item of items.values()) {
-      if (item.repo === repo && !open.has(item.key)) items.set(item.key, { ...item, needsHuman: false });
+      if (item.repo === repo && !open.has(item.key)) items.set(item.key, { ...item, needsHuman: false, closed: true });
     }
     for (const pr of prs) {
       const key = `${repo}#${pr.number}`;
@@ -1639,6 +1641,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
         sha: pr.sha,
         degraded: null,
         needsHuman: false,
+        closed: false,
         pendingApprovalId: null,
         runId: null,
         waitingSince: pr.updatedAt,
