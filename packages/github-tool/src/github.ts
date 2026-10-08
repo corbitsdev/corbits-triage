@@ -3,11 +3,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 /** Authenticated fetch pinned to the GitHub API origin; takes a path. */
 export type GithubFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
-export function markerFor(repo: string, number: number, sha: string) {
-  return `<!-- corbits-triage:${repo}#${number}@${sha} -->`;
-}
+export const TRIAGE_COMMENT_MARKER = "<!-- corbits-triage -->";
+// Also matches the earlier per-head `<!-- corbits-triage:repo#n@sha -->` marker, so those comments are edited rather than duplicated.
+const TRIAGE_COMMENT_PREFIX = "<!-- corbits-triage";
 
-const MARKER_PREFIX = "<!-- corbits-triage:";
+export function isTriageComment(body: string): boolean {
+  return body.startsWith(TRIAGE_COMMENT_PREFIX);
+}
 
 async function request(gh: GithubFetch, path: string, init?: RequestInit): Promise<Response> {
   const res = await gh(path, {
@@ -270,22 +272,36 @@ export interface MirrorInput {
 export async function mirror(gh: GithubFetch, i: MirrorInput) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
-  const posted = i.comment ? await postComment(gh, repo, number, markerFor(repo, number, pr.head.sha), i.comment) : null;
+  const posted = i.comment ? await upsertTriageComment(gh, { repo, number, body: i.comment }) : null;
   await json(gh, `/repos/${repo}/issues/${number}/labels`, send("PUT", { labels: i.labels }));
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
-  return { commentId: posted?.id ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha };
+  return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha };
 }
 
-async function postComment(gh: GithubFetch, repo: string, number: number, marker: string, comment: string) {
-  const body = `${marker}\n${comment}`;
+export type TriageCommentInput = {
+  repo: string;
+  number: number;
+  body: string;
+};
+
+/** Edits the App's one Triage comment on the pull request, creating it only when none exists. */
+export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput) {
+  const { repo, number } = input;
+  const body = `${TRIAGE_COMMENT_MARKER}\n${input.body}`;
   const comments = await jsonAll<any>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
-  const existing = comments.find((c: any) => c.body?.startsWith(marker));
-  const prior = comments.find((c: any) => c.body?.startsWith(MARKER_PREFIX));
-  const target = existing ?? prior;
-  const posted = target
-    ? await json(gh, `/repos/${repo}/issues/comments/${target.id}`, send("PATCH", { body }))
-    : await json(gh, `/repos/${repo}/issues/${number}/comments`, send("POST", { body }));
-  return { id: posted.id, updated: Boolean(target) };
+  const candidates = comments.filter((c) => c.user?.type === "Bot" && typeof c.body === "string" && isTriageComment(c.body));
+  const edit = send("PATCH", { body });
+  for (const candidate of candidates) {
+    const path = `/repos/${repo}/issues/comments/${candidate.id}`;
+    const res = await gh(path, { ...edit, headers: { accept: "application/vnd.github+json", ...edit.headers } });
+    // An installation token can edit only its own App's comments, so a refusal means another App wrote this one.
+    if (res.status === 403 || res.status === 404) continue;
+    if (!res.ok) throw new Error(`github PATCH ${path} -> ${res.status}`);
+    const edited = await res.json() as { id: number };
+    return { commentId: edited.id, updated: true };
+  }
+  const posted = await json(gh, `/repos/${repo}/issues/${number}/comments`, send("POST", { body }));
+  return { commentId: posted.id, updated: false };
 }
 
 export const REVIEW_EVENTS = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const;

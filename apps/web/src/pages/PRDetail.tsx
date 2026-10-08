@@ -282,7 +282,7 @@ function RecommendedComment({ item, posted, onPosted, onDismiss }: {
     setBusy(true);
     try {
       setError("");
-      await writeGithub({ action: "comment", repo: item.repo, number: item.number, body });
+      await writeGithub({ action: "reply", repo: item.repo, number: item.number, body });
       if (item.labels.length > 0) await writeGithub({ action: "labels", repo: item.repo, number: item.number, labels: item.labels });
       onPosted();
       await queryClient.invalidateQueries({ queryKey: ["github-pull"] });
