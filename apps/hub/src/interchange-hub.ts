@@ -4,8 +4,10 @@
 // routes mount on the same instance as `resolveTenant`), the live sidecar
 // router and what those routes share (database, credential cipher, principal
 // key store, and `getSession`, hoisted out of `createApp` for reuse); and the
-// injected database config, auth config and credential cipher. The caller
-// builds the cipher so sidecar provisioners created before the hub share it.
+// injected database config, auth config, credential cipher and Interchange
+// settings, whose defaults env.ts `interchangeSettings` mirrors from upstream.
+// The caller builds the cipher so sidecar provisioners created before the hub
+// share it.
 import {
   createDB,
   createGrantStore,
@@ -19,10 +21,7 @@ import {
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import {
   hexDecode,
-  LifecycleDuration,
-  lifecycleDurationMs,
   type CredentialCipher,
-  type ResolvedWorkflowLifecyclePolicy,
   type SidecarCapabilityRule,
 } from "@intx/types";
 import {
@@ -62,11 +61,12 @@ import { hexEncode } from "@intx/types";
 import { MAX_SIDECAR_FRAME_BYTES } from "@intx/types/sidecar";
 import { upgradeWebSocket, websocket } from "hono/bun";
 import { setup, getLogger } from "@intx/log";
-import type { DatabaseConfig } from "./env.js";
+import type { DatabaseConfig, InterchangeSettings } from "./env.js";
 import { createHubAuth, type HubAuthConfig } from "./auth.js";
 
 export type CreateHubServerOpts = {
   readonly database: DatabaseConfig;
+  readonly settings: InterchangeSettings;
   readonly authConfig: HubAuthConfig;
   /** Encrypts credential secrets at rest (stock: built from CREDENTIAL_ENCRYPTION_KEY). */
   readonly credentialCipher: CredentialCipher;
@@ -87,6 +87,7 @@ export type CreateHubServerOpts = {
 
 export async function createInterchangeHub({
   database,
+  settings,
   authConfig,
   credentialCipher,
   sidecarProvisioners = [],
@@ -100,56 +101,18 @@ export async function createInterchangeHub({
   await setup();
 
   const log = getLogger(["hub"]);
-  const port = Number(process.env["PORT"] ?? 3000);
-
   const { db } = createDB(database);
 
   const auth = createHubAuth(db, authConfig);
 
-  const hubDataDir = process.env["HUB_DATA_DIR"];
-  if (!hubDataDir) {
-    throw new Error("HUB_DATA_DIR environment variable is required");
-  }
-
   // Per-principal signing keys are sealed at rest under their own operator key,
   // separate from CREDENTIAL_ENCRYPTION_KEY so the two rotate independently.
-  // Required at boot for the same reason: a missing key would silently persist
-  // minted private keys in the clear. 32 bytes, hex.
-  const principalKeyEncryptionKeyHex =
-    process.env["PRINCIPAL_KEY_ENCRYPTION_KEY"];
-  if (
-    principalKeyEncryptionKeyHex === undefined ||
-    principalKeyEncryptionKeyHex.trim() === ""
-  ) {
-    throw new Error(
-      "PRINCIPAL_KEY_ENCRYPTION_KEY environment variable is required",
-    );
-  }
   const principalKeyStore = createPrincipalKeyStore({
     db,
     cipher: createEnvKeyCredentialCipher(
-      hexDecode(principalKeyEncryptionKeyHex),
+      hexDecode(settings.principalKeyEncryptionKey),
     ),
   });
-
-  // 10 MiB is the production cap for tool-package tarballs uploaded via
-  // the package-registry PUT endpoint. The npm registry's own per-tarball
-  // soft cap is several times this, but the substrate's tool packages are
-  // the curated subset the operator vets; an upload pushing past 10 MiB
-  // is far more likely to be misuse than a legitimate build. The
-  // HUB_MAX_TARBALL_BYTES env var lets an operator opt into a different
-  // cap without a code change.
-  const DEFAULT_HUB_MAX_TARBALL_BYTES = 10 * 1024 * 1024;
-  const hubMaxTarballBytesRaw = process.env["HUB_MAX_TARBALL_BYTES"];
-  const hubMaxTarballBytes =
-    hubMaxTarballBytesRaw === undefined || hubMaxTarballBytesRaw.trim() === ""
-      ? DEFAULT_HUB_MAX_TARBALL_BYTES
-      : Number(hubMaxTarballBytesRaw);
-  if (!Number.isFinite(hubMaxTarballBytes) || hubMaxTarballBytes <= 0) {
-    throw new Error(
-      `HUB_MAX_TARBALL_BYTES must be a positive number; got ${JSON.stringify(hubMaxTarballBytesRaw)}`,
-    );
-  }
 
   const hubSigningKey = await generateKeyPair();
   log.info("Generated hub deploy signing key");
@@ -164,89 +127,11 @@ export async function createInterchangeHub({
   // long-term archive of an agent's state graph, and tip-only would prune
   // the commit ancestry the hub's subscriber-seq and history replay derive
   // from git.log.
-  const DEFAULT_HUB_AGENT_GC_PACK_THRESHOLD = 64;
-  const DEFAULT_HUB_AGENT_GC_LOOSE_THRESHOLD = 2048;
-  const DEFAULT_HUB_AGENT_GC_WARN_BYTES = 256 * 1024 * 1024;
-
-  function readPositiveIntEnv(name: string, fallback: number): number {
-    const raw = process.env[name];
-    if (raw === undefined || raw.trim() === "") return fallback;
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value <= 0) {
-      throw new Error(
-        `${name} must be a positive integer; got ${JSON.stringify(raw)}`,
-      );
-    }
-    return value;
-  }
-
-  // Like `readPositiveIntEnv` but with no fallback: returns `undefined` when the
-  // var is unset so the caller can omit the field and let the consumer apply its
-  // own default, instead of duplicating that default here.
-  function readOptionalPositiveIntEnv(name: string): number | undefined {
-    const raw = process.env[name];
-    if (raw === undefined || raw.trim() === "") return undefined;
-    const value = Number(raw);
-    if (!Number.isInteger(value) || value <= 0) {
-      throw new Error(
-        `${name} must be a positive integer; got ${JSON.stringify(raw)}`,
-      );
-    }
-    return value;
-  }
-
-  function readLifecycleDurationEnv(name: string, fallback: string): string {
-    const raw = process.env[name];
-    if (raw === undefined || raw.trim() === "") return fallback;
-    try {
-      return LifecycleDuration.assert(raw.trim());
-    } catch (cause) {
-      throw new Error(
-        `${name} must be a lifecycle duration such as 30m or 7d; got ${JSON.stringify(raw)}`,
-        { cause },
-      );
-    }
-  }
-
-  const defaultLifecyclePolicy: ResolvedWorkflowLifecyclePolicy = {
-    maxLifetime: readLifecycleDurationEnv(
-      "WORKFLOW_DEFAULT_MAX_LIFETIME",
-      "7d",
-    ),
-    capacityRetention: {
-      completed: readLifecycleDurationEnv(
-        "WORKFLOW_DEFAULT_RETENTION_COMPLETED",
-        "30m",
-      ),
-      failed: readLifecycleDurationEnv(
-        "WORKFLOW_DEFAULT_RETENTION_FAILED",
-        "24h",
-      ),
-      cancelled: readLifecycleDurationEnv(
-        "WORKFLOW_DEFAULT_RETENTION_CANCELLED",
-        "1h",
-      ),
-    },
-  };
-  if (lifecycleDurationMs(defaultLifecyclePolicy.maxLifetime) === 0)
-    throw new Error("WORKFLOW_DEFAULT_MAX_LIFETIME must be greater than zero");
-
   const agentRepoStore = createAgentRepoStore({
-    dataDir: hubDataDir,
+    dataDir: settings.dataDir,
     signingKey: hubSigningKey,
     gc: {
-      packThreshold: readPositiveIntEnv(
-        "HUB_AGENT_GC_PACK_THRESHOLD",
-        DEFAULT_HUB_AGENT_GC_PACK_THRESHOLD,
-      ),
-      looseThreshold: readPositiveIntEnv(
-        "HUB_AGENT_GC_LOOSE_THRESHOLD",
-        DEFAULT_HUB_AGENT_GC_LOOSE_THRESHOLD,
-      ),
-      warnBytes: readPositiveIntEnv(
-        "HUB_AGENT_GC_WARN_BYTES",
-        DEFAULT_HUB_AGENT_GC_WARN_BYTES,
-      ),
+      ...settings.agentGc,
       retention: "keep-history",
     },
   });
@@ -308,11 +193,6 @@ export async function createInterchangeHub({
   };
 
   const sidecarCredentials = createSidecarCredentialResolver({ db });
-  // HUB_PROBE_TIMEOUT_MS widens the router's per-probe timeout for operators
-  // whose registries or definition evaluations run slow; unset, the router
-  // applies its own DEFAULT_PROBE_TIMEOUT_MS.
-  const probeTimeoutMs = readOptionalPositiveIntEnv("HUB_PROBE_TIMEOUT_MS");
-
   const sidecarRouter = createSidecarRouter({
     hubPublicKey: hexEncode(hubSigningKey.publicKey),
     authenticateSidecar: async ({ token }) => sidecarCredentials.resolve(token),
@@ -320,7 +200,9 @@ export async function createInterchangeHub({
     withExecutableWorkflowRun: (target, send, signal) =>
       withExecutableWorkflowRun(db, target, send, signal),
     lookups,
-    ...(probeTimeoutMs !== undefined ? { probeTimeoutMs } : {}),
+    ...(settings.probeTimeoutMs !== undefined
+      ? { probeTimeoutMs: settings.probeTimeoutMs }
+      : {}),
   });
 
   // Wire the reconnect credential resync now that the router exists (the lookup
@@ -395,9 +277,6 @@ export async function createInterchangeHub({
       ? { chooser: probeSidecarProvisionerChooser }
       : {}),
   });
-  const hubSidecarWebSocketUrl =
-    process.env["HUB_SIDECAR_WEBSOCKET_URL"] ??
-    `ws://127.0.0.1:${String(port)}/api/sidecars/ws`;
   const workflowAllocationService = createWorkflowAllocationService({
     db,
     deploymentPlugins: sidecarPlugins,
@@ -406,8 +285,8 @@ export async function createInterchangeHub({
     credentialCipher,
     probeCapabilityRules: probeSidecarCapabilityRules,
     allocationRouter: sidecarRouter,
-    hubWebSocketUrl: hubSidecarWebSocketUrl,
-    defaultLifecyclePolicy,
+    hubWebSocketUrl: settings.sidecarWebSocketUrl,
+    defaultLifecyclePolicy: settings.defaultLifecyclePolicy,
     ...(sidecarOperationTimeoutMs !== undefined
       ? { operationTimeoutMs: sidecarOperationTimeoutMs }
       : {}),
@@ -441,7 +320,7 @@ export async function createInterchangeHub({
     maxConcurrentClaims: sidecarAllocationConcurrency,
     plugins: sidecarPlugins,
     router: sidecarRouter,
-    hubWebSocketUrl: hubSidecarWebSocketUrl,
+    hubWebSocketUrl: settings.sidecarWebSocketUrl,
     ...(sidecarOperationTimeoutMs !== undefined
       ? { operationTimeoutMs: sidecarOperationTimeoutMs }
       : {}),
@@ -550,7 +429,7 @@ export async function createInterchangeHub({
     principalKeyStore,
     assetService,
     repoStore: agentRepoStore.repoStore,
-    maxTarballBytes: hubMaxTarballBytes,
+    maxTarballBytes: settings.maxTarballBytes,
     sidecarWsHandler: upgradeWebSocket((_c) => {
       let handle: WsHandle;
       return {
@@ -577,7 +456,7 @@ export async function createInterchangeHub({
     }),
   });
 
-  log.info("Starting server on port {port}", { port });
+  log.info("Starting server on port {port}", { port: settings.port });
 
   // Cap the size of a frame the hub accepts from a sidecar. Bun's default
   // (~16MB) sits below legitimate frames -- a large mail.outbound would trip it
@@ -601,7 +480,7 @@ export async function createInterchangeHub({
     server: {
       fetch: app.fetch,
       websocket: sidecarWebsocket,
-      port,
+      port: settings.port,
       idleTimeout: 0,
     },
     // Corbits: same Hono app createApp built (`resolveTenant` already mounted).
