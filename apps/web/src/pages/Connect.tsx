@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
@@ -18,6 +18,7 @@ import {
 import { useGithubSync } from "../lib/github-sync.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useRunLogs } from "../lib/run-logs.ts";
+import { useApprovals, useRuns } from "../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
 
@@ -61,7 +62,9 @@ export default function Connect() {
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
   const { logs } = useRunLogs();
-  const items = snapshot ? projectQueue(logs, snapshot.runs, snapshot.approvals) : [];
+  const approvals = useApprovals();
+  const runs = useRuns();
+  const items = useMemo(() => projectQueue(logs, runs.rows, approvals.rows), [logs, runs.rows, approvals.rows]);
   const githubReady = repos.some((repo) => hasVerifiedWebhookDelivery(logs, repo.name));
   const modelStored = hasDecisionModelCredential(snapshot?.credentials ?? []);
   const inferenceReady = hasObservedInference(items);
@@ -231,7 +234,7 @@ export default function Connect() {
   }
 
   function renderInstallRow(repo: RepoRecord) {
-    const catchingUp = snapshot ? isRepoCatchingUp(logs, snapshot.runs, repo.name) : false;
+    const catchingUp = isRepoCatchingUp(logs, runs.rows, repo.name);
     return <div key={repo.name} className="install-row"><strong className="mono">{repo.name}</strong><span className={`status-badge${catchingUp ? "" : " status-ok"}`}><span aria-hidden="true" />{catchingUp ? "Catching up open pull requests…" : "Connected"}</span></div>;
   }
 

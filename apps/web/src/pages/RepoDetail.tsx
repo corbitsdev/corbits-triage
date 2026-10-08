@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { emptyPack, recommendedPack, repoPolicy } from "@corbits/triage-contracts";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import {
@@ -21,8 +22,9 @@ import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallati
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useQueueItems } from "../lib/open-pulls.ts";
-import { usePortal } from "../lib/portal.tsx";
+import { rememberCheckPack, usePortal } from "../lib/portal.tsx";
 import { useRunLogs } from "../lib/run-logs.ts";
+import { useRuns } from "../lib/tenant-entities.ts";
 
 function ownerAndName(raw: string): { owner: string; name: string } | null {
   let value = raw;
@@ -92,6 +94,7 @@ export default function RepoDetail() {
   const params = useParams();
   const navigate = useNavigate();
   const { snapshot, refreshNow, syncFromGithub, runBacklog, saveRepoPolicy, notify, readOnly } = usePortal();
+  const queryClient = useQueryClient();
   const fromId = params.id ? ownerAndName(params.id) : null;
   const setupTab = params.tab === "setup";
   const paired = !fromId && params.id && params.tab && params.tab !== "setup"
@@ -120,8 +123,9 @@ export default function RepoDetail() {
   const needs = items.filter((item) => item.needsHuman).length;
   const ready = items.filter((item) => item.state === "ready").length;
   const { logs } = useRunLogs();
+  const runs = useRuns();
   const receivingEvents = config ? hasVerifiedWebhookDelivery(logs, config.name) : false;
-  const catchingUp = snapshot ? isRepoCatchingUp(logs, snapshot.runs, config?.name ?? label) : false;
+  const catchingUp = isRepoCatchingUp(logs, runs.rows, config?.name ?? label);
   const dirty = packJson(pack) !== packJson(saved) || (needsSetup && customizing);
   async function syncAfterGithub() {
     try {
@@ -335,6 +339,7 @@ export default function RepoDetail() {
       await saveCheckPack(createHubTransport(), snapshot.workspace.tenantId, config.name, artifact, {
         cleanupMode: draft.mode,
       });
+      rememberCheckPack(queryClient, snapshot.workspace.tenantId, config.name);
       await refreshNow();
       const nextDraft = draftFromCheckPack(artifact, draft.mode);
       setPack(nextDraft);

@@ -8,7 +8,7 @@ import {
   type CheckPack,
   type CleanupMode,
 } from "@corbits/triage-contracts";
-import { CONFIG_KEY, patchAppConfig, validateRepo } from "./hub-api.ts";
+import { CONFIG_KEY, findArtifactByTitle, loadRepoCheckPack, patchAppConfig, validateRepo } from "./hub-api.ts";
 
 export {
   applyRecommended,
@@ -18,9 +18,6 @@ export {
   type CheckPack,
 };
 
-type ArtifactListItem = { id: string; title: string; kind?: string };
-type ArtifactDetail = ArtifactListItem & { content?: string; version?: number };
-
 function enc(value: string): string {
   return encodeURIComponent(value);
 }
@@ -29,22 +26,13 @@ function collection(tenantId: string): string {
   return `/api/tenants/${enc(tenantId)}/artifacts`;
 }
 
-async function findByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
-  const page = await transport.fetch<{ artifacts?: ArtifactListItem[] }>(
-    "GET",
-    `${collection(tenantId)}?query=${enc(title)}&limit=100`,
-  );
-  const rows = Array.isArray(page?.artifacts) ? page.artifacts : [];
-  return rows.find((row) => row.title === title) ?? null;
+/** True when the repository's check pack artifact exists; the config pointer can be lost when a sync re-adds a repository row. */
+export async function hasCheckPack(transport: Transport, tenantId: string, repo: string): Promise<boolean> {
+  return (await findArtifactByTitle(transport, tenantId, checkPackName(repo))) !== null;
 }
 
 export async function loadCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPack | null> {
-  const clean = validateRepo(repo);
-  const title = checkPackName(clean);
-  const listed = await findByTitle(transport, tenantId, title);
-  if (!listed) return null;
-  const detail = await transport.fetch<{ artifact?: ArtifactDetail }>("GET", `${collection(tenantId)}/${enc(listed.id)}`);
-  return parseCheckPack(detail?.artifact?.content, clean);
+  return loadRepoCheckPack(transport, tenantId, validateRepo(repo));
 }
 
 export async function saveCheckPack(
@@ -59,7 +47,7 @@ export async function saveCheckPack(
   if (!parsed) throw new Error("Check pack is not valid.");
   const title = checkPackName(clean);
   const content = JSON.stringify(parsed);
-  const listed = await findByTitle(transport, tenantId, title);
+  const listed = await findArtifactByTitle(transport, tenantId, title);
   if (!listed) {
     try {
       await transport.fetch("POST", collection(tenantId), {

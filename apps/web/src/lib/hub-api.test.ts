@@ -62,17 +62,12 @@ const approval = (id: string, close: boolean): HubApproval => ({
   correlationId: id,
 });
 
-const snapshot = (approvals: HubApproval[]): PortalSnapshot => ({
+const snapshot = (): PortalSnapshot => ({
   workspace: { tenantId: "tenant", principalId: "principal", userId: "user" },
   tenantName: "Acme",
   repos: [],
   credentials: [],
-  grants: [],
-  principals: [],
-  roles: [],
-  approvals,
-  runs: [],
-  denied: { repos: false, credentials: false, grants: false, approvals: false, runs: false },
+  denied: { repos: false, credentials: false },
 });
 
 const queue = (approvals: HubApproval[], logs: RunLog[] = [duplicateLog], openPulls?: Parameters<typeof projectQueue>[2]) =>
@@ -250,7 +245,7 @@ describe("workspace GitHub App and repository lifecycle", () => {
       path: "/api/tenants/tenant/credentials/legacy-api",
       body: undefined,
     });
-    const configured = snapshot([]);
+    const configured = snapshot();
     configured.credentials = [{ id: "credential", name: "github", status: "active", providerId: "provider" }];
     expect(portalConnected(configured)).toBe(true);
   });
