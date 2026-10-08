@@ -14,9 +14,21 @@ export function relativeTime(iso: string | null | undefined, now = Date.now()): 
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export function formatConfidence(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "Unknown";
-  return `${Math.round(value * 100)}%`;
+function points(value: number): number {
+  return Math.round(value * 100);
+}
+
+export function scoreText(item: Pick<PrItem, "confidence" | "checks" | "degraded">, floor: number): string {
+  if (item.confidence !== null) {
+    const score = points(item.confidence);
+    const threshold = points(floor);
+    const side = score < threshold ? "below" : "at or above";
+    return `Certainty ${score} · ${side} ${threshold} auto-post threshold`;
+  }
+  if (item.degraded === "inference-outage") return "Not scored · decision model unavailable";
+  if (item.degraded === "error") return "Not scored · data unavailable";
+  if (item.checks.some((check) => check.result === "fail")) return "Not scored · fix blockers first";
+  return "Not scored";
 }
 
 export function approvalHeadline(approval: HubApproval): string {
