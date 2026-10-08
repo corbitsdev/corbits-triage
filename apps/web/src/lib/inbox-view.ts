@@ -120,3 +120,36 @@ export function inboxHref(item: Pick<PrItem, "repo" | "number">): string {
 export function confidenceText(item: Pick<PrItem, "confidence">): string | null {
   return item.confidence === null ? null : `${Math.round(item.confidence * 100)}% sure`;
 }
+
+export type InboxGrouping = "action" | "repo" | "owner";
+
+export const INBOX_GROUPINGS: InboxGrouping[] = ["action", "repo", "owner"];
+
+/** Hours under a day, else days, as the mockup writes ages. */
+export function ageText(iso: string | null, now = Date.now()): string {
+  const at = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(at)) return "";
+  const hours = Math.max(0, Math.round((now - at) / 3_600_000));
+  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+}
+
+export function initialsOf(name: string): string {
+  const words = name.trim().split(/[\s@._-]+/).filter(Boolean);
+  const letters = words.length > 1 ? `${words[0]?.[0] ?? ""}${words[1]?.[0] ?? ""}` : (words[0] ?? "").slice(0, 2);
+  return letters.toUpperCase();
+}
+
+export type InboxPile = { key: string; label: string; action: InboxAction | null; items: PrItem[] };
+
+/** The actionable pull requests regrouped by repository or owner; the action pile order is kept inside each group. */
+export function regroupInbox(view: InboxView, grouping: InboxGrouping): InboxPile[] {
+  if (grouping === "action") return view.groups.map((group) => ({ key: group.action, label: group.label, action: group.action, items: group.items }));
+  const ordered = view.groups.flatMap((group) => group.items);
+  const keyOf = grouping === "repo" ? (item: PrItem) => item.repo : (item: PrItem) => item.owner ?? "Unassigned";
+  const piles = new Map<string, PrItem[]>();
+  for (const item of ordered) {
+    const key = keyOf(item);
+    piles.set(key, [...(piles.get(key) ?? []), item]);
+  }
+  return [...piles.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, items]) => ({ key, label: key, action: null, items }));
+}
