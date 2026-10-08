@@ -5,7 +5,7 @@ import { createGithubAppCredentialFetch, INSTALLATION_SELECTOR_HEADER } from "./
 import { applyInstallationListing, sendBacklog, type BacklogDeps, type InstallationListing } from "./bridge.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 import { markBacklogFailed, patchCorbitsTriage, repoRecords, type CorbitsTriageNs } from "./tenant-config.js";
-import type { GithubFetch } from "@corbits/github-tool/github";
+import { jsonAll, type GithubFetch } from "@corbits/github-tool/github";
 
 export const GITHUB_INSTALLATIONS_PATH = "/api/integrations/github-installations";
 
@@ -27,31 +27,17 @@ function logJson(entry: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
 }
 
-async function getJson(gh: GithubFetch, path: string, headers: Record<string, string>): Promise<unknown> {
-  const response = await gh(path, { headers });
-  if (!response.ok) throw new Error(`GET ${path} -> ${String(response.status)}`);
-  return response.json();
-}
-
 async function listInstallations(gh: GithubFetch): Promise<Installation[]> {
-  const all: Installation[] = [];
-  for (let page = 1; ; page += 1) {
-    const rows = Installation.array().assert(await getJson(gh, `/app/installations?per_page=${PAGE_SIZE}&page=${page}`, {}));
-    all.push(...rows);
-    if (rows.length < PAGE_SIZE) return all;
-  }
+  return Installation.array().assert(await jsonAll(gh, `/app/installations?per_page=${PAGE_SIZE}`));
 }
 
 async function listRepositories(gh: GithubFetch, installationId: number): Promise<string[]> {
-  const names: string[] = [];
-  const selector = { [INSTALLATION_SELECTOR_HEADER]: String(installationId) };
-  for (let page = 1; ; page += 1) {
-    const { repositories } = RepositoryPage.assert(
-      await getJson(gh, `/installation/repositories?per_page=${PAGE_SIZE}&page=${page}`, selector),
-    );
-    names.push(...repositories.map((repo) => repo.full_name));
-    if (repositories.length < PAGE_SIZE) return names;
-  }
+  const init = { headers: { [INSTALLATION_SELECTOR_HEADER]: String(installationId) } };
+  const repositories = await jsonAll(gh, `/installation/repositories?per_page=${PAGE_SIZE}`, {
+    init,
+    items: (page) => RepositoryPage.assert(page).repositories,
+  });
+  return repositories.map((repo) => repo.full_name);
 }
 
 async function listingFor(gh: GithubFetch, installation: Installation): Promise<InstallationListing> {
