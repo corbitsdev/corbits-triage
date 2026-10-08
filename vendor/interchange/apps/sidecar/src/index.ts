@@ -14,11 +14,27 @@ import {
   createInboundMailPolicyRegistry,
   createInboundMailPolicyLookup,
   createSidecarOrchestrator,
+  MAX_INLINE_ASSET_PAYLOAD_BYTES,
+  materializeWorkflowAssets,
+  resolveInboundMailPolicy,
+  sourceAssetGitDir,
   type HubLink,
 } from "@intx/hub-agent";
 import { hexDecode, hexEncode } from "@intx/types";
-import { createAgentRepoStore } from "@intx/hub-sessions";
-import { createTarballCache } from "@intx/tool-packaging";
+import {
+  createAgentRepoStore,
+  parseAgentId,
+  workflowSourceAssetMountPath,
+} from "@intx/hub-sessions";
+import {
+  applyFrozenWorkflowClosure,
+  createTarballCache,
+  createWorkflowClosureMaterializer,
+} from "@intx/tool-packaging";
+import {
+  deriveWorkflowRunRepoId,
+  inertFlatNamespaceStepIds,
+} from "@intx/workflow-deploy";
 
 import { loadAdapterRegistry } from "@intx/inference/providers";
 
@@ -35,32 +51,37 @@ import { createDefaultHarnessBuilder } from "./default-harness";
 // inbound frame stages through the workflow-run substrate, spawning a
 // supervised workflow-process child for a workflow deploy.
 import type { DispatchTimingMark } from "@intx/workflow-host";
-
-import {
-  createSidecarDeployRouter,
-  type SidecarDeployRouter,
-} from "./workflow-host-wiring";
 import {
   createDeploymentAddressRegistry,
+  createMultistepCredentialsRouter,
   createMultistepDrainRouter,
   createMultistepGrantsRouter,
   createMultistepMailRouter,
   createMultistepSignalRouter,
   createMultistepSourcesRouter,
-  createMultistepCredentialsRouter,
+  createSidecarDeployRouter,
   createWorkflowRunPackClient,
   createWorkflowRunPackPushingRepoStore,
-} from "./workflow-run-pack-client";
-import { createWorkflowRunPackRestorer } from "./workflow-run-pack-restore";
-import { readRegistries } from "./sidecar-materialization-config";
-import { createWorkflowClosureMaterializer } from "./workflow-closure-materialization";
-import { MAX_INLINE_ASSET_PAYLOAD_BYTES } from "./source-asset-delivery";
-import { createWorkflowProbeExecutor } from "./workflow-probe-handler";
-import { loadOrMintSidecarKeypair } from "./signing-keypair";
-import {
+  createWorkflowRunPackRestorer,
   removeFileAtomicDurable,
   writeFileAtomicDurable,
-} from "./atomic-write";
+  type SidecarDeployRouter,
+} from "@intx/workflow-host/deploy";
+import { createWorkflowProbeExecutor } from "@intx/workflow-host/probe";
+
+import {
+  readRegistries,
+  resolveHostPlatform,
+} from "./sidecar-materialization-config";
+import { loadOrMintSidecarKeypair } from "./signing-keypair";
+import {
+  defaultSubprocessSpawner,
+  SIDECAR_WORKFLOW_CHILD_BINARY,
+} from "./workflow-child-spawner";
+import {
+  defaultProbeChildSpawner,
+  SIDECAR_WORKFLOW_PROBE_CHILD_BINARY,
+} from "./workflow-probe-spawner";
 
 await setup();
 
@@ -366,6 +387,7 @@ const restoreWorkflowRunPack = createWorkflowRunPackRestorer({
   // Hub and incorrectly present it as a new supervisor write.
   substrate: agentRepoStore.repoStore,
   markRestored: workflowRunPackClient.markRestored,
+  deriveWorkflowRunRepoId,
 });
 
 // Wrap the substrate's RepoStore with the boot-edge facade so a
@@ -377,6 +399,7 @@ const wrappedRepoStore = createWorkflowRunPackPushingRepoStore({
   underlying: agentRepoStore.repoStore,
   packClient: workflowRunPackClient,
   registry: deploymentAddressRegistry,
+  deriveWorkflowRunRepoId,
 });
 
 const hubWsUrl = requireEnv("HUB_WS_URL");
@@ -449,6 +472,8 @@ const buildHarness = createDefaultHarnessBuilder({ adapters });
 // inline-payload cap is the signal to move the probe's asset delivery to the
 // streamed transfer the deploy path uses.
 const workflowProbeExecutor = createWorkflowProbeExecutor({
+  binaryPath: SIDECAR_WORKFLOW_PROBE_CHILD_BINARY,
+  spawnProbeChild: defaultProbeChildSpawner,
   materialize: createWorkflowClosureMaterializer({
     cacheRoot,
     cacheMaxBytes,
@@ -456,6 +481,8 @@ const workflowProbeExecutor = createWorkflowProbeExecutor({
     maxAssetPayloadBytes: MAX_INLINE_ASSET_PAYLOAD_BYTES,
     registries: readRegistries(),
     scratchRoot: path.join(dataDir, "workflow-probe", "closures"),
+    host: resolveHostPlatform(),
+    materializeAssets: materializeWorkflowAssets,
   }),
 });
 
@@ -591,6 +618,8 @@ const orchestrator = createSidecarOrchestrator({
       unregisterDeployment: ({ runId }) => {
         deploymentAddressRegistry.unregister(runId);
       },
+      reportDeploymentRefTips: (agentAddress) =>
+        wrappedRepoStore.reportWorkflowRunRefTips(agentAddress),
       multistepMailRouter,
       inboundMailPolicyRegistry,
       multistepSignalRouter,
@@ -599,6 +628,19 @@ const orchestrator = createSidecarOrchestrator({
       multistepSourcesRouter,
       multistepCredentialsRouter,
       multistepSubstrateEnv,
+      multistepSubprocessSpawner: defaultSubprocessSpawner,
+      multistepBinaryPath: SIDECAR_WORKFLOW_CHILD_BINARY,
+      applyFrozenWorkflowClosure,
+      readRegistries,
+      resolveHostPlatform,
+      resolveInboundMailPolicy,
+      materializeWorkflowAssets,
+      maxInlineAssetPayloadBytes: MAX_INLINE_ASSET_PAYLOAD_BYTES,
+      deriveWorkflowRunRepoId,
+      inertFlatNamespaceStepIds,
+      workflowSourceAssetMountPath,
+      sourceAssetGitDir,
+      parseAgentId,
       publishWorkflowInferenceEvent,
       publishWorkflowSuspension,
       ...(onDispatchTiming !== undefined ? { onDispatchTiming } : {}),

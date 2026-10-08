@@ -1,10 +1,10 @@
 // The hub bridge finds deployments by workflow name, so each workflow is
 // redeployed only when its source changed, no live deployment exists, or the
 // decision model changed (a deployment resolves its offering when deployed).
-import { deployWorkflow, listWorkflowDeployments, type Transport } from "@intx/hub-client";
+import { ApiError, deployWorkflow, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { pushFiles } from "./git-push.ts";
 import { requestOrigin } from "./hub-origin.ts";
-import { DECISION_MODEL_ALIAS, isLiveDeployment } from "./hub-api.ts";
+import { DECISION_MODEL_ALIAS, isDeployed, isLiveDeployment } from "./hub-api.ts";
 import { WORKFLOW_PACKAGES, workflowPackageFiles, type WorkflowPackage } from "./workflow-packages.ts";
 
 /** Provider plugin the triage agents infer through (packages/triage-workflows/src/agents.ts). */
@@ -58,21 +58,67 @@ async function pushWorkflow(transport: Transport, tenantId: string, asset: Asset
   });
 }
 
+/** The longest lifetime Interchange accepts, so a deployment lives until a newer one replaces it. */
+const KEEP_DEPLOYED_LIFETIME = "36500d";
+
+/**
+ * Interchange creates a workflow's definition during its first deploy, so a
+ * per-definition lifecycle cannot apply to that deployment. The tenant only
+ * runs triage workflows, so its ceiling keeps every triage listener
+ * (pr-triage and pr-triage-historical) deployed until a newer one replaces it.
+ */
+async function ensureKeepDeployedLifetime(transport: Transport, tenantId: string): Promise<void> {
+  const path = `/api/tenants/${encodeURIComponent(tenantId)}`;
+  const { config } = await transport.fetch<{ config?: { lifecycle?: { maxLifetime?: string } } }>("GET", path);
+  if (config?.lifecycle?.maxLifetime === KEEP_DEPLOYED_LIFETIME) return;
+  await transport.fetch("PATCH", path, { config: { lifecycle: { ...config?.lifecycle, maxLifetime: KEEP_DEPLOYED_LIFETIME } } });
+}
+
+/** A deployment's id is its anchor run's id; 409 means it already stopped. */
+async function cancelDeployment(transport: Transport, tenantId: string, deploymentId: string): Promise<void> {
+  try {
+    await transport.fetch("DELETE", `/api/tenants/${encodeURIComponent(tenantId)}/workflows/runs/${encodeURIComponent(deploymentId)}`);
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 409)) throw error;
+  }
+}
+
+function newestFirst(a: WorkflowDeployment, b: WorkflowDeployment): number {
+  return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+}
+
+/**
+ * Cancels every live deployment older than the newest `deployed` one. Older
+ * ones stay up while a newer deployment is still pending, and every converge
+ * runs this again, so a failed cancel is retried.
+ */
+async function cancelSuperseded(transport: Transport, tenantId: string, newestFirstDeployments: WorkflowDeployment[]): Promise<void> {
+  const newestDeployed = newestFirstDeployments.findIndex((d) => isDeployed(d.status));
+  if (newestDeployed === -1) return;
+  for (const old of newestFirstDeployments.slice(newestDeployed + 1)) {
+    if (isLiveDeployment(old.status)) await cancelDeployment(transport, tenantId, old.id);
+  }
+}
+
 export async function ensureWorkflows(transport: Transport, tenantId: string, offerings: OfferingSuggestion, redeploy: boolean): Promise<string[]> {
   const deployments = await listWorkflowDeployments(transport, tenantId);
+  await ensureKeepDeployedLifetime(transport, tenantId);
   const deployed: string[] = [];
   for (const workflow of WORKFLOW_PACKAGES) {
     const asset = await ensureAsset(transport, tenantId, workflow.name);
+    const ofAsset = deployments.filter((d) => d.definitionAssetId === asset.id).sort(newestFirst);
     const { commitSha, changed } = await pushWorkflow(transport, tenantId, asset, workflow);
-    const live = deployments.some((d) => d.definitionAssetId === asset.id && isLiveDeployment(d.status));
-    if (live && !changed && !redeploy) continue;
-    await deployWorkflow(transport, tenantId, {
-      source: { kind: "asset", assetId: asset.id, package: { format: "source", commitSha, packageName: workflow.packageName } },
-      entry: workflow.entry,
-      sourceOfferingIds: offerings.ids,
-      defaultSourceOfferingId: offerings.defaultId,
-    });
-    deployed.push(workflow.name);
+    const live = ofAsset.some((d) => isLiveDeployment(d.status));
+    if (changed || redeploy || !live) {
+      await deployWorkflow(transport, tenantId, {
+        source: { kind: "asset", assetId: asset.id, package: { format: "source", commitSha, packageName: workflow.packageName } },
+        entry: workflow.entry,
+        sourceOfferingIds: offerings.ids,
+        defaultSourceOfferingId: offerings.defaultId,
+      });
+      deployed.push(workflow.name);
+    }
+    await cancelSuperseded(transport, tenantId, ofAsset);
   }
   return deployed;
 }

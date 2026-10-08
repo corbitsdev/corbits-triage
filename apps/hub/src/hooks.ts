@@ -2,7 +2,7 @@
 // required here, so a hook route can never silently boot unroutable.
 import type { createPrincipalKeyStore, DB } from "@intx/db";
 import type { CredentialCipher } from "@intx/types";
-import { createHookRoutes, type HookMailRouter } from "@corbits/webhooks";
+import { createHookRoutes, type HookRouter } from "@corbits/webhooks";
 import { runWebhookMigrations } from "@corbits/webhooks/migrations";
 import type { DatabaseConfig } from "./env.js";
 
@@ -22,7 +22,7 @@ export interface HookDeps {
 export function createStockHookApp(
   deps: HookDeps,
   principalKeyStore: ReturnType<typeof createPrincipalKeyStore>,
-  router: HookMailRouter,
+  router: HookRouter,
 ) {
   return createHookRoutes({
     db: deps.db,

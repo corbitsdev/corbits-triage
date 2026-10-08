@@ -42,6 +42,8 @@ import {
   ControlParkKind,
   InferenceSource,
   InterchangeType,
+  MessageTransportCondition,
+  SignatureStatus,
 } from "@intx/types/runtime";
 import { CredentialDelivery } from "@intx/types/sidecar";
 
@@ -192,6 +194,373 @@ export const MailboxNotifyHeaders = type({
 export type MailboxNotifyHeaders = typeof MailboxNotifyHeaders.infer;
 
 /**
+ * Recursive mailbox values carried on `mailbox.call`. Date fields of a search
+ * stay strings: reviving them here would turn a bad date into a control-channel
+ * failure, and the handler revives the tree before it runs the query.
+ */
+const mailboxCall = type.module({
+  SearchQuery: {
+    "from?": "string",
+    "to?": "string",
+    "cc?": "string",
+    "bcc?": "string",
+    "header?": {
+      field: "string",
+      contains: "string",
+    },
+    "before?": "string",
+    "after?": "string",
+    "on?": "string",
+    "sentBefore?": "string",
+    "sentAfter?": "string",
+    "sentOn?": "string",
+    "hasFlags?": "string[]",
+    "missingFlags?": "string[]",
+    "body?": "string",
+    "text?": "string",
+    "largerThan?": "number",
+    "smallerThan?": "number",
+    "and?": "SearchQuery[]",
+    "or?": "SearchQuery[]",
+    "not?": "SearchQuery",
+  },
+  Thread: {
+    ref: {
+      uid: "number >= 1",
+      mailbox: "string > 0",
+    },
+    children: "Thread[]",
+  },
+  BodyStructure: {
+    contentType: "string",
+    "size?": "number",
+    "disposition?": "string",
+    "parts?": "BodyStructure[]",
+  },
+});
+
+const MailboxCallMessageRef = type({
+  uid: "number >= 1",
+  mailbox: "string > 0",
+});
+
+/**
+ * Caller-supplied message coordinates. They are not bounded: a frame this
+ * schema rejects crashes the child, and the supervisor is what refuses a
+ * mailbox name or a uid. Refs the supervisor emits stay on
+ * `MailboxCallMessageRef`, which admits only a positive uid and a non-empty
+ * mailbox.
+ */
+const MailboxCallRequestRef = type({
+  uid: "number",
+  mailbox: "string",
+});
+
+const MailboxCallOp = type.enumerated(
+  "search",
+  "thread",
+  "fetchHeaders",
+  "fetchStructure",
+  "fetchPart",
+  "fetchFull",
+  "sync",
+  "getMailboxStatus",
+  "append",
+  "listMailboxes",
+  "createMailbox",
+  "deleteMailbox",
+  "move",
+  "copy",
+  "createList",
+  "listMembers",
+  "subscribe",
+  "unsubscribe",
+  "watch",
+  "readMailPart",
+);
+
+const MailboxCallStructuredPayload = type({
+  type: InterchangeType,
+  version: "string",
+  body: "Record<string, unknown>",
+});
+
+/** Decoded part bytes. `encoding` is omitted when the part was 7bit. */
+const MailboxCallPart = type({
+  contentType: "string",
+  contentBase64: "string",
+  "encoding?": "string",
+  "filename?": "string",
+  "disposition?": "'inline' | 'attachment'",
+});
+
+/**
+ * A fetched attachment. `part` is the IMAP section `fetchPart` addresses, so
+ * it has to survive this schema; a header-only attachment object would drop
+ * it on the way to the caller.
+ */
+const MailboxCallAttachment = type({
+  name: "string",
+  contentType: "string",
+  dataBase64: "string",
+  "part?": "string",
+});
+
+const MailboxCallFetchedMessage = type({
+  ref: MailboxCallMessageRef,
+  headers: MailboxNotifyHeaders,
+  flags: "string[]",
+  signatureStatus: SignatureStatus,
+  "content?": "string",
+  "payload?": MailboxCallStructuredPayload,
+  "attachments?": MailboxCallAttachment.array(),
+});
+
+const MailboxCallSyncResult = type({
+  vanished: "number[]",
+  changed: type({
+    uid: "number >= 1",
+    flags: "string[]",
+  }).array(),
+  newMessages: MailboxCallMessageRef.array(),
+  fullResyncRequired: "boolean",
+});
+
+const MailboxCallStatus = type({
+  total: "number >= 0",
+  unseen: "number >= 0",
+  recent: "number >= 0",
+  uidNext: "number >= 1",
+  uidValidity: "number",
+  highestModSeq: "number >= 0",
+});
+
+const MailboxCallMailbox = type({
+  name: "string > 0",
+  "role?": "string",
+  "delimiter?": "string",
+});
+
+const MailboxCallListInfo = type({
+  address: "string",
+  name: "string",
+  memberCount: "number >= 0",
+  createdAt: "string",
+});
+
+/**
+ * Operands the child forwards are unbounded. A frame this schema rejects
+ * crashes the child, and the supervisor refuses a mailbox, a uid, or a part
+ * it does not own. Results the supervisor emits stay bounded.
+ */
+const MailboxCallRequestData = type.or(
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'search'",
+    mailbox: "string",
+    query: mailboxCall.SearchQuery,
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'thread'",
+    mailbox: "string",
+    algorithm: "'references' | 'orderedsubject'",
+    "query?": mailboxCall.SearchQuery,
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'fetchHeaders' | 'fetchStructure' | 'fetchFull'",
+    ref: MailboxCallRequestRef,
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'fetchPart'",
+    ref: MailboxCallRequestRef,
+    partPath: "string",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'sync'",
+    mailbox: "string",
+    uidNext: "number",
+    uidValidity: "number",
+    highestModSeq: "number",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'getMailboxStatus' | 'watch'",
+    mailbox: "string",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'append'",
+    mailbox: "string",
+    headers: MailboxNotifyHeaders,
+    "content?": "string",
+    "payload?": MailboxCallStructuredPayload,
+    "flags?": "string[]",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'listMailboxes'",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'createMailbox' | 'deleteMailbox'",
+    name: "string",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'move' | 'copy'",
+    ref: MailboxCallRequestRef,
+    toMailbox: "string",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'createList'",
+    address: "string",
+    name: "string",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'listMembers'",
+    address: "string",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'subscribe' | 'unsubscribe'",
+    listAddress: "string",
+    subscriberAddress: "string",
+  },
+  {
+    requestId: "string > 0",
+    runId: "string > 0",
+    op: "'readMailPart'",
+    partRef: "string",
+  },
+);
+
+/**
+ * `op` is echoed so `value` is checked under that operation. A shared value
+ * union would let a structure object match a part fetch and drop
+ * `contentBase64`. Operations with no result omit `value` rather than sending
+ * null. Part and attachment bytes are base64.
+ */
+const MailboxCallResponseData = type.or(
+  {
+    requestId: "string > 0",
+    ok: "false",
+    op: MailboxCallOp,
+    reason: "string > 0",
+    "condition?": MessageTransportCondition,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'watch' | 'deleteMailbox' | 'move' | 'copy' | 'subscribe' | 'unsubscribe'",
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'search'",
+    value: MailboxCallMessageRef.array(),
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'thread'",
+    value: mailboxCall.Thread.array(),
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'fetchHeaders'",
+    value: MailboxNotifyHeaders,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'fetchStructure'",
+    value: mailboxCall.BodyStructure,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'fetchPart'",
+    value: MailboxCallPart,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'fetchFull'",
+    value: MailboxCallFetchedMessage,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'sync'",
+    value: MailboxCallSyncResult,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'getMailboxStatus'",
+    value: MailboxCallStatus,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'append'",
+    value: MailboxCallMessageRef,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'listMailboxes'",
+    value: MailboxCallMailbox.array(),
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'createMailbox'",
+    value: MailboxCallMailbox,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'createList'",
+    value: MailboxCallListInfo,
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'listMembers'",
+    value: "string[]",
+  },
+  {
+    requestId: "string > 0",
+    ok: "true",
+    op: "'readMailPart'",
+    value: {
+      contentBase64: "string",
+    },
+  },
+);
+
+/**
  * Discriminated union of every control-channel payload kind. The
  * `type` discriminator namespaces the control-plane vocabulary so a
  * future addition (e.g. `connector-bind`) lands by extending this
@@ -242,6 +611,18 @@ export const ControlPayload = type.or(
     data: {
       reason: "string",
     },
+  },
+  {
+    type: "'cancel.prepare'",
+    data: { requestId: "string", runId: "string", reason: "string" },
+  },
+  {
+    type: "'cancel.prepared'",
+    data: { requestId: "string", "error?": "string" },
+  },
+  {
+    type: "'cancel.committed'",
+    data: { requestId: "string", "error?": "string" },
   },
   {
     type: "'grants-updated'",
@@ -427,11 +808,18 @@ export const ControlPayload = type.or(
     // failure). The message is carried as a JSON-projected
     // `OutboundMessage`; attachment bytes ride base64-encoded so the
     // NDJSON wire stays text-safe.
+    //
+    // `completeReferences` is set only by a connector reply. The
+    // supervisor then fills References from the committed mailbox when
+    // `inReplyTo` is set and `references` is absent. A send without the
+    // flag is left alone: `mail_send` is the same shape, and completing
+    // it would replace its one-parent chain with the full ancestry.
     type: "'outbound.message'",
     data: {
       requestId: "string > 0",
       senderAddress: "string > 0",
       "mailbox?": "string",
+      "completeReferences?": "boolean",
       message: OutboundMessagePayload,
     },
   },
@@ -566,12 +954,11 @@ export const ControlPayload = type.or(
     // deployment mailbox (INBOUND half of mailbox ownership, §3b). One-way
     // like `grants-updated`/`sources-updated`: no correlation id, no response.
     // The supervisor -- the sole mail owner -- commits the arrived message to
-    // the workflow-run substrate mailbox, then fires this frame so the child's
-    // warm-agent `watch`/`mail_wait` observes the arrival decoupled from the
-    // FIFO trigger dispatch that resolves a run's first input. `headers` rides
-    // inline so a watcher gets the `exists` `MailboxEvent`'s envelope without a
-    // substrate round-trip. The child reads the latest committed mailbox state
-    // regardless, so the frame carries no commit pin.
+    // the workflow-run substrate mailbox, then fires this frame so a registered
+    // `watch` observes the arrival decoupled from the FIFO trigger dispatch
+    // that resolves a run's first input. `headers` rides inline and is copied
+    // onto the `exists` event. The frame is not a copy of the message: a later
+    // fetch is its own mailbox call. The frame carries no commit pin.
     type: "'mailbox.notify'",
     data: {
       runId: "string > 0",
@@ -583,9 +970,8 @@ export const ControlPayload = type.or(
   {
     // Child-initiated mailbox-mutation request (INBOUND half of mailbox
     // ownership, §3b). The supervisor is the sole writer to the
-    // workflow-run mailbox: a step agent reads its INBOX locally but
-    // every mutation -- flag writes and `expunge` -- routes up here so
-    // the supervisor applies it to its owned store. A child flushing the
+    // workflow-run mailbox. Flag writes and `expunge` route up here so
+    // the supervisor applies them to its owned store. A child flushing the
     // same ref would race the supervisor's in-memory mirror and break
     // uid / modseq monotonicity.
     //
@@ -593,23 +979,25 @@ export const ControlPayload = type.or(
     // carries the target `uid` and the `flags` to change, so the wire
     // boundary rejects a flag frame that omits them; an `expunge` sweeps
     // every `\Deleted` message in the mailbox and the child constructs it
-    // with neither. `requestId` correlates the supervisor's
-    // `mailbox.mutate.response` reply.
+    // with neither. The mailbox name and the flag uid are not bounded. A
+    // frame this schema rejects crashes the child, and the supervisor
+    // refuses a mailbox other than INBOX and an unknown uid. `requestId`
+    // correlates the supervisor's `mailbox.mutate.response` reply.
     type: "'mailbox.mutate.request'",
     data: type(
       {
         requestId: "string > 0",
         runId: "string > 0",
-        mailbox: "string > 0",
+        mailbox: "string",
         op: "'addFlags' | 'removeFlags'",
-        uid: "number >= 1",
+        uid: "number",
         flags: "string[]",
       },
       "|",
       {
         requestId: "string > 0",
         runId: "string > 0",
-        mailbox: "string > 0",
+        mailbox: "string",
         op: "'expunge'",
       },
     ),
@@ -637,9 +1025,27 @@ export const ControlPayload = type.or(
         {
           ok: "false",
           reason: "string > 0",
+          // Present when the supervisor refused the mailbox itself. Absent
+          // for a failure that names no IMAP condition, such as an unknown uid.
+          "condition?": MessageTransportCondition,
         },
       ),
     },
+  },
+  {
+    // A child asks the supervisor to answer one mailbox operation. The
+    // supervisor owns the deployment mailbox, so the answer — including a
+    // refusal — is its decision. `data` is discriminated on `op`, and each
+    // operation carries only the operands it uses. `requestId` correlates
+    // the `mailbox.call.response`.
+    type: "'mailbox.call.request'",
+    data: MailboxCallRequestData,
+  },
+  {
+    // Reply to `mailbox.call.request`, sent after the operation finishes.
+    // `op` echoes the request. See `MailboxCallResponseData`.
+    type: "'mailbox.call.response'",
+    data: MailboxCallResponseData,
   },
 );
 
@@ -662,6 +1068,34 @@ export interface ControlChannelSenderOpts {
 export interface ControlChannelSender {
   send(payload: ControlPayload): Promise<void>;
   readonly seq: number;
+}
+
+/**
+ * JSON has no NaN or Infinity: `JSON.stringify` emits `null` for both.
+ * The receiver then rejects the frame and crashes the child. Refuse
+ * before `seq` advances. A skipped sequence is itself a crash on the
+ * next frame.
+ */
+function rejectNonFiniteNumbers(value: unknown, path: string): void {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(
+        `control channel: cannot encode non-finite number at ${path}`,
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      rejectNonFiniteNumbers(value[index], `${path}[${String(index)}]`);
+    }
+    return;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const [key, child] of Object.entries(value)) {
+      rejectNonFiniteNumbers(child, `${path}.${key}`);
+    }
+  }
 }
 
 /**
@@ -693,6 +1127,7 @@ export function createControlChannelSender(
       return (async () => {
         await previous;
         try {
+          rejectNonFiniteNumbers(payload, "payload");
           seq += 1;
           const envelope: FrameEnvelope = {
             seq,

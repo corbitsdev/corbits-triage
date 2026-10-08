@@ -73,7 +73,7 @@ describe("send and watch", () => {
     let callbackFired = false;
     let receivedEvent: MailboxEvent | undefined;
 
-    const unwatch = betaTransport.watch("INBOX", (event) => {
+    const unwatch = await betaTransport.watch("INBOX", (event) => {
       callbackFired = true;
       receivedEvent = event;
     });
@@ -106,7 +106,7 @@ describe("send and watch", () => {
     const { alphaTransport, betaTransport } = await createTestTransport();
 
     let count = 0;
-    const unwatch = betaTransport.watch("INBOX", () => {
+    const unwatch = await betaTransport.watch("INBOX", () => {
       count++;
     });
 
@@ -126,7 +126,7 @@ describe("send and watch", () => {
     // still-registered stale callback would have fired -- if unwatch() had not
     // removed it, `count` would already be 2 by the time the probe runs.
     let probeFired = false;
-    const unwatchProbe = betaTransport.watch("INBOX", () => {
+    const unwatchProbe = await betaTransport.watch("INBOX", () => {
       probeFired = true;
     });
 
@@ -388,6 +388,56 @@ describe("fetchFull", () => {
     expect(got.name).toBe("shot.png");
     expect(got.contentType).toBe("image/png");
     expect(Array.from(got.data)).toEqual(Array.from(orig.data));
+  });
+
+  test("send carries attachments through to the recipient", async () => {
+    const { alphaTransport, betaTransport } = await createTestTransport();
+
+    const attachments: MessageAttachment[] = [
+      {
+        name: "notes.txt",
+        contentType: "text/plain",
+        data: new TextEncoder().encode("café\nnotes\n"),
+      },
+      {
+        name: "shot.png",
+        contentType: "image/png",
+        data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      },
+    ];
+    await alphaTransport.send({
+      to: "beta@test.interchange",
+      type: "conversation.message",
+      content: "see attached",
+      attachments,
+    });
+
+    const [ref] = await betaTransport.search("INBOX", {});
+    if (ref === undefined) throw new Error("expected a delivered message");
+    const msg = await betaTransport.fetchFull(ref);
+    expect(msg.signatureStatus).toBe("valid");
+    expect(msg.attachments).toEqual(
+      attachments.map((att, i) => ({ ...att, part: `1.${String(i + 2)}` })),
+    );
+  });
+
+  test("send rejects attachments on a structured message", async () => {
+    const { alphaTransport } = await createTestTransport();
+
+    await expect(
+      alphaTransport.send({
+        to: "beta@test.interchange",
+        type: "offering.request",
+        payload: { offeringId: "code-review" },
+        attachments: [
+          {
+            name: "notes.txt",
+            contentType: "text/plain",
+            data: new TextEncoder().encode("notes"),
+          },
+        ],
+      }),
+    ).rejects.toThrow("Structured messages must not carry attachments");
   });
 
   test("fetchFull surfaces a malformed attachment instead of dropping it", async () => {
@@ -959,7 +1009,7 @@ describe("deliver", () => {
     const alphaTransport = transport.getTransportFor("alpha@test.interchange");
 
     const events: MailboxEvent[] = [];
-    alphaTransport.watch("INBOX", (event) => events.push(event));
+    await alphaTransport.watch("INBOX", (event) => events.push(event));
 
     transport.deliver("alpha@test.interchange", VALID_MESSAGE);
 
@@ -1055,6 +1105,30 @@ describe("append", () => {
 
     const headers = await alphaTransport.fetchHeaders(ref);
     expect(headers.from).toBeUndefined();
+  });
+
+  test("throws for an unparseable Date header and still accepts the next append", async () => {
+    // An Invalid Date must be refused before it is stored. The mailbox index
+    // serializes dates with toISOString, so a bad one that reached the mirror
+    // would make every later flush throw.
+    const { alphaTransport } = await createTestTransport();
+    const bad = createInboundMessage({
+      to: ["alpha@test.interchange"],
+      content: "bad",
+      interchangeType: "conversation.message",
+    });
+    bad.headers.date = "not-a-date";
+    expect(alphaTransport.append("INBOX", bad)).rejects.toThrow(/not-a-date/);
+
+    const ref = await alphaTransport.append(
+      "INBOX",
+      createInboundMessage({
+        to: ["alpha@test.interchange"],
+        content: "good",
+        interchangeType: "conversation.message",
+      }),
+    );
+    expect(ref.uid).toBe(1);
   });
 });
 

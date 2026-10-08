@@ -151,7 +151,7 @@ export {
 
 export {
   EVENT_CHANNEL_FD,
-  createChildMailboxReader,
+  createChildMailboxCallBridge,
   createChildMailboxMutationBridge,
   createChildOutboundMailBridge,
   createChildSubstrateWriteBridge,
@@ -165,8 +165,8 @@ export {
   parseSpawnTimeEnv,
   runWorkflowChild,
   runWorkflowChildFromProcessEnv,
+  type ChildMailboxCallBridge,
   type ChildMailboxMutationBridge,
-  type ChildMailboxReader,
   type ChildOutboundMailBridge,
   type ChildStepInvoker,
   type ChildSubstrateWriteBridge,
@@ -208,3 +208,14 @@ export {
   type SignalChannelHandle,
   type SignalChannelOpts,
 } from "./seams/index";
+export {
+  createDurableConversationRegistry,
+  createDurableConversationStore,
+  reconstructDurableConversation,
+  type DurableConversationRegistry,
+  type DurableConversationRegistryOpts,
+  type DurableConversationStore,
+  type DurableConversationStoreOpts,
+  type ReconstructedConversation,
+} from "./conversation-state";
+export { readRunGrants, runGrantsPath } from "./run-grants";

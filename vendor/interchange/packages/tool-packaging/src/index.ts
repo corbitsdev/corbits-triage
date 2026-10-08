@@ -23,6 +23,17 @@
 //       protocol that stages each deploy into its own never-renamed
 //       directory and maps every loader failure category onto an
 //       `ApplyAtomicFailure` the caller surfaces as a rejected apply.
+//       materializeToolPackages({ …, registries, host, assetRoot }) —
+//       validates a step manifest, applies it, and persists the active
+//       deploy id. parseToolRegistries(raw) and hostPlatform(os, cpu)
+//       are the registry-map and host-platform boundary that apply
+//       consumes.
+//       applyFrozenWorkflowClosure({ …, host, loadDefinition }) — lays
+//       out a frozen workflow closure and loads the definition through
+//       the caller-supplied loader.
+//       createWorkflowClosureMaterializer({ …, host, materializeAssets })
+//       — lays out a probe frame's frozen closure without importing
+//       author code. Asset delivery is the caller-supplied callback.
 
 export {
   type ClosureResolver,
@@ -78,3 +89,21 @@ export {
   type ExtractPackageJSONOutcome,
   extractTarballPackageJSON,
 } from "./package-json-extract";
+
+export { hostPlatform, parseToolRegistries } from "./materialization-config";
+
+export {
+  type StepToolFactory,
+  materializeToolPackages,
+} from "./tool-materialization";
+
+export {
+  type ApplyFrozenWorkflowClosureArgs,
+  type AppliedWorkflowClosure,
+  applyFrozenWorkflowClosure,
+} from "./workflow-closure-apply";
+
+export {
+  type WorkflowClosureMaterializerConfig,
+  createWorkflowClosureMaterializer,
+} from "./workflow-closure-materialization";

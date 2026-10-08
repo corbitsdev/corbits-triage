@@ -53,7 +53,7 @@ Public surface (the package barrel re-exports these):
 - `createWorkflowRunBlobSubstrate` — the production `BlobSubstrate`
   adapter with 1 MiB inline-vs-blob spill threshold.
 - `createWorkflowStepInvoker` — the production `StepInvoker` adapter.
-- `createWorkflowSpawnChild` — the production `SpawnChildWorkflow`
+- `createInMemorySpawnChild` — the production `SpawnChildWorkflow`
   adapter.
 - `createWorkflowSupervisor` — the per-deployment supervisor
   factory. See "Supervisor" below for the bindings shape.
@@ -109,7 +109,7 @@ The constructor argument shape:
 
 The sidecar's deploy router is the single ingress for inbound
 `agent.deploy` frames; its production wiring lives at
-`apps/sidecar/src/workflow-host-wiring.ts` in
+`src/deploy/workflow-host-wiring.ts` in
 `createSidecarDeployRouter`. Every deploy stages through the
 workflow-run substrate, and the router decides between two frame
 shapes:
@@ -145,9 +145,22 @@ through `signAsPrincipal("supervisor", ...)` for every origin in
 the Q3 map. The `self`-origin case carries the workflow-process's
 stated reason; the supervisor wraps it into the same supervisor-
 signed shape as the operator and drain origins.
+When a child is active, it first flushes and pauses its runtime event
+writer. The supervisor commits the signed cancellation while that writer
+is paused, then releases the child to apply cancellation. A child that
+does not respond still requires the caller's forced-stop deadline.
 
 `shutdown()` unregisters the mail address, kills the child, and
-disposes subscriptions.
+disposes subscriptions. Concurrent callers await the same teardown through
+confirmed child exit, including a replacement still awaiting readiness.
+A replacement cannot spawn once shutdown begins.
+It releases pending cancellation waits and requests the kill before waiting for
+the dispatch loops, so a child that stops reading its control pipe cannot block
+its own forced termination. The kill escalates from SIGTERM to SIGKILL after
+the kill timeout, so a child that traps SIGTERM cannot block it either.
+Already-started cancellation commits finish before the supervisor releases its
+bindings, and so does every dispatch loop still running, including the loop of
+a cohort a recycle has just replaced.
 
 `drain(opts)` sends the drain control mail and waits for in-flight
 runs to drain per each step's `drainBehavior`; on the drain-timeout it
@@ -203,16 +216,19 @@ status: on latch the supervisor (the sole writer of the workflow-run
 repo) commits a `RunFailed` for the deployment's stable run, flipping
 its `workflow_run.status` to `failed` through the same pack path every
 other terminal run uses. External automation that watches run status
-sees the crash-loop as a failed run.
+sees the crash-loop as a failed run. The commit lands before the latch's
+teardown resolves and before the host hears of the self-termination, so a
+host that reads the stopped deployment's history finds it.
 
 ### Host wiring
 
 A host that wants to instantiate a supervisor constructs the
-bindings against its own infrastructure. The reference
-implementation for the in-tree sidecar lives at
-`apps/sidecar/src/workflow-host-wiring.ts` and is intentionally
-thin — anything that would benefit a future alternative-sidecar
-implementation belongs inside this package, not in the wiring.
+bindings against its own infrastructure. The in-tree sidecar's
+supervisor and deploy router live in this package
+(`src/deploy/workflow-host-wiring.ts`). The host entry passes the Bun
+spawners from `apps/sidecar/src/workflow-child-spawner.ts` and
+`apps/sidecar/src/workflow-probe-spawner.ts`. The child binary
+closes the factory in `apps/sidecar/src/workflow-child-bindings.ts`.
 
 ## Child Entry
 
@@ -318,7 +334,7 @@ Example host binary (`apps/<host>/bin/workflow-child`):
 ```ts
 #!/usr/bin/env bun
 import { runWorkflowChildFromProcessEnv } from "@intx/workflow-host";
-import { createSubstrate } from "../src/workflow-substrate-factory";
+import { createSubstrate } from "../src/workflow-child-bindings";
 
 await runWorkflowChildFromProcessEnv(createSubstrate, {
   substrateConfigKeys: ["SIDECAR_DATA_DIR" /* ... */],
@@ -330,11 +346,15 @@ await runWorkflowChildFromProcessEnv(createSubstrate, {
 });
 ```
 
-The reference in-tree implementation lives in `apps/sidecar`. An
-alternative-sidecar implementer follows the same pattern: write a
-substrate factory against its own infrastructure, ship a ~5-line
-entry script, and resolve the `binaryPath` binding to that script
-in its supervisor-wiring module.
+The reference in-tree binary imports `createSubstrate` from
+`apps/sidecar/src/workflow-child-bindings.ts`, which closes this
+package's `createSidecarSubstrateFactory` over the app's tool
+materializer and the grant cap from `@intx/workflow-deploy`. The child
+binary path is resolved in
+`apps/sidecar/src/workflow-child-spawner.ts`. An alternative host
+follows the same pattern: write a substrate factory against its own
+infrastructure, ship a short entry script, and pass that script as
+`binaryPath`.
 
 ### Scheduler adapter
 
