@@ -335,6 +335,7 @@ export default function PRDetail() {
   const gated = Boolean(item?.needsHuman && pending);
   const floor = snapshot?.config?.confidenceFloor ?? 0.7;
   const mergeable = pull.data?.pr.mergeable ?? item?.mergeable ?? null;
+  const closed = pull.data?.pr.state === "closed";
   const canMerge = mergeable === true && (pull.data?.pr.draft ?? item?.draft) !== true;
   const [handled, setHandled] = useState<Record<string, "posted" | "dismissed">>({});
   const head = pull.data?.pr.sha ?? item?.sha ?? "";
@@ -342,7 +343,7 @@ export default function PRDetail() {
   const repoRecord = snapshot?.repos.find((row) => row.name === item?.repo);
   const recommended = item?.comment?.trim() ?? "";
   const showRecommended = Boolean(
-    recommended && item?.number && !readOnly && repoRecord?.cleanupMode !== "automated" && handled[handledKey] !== "dismissed",
+    recommended && item?.number && !closed && !readOnly && repoRecord?.cleanupMode !== "automated" && handled[handledKey] !== "dismissed",
   );
   const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
   const moreRef = useRef<HTMLDetailsElement>(null);
@@ -523,7 +524,8 @@ export default function PRDetail() {
             <div className="pr-id-row">
               <span className={`pri ${(item.priority ?? "").toLowerCase()}`}>{item.priority ?? "—"}</span>
               <span className="state-chip">{QUEUE_STATE_LABEL[item.state]}</span>
-              {mergeable === null ? null : <span className="state-chip">{mergeable ? "Mergeable" : "Not mergeable"}</span>}
+              {closed ? <span className="state-chip">{pull.data?.pr.merged ? "Merged" : "Closed"}</span>
+                : mergeable === null ? null : <span className="state-chip">{mergeable ? "Mergeable" : "Not mergeable"}</span>}
               <span className="state-chip">{score}</span>
               {github ? <a className="ghost-link" href={github} target="_blank" rel="noreferrer">View on GitHub</a> : null}
             </div>
@@ -532,23 +534,27 @@ export default function PRDetail() {
             <div className="pr-actions-row">
               {pending ? (
                 <>
-                  <button type="button" className={`btn${gated ? " primary" : ""}`} disabled={busy || readOnly} onClick={() => void act("once")}>Confirm</button>
+                  {closed ? null : <button type="button" className={`btn${gated ? " primary" : ""}`} disabled={busy || readOnly} onClick={() => void act("once")}>Confirm</button>}
                   <button type="button" className="btn" disabled={busy || readOnly} onClick={() => void act("deny")}>Dismiss</button>
                 </>
               ) : null}
-              {item.canClose ? (
-                <button type="button" className="btn" disabled={item.pendingClose || busy || readOnly} onClick={() => void requestClose()}>Close as duplicate</button>
-              ) : null}
-              <button type="button" className="btn" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</button>
-              <button type="button" className={`btn${canMerge && !gated ? " primary" : ""}`} disabled={!item.number || !canMerge || busy || readOnly} onClick={() => void requestWrite("merge")}>Merge</button>
-              <details className="more-menu" ref={moreRef}>
-                <summary className="btn" aria-label="More actions">More</summary>
-                <div className="more-menu-list" role="menu">
-                  <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("approve")}>Approve</button>
-                  <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("changes")}>Request changes</button>
-                  <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("close")}>Close pull request</button>
-                </div>
-              </details>
+              {closed ? null : (
+                <>
+                  {item.canClose ? (
+                    <button type="button" className="btn" disabled={item.pendingClose || busy || readOnly} onClick={() => void requestClose()}>Close as duplicate</button>
+                  ) : null}
+                  <button type="button" className="btn" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</button>
+                  <button type="button" className={`btn${canMerge && !gated ? " primary" : ""}`} disabled={!item.number || !canMerge || busy || readOnly} onClick={() => void requestWrite("merge")}>Merge</button>
+                  <details className="more-menu" ref={moreRef}>
+                    <summary className="btn" aria-label="More actions">More</summary>
+                    <div className="more-menu-list" role="menu">
+                      <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("approve")}>Approve</button>
+                      <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("changes")}>Request changes</button>
+                      <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("close")}>Close pull request</button>
+                    </div>
+                  </details>
+                </>
+              )}
             </div>
           </div>
         </header>

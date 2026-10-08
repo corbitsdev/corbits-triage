@@ -1003,6 +1003,7 @@ export type GithubPullDetail = {
     title: string;
     body: string | null;
     state: string;
+    merged: boolean;
     draft: boolean;
     author: string;
     sha: string;
