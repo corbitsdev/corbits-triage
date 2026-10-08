@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ChevronLeft, ChevronRight, FolderGit2, GitMerge, Inbox, List, Settings } from "lucide-react";
-import { usePortal } from "../lib/portal.tsx";
 import { useQueueItems } from "../lib/open-pulls.ts";
 
 const COLLAPSE_KEY = "corbits.sidebarCollapsed";
@@ -15,7 +14,6 @@ function readCollapsed(): boolean {
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
-  const { snapshot } = usePortal();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const items = useQueueItems();

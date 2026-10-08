@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
+import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
+import { del, get, set } from "idb-keyval";
 import { Toaster } from "sonner";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { PortalProvider, usePortal } from "./lib/portal.tsx";
@@ -10,6 +13,7 @@ import Layout from "./components/Layout.tsx";
 import Connect from "./pages/Connect.tsx";
 import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
+import { isFinishedRunLogQuery } from "./lib/run-logs.ts";
 import { Welcome } from "./pages/Welcome.tsx";
 import Triage from "./pages/Triage.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
@@ -164,13 +168,32 @@ function createPortalQueryClient() {
   });
 }
 
+const PERSISTED_QUERIES_KEY = "corbits.queries";
+const PERSISTED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function getPersisted(key: string): Promise<string | null> {
+  return (await get<string>(key)) ?? null;
+}
+
+/** Finished run logs never change, so they are kept in IndexedDB across reloads. */
+const persister = createAsyncStoragePersister({
+  storage: { getItem: getPersisted, setItem: set, removeItem: del },
+  key: PERSISTED_QUERIES_KEY,
+});
+
+const persistOptions = {
+  persister,
+  maxAge: PERSISTED_MAX_AGE_MS,
+  dehydrateOptions: { shouldDehydrateQuery: isFinishedRunLogQuery },
+};
+
 export default function App() {
   const [queryClient] = useState(createPortalQueryClient);
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
       <BrowserRouter>
         <AppShell />
       </BrowserRouter>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   );
 }
