@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import type { Transport } from "@intx/hub-client";
-import { loadCheckPack, repoNeedsCheckSetup, saveCheckPack } from "./check-pack.ts";
+import { listCheckPackIds, loadCheckPackById, repoNeedsCheckSetup, saveCheckPack } from "./check-pack.ts";
 
 function transport(store: {
   artifacts: Array<{ id: string; title: string; content: string }>;
@@ -43,10 +43,15 @@ function transport(store: {
   };
 }
 
+async function loadWidgets(client: Transport) {
+  const id = (await listCheckPackIds(client, "tenant"))["check-pack/acme/widgets"];
+  return id ? loadCheckPackById(client, "tenant", "acme/widgets", id) : null;
+}
+
 describe("check-pack client", () => {
   test("empty default load is null when no artifact exists", async () => {
     const store = { artifacts: [], config: { corbitsTriage: { repos: [{ name: "acme/widgets", connected: true }] } }, posted: [] as unknown[] };
-    expect(await loadCheckPack(transport(store), "tenant", "acme/widgets")).toBeNull();
+    expect(await loadWidgets(transport(store))).toBeNull();
   });
 
   test("save writes the artifact and empty draft is checks {} custom []", async () => {
@@ -68,7 +73,7 @@ describe("check-pack client", () => {
       },
     });
     expect(JSON.parse(store.artifacts[0]!.content)).toEqual(pack);
-    expect(await loadCheckPack(transport(store), "tenant", "acme/widgets")).toEqual(pack);
+    expect(await loadWidgets(transport(store))).toEqual(pack);
   });
 
   test("Use recommended writes the recommended pack", async () => {

@@ -1,59 +1,6 @@
-/* Mockup D (mockups/redesign/d-inbox-pulse) Repositories table, ported as is and scoped to .repos. */
-.repos {
-  --white: #ffffff;
-  --ink: #000000;
-  --charcoal: #2b2627;
-  --green: #7b9974;
-  --paper: #f2f4f5;
-  --rule: rgba(92, 85, 85, 0.18);
-  --rule-strong: rgba(92, 85, 85, 0.45);
-  --fill: rgba(92, 85, 85, 0.06);
-  --fill-hover: rgba(92, 85, 85, 0.1);
-  --font: "Red Hat Display", "Inter", "Helvetica Neue", Arial, sans-serif;
-  --mono: "Space Mono", "SFMono-Regular", Consolas, monospace;
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 16px;
-  --focus: 0 0 0 3px rgba(233, 132, 40, 0.35);
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  padding: 12px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  color: var(--ink);
-  font-family: var(--font);
-  font-size: 15px;
-  line-height: 1.5;
-}
-.repos :focus-visible { outline: none; box-shadow: var(--focus); }
-.repos .mono { font-family: var(--mono); font-size: 0.86em; }
-.repos .rl { background: var(--white); border: 1px solid var(--rule); border-radius: var(--r-lg); min-height: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; container: rl / inline-size; }
-.repos .scroll { flex: 1; min-height: 0; overflow: auto; }
-
-.repos .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  height: 38px; min-height: 0; padding: 0 16px; border-radius: var(--r-md);
-  font: 600 14px/1 var(--font); color: var(--ink); text-decoration: none;
-  background: var(--white); border: 1px solid var(--rule-strong); cursor: pointer;
-}
-.repos .btn:hover { background: var(--fill); }
-.repos .btn-sm { height: 30px; padding: 0 12px; font-size: 13px; border-radius: var(--r-sm); }
-.repos .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
-
-.repos .lh { padding: 16px 16px 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--rule); }
-.repos .lh-top { display: flex; align-items: baseline; gap: 10px; }
-.repos .lh-top h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
-.repos .lh-top .n { font: 700 13px var(--mono); }
-.repos .lh-top .sp { flex: 1; }
-.repos .lh-top .btn { align-self: center; }
-
-.repos .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
-.repos .dot.ready { background: var(--green); }
-.repos .dot.hollow { background: none; box-shadow: inset 0 0 0 1.5px var(--ink); }
-.repos .mk { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 700 11px var(--font); margin-top: 1px; }
-.repos .mk.flag { background: var(--paper); box-shadow: inset 0 0 0 1.5px var(--ink); }
-
+/* Mockup D (mockups/redesign/d-inbox-pulse) Repositories table, ported as is. Shared panel, head, button and mark rules live in shell.css. */
+.repos { min-width: 0; min-height: 0; padding: 12px 12px 12px 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+.repos .panel.rl { container: rl / inline-size; }
 .repos .rt { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: auto; }
 .repos .rt th { font-size: 12px; font-weight: 700; text-align: left; padding: 12px 10px 8px; border-bottom: 1px solid var(--rule); white-space: nowrap; position: sticky; top: 0; background: var(--white); }
 .repos .rt td { padding: 0 10px; height: 44px; border-bottom: 1px solid var(--rule); white-space: nowrap; }

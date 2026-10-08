@@ -1684,13 +1684,6 @@ body[data-rail="collapsed"] .nav-count {
 }
 .actions-end { justify-content: flex-end; }
 
-.repo-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0;
-  border-top: 1px solid var(--rule);
-}
-
 .repo-dash {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 16.5rem;
@@ -1780,12 +1773,7 @@ body[data-rail="collapsed"] .nav-count {
   border-radius: 99px;
   background: var(--ok);
 }
-.status.catching i {
-  background: var(--heat);
-  animation: live-pulse 1.4s ease-in-out infinite;
-}
 .status.quiet i { background: var(--rule-strong); }
-.status.needs-setup i { background: var(--heat); }
 
 .segmented {
   display: flex;

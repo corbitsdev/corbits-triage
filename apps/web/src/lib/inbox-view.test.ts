@@ -27,6 +27,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     pendingApprovalId: null,
     runId: "run-1",
     waitingSince: "2026-10-01T00:00:00.000Z",
+    updatedAt: null,
     canClose: false,
     pendingClose: false,
     running: false,

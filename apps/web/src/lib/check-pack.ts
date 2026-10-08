@@ -8,7 +8,7 @@ import {
   type CheckPack,
   type CleanupMode,
 } from "@corbits/triage-contracts";
-import { CONFIG_KEY, findArtifactByTitle, loadRepoCheckPack, patchAppConfig, validateRepo } from "./hub-api.ts";
+import { CONFIG_KEY, findArtifactByTitle, patchAppConfig, validateRepo } from "./hub-api.ts";
 
 export {
   applyRecommended,
@@ -18,6 +18,9 @@ export {
   type CheckPack,
 };
 
+type ArtifactListItem = { id: string; title: string; kind?: string };
+type ArtifactDetail = ArtifactListItem & { content?: string; version?: number };
+
 function enc(value: string): string {
   return encodeURIComponent(value);
 }
@@ -26,13 +29,45 @@ function collection(tenantId: string): string {
   return `/api/tenants/${enc(tenantId)}/artifacts`;
 }
 
+async function findByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
+  const page = await transport.fetch<{ artifacts?: ArtifactListItem[] }>(
+    "GET",
+    `${collection(tenantId)}?query=${enc(title)}&limit=100`,
+  );
+  const rows = Array.isArray(page?.artifacts) ? page.artifacts : [];
+  return rows.find((row) => row.title === title) ?? null;
+}
+
 /** True when the repository's check pack artifact exists; the config pointer can be lost when a sync re-adds a repository row. */
 export async function hasCheckPack(transport: Transport, tenantId: string, repo: string): Promise<boolean> {
   return (await findArtifactByTitle(transport, tenantId, checkPackName(repo))) !== null;
 }
 
-export async function loadCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPack | null> {
-  return loadRepoCheckPack(transport, tenantId, validateRepo(repo));
+const MAX_INDEX_PAGES = 50;
+
+/** Every check pack's artifact id by title, from one listing of the tenant's check-pack artifacts. */
+export async function listCheckPackIds(transport: Transport, tenantId: string): Promise<Record<string, string>> {
+  const ids: Record<string, string> = {};
+  const prefix = "check-pack/";
+  let cursor: string | null = null;
+  for (let page = 0; page < MAX_INDEX_PAGES; page += 1) {
+    const listed: { artifacts?: ArtifactListItem[]; nextCursor?: string | null } = await transport.fetch(
+      "GET",
+      `${collection(tenantId)}?query=${enc(prefix)}&limit=100${cursor ? `&cursor=${enc(cursor)}` : ""}`,
+    );
+    for (const row of Array.isArray(listed?.artifacts) ? listed.artifacts : []) {
+      if (row.title.startsWith(prefix)) ids[row.title] = row.id;
+    }
+    const next = listed?.nextCursor ?? null;
+    if (!next || next === cursor) return ids;
+    cursor = next;
+  }
+  throw new Error("The hub paginated check packs past its page limit.");
+}
+
+export async function loadCheckPackById(transport: Transport, tenantId: string, repo: string, id: string): Promise<CheckPack | null> {
+  const detail = await transport.fetch<{ artifact?: ArtifactDetail }>("GET", `${collection(tenantId)}/${enc(id)}`);
+  return parseCheckPack(detail?.artifact?.content, validateRepo(repo));
 }
 
 export async function saveCheckPack(
@@ -47,7 +82,7 @@ export async function saveCheckPack(
   if (!parsed) throw new Error("Check pack is not valid.");
   const title = checkPackName(clean);
   const content = JSON.stringify(parsed);
-  const listed = await findArtifactByTitle(transport, tenantId, title);
+  const listed = await findByTitle(transport, tenantId, title);
   if (!listed) {
     try {
       await transport.fetch("POST", collection(tenantId), {

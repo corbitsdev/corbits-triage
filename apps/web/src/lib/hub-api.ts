@@ -1231,6 +1231,8 @@ export type PrItem = {
   pendingApprovalId: string | null;
   runId: string | null;
   waitingSince: string | null;
+  /** GitHub's last update to the pull request, known once the open pull requests have loaded. */
+  updatedAt: string | null;
   canClose: boolean;
   pendingClose: boolean;
   /** A pr-triage run for this pull request has started and has not rendered its verdict yet. */
@@ -1467,6 +1469,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         pendingApprovalId: null,
         runId: log.runId,
         waitingSince: at,
+        updatedAt: null,
         canClose: r.duplicate === true,
         pendingClose: false,
         running: running.has(key),
@@ -1502,7 +1505,11 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
     }
     for (const pr of prs) {
       const key = `${repo}#${pr.number}`;
-      if (items.has(key)) continue;
+      const known = items.get(key);
+      if (known) {
+        items.set(key, { ...known, updatedAt: pr.updatedAt });
+        continue;
+      }
       items.set(key, {
         key,
         repo,
@@ -1527,6 +1534,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         pendingApprovalId: null,
         runId: null,
         waitingSince: pr.updatedAt,
+        updatedAt: pr.updatedAt,
         canClose: false,
         pendingClose: false,
         running: running.has(key),

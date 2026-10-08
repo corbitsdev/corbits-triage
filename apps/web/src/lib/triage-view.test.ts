@@ -40,6 +40,7 @@ function item(repo: string, number: number): PrItem {
     pendingApprovalId: `approval-${repo}`,
     runId: `run-${repo}`,
     waitingSince: null,
+    updatedAt: null,
     canClose: true,
     pendingClose: false,
     running: false,

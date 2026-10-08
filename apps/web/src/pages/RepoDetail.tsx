@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { emptyPack, recommendedPack, repoPolicy } from "@corbits/triage-contracts";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import {
@@ -14,8 +14,8 @@ import {
   type DraftCheck,
   type DraftPack,
 } from "../lib/check-catalog.ts";
-import { loadCheckPack, repoNeedsCheckSetup, saveCheckPack } from "../lib/check-pack.ts";
-import { checkPackQueryKey } from "../lib/check-packs.ts";
+import { repoNeedsCheckSetup, saveCheckPack } from "../lib/check-pack.ts";
+import { checkPackQuery, checkPackQueryKey } from "../lib/check-packs.ts";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential } from "../lib/hub-api.ts";
@@ -138,12 +138,14 @@ export default function RepoDetail() {
   const { arm } = useGithubReturnSync(() => { void syncAfterGithub(); });
   const tenantId = snapshot?.workspace.tenantId;
 
+  const packTenant = label.includes("/") ? tenantId : undefined;
+  const packQuery = useQuery(checkPackQuery(packTenant, label));
+  const packKey = `${packTenant ?? ""}|${label}`;
+  const [loadedPackKey, setLoadedPackKey] = useState<string | null>(null);
+
+  /** Seeds the editable draft once per repository; later refetches must not overwrite edits in progress. */
   useEffect(function loadPack() {
-    let cancelled = false;
-    setLoadingPack(true);
-    setCustomizing(false);
-    setPicker(false);
-    setCustomOpen(false);
+    if (loadedPackKey === packKey) return;
     const mode = repoPolicy(config).cleanupMode;
     function startEmpty() {
       const next = emptyDraft(label, mode);
@@ -151,36 +153,32 @@ export default function RepoDetail() {
       setSaved(next);
       setNeedsSetup(true);
     }
-    if (!snapshot || !tenantId || !label.includes("/")) {
+    setCustomizing(false);
+    setPicker(false);
+    setCustomOpen(false);
+    if (packTenant === undefined) {
       startEmpty();
       setLoadingPack(false);
       return;
     }
-    async function run(id: string) {
-      try {
-        const found = await loadCheckPack(createHubTransport(), id, label);
-        if (cancelled) return;
-        if (found) {
-          const draft = draftFromCheckPack(found, mode);
-          setPack(draft);
-          setSaved(draft);
-          setNeedsSetup(false);
-        } else {
-          startEmpty();
-        }
-      } catch (cause) {
-        if (cancelled) return;
-        setError(`Could not load the check pack. ${cause instanceof Error ? cause.message : String(cause)}`);
-        startEmpty();
-      } finally {
-        if (!cancelled) setLoadingPack(false);
-      }
+    if (packQuery.isPending) {
+      setLoadingPack(true);
+      return;
     }
-    void run(tenantId);
-    return function cancel() {
-      cancelled = true;
-    };
-  }, [label, tenantId]);
+    if (packQuery.isError) {
+      setError(`Could not load the check pack. ${packQuery.error.message}`);
+      startEmpty();
+    } else if (packQuery.data) {
+      const draft = draftFromCheckPack(packQuery.data, mode);
+      setPack(draft);
+      setSaved(draft);
+      setNeedsSetup(false);
+    } else {
+      startEmpty();
+    }
+    setLoadingPack(false);
+    setLoadedPackKey(packKey);
+  }, [packKey, loadedPackKey, packQuery.isPending, packQuery.isError, packQuery.data, packQuery.error]);
 
   const remaining = useMemo(function remainingChecks() {
     const have = new Set(pack.checks.map((row) => row.id));
@@ -337,14 +335,12 @@ export default function RepoDetail() {
     setSaving(true);
     setError("");
     try {
-      await saveCheckPack(createHubTransport(), snapshot.workspace.tenantId, config.name, artifact, {
+      const stored = await saveCheckPack(createHubTransport(), snapshot.workspace.tenantId, config.name, artifact, {
         cleanupMode: draft.mode,
       });
       rememberCheckPack(queryClient, snapshot.workspace.tenantId, config.name);
-      await Promise.all([
-        refreshNow(),
-        queryClient.invalidateQueries({ queryKey: checkPackQueryKey(snapshot.workspace.tenantId, config.name) }),
-      ]);
+      queryClient.setQueryData(checkPackQueryKey(snapshot.workspace.tenantId, config.name), stored);
+      await refreshNow();
       const nextDraft = draftFromCheckPack(artifact, draft.mode);
       setPack(nextDraft);
       setSaved(nextDraft);
