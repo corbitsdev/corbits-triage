@@ -91,7 +91,6 @@ body:has(.signin, .setup-flow),
 }
 .signin-form h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
 .signin-form > p { margin: -4px 0 10px; font-size: 15px; }
-.signin-form .btn b { font-weight: 900; }
 .signin-form .field { font-size: 14px; font-weight: 600; }
 .signin-or { display: flex; align-items: center; gap: 12px; font-size: 12px; }
 .signin-or::before,
