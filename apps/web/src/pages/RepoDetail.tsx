@@ -15,6 +15,7 @@ import {
   type DraftPack,
 } from "../lib/check-catalog.ts";
 import { loadCheckPack, repoNeedsCheckSetup, saveCheckPack } from "../lib/check-pack.ts";
+import { checkPackQueryKey } from "../lib/check-packs.ts";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential } from "../lib/hub-api.ts";
@@ -340,7 +341,10 @@ export default function RepoDetail() {
         cleanupMode: draft.mode,
       });
       rememberCheckPack(queryClient, snapshot.workspace.tenantId, config.name);
-      await refreshNow();
+      await Promise.all([
+        refreshNow(),
+        queryClient.invalidateQueries({ queryKey: checkPackQueryKey(snapshot.workspace.tenantId, config.name) }),
+      ]);
       const nextDraft = draftFromCheckPack(artifact, draft.mode);
       setPack(nextDraft);
       setSaved(nextDraft);

@@ -6,9 +6,13 @@ import { usePortal } from "./portal.tsx";
 
 export type PackState = { pack: CheckPack | null; pending: boolean; error: Error | null };
 
+export function checkPackQueryKey(tenantId: string | undefined, repo: string) {
+  return ["check-pack", tenantId, repo] as const;
+}
+
 function checkPackQuery(tenantId: string | undefined, repo: string) {
   return queryOptions({
-    queryKey: ["check-pack", tenantId, repo],
+    queryKey: checkPackQueryKey(tenantId, repo),
     queryFn: tenantId === undefined ? skipToken : () => loadCheckPack(createHubTransport(), tenantId, repo),
   });
 }
