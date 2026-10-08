@@ -1,6 +1,6 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import { DEVELOPMENT_CSP, PRODUCTION_CSP, securityHeaders } from "./src/security-headers.ts";
+import { DEVELOPMENT_CSP, DEVELOPMENT_META_CSP, PRODUCTION_META_CSP, securityHeaders } from "./src/security-headers.ts";
 
 export default defineConfig(({ command }) => ({
   plugins: [
@@ -9,7 +9,7 @@ export default defineConfig(({ command }) => ({
       ? [{
           name: "corbits-dev-csp",
           transformIndexHtml(html: string) {
-            return html.replaceAll(PRODUCTION_CSP, DEVELOPMENT_CSP);
+            return html.replaceAll(PRODUCTION_META_CSP, DEVELOPMENT_META_CSP);
           },
         }]
       : []),
