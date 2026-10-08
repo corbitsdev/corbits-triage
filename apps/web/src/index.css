@@ -19,7 +19,7 @@
 
 :root {
   color-scheme: light;
-  --paper: #e5e7ed;
+  --paper: #f2f4f5;
   --pane: #f6f7f9;
   --sheet: #fdfdfe;
   --inset: #d4d7e0;
@@ -28,9 +28,9 @@
   --ink-mute: #575d68;
   --rule: #c3c7d1;
   --rule-strong: #959ba8;
-  --heat: #d44510;
-  --heat-hover: #b83a0c;
-  --heat-press: #9c300a;
+  --heat: #e98428;
+  --heat-hover: #dd7a20;
+  --heat-press: #bf6b20;
   --heat-ink: #1c0b06;
   --heat-wash: #ead0c4;
   --rail: #0a0c11;
@@ -162,12 +162,12 @@ input, textarea { caret-color: var(--heat); }
 
 .app {
   display: grid;
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   width: 100%;
   height: 100dvh;
   overflow: hidden;
   min-height: 0;
-  background: var(--rail);
+  background: var(--paper);
 }
 .app.is-auth { background: var(--paper); }
 .stage {
@@ -197,154 +197,6 @@ body[data-rail="collapsed"] {
   }
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  background: var(--rail);
-  color: var(--rail-text);
-  min-height: 0;
-  border-right: 1px solid var(--rail-line);
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: var(--topbar-height);
-  padding: 0 8px 0 16px;
-}
-.mark {
-  width: 28px;
-  height: 28px;
-  display: block;
-  flex-shrink: 0;
-  object-fit: contain;
-  border-radius: 4px;
-}
-.brand strong {
-  font-weight: 650;
-  font-size: 14px;
-  letter-spacing: -0.04em;
-  min-width: 0;
-  flex: 1;
-}
-.rail-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  margin-left: auto;
-  flex-shrink: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--rail-mute);
-}
-.rail-toggle svg { width: 16px; height: 16px; }
-.rail-toggle:hover {
-  background: var(--rail-hover);
-  color: var(--rail-text);
-}
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  flex: 1;
-  min-height: 0;
-}
-.nav-section {
-  display: grid;
-  gap: 2px;
-  margin-bottom: 12px;
-}
-.nav-section-label {
-  padding: 6px 10px 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--rail-mute);
-}
-.nav-sub { display: grid; gap: 1px; }
-.sidebar-footer {
-  padding: 10px;
-  border-top: 1px solid rgba(232, 234, 240, 0.08);
-}
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 0 10px;
-  border-radius: var(--radius-sm);
-  color: var(--rail-text);
-  text-decoration: none;
-  font-weight: 520;
-  font-size: 14px;
-  position: relative;
-  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
-}
-.nav-item.sub {
-  min-height: 36px;
-  font-size: 13px;
-  color: var(--rail-text);
-}
-.nav-item svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  opacity: 0.7;
-  stroke-width: 1.7;
-}
-.nav-item:hover {
-  background: var(--rail-hover);
-  color: var(--rail-text);
-}
-.nav-item[aria-current="page"],
-.nav-item.is-on {
-  background: rgba(212, 69, 16, 0.16);
-  color: var(--heat);
-  font-weight: 650;
-}
-.nav-item[aria-current="page"] svg,
-.nav-item.is-on svg { opacity: 1; color: var(--heat); }
-.nav-count {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  font-weight: 700;
-  min-width: 1.5em;
-  text-align: right;
-  color: var(--heat);
-}
-.nav-count.quiet {
-  color: var(--rail-mute);
-  font-weight: 560;
-}
-.nav-label { min-width: 0; }
-
-body[data-rail="collapsed"] .sidebar {
-  overflow: hidden;
-}
-body[data-rail="collapsed"] .brand {
-  flex-direction: column;
-  justify-content: center;
-  padding: 8px 0;
-  min-height: auto;
-  gap: 4px;
-}
-body[data-rail="collapsed"] .brand strong,
-body[data-rail="collapsed"] .nav-label,
-body[data-rail="collapsed"] .nav-section-label {
-  display: none;
-}
-body[data-rail="collapsed"] .rail-toggle {
-  margin: 0;
-}
-body[data-rail="collapsed"] .sidebar-nav,
-body[data-rail="collapsed"] .sidebar-footer {
-  padding-left: 8px;
-  padding-right: 8px;
-}
 body[data-rail="collapsed"] .nav-item {
   justify-content: center;
   padding: 0;
@@ -3149,3 +3001,4 @@ textarea { min-height: 88px; resize: vertical; }
   display: flex;
   padding: 0.25rem;
 }
+

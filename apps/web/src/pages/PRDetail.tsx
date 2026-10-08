@@ -446,7 +446,7 @@ export default function PRDetail() {
     return (
       <div className="main-shell">
         <header className="topbar pr-topbar">
-          <Link className="btn ghost" to="/triage/action">Back</Link>
+          <Link className="btn ghost" to="/inbox">Back</Link>
           <h1 tabIndex={-1}>{approvalHeadline(approval)}</h1>
         </header>
         <main id="main" className="scroller">
@@ -462,7 +462,7 @@ export default function PRDetail() {
     return (
       <div className="main-shell">
         <header className="topbar pr-topbar">
-          <Link className="btn ghost" to="/triage/action">Back</Link>
+          <Link className="btn ghost" to="/inbox">Back</Link>
           <h1 tabIndex={-1}>Pull request</h1>
         </header>
         <main id="main" className="scroller">
@@ -513,7 +513,7 @@ export default function PRDetail() {
     <>
       <div className="main-shell">
         <header className="topbar pr-topbar action-bar">
-          <Link className="btn ghost" to="/triage/action">Back</Link>
+          <Link className="btn ghost" to="/inbox">Back</Link>
           <div className="pr-id">
             <p className="pr-id-line">
               <span className="mono pr-repo">{item.repo}</span>

@@ -51,7 +51,7 @@
       "name": "@corbits/web",
       "version": "0.1.0",
       "dependencies": {
-        "@corbits/react-ui": "0.3.0",
+        "@corbits/react-ui": "0.3.1",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/hub-client": "workspace:*",
         "@isomorphic-git/lightning-fs": "^4.10.3",
@@ -649,7 +649,7 @@
 
     "@corbits/openai-null-delta": ["@corbits/openai-null-delta@workspace:packages/openai-null-delta"],
 
-    "@corbits/react-ui": ["@corbits/react-ui@0.3.0", "", { "dependencies": { "class-variance-authority": "^0.7.1", "clsx": "^2.1.1", "tailwind-merge": "^3.3.1" }, "peerDependencies": { "@radix-ui/react-dialog": "^1.1.15", "@radix-ui/react-dropdown-menu": "^2.1.16", "@radix-ui/react-slot": "^1.2.3", "@radix-ui/react-tooltip": "^1.2.8", "lucide-react": "^0.545.0 || ^1.0.0", "react": "^18.2.0 || ^19.0.0", "react-dom": "^18.2.0 || ^19.0.0", "sonner": "^2.0.7" }, "optionalPeers": ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-tooltip", "sonner"] }, "sha512-yOIL6ifFR9tKUiPzCGWQ5ulBYMMmXUBxgnfgV1tK15FUAlIn401FzJ6riPGVrTjsX0VU0LewUyBP7S6vAwz8Fg=="],
+    "@corbits/react-ui": ["@corbits/react-ui@0.3.1", "", { "dependencies": { "class-variance-authority": "^0.7.1", "clsx": "^2.1.1", "tailwind-merge": "^3.3.1" }, "peerDependencies": { "@radix-ui/react-dialog": "^1.1.15", "@radix-ui/react-dropdown-menu": "^2.1.16", "@radix-ui/react-slot": "^1.2.3", "@radix-ui/react-tooltip": "^1.2.8", "lucide-react": "^0.545.0 || ^1.0.0", "react": "^18.2.0 || ^19.0.0", "react-dom": "^18.2.0 || ^19.0.0", "sonner": "^2.0.7" }, "optionalPeers": ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-tooltip", "sonner"] }, "sha512-qAi4UiRuxIfv+0XaiCFdB+nwX39/YEpvhhkW0W0urrA5E81iaX1s7PCqJze9EtaSop9AxvlJ82V7Bd1qgitqaQ=="],
 
     "@corbits/rule-packs": ["@corbits/rule-packs@workspace:packages/rule-packs"],
 

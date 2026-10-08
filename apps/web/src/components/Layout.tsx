@@ -1,124 +1,102 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { NavLink, useLocation } from "react-router-dom";
-import { ChevronLeft, ChevronRight, FolderGit2, GitMerge, Inbox, List, Settings } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { groupInbox, initialsOf } from "../lib/inbox-view.ts";
 import { useQueueItems } from "../lib/open-pulls.ts";
+import { useSession } from "../lib/session.tsx";
+import { GearIcon, InboxIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
-const COLLAPSE_KEY = "corbits.sidebarCollapsed";
+function UserBlock() {
+  const { session, signOut } = useSession();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const onSettingsOrRepos = location.pathname.startsWith("/settings") || location.pathname.startsWith("/repositories");
 
-function readCollapsed(): boolean {
-  try {
-    return window.localStorage.getItem(COLLAPSE_KEY) === "1";
-  } catch {
-    return false;
+  useEffect(function closeOnOutsideClick() {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  if (!session) return null;
+
+  function go(to: string) {
+    setOpen(false);
+    navigate(to);
   }
+
+  return (
+    <div className="menu-wrap" ref={wrapRef}>
+      {open ? (
+        <div className="menu up me-menu" role="menu">
+          <button type="button" role="menuitem" onClick={() => go("/settings")}><GearIcon />Settings</button>
+          <button type="button" role="menuitem" onClick={() => go("/repositories")}><RepoIcon />Repositories</button>
+          <hr />
+          <button type="button" role="menuitem" onClick={() => void signOut()}><SignOutIcon />Sign out</button>
+        </div>
+      ) : null}
+      <button type="button" className="me" aria-haspopup="menu" aria-expanded={open} aria-current={onSettingsOrRepos ? "true" : undefined} onClick={() => setOpen(!open)}>
+        <span className="av lg">{initialsOf(session.name || session.email)}</span>
+        <span className="me-t"><b>{session.name || session.email}</b><span>{session.email}</span></span>
+        <UpDownIcon />
+      </button>
+    </div>
+  );
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const [collapsed, setCollapsed] = useState(readCollapsed);
-  const items = useQueueItems();
-  const actionCount = items.filter((item) => item.state !== "new").length;
-  const mergeCount = items.filter((item) => item.state === "ready").length;
+  const inboxCount = groupInbox(useQueueItems()).groups.reduce((n, group) => n + group.items.length, 0);
   const path = location.pathname;
-  const isPr = path.startsWith("/triage/pr/");
-  const room = path.startsWith("/settings")
-    ? "settings"
-    : path.startsWith("/repositories")
-      ? "repos"
-      : isPr
-        ? "pr"
-        : "triage";
+  const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : "inbox";
+  const inboxActive = path.startsWith("/inbox") || path.startsWith("/triage");
 
   useEffect(function markBody() {
-    document.body.dataset.rail = collapsed ? "collapsed" : "expanded";
     document.body.dataset.room = room;
     return function unmarkBody() {
-      delete document.body.dataset.rail;
       delete document.body.dataset.room;
     };
-  }, [collapsed, room]);
-
-  function toggleCollapsed() {
-    setCollapsed(function flip(current) {
-      const next = !current;
-      try {
-        window.localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
-      } catch {
-        // Private browsing: keep the in-memory rail state only.
-      }
-      return next;
-    });
-  }
-
-  const triageActive = path.startsWith("/triage");
+  }, [room]);
 
   return (
-    <div className={["app", collapsed ? "collapsed" : ""].filter(Boolean).join(" ")}>
+    <div className="app shell">
       <a className="skip" href="#main">
         Skip to content
       </a>
-      <aside className="sidebar" aria-label="Workspace">
-        <div className="brand">
-          <img className="mark" src="/corbits-mark.svg" width="28" height="28" alt="" />
-          <strong>corbits</strong>
-          <button
-            type="button"
-            className="rail-toggle"
-            aria-expanded={!collapsed}
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            onClick={toggleCollapsed}
-          >
-            {collapsed ? <ChevronRight strokeWidth={1.7} aria-hidden="true" /> : <ChevronLeft strokeWidth={1.7} aria-hidden="true" />}
-          </button>
-        </div>
-        <nav className="sidebar-nav" aria-label="Primary">
-          <div className="nav-section">
-            <p className="nav-section-label" id="nav-triage-label">Triage</p>
-            <div className="nav-sub" role="group" aria-labelledby="nav-triage-label">
-              <NavLink to="/triage/action" title="Triaged" className={({ isActive }) => `nav-item sub${isActive || (triageActive && path === "/triage") ? " is-on" : ""}`}>
-                <Inbox strokeWidth={1.7} aria-hidden="true" />
-                <span className="nav-label">Triaged</span>
-                <span className="nav-count">{actionCount}</span>
-              </NavLink>
-              <NavLink to="/triage/merge" title="Ready to Merge" className={({ isActive }) => `nav-item sub${isActive ? " is-on" : ""}`}>
-                <GitMerge strokeWidth={1.7} aria-hidden="true" />
-                <span className="nav-label">Ready to Merge</span>
-                <span className="nav-count quiet">{mergeCount}</span>
-              </NavLink>
-              <NavLink to="/triage/all" title="All PRs" className={({ isActive }) => `nav-item sub${isActive ? " is-on" : ""}`}>
-                <List strokeWidth={1.7} aria-hidden="true" />
-                <span className="nav-label">All PRs</span>
-                <span className="nav-count quiet">{items.length}</span>
-              </NavLink>
-            </div>
-          </div>
-          <NavLink to="/repositories" title="Repositories" className={({ isActive }) => `nav-item${isActive ? " is-on" : ""}`}>
-            <FolderGit2 strokeWidth={1.7} aria-hidden="true" />
-            <span className="nav-label">Repositories</span>
-          </NavLink>
-        </nav>
-        <div className="sidebar-footer">
-          <NavLink to="/settings" title="Settings" className={({ isActive }) => `nav-item${isActive ? " is-on" : ""}`}>
-            <Settings strokeWidth={1.7} aria-hidden="true" />
-            <span className="nav-label">Settings</span>
-          </NavLink>
-        </div>
-      </aside>
-      <div className={isPr ? "stage has-sliver" : "stage"} id="stage">
-        {children}
-      </div>
-      <nav className="mobile-nav" aria-label="Mobile">
-        <NavLink to="/triage/action" className={triageActive ? "active" : undefined}>
-          <Inbox strokeWidth={1.7} aria-hidden="true" />
+      <nav className="rail" aria-label="Main">
+        <Link className="brand" to="/inbox">
+          <img src="/triage-logo.svg" alt="Corbits" />
           Triage
+        </Link>
+        <h3>Inbox</h3>
+        <Link className="nav-a" to="/inbox" aria-current={inboxActive ? "true" : undefined}>
+          <InboxIcon />
+          Inbox
+          <span className="n">{inboxCount}</span>
+        </Link>
+        <span className="grow" />
+        <UserBlock />
+      </nav>
+      {room === "inbox" ? children : (
+        <div className={room === "pr" ? "stage has-sliver" : "stage"} id="stage">
+          {children}
+        </div>
+      )}
+      <nav className="mobile-nav" aria-label="Mobile">
+        <NavLink to="/inbox" className={inboxActive ? "active" : undefined}>
+          <InboxIcon />
+          Inbox
         </NavLink>
         <NavLink to="/repositories">
-          <FolderGit2 strokeWidth={1.7} aria-hidden="true" />
+          <RepoIcon />
           Repositories
         </NavLink>
         <NavLink to="/settings">
-          <Settings strokeWidth={1.7} aria-hidden="true" />
+          <GearIcon />
           Settings
         </NavLink>
       </nav>
