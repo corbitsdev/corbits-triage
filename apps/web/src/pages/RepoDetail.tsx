@@ -588,7 +588,7 @@ export default function RepoDetail() {
                     {!initial.enabled && <p className="field-help">Nothing runs until triage is enabled.</p>}
                     <div className="repo-side-actions">
                       {!initial.enabled && <button type="button" className="btn primary" disabled={readOnly || deniedRepos || !config || toggling} onClick={() => void enableTriage()}>{toggling ? "Enabling…" : "Enable triage"}</button>}
-                      <Link className={`btn${needs && initial.enabled ? " primary" : ""}`} to={`/triage/action`}>Open triage</Link>
+                      <Link className={`btn${needs && initial.enabled ? " primary" : ""}`} to="/inbox">Open triage</Link>
                       {initial.enabled && <button type="button" className="btn" disabled={readOnly || deniedRepos || !config} onClick={() => void triageAgain()}>Triage again</button>}
                       {initial.enabled && <button type="button" className="btn" disabled={readOnly || deniedRepos || !config || toggling} onClick={() => void disableTriage()}>{toggling ? "Disabling…" : "Disable triage"}</button>}
                       <button type="button" className="btn" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</button>

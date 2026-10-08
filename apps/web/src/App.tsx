@@ -16,14 +16,14 @@ import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
 import { isFinishedRunLogQuery } from "./lib/run-logs.ts";
 import { Welcome } from "./pages/Welcome.tsx";
-import Triage from "./pages/Triage.tsx";
+import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
 import Repositories from "./pages/Repositories.tsx";
 import RepoDetail from "./pages/RepoDetail.tsx";
 import Settings from "./pages/Settings.tsx";
 
-function TriageRedirect() {
-  return <Navigate to="/triage/action" replace />;
+function InboxRedirect() {
+  return <Navigate to="/inbox" replace />;
 }
 
 function NotConfigured() {
@@ -115,32 +115,29 @@ function Gate() {
 
   if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;
   if (path === "/login" || path === "/") {
-    return <Navigate to={snapshot.repos.length > 0 ? "/triage/action" : "/repositories"} replace />;
+    return <Navigate to={snapshot.repos.length > 0 ? "/inbox" : "/repositories"} replace />;
   }
 
   return (
     <Layout>
       <Routes>
-        <Route path="/triage" element={<TriageRedirect />} />
-        <Route path="/triage/action" element={<Triage />} />
-        <Route path="/triage/merge" element={<Triage />} />
-        <Route path="/triage/all" element={<Triage />} />
+        <Route path="/inbox" element={<Inbox />} />
+        <Route path="/inbox/:owner/:repo/:number" element={<Inbox />} />
         <Route path="/triage/pr/:owner/:repo/:number" element={<PRDetail />} />
         <Route path="/triage/pr/:id" element={<PRDetail />} />
-        <Route path="/queue" element={<TriageRedirect />} />
-        <Route path="/queue/*" element={<TriageRedirect />} />
-        <Route path="/approvals" element={<TriageRedirect />} />
-        <Route path="/audit" element={<TriageRedirect />} />
-        <Route path="/runs" element={<TriageRedirect />} />
-        <Route path="/runs/*" element={<TriageRedirect />} />
         <Route path="/prs/:owner/:repo/:number" element={<PRDetail />} />
         <Route path="/prs/:id" element={<PRDetail />} />
+        <Route path="/triage/*" element={<InboxRedirect />} />
+        <Route path="/queue/*" element={<InboxRedirect />} />
+        <Route path="/approvals" element={<InboxRedirect />} />
+        <Route path="/audit" element={<InboxRedirect />} />
+        <Route path="/runs/*" element={<InboxRedirect />} />
         <Route path="/repositories" element={<Repositories />} />
         <Route path="/repositories/:id" element={<RepoDetail />} />
         <Route path="/repositories/:id/:tab" element={<RepoDetail />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/:tab" element={<Settings />} />
-        <Route path="/" element={<TriageRedirect />} />
+        <Route path="/" element={<InboxRedirect />} />
         <Route path="*" element={<div className="empty">Page not found. Choose a page from the navigation.</div>} />
       </Routes>
     </Layout>
