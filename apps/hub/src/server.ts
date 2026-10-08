@@ -238,8 +238,6 @@ const syncInstallations = createInstallationSync({
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
-  sendMail: sendBridgeMail,
-  readCheckPack,
 });
 const bridge = createBridgeHandler({
   db: hookDeps.db,

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
-import { checkPackName, emptyPack, repoPolicy } from "@corbits/triage-contracts";
+import { emptyPack } from "@corbits/triage-contracts";
 import { applyInstallationListing, createBridgeHandler, loadBridgeHook, MAX_BODY_BYTES, type BridgeDeps } from "./bridge.js";
-import { namesNeedingBacklog, repoRecords } from "./tenant-config.js";
+import { repoRecords } from "./tenant-config.js";
 import { DeliveryCache } from "./dedupe.js";
 import { NoLiveDeploymentError } from "./deployment.js";
 import { verifySignature } from "./signature.js";
@@ -339,18 +339,6 @@ function repos(db: StubDb): Array<Record<string, unknown>> {
   return (db.tenantConfig() as { corbitsTriage: { repos: Array<Record<string, unknown>> } }).corbitsTriage.repos;
 }
 
-function backlogMail(repo: string): Sent {
-  return {
-    workflow: "pr-triage-historical",
-    payload: {
-      kind: "backlog",
-      repo,
-      policy: { ...repoPolicy(undefined), checkPack: { name: checkPackName(repo) } },
-      checkPack: emptyPack(repo),
-    },
-  };
-}
-
 describe("bridge installation events", () => {
   test("created upserts listed repos, keeping existing policy", async () => {
     const sent: Sent[] = [];
@@ -366,7 +354,7 @@ describe("bridge installation events", () => {
         }],
       },
     });
-    const res = await bridge({ db, sent, readCheckPack: packsFor([]) })(installRequest("installation", {
+    const res = await bridge({ db, sent })(installRequest("installation", {
       action: "created",
       installation: INSTALLATION,
       repositories: [{ full_name: "octocat/hello" }, { full_name: "octocat/world" }],
@@ -389,16 +377,17 @@ describe("bridge installation events", () => {
     expect(sent).toEqual([]);
   });
 
-  test("created mails backlog only for added repos that have a check pack", async () => {
+  test("installation_repositories added records the repos disabled and starts nothing", async () => {
     const sent: Sent[] = [];
     const db = stubDb([hookRow()], { corbitsTriage: { repos: [] } });
-    const res = await bridge({ db, sent, readCheckPack: packsFor(["octocat/world"]) })(installRequest("installation", {
-      action: "created",
+    const res = await bridge({ db, sent })(installRequest("installation_repositories", {
+      action: "added",
       installation: INSTALLATION,
-      repositories: [{ full_name: "octocat/hello" }, { full_name: "octocat/world" }],
-    }, "created-pack"), TARGET);
-    expect(await res.json()).toEqual({ status: "forwarded" });
-    expect(sent).toEqual([backlogMail("octocat/world")]);
+      repositories_added: [{ full_name: "octocat/hello" }],
+    }, "added-1"), TARGET);
+    expect(await res.json()).toEqual({ status: "accepted" });
+    expect(repos(db)).toEqual([expect.objectContaining({ name: "octocat/hello", connected: true, installationId: 42, enabled: false })]);
+    expect(sent).toHaveLength(0);
   });
 
   test("removed drops listed names without mailing", async () => {
@@ -462,46 +451,30 @@ describe("bridge installation events", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("preserves sibling config keys and succeeded backlog syncs", async () => {
+  test("preserves sibling config keys", async () => {
     const db = stubDb([hookRow()], {
       other: { keep: true },
       corbitsTriage: {
         confidenceFloor: 0.8,
-        backlogSync: { "octocat/hello": { status: "succeeded", operationId: "op-1" } },
         repos: [{ name: "octocat/hello", connected: true, installationId: 1, cleanupMode: "automated" }],
       },
     });
-    await bridge({ db, readCheckPack: packsFor([]) })(installRequest("installation_repositories", {
+    await bridge({ db })(installRequest("installation_repositories", {
       action: "added",
       installation: INSTALLATION,
       repositories_added: [{ full_name: "octocat/extra" }],
     }, "siblings-1"), TARGET);
     const config = db.tenantConfig() as {
       other: unknown;
-      corbitsTriage: { confidenceFloor: number; backlogSync: unknown; repos: Array<{ name: string; cleanupMode?: string }> };
+      corbitsTriage: { confidenceFloor: number; repos: Array<{ name: string; cleanupMode?: string }> };
     };
     expect(config.other).toEqual({ keep: true });
     expect(config.corbitsTriage.confidenceFloor).toBe(0.8);
-    expect(config.corbitsTriage.backlogSync).toEqual({
-      "octocat/hello": { status: "succeeded", operationId: "op-1" },
-      "octocat/extra": { status: "pending" },
-    });
     expect(config.corbitsTriage.repos.find((row) => row.name === "octocat/hello")?.cleanupMode).toBe("automated");
-  });
-
-  test("retries backlog mail after a failed send on created", async () => {
-    const sent: Sent[] = [];
-    const db = stubDb([hookRow()], { corbitsTriage: { repos: [] } });
-    const handle = bridge({ db, sendMail: flakyMail(sent, 1) });
-    const body = { action: "created", installation: INSTALLATION, repositories: [{ full_name: "octocat/hello" }] };
-    expect((await handle(installRequest("installation", body, "retry-created"), TARGET)).status).toBe(502);
-    const retry = await handle(installRequest("installation", body, "retry-created"), TARGET);
-    expect(await retry.json()).toEqual({ status: "forwarded" });
-    expect(sent).toEqual([backlogMail("octocat/hello")]);
   });
 });
 
-test("installation listing mirrors GitHub and reports only new repositories", () => {
+test("installation listing mirrors GitHub", () => {
   const ns = {
     repos: [
       { name: "acme/kept", connected: true, installationId: 1 },
@@ -515,11 +488,7 @@ test("installation listing mirrors GitHub and reports only new repositories", ()
     { fields: { installationId: 1, account: "acme" }, suspended: false as const, names: ["acme/kept", "acme/new"] },
     { fields: { installationId: 3 }, suspended: true as const },
   ];
-  const first = applyInstallationListing(ns, listings);
-  expect(repoRecords(first.ns).map((row) => row.name).sort()).toEqual(["acme/kept", "acme/new", "manual/repo", "paused/repo"]);
-  expect(repoRecords(first.ns).find((row) => row.name === "paused/repo")?.connected).toBe(false);
-  expect(first.added).toEqual(["acme/new"]);
-  expect(namesNeedingBacklog({ ...first.ns, backlogSync: { "acme/kept": { status: "succeeded" } } }, ["acme/new", "acme/kept"], 0)).toEqual(["acme/new"]);
-
-  expect(applyInstallationListing(first.ns, listings).added).toEqual([]);
+  const next = applyInstallationListing(ns, listings);
+  expect(repoRecords(next).map((row) => row.name).sort()).toEqual(["acme/kept", "acme/new", "manual/repo", "paused/repo"]);
+  expect(repoRecords(next).find((row) => row.name === "paused/repo")?.connected).toBe(false);
 });

@@ -370,11 +370,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     const current = requireSnapshot();
     const result = await syncGithubInstallations(current.workspace.tenantId);
     await refreshNow();
-    if (result.backlogFailed.length > 0) {
-      notify(`Could not start catch-up for ${result.backlogFailed.join(", ")}. Retry it from Repositories.`);
-    }
     return result;
-  }, [notify, refreshNow, requireSnapshot]);
+  }, [refreshNow, requireSnapshot]);
 
   const saveInferenceSecret = useCallback(
     async function saveInferenceSecret(input: { endpoint: string; model: string; secret: string }) {
