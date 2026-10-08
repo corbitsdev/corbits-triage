@@ -32,7 +32,7 @@
   --heat-hover: #dd7a20;
   --heat-press: #bf6b20;
   --heat-ink: #1c0b06;
-  --heat-wash: #ead0c4;
+  --heat-wash: #fbe1c9;
   --rail: #0a0c11;
   --rail-text: #e8eaf0;
   --rail-mute: #8b909c;
@@ -40,7 +40,7 @@
   --rail-line: #16181e;
   --ok: #1d6b42;
   --bad: #b1352c;
-  --ring: #b83a0c;
+  --ring: #bf6b20;
   --background: var(--paper);
   --surface: var(--sheet);
   --surface-subtle: var(--inset);
