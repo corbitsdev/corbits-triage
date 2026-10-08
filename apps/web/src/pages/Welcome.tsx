@@ -32,13 +32,6 @@ export function Welcome() {
     void load();
   }, []);
 
-  useEffect(function markLoginRoom() {
-    document.body.dataset.room = "login";
-    return function unmarkLoginRoom() {
-      delete document.body.dataset.room;
-    };
-  }, []);
-
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
@@ -73,29 +66,27 @@ export function Welcome() {
 
   return (
     <div className="app is-auth">
-      <main className="login-room">
-        <div className="login-stage">
-          <div className="login-mark">
-            <img src="/corbits-mark.svg" width="40" height="40" alt="" />
-            <strong>corbits</strong>
-          </div>
-          <form
-            className="login-form"
-            aria-busy={pending}
-            onSubmit={(event) => void submit(event)}
-          >
-            <header className="login-head">
-              <h1>Classify every pull request.</h1>
-              <p>{creating ? "Create an account to set up triage for your GitHub repositories." : "Sign in to the triage queue for your GitHub repositories."}</p>
-            </header>
-            {methods?.google && (
-              <button type="button" className="btn primary" disabled={pending} onClick={() => void continueWithGoogle()}>
-                Continue with Google
-              </button>
-            )}
-            {methods?.emailPassword && <>
+      <main className="signin">
+        <span className="onboarding-brand">
+          <img src="/triage-logo.svg" width="26" height="26" alt="Corbits" />
+          Triage
+        </span>
+        <form
+          className="signin-form"
+          aria-busy={pending}
+          onSubmit={(event) => void submit(event)}
+        >
+          <h1>{creating ? "Create your Triage account" : "Sign in to Triage"}</h1>
+          <p>Every pull request sorted by what you need to do, with the reply already written.</p>
+          {methods?.google && (
+            <button type="button" className="btn primary large" disabled={pending} onClick={() => void continueWithGoogle()}>
+              <b aria-hidden="true">G</b> Continue with Google
+            </button>
+          )}
+          {methods?.google && methods.emailPassword && <div className="signin-or">or with email</div>}
+          {methods?.emailPassword && <>
             <label className="field">
-              Email
+              Work email
               <input
                 type="email"
                 autoComplete="username"
@@ -116,22 +107,21 @@ export function Welcome() {
                 aria-invalid={Boolean(localError || error)}
               />
             </label>
-            </>}
-            {(localError || error) && (
-              <p role="alert" className="field-error">
-                {localError || (error ? `Could not load your session. ${error} Reload the page to try again.` : "")}
-              </p>
-            )}
-            {methods?.emailPassword && <>
-            <button type="submit" className={methods.google ? "btn" : "btn primary"} disabled={pending}>
+          </>}
+          {(localError || error) && (
+            <p role="alert" className="field-error">
+              {localError || (error ? `Could not load your session. ${error} Reload the page to try again.` : "")}
+            </p>
+          )}
+          {methods?.emailPassword && <>
+            <button type="submit" className={methods.google ? "btn" : "btn primary large"} disabled={pending}>
               {creating ? (pending ? "Creating account…" : "Create account") : (pending ? "Signing in…" : "Sign in")}
             </button>
-            <button type="button" className="login-switch" onClick={toggleMode}>
+            <button type="button" className="signin-switch" onClick={toggleMode}>
               {creating ? "Have an account? Sign in" : "New here? Create an account"}
             </button>
-            </>}
-          </form>
-        </div>
+          </>}
+        </form>
       </main>
     </div>
   );
