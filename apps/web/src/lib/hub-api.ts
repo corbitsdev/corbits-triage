@@ -2,7 +2,6 @@ import {
   ApiError,
   findAwaitingSignal,
   listWorkflowDeployments,
-  listWorkflowRuns,
   readWorkflowRunEvents,
   triggerWorkflowRun,
   type Transport,
@@ -162,7 +161,6 @@ export type SectionDenied = {
   grants: boolean;
   approvals: boolean;
   runs: boolean;
-  logs: boolean;
 };
 
 export type PortalSnapshot = {
@@ -177,8 +175,6 @@ export type PortalSnapshot = {
   roles: HubRole[];
   approvals: HubApproval[];
   runs: HubRun[];
-  logs: RunLog[];
-  awaiting: Awaiting[];
   denied: SectionDenied;
 };
 
@@ -807,31 +803,6 @@ function isTerminalMailFailure(cause: unknown): boolean {
     || message.includes("no longer active");
 }
 
-/** The hub names every definition "corbits-triage"; the real workflow id is in the run's definitionHash (hex JSON). */
-export function workflowOf(log: RunLog): string | null {
-  const hash = obj(obj(log.events.find((e) => e.type === "RunStarted")).body).definitionHash;
-  if (typeof hash !== "string" || hash.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hash)) return null;
-  try {
-    const bytes = Uint8Array.from(hash.match(/../g) ?? [], (h) => parseInt(h, 16));
-    const id = obj(JSON.parse(new TextDecoder().decode(bytes))).id;
-    return typeof id === "string" ? id.split("__")[0] : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Runs with definitionName replaced by the workflow id decoded from their (or a sibling's) event log. */
-export function withWorkflowNames(runs: HubRun[], logs: RunLog[]): HubRun[] {
-  const byRun = new Map(runs.map((run) => [run.id, run.definitionId]));
-  const names = new Map<string, string>();
-  for (const log of logs) {
-    const definitionId = byRun.get(log.anchorRunId);
-    const name = workflowOf(log);
-    if (definitionId && name && !names.has(definitionId)) names.set(definitionId, name);
-  }
-  return runs.map((run) => ({ ...run, definitionName: names.get(run.definitionId) ?? run.definitionName }));
-}
-
 function byPreferredDeployment(
   a: { createdAt: string; id: string },
   b: { createdAt: string; id: string },
@@ -1103,36 +1074,6 @@ export async function resolveApproval(
   });
 }
 
-async function readLogs(transport: Transport, tenantId: string): Promise<RunLog[]> {
-  const deployments = await listWorkflowDeployments(transport, tenantId);
-  const logs: RunLog[] = [];
-  const seen = new Set<string>();
-  for (const deployment of deployments) {
-    let runIds: string[] = [];
-    try {
-      runIds = await listWorkflowRuns(transport, tenantId, deployment.id);
-    } catch (cause) {
-      if (cause instanceof ApiError && (cause.status === 404 || cause.status === 403)) continue;
-      throw cause;
-    }
-    if (runIds.length === 0) continue;
-    for (const eventRunId of runIds) {
-      if (seen.has(eventRunId)) continue;
-      seen.add(eventRunId);
-      try {
-        const log = await readWorkflowRunEvents(transport, tenantId, deployment.id, eventRunId);
-        if (log.runId !== eventRunId && seen.has(log.runId)) continue;
-        seen.add(log.runId);
-        logs.push({ runId: log.runId, anchorRunId: deployment.id, events: log.events });
-      } catch (cause) {
-        if (cause instanceof ApiError && (cause.status === 404 || cause.status === 403)) continue;
-        throw cause;
-      }
-    }
-  }
-  return logs;
-}
-
 function isAuthDenied(cause: unknown): boolean {
   return cause instanceof ApiError && cause.status === 403;
 }
@@ -1156,7 +1097,7 @@ export async function loadPortal(transport: Transport, workspace: Workspace): Pr
   const tenantId = requireTenantId(workspace.tenantId);
   const tid = enc(tenantId);
   const tenantFallback: TenantBody = { id: tenantId, name: "", slug: WORKSPACE_SLUG };
-  const [tenant, credentials, grants, principals, roles, approvals, runs, logs] = await Promise.all([
+  const [tenant, credentials, grants, principals, roles, approvals, runs] = await Promise.all([
     tolerateSection(transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`), tenantFallback),
     tolerateSection(listAll<HubCredential>(transport, `/api/tenants/${tid}/credentials`), []),
     tolerateSection(listAll<HubGrant>(transport, `/api/tenants/${tid}/grants`), []),
@@ -1164,19 +1105,7 @@ export async function loadPortal(transport: Transport, workspace: Workspace): Pr
     tolerateSection(listRoles(transport, tenantId), []),
     tolerateSection(listAll<HubApproval>(transport, `/api/tenants/${tid}/approvals`), []),
     tolerateSection(listAll<HubRun>(transport, `/api/tenants/${tid}/workflows/runs`), []),
-    tolerateSection(readLogs(transport, tenantId), []),
   ]);
-  const awaiting: Awaiting[] = [];
-  for (const log of logs.value) {
-    const signal = findAwaitingSignal(log.events);
-    if (!signal) continue;
-    awaiting.push({
-      runId: log.runId,
-      anchorRunId: log.anchorRunId,
-      seq: signal.seq,
-      signalName: signal.signalName,
-    });
-  }
   return {
     workspace,
     tenantName: tenant.value.name,
@@ -1188,16 +1117,13 @@ export async function loadPortal(transport: Transport, workspace: Workspace): Pr
     principals: principals.value,
     roles: roles.value,
     approvals: approvals.value,
-    runs: withWorkflowNames(runs.value, logs.value),
-    logs: logs.value,
-    awaiting,
+    runs: runs.value,
     denied: {
       repos: tenant.denied,
       credentials: credentials.denied,
       grants: grants.denied,
       approvals: approvals.denied,
       runs: runs.denied,
-      logs: logs.denied,
     },
   };
 }
@@ -1225,9 +1151,19 @@ function isPendingStatus(status: unknown): boolean {
 }
 
 /** Needs-review rows from pending approvals and awaited signals. All view never lists hub runs. */
-export function queueRows(snapshot: PortalSnapshot, needsHuman: boolean): QueueRow[] {
+export function awaitingOf(logs: RunLog[]): Awaiting[] {
+  const awaiting: Awaiting[] = [];
+  for (const log of logs) {
+    const signal = findAwaitingSignal(log.events);
+    if (!signal) continue;
+    awaiting.push({ runId: log.runId, anchorRunId: log.anchorRunId, seq: signal.seq, signalName: signal.signalName });
+  }
+  return awaiting;
+}
+
+export function queueRows(logs: RunLog[], approvals: HubApproval[], needsHuman: boolean): QueueRow[] {
   if (!needsHuman) return [];
-  const approvals = snapshot.approvals
+  const pending = approvals
     .filter((row) => isPendingStatus(row.status))
     .map((row) => ({
       id: row.id,
@@ -1235,13 +1171,13 @@ export function queueRows(snapshot: PortalSnapshot, needsHuman: boolean): QueueR
       meta: `${row.runId} · pending`,
       href: `/triage/pr/${row.id}`,
     }));
-  const signals = snapshot.awaiting.map((row) => ({
+  const signals = awaitingOf(logs).map((row) => ({
     id: `${row.runId}:${row.signalName}`,
     title: row.signalName,
     meta: `${row.runId} · seq ${row.seq}`,
     href: `/triage/action`,
   }));
-  return [...approvals, ...signals];
+  return [...pending, ...signals];
 }
 
 export type QueueState =
@@ -1466,9 +1402,9 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
  * overlay needs-human; they never decide the verdict. With the open pull
  * requests, unseen ones join as "new" and verdicts of closed ones stop needing a human.
  */
-export function projectQueue(snapshot: PortalSnapshot, openPulls?: OpenPulls): PrItem[] {
+export function projectQueue(runLogs: RunLog[], approvals: HubApproval[], openPulls?: OpenPulls): PrItem[] {
   const items = new Map<string, PrItem>();
-  const logs = snapshot.logs.map((log, i) => ({ log, i })).sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i);
+  const logs = runLogs.map((log, i) => ({ log, i })).sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i);
   for (const { log } of logs) {
     const started = log.events.find((e) => e.type === "RunStarted");
     const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
@@ -1509,7 +1445,7 @@ export function projectQueue(snapshot: PortalSnapshot, openPulls?: OpenPulls): P
       });
     }
   }
-  for (const approval of snapshot.approvals) {
+  for (const approval of approvals) {
     if (!isGithubWriteApproval(approval) || !isPendingStatus(approval.status)) continue;
     const args = obj(approval.toolArguments);
     const item = items.get(`${args.repo}#${args.number}`);
@@ -1608,10 +1544,10 @@ export function auditSummary(event: WorkflowRunEvent): string {
   return detail ? `${event.type} ${body.stepId}: ${detail}` : `${event.type} ${body.stepId}`;
 }
 
-export function auditTimeline(snapshot: PortalSnapshot): AuditEntry[] {
+export function auditTimeline(logs: RunLog[], approvals: HubApproval[]): AuditEntry[] {
   const entries: AuditEntry[] = [];
   const received = new Set<string>();
-  for (const log of snapshot.logs) {
+  for (const log of logs) {
     for (const event of log.events) {
       if (event.type === "SignalReceived") {
         const key = `${obj(event.body).signalName}:${obj(event.body).signalId}`;
@@ -1628,7 +1564,7 @@ export function auditTimeline(snapshot: PortalSnapshot): AuditEntry[] {
       });
     }
   }
-  for (const a of snapshot.approvals) {
+  for (const a of approvals) {
     entries.push({
       id: a.id,
       source: "approval",

@@ -1,4 +1,4 @@
-import { projectQueue, type HubRun, type PortalSnapshot, type RunLog } from "./hub-api.ts";
+import { projectQueue, type HubRun, type RunLog } from "./hub-api.ts";
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -33,18 +33,18 @@ function isLiveStatus(status: string): boolean {
 }
 
 /** Body children bound by `{ kind: "backlog", repo }` on their own events (`log.runId === run.id`). */
-function bodyRunsForRepo(snapshot: PortalSnapshot, repoName: string): HubRun[] {
+function bodyRunsForRepo(logs: RunLog[], runs: HubRun[], repoName: string): HubRun[] {
   const runIds = new Set(
-    snapshot.logs.filter((log) => backlogRepoFromLog(log) === repoName).map((log) => log.runId),
+    logs.filter((log) => backlogRepoFromLog(log) === repoName).map((log) => log.runId),
   );
-  return snapshot.runs.filter((run) => runIds.has(run.id));
+  return runs.filter((run) => runIds.has(run.id));
 }
 
 /**
  * True while a pr-triage-historical run for this repository is live and the
  * projected queue has no item for it yet.
  */
-export function isRepoCatchingUp(snapshot: PortalSnapshot, repoName: string): boolean {
-  if (projectQueue(snapshot).some((item) => item.repo === repoName)) return false;
-  return bodyRunsForRepo(snapshot, repoName).some((run) => isLiveStatus(run.status));
+export function isRepoCatchingUp(logs: RunLog[], runs: HubRun[], repoName: string): boolean {
+  if (projectQueue(logs, []).some((item) => item.repo === repoName)) return false;
+  return bodyRunsForRepo(logs, runs, repoName).some((run) => isLiveStatus(run.status));
 }

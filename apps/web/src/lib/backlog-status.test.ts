@@ -1,22 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { isRepoCatchingUp } from "./backlog-status.ts";
-import type { HubRun, PortalSnapshot, RunLog } from "./hub-api.ts";
+import type { HubRun, RunLog } from "./hub-api.ts";
 
-const emptySnapshot = (overrides: Partial<PortalSnapshot> = {}): PortalSnapshot => ({
-  workspace: { tenantId: "tenant", principalId: "principal", userId: "user" },
-  tenantName: "Acme",
-  repos: [],
-  credentials: [],
-  grants: [],
-  principals: [],
-  roles: [],
-  approvals: [],
-  runs: [],
-  logs: [],
-  awaiting: [],
-  denied: { repos: false, credentials: false, grants: false, approvals: false, runs: false, logs: false },
-  ...overrides,
-});
+type Source = { logs?: RunLog[]; runs?: HubRun[] };
+
+const catchingUp = (source: Source, repo: string) => isRepoCatchingUp(source.logs ?? [], source.runs ?? [], repo);
 
 const backlogRun = (status: string): HubRun => ({
   id: "run-backlog",
@@ -34,17 +22,15 @@ const backlogLog = (repo: string): RunLog => ({
 
 describe("isRepoCatchingUp", () => {
   test("a live pr-triage-historical run for that repo is catching up", () => {
-    const snapshot = emptySnapshot({
-      repos: [{ name: "acme/widgets", connected: true }],
+    const source = {
       runs: [backlogRun("running")],
       logs: [backlogLog("acme/widgets")],
-    });
-    expect(isRepoCatchingUp(snapshot, "acme/widgets")).toBe(true);
+    };
+    expect(catchingUp(source, "acme/widgets")).toBe(true);
   });
 
   test("H1: running listener parent does not keep a completed 0-PR child catching up", () => {
-    const snapshot = emptySnapshot({
-      repos: [{ name: "acme/widgets", connected: true }],
+    const source = {
       runs: [
         {
           id: "deploy-backlog",
@@ -74,13 +60,12 @@ describe("isRepoCatchingUp", () => {
           ],
         },
       ],
-    });
-    expect(isRepoCatchingUp(snapshot, "acme/widgets")).toBe(false);
+    };
+    expect(catchingUp(source, "acme/widgets")).toBe(false);
   });
 
   test("H4: unbound log without kind:backlog does not invent a live run", () => {
-    const snapshot = emptySnapshot({
-      repos: [{ name: "acme/widgets", connected: true }],
+    const source = {
       logs: [
         {
           runId: "run-other",
@@ -88,7 +73,7 @@ describe("isRepoCatchingUp", () => {
           events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: JSON.stringify({ repo: "acme/widgets" }) } } }],
         },
       ],
-    });
-    expect(isRepoCatchingUp(snapshot, "acme/widgets")).toBe(false);
+    };
+    expect(catchingUp(source, "acme/widgets")).toBe(false);
   });
 });

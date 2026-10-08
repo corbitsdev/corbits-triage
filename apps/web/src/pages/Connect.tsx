@@ -17,6 +17,7 @@ import {
 } from "../lib/github-manifest.ts";
 import { useGithubSync } from "../lib/github-sync.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { useRunLogs } from "../lib/run-logs.ts";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
 
@@ -66,8 +67,9 @@ export default function Connect() {
   const [webhookUrlNotice, setWebhookUrlNotice] = useState("");
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
-  const items = snapshot ? projectQueue(snapshot) : [];
-  const githubReady = repos.some((repo) => hasVerifiedWebhookDelivery(snapshot?.logs ?? [], repo.name));
+  const { logs } = useRunLogs(snapshot?.workspace.tenantId);
+  const items = snapshot ? projectQueue(logs, snapshot.approvals) : [];
+  const githubReady = repos.some((repo) => hasVerifiedWebhookDelivery(logs, repo.name));
   const modelStored = hasDecisionModelCredential(snapshot?.credentials ?? []);
   const inferenceReady = hasObservedInference(items);
   const liveReady = githubReady && inferenceReady;
@@ -243,7 +245,7 @@ export default function Connect() {
   }
 
   function renderInstallRow(repo: RepoRecord) {
-    const catchingUp = snapshot ? isRepoCatchingUp(snapshot, repo.name) : false;
+    const catchingUp = snapshot ? isRepoCatchingUp(logs, snapshot.runs, repo.name) : false;
     return <div key={repo.name} className="install-row"><strong className="mono">{repo.name}</strong><span className={`status-badge${catchingUp ? "" : " status-ok"}`}><span aria-hidden="true" />{catchingUp ? "Catching up open pull requests…" : "Connected"}</span></div>;
   }
 

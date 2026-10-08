@@ -10,9 +10,11 @@ import { repoNeedsCheckSetup } from "../lib/check-pack.ts";
 import { useGithubSync } from "../lib/github-sync.ts";
 import { useQueueItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { useRunLogs } from "../lib/run-logs.ts";
 
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
+  const { logs } = useRunLogs(snapshot?.workspace.tenantId);
   const repos = snapshot?.repos ?? [];
   const denied = snapshot?.denied.repos ?? false;
   const [opening, setOpening] = useState(false);
@@ -47,8 +49,8 @@ export default function Repositories() {
   function renderRepoCard(repo: RepoRecord) {
     const needsSetup = repoNeedsCheckSetup(repo);
     const to = `/repositories/${encodeURIComponent(repo.name)}${needsSetup ? "/setup" : ""}`;
-    const receivingEvents = hasVerifiedWebhookDelivery(snapshot?.logs ?? [], repo.name);
-    const catchingUp = snapshot ? isRepoCatchingUp(snapshot, repo.name) : false;
+    const receivingEvents = hasVerifiedWebhookDelivery(logs, repo.name);
+    const catchingUp = snapshot ? isRepoCatchingUp(logs, snapshot.runs, repo.name) : false;
     const disabled = !needsSetup && !repoPolicy(repo).enabled;
     const status = needsSetup ? "Needs setup" : disabled ? "Disabled" : catchingUp ? "Catching up open pull requests" : receivingEvents ? "Receiving events" : "Ready";
     const open = items.filter((item) => item.repo === repo.name);

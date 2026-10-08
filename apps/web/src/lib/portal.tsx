@@ -34,6 +34,7 @@ import type { CreateGrantInput } from "./grant-actions.ts";
 import { ensureWorkflows, suggestOfferings } from "./workflow-deploy.ts";
 import { hasDecisionModelCredential } from "./decision-models.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
+import { invalidateRunLogs } from "./run-logs.ts";
 import type { RepoPolicy } from "@corbits/triage-contracts";
 
 interface PortalContextValue {
@@ -107,9 +108,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(function refresh() {
     void queryClient.invalidateQueries({ queryKey: PORTAL_QUERY_KEY });
+    void invalidateRunLogs(queryClient);
   }, [queryClient]);
   const refreshNow = useCallback(async function refreshNow() {
     await queryClient.invalidateQueries({ queryKey: PORTAL_QUERY_KEY });
+    await invalidateRunLogs(queryClient);
     return queryClient.fetchQuery({
       queryKey: PORTAL_QUERY_KEY,
       queryFn: loadSnapshot,
