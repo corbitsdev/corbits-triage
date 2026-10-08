@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { filterTriageItems, sortTriageItems } from "../lib/triage-view.ts";
 
 describe("Triage board filters", () => {
-  test("splits requires-action, ready-to-merge, and all with humans first", () => {
+  test("shows every triaged pull request, ready to merge, and all with humans first", () => {
     const human = {
       key: "acme/widgets#8",
       repo: "acme/widgets",
@@ -27,13 +27,15 @@ describe("Triage board filters", () => {
     };
     const ready = { ...human, key: "acme/widgets#9", number: 9, state: "ready" as const, needsHuman: false, priority: "P3", pendingApprovalId: null };
     const stale = { ...human, key: "acme/widgets#10", number: 10, state: "stale" as const, needsHuman: false, priority: "P2", pendingApprovalId: null };
-    const items = [ready, stale, human];
-    expect(filterTriageItems(items, "action").map((item) => item.key)).toEqual(["acme/widgets#8"]);
+    const untriaged = { ...human, key: "acme/widgets#11", number: 11, state: "new" as const, needsHuman: false, priority: null, pendingApprovalId: null };
+    const items = [ready, stale, human, untriaged];
+    expect(filterTriageItems(items, "action").map((item) => item.key)).toEqual(["acme/widgets#9", "acme/widgets#10", "acme/widgets#8"]);
     expect(filterTriageItems(items, "merge").map((item) => item.key)).toEqual(["acme/widgets#9"]);
     expect(sortTriageItems(filterTriageItems(items, "all")).map((item) => item.key)).toEqual([
       "acme/widgets#8",
       "acme/widgets#10",
       "acme/widgets#9",
+      "acme/widgets#11",
     ]);
   });
 });
