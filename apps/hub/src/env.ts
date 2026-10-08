@@ -1,8 +1,17 @@
 import { type, type ArkError } from "arktype";
+import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 
 const secret = type("string").narrow((value, ctx) =>
   /^[0-9a-fA-F]{64}$/.test(value) || ctx.mustBe("32 bytes encoded as 64 hexadecimal characters"));
+
+const positiveInteger = type("string.integer").narrow((value, ctx) =>
+  Number(value) > 0 || ctx.mustBe("a positive integer"));
+
+const lifecycleDuration = type("string.trim").pipe(LifecycleDuration);
+
+const maxLifetime = lifecycleDuration.narrow((value, ctx) =>
+  lifecycleDurationMs(value) > 0 || ctx.mustBe("greater than zero"));
 
 const HubEnvSchema = type({
   DATABASE_URL: type("string").narrow((value, ctx) =>
@@ -21,9 +30,16 @@ const HubEnvSchema = type({
   "AUTH_ALLOWED_EMAILS?": "string",
   "GITHUB_API_ORIGIN?": "string.url",
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
-  "HUB_MAX_TARBALL_BYTES?": "string.integer",
-  "HUB_SIDECAR_STOP_TIMEOUT_MS?": type("string.integer").narrow((value, ctx) =>
-    Number(value) > 0 || ctx.mustBe("a positive integer")),
+  "HUB_MAX_TARBALL_BYTES?": positiveInteger,
+  "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
+  "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
+  "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
+  "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
+  "HUB_PROBE_TIMEOUT_MS?": positiveInteger,
+  "WORKFLOW_DEFAULT_MAX_LIFETIME?": maxLifetime,
+  "WORKFLOW_DEFAULT_RETENTION_COMPLETED?": lifecycleDuration,
+  "WORKFLOW_DEFAULT_RETENTION_FAILED?": lifecycleDuration,
+  "WORKFLOW_DEFAULT_RETENTION_CANCELLED?": lifecycleDuration,
   "PG_SCHEMA?": "string",
   "DB_STATEMENT_TIMEOUT_MS?": "string.integer",
 });
@@ -108,5 +124,48 @@ export function signInSettings(env: HubEnv): SignInSettings {
   return {
     ...(clientId !== undefined && clientSecret !== undefined && { google: { clientId, clientSecret } }),
     ...(allowedEmails !== undefined && { allowedEmails }),
+  };
+}
+
+export type InterchangeSettings = {
+  port: number;
+  dataDir: string;
+  principalKeyEncryptionKey: string;
+  maxTarballBytes: number;
+  agentGc: { packThreshold: number; looseThreshold: number; warnBytes: number };
+  probeTimeoutMs?: number;
+  sidecarWebSocketUrl: string;
+  defaultLifecyclePolicy: ResolvedWorkflowLifecyclePolicy;
+};
+
+function numberOr(value: string | undefined, stock: number): number {
+  return value === undefined ? stock : Number(value);
+}
+
+/** Unset values keep Interchange's stock defaults. */
+export function interchangeSettings(env: HubEnv): InterchangeSettings {
+  const port = Number(env.PORT);
+  return {
+    port,
+    dataDir: env.HUB_DATA_DIR,
+    principalKeyEncryptionKey: env.PRINCIPAL_KEY_ENCRYPTION_KEY,
+    // Tool packages are the curated subset the operator vets, so an upload past
+    // 10 MiB is far more likely misuse than a legitimate build.
+    maxTarballBytes: numberOr(env.HUB_MAX_TARBALL_BYTES, 10 * 1024 * 1024),
+    agentGc: {
+      packThreshold: numberOr(env.HUB_AGENT_GC_PACK_THRESHOLD, 64),
+      looseThreshold: numberOr(env.HUB_AGENT_GC_LOOSE_THRESHOLD, 2048),
+      warnBytes: numberOr(env.HUB_AGENT_GC_WARN_BYTES, 256 * 1024 * 1024),
+    },
+    ...(env.HUB_PROBE_TIMEOUT_MS !== undefined && { probeTimeoutMs: Number(env.HUB_PROBE_TIMEOUT_MS) }),
+    sidecarWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? `ws://127.0.0.1:${port}/api/sidecars/ws`,
+    defaultLifecyclePolicy: {
+      maxLifetime: env.WORKFLOW_DEFAULT_MAX_LIFETIME ?? "7d",
+      capacityRetention: {
+        completed: env.WORKFLOW_DEFAULT_RETENTION_COMPLETED ?? "30m",
+        failed: env.WORKFLOW_DEFAULT_RETENTION_FAILED ?? "24h",
+        cancelled: env.WORKFLOW_DEFAULT_RETENTION_CANCELLED ?? "1h",
+      },
+    },
   };
 }

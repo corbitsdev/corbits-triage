@@ -25,6 +25,16 @@ Public surface:
 - `walkCapabilities(workflow, registry, pluginDefs)` — the pure
   capability walk; reused to populate per-step capability declarations
   and as the input to the approval gate.
+- `collectDeclaredResources(definition, directors, pluginDefs)` /
+  `collectDeclaredCredentialConsumers(definition, directors, pluginDefs)` /
+  `filterGrantsToDeclaredResources(parentGrants, declared, credentialConsumers)`
+  — cap a spawned child's inherited grants at what the child body
+  declares. The resource collector walks declared grant strings. The
+  consumer collector returns `toolConsumer(factory.id)` for each factory
+  the pre-rewrite body instantiates. The filter removes a
+  non-credential `allow` only when its pattern covers none of the
+  declared set, removes a `credential:` `allow` unless `conditions.tool`
+  equals one of those consumers, and keeps every `deny` and `ask`.
 - `createApprovalSet(grants, requirements)` — the edge of the approval
   vocabulary. An `ApprovalSet` is one approved surface behind one operator
   decision, carrying the two kinds of approved item in two fields:

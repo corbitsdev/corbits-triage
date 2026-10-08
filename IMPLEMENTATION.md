@@ -9,7 +9,7 @@ Bun, TypeScript, Postgres, React + Vite. Interchange is consumed from
 | --- | --- |
 | `src/env.ts` | Only reader of the environment. arktype schema; `databaseConfig` parses `DATABASE_URL`. |
 | `src/server.ts` | Composition root: loads env, runs migrations, builds every component and injects config. |
-| `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database config injected. |
+| `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database config, auth config, credential cipher and Interchange settings injected. |
 | `src/auth.ts` | better-auth config: stock settings, optional Google sign-in and email allowlist, `PORTAL_ORIGIN` as a trusted origin. |
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
 | `src/hooks.ts` | `@corbits/webhooks` mount and its migrations. |
@@ -28,7 +28,15 @@ Required: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`,
 `BETTER_AUTH_BASE_URL`, `PORT`, `HUB_DATA_DIR`.
 
 Optional: `PORTAL_DIR`, `PORTAL_ORIGIN`, `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`, `AUTH_ALLOWED_EMAILS`, `GITHUB_API_ORIGIN` (emulator), `HUB_SIDECAR_WEBSOCKET_URL`,
-`HUB_MAX_TARBALL_BYTES`, `PG_SCHEMA`, `DB_STATEMENT_TIMEOUT_MS`.
+`HUB_SIDECAR_STOP_TIMEOUT_MS` (25000), `PG_SCHEMA`, `DB_STATEMENT_TIMEOUT_MS` (60000).
+
+Optional Interchange settings (unset keeps the stock default):
+`HUB_MAX_TARBALL_BYTES` (10485760), `HUB_AGENT_GC_PACK_THRESHOLD` (64),
+`HUB_AGENT_GC_LOOSE_THRESHOLD` (2048), `HUB_AGENT_GC_WARN_BYTES` (268435456),
+`HUB_PROBE_TIMEOUT_MS` (60000), `WORKFLOW_DEFAULT_MAX_LIFETIME` (`7d`),
+`WORKFLOW_DEFAULT_RETENTION_COMPLETED` (`30m`),
+`WORKFLOW_DEFAULT_RETENTION_FAILED` (`24h`),
+`WORKFLOW_DEFAULT_RETENTION_CANCELLED` (`1h`).
 
 GitHub App credentials are not environment: they live in the hub vault as
 provider `github` (`{"appId","privateKey"}`) and `github-hook` (webhook
@@ -83,7 +91,7 @@ deployment resolves its offering when deployed.
 | --- | --- | --- |
 | PR #193 / INTR-581 | Custom directors | 2026-11-01 |
 | INTR-583 | Operator-registered model provider plugins | 2026-11-01 |
-| INTR-647 | Keep tool-scoped credential grants in spawned children | 2026-11-01 |
+| CL-10178 | Run-scoped `onTrigger` child run ids, with backward-compatible resume | 2026-11-01 |
 
 ## Deployment
 

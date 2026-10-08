@@ -41,7 +41,7 @@ import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
 import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
-import { databaseConfig, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings } from "./env.js";
+import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
@@ -125,6 +125,7 @@ const portalOrigin = env.PORTAL_ORIGIN === undefined ? [] : [new URL(env.PORTAL_
 const signIn = signInSettings(env);
 const composition = await createInterchangeHub({
   database,
+  settings: interchangeSettings(env),
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin },
   credentialCipher,
   sidecarProvisioners: [local.provisioner],

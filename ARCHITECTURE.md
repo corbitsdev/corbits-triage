@@ -82,5 +82,3 @@ the deltas in `vendor/interchange/VENDORED.md`, each with a kill date.
 ## Known gaps
 
 - A hub restart leaves deployments marked live with no sidecar.
-- INTR-647: the stock child-grant cap drops credential grants in
-  `onTrigger` bodies; carried as a vendor patch.

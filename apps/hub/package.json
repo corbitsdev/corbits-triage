@@ -16,7 +16,7 @@
     "@corbits/rule-packs": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@corbits/triage-workflows": "workspace:*",
-    "@corbits/webhooks": "0.2.0",
+    "@corbits/webhooks": "0.3.0",
     "@intx/authz": "workspace:*",
     "@intx/crypto": "0.4.0",
     "@intx/db": "workspace:*",

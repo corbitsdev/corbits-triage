@@ -27,7 +27,7 @@
         "@corbits/rule-packs": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-workflows": "workspace:*",
-        "@corbits/webhooks": "0.2.0",
+        "@corbits/webhooks": "0.3.0",
         "@intx/authz": "workspace:*",
         "@intx/crypto": "0.4.0",
         "@intx/db": "workspace:*",
@@ -513,7 +513,7 @@
       "version": "0.4.0",
       "dependencies": {
         "@intx/agent": "workspace:*",
-        "@intx/tool-packaging": "workspace:*",
+        "@intx/authz": "workspace:*",
         "@intx/types": "workspace:*",
         "@intx/workflow": "workspace:*",
       },
@@ -526,7 +526,9 @@
       "version": "0.4.0",
       "dependencies": {
         "@intx/agent": "workspace:*",
+        "@intx/authz": "workspace:*",
         "@intx/crypto": "workspace:*",
+        "@intx/harness": "workspace:*",
         "@intx/hub-sessions": "workspace:*",
         "@intx/inference": "workspace:*",
         "@intx/log": "workspace:*",
@@ -652,7 +654,7 @@
 
     "@corbits/web": ["@corbits/web@workspace:apps/web"],
 
-    "@corbits/webhooks": ["@corbits/webhooks@0.2.0", "", { "peerDependencies": { "@intx/crypto": "^0.4.0", "@intx/db": "^0.4.0", "@intx/hub-api": "^0.4.0", "@intx/hub-common": "^0.4.0", "@intx/mime": "^0.4.0", "@intx/types": "^0.4.0", "drizzle-orm": "^0.45.1", "hono": "^4.11.9", "postgres": "^3.4.8" } }, "sha512-pUJLn8ckJBdpmJ7ARMW3IBsXfvHEJGs0xMhpqZtAKaEQkHbAMD6LFg773/EQuwH84J9te7Rm8BiO5ijoRN75gw=="],
+    "@corbits/webhooks": ["@corbits/webhooks@0.3.0", "", { "peerDependencies": { "@intx/crypto": "^0.4.0", "@intx/db": "^0.4.0", "@intx/hub-api": "^0.4.0", "@intx/hub-common": "^0.4.0", "@intx/hub-sessions": "^0.4.0", "@intx/mime": "^0.4.0", "@intx/types": "^0.4.0", "drizzle-orm": "^0.45.1", "hono": "^4.11.9", "postgres": "^3.4.8" } }, "sha512-9GC/1xezt1LqRE6kjbw4Ztw1ck9NWN7MkV8w5aiky2zmDZlBVCZef1zKYiKTd0GsnAoHuKbK4gD6HzAHOejhrg=="],
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 

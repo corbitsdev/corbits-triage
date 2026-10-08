@@ -72,14 +72,28 @@ import {
   signalName,
 } from "@intx/types";
 import { RepoId, type CredentialDelivery } from "@intx/types/sidecar";
-import type {
-  ApprovalSnapshot,
-  InferenceSource,
-  Mail,
-  MessageHeaders,
-  OutboundMessage,
+import { inboundMessageToRaw } from "@intx/mail-memory";
+import {
+  executeSearch,
+  executeThread,
+  fetchFull,
+  fetchHeaders,
+  fetchPart,
+  fetchStructure,
+  type StoredEnvelope,
+} from "@intx/mailbox";
+import {
+  isMessageTransportError,
+  type ApprovalSnapshot,
+  type InferenceSource,
+  type InboundMessage,
+  type Mail,
+  type MessageHeaders,
+  type MessagePart,
+  type MessageTransportCondition,
+  type OutboundMessage,
+  type SearchQuery,
 } from "@intx/types/runtime";
-import type { StoredEnvelope } from "@intx/mailbox";
 import type { CancelOrigin } from "@intx/workflow";
 
 import {
@@ -104,11 +118,16 @@ import { buildChildSpawnEnv } from "./spawn-env";
 import { compactRunEvents } from "./run-event-compaction";
 import { recoverInterruptedCompactions } from "./run-event-recovery";
 import { decodeMail } from "@intx/mime";
-import { commitMail, InvalidMailError } from "../adapters/mail-part-store";
+import {
+  commitMail,
+  createMailPartReader,
+  InvalidMailError,
+} from "../adapters/mail-part-store";
 import { mergeCredentialDelivery } from "../child/credential-cell";
 import {
   createSubstrateMailboxStore,
   MAILBOX_INBOX_DIR,
+  type MailboxSyncResult,
   type SubstrateMailboxStore,
 } from "../adapters/substrate-mailbox-store";
 import {
@@ -242,7 +261,8 @@ export interface WorkflowSupervisor {
    * Used by the host directly for `supervisor-operator` and `hub-
    * admin` origins; the `self` origin is invoked indirectly by the
    * supervisor when the child requests cancellation over the
-   * control IPC.
+   * control IPC. An active child's runtime writer is flushed and paused before
+   * the signed append. The caller owns the deadline for an unresponsive child.
    */
   requestCancel(opts: CancelRequestOpts): Promise<CancelCommitInfo>;
   /**
@@ -450,6 +470,255 @@ export type RecycleOpts = {
   origin?: RecycleOrigin;
 };
 
+type MailboxCallRequest = Extract<
+  ControlPayload,
+  { type: "mailbox.call.request" }
+>["data"];
+
+type MailboxCallResponse = Extract<
+  ControlPayload,
+  { type: "mailbox.call.response" }
+>["data"];
+
+type MailboxCallSuccess = Extract<MailboxCallResponse, { ok: true }>;
+
+type MailboxCallSearchQuery = Extract<
+  MailboxCallRequest,
+  { op: "search" }
+>["query"];
+
+/**
+ * Search dates arrive as strings. A bad one is a failed call, reported by the
+ * handler, rather than a schema rejection of the control frame.
+ */
+function reviveSearchDates(query: MailboxCallSearchQuery): SearchQuery {
+  const revived: SearchQuery = {};
+  if (query.from !== undefined) revived.from = query.from;
+  if (query.to !== undefined) revived.to = query.to;
+  if (query.cc !== undefined) revived.cc = query.cc;
+  if (query.bcc !== undefined) revived.bcc = query.bcc;
+  if (query.header !== undefined) {
+    revived.header = {
+      field: query.header.field,
+      contains: query.header.contains,
+    };
+  }
+  if (query.before !== undefined)
+    revived.before = reviveSearchDate(query.before);
+  if (query.after !== undefined) revived.after = reviveSearchDate(query.after);
+  if (query.on !== undefined) revived.on = reviveSearchDate(query.on);
+  if (query.sentBefore !== undefined) {
+    revived.sentBefore = reviveSearchDate(query.sentBefore);
+  }
+  if (query.sentAfter !== undefined) {
+    revived.sentAfter = reviveSearchDate(query.sentAfter);
+  }
+  if (query.sentOn !== undefined)
+    revived.sentOn = reviveSearchDate(query.sentOn);
+  if (query.hasFlags !== undefined) revived.hasFlags = query.hasFlags;
+  if (query.missingFlags !== undefined)
+    revived.missingFlags = query.missingFlags;
+  if (query.body !== undefined) revived.body = query.body;
+  if (query.text !== undefined) revived.text = query.text;
+  if (query.largerThan !== undefined) revived.largerThan = query.largerThan;
+  if (query.smallerThan !== undefined) revived.smallerThan = query.smallerThan;
+  if (query.and !== undefined) revived.and = query.and.map(reviveSearchDates);
+  if (query.or !== undefined) revived.or = query.or.map(reviveSearchDates);
+  if (query.not !== undefined) revived.not = reviveSearchDates(query.not);
+  return revived;
+}
+
+function reviveSearchDate(value: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid search date ${JSON.stringify(value)}`);
+  }
+  return date;
+}
+
+function missingMailbox(name: string): string {
+  return `Mailbox "${name}" does not exist`;
+}
+
+/**
+ * The supervisor's mailbox policy. A refusal is the whole answer: the caller
+ * does not open the store. A name other than INBOX is not uniformly
+ * NONEXISTENT — creating a mailbox is CANNOT for every name, and deleting
+ * INBOX is CANNOT while deleting any other name is NONEXISTENT.
+ */
+function refuseMailboxCall(
+  data: MailboxCallRequest,
+): { condition: MessageTransportCondition; reason: string } | undefined {
+  switch (data.op) {
+    case "createMailbox":
+      return {
+        condition: "CANNOT",
+        reason: `Cannot create mailbox "${data.name}"`,
+      };
+    case "deleteMailbox":
+      if (data.name !== MAILBOX_INBOX_DIR) {
+        return { condition: "NONEXISTENT", reason: missingMailbox(data.name) };
+      }
+      return {
+        condition: "CANNOT",
+        reason: `Cannot delete mailbox "${data.name}"`,
+      };
+    case "move":
+    case "copy":
+      return refuseMoveOrCopy(data.ref.mailbox, data.toMailbox);
+    case "createList":
+    case "listMembers":
+    case "subscribe":
+    case "unsubscribe":
+      return {
+        condition: "CANNOT",
+        reason: "Distribution list management is not implemented",
+      };
+    case "search":
+    case "thread":
+    case "sync":
+    case "getMailboxStatus":
+    case "append":
+    case "watch":
+      if (data.mailbox !== MAILBOX_INBOX_DIR) {
+        return {
+          condition: "NONEXISTENT",
+          reason: missingMailbox(data.mailbox),
+        };
+      }
+      return undefined;
+    case "fetchHeaders":
+    case "fetchStructure":
+    case "fetchPart":
+    case "fetchFull":
+      if (data.ref.mailbox !== MAILBOX_INBOX_DIR) {
+        return {
+          condition: "NONEXISTENT",
+          reason: missingMailbox(data.ref.mailbox),
+        };
+      }
+      return undefined;
+    case "listMailboxes":
+    case "readMailPart":
+      return undefined;
+  }
+}
+
+function refuseMoveOrCopy(
+  fromMailbox: string,
+  toMailbox: string,
+): { condition: MessageTransportCondition; reason: string } {
+  if (fromMailbox !== MAILBOX_INBOX_DIR) {
+    return { condition: "NONEXISTENT", reason: missingMailbox(fromMailbox) };
+  }
+  if (toMailbox !== MAILBOX_INBOX_DIR) {
+    return { condition: "NONEXISTENT", reason: missingMailbox(toMailbox) };
+  }
+  return {
+    condition: "CANNOT",
+    reason: `Cannot move/copy a message within "${MAILBOX_INBOX_DIR}"`,
+  };
+}
+
+function mailboxCallFailure(
+  data: MailboxCallRequest,
+  reason: string,
+  condition?: MessageTransportCondition,
+): Extract<MailboxCallResponse, { ok: false }> {
+  if (condition === undefined) {
+    return { requestId: data.requestId, ok: false, op: data.op, reason };
+  }
+  return {
+    requestId: data.requestId,
+    ok: false,
+    op: data.op,
+    reason,
+    condition,
+  };
+}
+
+function projectFetchedMessage(
+  message: InboundMessage,
+): Extract<MailboxCallSuccess, { op: "fetchFull" }>["value"] {
+  const value: Extract<MailboxCallSuccess, { op: "fetchFull" }>["value"] = {
+    ref: message.ref,
+    headers: message.headers,
+    flags: message.flags,
+    signatureStatus: message.signatureStatus,
+  };
+  if (message.content !== undefined) value.content = message.content;
+  if (message.payload !== undefined) value.payload = message.payload;
+  if (message.attachments !== undefined) {
+    value.attachments = message.attachments.map((attachment) => {
+      const projected: {
+        name: string;
+        contentType: string;
+        dataBase64: string;
+        part?: string;
+      } = {
+        name: attachment.name,
+        contentType: attachment.contentType,
+        dataBase64: base64Encode(attachment.data),
+      };
+      if (attachment.part !== undefined) projected.part = attachment.part;
+      return projected;
+    });
+  }
+  return value;
+}
+
+/**
+ * The store reports one delta of new arrivals and flag changes together, and
+ * its flags are a `Set` (which JSON would encode as `{}`). Split on the
+ * caller's `uidNext` and copy the flags out as arrays. The caller receives
+ * the finished sync result.
+ */
+function syncResultForCaller(
+  mailbox: string,
+  uidNext: number,
+  result: MailboxSyncResult,
+): Extract<MailboxCallSuccess, { op: "sync" }>["value"] {
+  if (result.resync) {
+    return {
+      vanished: [],
+      changed: [],
+      newMessages: result.messages.map((message) => ({
+        uid: message.uid,
+        mailbox,
+      })),
+      fullResyncRequired: true,
+    };
+  }
+  const newMessages: { uid: number; mailbox: string }[] = [];
+  const changed: { uid: number; flags: string[] }[] = [];
+  for (const message of result.changed) {
+    if (message.uid >= uidNext) {
+      newMessages.push({ uid: message.uid, mailbox });
+    } else {
+      changed.push({ uid: message.uid, flags: Array.from(message.flags) });
+    }
+  }
+  return {
+    vanished: [...result.vanished],
+    changed,
+    newMessages,
+    fullResyncRequired: false,
+  };
+}
+
+function projectPart(
+  part: MessagePart,
+): Extract<MailboxCallSuccess, { op: "fetchPart" }>["value"] {
+  const value: Extract<MailboxCallSuccess, { op: "fetchPart" }>["value"] = {
+    contentType: part.contentType,
+    contentBase64: base64Encode(part.content),
+  };
+  if (part.encoding !== undefined) value.encoding = part.encoding;
+  if (part.filename !== undefined) value.filename = part.filename;
+  if (part.disposition !== undefined) value.disposition = part.disposition;
+  return value;
+}
+
 /**
  * Construct a per-deployment supervisor. All host-specific
  * dependencies are pulled in via `bindings`; nothing in the
@@ -459,6 +728,10 @@ export function createWorkflowSupervisor(
   bindings: WorkflowSupervisorBindings,
 ): WorkflowSupervisor {
   let state: SupervisorState = { phase: "idle" };
+  let shutdownPromise: Promise<void> | null = null;
+  // Replacement processes belong to shutdown before their ready handshake
+  // transfers ownership to the active state.
+  const uninstalledChildren = new Set<SubprocessHandle>();
   // The live credential delivery to seed the child on every spawn and every
   // pre-trigger barrier. Initialized from the deploy-time delivery and MUTATED
   // by `deliverCredentials` on every runtime update, so a mid-life revocation or
@@ -1036,43 +1309,41 @@ export function createWorkflowSupervisor(
       // cannot saturate the host.
       const crashCount = crashTimestamps.length;
       logger.error`workflow-process crash-looped: ${String(crashCount)} unexpected exits within ${String(crashLoopWindowMs)}ms; stopping the deployment (${reason})`;
+      // The RunFailed tombstone is the SOLE durable, externally-queryable
+      // signal of the crash-loop (the `crash-looping` phase is in-memory
+      // only). Shutdown commits it once teardown has quiesced the drain
+      // accumulators, so no escalation commit races this write, and before
+      // it resolves or reports the self-termination, so a host that then
+      // reads the deployment's history finds it. Best-effort: the deployment
+      // is already terminal, so the write not landing costs observability,
+      // not correctness.
       await shutdownInternal({
         reason: `crash-loop: ${reason}`,
         terminalPhase: "crash-looping",
         selfTerminated: true,
+        terminalCommit: async () => {
+          // `anchorRunId` and the tombstone's `runId` are DISTINCT ids and
+          // must not be conflated. `bindings.anchorRunId` is the workflow-run
+          // repo slug (`deriveWorkflowRunRepoId`), which the supervisor
+          // principal's authz check keys on (`repoId.id === anchorRunId`).
+          // The RunFailed must land on the deployment's ONE top-level run,
+          // whose id is the local part of the deployment's mail address
+          // (`deriveWorkflowRunId`) -- the same id the dispatch loop writes
+          // every run event under. For a domain like `integration.interchange`
+          // the two ids differ (the repo slug carries a domain suffix), so
+          // writing the tombstone under the repo slug would strand it in a run
+          // subtree no reader consults.
+          await commitRunFailed({
+            substrate: bindings.repoStore,
+            repoId: bindings.workflowRunRepoId,
+            ref: bindings.workflowRunRef,
+            anchorRunId: bindings.anchorRunId,
+            runId: deriveWorkflowRunId(bindings.deploymentMailAddress),
+            at: new Date(nowMs).toISOString(),
+            message: `workflow-process crash-looped: ${String(crashCount)} unexpected exits within ${String(crashLoopWindowMs)}ms`,
+          });
+        },
       });
-      // Commit the RunFailed tombstone AFTER teardown: shutdownInternal has
-      // quiesced the drain accumulators (stop + await disposed), so the
-      // run-event tree is settled and no escalation commit races this write.
-      // This RunFailed is the SOLE durable, externally-queryable signal of
-      // the crash-loop (the `crash-looping` phase is in-memory only), so a
-      // failure to write it is logged loudly rather than swallowed. Best-
-      // effort: the deployment is already terminal, so the write not landing
-      // costs observability, not correctness.
-      try {
-        // `anchorRunId` and the tombstone's `runId` are DISTINCT ids and must
-        // not be conflated. `bindings.anchorRunId` is the workflow-run repo
-        // slug (`deriveWorkflowRunRepoId`), which the supervisor principal's
-        // authz check keys on (`repoId.id === anchorRunId`). The RunFailed must
-        // land on the deployment's ONE top-level run, whose id is the local
-        // part of the deployment's mail address (`deriveWorkflowRunId`) -- the
-        // same id the dispatch loop writes every run event under. For a domain
-        // like `integration.interchange` the two ids differ (the repo slug
-        // carries a domain suffix), so writing the tombstone under the repo
-        // slug would strand it in a run subtree no reader consults.
-        await commitRunFailed({
-          substrate: bindings.repoStore,
-          repoId: bindings.workflowRunRepoId,
-          ref: bindings.workflowRunRef,
-          anchorRunId: bindings.anchorRunId,
-          runId: deriveWorkflowRunId(bindings.deploymentMailAddress),
-          at: new Date(nowMs).toISOString(),
-          message: `workflow-process crash-looped: ${String(crashCount)} unexpected exits within ${String(crashLoopWindowMs)}ms`,
-        });
-      } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause);
-        logger.error`crash-loop RunFailed commit failed; deployment has no durable failure tombstone: ${message}`;
-      }
       return;
     }
     const thisBackoffMs = respawnBackoffMs;
@@ -1160,6 +1431,22 @@ export function createWorkflowSupervisor(
       });
     }
     return mailboxStore;
+  }
+
+  // The long-lived mirror drops a message's raw bytes on flush and cannot
+  // read them back: its committed-read snapshot was pinned when the mirror
+  // opened. A fetch, a search, or a reply's References lookup opens a fresh
+  // snapshot, which resolves the committed `<uid>.eml`. Pending mirror writes
+  // are flushed first so that snapshot includes them.
+  async function openCommittedMailbox(): Promise<SubstrateMailboxStore> {
+    const writer = await getMailboxStore();
+    if (writer.pendingWrites) await writer.flush();
+    return createSubstrateMailboxStore({
+      substrate: bindings.repoStore,
+      repoId: bindings.workflowRunRepoId,
+      principal: mailboxWritePrincipal,
+      ref: bindings.workflowRunRef,
+    });
   }
 
   function storedEnvelopeFromHeaders(
@@ -1404,6 +1691,12 @@ export function createWorkflowSupervisor(
     cohortBroadcaster: TerminalBroadcaster,
   ): Promise<void> {
     for await (const payload of iter) {
+      if (payload.type === "cancel.prepared") {
+        const pending = pendingCancellations.get(payload.data.requestId);
+        if (pending?.broadcaster === cohortBroadcaster)
+          pending.resolve(payload.data.error);
+        continue;
+      }
       if (payload.type === "recycle.request") {
         logger.info`workflow-process self-initiated recycle.request: ${payload.data.reason}`;
         // Run the recycle off the iterator's loop so the iterator can
@@ -1427,11 +1720,13 @@ export function createWorkflowSupervisor(
         // for this very write -- if the loop were blocked here, the
         // merge response could not be consumed and the write would
         // deadlock).
-        void handleSubstrateWriteRequest(payload.data).catch((cause) => {
-          const message =
-            cause instanceof Error ? cause.message : String(cause);
-          logger.error`substrate.write.request handler crashed: ${message}`;
-        });
+        ownDetachedWrite(
+          handleSubstrateWriteRequest(payload.data).catch((cause) => {
+            const message =
+              cause instanceof Error ? cause.message : String(cause);
+            logger.error`substrate.write.request handler crashed: ${message}`;
+          }),
+        );
         continue;
       }
       if (payload.type === "substrate.merge.response") {
@@ -1462,10 +1757,23 @@ export function createWorkflowSupervisor(
         // expunge. Run it off the iterator's loop so the iterator keeps
         // draining while the store flushes; the handler owns the
         // `mailbox.mutate.response` reply that resolves the child's awaiter.
-        void handleMailboxMutation(payload.data).catch((cause) => {
+        ownDetachedWrite(
+          handleMailboxMutation(payload.data).catch((cause) => {
+            const message =
+              cause instanceof Error ? cause.message : String(cause);
+            logger.error`mailbox.mutate.request handler crashed: ${message}`;
+          }),
+        );
+        continue;
+      }
+      if (payload.type === "mailbox.call.request") {
+        // A mailbox read, append, or refusal. Run it off the iterator so
+        // the pump keeps draining; the handler owns the
+        // `mailbox.call.response` that answers the request.
+        void handleMailboxCall(payload.data).catch((cause) => {
           const message =
             cause instanceof Error ? cause.message : String(cause);
-          logger.error`mailbox.mutate.request handler crashed: ${message}`;
+          logger.error`mailbox.call.request handler crashed: ${message}`;
         });
         continue;
       }
@@ -1592,6 +1900,37 @@ export function createWorkflowSupervisor(
     ) => void;
   };
   const pendingMerges = new Map<string, PendingMerge>();
+  const pendingCancellations = new Map<
+    string,
+    {
+      broadcaster: TerminalBroadcaster;
+      resolve: (error: string | undefined) => void;
+    }
+  >();
+  let cancellationSeq = 0;
+  const cancellationCommits = new Set<Promise<CancelCommitInfo>>();
+  // Repository writes started off the control pump. Each promise settles
+  // without rejecting; its handler logs any failure.
+  const detachedWrites = new Set<Promise<unknown>>();
+
+  function ownDetachedWrite(write: Promise<unknown>): void {
+    detachedWrites.add(write);
+    void write.then(() => {
+      detachedWrites.delete(write);
+    });
+  }
+
+  // Every dispatch loop still running. A recycle moves `state` to the
+  // replacement cohort while the retired loop finishes its last message.
+  const dispatchLoops = new Set<Promise<void>>();
+
+  function ownDispatchLoop(loop: Promise<void>): void {
+    dispatchLoops.add(loop);
+    const release = () => {
+      dispatchLoops.delete(loop);
+    };
+    void loop.then(release, release);
+  }
 
   /**
    * Reject every pending merge round-trip and every park-notify
@@ -1603,6 +1942,9 @@ export function createWorkflowSupervisor(
    * channel will never invoke.
    */
   function rejectCohortAwaiters(reason: string): void {
+    for (const pending of pendingCancellations.values())
+      pending.resolve(`cohort aborted: ${reason}`);
+    pendingCancellations.clear();
     for (const [requestId, entry] of pendingMerges) {
       pendingMerges.delete(requestId);
       entry.resolve({ ok: false, reason: `cohort aborted: ${reason}` });
@@ -1830,6 +2172,33 @@ export function createWorkflowSupervisor(
     }
     try {
       const message = outboundMessageFromPayload(data.message);
+      // A connector reply arrives with `inReplyTo` and no References, and
+      // it is the only send that sets `completeReferences`. `mail_send`
+      // is that same shape without the flag; completing it would grow its
+      // one-parent chain into the full ancestry when the parent happens
+      // to be in this mailbox. An already-present `references`, including
+      // an empty array, is the caller's chain. A parent that is not in
+      // the mailbox leaves `references` unset, and the transport still
+      // derives `[inReplyTo]`. The lookup releases the mailbox lock
+      // before the send.
+      if (
+        data.completeReferences === true &&
+        message.inReplyTo !== undefined &&
+        message.references === undefined
+      ) {
+        const inReplyTo = message.inReplyTo;
+        const references = await runMailboxExclusive(async () => {
+          const store = await openCommittedMailbox();
+          const parent = store.messages.find(
+            (m) => m.envelope.messageId === inReplyTo,
+          );
+          if (parent === undefined) return undefined;
+          return [...parent.envelope.references, parent.envelope.messageId];
+        });
+        if (references !== undefined && references.length > 0) {
+          message.references = references;
+        }
+      }
       const receipt = await bindings.mailBus.sendOutbound(
         data.senderAddress,
         message,
@@ -1897,6 +2266,7 @@ export function createWorkflowSupervisor(
           result: {
             ok: false,
             reason: `unknown mailbox "${data.mailbox}"; only ${MAILBOX_INBOX_DIR} is writable`,
+            condition: "NONEXISTENT",
           },
         },
       });
@@ -1960,6 +2330,238 @@ export function createWorkflowSupervisor(
           result: { ok: false, reason },
         },
       });
+    }
+  }
+
+  /**
+   * Answer one mailbox operation from the deployment the supervisor owns.
+   * Refusals are decided here and do not open the store. Reads, sync, status,
+   * and append run under `runMailboxExclusive` and reply after the lock, on
+   * the sender captured before it. `readMailPart` reads committed part blobs
+   * through the same principal and ref that wrote them, and does not take the
+   * mailbox lock. `fetchFull` verifies with no key, so the signature status
+   * stays `unknown`. `append` stores the shared text/plain encoding and does
+   * not notify.
+   */
+  async function handleMailboxCall(data: MailboxCallRequest): Promise<void> {
+    const controlSender = activeControlSender();
+    if (controlSender === null) {
+      logger.warn`mailbox.call.request received outside running phase; requestId=${data.requestId} dropped (child awaiter will fail on pipe close)`;
+      return;
+    }
+    const refusal = refuseMailboxCall(data);
+    if (refusal !== undefined) {
+      await controlSender.send({
+        type: "mailbox.call.response",
+        data: mailboxCallFailure(data, refusal.reason, refusal.condition),
+      });
+      return;
+    }
+    try {
+      const answer = await answerMailboxCall(data);
+      await controlSender.send({
+        type: "mailbox.call.response",
+        data: answer,
+      });
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      const condition = isMessageTransportError(cause)
+        ? cause.condition
+        : undefined;
+      await controlSender.send({
+        type: "mailbox.call.response",
+        data: mailboxCallFailure(data, reason, condition),
+      });
+    }
+  }
+
+  async function answerMailboxCall(
+    data: MailboxCallRequest,
+  ): Promise<MailboxCallSuccess> {
+    switch (data.op) {
+      case "listMailboxes":
+        return {
+          requestId: data.requestId,
+          ok: true,
+          op: "listMailboxes",
+          value: [{ name: MAILBOX_INBOX_DIR }],
+        };
+      case "watch":
+        return { requestId: data.requestId, ok: true, op: "watch" };
+      case "readMailPart": {
+        // The blobs were committed under this principal and ref. A reader
+        // opened against any other identity looks at a different tree.
+        const reader = createMailPartReader({
+          substrate: bindings.repoStore,
+          repoId: bindings.workflowRunRepoId,
+          principal: mailboxWritePrincipal,
+          ref: bindings.workflowRunRef,
+        });
+        const bytes = await reader.read(data.partRef);
+        return {
+          requestId: data.requestId,
+          ok: true,
+          op: "readMailPart",
+          value: { contentBase64: base64Encode(bytes) },
+        };
+      }
+      case "search": {
+        const query = reviveSearchDates(data.query);
+        return runMailboxExclusive(async () => {
+          const store = await openCommittedMailbox();
+          const value = await executeSearch(data.mailbox, store, query);
+          const success: MailboxCallSuccess = {
+            requestId: data.requestId,
+            ok: true,
+            op: "search",
+            value,
+          };
+          return success;
+        });
+      }
+      case "thread": {
+        const query =
+          data.query === undefined ? undefined : reviveSearchDates(data.query);
+        return runMailboxExclusive(async () => {
+          const store = await openCommittedMailbox();
+          const value =
+            query === undefined
+              ? await executeThread(data.mailbox, store, data.algorithm)
+              : await executeThread(data.mailbox, store, data.algorithm, query);
+          const success: MailboxCallSuccess = {
+            requestId: data.requestId,
+            ok: true,
+            op: "thread",
+            value,
+          };
+          return success;
+        });
+      }
+      case "fetchHeaders":
+      case "fetchStructure":
+      case "fetchFull":
+      case "fetchPart": {
+        const ref = data.ref;
+        return runMailboxExclusive(async () => {
+          const store = await openCommittedMailbox();
+          if (data.op === "fetchHeaders") {
+            const value = await fetchHeaders(ref, store);
+            const success: MailboxCallSuccess = {
+              requestId: data.requestId,
+              ok: true,
+              op: "fetchHeaders",
+              value,
+            };
+            return success;
+          }
+          if (data.op === "fetchStructure") {
+            const value = await fetchStructure(ref, store);
+            const success: MailboxCallSuccess = {
+              requestId: data.requestId,
+              ok: true,
+              op: "fetchStructure",
+              value,
+            };
+            return success;
+          }
+          if (data.op === "fetchPart") {
+            const value = projectPart(
+              await fetchPart(ref, data.partPath, store),
+            );
+            const success: MailboxCallSuccess = {
+              requestId: data.requestId,
+              ok: true,
+              op: "fetchPart",
+              value,
+            };
+            return success;
+          }
+          const value = projectFetchedMessage(
+            await fetchFull(ref, store, () => undefined),
+          );
+          const success: MailboxCallSuccess = {
+            requestId: data.requestId,
+            ok: true,
+            op: "fetchFull",
+            value,
+          };
+          return success;
+        });
+      }
+      case "sync":
+        return runMailboxExclusive(async () => {
+          const store = await getMailboxStore();
+          const result = store.sync({
+            uidValidity: data.uidValidity,
+            highestModSeq: data.highestModSeq,
+          });
+          const success: MailboxCallSuccess = {
+            requestId: data.requestId,
+            ok: true,
+            op: "sync",
+            value: syncResultForCaller(data.mailbox, data.uidNext, result),
+          };
+          return success;
+        });
+      case "getMailboxStatus":
+        return runMailboxExclusive(async () => {
+          const store = await getMailboxStore();
+          const unseen = store.messages.filter(
+            (message) => !message.flags.has(MAILBOX_FLAG_SEEN),
+          ).length;
+          const success: MailboxCallSuccess = {
+            requestId: data.requestId,
+            ok: true,
+            op: "getMailboxStatus",
+            value: {
+              total: store.messages.length,
+              unseen,
+              recent: 0,
+              uidNext: store.uidNext,
+              uidValidity: store.uidValidity,
+              highestModSeq: store.highestModSeq,
+            },
+          };
+          return success;
+        });
+      case "append": {
+        const appended: {
+          headers: MessageHeaders;
+          content?: string;
+          payload?: InboundMessage["payload"];
+        } = { headers: data.headers };
+        if (data.content !== undefined) appended.content = data.content;
+        if (data.payload !== undefined) appended.payload = data.payload;
+        const flags = data.flags === undefined ? [] : data.flags;
+        // Encode before the lock. A missing Message-ID, or a missing or
+        // unparseable Date, throws here, so the message never enters the
+        // mirror. An Invalid Date that reached append would survive a failed
+        // flush and wedge every later write.
+        const stored = inboundMessageToRaw(appended);
+        return runMailboxExclusive(async () => {
+          const store = await getMailboxStore();
+          const uid = store.append(stored.raw, stored.envelope, flags);
+          await store.flush();
+          const success: MailboxCallSuccess = {
+            requestId: data.requestId,
+            ok: true,
+            op: "append",
+            value: { uid, mailbox: data.mailbox },
+          };
+          return success;
+        });
+      }
+      case "createMailbox":
+      case "deleteMailbox":
+      case "move":
+      case "copy":
+      case "createList":
+      case "listMembers":
+      case "subscribe":
+      case "unsubscribe":
+        // Refusals are sent before this switch. Reaching one means the
+        // refusal table and this switch disagree.
+        throw new Error(`mailbox call ${data.op} has no answer`);
     }
   }
 
@@ -2132,15 +2734,17 @@ export function createWorkflowSupervisor(
       // per-event. The fold commit carries no newly-added terminal event,
       // so it does not re-fire this terminal-write coupling.
       for (const { runId } of newlyTerminalRuns) {
-        void compactRunEvents({
-          substrate: bindings.repoStore,
-          repoId: validatedRepoId,
-          ref: data.ref,
-          anchorRunId: bindings.anchorRunId,
-          runId,
-        }).catch((cause) => {
-          logger.warn`compaction of run ${runId} failed: ${cause instanceof Error ? cause.message : String(cause)}`;
-        });
+        ownDetachedWrite(
+          compactRunEvents({
+            substrate: bindings.repoStore,
+            repoId: validatedRepoId,
+            ref: data.ref,
+            anchorRunId: bindings.anchorRunId,
+            runId,
+          }).catch((cause) => {
+            logger.warn`compaction of run ${runId} failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+          }),
+        );
       }
     } catch (cause) {
       // Clean up any merge awaiter that the substrate may not have
@@ -2539,6 +3143,7 @@ export function createWorkflowSupervisor(
         startingPhaseBroadcaster,
         replayDone,
       );
+      ownDispatchLoop(dispatchLoop);
       // Surface dispatch-loop failures via the logger; the loop's own
       // catch already swallows per-iteration faults, but a structural
       // failure (e.g. the cohort abort handler itself throws) lands
@@ -3448,25 +4053,86 @@ export function createWorkflowSupervisor(
   async function requestCancel(
     opts: CancelRequestOpts,
   ): Promise<CancelCommitInfo> {
-    const result = await commitCancelRequested({
-      substrate: bindings.repoStore,
-      repoId: bindings.workflowRunRepoId,
-      ref: bindings.workflowRunRef,
-      anchorRunId: bindings.anchorRunId,
-      runId: opts.runId,
-      origin: opts.origin,
-      reason: opts.reason,
-      at: opts.at,
-      signAsPrincipal: bindings.signAsPrincipal,
+    if (
+      state.phase === "stopping" ||
+      state.phase === "stopped" ||
+      state.phase === "crash-looping"
+    ) {
+      throw new Error("Cannot cancel a stopped workflow supervisor");
+    }
+    const commitCancellation = async () => {
+      const committing = commitCancelRequested({
+        substrate: bindings.repoStore,
+        repoId: bindings.workflowRunRepoId,
+        ref: bindings.workflowRunRef,
+        anchorRunId: bindings.anchorRunId,
+        runId: opts.runId,
+        origin: opts.origin,
+        reason: opts.reason,
+        at: opts.at,
+        signAsPrincipal: bindings.signAsPrincipal,
+      });
+      cancellationCommits.add(committing);
+      try {
+        const result = await committing;
+        return { commitSha: result.commitSha, seq: result.seq };
+      } finally {
+        cancellationCommits.delete(committing);
+      }
+    };
+    const cohort = state;
+    if (
+      cohort.phase !== "starting" &&
+      cohort.phase !== "running" &&
+      cohort.phase !== "recycling"
+    )
+      return commitCancellation();
+    const sender = cohort.controlSender;
+
+    const requestId = `cancel-${String((cancellationSeq += 1))}`;
+    const prepared = Promise.withResolvers<string | undefined>();
+    pendingCancellations.set(requestId, {
+      broadcaster: cohort.terminalBroadcaster,
+      resolve: prepared.resolve,
     });
-    return { commitSha: result.commitSha, seq: result.seq };
+    try {
+      await sender.send({
+        type: "cancel.prepare",
+        data: { requestId, runId: opts.runId, reason: opts.reason },
+      });
+      const error = await prepared.promise;
+      if (error !== undefined) throw new Error(error);
+      cohort.terminalCohortAbort.signal.throwIfAborted();
+      if (activeControlSender() !== sender)
+        throw new Error("Cancellation's workflow child was replaced");
+      const result = await commitCancellation();
+      await sender
+        .send({ type: "cancel.committed", data: { requestId } })
+        .catch((cause: unknown) => {
+          logger.warn`CancelRequested committed for ${opts.runId}, but the child wakeup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+        });
+      return result;
+    } catch (cause) {
+      await sender
+        .send({
+          type: "cancel.committed",
+          data: {
+            requestId,
+            error: cause instanceof Error ? cause.message : String(cause),
+          },
+        })
+        .catch(() => undefined);
+      throw cause;
+    } finally {
+      pendingCancellations.delete(requestId);
+    }
   }
 
   async function shutdown(): Promise<void> {
     await shutdownInternal({ reason: "shutdown requested" });
   }
 
-  async function shutdownInternal(opts: {
+  type ShutdownOptions = {
     reason: string;
     // Terminal phase the teardown lands in. Defaults to `stopped` (a clean
     // shutdown); the crash-loop latch passes `crash-looping` so the terminal
@@ -3478,23 +4144,42 @@ export function createWorkflowSupervisor(
     // fire below. The terminal phase alone cannot carry this: a self-terminated
     // and a host-requested teardown both land in `stopped`.
     selfTerminated?: boolean;
-  }): Promise<void> {
+    // A durable record of the teardown, written once the child has exited and
+    // the writers shutdown owns have settled, and before shutdown resolves or
+    // reports a self-termination. A host that finds the supervisor gone reads
+    // history that already holds it.
+    terminalCommit?: () => Promise<void>;
+  };
+
+  function shutdownInternal(opts: ShutdownOptions): Promise<void> {
+    if (shutdownPromise !== null) return shutdownPromise;
     if (
       state.phase === "idle" ||
       state.phase === "stopped" ||
       state.phase === "crash-looping"
     )
-      return;
+      return Promise.resolve();
+    // Publish the completion before teardown can call back into the supervisor.
+    const completion = Promise.withResolvers<undefined>();
+    shutdownPromise = completion.promise;
+    void performShutdown(opts).then(
+      () => completion.resolve(undefined),
+      completion.reject,
+    );
+    return shutdownPromise;
+  }
+
+  async function performShutdown(opts: ShutdownOptions): Promise<void> {
     const prior = state;
     state = { phase: "stopping" };
     // shutdownInternal is designed to be TOTAL: when a child is up it must
     // always kill it and always reach `stopped`, no matter which teardown
     // step throws. Rather than depend on every step being individually
     // non-throwing (an approach that has already leaked an escape hatch),
-    // the whole teardown body runs inside one `try`, and the two
-    // load-bearing actions -- the child kill and the `phase = "stopped"`
-    // transition -- live in the `finally`, so a throw anywhere above them
-    // still runs both. This is the documented shutdown carve-out to the
+    // the whole teardown body runs inside one `try`. It requests the child
+    // kill before waiting for teardown; `finally` requests it if that point
+    // was never reached and always completes the terminal transition.
+    // This is the documented shutdown carve-out to the
     // fail-loud rule: leaking the child or wedging the supervisor in
     // `stopping` is strictly worse than logging and continuing, so the
     // steps that can throw surface at `logger.warn` and execution proceeds.
@@ -3503,6 +4188,34 @@ export function createWorkflowSupervisor(
     // by construction; they sit inside the `try` regardless so the
     // invariant survives if that ever changes.)
     const accumulatorsToDispose = [...drainAccumulators.values()];
+    const childrenToStop = new Set(uninstalledChildren);
+    if (
+      prior.phase === "starting" ||
+      prior.phase === "running" ||
+      prior.phase === "recycling"
+    )
+      childrenToStop.add(prior.handle);
+    const childTerminations: Promise<void>[] = [];
+    let killRequested = false;
+    function killChildren(): void {
+      if (killRequested) return;
+      killRequested = true;
+      // Escalate to SIGKILL: the child runs workflow code, which can trap
+      // SIGTERM and would otherwise hold the forced stop open indefinitely.
+      for (const handle of childrenToStop) {
+        childTerminations.push(
+          killChildHandle(handle, DEFAULT_KILL_TIMEOUT_MS, {
+            setTimer: readySetTimer,
+            clearTimer: readyClearTimer,
+            logger,
+          }).catch((cause: unknown) => {
+            const message =
+              cause instanceof Error ? cause.message : String(cause);
+            logger.warn`child kill threw during shutdown: ${message}`;
+          }),
+        );
+      }
+    }
     try {
       // Stop every armed drainTimeout accumulator before tearing the child
       // down. An accumulator left running would otherwise fire its
@@ -3547,6 +4260,17 @@ export function createWorkflowSupervisor(
         // some other actor woke it.
         wakeDispatch();
       }
+      // A dispatch may be blocked writing to an unresponsive child. Killing
+      // before awaiting its loop releases that pipe and the cancellation wait.
+      killChildren();
+      // An already-started signed append may finish after the child exits.
+      // Own that write through teardown before the host releases its bindings.
+      await Promise.allSettled([...cancellationCommits]);
+      // Own the pump's detached writes the same way, so every write the child
+      // requested lands before shutdown resolves. New merges fail once
+      // stopping, so what remains is local I/O. A finishing write can start a
+      // fold.
+      while (detachedWrites.size > 0) await Promise.all([...detachedWrites]);
       // Await every accumulator's `disposed()` so a pending escalation
       // commit or terminal-event watcher coroutine cannot outlive the
       // supervisor and fire against torn-down bindings.
@@ -3557,16 +4281,10 @@ export function createWorkflowSupervisor(
           }),
         ),
       );
-      if (
-        (prior.phase === "running" || prior.phase === "recycling") &&
-        prior.dispatchLoop !== null
-      ) {
-        await prior.dispatchLoop.catch(() => {
-          /* swallowed: dispatch-loop failures are surfaced by the
-             loop's own logger; the shutdown path only waits for the
-             loop's last iteration to settle. */
-        });
-      }
+      // Includes a loop a recycle has retired from `state`, so its last
+      // consumption write lands before shutdown resolves. Each loop's own
+      // logger surfaces its failure.
+      await Promise.allSettled([...dispatchLoops]);
       if (
         (prior.phase === "starting" ||
           prior.phase === "running" ||
@@ -3658,38 +4376,37 @@ export function createWorkflowSupervisor(
       // whatever happened above, so a throwing teardown step can neither
       // leak the child nor wedge the supervisor in `stopping`. The kill is
       // itself guarded so a throw here cannot re-escape the `finally`.
+      killChildren();
+      await Promise.all(childTerminations);
+      await Promise.all(
+        [...childrenToStop].map((handle) =>
+          handle.exited.catch(() => {
+            /* A non-zero child exit is expected during shutdown. */
+          }),
+        ),
+      );
       if (
         prior.phase === "starting" ||
         prior.phase === "running" ||
         prior.phase === "recycling"
       ) {
-        try {
-          prior.handle.kill();
-        } catch (cause) {
-          const message =
-            cause instanceof Error ? cause.message : String(cause);
-          logger.warn`child kill threw during shutdown: ${message}`;
-        }
-        await prior.handle.exited.catch(() => {
-          /* swallowed: the host has already been told the deployment is
-             coming down; an error surfaced from the spawner is the
-             process exiting with a non-zero code, which is what the
-             shutdown path expects. */
-        });
         await prior.eventPump.catch(() => {
           /* swallowed for the same reason as above. */
         });
       }
       state = { phase: opts.terminalPhase ?? "stopped" };
     }
+    if (opts.terminalCommit !== undefined) {
+      try {
+        await opts.terminalCommit();
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        logger.error`terminal commit failed; the deployment has no durable record of why it stopped (${opts.reason}): ${message}`;
+      }
+    }
     // Surface a self-termination to the host after the terminal transition is
-    // committed. The already-terminal early-return at the top dedups the common
-    // case, but it does NOT cover the `stopping` window, so two self-terminating
-    // callers interleaving through teardown can each fire (e.g. an onChildCrash
-    // during `recycling` plus the recycle-failure catch). The sink is therefore
-    // idempotent-required, not exactly-once; the reclaim it drives absorbs a
-    // repeat by design. Wrapped so a throwing sink cannot re-escape here and
-    // break the documented shutdown totality.
+    // committed. Concurrent shutdown callers share this teardown. Catch sink
+    // failures so they cannot escape a completed shutdown.
     if (opts.selfTerminated === true) {
       try {
         bindings.onSelfTerminate?.({
@@ -3883,7 +4600,22 @@ export function createWorkflowSupervisor(
     try {
       attempt = await triggerRecycle(
         {
-          bindings,
+          bindings: {
+            ...bindings,
+            subprocessSpawner: (spawnArgs) => {
+              if (state.phase !== "recycling") {
+                throw new Error(
+                  `Cannot spawn a replacement in supervisor phase ${state.phase}`,
+                );
+              }
+              const handle = bindings.subprocessSpawner(spawnArgs);
+              uninstalledChildren.add(handle);
+              const forgetExitedChild = () =>
+                uninstalledChildren.delete(handle);
+              void handle.exited.then(forgetExitedChild, forgetExitedChild);
+              return handle;
+            },
+          },
           stepOrder: priorContext.stepOrder,
           definitionHash: priorContext.definitionHash,
           warmKeep: priorContext.warmKeep,
@@ -3922,26 +4654,10 @@ export function createWorkflowSupervisor(
             credentialsSnapshot,
             controlIncoming,
           }) => {
-            // Phase guard: a `shutdown()` that landed during the
-            // kill/respawn gap (between `subprocessSpawner` and this
-            // callback) has flipped `state.phase` to `stopping` or
-            // `stopped`. The new child is now an orphan -- the
-            // supervisor was supposed to be tearing down, not
-            // installing a fresh cohort. Kill the new wiring's
-            // handle and bail out without registering it on
-            // `state`. `shutdownInternal`'s own teardown path has
-            // already disposed the prior cohort; there is nothing
-            // for this callback to do.
+            // Shutdown already owns the uninstalled child's kill and exit.
+            // A late ready frame must only drain its IPC resources, never
+            // install it as a new running cohort.
             if (state.phase !== "recycling") {
-              // Kill the orphan child and release its event-channel /
-              // upstream-control resources so they cannot survive as
-              // unowned promises. Without this, the eventPump and
-              // controlIncoming iterator would have no `state`
-              // bookkeeping to drive their cleanup -- a rejection
-              // inside `pumpEvents` would surface as an unhandled
-              // rejection, and the upstream control iterator's
-              // exit would never be observed.
-              wiring.handle.kill("SIGTERM");
               void wiring.eventPump.catch((cause: unknown) => {
                 const message =
                   cause instanceof Error ? cause.message : String(cause);
@@ -3991,6 +4707,7 @@ export function createWorkflowSupervisor(
               newBroadcaster,
               null,
             );
+            ownDispatchLoop(newDispatchLoop);
             void newDispatchLoop.catch((cause) => {
               const message =
                 cause instanceof Error ? cause.message : String(cause);
@@ -4013,6 +4730,7 @@ export function createWorkflowSupervisor(
               replayDone: null,
               sweepDone: prior.sweepDone,
             };
+            uninstalledChildren.delete(wiring.handle);
             // Bump the generation and arm the exit-watcher for the
             // respawned child atomically with this running transition, so
             // the predecessor's watcher (already stale by generation) never
@@ -4356,9 +5074,11 @@ type ActiveState = {
    * `starting`-phase ActiveState carries `null` because the loop is
    * not started until the child emits `ready`; once `spawn()`
    * transitions to `running` the field carries the live loop
-   * promise. `shutdownInternal` awaits this promise after aborting
-   * the cohort so a dispatch-loop iteration that is mid-await
-   * settles before the supervisor tears the bindings down.
+   * promise. The recycle that replaces this cohort awaits it.
+   * `shutdownInternal` waits on every running loop through the
+   * supervisor's `dispatchLoops`, including one a recycle has already
+   * cleared from this field, so an iteration that is mid-await settles
+   * before the supervisor tears the bindings down.
    */
   dispatchLoop: Promise<void> | null;
   /**

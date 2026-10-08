@@ -1,6 +1,6 @@
 // `runWorkflowChild` -- the workflow-process child's runtime body.
 //
-// The package-owned binary at `packages/workflow-host/bin/workflow-child`
+// The sidecar binary at `apps/sidecar/bin/workflow-child`
 // is a thin wrapper that parses `process.env`, opens stdin/stdout for
 // the control channel, accepts the inherited event-channel fd, builds
 // the substrate `RepoStore`, and invokes this function. Tests bypass
@@ -70,6 +70,7 @@ import type { AuthzCallResult } from "@intx/inference";
 import type {
   ActionHandler,
   RunResult,
+  RuntimeWorkflowRun,
   Scheduler,
   ReadParkedApprovalOps,
   StepInvokeRequest,
@@ -81,7 +82,6 @@ import type {
   WorkflowAuthorizeFn,
   WorkflowDefinition,
   WorkflowPark,
-  WorkflowRun,
   WorkflowRuntimeEnv,
 } from "@intx/workflow";
 import {
@@ -102,8 +102,8 @@ import type { InferenceSource, MailPartReader } from "@intx/types/runtime";
 import type { CredentialDelivery } from "@intx/types/sidecar";
 
 import { createWorkflowRunRepoStore } from "../adapters/repo-store";
+import { createCancellationBarrier } from "./cancellation-barrier";
 import { createWorkflowRunBlobSubstrate } from "../adapters/blob-substrate";
-import { createMailPartReader } from "../adapters/mail-part-store";
 import type {
   HostSpawnSuspendableChild,
   HostSpawnChild,
@@ -143,6 +143,8 @@ import {
   type LoadParkedApproval,
 } from "./parked-correlations";
 import type { ChildOutboundMailBridge } from "./outbound-mail-bridge";
+import type { ChildMailboxCallBridge } from "./mailbox-call-bridge";
+import { createSupervisorBackedMailPartReader } from "./supervisor-backed-mail-part-reader";
 import type { ChildMailboxMutationBridge } from "./mailbox-mutation-bridge";
 import type { MailboxWatchRegistry } from "./mailbox-watch-registry";
 import { createWarmAgentCache, type WarmAgentCache } from "./warm-agent-cache";
@@ -573,6 +575,14 @@ export interface RunWorkflowChildOpts {
    */
   mailboxMutationBridge?: ChildMailboxMutationBridge;
   /**
+   * Optional mailbox-call bridge. The step agent's transport forwards every
+   * mailbox method that is not `send` and not a flag or expunge mutation
+   * through this bridge. The control loop routes `mailbox.call.response`
+   * to `handleResult` and `cancelAll`s it on exit. When omitted, a response
+   * is logged and dropped.
+   */
+  mailboxCallBridge?: ChildMailboxCallBridge;
+  /**
    * Optional mailbox watch registry (INBOUND half of mailbox ownership,
    * design §3b). The supervisor -- the sole mail owner -- commits an arrived
    * message to the workflow-run substrate mailbox and fires a `mailbox.notify`
@@ -917,7 +927,11 @@ export async function runWorkflowChild(
   // race to settle the same residual and the loser throws an uncaught
   // TransitionError into its fire-and-forget continuation. Each site
   // removes its entry when the run reaches terminal.
-  const runsInFlight = new Map<string, WorkflowRun>();
+  const runsInFlight = new Map<string, RuntimeWorkflowRun>();
+  const cancellationBarrier = createCancellationBarrier(
+    runtimeRepoStore,
+    upstreamSender,
+  );
   for (const run of discovered) {
     const env = buildRuntimeEnv({
       runId: run.runId,
@@ -937,6 +951,9 @@ export async function runWorkflowChild(
       warmCache,
       sourcesRef,
       credentialWiring,
+      ...(opts.mailboxCallBridge !== undefined
+        ? { mailboxCallBridge: opts.mailboxCallBridge }
+        : {}),
       onEvent: (event) => {
         void eventSender.send(event).catch((cause) => {
           logger.error`event-channel send failed during resume run ${run.runId}: ${String(cause)}`;
@@ -1045,6 +1062,7 @@ export async function runWorkflowChild(
           drainController,
           triggeredRunIds,
           runsInFlight,
+          cancellationBarrier,
           warmCache,
           sourcesRef,
           credentialMaterialRef,
@@ -1057,6 +1075,9 @@ export async function runWorkflowChild(
             : {}),
           ...(opts.mailboxMutationBridge !== undefined
             ? { mailboxMutationBridge: opts.mailboxMutationBridge }
+            : {}),
+          ...(opts.mailboxCallBridge !== undefined
+            ? { mailboxCallBridge: opts.mailboxCallBridge }
             : {}),
           ...(mailboxWatchRegistry !== undefined
             ? { mailboxWatchRegistry }
@@ -1071,6 +1092,7 @@ export async function runWorkflowChild(
   };
 
   const cleanupControlLoop = async (): Promise<void> => {
+    cancellationBarrier.close("workflow-child control loop exited");
     // Any exit path -- clean (iterator end), dirty (thrown error),
     // shutdown (already cancelled, repeat is a no-op on an empty map)
     // -- cancels every still-pending substrate write so the runtime
@@ -1095,6 +1117,9 @@ export async function runWorkflowChild(
       opts.mailboxMutationBridge.cancelAll(
         "workflow-child control loop exited",
       );
+    }
+    if (opts.mailboxCallBridge !== undefined) {
+      opts.mailboxCallBridge.cancelAll("workflow-child control loop exited");
     }
     // Evict the warm-agent cache (design §3b) on every exit path:
     // graceful (shutdown frame -> iterator end), dirty (thrown error),
@@ -1154,7 +1179,8 @@ async function handleControlPayload(
     upstreamSender: ControlChannelSender;
     drainController: DrainController;
     triggeredRunIds: string[];
-    runsInFlight: Map<string, WorkflowRun>;
+    runsInFlight: Map<string, RuntimeWorkflowRun>;
+    cancellationBarrier: ReturnType<typeof createCancellationBarrier>;
     warmCache: WarmAgentCache | undefined;
     sourcesRef: SourcesSnapshotRef;
     credentialMaterialRef: CredentialMaterialRef;
@@ -1162,6 +1188,7 @@ async function handleControlPayload(
     substrateWriteBridge?: SubstrateWriteResponseSink;
     outboundMailBridge?: ChildOutboundMailBridge;
     mailboxMutationBridge?: ChildMailboxMutationBridge;
+    mailboxCallBridge?: ChildMailboxCallBridge;
     mailboxWatchRegistry?: MailboxWatchRegistry;
   },
 ): Promise<boolean> {
@@ -1213,6 +1240,9 @@ async function handleControlPayload(
         warmCache: ctx.warmCache,
         sourcesRef: ctx.sourcesRef,
         credentialWiring: ctx.credentialWiring,
+        ...(ctx.mailboxCallBridge !== undefined
+          ? { mailboxCallBridge: ctx.mailboxCallBridge }
+          : {}),
         onEvent: (event) => {
           void ctx.eventSender.send(event).catch((cause) => {
             logger.error`event-channel send failed during run ${payload.data.runId}: ${String(cause)}`;
@@ -1220,7 +1250,7 @@ async function handleControlPayload(
         },
         upstreamSender: ctx.upstreamSender,
       });
-      const handle: WorkflowRun = runtimeRun(ctx.definition, env, {
+      const handle = runtimeRun(ctx.definition, env, {
         runId: payload.data.runId,
         consumedMessageId: payload.data.messageId,
         triggerPayload,
@@ -1359,6 +1389,27 @@ async function handleControlPayload(
         }
       })();
       return false;
+    }
+    case "cancel.prepare": {
+      // Preparation flushes through the same IPC stream; keep consuming replies.
+      void ctx.cancellationBarrier
+        .prepare(payload.data)
+        .then(() =>
+          ctx.runsInFlight
+            .get(payload.data.runId)
+            ?.applyCommittedCancellation(),
+        )
+        .catch((error: unknown) => {
+          logger.error`Failed to apply cancellation for ${payload.data.runId}: ${error instanceof Error ? error.message : String(error)}`;
+        });
+      return false;
+    }
+    case "cancel.committed": {
+      ctx.cancellationBarrier.complete(payload.data);
+      return false;
+    }
+    case "cancel.prepared": {
+      throw new Error("workflow-child received an upstream cancellation reply");
     }
     case "drain": {
       // The supervisor's `drain` control mail flips the controller's
@@ -1533,6 +1584,26 @@ async function handleControlPayload(
       ctx.mailboxMutationBridge.handleResult(payload.data);
       return false;
     }
+    case "mailbox.call.request": {
+      // `mailbox.call.request` is the child->supervisor mailbox-call frame;
+      // receiving one on the child's downstream side is a protocol violation
+      // in the same shape as a downstream `mailbox.mutate.request`.
+      throw new Error(
+        "workflow-child received a `mailbox.call.request` frame on its inbound control channel; this is a child-only upstream payload",
+      );
+    }
+    case "mailbox.call.response": {
+      // Route the supervisor's answer to the mailbox-call bridge if one is
+      // wired. A response that lands without an active bridge means a stale
+      // frame for which no awaiter exists; log and drop rather than throwing
+      // so the runtime keeps progressing.
+      if (ctx.mailboxCallBridge === undefined) {
+        logger.warn`workflow-child mailbox.call.response received without a bridge wired; requestId=${payload.data.requestId} dropped`;
+        return false;
+      }
+      ctx.mailboxCallBridge.handleResult(payload.data);
+      return false;
+    }
     case "substrate.merge.request": {
       // Route the request to the substrate-write bridge if one is
       // wired. A request that lands without an active bridge means a
@@ -1631,6 +1702,18 @@ function eagerlyResolveActionHandlers(
   for (const def of definitions) visit(def);
 }
 
+function unwiredMailPartReader(): MailPartReader {
+  return {
+    read(ref) {
+      return Promise.reject(
+        new Error(
+          `mail part reader: this child has no mailbox call bridge; cannot read ${ref}`,
+        ),
+      );
+    },
+  };
+}
+
 function buildRuntimeEnv(args: {
   runId: string;
   bindings: RunWorkflowChildBindings;
@@ -1649,6 +1732,7 @@ function buildRuntimeEnv(args: {
   warmCache: WarmAgentCache | undefined;
   sourcesRef: SourcesSnapshotRef;
   credentialWiring: CredentialWiring;
+  mailboxCallBridge?: ChildMailboxCallBridge;
   onEvent: (event: EventPayload) => void;
   upstreamSender: ControlChannelSender;
 }): WorkflowRuntimeEnv {
@@ -1669,17 +1753,16 @@ function buildRuntimeEnv(args: {
     runId: args.runId,
     ref: args.bindings.workflowRunRef,
   });
-  // Reader for inbound-mail parts, a sibling of `blobs` over the same
-  // workflow-run repo. The step invoker resolves a `Mail` part's `ref` to its
-  // bytes through it at `agent.send` time; the supervisor committed the bytes
-  // before the trigger. Deployment-scoped (the ref encodes the owning run), so
-  // one reader resolves any run's parts.
-  const mailPartReader = createMailPartReader({
-    substrate: args.bindings.substrate,
-    repoId: args.bindings.workflowRunRepoId,
-    principal: args.bindings.principal,
-    ref: args.bindings.workflowRunRef,
-  });
+  // The supervisor committed each part before the trigger. A step asks it
+  // for the bytes. A child with no call bridge cannot read them; inlined
+  // text never asks.
+  const mailPartReader =
+    args.mailboxCallBridge === undefined
+      ? unwiredMailPartReader()
+      : createSupervisorBackedMailPartReader({
+          callBridge: args.mailboxCallBridge,
+          runId: args.runId,
+        });
   // Wrap the step invoker so every `InferenceEvent` the harness emits
   // funnels through the per-run `onEvent` closure, which forwards
   // the event up the HMAC-authenticated event channel. The wrap is
