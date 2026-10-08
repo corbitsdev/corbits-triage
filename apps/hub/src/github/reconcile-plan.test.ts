@@ -105,4 +105,41 @@ describe("reconcile plan", () => {
     expect(pushed.rows).toHaveLength(1);
     expect(pushed.rows[0]).toMatchObject({ headSha: "sha1b", attempts: 1 });
   });
+
+  test("a completed run with a degraded verdict counts as failed with its reason", () => {
+    const degraded = { ...run("run_d", "completed", 1), degraded: "This repository still needs check setup." };
+    const result = plan([pr(1)], [], at(60), [[pr(1), [degraded]]]);
+    expect(enqueued(result)).toEqual([1]);
+    expect(plan([pr(1)], [], at(60), [[pr(1), [degraded]]]).enqueue[0]?.undelivered).toMatchObject({
+      status: "failed",
+      runId: "run_d",
+      error: "This repository still needs check setup.",
+    });
+  });
+
+  test("a run started on a sidecar whose clock trails the hub still matches the hub's queue", () => {
+    const queued = plan([pr(1)], [], at(0)).rows;
+    const result = plan([pr(1)], queued, at(3), [[pr(1), [{ ...run("run_a", "failed", 0), startedAt: at(-0.5).toISOString() }]]]);
+    expect(status(result, 1)).toMatchObject({ status: "failed", runId: "run_a", attempts: 1, error: "run failed" });
+    const before = plan([pr(1)], queued, at(11), [[pr(1), [run("run_old", "failed", -5)]]]);
+    expect(status(before, 1)).toMatchObject({ status: "queued", attempts: 2 });
+  });
+
+  test("a webhook run that fails fast does not override the hub's run still going", () => {
+    const queued = plan([pr(1)], [], at(0)).rows;
+    const running = plan([pr(1)], queued, at(1), [[pr(1), [run("run_hub", "running", 0.1)]]]).rows;
+    const result = plan([pr(1)], running, at(3), [[pr(1), [run("run_hub", "running", 0.1), run("run_hook", "failed", 2)]]]);
+    expect(enqueued(result)).toEqual([]);
+    expect(status(result, 1)).toMatchObject({ status: "running", runId: "run_hub" });
+
+    const ended = plan([pr(1)], result.rows, at(4), [[pr(1), [run("run_hub", "failed", 0.1), run("run_hook", "failed", 2)]]]);
+    expect(status(ended, 1)).toMatchObject({ status: "failed", runId: "run_hub" });
+  });
+
+  test("a stuck run from before the hub queued the head again does not fail the new attempt", () => {
+    const queued = plan([pr(1)], [], at(200)).rows;
+    const result = plan([pr(1)], queued, at(205), [[pr(1), [run("run_dead", "running", 0)]]]);
+    expect(enqueued(result)).toEqual([]);
+    expect(status(result, 1)).toMatchObject({ status: "queued" });
+  });
 });
