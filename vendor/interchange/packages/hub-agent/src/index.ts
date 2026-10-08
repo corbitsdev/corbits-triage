@@ -45,6 +45,7 @@ export {
   type GrantsInboundRouter,
   type WorkflowRunPackApplier,
   type ReconnectScheduler,
+  type WorkflowControlOutcome,
 } from "./ws/hub-link";
 export {
   createSidecarOrchestrator,
@@ -54,5 +55,12 @@ export {
   type SidecarCryptoOps,
 } from "./sidecar-orchestrator";
 export { applyAssetPack, type ApplyAssetPackArgs } from "./apply-asset-pack";
+export {
+  assetReferenceFormats,
+  indexAssetPackIntoGitDir,
+  materializeWorkflowAssets,
+  sourceAssetGitDir,
+  MAX_INLINE_ASSET_PAYLOAD_BYTES,
+} from "./source-asset-delivery";
 export { readDeployTree, type DeployTree } from "./deploy-tree";
 export { agentDir, sanitizeAddress } from "./agent-paths";

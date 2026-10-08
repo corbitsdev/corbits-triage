@@ -3,8 +3,8 @@
 ## Baseline
 
 - Upstream: <https://github.com/faremeter/interchange>
-- Stock ref: `9febf699e1c8a01fd329927e5a14be7f94e9919e`
-- Composite pin: stock `9febf699` plus allowlisted PR #193 at `13129bb5` and INTR-583 at `44170ebb`. Main has not moved; do not treat either delta as a new stock pin.
+- Stock ref: `779b47f59c47026b14f02eb54eefa90e15b7fd9a`
+- Composite pin: stock `779b47f5` plus allowlisted PR #193 at `13129bb5` (rebased), INTR-583 at `44170ebb`, and the local CL-10178 carry. Do not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -20,21 +20,21 @@ patches.
 
 Required because `@corbits/triage-workflows` declares
 `interchange.directors` and its agents reference
-`@corbits/triage-workflows/triage`. Stock `9febf699` only constructs the
+`@corbits/triage-workflows/triage`. Stock `779b47f5` only constructs the
 built-in director registry, so that workflow cannot resolve its director at
-runtime. The allowed production and regression files are byte-identical to upstream PR #193
-commit `13129bb5b23df2dd11d0437fc2c2511f29ac6960`. Makefile, docs, and
-`tests/` paths from that PR are not in this prune and are not vendored.
+runtime. The allowed production and regression files are upstream PR #193
+commit `13129bb5b23df2dd11d0437fc2c2511f29ac6960` rebased onto the stock pin.
+Upstream moved the sidecar child factory and probe into `@intx/workflow-host`
+(`apps/sidecar/src/workflow-substrate-factory*.ts` became
+`packages/workflow-host/src/child/substrate-factory.ts` and its tests;
+`workflow-probe-handler.ts` became `packages/workflow-host/src/probe/index.ts`).
+The rebase resolves only those conflicts: the factory imports the closure
+loaders relatively, and `directors` sits beside the stock
+`materializeStepTools` and child grant-cap deps. Makefile, docs, and `tests/`
+paths from that PR are not in this prune and are not vendored.
 `packages/workflow/src/definition/extract-agent.test.ts` is likewise absent
 from the prune.
 
-- `apps/sidecar/src/workflow-probe-handler.ts`
-- `apps/sidecar/src/workflow-substrate-factory.ts`
-- `apps/sidecar/src/workflow-substrate-factory-abort.test.ts`
-- `apps/sidecar/src/workflow-substrate-factory-child-depth.test.ts`
-- `apps/sidecar/src/workflow-substrate-factory-child-grants.test.ts`
-- `apps/sidecar/src/workflow-substrate-factory-step-storage.test.ts`
-- `apps/sidecar/src/workflow-substrate-factory-suspendable-child.test.ts`
 - `packages/agent/src/index.ts`
 - `packages/agent/src/namespace.ts`
 - `packages/agent/src/namespace.test.ts`
@@ -46,7 +46,14 @@ from the prune.
 - `packages/workflow-deploy/src/inert-ontrigger-bodies.ts`
 - `packages/workflow-host/src/child/index.ts`
 - `packages/workflow-host/src/child/run-child.ts`
+- `packages/workflow-host/src/child/substrate-factory.ts`
+- `packages/workflow-host/src/child/workflow-substrate-factory-abort.test.ts`
+- `packages/workflow-host/src/child/workflow-substrate-factory-child-depth.test.ts`
+- `packages/workflow-host/src/child/workflow-substrate-factory-child-grants.test.ts`
+- `packages/workflow-host/src/child/workflow-substrate-factory-step-storage.test.ts`
+- `packages/workflow-host/src/child/workflow-substrate-factory-suspendable-child.test.ts`
 - `packages/workflow-host/src/index.ts`
+- `packages/workflow-host/src/probe/index.ts`
 - `packages/workflow-host/src/workflow-definition-loader.test.ts`
 - `packages/workflow-host/src/workflow-definition-loader.ts`
 
@@ -61,14 +68,15 @@ and renew the date explicitly rather than silently carrying the patch.
 
 Required because `apps/hub/src/server.ts` registers and selects the
 `corbits-system-one` adapter through `SIDECAR_ADAPTER_MANIFEST`, while stock
-`9febf699` restricts `ModelProviderPlugin` to its built-in enum. These files
-are byte-identical to upstream commit
+`779b47f5` restricts `ModelProviderPlugin` to its built-in enum. The catalog
+files are byte-identical to upstream commit
 `44170ebbcf819e1f48e0ec4c7a0d9f682635d10d`
 (`Accept operator-registered provider plugins in the model catalog`) on
 branch `intr-583-allow-operator-registered-custom-model-provider-types-in-the`
-(tip `2d815607`). This is the open operator-plugin grammar, not a one-key
-enum poke. `apps/admin-ui` and `docs/` from that commit are not in this prune
-and are not vendored.
+(tip `2d815607`). `packages/db/src/parse-row.test.ts` carries that commit's
+change on top of the stock pin's newer run-row fixture fields. This is the
+open operator-plugin grammar, not a one-key enum poke. `apps/admin-ui` and
+`docs/` from that commit are not in this prune and are not vendored.
 
 Allowed files:
 
@@ -81,24 +89,7 @@ Upstream reference: <https://github.com/faremeter/interchange/commit/44170ebb>.
 
 Kill date: **2026-11-01**. Remove this delta when the stock pin contains
 `44170ebb` (or its merged equivalent); if it is still absent at the kill date,
-re-audit and renew explicitly. Do not drop the allowlist while main remains
-`9febf699`.
-
-### Tool-scoped credential grants in spawned children (INTR-647)
-
-Local carry, not upstream. The spawned-child grant cap keeps an `allow` only
-when it covers a resource from `walkCapabilities`, which never declares
-`credential:`. Every `onTrigger` body therefore loses its credential grants
-and GitHub calls in `pr-triage` fail authorization. The patch keeps a
-`credential:` allow grant that carries a `{ tool }` condition; the credential
-capability still requires that tool to be loaded in the child.
-
-Allowed files:
-
-- `apps/sidecar/src/child-grant-filter.ts`
-
-Kill date: **2026-11-01**. Remove when the stock pin contains a fix for
-INTR-647.
+re-audit and renew explicitly.
 
 ### Run-scoped onTrigger body run ids (CL-10178)
 
@@ -129,6 +120,14 @@ Upstream status: to be filed.
 Kill date: **2026-11-01**. Remove when the stock pin scopes onTrigger body
 run ids to their container run.
 
+## Dropped deltas
+
+- INTR-647 (tool-scoped credential grants in spawned children): stock
+  `779b47f5` contains `26f2e755` (`Keep a child credential grant for a tool
+  the child instantiates`), which keeps a `credential:` allow whose `{ tool }`
+  condition names a factory the child body instantiates. The cap now lives in
+  `packages/workflow-deploy/src/child-grant-filter.ts`.
+
 ## Reverted historical drift
 
 On 2026-10-02 the following local changes were removed and restored to stock
@@ -153,8 +152,7 @@ individually in `tooling/vendor-diff-allowlist.txt`.
 The health command enables `intx-src`, runs the catalog, tool-packaging,
 workflow-deploy, and workflow-definition-loader suites, and runs
 `tooling/vendor-health.test.ts` against this repository's real custom
-workflow. The pinned stock tool-packaging and workflow-definition-loader
-fixtures predate PR #193: one uses a now-rejected foreign director namespace
-and the others omit the now-required definition argument. Their two test files
-are therefore synchronized byte-for-byte to the same upstream PR commit as the
-production patch and individually allowlisted above.
+workflow. The stock tool-packaging and workflow-definition-loader fixtures
+predate PR #193: one uses a now-rejected foreign director namespace and the
+others omit the now-required definition argument. Their two test files are
+therefore carried from the same PR and individually allowlisted above.

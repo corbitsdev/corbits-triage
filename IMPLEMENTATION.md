@@ -9,7 +9,7 @@ Bun, TypeScript, Postgres, React + Vite. Interchange is consumed from
 | --- | --- |
 | `src/env.ts` | Only reader of the environment. arktype schema; `databaseConfig` parses `DATABASE_URL`. |
 | `src/server.ts` | Composition root: loads env, runs migrations, builds every component and injects config. |
-| `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database config injected. |
+| `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database config, auth config and credential cipher injected. |
 | `src/auth.ts` | better-auth config: stock settings, optional Google sign-in and email allowlist, `PORTAL_ORIGIN` as a trusted origin. |
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
 | `src/hooks.ts` | `@corbits/webhooks` mount and its migrations. |
@@ -83,7 +83,7 @@ deployment resolves its offering when deployed.
 | --- | --- | --- |
 | PR #193 / INTR-581 | Custom directors | 2026-11-01 |
 | INTR-583 | Operator-registered model provider plugins | 2026-11-01 |
-| INTR-647 | Keep tool-scoped credential grants in spawned children | 2026-11-01 |
+| CL-10178 | Run-scoped `onTrigger` child run ids, with backward-compatible resume | 2026-11-01 |
 
 ## Deployment
 
