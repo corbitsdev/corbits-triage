@@ -16,7 +16,7 @@ import {
 import { loadCheckPack, repoNeedsCheckSetup, saveCheckPack } from "../lib/check-pack.ts";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { backlogSyncFromConfig, githubAppSlugFromCredentials, hasActiveGithubCredential } from "../lib/hub-api.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential } from "../lib/hub-api.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
@@ -90,7 +90,7 @@ function CheckControl({ spec, row, onChange }: { spec: CatalogCheck; row: DraftC
 export default function RepoDetail() {
   const params = useParams();
   const navigate = useNavigate();
-  const { snapshot, refreshNow, syncFromGithub, runBacklog, readOnly } = usePortal();
+  const { snapshot, refreshNow, syncFromGithub, runBacklog, saveRepoPolicy, notify, readOnly } = usePortal();
   const fromId = params.id ? ownerAndName(params.id) : null;
   const setupTab = params.tab === "setup";
   const paired = !fromId && params.id && params.tab && params.tab !== "setup"
@@ -110,6 +110,7 @@ export default function RepoDetail() {
   const [customInstruction, setCustomInstruction] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [loadingPack, setLoadingPack] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(() => repoNeedsCheckSetup(config));
   const [customizing, setCustomizing] = useState(false);
@@ -119,7 +120,6 @@ export default function RepoDetail() {
   const ready = items.filter((item) => item.state === "ready").length;
   const receivingEvents = config ? hasVerifiedWebhookDelivery(snapshot?.logs ?? [], config.name) : false;
   const catchingUp = snapshot ? isRepoCatchingUp(snapshot, config?.name ?? label) : false;
-  const backlogFailed = snapshot ? backlogSyncFromConfig(snapshot.config)[config?.name ?? label]?.status === "failed" : false;
   const dirty = packJson(pack) !== packJson(saved) || (needsSetup && customizing);
   async function syncAfterGithub() {
     try {
@@ -287,6 +287,44 @@ export default function RepoDetail() {
     }
   }
 
+  async function triageOpenPullRequests(repo: string) {
+    try {
+      await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
+    } catch (cause) {
+      setError(`Triage enabled. Could not start triage of open pull requests. ${cause instanceof Error ? cause.message : String(cause)} Use Triage again.`);
+    }
+  }
+
+  async function enableTriage() {
+    if (!config) return;
+    setToggling(true);
+    setError("");
+    try {
+      await saveRepoPolicy(config.name, { ...repoPolicy(config), enabled: true });
+      await triageOpenPullRequests(config.name);
+      await refreshNow();
+    } catch (cause) {
+      setError(`Could not enable triage. ${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  async function disableTriage() {
+    if (!config) return;
+    setToggling(true);
+    setError("");
+    try {
+      await saveRepoPolicy(config.name, { ...repoPolicy(config), enabled: false });
+      await refreshNow();
+      notify("Triage disabled.");
+    } catch (cause) {
+      setError(`Could not disable triage. ${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setToggling(false);
+    }
+  }
+
   async function persist(artifact: ReturnType<typeof checkPackFromDraft>, draft: DraftPack, completingSetup: boolean) {
     if (!snapshot || !config) return;
     setSaving(true);
@@ -295,23 +333,13 @@ export default function RepoDetail() {
       await saveCheckPack(createHubTransport(), snapshot.workspace.tenantId, config.name, artifact, {
         cleanupMode: draft.mode,
       });
-      if (completingSetup) {
-        try {
-          await runBacklog(config.name);
-        } catch (cause) {
-          setError(`Checks saved. Could not start backlog. ${cause instanceof Error ? cause.message : String(cause)}`);
-        }
-      }
-      const nextSnap = await refreshNow();
+      await refreshNow();
       const nextDraft = draftFromCheckPack(artifact, draft.mode);
       setPack(nextDraft);
       setSaved(nextDraft);
       setNeedsSetup(false);
       setCustomizing(false);
-      if (completingSetup) {
-        const pending = nextSnap?.repos.find((row) => row.name !== config.name && repoNeedsCheckSetup(row));
-        navigate(pending ? repoPath(pending.name, true) : repoPath(config.name));
-      }
+      if (completingSetup) navigate(repoPath(config.name));
     } catch (cause) {
       setError(`Could not save configuration. ${cause instanceof Error ? cause.message : String(cause)} Check the values, then try again.`);
     } finally {
@@ -374,13 +402,11 @@ export default function RepoDetail() {
       ? "Repository not found."
       : needsSetup
         ? "Needs setup"
-        : backlogFailed
-          ? "Backlog failed"
-          : catchingUp
-            ? "Catching up open pull requests"
-            : receivingEvents
-              ? "Receiving events"
-              : "No events yet";
+        : catchingUp
+          ? "Catching up open pull requests"
+          : receivingEvents
+            ? "Receiving events"
+            : "No events yet";
 
   function renderCheckRow({ row, spec }: { row: DraftCheck; spec: CatalogCheck | undefined }) {
     const tall = spec?.param === "globs" || row.custom;
@@ -520,7 +546,7 @@ export default function RepoDetail() {
               <h1 className={needsSetup && !customizing ? undefined : "mono"}>{needsSetup && !customizing ? "Set up checks" : label}</h1>
               <p className="lede">
                 {needsSetup && !customizing
-                  ? <><span className="mono">{label}</span> is not classifying pull requests until you save a pack. Use recommended adds the pack in one click. Customize starts with no checks.</>
+                  ? <><span className="mono">{label}</span> needs a check pack. Use recommended adds the pack in one click. Customize starts with no checks. Saving checks does not start triage; Enable triage does.</>
                   : needsSetup
                     ? "Add checks from the catalog, or start empty. Save writes the pack."
                     : "When to post, then the checks triage reads for this repository."}
@@ -555,10 +581,14 @@ export default function RepoDetail() {
                       <div className="repo-stat"><dt>Ready to merge</dt><dd>{ready}</dd></div>
                       <div className="repo-stat"><dt>Last event</dt><dd>{eventText}</dd></div>
                       <div className="repo-stat"><dt>Posting</dt><dd>{pack.mode === "automated" ? "Automated" : "Human approved"}</dd></div>
+                      <div className="repo-stat"><dt>Triage</dt><dd>{initial.enabled ? "Enabled" : "Disabled"}</dd></div>
                     </dl>
+                    {!initial.enabled && <p className="field-help">Nothing runs until triage is enabled.</p>}
                     <div className="repo-side-actions">
-                      <Link className={`btn${needs ? " primary" : ""}`} to={`/triage/action`}>Open triage</Link>
-                      <button type="button" className="btn" disabled={readOnly || deniedRepos || !config} onClick={() => void triageAgain()}>Triage again</button>
+                      {!initial.enabled && <button type="button" className="btn primary" disabled={readOnly || deniedRepos || !config || toggling} onClick={() => void enableTriage()}>{toggling ? "Enabling…" : "Enable triage"}</button>}
+                      <Link className={`btn${needs && initial.enabled ? " primary" : ""}`} to={`/triage/action`}>Open triage</Link>
+                      {initial.enabled && <button type="button" className="btn" disabled={readOnly || deniedRepos || !config} onClick={() => void triageAgain()}>Triage again</button>}
+                      {initial.enabled && <button type="button" className="btn" disabled={readOnly || deniedRepos || !config || toggling} onClick={() => void disableTriage()}>{toggling ? "Disabling…" : "Disable triage"}</button>}
                       <button type="button" className="btn" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</button>
                       {config ? <a className="ghost-link" href={`https://github.com/${config.name}`} target="_blank" rel="noreferrer">View on GitHub</a> : null}
                     </div>

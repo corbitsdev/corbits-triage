@@ -62,18 +62,6 @@ export type RepoRecord = {
   checkPack?: { name: string };
 };
 
-export type BacklogSyncState = {
-  status: "pending" | "succeeded" | "failed";
-  operationId: string;
-  runId?: string;
-  error?: string;
-};
-
-export type BacklogSyncResult =
-  | { repo: string; status: "succeeded"; runId: string }
-  | { repo: string; status: "pending" }
-  | { repo: string; status: "failed"; error: string };
-
 export function githubAppInstallUrl(slug: string): string {
   const clean = slug.trim();
   if (!clean) throw new Error("GitHub App slug is required.");
@@ -287,7 +275,6 @@ export const CONFIG_KEY = "corbitsTriage";
 
 export type AppConfig = {
   repos?: unknown[];
-  backlogSync?: Record<string, BacklogSyncState>;
   confidenceFloor?: number;
   allowlist?: Record<string, string[]>;
   labelMap?: Record<string, string>;
@@ -298,24 +285,6 @@ export type AppConfig = {
   };
   rev?: number;
 };
-
-export function backlogSyncFromConfig(config: AppConfig | null | undefined): Record<string, BacklogSyncState> {
-  const raw = config?.backlogSync;
-  if (!raw || typeof raw !== "object") return {};
-  const parsed: Record<string, BacklogSyncState> = {};
-  for (const [repo, value] of Object.entries(raw)) {
-    if (!value || typeof value !== "object") continue;
-    const row = value as Record<string, unknown>;
-    if ((row.status !== "pending" && row.status !== "succeeded" && row.status !== "failed") || typeof row.operationId !== "string") continue;
-    parsed[repo] = {
-      status: row.status,
-      operationId: row.operationId,
-      ...(typeof row.runId === "string" ? { runId: row.runId } : {}),
-      ...(typeof row.error === "string" ? { error: row.error } : {}),
-    };
-  }
-  return parsed;
-}
 
 export function appConfig(config: unknown): AppConfig {
   if (!config || typeof config !== "object") return {};
