@@ -25,6 +25,7 @@ export {
   scanRunsForBoot,
   readCommittedWorkflowRunLifecycle,
   readWorkflowRunLifecycle,
+  hasRecordedSignal,
   readProcessingEntry,
   replayProcessingToInbox,
   requireEventSeq,
