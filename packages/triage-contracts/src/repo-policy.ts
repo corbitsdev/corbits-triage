@@ -29,7 +29,7 @@ export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
 
 export const DEFAULT_REPO_POLICY: RepoPolicy = {
   cleanupMode: "human-approved",
-  enabled: true,
+  enabled: false,
   checks: { ...DEFAULT_REPO_CHECKS },
 };
 
@@ -51,7 +51,7 @@ export function repoPolicy(raw: unknown): RepoPolicy {
   const pointerName = typeof pointer.name === "string" ? pointer.name.trim() : "";
   return {
     cleanupMode: source.cleanupMode === "automated" ? "automated" : "human-approved",
-    enabled: flag(source.enabled, true),
+    enabled: flag(source.enabled, false),
     checks: {
       draft: flag(checks.draft, true),
       ci: flag(checks.ci, true),

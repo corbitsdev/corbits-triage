@@ -11,7 +11,7 @@ describe("repoPolicy", () => {
   test("fills partial check flags and nested policy objects", () => {
     expect(repoPolicy({ cleanupMode: "automated", checks: { ci: false } })).toEqual({
       cleanupMode: "automated",
-      enabled: true,
+      enabled: false,
       checks: {
         draft: true,
         ci: false,

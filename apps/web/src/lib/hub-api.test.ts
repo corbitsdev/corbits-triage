@@ -516,7 +516,7 @@ describe("repository policy config", () => {
       name: "acme/widgets",
       connected: true,
       cleanupMode: "human-approved",
-      enabled: true,
+      enabled: false,
       checks: {
         draft: true,
         ci: true,

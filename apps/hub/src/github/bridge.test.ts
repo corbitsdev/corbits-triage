@@ -11,7 +11,7 @@ const SECRET = "test-webhook-secret";
 const HOOK_ID = "crd_test123";
 const TENANT_ID = "tnt_test";
 const TARGET = { hookId: HOOK_ID };
-const CONNECTED_HELLO = { corbitsTriage: { repos: [{ name: "octocat/hello", connected: true }] } };
+const CONNECTED_HELLO = { corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: true }] } };
 
 function sign(body: string): string {
   return `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
@@ -283,7 +283,7 @@ describe("bridge handler", () => {
 
   test("unconfigured repositories are 202 ignored", async () => {
     const sent: Sent[] = [];
-    const db = stubDb([hookRow()], { corbitsTriage: { repos: [{ name: "octocat/other", connected: true }] } });
+    const db = stubDb([hookRow()], { corbitsTriage: { repos: [{ name: "octocat/other", connected: true, enabled: true }] } });
     const res = await bridge({ db, sent })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);

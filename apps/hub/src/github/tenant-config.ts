@@ -160,7 +160,7 @@ export function upsertConnectedRepos(
     const at = index.get(name);
     if (at === undefined) {
       index.set(name, repos.length);
-      repos.push({ name, connected: true, ...fields, ...repoPolicy(undefined), enabled: false });
+      repos.push({ name, connected: true, ...fields, ...repoPolicy(undefined) });
       continue;
     }
     const prev = repos[at]!;

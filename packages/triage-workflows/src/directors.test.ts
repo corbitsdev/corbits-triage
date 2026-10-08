@@ -107,6 +107,7 @@ describe("facts director policy", () => {
             kind: "pr",
             repo: "acme/widgets",
             prNumber: 8,
+            policy: { enabled: true },
           }),
         },
       } as ReactorInboundEvent,
