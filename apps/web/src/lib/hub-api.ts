@@ -780,17 +780,6 @@ async function ensureInferenceOffering(
   }
 }
 
-async function rememberRepo(transport: Transport, tenantId: string, repo: string): Promise<void> {
-  await patchAppConfig(transport, tenantId, function addRepo(current) {
-    const prior = (current.repos ?? []).find((row) => rowName(row) === repo);
-    const kept = (current.repos ?? []).filter((row) => rowName(row) !== repo);
-    return {
-      ...current,
-      repos: [...kept, { ...(prior && typeof prior === "object" ? prior : {}), name: repo, connected: true }],
-    };
-  });
-}
-
 async function forgetRepo(transport: Transport, tenantId: string, repo: string): Promise<void> {
   await patchAppConfig(transport, tenantId, function dropRepo(current) {
     return { ...current, repos: (current.repos ?? []).filter((row) => rowName(row) !== repo) };
@@ -1034,20 +1023,6 @@ function serializePerTenant<T>(tenantId: string, work: () => Promise<T>): Promis
 }
 
 /** The portal does not call GitHub. A missing workflow deployment is an error, not seed data. */
-export async function connectRepository(
-  transport: Transport,
-  tenantId: string,
-  input: { repo: string },
-): Promise<{ runId: string }> {
-  const repo = validateRepo(input.repo);
-  const key = requireTenantId(tenantId);
-  return serializePerTenant(key, async function connect() {
-    await rememberRepo(transport, tenantId, repo);
-    const { runId } = await startBacklogTriage(transport, tenantId, repo);
-    return { runId };
-  });
-}
-
 export async function removeRepository(
   transport: Transport,
   tenantId: string,
@@ -1057,30 +1032,6 @@ export async function removeRepository(
   const key = requireTenantId(tenantId);
   await serializePerTenant(key, function remove() {
     return forgetRepo(transport, tenantId, clean);
-  });
-}
-
-export async function changeRepository(
-  transport: Transport,
-  tenantId: string,
-  input: { previousRepo: string; repo: string },
-): Promise<{ runId: string }> {
-  const previousRepo = validateRepo(input.previousRepo);
-  const repo = validateRepo(input.repo);
-  const key = requireTenantId(tenantId);
-  function replaceRepo(current: AppConfig): AppConfig {
-    return {
-      ...current,
-      repos: [
-        ...(current.repos ?? []).filter((row) => rowName(row) !== previousRepo && rowName(row) !== repo),
-        { name: repo, connected: true },
-      ],
-    };
-  }
-  return serializePerTenant(key, async function change() {
-    await patchAppConfig(transport, tenantId, replaceRepo);
-    const { runId } = await startBacklogTriage(transport, tenantId, repo);
-    return { runId };
   });
 }
 
