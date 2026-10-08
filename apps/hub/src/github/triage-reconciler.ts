@@ -1,39 +1,35 @@
 // Brings every open pull request on an enabled repository to a triaged head
 // without relying on any webhook, sidecar or portal visit having survived:
-// reads GitHub's open pull requests, the run logs and the stored state, then
-// queues what the plan says through the same path webhooks use.
-import { and, eq } from "drizzle-orm";
-import { schema, type DB } from "@intx/db";
-import { credentialAad, type CredentialCipher } from "@intx/types";
-import { listOpenPrs, type GithubFetch } from "@corbits/github-tool/github";
+// reads GitHub's open pull requests, the live deployment's run log and the
+// stored state, then queues what the plan says to that deployment.
 import { repoPolicy, type CheckPack, type RepoPolicy } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead } from "./check-pack-store.js";
-import { resolveLiveDeployment } from "./deployment.js";
-import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { forInstallation } from "./open-pulls.js";
-import { appGithubFetch } from "./portal-credential.js";
-import { planRepo, type OpenPr, type ReconcilePolicy } from "./reconcile-plan.js";
+import { planRepo, type ReconcilePolicy } from "./reconcile-plan.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
+import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import type { ObservedRuns } from "./triage-runs.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 
+export type ReconcileTenant = { id: string; domain: string; config: unknown };
+export type LiveDeployment = { runId: string; address: string };
+
 export type TriageReconcilerDeps = {
-  db: DB["db"];
-  cipher: CredentialCipher;
-  githubApiOrigin: string;
-  /** The deployed workflow that triages one pull request. */
-  workflowName: string;
+  tenants: () => Promise<ReconcileTenant[]>;
+  /** The tenant's live pr-triage deployment; the hub never deploys one itself. */
+  liveDeployment: (tenantId: string) => Promise<LiveDeployment | null>;
+  openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
+  observeRuns: (anchorRunId: string, domain: string) => Promise<ObservedRuns>;
   store: TriageStateStore;
-  observeRuns: (tenantId: string, domain: string) => Promise<ObservedRuns>;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
-  sendMail: (tenantId: string, workflow: string, payload: unknown) => Promise<unknown>;
+  deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   policy: ReconcilePolicy;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
 
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
+type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
 
 /** Deliveries stop for the tenant once one fails: its deployment is unreachable until a later pass. */
 class DeliveryFailed extends Error {}
@@ -45,27 +41,12 @@ function enabledRepos(config: unknown): EnabledRepo[] {
   });
 }
 
-function openHeads(prs: Awaited<ReturnType<typeof listOpenPrs>>): OpenPr[] {
-  return prs.flatMap((pr) => (typeof pr.sha === "string" && pr.sha !== "" ? [{ number: pr.number, headSha: pr.sha, updatedAt: pr.updatedAt }] : []));
-}
-
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
-  const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
-
-  async function tenantGithub(tenantId: string): Promise<GithubFetch | undefined> {
-    const credential = await deps.db.query.credential.findFirst({
-      where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.name, "github"), eq(schema.credential.status, "active")),
-    });
-    if (!credential) return undefined;
-    const appJson = await deps.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
-    return appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
-  }
-
-  async function reconcileRepo(tenantId: string, gh: GithubFetch, repo: EnabledRepo, pack: CheckPack, runs: ObservedRuns): Promise<void> {
+  async function reconcileRepo(pass: TenantPass, repo: EnabledRepo, pack: CheckPack): Promise<void> {
     const name = repo.record.name;
-    const prs = openHeads(await listOpenPrs(forInstallation(gh, repo.record.installationId), name));
-    const stored = await deps.store.load(tenantId, name);
-    const plan = planRepo({ prs, rows: stored, runs: runs.get(name) ?? new Map(), now: deps.now(), policy: deps.policy });
+    const prs = await pass.openHeads(repo.record);
+    const stored = await deps.store.load(pass.tenantId, name);
+    const plan = planRepo({ prs, rows: stored, runs: pass.runs.get(name) ?? new Map(), now: deps.now(), policy: deps.policy });
     const rows = [...plan.rows];
     let failure: unknown;
     for (const queued of plan.enqueue) {
@@ -76,33 +57,37 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         continue;
       }
       try {
-        await deps.sendMail(tenantId, deps.workflowName, mailPayload(name, repo.policy, pack, { prNumber: queued.number, headSha }));
-        deps.log({ level: "info", msg: "triage_requeued", tenantId, repo: name, pr: queued.number, headSha });
+        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, pack, { prNumber: queued.number, headSha }));
+        deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha });
       } catch (err) {
         failure = err;
         rows[index] = { ...queued.undelivered, error: `delivery failed: ${String(err)}` };
       }
     }
-    if (JSON.stringify(rows) !== JSON.stringify(stored)) await deps.store.save(tenantId, name, rows);
+    if (JSON.stringify(rows) !== JSON.stringify(stored)) await deps.store.save(pass.tenantId, name, rows);
     if (failure !== undefined) throw new DeliveryFailed(String(failure));
   }
 
-  async function reconcileTenant(tenant: { id: string; domain: string; config: unknown }): Promise<void> {
+  async function reconcileTenant(tenant: ReconcileTenant): Promise<void> {
     const repos = enabledRepos(tenant.config);
     if (repos.length === 0) return;
-    // The hub never deploys on its own; without a live deployment there is nothing to queue to.
-    if (!(await resolveLiveDeployment(deps.db, tenant.id, deps.workflowName))) {
+    const deployment = await deps.liveDeployment(tenant.id);
+    if (!deployment) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
       return;
     }
-    const gh = await tenantGithub(tenant.id);
-    if (!gh) return;
-    const runs = await deps.observeRuns(tenant.id, tenant.domain);
+    const openHeads = await deps.openHeadsFor(tenant.id);
+    if (!openHeads) {
+      deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_github_credential" });
+      return;
+    }
+    // Only the live deployment's log is read; heads triaged under an earlier one are already settled in the stored state.
+    const pass = { tenantId: tenant.id, deployment, openHeads, runs: await deps.observeRuns(deployment.runId, tenant.domain) };
     for (const repo of repos) {
       const read = await deps.readCheckPack(tenant.id, repo.record.name);
       if (read.status !== "ok") continue;
       try {
-        await reconcileRepo(tenant.id, gh, repo, read.pack, runs);
+        await reconcileRepo(pass, repo, read.pack);
       } catch (err) {
         deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: repo.record.name, error: String(err) });
         if (err instanceof DeliveryFailed) return;
@@ -111,8 +96,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   }
 
   return async function reconcileTriage(): Promise<void> {
-    const tenants = await deps.db.select({ id: schema.tenant.id, domain: schema.tenant.domain, config: schema.tenant.config }).from(schema.tenant);
-    for (const tenant of tenants) {
+    for (const tenant of await deps.tenants()) {
       try {
         await reconcileTenant(tenant);
       } catch (err) {

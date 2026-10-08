@@ -15,6 +15,7 @@ export type TriageStateStoreDeps = {
   db: ArtifactDb;
   /** The principal hub writes are recorded as. */
   writerFor: (tenantId: string) => Promise<string>;
+  log: (entry: Record<string, unknown>) => void;
 };
 
 export type TriageStateStore = {
@@ -29,7 +30,11 @@ export function createTriageStateStore(deps: TriageStateStoreDeps): TriageStateS
     const row = await getArtifact(deps.db, found.artifactId);
     if (!row) return [];
     const state = parseTriageState(row.content, repo);
-    if (!state) throw new Error(`triage state for ${repo} is corrupt`);
+    // Unreadable state only costs a re-derivation from the run log; the next save replaces it.
+    if (!state) {
+      deps.log({ level: "warn", msg: "triage_state_unreadable", tenantId, repo, artifactId: found.artifactId });
+      return [];
+    }
     return state.prs;
   }
 
