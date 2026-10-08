@@ -34,6 +34,9 @@ type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: Ope
 /** Deliveries stop for the tenant once one fails: its deployment is unreachable until a later pass. */
 class DeliveryFailed extends Error {}
 
+/** `retry` asks for another pass soon: a deployment was not routable yet. */
+export type ReconcileOutcome = { retry: boolean };
+
 function enabledRepos(config: unknown): EnabledRepo[] {
   return repoRecords(triageNs(config)).flatMap(function enabled(record) {
     const policy = repoPolicy(record);
@@ -68,18 +71,19 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     if (failure !== undefined) throw new DeliveryFailed(String(failure));
   }
 
-  async function reconcileTenant(tenant: ReconcileTenant): Promise<void> {
+  /** True when a delivery failed: the deployment was not routable yet, so the pass is worth repeating soon. */
+  async function reconcileTenant(tenant: ReconcileTenant): Promise<boolean> {
     const repos = enabledRepos(tenant.config);
-    if (repos.length === 0) return;
+    if (repos.length === 0) return false;
     const deployment = await deps.liveDeployment(tenant.id);
     if (!deployment) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
-      return;
+      return false;
     }
     const openHeads = await deps.openHeadsFor(tenant.id);
     if (!openHeads) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_github_credential" });
-      return;
+      return false;
     }
     // Only the live deployment's log is read; heads triaged under an earlier one are already settled in the stored state.
     const pass = { tenantId: tenant.id, deployment, openHeads, runs: await deps.observeRuns(deployment.runId, tenant.domain) };
@@ -90,18 +94,21 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         await reconcileRepo(pass, repo, read.pack);
       } catch (err) {
         deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: repo.record.name, error: String(err) });
-        if (err instanceof DeliveryFailed) return;
+        if (err instanceof DeliveryFailed) return true;
       }
     }
+    return false;
   }
 
-  return async function reconcileTriage(): Promise<void> {
+  return async function reconcileTriage(): Promise<ReconcileOutcome> {
+    let retry = false;
     for (const tenant of await deps.tenants()) {
       try {
-        await reconcileTenant(tenant);
+        if (await reconcileTenant(tenant)) retry = true;
       } catch (err) {
         deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, error: String(err) });
       }
     }
+    return { retry };
   };
 }
