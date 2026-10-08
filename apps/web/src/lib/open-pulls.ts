@@ -27,6 +27,13 @@ export function usePullRequestItems(): PrItem[] {
   return useMemo(() => (snapshot ? projectQueue(logs, snapshot.approvals, data) : []), [logs, snapshot, data]);
 }
 
+/** True until every source the queue is projected from has loaded once; the lists are not meaningful before that. */
+export function useQueueLoading(): boolean {
+  const { pending } = useRunLogs();
+  const openPulls = useOpenPulls();
+  return pending || openPulls.isLoading;
+}
+
 /** The inbox: every open pull request, with its verdict when it has one. */
 export function useQueueItems(): PrItem[] {
   const items = usePullRequestItems();

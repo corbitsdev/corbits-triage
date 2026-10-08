@@ -5,7 +5,7 @@ import { QUEUE_STATE_LABEL, type PrItem } from "../lib/hub-api.ts";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import { actionLane, filterTriageItems, prHref, relativeTime, sortTriageItems, type TriageBoardView } from "../lib/triage-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { useQueueItems } from "../lib/open-pulls.ts";
+import { useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
@@ -54,6 +54,7 @@ export default function Triage() {
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const allItems = useQueueItems();
+  const loading = useQueueLoading();
   const shown = useMemo(function filterShown() {
     const normalized = query.trim().toLowerCase();
     function matchesQuery(item: PrItem): boolean {
@@ -134,13 +135,13 @@ export default function Triage() {
         <main id="main" className="scroller">
           <div className="content-wide">
             {denied && <DeniedNotice section="logs" />}
-            {!denied && connectedRepos.length === 0 && shown.length === 0 ? (
+            {!denied && !loading && connectedRepos.length === 0 && shown.length === 0 ? (
               <div className="empty">
                 <p>No repositories yet.</p>
                 <Link className="btn primary" to="/repositories">Choose repositories on GitHub</Link>
               </div>
             ) : !denied && shown.length === 0 ? (
-              <div className="empty">{empty}</div>
+              loading ? null : <div className="empty">{empty}</div>
             ) : view === "action" ? board : stack}
           </div>
         </main>
