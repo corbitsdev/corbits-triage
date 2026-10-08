@@ -12,30 +12,31 @@ function recorder(respond: (path: string, init?: RequestInit) => unknown) {
       method: init?.method ?? "GET",
       body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
     });
-    return Response.json(respond(path, init));
+    const reply = respond(path, init);
+    return reply instanceof Response ? reply : Response.json(reply);
   }
   return { gh: gh satisfies GithubFetch, requests };
 }
 
-type FakeComment = { id: number; user: { login: string }; body: string };
+type FakeComment = { id: number; user: { login: string; type: string }; body: string };
 
-const APP_LOGIN = "corbits-triage[bot]";
+const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 /** GitHub that keeps pull request 8's issue comments, so repeated runs see each other's writes. */
-function fakeGithub(comments: FakeComment[] = []) {
+function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = []) {
   let nextId = 100;
   const { gh, requests } = recorder(function respond(path, init) {
     const body = typeof init?.body === "string" ? JSON.parse(init.body).body : undefined;
-    if (path === "/app") return { slug: "corbits-triage" };
     if (path.endsWith("/pulls/8") && !init?.method) return { head: { sha: "abc123" } };
     if (path.includes("/comments?per_page")) return comments;
     if (path.endsWith("/issues/8/comments") && init?.method === "POST") {
-      const created = { id: nextId++, user: { login: APP_LOGIN }, body };
+      const created = { id: nextId++, user: APP, body };
       comments.push(created);
       return created;
     }
     const edit = /\/issues\/comments\/(\d+)$/.exec(path);
     if (edit && init?.method === "PATCH") {
+      if (otherAppComments.includes(Number(edit[1]))) return Response.json({ message: "Forbidden" }, { status: 403 });
       const target = comments.find((comment) => comment.id === Number(edit[1]));
       if (!target) throw new Error(`no comment ${edit[1]}`);
       target.body = body;
@@ -57,23 +58,31 @@ describe("triage comment", () => {
     expect(first).toEqual({ commentId: 100, updated: false });
     expect(second).toMatchObject({ commentId: 100, updated: true });
     expect(third).toEqual({ commentId: 100, updated: true });
-    expect(comments).toEqual([{ id: 100, user: { login: APP_LOGIN }, body: "<!-- corbits-triage -->\nThird" }]);
+    expect(comments).toEqual([{ id: 100, user: APP, body: "<!-- corbits-triage -->\nThird" }]);
   });
 
   test("edits a comment carrying the earlier per-head marker", async () => {
     const { gh, requests, comments } = fakeGithub([
-      { id: 42, user: { login: APP_LOGIN }, body: "<!-- corbits-triage:acme/widgets#8@old -->\nOld" },
+      { id: 42, user: APP, body: "<!-- corbits-triage:acme/widgets#8@old -->\nOld" },
     ]);
     await mirror(gh, { ...MIRROR, close: false });
     expect(requests.some((request) => request.method === "POST")).toBe(false);
-    expect(comments).toEqual([{ id: 42, user: { login: APP_LOGIN }, body: "<!-- corbits-triage -->\nDuplicate" }]);
+    expect(comments).toEqual([{ id: 42, user: APP, body: "<!-- corbits-triage -->\nDuplicate" }]);
   });
 
-  test("ignores a marked comment written by someone else", async () => {
-    const foreign = { id: 7, user: { login: "mallory" }, body: "<!-- corbits-triage -->\nNot ours" };
+  test("ignores a marked comment written by a person", async () => {
+    const foreign = { id: 7, user: { login: "mallory", type: "User" }, body: "<!-- corbits-triage -->\nNot ours" };
     const { gh, comments } = fakeGithub([{ ...foreign }]);
     expect(await upsertTriageComment(gh, { repo: "acme/widgets", number: 8, body: "Ours" })).toEqual({ commentId: 100, updated: false });
-    expect(comments).toEqual([foreign, { id: 100, user: { login: APP_LOGIN }, body: "<!-- corbits-triage -->\nOurs" }]);
+    expect(comments).toEqual([foreign, { id: 100, user: APP, body: "<!-- corbits-triage -->\nOurs" }]);
+  });
+
+  test("creates its own when GitHub refuses to edit another App's marked comment", async () => {
+    const other = { id: 9, user: { login: "other-app[bot]", type: "Bot" }, body: "<!-- corbits-triage -->\nTheirs" };
+    const { gh, requests, comments } = fakeGithub([{ ...other }], [9]);
+    expect(await upsertTriageComment(gh, { repo: "acme/widgets", number: 8, body: "Ours" })).toEqual({ commentId: 100, updated: false });
+    expect(requests.some((request) => request.path === "/repos/acme/widgets/issues/comments/9" && request.method === "PATCH")).toBe(true);
+    expect(comments).toEqual([other, { id: 100, user: APP, body: "<!-- corbits-triage -->\nOurs" }]);
   });
 });
 

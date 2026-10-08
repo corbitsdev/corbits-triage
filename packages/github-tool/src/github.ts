@@ -287,14 +287,21 @@ export type TriageCommentInput = {
 /** Edits the App's one Triage comment on the pull request, creating it only when none exists. */
 export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput) {
   const { repo, number } = input;
-  const { slug } = await getApp(gh);
-  const comments = await listIssueComments(gh, repo, number);
-  const existing = comments.find((c) => c.author === `${slug}[bot]` && isTriageComment(c.body));
   const body = `${TRIAGE_COMMENT_MARKER}\n${input.body}`;
-  const posted = existing
-    ? await json(gh, `/repos/${repo}/issues/comments/${existing.id}`, send("PATCH", { body }))
-    : await json(gh, `/repos/${repo}/issues/${number}/comments`, send("POST", { body }));
-  return { commentId: posted.id, updated: Boolean(existing) };
+  const comments = await jsonAll<any>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
+  const candidates = comments.filter((c) => c.user?.type === "Bot" && typeof c.body === "string" && isTriageComment(c.body));
+  const edit = send("PATCH", { body });
+  for (const candidate of candidates) {
+    const path = `/repos/${repo}/issues/comments/${candidate.id}`;
+    const res = await gh(path, { ...edit, headers: { accept: "application/vnd.github+json", ...edit.headers } });
+    // An installation token can edit only its own App's comments, so a refusal means another App wrote this one.
+    if (res.status === 403 || res.status === 404) continue;
+    if (!res.ok) throw new Error(`github PATCH ${path} -> ${res.status}`);
+    const edited = await res.json() as { id: number };
+    return { commentId: edited.id, updated: true };
+  }
+  const posted = await json(gh, `/repos/${repo}/issues/${number}/comments`, send("POST", { body }));
+  return { commentId: posted.id, updated: false };
 }
 
 export const REVIEW_EVENTS = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const;
