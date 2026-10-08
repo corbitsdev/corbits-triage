@@ -12,7 +12,7 @@
     "workflows": "bun scripts/build-workflows.ts"
   },
   "dependencies": {
-    "@corbits/react-ui": "0.3.0",
+    "@corbits/react-ui": "0.3.1",
     "@corbits/triage-contracts": "workspace:*",
     "@intx/hub-client": "workspace:*",
     "@isomorphic-git/lightning-fs": "^4.10.3",

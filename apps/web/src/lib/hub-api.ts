@@ -1175,7 +1175,7 @@ export function queueRows(logs: RunLog[], approvals: HubApproval[], needsHuman: 
     id: `${row.runId}:${row.signalName}`,
     title: row.signalName,
     meta: `${row.runId} · seq ${row.seq}`,
-    href: `/triage/action`,
+    href: `/inbox`,
   }));
   return [...pending, ...signals];
 }

@@ -321,7 +321,7 @@ export default function Connect() {
           {modelStored && !liveReady && <p role="status" className="muted">{githubReady ? "Waiting for the first triage run." : "Waiting for GitHub to deliver a webhook."}</p>}
           <div className="task-actions">
             <button type="button" className="btn" onClick={() => setStep("select")}>Back</button>
-            {modelStored && <button type="button" className="btn primary" disabled={!liveReady} onClick={() => navigate("/triage/action")}>Open triage</button>}
+            {modelStored && <button type="button" className="btn primary" disabled={!liveReady} onClick={() => navigate("/inbox")}>Open triage</button>}
           </div>
         </>}
       </section>

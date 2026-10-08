@@ -150,36 +150,9 @@ export function formatLatency(ms: number | null): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-export type TriageBoardView = "action" | "merge" | "all";
-
 export function priorityRank(priority: string | null): number {
   const rank = priority ? Number(priority.slice(1)) : 4;
   return Number.isFinite(rank) ? rank : 4;
-}
-
-export function filterTriageItems(items: PrItem[], view: TriageBoardView): PrItem[] {
-  if (view === "action") return items.filter((item) => item.state !== "new");
-  if (view === "merge") return items.filter((item) => item.state === "ready");
-  return items;
-}
-
-function compareTriageItems(a: PrItem, b: PrItem): number {
-  if (a.needsHuman !== b.needsHuman) return a.needsHuman ? -1 : 1;
-  const byPriority = priorityRank(a.priority) - priorityRank(b.priority);
-  if (byPriority !== 0) return byPriority;
-  const aWait = a.waitingSince ? Date.parse(a.waitingSince) : 0;
-  const bWait = b.waitingSince ? Date.parse(b.waitingSince) : 0;
-  return aWait - bWait;
-}
-
-export function sortTriageItems(items: PrItem[]): PrItem[] {
-  return [...items].sort(compareTriageItems);
-}
-
-export function actionLane(item: PrItem): "p01" | "p2" | "p3" {
-  if (item.priority === "P0" || item.priority === "P1") return "p01";
-  if (item.priority === "P2") return "p2";
-  return "p3";
 }
 
 export function prHref(item: Pick<PrItem, "repo" | "number" | "href">): string {
