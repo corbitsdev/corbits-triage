@@ -8,6 +8,7 @@ import { DeniedNotice } from "../lib/denied.tsx";
 import { useQueueItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
+import { useRunLogs } from "../lib/run-logs.ts";
 
 function viewFromPath(pathname: string): TriageBoardView {
   if (pathname.endsWith("/merge")) return "merge";
@@ -61,9 +62,9 @@ export default function Triage() {
     }
     return sortTriageItems(filterTriageItems(allItems, view).filter(matchesQuery));
   }, [allItems, query, view]);
-  const denied = snapshot?.denied.logs ?? false;
+  const { logs, denied } = useRunLogs();
   const connectedRepos = snapshot?.repos.filter((repo) => repo.connected) ?? [];
-  const catchingUp = snapshot ? connectedRepos.some((repo) => isRepoCatchingUp(snapshot, repo.name)) : false;
+  const catchingUp = snapshot ? connectedRepos.some((repo) => isRepoCatchingUp(logs, snapshot.runs, repo.name)) : false;
   const title = view === "action" ? "Triaged" : view === "merge" ? "Ready to Merge" : "All PRs";
   const lede = view === "action"
     ? "Every triaged pull request, ranked by priority."

@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
@@ -75,6 +75,9 @@ const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
 };
 
 export const PORTAL_QUERY_KEY = ["portal"] as const;
+export const RUN_IDS_QUERY_KEY = "run-ids";
+export const RUN_LOG_QUERY_KEY = "run-log";
+const REFRESH_QUERY_KEYS = [PORTAL_QUERY_KEY, [RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY]];
 
 const convergedTenants = new Set<string>();
 
@@ -106,10 +109,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [signOut]);
 
   const refresh = useCallback(function refresh() {
-    void queryClient.invalidateQueries({ queryKey: PORTAL_QUERY_KEY });
+    for (const queryKey of REFRESH_QUERY_KEYS) void queryClient.invalidateQueries({ queryKey });
   }, [queryClient]);
   const refreshNow = useCallback(async function refreshNow() {
-    await queryClient.invalidateQueries({ queryKey: PORTAL_QUERY_KEY });
+    await Promise.all(REFRESH_QUERY_KEYS.map((queryKey) => queryClient.invalidateQueries({ queryKey })));
     return queryClient.fetchQuery({
       queryKey: PORTAL_QUERY_KEY,
       queryFn: loadSnapshot,
