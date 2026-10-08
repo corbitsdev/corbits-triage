@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { emptyPack, recommendedPack, repoPolicy } from "@corbits/triage-contracts";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import {
@@ -14,6 +15,7 @@ import {
   type DraftPack,
 } from "../lib/check-catalog.ts";
 import { alreadyWritten, linkCheckPack, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack, type LoadedCheckPack } from "../lib/check-pack.ts";
+import { checkPackQueryKey } from "../lib/check-packs.ts";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential, loadRepoCheckPack, type StoredCheckPack } from "../lib/hub-api.ts";
@@ -92,6 +94,7 @@ function CheckControl({ spec, row, onChange }: { spec: CatalogCheck; row: DraftC
 export default function RepoDetail() {
   const params = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { snapshot, refreshNow, syncFromGithub, runBacklog, saveRepoPolicy, notify, readOnly } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
   const fromId = params.id ? ownerAndName(params.id) : null;
@@ -414,6 +417,9 @@ export default function RepoDetail() {
 
   /** The save is done by now; a failed refresh is reported as such, not as a failed save. */
   async function refreshAfterSave() {
+    if (snapshot && config) {
+      await queryClient.invalidateQueries({ queryKey: checkPackQueryKey(snapshot.workspace.tenantId, config.name) });
+    }
     try {
       await refreshNow();
     } catch (cause) {
