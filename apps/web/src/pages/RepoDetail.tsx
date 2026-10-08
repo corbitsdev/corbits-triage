@@ -188,6 +188,7 @@ export default function RepoDetail() {
             setLoaded({ id: found.id, version: found.version });
           }
         }
+        queryClient.setQueryData(checkPackQueryKey(id, label), found?.kind === "pack" ? found.pack : null);
       } catch (cause) {
         if (cancelled) return;
         signOutWhenRejected(cause);
