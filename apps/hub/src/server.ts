@@ -77,6 +77,8 @@ const EXPECTED_DEPLOYMENT_SET = {
 
 // Runs whose trigger and outcome the reconciler remembers between passes.
 const TRIAGE_KNOWN_RUNS = 10_000;
+const TRIAGE_RETRY_MS = 15_000;
+const TRIAGE_RETRY_MAX_MS = 120_000;
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
@@ -285,7 +287,7 @@ const reconcileTriage = createTriageReconciler({
   now,
   log: logJson,
 });
-triageLoop = createReconcileLoop(reconcileTriage, triageReconcileIntervalMs(env), logJson);
+triageLoop = createReconcileLoop(reconcileTriage, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
 const syncInstallations = createInstallationSync({
   db: composition.db,
   cipher: composition.credentialCipher,
