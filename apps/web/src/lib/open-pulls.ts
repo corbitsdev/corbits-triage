@@ -18,9 +18,15 @@ export function useOpenPulls() {
   });
 }
 
-/** The inbox: every open pull request, with its verdict when it has one. */
-export function useQueueItems(): PrItem[] {
+/** Every pull request with a verdict, including closed ones, for the pull request page. */
+export function usePullRequestItems(): PrItem[] {
   const { snapshot } = usePortal();
   const { data } = useOpenPulls();
   return useMemo(() => (snapshot ? projectQueue(snapshot, data) : []), [snapshot, data]);
+}
+
+/** The inbox: every open pull request, with its verdict when it has one. */
+export function useQueueItems(): PrItem[] {
+  const items = usePullRequestItems();
+  return useMemo(() => items.filter((item) => !item.closed), [items]);
 }

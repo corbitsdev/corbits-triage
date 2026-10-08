@@ -94,6 +94,11 @@ describe("duplicate close projection", () => {
     expect(item).toMatchObject({ canClose: true, pendingApprovalId: "mirror", pendingClose: false });
   });
 
+  test("a pull request that is no longer open is closed and needs no human", () => {
+    const [item] = projectQueue(snapshot([approval("mirror", false)]), { repos: [{ repo: "acme/widgets", prs: [] }] });
+    expect(item).toMatchObject({ closed: true, needsHuman: false });
+  });
+
   test("keeps the canonical pull request href when an approval is pending", () => {
     const [item] = projectQueue(snapshot([approval("mirror", false)]));
     expect(item?.href).toBe("/triage/pr/acme/widgets/8");
