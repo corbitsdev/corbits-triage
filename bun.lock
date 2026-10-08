@@ -67,7 +67,7 @@
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
         "react-router-dom": "^7.13.0",
-        "sonner": "^2.0.8",
+        "sonner": "2.0.8",
       },
       "devDependencies": {
         "@types/node": "^24.0.0",
