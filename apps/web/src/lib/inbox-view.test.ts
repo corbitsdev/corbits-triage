@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { groupInbox, inboxAction, primaryAction } from "./inbox-view.ts";
+import { groupInbox, inboxAction, inboxStatus, primaryAction } from "./inbox-view.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
@@ -29,6 +29,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     waitingSince: "2026-10-01T00:00:00.000Z",
     canClose: false,
     pendingClose: false,
+    running: false,
     href: "/prs/acme/widgets/1",
     ...overrides,
   };
@@ -61,6 +62,12 @@ describe("groupInbox", () => {
       item({ key: "urgent", priority: "P1", waitingSince: "2026-10-07T00:00:00.000Z" }),
     ]);
     expect(view.groups[0]?.items.map((row) => row.key)).toEqual(["urgent", "human", "early", "late"]);
+  });
+
+  test("a running pull request keeps its previous verdict's pile and reads Running", () => {
+    const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true })]);
+    expect(view.groups.map((group) => [group.action, group.items.map((row) => [row.key, inboxStatus(row)])])).toEqual([["decide", [["rerun", "Running"]]]]);
+    expect(view.waiting.map((row) => [row.key, inboxStatus(row)])).toEqual([["first", "Running"]]);
   });
 });
 

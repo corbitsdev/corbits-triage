@@ -23,6 +23,11 @@ export const INBOX_STATUS_LABEL: Record<QueueState, string> = {
   new: "Not triaged yet",
 };
 
+/** A running pull request says so; it keeps its previous verdict for grouping. */
+export function inboxStatus(item: Pick<PrItem, "running" | "state">): string {
+  return item.running ? "Running" : INBOX_STATUS_LABEL[item.state];
+}
+
 export type PrimaryAction = "reply" | "comment" | "approve" | "changes" | "close" | "merge";
 
 const PRIMARY_LABEL: Record<PrimaryAction, string> = {

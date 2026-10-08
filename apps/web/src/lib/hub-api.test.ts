@@ -187,6 +187,29 @@ describe("projectQueue reply unwrap", () => {
   });
 });
 
+describe("projectQueue running pull requests", () => {
+  const prStarted = (number: number) => ({
+    seq: 0,
+    type: "RunStarted",
+    body: { trigger: { payload: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: number, headSha: "abc" }) } },
+  });
+  const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: "abc", updatedAt: "2026-10-01T00:00:00.000Z", labels: [] });
+  const openPulls = { repos: [{ repo: "acme/widgets", prs: [pr(8), pr(9), pr(10)] }] };
+
+  test("a started pr-triage run is running until it renders or ends, and a previous verdict is kept", () => {
+    const started: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
+    const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
+    const rerun: RunLog = { runId: "run-8b", anchorRunId: "pr", events: [prStarted(8)] };
+    const items = projectQueue([duplicateLog, rerun, started, failed], [], openPulls);
+    expect(items.map(({ key, state, running }) => ({ key, state, running }))).toEqual([
+      { key: "acme/widgets#8", state: "needs-decision", running: true },
+      { key: "acme/widgets#9", state: "new", running: true },
+      { key: "acme/widgets#10", state: "new", running: false },
+    ]);
+    expect(projectQueue([rerun, duplicateLog], [], openPulls).find((item) => item.key === "acme/widgets#8")?.running).toBe(false);
+  });
+});
+
 describe("workspace GitHub App and repository lifecycle", () => {
   test("stores one repo-free workspace credential and completes App setup without repositories", async () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];

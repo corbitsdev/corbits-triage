@@ -1,6 +1,7 @@
 import {
   ApiError,
   findAwaitingSignal,
+  isTerminalRunEvents,
   listWorkflowDeployments,
   readWorkflowRunEvents,
   triggerWorkflowRun,
@@ -1236,6 +1237,8 @@ export type PrItem = {
   waitingSince: string | null;
   canClose: boolean;
   pendingClose: boolean;
+  /** A pr-triage run for this pull request has started and has not rendered its verdict yet. */
+  running: boolean;
   href: string;
 };
 
@@ -1388,6 +1391,13 @@ function logTime(log: RunLog): string {
   return typeof at === "string" ? at : "";
 }
 
+/** The pull request a pr-triage run was triggered for, from its RunStarted trigger. */
+function triggeredPull(log: RunLog): string | null {
+  const started = log.events.find((e) => e.type === "RunStarted");
+  const payload = tryJson(obj(obj(started?.body).trigger).payload);
+  return payload.kind === "pr" && typeof payload.repo === "string" && typeof payload.prNumber === "number" ? `${payload.repo}#${payload.prNumber}` : null;
+}
+
 function isGithubWriteApproval(approval: HubApproval): boolean {
   const tool = obj(approval.toolDefinition).name;
   return tool === "github_mirror"
@@ -1402,17 +1412,23 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
  * logs. Latest run wins per repo#number. Pending github_mirror approvals only
  * overlay needs-human; they never decide the verdict. With the open pull
  * requests, unseen ones join as "new" and verdicts of closed ones stop needing a human.
+ * A pull request whose latest pr-triage run has started but not rendered is running.
  */
 export function projectQueue(runLogs: RunLog[], approvals: HubApproval[], openPulls?: OpenPulls): PrItem[] {
   const items = new Map<string, PrItem>();
+  const running = new Map<string, boolean>();
   const logs = runLogs.map((log, i) => ({ log, i })).sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i);
   for (const { log } of logs) {
     const started = log.events.find((e) => e.type === "RunStarted");
     const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
     const payload = eventStep ? obj(eventStep.output) : tryJson(obj(obj(started?.body).trigger).payload);
     const at = logTime(log) || null;
-    for (const v of runVerdicts(log)) {
+    const verdicts = runVerdicts(log);
+    const pull = triggeredPull(log);
+    if (pull) running.set(pull, !isTerminalRunEvents(log.events));
+    for (const v of verdicts) {
       const key = `${v.repo}#${v.number}`;
+      running.set(key, false);
       const r = v.render;
       const triggered = payload.repo === v.repo && payload.prNumber === v.number;
       const sha = payload.headSha ?? payload.sha;
@@ -1442,6 +1458,7 @@ export function projectQueue(runLogs: RunLog[], approvals: HubApproval[], openPu
         waitingSince: at,
         canClose: r.duplicate === true,
         pendingClose: false,
+        running: false,
         href: canonicalPrHref(v.repo, v.number),
       });
     }
@@ -1462,6 +1479,10 @@ export function projectQueue(runLogs: RunLog[], approvals: HubApproval[], openPu
     });
   }
   if (openPulls) joinOpenPulls(items, openPulls);
+  for (const [key, isRunning] of running) {
+    const item = items.get(key);
+    if (item && isRunning) items.set(key, { ...item, running: true });
+  }
   return [...items.values()];
 }
 
@@ -1501,6 +1522,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls): void {
         waitingSince: pr.updatedAt,
         canClose: false,
         pendingClose: false,
+        running: false,
         href: canonicalPrHref(repo, pr.number),
       });
     }
