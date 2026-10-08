@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
-import { usePullRequestItems } from "../lib/open-pulls.ts";
+import { usePullRequestItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
@@ -322,6 +322,7 @@ export default function PRDetail() {
   const [composer, setComposer] = useState<null | { kind: "comment" | "approve" | "changes"; body: string }>(null);
   const id = params.id ?? params.number ?? "";
   const queueItems = usePullRequestItems();
+  const loading = useQueueLoading();
   const item = snapshot ? findPrItem(queueItems, params) : undefined;
   const approval = snapshot?.approvals.find((row) => row.id === (item?.pendingApprovalId ?? id));
   const denied = snapshot?.denied.approvals ?? false;
@@ -465,7 +466,7 @@ export default function PRDetail() {
           <h1 tabIndex={-1}>Pull request</h1>
         </header>
         <main id="main" className="scroller">
-          {denied ? <DeniedNotice section="approvals" /> : <div className="empty">Unknown pull request.</div>}
+          {denied ? <DeniedNotice section="approvals" /> : loading ? null : <div className="empty">Unknown pull request.</div>}
         </main>
       </div>
     );

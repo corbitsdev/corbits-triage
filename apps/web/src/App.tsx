@@ -10,6 +10,7 @@ import { SessionProvider, useSession } from "./lib/session.tsx";
 import { DeniedNotice } from "./lib/denied.tsx";
 import type { PortalSnapshot } from "./lib/hub-api.ts";
 import Layout from "./components/Layout.tsx";
+import LoadingIndicator from "./components/LoadingIndicator.tsx";
 import Connect from "./pages/Connect.tsx";
 import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
@@ -151,6 +152,7 @@ export function AppShell() {
     <SessionProvider>
       <PortalProvider>
         <Gate />
+        <LoadingIndicator />
         <Toaster position="bottom-right" />
       </PortalProvider>
     </SessionProvider>

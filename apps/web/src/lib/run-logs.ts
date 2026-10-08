@@ -58,11 +58,16 @@ function runLogQuery(tenantId: string, ref: RunRef) {
   });
 }
 
-function loadedLogs(results: Array<UseQueryResult<RunLog>>): RunLog[] {
-  return results.flatMap((result) => (result.data === undefined ? [] : [result.data]));
+type LoadedLogs = { logs: RunLog[]; pending: boolean };
+
+function loadedLogs(results: Array<UseQueryResult<RunLog>>): LoadedLogs {
+  return {
+    logs: results.flatMap((result) => (result.data === undefined ? [] : [result.data])),
+    pending: results.some((result) => result.isLoading),
+  };
 }
 
-export function useRunLogs(): { logs: RunLog[]; denied: boolean } {
+export function useRunLogs(): { logs: RunLog[]; pending: boolean; denied: boolean } {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   const refs = useQuery({
@@ -74,5 +79,9 @@ export function useRunLogs(): { logs: RunLog[]; denied: boolean } {
     queries: tenantId === undefined || refs.data === undefined ? [] : refs.data.map((ref) => runLogQuery(tenantId, ref)),
     combine: loadedLogs,
   });
-  return { logs, denied: refs.error instanceof ApiError && refs.error.status === 403 };
+  return {
+    logs: logs.logs,
+    pending: refs.isLoading || logs.pending,
+    denied: refs.error instanceof ApiError && refs.error.status === 403,
+  };
 }
