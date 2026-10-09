@@ -14,6 +14,8 @@ export interface PrMail {
   author: string | null;
   title: string | null;
   body: string | null;
+  /** Null when the payload does not say, as on check_run. */
+  draft: boolean | null;
   policy?: RepoPolicy;
 }
 
@@ -43,5 +45,6 @@ export function normalize(event: string, deliveryId: string, p: Json): PrMail | 
     author: pr?.user?.login ?? null,
     title: pr?.title ?? null,
     body: pr?.body ?? null,
+    draft: typeof pr?.draft === "boolean" ? pr.draft : null,
   };
 }

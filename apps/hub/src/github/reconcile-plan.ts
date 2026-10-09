@@ -5,7 +5,7 @@ import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow } from "@corbits/triage-contra
 /** A verdict whose model checks were all skipped; a settled head is triaged again for it once, whatever attempts it spent. */
 export const MODEL_NOT_ASKED = "model not asked";
 
-export type OpenPr = { number: number; headSha: string; updatedAt: string };
+export type OpenPr = { number: number; headSha: string; updatedAt: string; draft: boolean };
 
 export type ObservedRun = {
   runId: string;

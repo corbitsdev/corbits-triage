@@ -30,7 +30,7 @@ function repoKey(anchorRunId: string): string {
 }
 
 function head(number: number): OpenPr {
-  return { number, headSha: `sha${number}`, updatedAt: LONG_AGO };
+  return { number, headSha: `sha${number}`, updatedAt: LONG_AGO, draft: false };
 }
 
 function heads(from: number, count: number): OpenPr[] {
@@ -137,13 +137,15 @@ type HarnessOptions = {
   rotation?: RotationRecord;
   /** Whether any two deployments run the same workflow source; false by default. */
   sameSource?: boolean;
+  /** The repositories' triage-drafts setting; unset keeps the default. */
+  triageDrafts?: boolean;
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
   const repos = Array.isArray(prs) ? { [REPO]: prs } : prs;
   const records = { rotation: options.rotation };
   function tenant() {
-    const ns = { repos: Object.keys(repos).map((name) => ({ name, connected: true, enabled: true })), ...(records.rotation && { rotation: records.rotation }) };
+    const ns = { repos: Object.keys(repos).map((name) => ({ name, connected: true, enabled: true, ...(options.triageDrafts !== undefined && { triageDrafts: options.triageDrafts }) })), ...(records.rotation && { rotation: records.rotation }) };
     return { id: TENANT_ID, domain: DOMAIN, config: { corbitsTriage: ns } };
   }
   const { reader, reads, latestOf } = fakeReader(logs);
@@ -253,6 +255,16 @@ describe("triage reconciler", () => {
     expect(reads.every((read) => read.repo === repoKey(LIVE.runId))).toBe(true);
     expect(delivered).toHaveLength(1);
     expect(delivered[0]).toMatchObject({ address: LIVE.address, payload: { kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] } });
+  });
+
+  test("draft heads are queued only while the repository triages drafts", async () => {
+    const prs = [{ ...head(1), draft: true }, head(2)];
+    const off = harness({ [repoKey(LIVE.runId)]: {} }, prs, { triageDrafts: false });
+    await off.reconcile();
+    expect(mailedNumbers(off.delivered)).toEqual([2]);
+    const on = harness({ [repoKey(LIVE.runId)]: {} }, prs);
+    await on.reconcile();
+    expect(mailedNumbers(on.delivered)).toEqual([1, 2]);
   });
 
   test("a degraded verdict is queued again and a clean one settles the head", async () => {

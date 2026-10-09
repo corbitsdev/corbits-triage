@@ -102,7 +102,8 @@ function withoutLimit(evidence: string[]): string {
 
 function failedStep(c: CheckResult, sources: Sources): Step {
   switch (c.check) {
-    case "draft": return { actor: "author", action: "Mark ready for review" };
+    // Informational: marking a draft ready is the author's call, never asked of them.
+    case "draft": return { actor: "maintainer", action: "Review once marked ready" };
     case "ci": return { actor: "author", action: c.evidence.length ? `Fix failing CI: ${c.evidence.join(", ")}` : "Fix failing CI" };
     case "conflicts": return { actor: "author", action: "Resolve merge conflicts" };
     case "paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
