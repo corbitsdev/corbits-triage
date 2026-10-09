@@ -24,7 +24,7 @@ import {
   saveRepoPolicy,
   startBacklogTriage,
   githubPrAction,
-  startPullRequestTriage,
+  triagePullRequest as requestPullRequestTriage,
   type HubGrant,
   type PrGithubWriteInput,
   type PrItem,
@@ -52,7 +52,7 @@ interface PortalContextValue {
   configureHook: (secret: string) => Promise<string>;
   removeRepo: (repo: string) => Promise<void>;
   runBacklog: (repo: string, message?: string) => Promise<void>;
-  runPullRequest: (pullRequest: string, refreshAfter?: boolean) => Promise<void>;
+  triagePullRequest: (repo: string, number: number) => Promise<void>;
   closeDuplicate: (item: PrItem) => Promise<void>;
   writeGithub: (input: PrGithubWriteInput) => Promise<void>;
   decide: (approvalId: string, decision: "once" | "always" | "deny") => Promise<void>;
@@ -257,15 +257,13 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const runPullRequest = useCallback(
-    async function runPullRequest(pullRequest: string, refreshAfter = true) {
+  const triagePullRequest = useCallback(
+    async function triagePullRequest(repo: string, number: number) {
       const current = requireSnapshot();
-      const transport = createHubTransport();
-      await startPullRequestTriage(transport, current.workspace.tenantId, pullRequest);
-      notify(`Pull request triage started for ${pullRequest}.`);
-      if (refreshAfter) refresh();
+      await requestPullRequestTriage(createHubTransport(), current.workspace.tenantId, repo, number);
+      await Promise.all([[RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY], [RUNS_QUERY_KEY]].map((queryKey) => queryClient.invalidateQueries({ queryKey })));
     },
-    [notify, refresh, requireSnapshot],
+    [queryClient, requireSnapshot],
   );
 
   const closeDuplicate = useCallback(
@@ -403,7 +401,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         configureHook,
         removeRepo,
         runBacklog,
-        runPullRequest,
+        triagePullRequest,
         closeDuplicate,
         writeGithub,
         decide,
@@ -430,7 +428,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       configureHook,
       removeRepo,
       runBacklog,
-      runPullRequest,
+      triagePullRequest,
       closeDuplicate,
       writeGithub,
       decide,

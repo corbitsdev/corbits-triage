@@ -49,11 +49,12 @@ import { NoLiveDeploymentError, resolveLiveDeployment } from "./github/deploymen
 import { createGithubOpenPulls, GITHUB_OPEN_PULLS_PATH } from "./github/open-pulls.js";
 import { createGithubPrActions, GITHUB_PR_ACTIONS_PATH } from "./github/pr-actions.js";
 import { createGithubPrDetails, GITHUB_PR_DETAILS_PATH } from "./github/pr-details.js";
+import { createGithubPrTriage, GITHUB_PR_TRIAGE_PATH } from "./github/pr-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { DEFAULT_RECONCILE_POLICY } from "./github/reconcile-plan.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
-import { createTenantOpenHeads } from "./github/tenant-open-heads.js";
+import { createPullHeadReader, createTenantOpenHeads } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import {
@@ -271,16 +272,19 @@ function reconcileTenants() {
 function livePrTriageDeployment(tenantId: string) {
   return resolveLiveDeployment(composition.db, tenantId, prTriageWorkflow.id);
 }
+const tenantOpenHeads = createTenantOpenHeads({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
+const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
+const observeTriageRuns = createTriageRuns({
+  runReader: composition.runReader,
+  readSettled: createSettledStatusReader(composition.db),
+  maxKnownRuns: TRIAGE_KNOWN_RUNS,
+});
 const reconcileTriage = createTriageReconciler({
   tenants: reconcileTenants,
   liveDeployment: livePrTriageDeployment,
-  openHeadsFor: createTenantOpenHeads({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
-  observeRuns: createTriageRuns({
-    runReader: composition.runReader,
-    readSettled: createSettledStatusReader(composition.db),
-    maxKnownRuns: TRIAGE_KNOWN_RUNS,
-  }),
-  store: createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson }),
+  openHeadsFor: tenantOpenHeads,
+  observeRuns: observeTriageRuns,
+  store: triageStateStore,
   readCheckPack,
   deliver: deliverToDeployment,
   policy: DEFAULT_RECONCILE_POLICY,
@@ -288,6 +292,22 @@ const reconcileTriage = createTriageReconciler({
   log: logJson,
 });
 triageLoop = createReconcileLoop(reconcileTriage, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
+const githubPrTriage = createGithubPrTriage({
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  getSession: composition.getSession,
+  trustedPortalOrigins,
+  authorize: authorizePortal,
+  pullHead: createPullHeadReader({ githubApiOrigin: githubOrigin }),
+  readCheckPack,
+  liveDeployment: livePrTriageDeployment,
+  observeRuns: observeTriageRuns,
+  store: triageStateStore,
+  deliver: deliverToDeployment,
+  policy: DEFAULT_RECONCILE_POLICY,
+  now,
+  log: logJson,
+});
 const syncInstallations = createInstallationSync({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -384,6 +404,15 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
     try {
       return githubPrActions(req, decodeURIComponent(tenantId));
+    } catch {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+  }
+  if (url.pathname.startsWith(`${GITHUB_PR_TRIAGE_PATH}/`) && req.method === "POST") {
+    const tenantId = url.pathname.slice(GITHUB_PR_TRIAGE_PATH.length + 1);
+    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
+    try {
+      return githubPrTriage(req, decodeURIComponent(tenantId));
     } catch {
       return Response.json({ error: "not_found" }, { status: 404 });
     }

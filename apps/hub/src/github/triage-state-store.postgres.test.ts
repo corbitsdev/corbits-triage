@@ -44,11 +44,13 @@ test("PostgreSQL: unreadable triage state loads as empty with a warning and the 
       writerFor: async () => "prn_github",
       log: (entry) => logged.push(entry),
     });
-    expect(await store.load("tnt_state", REPO)).toEqual([]);
+    const unreadable = await store.load("tnt_state", REPO);
+    expect(unreadable.rows).toEqual([]);
+    expect(unreadable.version).not.toBeNull();
     expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_state_unreadable", repo: REPO }));
 
-    await store.save("tnt_state", REPO, [ROW]);
-    expect(await store.load("tnt_state", REPO)).toEqual([ROW]);
+    await store.save("tnt_state", REPO, [ROW], unreadable.version);
+    expect((await store.load("tnt_state", REPO)).rows).toEqual([ROW]);
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

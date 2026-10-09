@@ -1,6 +1,6 @@
 // Decides, from what GitHub and the run logs say now, which open pull requests
 // to queue again. Pure, so every recovery path is decided in one place.
-import type { PrTriageRow } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow } from "@corbits/triage-contracts";
 
 export type OpenPr = { number: number; headSha: string; updatedAt: string };
 
@@ -40,8 +40,7 @@ const MINUTE = 60_000;
 export const DEFAULT_RECONCILE_POLICY: ReconcilePolicy = {
   webhookGraceMs: 2 * MINUTE,
   unstartedAfterMs: 10 * MINUTE,
-  // Four steps of up to fifteen minutes each, plus their retries.
-  stuckAfterMs: 90 * MINUTE,
+  stuckAfterMs: PR_TRIAGE_STUCK_RUN_MS,
   clockSkewMs: MINUTE,
   backoffBaseMs: 5 * MINUTE,
   backoffMaxMs: 6 * 60 * MINUTE,
@@ -102,7 +101,7 @@ function failure(run: ObservedRun, stuck: boolean): string {
   return run.unsettled ?? `run ${run.status}`;
 }
 
-function isStuck(run: ObservedRun, now: Date, policy: ReconcilePolicy): boolean {
+export function isStuck(run: ObservedRun, now: Date, policy: ReconcilePolicy): boolean {
   return run.status === "running" && now.getTime() - ms(run.startedAt) > policy.stuckAfterMs;
 }
 
@@ -111,19 +110,27 @@ function pick(row: PrTriageRow, runs: readonly ObservedRun[]): ObservedRun | und
   return runs.find((run) => run.runId === row.runId) ?? [...runs].sort((a, b) => ms(b.startedAt) - ms(a.startedAt))[0];
 }
 
+/** Runs started since the hub last queued the head, allowing for the sidecar clock trailing the hub's. */
+function sinceQueued(row: PrTriageRow, runs: readonly ObservedRun[], policy: ReconcilePolicy): ObservedRun[] {
+  const since = row.queuedAt === undefined ? -Infinity : ms(row.queuedAt) - policy.clockSkewMs;
+  return runs.filter((run) => ms(run.startedAt) >= since);
+}
+
 /**
  * A clean completed run settles the head; otherwise a run still going keeps it
  * running; only once every run has ended does the failure of the one since the
- * hub last queued the head count.
+ * hub last queued the head count. A head queued or running on the hub's word
+ * only sees runs since it was queued, so a head queued again on top of a
+ * verdict stays queued until its new run starts.
  */
-function observe(row: PrTriageRow, runs: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): PrTriageRow {
+function observe(row: PrTriageRow, observed: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): PrTriageRow {
   const at = now.toISOString();
+  const runs = row.status === "queued" || row.status === "running" ? sinceQueued(row, observed, policy) : observed;
   const settled = runs.find((run) => run.status === "completed" && run.unsettled === undefined);
   if (settled) return withStatus(row, { status: "triaged", run: settled }, at);
   const live = pick(row, runs.filter((run) => run.status === "running" && !isStuck(run, now, policy)));
   if (live) return withStatus(row, { status: "running", run: live }, at);
-  const since = row.queuedAt === undefined ? -Infinity : ms(row.queuedAt) - policy.clockSkewMs;
-  const ended = pick(row, runs.filter((run) => ms(run.startedAt) >= since));
+  const ended = pick(row, sinceQueued(row, runs, policy));
   if (ended) return withStatus(row, { status: "failed", run: ended, error: failure(ended, isStuck(ended, now, policy)) }, at);
   if (row.status === "queued" && row.queuedAt !== undefined && now.getTime() - ms(row.queuedAt) > policy.unstartedAfterMs) {
     return withStatus(row, { status: "failed", error: "run never started" }, at);
@@ -155,7 +162,7 @@ function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: numb
 }
 
 /** A queued head counts until the hub marks it failed for never starting, so a backed-up queue is not mailed again. */
-function inFlight(row: PrTriageRow): boolean {
+export function inFlight(row: PrTriageRow): boolean {
   return row.status === "queued" || row.status === "running";
 }
 

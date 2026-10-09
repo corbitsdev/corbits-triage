@@ -64,7 +64,7 @@ export default function Connect() {
   const { logs } = useRunLogs();
   const approvals = useApprovals();
   const runs = useRuns();
-  const items = useMemo(() => projectQueue(logs, runs.rows, approvals.rows), [logs, runs.rows, approvals.rows]);
+  const items = useMemo(() => projectQueue(logs, runs.rows, approvals.rows, undefined, new Date()), [logs, runs.rows, approvals.rows]);
   const githubReady = repos.some((repo) => hasVerifiedWebhookDelivery(logs, repo.name));
   const modelStored = hasDecisionModelCredential(snapshot?.credentials ?? []);
   const inferenceReady = hasObservedInference(items);
