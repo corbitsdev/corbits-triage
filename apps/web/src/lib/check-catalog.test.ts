@@ -12,6 +12,21 @@ describe("draft pack conversion", () => {
     expect(checkPackFromDraft(emptyDraft("acme/widgets"))).toEqual(emptyPack("acme/widgets"));
   });
 
+  test("a check edit keeps the pack's actions", () => {
+    const pack = {
+      ...recommendedPack("acme/widgets"),
+      actions: [{
+        id: "thank",
+        when: "every" as const,
+        checks: [],
+        branches: { always: [{ kind: "comment" as const, target: { body: "Thanks!" }, automatic: false }] },
+      }],
+    };
+    const draft = draftFromCheckPack(pack);
+    const edited = { ...draft, checks: draft.checks.map((row) => (row.id === "ci" ? { ...row, enabled: false } : row)) };
+    expect(checkPackFromDraft(edited).actions).toEqual(pack.actions);
+  });
+
   test("custom checks persist on custom[]", () => {
     const draft = emptyDraft("acme/widgets");
     draft.custom.push({
