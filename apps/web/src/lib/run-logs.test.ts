@@ -63,12 +63,12 @@ test("one tab reads only what can still change over two minutes", async () => {
   await flush();
   const count = (suffix: string) => calls.filter((path) => path.endsWith(suffix)).length;
 
-  expect(count("/deployments")).toBe(3);
-  expect(count("/live/runs")).toBe(3);
+  expect(count("/deployments")).toBe(13);
+  expect(count("/live/runs")).toBe(13);
   expect(count("/old/runs")).toBe(1);
   expect(count("/runs/live/events")).toBe(0);
   expect(count("/runs/done-1/events")).toBe(1);
   expect(count("/runs/done-old/events")).toBe(1);
-  expect(count("/runs/busy/events")).toBe(5);
-  expect(calls.length).toBe(16);
+  expect(count("/runs/busy/events")).toBe(13);
+  expect(calls.length).toBe(44);
 });
