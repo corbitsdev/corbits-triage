@@ -953,14 +953,18 @@ export type PrGithubWriteInput =
   | { action: "merge"; repo: string; number: number }
   | { action: "close"; repo: string; number: number; labels: string[]; comment: string };
 
-export async function githubPrAction(transport: Transport, tenantId: string, input: PrGithubWriteInput): Promise<void> {
+/** The hub answers a reply with the GitHub comment it wrote; other writes carry none. */
+export type PrGithubWriteResult = { commentId: number | null };
+
+export async function githubPrAction(transport: Transport, tenantId: string, input: PrGithubWriteInput): Promise<PrGithubWriteResult> {
   const repo = validateRepo(input.repo);
   if (!Number.isInteger(input.number) || input.number < 1) throw new Error("Pull request number must be a positive integer.");
   if ((input.action === "comment" || input.action === "reply") && !input.body.trim()) throw new Error("Comment must not be empty.");
   if (input.action === "review" && input.event !== "APPROVE" && !input.body.trim()) {
     throw new Error("Review body must not be empty.");
   }
-  await transport.fetch("POST", `/api/integrations/github-actions/${enc(requireTenantId(tenantId))}`, { ...input, repo });
+  const result = obj(await transport.fetch<unknown>("POST", `/api/integrations/github-actions/${enc(requireTenantId(tenantId))}`, { ...input, repo }));
+  return { commentId: typeof result.commentId === "number" ? result.commentId : null };
 }
 
 export type GithubPullDetail = {
@@ -1278,6 +1282,8 @@ export type PrItem = {
   waitingSince: string | null;
   canClose: boolean;
   pendingClose: boolean;
+  /** The verdict's reply is on GitHub: the run's mirror step wrote non-empty feedback, or this portal sent it (see `useQueueItems`). */
+  posted: boolean;
   /** A pr-triage run for this pull request has started and has not rendered its verdict yet. */
   running: boolean;
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
@@ -1421,6 +1427,23 @@ function runVerdicts(log: RunLog): Verdict[] {
   return verdicts;
 }
 
+const MIRROR_CALL_PREFIX = "github_mirror_auto:";
+
+/** Pull requests the run's mirror step posted to: its results name each call `github_mirror_auto:<repo>#<number>`. */
+function mirroredPulls(log: RunLog): Set<string> {
+  const posted = new Set<string>();
+  for (const { stepId, output } of stepOutputs(log)) {
+    if (stepId !== "mirror") continue;
+    const o = obj(output);
+    const results: unknown[] = Array.isArray(o.results) ? o.results : [o];
+    for (const result of results) {
+      const r = obj(result);
+      if (r.ok === true && typeof r.call === "string" && r.call.startsWith(MIRROR_CALL_PREFIX)) posted.add(r.call.slice(MIRROR_CALL_PREFIX.length));
+    }
+  }
+  return posted;
+}
+
 function logTime(log: RunLog): string {
   const last = log.events[log.events.length - 1];
   const at = last ? (obj(last).at ?? obj(last.body).at) : null;
@@ -1526,6 +1549,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
     const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
     const payload = eventStep ? obj(eventStep.output) : obj(triggerRequestOf(obj(obj(started?.body).trigger).payload));
     const at = logTime(log) || null;
+    const posted = mirroredPulls(log);
     for (const v of verdicts) {
       const key = `${v.repo}#${v.number}`;
       const r = v.render;
@@ -1558,6 +1582,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         waitingSince: at,
         canClose: r.duplicate === true,
         pendingClose: false,
+        posted: posted.has(key) && typeof r.feedback === "string" && r.feedback.trim() !== "",
         running: running.has(key),
         failure: failed.get(key) ?? null,
         href: canonicalPrHref(v.repo, v.number),
@@ -1619,6 +1644,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         waitingSince: pr.updatedAt,
         canClose: false,
         pendingClose: false,
+        posted: false,
         running: running.has(key),
         failure: failed.get(key) ?? null,
         href: canonicalPrHref(repo, pr.number),
