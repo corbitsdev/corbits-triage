@@ -72,6 +72,21 @@ describe("groupInbox", () => {
   });
 });
 
+describe("hasDraftComment", () => {
+  test("a real draft is a draft", () => {
+    expect(hasDraftComment("approve this")).toBe(true);
+  });
+
+  test("null and empty are not drafts", () => {
+    expect(hasDraftComment(null)).toBe(false);
+    expect(hasDraftComment("")).toBe(false);
+  });
+
+  test("whitespace-only is not a draft", () => {
+    expect(hasDraftComment("   ")).toBe(false);
+  });
+});
+
 describe("primaryAction", () => {
   test("a decision with a drafted reply posts it; without one it opens the composer", () => {
     expect(primaryAction(item({ comment: "Thanks" }), "decide")).toBe("reply");

@@ -74,7 +74,7 @@ export function inboxAction(item: PrItem): InboxAction | null {
 
 /** A comment only counts as a draft when it holds non-empty text; a degraded verdict's empty feedback is nothing to post. */
 export function hasDraftComment(comment: string | null): boolean {
-  return comment !== null && comment !== "";
+  return comment !== null && comment.trim() !== "";
 }
 
 export function primaryAction(item: PrItem, action: InboxAction | null): PrimaryAction | null {
