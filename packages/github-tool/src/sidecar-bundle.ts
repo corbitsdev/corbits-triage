@@ -22,6 +22,7 @@ import {
   mirror,
   requestReviewers,
   type GithubFetch,
+  type PrFile,
 } from "./github";
 
 export const CREDENTIAL_HANDLE = "github";
@@ -67,7 +68,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "github_list_pr_files",
-    description: "List files changed on a pull request, including patches when GitHub returns them.",
+    description: "List files changed on a pull request with their status and line counts, without patches.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
   },
   {
@@ -149,6 +150,11 @@ interface Env extends BaseEnv {
 
 type ToolCallInput = { id: string; name: string; arguments: Record<string, any> };
 
+// Patches push large pull requests past the runtime's tool-result cap, which cuts the JSON short.
+function withoutPatch({ patch: _patch, ...file }: PrFile): Omit<PrFile, "patch"> {
+  return file;
+}
+
 async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> {
   const a = call.arguments;
   switch (call.name) {
@@ -169,7 +175,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
     case "github_list_pr_commits":
       return { commits: await listPrCommits(gh, a.repo, a.number) };
     case "github_list_pr_files":
-      return { files: await listPrFiles(gh, a.repo, a.number) };
+      return { files: (await listPrFiles(gh, a.repo, a.number)).map(withoutPatch) };
     case "github_list_issue_comments":
       return { comments: await listIssueComments(gh, a.repo, a.number) };
     case "github_list_org_members":

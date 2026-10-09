@@ -148,7 +148,7 @@ describe("judge on a blocked pull request", () => {
     return (event: unknown) => d.decide(event as ReactorInboundEvent, {} as ReactorState, caps as unknown as ReactorCapabilities);
   }
 
-  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false): Promise<string> {
+  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false, files: unknown = { files: [] }): Promise<string> {
     let reply = "";
     const decide = director("facts", {
       executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
@@ -160,7 +160,7 @@ describe("judge on a blocked pull request", () => {
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
-      "files:8": { files: [] },
+      "files:8": files,
       "comments:8": { comments: [] },
       "checks:8": { checks: checkRuns },
     };
@@ -215,6 +215,13 @@ describe("judge on a blocked pull request", () => {
     expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, feedback: "", actor: "maintainer", nextAction: "Review once marked ready" });
     expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [] });
     expect((verdict as RenderOutput & { request?: unknown }).request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, comment: "", close: false });
+  });
+
+  test("a cut-off file list degrades the verdict instead of judging without paths", async () => {
+    const truncated = '{"files":[{"path":"src/a.test.ts","status":"added"\n[Tool output truncated: omitted 8071 chars.]';
+    const { asked, verdict } = await judgeAndRender(await facts([], true, false, truncated));
+    expect(asked).toEqual([]);
+    expect(verdict).toMatchObject({ degraded: "error", mirror: false, reason: "github_list_pr_files failed for #8" });
   });
 
   test("stale-unknown facts skip the model", async () => {

@@ -185,7 +185,9 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           if (!pr) return degradedItem(`github_get_pr failed for #${n}`);
           const checks = data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [];
           const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
-          const paths = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files?.flatMap(pathOf) ?? [];
+          const files = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files;
+          if (!files) return degradedItem(`github_list_pr_files failed for #${n}`);
+          const paths = files.flatMap(pathOf);
           const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
           const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs), paths, commits };
           return { facts, det: deriveState(facts, policy, pack), cleanupMode: policy.cleanupMode, pack };
