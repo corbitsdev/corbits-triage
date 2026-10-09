@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { groupInbox, inboxAction, inboxStatus, primaryAction } from "./inbox-view.ts";
+import { groupInbox, hasDraftComment, inboxAction, inboxStatus, primaryAction } from "./inbox-view.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
