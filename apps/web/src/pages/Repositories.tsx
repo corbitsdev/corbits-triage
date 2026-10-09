@@ -1,6 +1,7 @@
-import { useMemo, useState, type MouseEvent, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
+import RepoPanel, { HealthMark } from "../components/RepoPanel.tsx";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
 import { enabledCheckCount, useCheckPacks, type PackState } from "../lib/check-packs.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
@@ -10,7 +11,7 @@ import { useGithubSync } from "../lib/github-sync.ts";
 import { awaitingText } from "../lib/inbox-view.ts";
 import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
-import { repoRows, type RepoHealth, type RepoRow } from "../lib/repo-rows.ts";
+import { repoRows, type RepoRow } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
 import { relativeTime } from "../lib/triage-view.ts";
@@ -44,11 +45,11 @@ function isPlainClick(event: MouseEvent): boolean {
   return window.getSelection()?.type !== "Range";
 }
 
-function HealthMark({ health }: { health: RepoHealth }) {
-  const mark = health.tone === "ok"
-    ? <span className="dot ready" />
-    : health.tone === "warn" ? <span className="mk flag">!</span> : <span className="dot hollow" />;
-  return <span className={`hl ${health.tone}`}>{mark}{health.label}</span>;
+/** `/repositories/owner/name`; the older `/repositories/owner%2Fname[/setup]` links arrive with the slash inside the first segment and move to the new form. */
+function selectedRepo(params: { owner?: string; repo?: string }): { name: string | null; redirect: string | null } {
+  if (params.owner?.includes("/")) return { name: null, redirect: `/repositories/${params.owner}` };
+  if (params.owner && params.repo) return { name: `${params.owner}/${params.repo}`, redirect: null };
+  return { name: null, redirect: params.owner === undefined ? null : "/repositories" };
 }
 
 export default function Repositories() {
@@ -56,6 +57,8 @@ export default function Repositories() {
   const { logs } = useRunLogs();
   const runs = useRuns();
   const navigate = useNavigate();
+  const params = useParams();
+  const selection = selectedRepo(params);
   const repos = snapshot?.repos ?? [];
   const denied = snapshot?.denied.repos ?? false;
   const [opening, setOpening] = useState(false);
@@ -71,6 +74,19 @@ export default function Repositories() {
     [repos, items, logs, catchingUp, openPulls, pullsError],
   );
   const accounts = [...new Set(repos.map((repo) => repo.name.split("/")[0]!))];
+  const selectedConfig = repos.find((repo) => repo.name === selection.name);
+  const selectedRow = rows.find((row) => row.name === selection.name);
+  const lastOpen = useRef<string | null>(null);
+
+  const closePanel = useCallback(function closePanel() {
+    navigate("/repositories");
+  }, [navigate]);
+
+  useEffect(function returnFocusToRow() {
+    const closed = lastOpen.current;
+    lastOpen.current = selectedRow ? selectedRow.name : null;
+    if (closed && !selectedRow) document.querySelector<HTMLElement>(`[data-repo-link="${CSS.escape(closed)}"]`)?.focus();
+  }, [selectedRow]);
 
   const sync = useGithubSync(Boolean(snapshot && hasActiveGithubCredential(snapshot.credentials)));
 
@@ -105,10 +121,11 @@ export default function Repositories() {
       if (isPlainClick(event)) navigate(row.href);
     }
     const pulls = "error" in row.pulls ? null : row.pulls;
+    const open = row.name === selection.name;
     return (
-      <tr key={row.name} onClick={openRow}>
+      <tr key={row.name} className={open ? "on" : undefined} onClick={openRow}>
         <td className="c-name">
-          <Link to={row.href}><b title={row.name}>{row.name}</b></Link>
+          <Link to={row.href} data-repo-link={row.name} aria-current={open ? "true" : undefined}><b title={row.name}>{row.name}</b></Link>
           {pulls && pulls.awaiting > 0 && live(<small>{awaitingText(pulls.awaiting)}</small>)}
         </td>
         <td className="c-n mono">{pulls && live(pulls.open)}</td>
@@ -122,8 +139,11 @@ export default function Repositories() {
     );
   }
 
+  if (selection.redirect) return <Navigate to={selection.redirect} replace />;
+  if (selection.name && snapshot && !selectedConfig && !denied) return <Navigate to="/repositories" replace />;
+
   return (
-    <div className="repos">
+    <div className={`repos${selectedConfig && selectedRow ? " split" : ""}`}>
       <section className="panel rl" aria-label="Repositories">
         <div className="lh">
           <div className="lh-top">
@@ -159,11 +179,12 @@ export default function Repositories() {
                 </thead>
                 <tbody>{rows.map(renderRow)}</tbody>
               </table>
-              <p className="rt-note">Triage sees the repositories its GitHub app is installed on, in {listed(accounts)}. Open one to change its posting and checks.</p>
+              <p className="rt-note">Triage sees the repositories its GitHub app is installed on, in {listed(accounts)}. Open one to change its posting, triage and checks.</p>
             </>
           )}
         </main>
       </section>
+      {selectedConfig && selectedRow ? <RepoPanel key={selectedConfig.name} repo={selectedConfig} row={selectedRow} live={!loading} onClose={closePanel} /> : null}
     </div>
   );
 }
