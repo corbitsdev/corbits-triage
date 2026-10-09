@@ -1,8 +1,9 @@
 import { toast } from "sonner";
 import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
+import { isTerminalRunEvents } from "@intx/hub-client";
 import { ApiError, createHubTransport } from "./hub-transport.ts";
 import {
   configureGithubApp,
@@ -28,6 +29,7 @@ import {
   type HubGrant,
   type PrGithubWriteInput,
   type PrItem,
+  type RunLog,
   type PortalSnapshot,
 } from "./hub-api.ts";
 import type { CreateGrantInput } from "./grant-actions.ts";
@@ -96,6 +98,19 @@ const REFRESH_QUERY_KEYS = [
   [ROLES_QUERY_KEY],
 ];
 
+function isRunLog(value: unknown): value is RunLog {
+  return typeof value === "object" && value !== null && "events" in value && Array.isArray(value.events);
+}
+
+export function isFinishedRunLogQuery(query: Query): boolean {
+  return query.queryKey[0] === RUN_LOG_QUERY_KEY && isRunLog(query.state.data) && isTerminalRunEvents(query.state.data.events);
+}
+
+/** A refresh rereads everything except finished run logs, which never change. */
+function canChange(query: Query): boolean {
+  return !isFinishedRunLogQuery(query);
+}
+
 /** A 401 means the hub ended the session, so the local session is cleared too. */
 export function useSignOutWhenRejected(): (cause: unknown) => void {
   const { signOut } = useSession();
@@ -136,10 +151,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [queryClient, signOutWhenRejected]);
 
   const refresh = useCallback(function refresh() {
-    for (const queryKey of REFRESH_QUERY_KEYS) void queryClient.invalidateQueries({ queryKey });
+    for (const queryKey of REFRESH_QUERY_KEYS) void queryClient.invalidateQueries({ queryKey, predicate: canChange });
   }, [queryClient]);
   const refreshNow = useCallback(async function refreshNow() {
-    await Promise.all(REFRESH_QUERY_KEYS.map((queryKey) => queryClient.invalidateQueries({ queryKey })));
+    await Promise.all(REFRESH_QUERY_KEYS.map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
     return queryClient.fetchQuery({
       queryKey: PORTAL_QUERY_KEY,
       queryFn: loadSnapshot,
@@ -261,7 +276,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     async function triagePullRequest(repo: string, number: number) {
       const current = requireSnapshot();
       await requestPullRequestTriage(createHubTransport(), current.workspace.tenantId, repo, number);
-      await Promise.all([[RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY], [RUNS_QUERY_KEY]].map((queryKey) => queryClient.invalidateQueries({ queryKey })));
+      await Promise.all([[RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY], [RUNS_QUERY_KEY]].map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
     },
     [queryClient, requireSnapshot],
   );

@@ -834,6 +834,13 @@ export function isLiveDeployment(status: string): boolean {
   return LIVE_DEPLOYMENT_STATUSES.has(status);
 }
 
+// Interchange's `WorkflowDeploymentStatus` values after which the anchor starts no more runs.
+const ENDED_DEPLOYMENT_STATUSES = new Set(["released", "failed", "destroy_failed"]);
+
+export function isEndedDeployment(status: string): boolean {
+  return ENDED_DEPLOYMENT_STATUSES.has(status);
+}
+
 export const SERVICE_NOT_RUNNING = "The service is not running. Restart the hub, then try again.";
 
 function isTerminalMailFailure(cause: unknown): boolean {
@@ -1440,6 +1447,10 @@ function triggeredPull(log: RunLog): string | null {
 const SETTLED_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "error", "stopped"]);
 
 type SettledRuns = Map<string, string>;
+
+export function isSettledRunStatus(status: string): boolean {
+  return SETTLED_RUN_STATUSES.has(status);
+}
 
 function settledRuns(runs: HubRun[]): SettledRuns {
   return new Map(runs.filter((run) => SETTLED_RUN_STATUSES.has(run.status)).map((run) => [run.id, run.status]));
