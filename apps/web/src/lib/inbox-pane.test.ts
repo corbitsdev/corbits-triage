@@ -29,6 +29,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     waitingSince: "2026-10-01T00:00:00.000Z",
     canClose: false,
     pendingClose: false,
+    posted: false,
     running: false,
     failure: null,
     href: "/prs/acme/widgets/1",
@@ -102,26 +103,29 @@ describe("paneActions", () => {
     const triage = (overrides: Partial<PrItem>, flags: Partial<Pick<PaneGate, "readOnly" | "busy">> = {}) => paneActions(gate(overrides, undefined, flags)).more.find((row) => row.kind === "triage");
     expect(triage({})).toEqual({ kind: "triage", blocker: null, label: "Triage again", confirm: null });
     expect(triage({ runId: null, state: "new" })).toBeUndefined();
-    expect(triage({ runId: null, state: "new", failure: "failed" })?.blocker).toBeNull();
     expect(triage({}, { readOnly: true })?.blocker).toBe("read-only");
     expect(triage({ running: true })?.blocker).toBe("running");
+    const failed = paneActions(gate({ runId: null, state: "new", failure: "failed" }));
+    expect(failed.primary).toEqual({ kind: "triage", blocker: null });
+    expect(failed.more.find((row) => row.kind === "triage")).toBeUndefined();
   });
 
-  test("a drafted reply is the primary action when the pile has none, and in the More menu otherwise", () => {
+  test("a drafted reply is the primary action for the author until the mirror posted it, and in the More menu otherwise", () => {
     expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" })).primary).toEqual({ kind: "reply", blocker: null });
     expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" }, undefined, { readOnly: true })).primary).toEqual({ kind: "reply", blocker: "read-only" });
     expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" })).more.find((row) => row.kind === "reply")).toBeUndefined();
+    expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase", posted: true })).primary).toBeNull();
     expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" })).more.find((row) => row.kind === "reply")).toEqual({ kind: "reply", blocker: null, label: "Post reply", confirm: null });
     expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" }, undefined, { readOnly: true })).more.find((row) => row.kind === "reply")?.blocker).toBe("read-only");
   });
 
   test("an empty or absent draft shows no reply to post anywhere", () => {
-    expect(paneActions(gate({ state: "needs-author-update" })).primary).toBeNull();
+    expect(paneActions(gate({ state: "needs-author-update" })).primary).toEqual({ kind: "comment", blocker: null });
     expect(paneActions(gate({})).more.find((row) => row.kind === "reply")).toBeUndefined();
     expect(replyDraft(item({ comment: "" }), "")).toBeNull();
     expect(replyDraft(item({ comment: null }), "")).toBeNull();
     // a degraded verdict's empty comment must not surface an enabled reply row either
-    expect(paneActions(gate({ state: "needs-author-update", comment: "" })).primary).toBeNull();
+    expect(paneActions(gate({ state: "needs-author-update", comment: "" })).primary).toEqual({ kind: "comment", blocker: null });
     expect(paneActions(gate({ state: "awaiting-review", comment: "" })).more.find((row) => row.kind === "reply")).toBeUndefined();
   });
 });
@@ -145,25 +149,31 @@ describe("canRun", () => {
 });
 
 describe("runPaneAction", () => {
-  async function record(kind: "reply" | "close" | "triage", overrides: Partial<PrItem>, text: string): Promise<unknown[]> {
+  async function record(kind: "reply" | "close" | "triage", overrides: Partial<PrItem>, text: string, commentId?: number | null): Promise<unknown[]> {
     const calls: unknown[] = [];
     async function write(input: PrGithubWriteInput) {
       calls.push(input);
+      return { commentId: commentId === undefined ? 7 : commentId };
+    }
+    function replySent(sent: PrItem) {
+      calls.push({ sent: sent.key });
     }
     async function triage(repo: string, number: number) {
       calls.push({ triage: `${repo}#${number}` });
     }
     const pr = item(overrides);
     if (pr.number === null) throw new Error("test item needs a number");
-    await runPaneAction(kind, { ...pr, number: pr.number }, replyDraft(pr, text), { write, triage });
+    await runPaneAction(kind, { ...pr, number: pr.number }, replyDraft(pr, text), { write, triage, replySent });
     return calls;
   }
 
-  test("posting the reply applies the verdict's labels after it", async () => {
+  test("posting the reply marks the verdict sent once the hub names the comment, then applies its labels", async () => {
     expect(await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks, edited")).toEqual([
       { action: "reply", repo: "acme/widgets", number: 1, body: "Thanks, edited" },
+      { sent: "acme/widgets#1" },
       { action: "labels", repo: "acme/widgets", number: 1, labels: ["wanted"] },
     ]);
+    await expect(record("reply", { comment: "Thanks" }, "Thanks", null)).rejects.toThrow("did not confirm");
   });
 
   test("triage again asks the hub for the pull request and writes nothing to GitHub", async () => {

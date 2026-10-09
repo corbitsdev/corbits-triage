@@ -27,11 +27,13 @@ import {
   INBOX_GROUPINGS,
   UNASSIGNED,
   ageText,
+  awaitingText,
   groupInbox,
   inboxAction,
   inboxHref,
   inboxStatus,
   initialsOf,
+  isPostedToAuthor,
   matchesQuery,
   primaryAction,
   regroupInbox,
@@ -40,21 +42,21 @@ import {
   type InboxAction,
   type InboxGrouping,
   type InboxPile,
-  type InboxView,
 } from "../lib/inbox-view.ts";
-import { useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
+import { useMarkReplySent, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { findPrItem, prHref } from "../lib/triage-view.ts";
 import { CheckIcon, ChevronIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 
+const POSTED = "Posted";
+
 const GROUPING_LABEL: Record<InboxGrouping, string> = { action: "Action", repo: "Repo", owner: "Owner" };
 
 function actionDot(action: InboxAction | null): string {
   if (action === "merge") return "dot ready";
   if (action === "unblock") return "dot blocked";
-  if (action === null) return "dot wait";
   return "dot";
 }
 
@@ -76,6 +78,7 @@ function Row({ item, selected }: { item: PrItem; selected: boolean }) {
       <span className="tw"><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
       {primary === null ? null : <span className="act">{rowActionLabel(primary)}</span>}
+      {isPostedToAuthor(item) ? <span className="act done">{POSTED}</span> : null}
     </Link>
   );
 }
@@ -220,6 +223,7 @@ function ComposerForm({ composer, busy, readOnly, onChange, onCancel, onSubmit }
 function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const { snapshot, writeGithub, triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
+  const replySent = useMarkReplySent();
   const [reply, setReply] = useState(draftText(item));
   const [editing, setEditing] = useState(false);
   const [composer, setComposer] = useState<Composer | null>(null);
@@ -269,7 +273,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     setBusy(true);
     try {
       setError(null);
-      setDone(await runPaneAction(kind, item, draft, { write: writeGithub, triage: triagePullRequest }));
+      setDone(await runPaneAction(kind, item, draft, { write: writeGithub, triage: triagePullRequest, replySent }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -364,6 +368,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
             <p className="vh">{verdictHeadline(item)}</p>
             <div className="vm">
               <span><span className="st"><span className={dotClass(item, inboxAction(item))} />{inboxStatus(item)}</span></span>
+              {isPostedToAuthor(item) ? <span>{POSTED}</span> : null}
               {item.priority === null ? null : <span><b>{item.priority}</b></span>}
               <Certainty confidence={item.confidence} floor={floor} />
             </div>
@@ -399,9 +404,9 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   );
 }
 
-type EmptyListProps = { loading: boolean; denied: boolean; noRepos: boolean; query: string; view: InboxView; onClear: () => void };
+type EmptyListProps = { loading: boolean; denied: boolean; noRepos: boolean; query: string; onClear: () => void };
 
-function EmptyList({ loading, denied, noRepos, query, view, onClear }: EmptyListProps) {
+function EmptyList({ loading, denied, noRepos, query, onClear }: EmptyListProps) {
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
   if (noRepos) {
@@ -410,8 +415,7 @@ function EmptyList({ loading, denied, noRepos, query, view, onClear }: EmptyList
   if (query.trim()) {
     return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match.</p><button type="button" className="btn btn-sm" onClick={onClear}>Clear search</button></div>;
   }
-  const waiting = view.waiting.length > 0 ? ` ${view.waiting.length} pull requests are waiting on authors or triage.` : "";
-  return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.{waiting}</p></div>;
+  return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
 }
 
 export default function Inbox() {
@@ -423,7 +427,6 @@ export default function Inbox() {
   const { denied } = useRunLogs();
   const [query, setQuery] = useState("");
   const [grouping, setGrouping] = useState<InboxGrouping>("action");
-  const [showWaiting, setShowWaiting] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const view = useMemo(() => groupInbox(items.filter((item) => matchesQuery(item, query))), [items, query]);
@@ -431,7 +434,6 @@ export default function Inbox() {
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
   const selected = params.number === undefined ? flat[0] : findPrItem(items, params);
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
-  const showFold = view.waiting.length > 0 && !loading;
 
   useEffect(function shortcuts() {
     function onKeyDown(event: KeyboardEvent) {
@@ -469,7 +471,7 @@ export default function Inbox() {
     <div className={`inbox${selected ? " has-selection" : ""}`} ref={paneRef} tabIndex={-1}>
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
-          <div className="lh-top"><h1>Inbox</h1><span className="n">{flat.length}</span></div>
+          <div className="lh-top"><h1>Inbox</h1><span className="n">{flat.length}</span>{view.awaiting > 0 ? <span className="awaiting">{awaitingText(view.awaiting)}</span> : null}</div>
           <div className="tools">
             <label className="search">
               <SearchIcon />
@@ -485,31 +487,12 @@ export default function Inbox() {
         </div>
         <div className="scroll" id="main">
           {flat.length === 0 ? (
-            <EmptyList loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} query={query} view={view} onClear={() => setQuery("")} />
+            <EmptyList loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} query={query} onClear={() => setQuery("")} />
           ) : (
             <div className="groups">
               {piles.map((pile) => <Pile key={pile.key} pile={pile} selectedKey={selected?.key} />)}
             </div>
           )}
-          {showFold ? (
-            <>
-              <div className="fold">
-                <span>{view.waiting.length} waiting on authors or triage</span>
-                <button type="button" className="linkish" onClick={() => setShowWaiting(!showWaiting)}>{showWaiting ? "Hide" : "Show"}</button>
-              </div>
-              {showWaiting ? (
-                <div className="fold-list">
-                  {view.waiting.map((item) => (
-                    <Link key={item.key} className="row" to={inboxHref(item)} aria-selected={item.key === selected?.key}>
-                      <span className={dotClass(item, null)} />
-                      <span className="tw"><b>{titleText(item.title)}</b><span className="why">{inboxStatus(item)}</span></span>
-                      <span className="age">{ageText(item.waitingSince)}</span>
-                    </Link>
-                  ))}
-                </div>
-              ) : null}
-            </>
-          ) : null}
         </div>
         <footer className="list-foot"><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>a</kbd> do suggested</span><span><kbd>/</kbd> search</span></footer>
       </section>

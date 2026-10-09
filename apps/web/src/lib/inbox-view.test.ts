@@ -29,6 +29,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     waitingSince: "2026-10-01T00:00:00.000Z",
     canClose: false,
     pendingClose: false,
+    posted: false,
     running: false,
     failure: null,
     href: "/prs/acme/widgets/1",
@@ -37,22 +38,26 @@ function item(overrides: Partial<PrItem>): PrItem {
 }
 
 describe("groupInbox", () => {
-  test("piles pull requests by the action they need, in mockup order, and folds the rest", () => {
+  test("piles every verdict by the action it needs, in mockup order, and only counts pull requests awaiting triage", () => {
     const view = groupInbox([
       item({ key: "a", state: "ready", priority: "P3" }),
-      item({ key: "b", state: "needs-author-update" }),
+      item({ key: "b", state: "needs-author-update", draft: true }),
       item({ key: "c", state: "blocked", priority: "P1" }),
       item({ key: "d", state: "awaiting-review", canClose: true }),
-      item({ key: "e", state: "new" }),
+      item({ key: "e", state: "new", runId: null }),
       item({ key: "f", state: "needs-decision", comment: "Looks wanted." }),
+      item({ key: "g", state: "stale" }),
+      item({ key: "h", state: "new", runId: null, failure: "failed" }),
     ]);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([
-      ["decide", ["f"]],
-      ["unblock", ["c"]],
+      ["decide", ["f", "g"]],
+      ["unblock", ["c", "b"]],
       ["duplicate", ["d"]],
       ["merge", ["a"]],
+      ["failed", ["h"]],
     ]);
-    expect(view.waiting.map((row) => row.key)).toEqual(["b", "e"]);
+    expect(view.awaiting).toBe(1);
+    expect(primaryAction(item({ state: "new", runId: null, failure: "failed" }), "failed")).toBe("triage");
   });
 
   test("sorts by priority, then humans first, then longest waiting", () => {
@@ -68,7 +73,7 @@ describe("groupInbox", () => {
   test("a running pull request keeps its previous verdict's pile and reads Running", () => {
     const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true })]);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => [row.key, inboxStatus(row)])])).toEqual([["decide", [["rerun", "Running"]]]]);
-    expect(view.waiting.map((row) => [row.key, inboxStatus(row)])).toEqual([["first", "Running"]]);
+    expect(view.awaiting).toBe(1);
   });
 });
 
@@ -94,10 +99,11 @@ describe("primaryAction", () => {
     expect(inboxAction(item({ state: "ready", canClose: true }))).toBe("duplicate");
   });
 
-  test("a pull request outside the piles posts its draft, and an empty draft is no draft", () => {
-    expect(primaryAction(item({ state: "needs-author-update", comment: "Please rebase" }), null)).toBe("reply");
-    expect(primaryAction(item({ state: "needs-author-update" }), null)).toBeNull();
-    expect(primaryAction(item({ state: "needs-author-update", comment: "" }), null)).toBeNull();
+  test("an author's verdict sends its unposted reply and has nothing left once the mirror posted it", () => {
+    expect(primaryAction(item({ state: "needs-author-update", comment: "Please rebase" }), "unblock")).toBe("reply");
+    expect(primaryAction(item({ state: "needs-author-update", comment: "" }), "unblock")).toBe("comment");
+    expect(primaryAction(item({ state: "needs-author-update", comment: "Please rebase", posted: true }), "unblock")).toBeNull();
+    expect(primaryAction(item({ state: "blocked", posted: true }), "unblock")).toBe("changes");
     expect(primaryAction(item({ comment: "" }), "decide")).toBe("comment");
   });
 });

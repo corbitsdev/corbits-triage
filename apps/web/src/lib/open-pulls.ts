@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { projectQueue, type PrItem } from "./hub-api.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
 import { usePortal } from "./portal.tsx";
@@ -20,13 +20,46 @@ export function useOpenPulls() {
   });
 }
 
+/** Replies this portal sent, by pull request key, to the verdict run they answered; a newer verdict supersedes them. */
+type SentReplies = Record<string, string>;
+
+function sentRepliesKey(tenantId: string | undefined) {
+  return ["sent-replies", tenantId];
+}
+
+function noSentReplies(): SentReplies {
+  return {};
+}
+
+function useSentReplies(): SentReplies {
+  const { snapshot } = usePortal();
+  const { data } = useQuery({ queryKey: sentRepliesKey(snapshot?.workspace.tenantId), queryFn: noSentReplies, staleTime: Infinity });
+  return data ?? {};
+}
+
+/** Marks a pull request's current verdict posted once the hub confirmed it wrote the reply. */
+export function useMarkReplySent(): (item: PrItem) => void {
+  const { snapshot } = usePortal();
+  const queryClient = useQueryClient();
+  const tenantId = snapshot?.workspace.tenantId;
+  return useCallback(function markReplySent(item: PrItem) {
+    if (item.runId === null) return;
+    const runId = item.runId;
+    queryClient.setQueryData<SentReplies>(sentRepliesKey(tenantId), (sent) => ({ ...sent, [item.key]: runId }));
+  }, [queryClient, tenantId]);
+}
+
 /** Every pull request with a verdict, including closed ones, for the pull request page. */
 export function usePullRequestItems(): PrItem[] {
   const { logs } = useRunLogs();
   const runs = useRuns();
   const approvals = useApprovals();
   const { data } = useOpenPulls();
-  return useMemo(() => projectQueue(logs, runs.rows, approvals.rows, data, new Date()), [logs, runs.rows, approvals.rows, data]);
+  const sent = useSentReplies();
+  return useMemo(function projectWithSentReplies() {
+    const items = projectQueue(logs, runs.rows, approvals.rows, data, new Date());
+    return items.map((item) => (item.runId !== null && sent[item.key] === item.runId ? { ...item, posted: true } : item));
+  }, [logs, runs.rows, approvals.rows, data, sent]);
 }
 
 /** True until every source the queue is projected from has loaded; the lists are not meaningful before that. */

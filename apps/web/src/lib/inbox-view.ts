@@ -1,9 +1,9 @@
 import type { PrItem, QueueState } from "./hub-api.ts";
 import { priorityRank } from "./triage-view.ts";
 
-export type InboxAction = "decide" | "review" | "unblock" | "duplicate" | "merge";
+export type InboxAction = "decide" | "review" | "unblock" | "duplicate" | "merge" | "failed";
 
-export const INBOX_ACTION_ORDER: InboxAction[] = ["decide", "review", "unblock", "duplicate", "merge"];
+export const INBOX_ACTION_ORDER: InboxAction[] = ["decide", "review", "unblock", "duplicate", "merge", "failed"];
 
 export const INBOX_ACTION_LABEL: Record<InboxAction, string> = {
   decide: "Decide",
@@ -11,6 +11,7 @@ export const INBOX_ACTION_LABEL: Record<InboxAction, string> = {
   unblock: "Unblock",
   duplicate: "Close duplicates",
   merge: "Merge",
+  failed: "Failed",
 };
 
 export const INBOX_STATUS_LABEL: Record<QueueState, string> = {
@@ -35,7 +36,7 @@ export function rowWhy(item: Pick<PrItem, "running" | "state" | "evidence">): st
 
 export const UNASSIGNED = "Unassigned";
 
-export type PrimaryAction = "reply" | "comment" | "approve" | "changes" | "close" | "merge";
+export type PrimaryAction = "reply" | "comment" | "approve" | "changes" | "close" | "merge" | "triage";
 
 const PRIMARY_LABEL: Record<PrimaryAction, string> = {
   reply: "Post reply",
@@ -44,6 +45,7 @@ const PRIMARY_LABEL: Record<PrimaryAction, string> = {
   changes: "Request changes",
   close: "Close as duplicate",
   merge: "Merge",
+  triage: "Triage again",
 };
 
 const ROW_LABEL: Record<PrimaryAction, string> = {
@@ -53,23 +55,31 @@ const ROW_LABEL: Record<PrimaryAction, string> = {
   changes: "Request changes",
   close: "Close",
   merge: "Merge",
+  triage: "Retry",
 };
 
-/** The pile a pull request lands in; null means it waits on someone else and sits under the fold. */
+/** The pile a pull request lands in; null means it is still awaiting its first verdict and is only counted. */
 export function inboxAction(item: PrItem): InboxAction | null {
   if (item.canClose) return "duplicate";
   switch (item.state) {
     case "needs-decision":
+    case "stale":
       return "decide";
     case "awaiting-review":
       return "review";
     case "blocked":
+    case "needs-author-update":
       return "unblock";
     case "ready":
       return "merge";
-    default:
-      return null;
+    case "new":
+      return item.failure === null ? null : "failed";
   }
+}
+
+/** The author must act and the App already told them so; there is nothing left to send. */
+export function isPostedToAuthor(item: PrItem): boolean {
+  return item.state === "needs-author-update" && item.posted;
 }
 
 /** A comment only counts as a draft when it holds non-empty text; a degraded verdict's empty feedback is nothing to post. */
@@ -80,17 +90,21 @@ export function hasDraftComment(comment: string | null): boolean {
 export function primaryAction(item: PrItem, action: InboxAction | null): PrimaryAction | null {
   switch (action) {
     case null:
-      return hasDraftComment(item.comment) ? "reply" : null;
+      return null;
     case "decide":
       return hasDraftComment(item.comment) ? "reply" : "comment";
     case "review":
       return "approve";
     case "unblock":
-      return "changes";
+      if (item.state !== "needs-author-update") return "changes";
+      if (isPostedToAuthor(item)) return null;
+      return hasDraftComment(item.comment) ? "reply" : "comment";
     case "duplicate":
       return "close";
     case "merge":
       return "merge";
+    case "failed":
+      return "triage";
   }
 }
 
@@ -116,14 +130,19 @@ export function compareInboxItems(a: PrItem, b: PrItem): number {
 
 export type InboxGroup = { action: InboxAction; label: string; items: PrItem[] };
 
-export type InboxView = { groups: InboxGroup[]; waiting: PrItem[] };
+/** `awaiting` counts the pull requests with no verdict and no failed run; they are not rows. */
+export type InboxView = { groups: InboxGroup[]; awaiting: number };
 
 export function groupInbox(items: PrItem[]): InboxView {
   const sorted = [...items].sort(compareInboxItems);
   const groups = INBOX_ACTION_ORDER
     .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inboxAction(item) === action) }))
     .filter((group) => group.items.length > 0);
-  return { groups, waiting: sorted.filter((item) => inboxAction(item) === null) };
+  return { groups, awaiting: items.filter((item) => inboxAction(item) === null).length };
+}
+
+export function awaitingText(count: number): string {
+  return `${count} awaiting triage`;
 }
 
 export function matchesQuery(item: PrItem, query: string): boolean {
