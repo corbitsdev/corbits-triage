@@ -1,9 +1,9 @@
 import { toast } from "sonner";
 import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
-import { ApiError, createHubTransport, type Transport } from "./hub-transport.ts";
+import { ApiError, createHubTransport } from "./hub-transport.ts";
 import {
   configureGithubApp,
   hasActiveGithubCredential,
@@ -32,10 +32,10 @@ import {
 } from "./hub-api.ts";
 import type { CreateGrantInput } from "./grant-actions.ts";
 import { ensureWorkflows, suggestOfferings } from "./workflow-deploy.ts";
-import { hasCheckPack } from "./check-pack.ts";
+import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { hasDecisionModelCredential } from "./decision-models.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
-import type { RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, type RepoPolicy } from "@corbits/triage-contracts";
 
 interface PortalContextValue {
   configured: boolean;
@@ -84,9 +84,8 @@ export const RUNS_QUERY_KEY = "runs";
 export const GRANTS_QUERY_KEY = "grants";
 export const PRINCIPALS_QUERY_KEY = "principals";
 export const ROLES_QUERY_KEY = "roles";
-const PACK_POINTER_QUERY_KEY = "pack-pointer";
 const REFRESH_QUERY_KEYS = [
-  [PACK_POINTER_QUERY_KEY],
+  [CHECK_PACK_INDEX_QUERY_KEY],
   PORTAL_QUERY_KEY,
   [RUN_IDS_QUERY_KEY],
   [RUN_LOG_QUERY_KEY],
@@ -96,20 +95,6 @@ const REFRESH_QUERY_KEYS = [
   [PRINCIPALS_QUERY_KEY],
   [ROLES_QUERY_KEY],
 ];
-
-/** A found check pack never goes away, so only a miss is searched again. */
-function readPackPointer(queryClient: QueryClient, transport: Transport, tenantId: string, repo: string): Promise<boolean> {
-  return queryClient.fetchQuery({
-    queryKey: [PACK_POINTER_QUERY_KEY, tenantId, repo],
-    queryFn: () => hasCheckPack(transport, tenantId, repo),
-    staleTime: (query) => (query.state.data === true ? "static" : 0),
-    gcTime: Infinity,
-  });
-}
-
-export function rememberCheckPack(queryClient: QueryClient, tenantId: string, repo: string): void {
-  queryClient.setQueryData([PACK_POINTER_QUERY_KEY, tenantId, repo], true);
-}
 
 /** A 401 means the hub ended the session, so the local session is cleared too. */
 export function useSignOutWhenRejected(): (cause: unknown) => void {
@@ -140,8 +125,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     try {
       const workspace = await ensureWorkspace(transport);
       const tenantId = workspace.tenantId;
-      function hasPack(repo: string) {
-        return readPackPointer(queryClient, transport, tenantId, repo);
+      async function hasPack(repo: string) {
+        return (await queryClient.fetchQuery(checkPackIndexQuery(tenantId))).has(checkPackName(repo));
       }
       return await loadPortal(transport, workspace, hasPack);
     } catch (cause: unknown) {

@@ -237,27 +237,37 @@ function requireContent(content: string, what: string): string {
   return trimmed;
 }
 
-async function listAll<T>(transport: Transport, path: string): Promise<T[]> {
+type Listed<T> = { rows: T[] | undefined; next: string | null };
+
+/** Follows `nextCursor` until the hub runs out of pages or `enough` says the caller has what it came for. */
+async function listPages<T>(transport: Transport, path: string, read: (raw: unknown) => Listed<T>, enough?: (items: T[]) => boolean): Promise<T[]> {
   const items: T[] = [];
   const seen = new Set<string>();
   let cursor: string | null = null;
   for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
     const separator = path.includes("?") ? "&" : "?";
-    const raw: Page<T> | T[] = await transport.fetch<Page<T> | T[]>(
+    const raw = await transport.fetch<unknown>(
       "GET",
       `${path}${separator}limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     );
-    const rows = Array.isArray(raw) ? raw : raw?.data;
+    const { rows, next } = read(raw);
     if (!Array.isArray(rows)) {
       throw new Error("The hub returned a page without data.");
     }
     items.push(...rows);
-    const next: string | null = Array.isArray(raw) ? null : (raw.nextCursor ?? null);
-    if (!next || seen.has(next)) return items;
+    if (!next || seen.has(next) || enough?.(items)) return items;
     seen.add(next);
     cursor = next;
   }
   throw new Error("The hub paginated past its page limit.");
+}
+
+async function listAll<T>(transport: Transport, path: string): Promise<T[]> {
+  return listPages<T>(transport, path, function readPage(raw) {
+    if (Array.isArray(raw)) return { rows: raw as T[], next: null };
+    const page = raw as Page<T> | undefined;
+    return { rows: page?.data, next: page?.nextCursor ?? null };
+  });
 }
 
 export const CONFIG_KEY = "corbitsTriage";
@@ -349,25 +359,65 @@ export function reposFromConfig(config: unknown): RepoRecord[] {
 }
 
 export type ArtifactListItem = { id: string; title: string; kind?: string };
+type ArtifactPage = { artifacts?: ArtifactListItem[]; nextCursor?: string | null };
 
-export async function findArtifactByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
+/**
+ * Artifact pages come newest first under `artifacts`. The hub matches `query`
+ * against title or content, so callers filter titles exactly.
+ */
+export async function listArtifacts(
+  transport: Transport,
+  tenantId: string,
+  query: string,
+  enough?: (rows: ArtifactListItem[]) => boolean,
+): Promise<ArtifactListItem[]> {
   const tid = enc(requireTenantId(tenantId));
-  const page = await transport.fetch<{ artifacts?: ArtifactListItem[] }>(
-    "GET",
-    `/api/tenants/${tid}/artifacts?query=${enc(title)}&limit=100`,
-  );
-  return (page.artifacts ?? []).find((row) => row.title === title) ?? null;
+  return listPages<ArtifactListItem>(transport, `/api/tenants/${tid}/artifacts?query=${enc(query)}`, function readPage(raw) {
+    const page = raw as ArtifactPage | undefined;
+    return { rows: page?.artifacts, next: page?.nextCursor ?? null };
+  }, enough);
 }
 
-export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPack | null> {
-  const listed = await findArtifactByTitle(transport, tenantId, checkPackName(repo));
-  if (!listed) return null;
+/** Titles are not unique; a title resolves to its newest artifact, which the listing order puts first. */
+export function newestByTitle(rows: ArtifactListItem[]): Map<string, ArtifactListItem> {
+  const byTitle = new Map<string, ArtifactListItem>();
+  for (const row of rows) {
+    if (!byTitle.has(row.title)) byTitle.set(row.title, row);
+  }
+  return byTitle;
+}
+
+export async function findArtifactByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
+  function found(rows: ArtifactListItem[]): boolean {
+    return rows.some((row) => row.title === title);
+  }
+  return newestByTitle(await listArtifacts(transport, tenantId, title, found)).get(title) ?? null;
+}
+
+/** A check pack with the artifact it was read from; `version` is what a save must match. */
+export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack };
+/** The newest artifact titled for the repository holds something that is not a check pack; a save replaces it in place. */
+export type CorruptCheckPack = { kind: "corrupt"; id: string; version: number };
+export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack;
+
+async function loadCheckPackById(transport: Transport, tenantId: string, repo: string, id: string): Promise<CheckPackArtifact> {
   const tid = enc(requireTenantId(tenantId));
-  const detail = await transport.fetch<{ artifact?: { content?: string } }>(
+  const detail = await transport.fetch<{ artifact?: { content?: string; version?: number } }>(
     "GET",
-    `/api/tenants/${tid}/artifacts/${enc(listed.id)}`,
+    `/api/tenants/${tid}/artifacts/${enc(id)}`,
   );
-  return parseCheckPack(detail.artifact?.content, repo);
+  const version = detail.artifact?.version;
+  if (typeof version !== "number") throw new Error("The hub returned an artifact without a version.");
+  const pack = parseCheckPack(detail.artifact?.content, repo);
+  return pack ? { kind: "pack", id, version, pack } : { kind: "corrupt", id, version };
+}
+
+/** The one title-to-detail path: the newest artifact titled for the repository, read in full. */
+export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPackArtifact | null> {
+  const clean = validateRepo(repo);
+  const listed = await findArtifactByTitle(transport, tenantId, checkPackName(clean));
+  if (!listed) return null;
+  return loadCheckPackById(transport, tenantId, clean, listed.id);
 }
 
 export type CheckPackLookup = (repo: string) => Promise<boolean>;
@@ -861,8 +911,10 @@ export async function startBacklogTriage(
   const clean = validateRepo(repo);
   const policy = await loadRepoPolicy(transport, tenantId, clean);
   assertRepoEnabled(policy);
-  const pack = await loadRepoCheckPack(transport, tenantId, clean);
-  if (!pack) throw new Error("This repository still needs check setup.");
+  const read = await loadRepoCheckPack(transport, tenantId, clean);
+  if (!read) throw new Error("This repository still needs check setup.");
+  if (read.kind === "corrupt") throw new Error("This repository's check pack is unreadable. Replace it on the repository page.");
+  const pack = read.pack;
   const { runId } = await triggerNamedWorkflow(
     transport,
     tenantId,
@@ -883,8 +935,10 @@ export async function startPullRequestTriage(
   const repo = typeof parsed.repo === "string" ? parsed.repo : "";
   const policy = repo ? await loadRepoPolicy(transport, tenantId, repo) : undefined;
   if (policy) assertRepoEnabled(policy);
-  const pack = repo ? await loadRepoCheckPack(transport, tenantId, repo) : null;
-  if (repo && !pack) throw new Error("This repository still needs check setup.");
+  const read = repo ? await loadRepoCheckPack(transport, tenantId, repo) : null;
+  if (repo && !read) throw new Error("This repository still needs check setup.");
+  if (read?.kind === "corrupt") throw new Error("This repository's check pack is unreadable. Replace it on the repository page.");
+  const pack = read?.pack ?? null;
   const content = repo
     ? JSON.stringify({ ...parsed, policy: policy ? { ...policy, checkPack: { name: checkPackName(repo) } } : policy, checkPack: pack })
     : clean;
