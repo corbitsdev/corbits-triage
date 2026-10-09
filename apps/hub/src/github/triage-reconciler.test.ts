@@ -5,6 +5,8 @@ import { emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { DEFAULT_RECONCILE_POLICY, type OpenPr } from "./reconcile-plan.js";
 import { createTriageReconciler, type LiveDeployment } from "./triage-reconciler.js";
 import { createTriageRuns } from "./triage-runs.js";
+import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
+import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
 
 const REPO = "acme/widgets";
 const DOMAIN = "acme.test";
@@ -30,6 +32,10 @@ function started(number: number, at = "2026-10-07T01:00:00.000Z"): WorkflowRunEv
   return { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at, trigger: { type: "mail", payload } } };
 }
 
+function current(number: number, workflowVersion = 2): Record<string, unknown> {
+  return { degraded: null, reason: "", headSha: `sha${number}`, workflowVersion, checks: [] };
+}
+
 function rendered(verdict: Record<string, unknown>): WorkflowRunEvent {
   const output = { ref: `inline:${JSON.stringify({ reply: JSON.stringify(verdict), turn: 1 })}` };
   return { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "render", output } };
@@ -38,6 +44,23 @@ function rendered(verdict: Record<string, unknown>): WorkflowRunEvent {
 const completed: WorkflowRunEvent = { seq: 2, type: "RunCompleted", body: { type: "RunCompleted", seq: 2 } };
 
 type Logs = Record<string, Record<string, WorkflowRunEvent[]>>;
+
+/** Drives one real triage director for one inbound event and returns its reply. */
+async function directorReply(role: "facts" | "render", event: ReactorInboundEvent): Promise<string> {
+  const replies: string[] = [];
+  const caps = {
+    executeTools(calls: unknown) {
+      return { type: "execute_tools", calls };
+    },
+    reply(content: string) {
+      replies.push(content);
+      return { type: "reply", content };
+    },
+  } as unknown as ReactorCapabilities;
+  const director = triageDirectorFactory({ role }, {} as never, { systemPrompt: "" } as never);
+  await director.decide(event, {} as ReactorState, caps);
+  return replies[0]!;
+}
 
 function fakeReader(logs: Logs) {
   const reads: Array<{ repo: string; runId: string }> = [];
@@ -115,7 +138,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
 describe("triage reconciler", () => {
   test("reads only the live deployment's runs and queues to it", async () => {
     const logs: Logs = {
-      [repoKey("run_old")]: { run_old_pr: [started(1), rendered({ degraded: null }), completed] },
+      [repoKey("run_old")]: { run_old_pr: [started(1), rendered(current(1)), completed] },
       [repoKey(LIVE.runId)]: {},
     };
     const { reconcile, delivered, reads, latestOf } = harness(logs, [head(1)]);
@@ -130,7 +153,7 @@ describe("triage reconciler", () => {
     const logs: Logs = {
       [repoKey(LIVE.runId)]: {
         run_degraded: [started(2), rendered({ degraded: "error", reason: "This repository still needs check setup." }), completed],
-        run_clean: [started(3), rendered({ degraded: null, reason: "" }), completed],
+        run_clean: [started(3), rendered(current(3)), completed],
       },
     };
     const { reconcile, delivered, saved } = harness(logs, [head(2), head(3)]);
@@ -141,8 +164,51 @@ describe("triage reconciler", () => {
     expect(rows.find((row) => row.number === 3)).toMatchObject({ status: "triaged", runId: "run_clean" });
   });
 
+  test("verdicts on another commit or with unconfirmed checks are queued again with their reason", async () => {
+    const unconfirmed = [{ check: "conflicts", kind: "machine", result: "unconfirmed" }, { check: "tests", kind: "model", result: "unconfirmed" }];
+    const logs: Logs = {
+      [repoKey(LIVE.runId)]: {
+        run_other_head: [started(2), rendered({ ...current(2), headSha: "sha2-pushed" }), completed],
+        run_unconfirmed: [started(3), rendered({ ...current(3), checks: unconfirmed }), completed],
+        run_not_asked: [started(4), rendered({ ...current(4), checks: [{ check: "tests", kind: "model", result: "unconfirmed" }] }), completed],
+      },
+    };
+    const { reconcile, delivered, saved, logged } = harness(logs, [head(2), head(3), head(4)]);
+    await reconcile();
+    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([2, 3]);
+    const reasons = logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"]);
+    expect(reasons).toEqual(["verdict made on head sha2-pushed", "unconfirmed checks: conflicts"]);
+    const rows = saved.get(REPO) ?? [];
+    expect(rows.filter((row) => row.number !== 4).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === 2)).toBe(true);
+    expect(rows.find((row) => row.number === 4)).toMatchObject({ status: "triaged", runId: "run_not_asked", workflowVersion: 2 });
+  });
+
+  test("a facts failure renders a degraded verdict naming no head, which is queued again with the facts error", async () => {
+    const item = await directorReply("facts", { type: "abort" } as ReactorInboundEvent);
+    const verdict = JSON.parse(await directorReply("render", { type: "message.received", message: { content: item } } as ReactorInboundEvent));
+    expect(verdict).toMatchObject({ degraded: "error", headSha: null, reason: "facts interrupted: abort" });
+    const logs: Logs = { [repoKey(LIVE.runId)]: { run_fail: [started(1), rendered(verdict), completed] } };
+    const { reconcile, delivered, logged } = harness(logs, [head(1)]);
+    await reconcile();
+    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1]);
+    expect(logged.find((entry) => entry["msg"] === "triage_requeued")?.["reason"]).toBe("degraded: facts interrupted: abort");
+  });
+
+  test("one verdict from a newer workflow version re-queues heads settled under the older one", async () => {
+    const logs: Logs = { [repoKey(LIVE.runId)]: { run_v2: [started(9), rendered(current(9, 2)), completed] } };
+    const { reconcile, delivered, saved, logged } = harness(logs, [head(1), head(2), head(9)]);
+    const settled = (number: number): PrTriageRow => ({ number, headSha: `sha${number}`, status: "triaged", attempts: 0, runId: `old_${number}`, workflowVersion: 1, firstSeenAt: LONG_AGO, updatedAt: LONG_AGO });
+    saved.set(REPO, [settled(1), settled(2)]);
+    await reconcile();
+    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1, 2]);
+    expect(logged.filter((entry) => entry["msg"] === "triage_requeued").every((entry) => entry["reason"] === "verdict from workflow version 1, current is 2")).toBe(true);
+    const rows = saved.get(REPO) ?? [];
+    expect(rows.filter((row) => row.number !== 9).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === 2)).toBe(true);
+    expect(rows.find((row) => row.number === 9)).toMatchObject({ status: "triaged", runId: "run_v2", workflowVersion: 2 });
+  });
+
   test("a finished run's log is read once and then left out of later passes", async () => {
-    const logs: Logs = { [repoKey(LIVE.runId)]: { run_clean: [started(3), rendered({ degraded: null }), completed] } };
+    const logs: Logs = { [repoKey(LIVE.runId)]: { run_clean: [started(3), rendered(current(3)), completed] } };
     const { reconcile, reads, latestOf } = harness(logs, [head(3)]);
     await reconcile();
     await reconcile();
@@ -162,7 +228,7 @@ describe("triage reconciler", () => {
     await reconcile();
     await reconcile();
     expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1, 2, 3, 4, 5]);
-    for (const number of [1, 2, 3, 4, 5]) logs[repoKey(LIVE.runId)]![`run_${number}`] = [started(number), rendered({ degraded: null }), completed];
+    for (const number of [1, 2, 3, 4, 5]) logs[repoKey(LIVE.runId)]![`run_${number}`] = [started(number), rendered(current(number)), completed];
     await reconcile();
     expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const rows = saved.get(REPO) ?? [];
