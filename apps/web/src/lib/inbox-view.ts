@@ -137,13 +137,7 @@ export type InboxGrouping = "action" | "repo" | "owner";
 
 export const INBOX_GROUPINGS: InboxGrouping[] = ["action", "repo", "owner"];
 
-/** Hours under a day, else days, as the mockup writes ages. */
-export function ageText(iso: string | null, now = Date.now()): string {
-  const at = iso ? Date.parse(iso) : NaN;
-  if (Number.isNaN(at)) return "";
-  const hours = Math.max(0, Math.round((now - at) / 3_600_000));
-  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
-}
+export { ageText } from "./duration.ts";
 
 export function initialsOf(name: string): string {
   const words = name.trim().split(/[\s@._-]+/).filter(Boolean);
