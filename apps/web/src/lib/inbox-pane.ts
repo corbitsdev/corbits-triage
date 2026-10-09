@@ -42,7 +42,10 @@ type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "mergeabil
 
 export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean };
 
-function actionBlocker(kind: PrimaryAction, gate: PaneGate): ActionBlocker | null {
+/** Everything the pane can run: the GitHub writes, plus asking the hub to triage the pull request again. */
+export type PaneKind = PrimaryAction | "triage";
+
+function actionBlocker(kind: PaneKind, gate: PaneGate): ActionBlocker | null {
   if (gate.item.number === null) return "no-number";
   if (gate.item.running) return "running";
   if (gate.readOnly) return "read-only";
@@ -54,17 +57,19 @@ function actionBlocker(kind: PrimaryAction, gate: PaneGate): ActionBlocker | nul
   return null;
 }
 
-type PaneAction = { kind: PrimaryAction; blocker: ActionBlocker | null };
+type PaneAction<K extends PaneKind = PaneKind> = { kind: K; blocker: ActionBlocker | null };
 
 export type MenuEntry = PaneAction & { label: string; confirm: string | null };
 
-type PaneActions = { primary: PaneAction | null; more: MenuEntry[] };
+type PaneActions = { primary: PaneAction<PrimaryAction> | null; more: MenuEntry[] };
 
 const MORE_ORDER: PrimaryAction[] = ["approve", "changes", "comment", "merge"];
 
 const PLAIN_CLOSE = { label: "Close pull request", confirm: "Close this pull request?" };
 
-function paneAction(kind: PrimaryAction, gate: PaneGate): PaneAction {
+const TRIAGE_AGAIN = "Triage again";
+
+function paneAction<K extends PaneKind>(kind: K, gate: PaneGate): PaneAction<K> {
   return { kind, blocker: actionBlocker(kind, gate) };
 }
 
@@ -76,6 +81,12 @@ function closeEntry(gate: PaneGate): MenuEntry | null {
   return { ...close, ...PLAIN_CLOSE };
 }
 
+/** A pull request the hub has run before, or gave up on, can be run again; one still waiting for its first run cannot. */
+function triageEntry(gate: PaneGate): MenuEntry | null {
+  if (gate.item.runId === null && gate.item.failure === null) return null;
+  return { ...paneAction("triage", gate), label: TRIAGE_AGAIN, confirm: null };
+}
+
 export function paneActions(gate: PaneGate): PaneActions {
   const action = inboxAction(gate.item);
   const primaryKind = action === null ? null : primaryAction(gate.item, action);
@@ -85,10 +96,17 @@ export function paneActions(gate: PaneGate): PaneActions {
     .map((kind) => ({ ...paneAction(kind, gate), label: primaryLabel(kind), confirm: null }));
   const close = closeEntry(gate);
   if (close !== null) more.push(close);
+  const triage = triageEntry(gate);
+  if (triage !== null) more.push(triage);
   return { primary, more };
 }
 
 export type ReplyDraft = { text: string; edited: boolean };
+
+/** The text the reply editor starts from; a new verdict starts it over. */
+export function draftText(item: Pick<PrItem, "comment">): string {
+  return item.comment === null ? "" : item.comment;
+}
 
 /** Null when the verdict drafted no reply; the pane then has nothing to edit or post. */
 export function replyDraft(item: PrItem, text: string): ReplyDraft | null {
@@ -96,7 +114,7 @@ export function replyDraft(item: PrItem, text: string): ReplyDraft | null {
   return { text, edited: text !== item.comment };
 }
 
-export function primaryButtonLabel(primary: PaneAction, draft: ReplyDraft | null): string {
+export function primaryButtonLabel(primary: PaneAction<PrimaryAction>, draft: ReplyDraft | null): string {
   if (primary.kind === "reply" && draft?.edited) return "Post edited reply";
   return primaryLabel(primary.kind);
 }
@@ -114,11 +132,13 @@ export function openComposer(current: Composer | null, kind: ComposerKind): Comp
   return { kind, body: current?.kind === kind ? current.body : "" };
 }
 
-export function isComposerKind(kind: PrimaryAction): kind is ComposerKind {
+export function isComposerKind(kind: PaneKind): kind is ComposerKind {
   return kind === "comment" || kind === "changes";
 }
 
 type GithubWrite = (input: PrGithubWriteInput) => Promise<void>;
+
+export type PaneIo = { write: GithubWrite; triage: (repo: string, number: number) => Promise<void> };
 
 type NumberedItem = PrItem & { number: number };
 
@@ -126,17 +146,18 @@ export function hasNumber(item: PrItem): item is NumberedItem {
   return item.number !== null;
 }
 
-export function canRun(kind: PrimaryAction, gate: PaneGate): boolean {
+export function canRun(kind: PaneKind, gate: PaneGate): boolean {
   return actionBlocker(kind, gate) === null;
 }
 
 export async function runPaneAction(
-  kind: Exclude<PrimaryAction, ComposerKind>,
+  kind: Exclude<PaneKind, ComposerKind>,
   item: NumberedItem,
   draft: ReplyDraft | null,
-  write: GithubWrite,
+  io: PaneIo,
 ): Promise<string> {
   const { repo, number } = item;
+  const { write } = io;
   switch (kind) {
     case "reply": {
       if (draft === null || !draft.text.trim()) throw new Error("The reply must not be empty.");
@@ -153,5 +174,8 @@ export async function runPaneAction(
     case "close":
       await write({ action: "close", repo, number, labels: item.labels, comment: item.comment ?? "" });
       return `Closed #${number}.`;
+    case "triage":
+      await io.triage(repo, number);
+      return `Triage started for #${number}. It will show as Running shortly and its verdict will appear when it completes.`;
   }
 }

@@ -7,6 +7,7 @@ import {
   COMPOSER_COPY,
   canRun,
   ciStatus,
+  draftText,
   hasNumber,
   isComposerKind,
   openComposer,
@@ -19,6 +20,7 @@ import {
   verdictHeadline,
   type Composer,
   type MenuEntry,
+  type PaneKind,
   type ReplyDraft,
 } from "../lib/inbox-pane.ts";
 import {
@@ -39,7 +41,6 @@ import {
   type InboxGrouping,
   type InboxPile,
   type InboxView,
-  type PrimaryAction,
 } from "../lib/inbox-view.ts";
 import { useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
@@ -197,9 +198,9 @@ function ComposerForm({ composer, busy, readOnly, onChange, onCancel, onSubmit }
 }
 
 function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
-  const { snapshot, writeGithub, readOnly } = usePortal();
+  const { snapshot, writeGithub, triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
-  const [reply, setReply] = useState(item.comment === null ? "" : item.comment);
+  const [reply, setReply] = useState(draftText(item));
   const [composer, setComposer] = useState<Composer | null>(null);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -215,6 +216,12 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const floor = snapshot?.config?.confidenceFloor;
   const detailFiles = pull.data === undefined ? "" : ` · ${filesText(pull.data.pr.changedFiles)}`;
 
+  // A new verdict replaces the draft and the last note; an edit made while a run is merely in flight stays.
+  useEffect(function restartDraftOnNewVerdict() {
+    setReply(draftText(item));
+    setDone(null);
+  }, [item.runId, item.comment]);
+
   useEffect(function closeMenuOnOutsideClick() {
     if (!menu) return;
     function onPointerDown(event: PointerEvent) {
@@ -224,7 +231,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [menu]);
 
-  async function run(kind: PrimaryAction) {
+  async function run(kind: PaneKind) {
     if (!hasNumber(item) || !canRun(kind, gate)) return;
     setMenu(false);
     if (isComposerKind(kind)) {
@@ -234,7 +241,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     setBusy(true);
     try {
       setError(null);
-      setDone(await runPaneAction(kind, item, draft, writeGithub));
+      setDone(await runPaneAction(kind, item, draft, { write: writeGithub, triage: triagePullRequest }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

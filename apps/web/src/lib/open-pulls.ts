@@ -26,7 +26,7 @@ export function usePullRequestItems(): PrItem[] {
   const runs = useRuns();
   const approvals = useApprovals();
   const { data } = useOpenPulls();
-  return useMemo(() => projectQueue(logs, runs.rows, approvals.rows, data), [logs, runs.rows, approvals.rows, data]);
+  return useMemo(() => projectQueue(logs, runs.rows, approvals.rows, data, new Date()), [logs, runs.rows, approvals.rows, data]);
 }
 
 /** True until every source the queue is projected from has loaded; the lists are not meaningful before that. */

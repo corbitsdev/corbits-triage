@@ -8,13 +8,12 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, parseCheckPack, checkPackName, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, parseCheckPack, checkPackName, PR_TRIAGE_STUCK_RUN_MS, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
 export const BACKLOG_WORKFLOW = "pr-triage-historical";
-export const PR_WORKFLOW = "pr-triage";
 export const GITHUB_PROVIDER = "github";
 export const GITHUB_PROVIDER_PLUGIN = "http";
 export const GITHUB_CREDENTIAL_NAME = "github";
@@ -924,26 +923,11 @@ export async function startBacklogTriage(
   return { runId };
 }
 
-/** A live pr-triage run. The content is the pull request id the maintainer typed. */
-export async function startPullRequestTriage(
-  transport: Transport,
-  tenantId: string,
-  pullRequest: string,
-): Promise<{ runId: string }> {
-  const clean = requireContent(pullRequest, "Pull request");
-  const parsed = tryJson(clean);
-  const repo = typeof parsed.repo === "string" ? parsed.repo : "";
-  const policy = repo ? await loadRepoPolicy(transport, tenantId, repo) : undefined;
-  if (policy) assertRepoEnabled(policy);
-  const read = repo ? await loadRepoCheckPack(transport, tenantId, repo) : null;
-  if (repo && !read) throw new Error("This repository still needs check setup.");
-  if (read?.kind === "corrupt") throw new Error("This repository's check pack is unreadable. Replace it on the repository page.");
-  const pack = read?.pack ?? null;
-  const content = repo
-    ? JSON.stringify({ ...parsed, policy: policy ? { ...policy, checkPack: { name: checkPackName(repo) } } : policy, checkPack: pack })
-    : clean;
-  const { runId } = await triggerNamedWorkflow(transport, tenantId, PR_WORKFLOW, content);
-  return { runId };
+/** Asks the hub to queue one open pull request on its live pr-triage deployment. */
+export async function triagePullRequest(transport: Transport, tenantId: string, repo: string, number: number): Promise<void> {
+  const clean = validateRepo(repo);
+  if (!Number.isInteger(number) || number < 1) throw new Error("Pull request number must be a positive integer.");
+  await transport.fetch("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}`, { repo: clean, number });
 }
 
 export type OpenPulls = {
@@ -1289,8 +1273,12 @@ export type PrItem = {
   pendingClose: boolean;
   /** A pr-triage run for this pull request has started and has not rendered its verdict yet. */
   running: boolean;
+  /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
+  failure: RunFailure | null;
   href: string;
 };
+
+export type RunFailure = "failed" | "cancelled" | "stuck";
 
 export type CheckResult = {
   check: string;
@@ -1451,17 +1439,56 @@ function triggeredPull(log: RunLog): string | null {
 // Hub run statuses, in both the lifecycle and the run-view vocabulary, after which a run makes no progress.
 const SETTLED_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "error", "stopped"]);
 
+type SettledRuns = Map<string, string>;
+
+function settledRuns(runs: HubRun[]): SettledRuns {
+  return new Map(runs.filter((run) => SETTLED_RUN_STATUSES.has(run.status)).map((run) => [run.id, run.status]));
+}
+
+function startedAt(log: RunLog): number | null {
+  const started = log.events.find((e) => e.type === "RunStarted");
+  const at = started ? (obj(started).at ?? obj(started.body).at) : null;
+  return typeof at === "string" ? new Date(at).getTime() : null;
+}
+
+/** How a run ended without a verdict, from its log, the hub's settled status, or how long it has been going. */
+function runFailure(log: RunLog, settled: SettledRuns, now: Date): RunFailure | null {
+  const last = log.events[log.events.length - 1]?.type;
+  if (last === "RunFailed") return "failed";
+  if (last === "RunCancelled") return "cancelled";
+  if (last === "RunCompleted") return null;
+  const status = settled.get(log.runId) ?? settled.get(log.anchorRunId);
+  if (status === "cancelled" || status === "stopped") return "cancelled";
+  if (status !== undefined) return "failed";
+  const began = startedAt(log);
+  return began !== null && now.getTime() - began > PR_TRIAGE_STUCK_RUN_MS ? "stuck" : null;
+}
+
 /** Pull requests whose latest pr-triage run has started, has not rendered and has not settled in its log or on the hub. */
-function runningPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, runs: HubRun[]): Set<string> {
-  const settled = new Set(runs.filter((run) => SETTLED_RUN_STATUSES.has(run.status)).map((run) => run.id));
+function runningPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, settled: SettledRuns, now: Date): Set<string> {
   const running = new Set<string>();
   for (const { log, verdicts } of logs) {
     const pull = triggeredPull(log);
-    if (pull && !isTerminalRunEvents(log.events) && !settled.has(log.runId) && !settled.has(log.anchorRunId)) running.add(pull);
+    if (pull && !isTerminalRunEvents(log.events) && runFailure(log, settled, now) === null) running.add(pull);
     else if (pull) running.delete(pull);
     for (const v of verdicts) running.delete(`${v.repo}#${v.number}`);
   }
   return running;
+}
+
+/** Pull requests whose latest pr-triage run ended without a verdict, and how. */
+function failedPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, settled: SettledRuns, now: Date): Map<string, RunFailure> {
+  const failed = new Map<string, RunFailure>();
+  for (const { log, verdicts } of logs) {
+    const pull = triggeredPull(log);
+    if (pull) {
+      const failure = runFailure(log, settled, now);
+      if (failure === null) failed.delete(pull);
+      else failed.set(pull, failure);
+    }
+    for (const v of verdicts) failed.delete(`${v.repo}#${v.number}`);
+  }
+  return failed;
 }
 
 function isGithubWriteApproval(approval: HubApproval): boolean {
@@ -1480,13 +1507,15 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
  * requests, unseen ones join as "new" and verdicts of closed ones stop needing a human.
  * A pull request whose latest pr-triage run has started but neither rendered nor settled is running.
  */
-export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubApproval[], openPulls?: OpenPulls): PrItem[] {
+export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubApproval[], openPulls: OpenPulls | undefined, now: Date): PrItem[] {
   const items = new Map<string, PrItem>();
   const logs = runLogs
     .map((log, i) => ({ log, i }))
     .sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i)
     .map(({ log }) => ({ log, verdicts: runVerdicts(log) }));
-  const running = runningPulls(logs, runs);
+  const settled = settledRuns(runs);
+  const running = runningPulls(logs, settled, now);
+  const failed = failedPulls(logs, settled, now);
   for (const { log, verdicts } of logs) {
     const started = log.events.find((e) => e.type === "RunStarted");
     const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
@@ -1524,6 +1553,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         canClose: r.duplicate === true,
         pendingClose: false,
         running: running.has(key),
+        failure: failed.get(key) ?? null,
         href: canonicalPrHref(v.repo, v.number),
       });
     }
@@ -1543,11 +1573,11 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
       waitingSince: approval.createdAt ?? item.waitingSince,
     });
   }
-  if (openPulls) joinOpenPulls(items, openPulls, running);
+  if (openPulls) joinOpenPulls(items, openPulls, running, failed);
   return [...items.values()];
 }
 
-function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running: Set<string>): void {
+function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running: Set<string>, failed: Map<string, RunFailure>): void {
   for (const { repo, prs, error } of openPulls.repos) {
     if (error) continue;
     const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
@@ -1584,6 +1614,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         canClose: false,
         pendingClose: false,
         running: running.has(key),
+        failure: failed.get(key) ?? null,
         href: canonicalPrHref(repo, pr.number),
       });
     }

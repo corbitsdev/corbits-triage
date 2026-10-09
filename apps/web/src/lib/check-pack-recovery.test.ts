@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import { alreadyWritten, writeCheckPack } from "./check-pack.ts";
 import { fakeHub } from "./fake-hub.ts";
-import { loadRepoCheckPack, startBacklogTriage, startPullRequestTriage, type StoredCheckPack } from "./hub-api.ts";
+import { loadRepoCheckPack, startBacklogTriage, type StoredCheckPack } from "./hub-api.ts";
 
 const title = "check-pack/acme/widgets";
 const config = { corbitsTriage: { repos: [{ name: "acme/widgets", connected: true }] } };
@@ -24,7 +24,6 @@ describe("check-pack recovery", () => {
     const hub = fakeHub([{ id: "c", title, content: "{\"not\":\"a pack\"}", version: 1, updatedAt: 1 }], enabled);
     const unreadable = /unreadable/;
     await expect(startBacklogTriage(hub.transport, "t", "acme/widgets")).rejects.toThrow(unreadable);
-    await expect(startPullRequestTriage(hub.transport, "t", JSON.stringify({ repo: "acme/widgets", number: 1 }))).rejects.toThrow(unreadable);
     expect(hub.requests.filter((line) => line.includes("/workflows"))).toEqual([]);
   });
 
