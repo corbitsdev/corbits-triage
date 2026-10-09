@@ -444,14 +444,6 @@ body[data-rail="collapsed"] .nav-count {
   font-size: 14px;
 }
 .topbar-search input::placeholder { color: var(--ink-mute); }
-.topbar-search kbd {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-mute);
-  border: 1px solid var(--rule);
-  border-radius: 3px;
-  padding: 1px 5px;
-}
 .topbar-id {
   display: flex;
   align-items: center;

@@ -28,7 +28,6 @@
 }
 .shell .ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .shell .mono { font-family: var(--mono); font-size: 0.86em; }
-.shell kbd { font: 700 10px var(--mono); border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--white); line-height: 16px; display: inline-block; min-width: 16px; text-align: center; }
 
 /* Rail */
 .shell .rail { display: flex; flex-direction: column; gap: 4px; padding: 18px 12px 14px; min-height: 0; overflow: auto; }
@@ -59,7 +58,6 @@
 .shell .menu.me-menu button { white-space: nowrap; padding: 7px 8px; gap: 8px; }
 .shell .menu button:hover { background: var(--fill-hover); }
 .shell .menu button[disabled] { opacity: 0.45; cursor: not-allowed; }
-.shell .menu button kbd { margin-left: auto; }
 .shell .menu hr { border: 0; border-top: 1px solid var(--rule); margin: 6px 0; }
 .shell .menu small { display: block; font-size: 11px; font-weight: 400; }
 
@@ -78,8 +76,6 @@
 .inbox .btn-quiet:hover { background: var(--fill-hover); }
 .inbox .btn-sm { height: 30px; padding: 0 12px; font-size: 13px; border-radius: var(--r-sm); }
 .inbox .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
-.inbox .btn kbd { margin-left: 2px; }
-.inbox .btn-primary kbd { background: rgba(255, 255, 255, 0.55); border-color: rgba(0, 0, 0, 0.25); }
 .inbox .linkish { background: none; border: 0; padding: 0; font: 600 12px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 
 /* List head */
@@ -118,7 +114,6 @@
 .inbox .fold { display: flex; justify-content: space-between; align-items: center; margin: 14px 8px 0; padding: 10px 8px; border-top: 1px solid var(--rule); font-size: 13px; }
 .inbox .fold-list { padding: 0 8px; }
 .inbox .fold-list .row { grid-template-columns: 10px minmax(0, 1fr) auto; }
-.inbox .list-foot { border-top: 1px solid var(--rule); padding: 9px 16px; font-size: 12px; display: flex; gap: 14px; }
 .inbox .zero { margin: auto; text-align: center; display: grid; gap: 10px; justify-items: center; padding: 40px; max-width: 420px; }
 .inbox .zero h2 { margin: 0; font-size: 26px; letter-spacing: -0.015em; }
 .inbox .zero p { margin: 0; font-size: 15px; }
@@ -162,10 +157,7 @@
 .inbox .mk.judge { background: var(--blue-light); }
 .inbox .disclose { width: 100%; display: flex; align-items: center; gap: 10px; padding: 12px 0; margin: 0 0 24px; border: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: none; cursor: pointer; font: 700 14px var(--font); color: inherit; text-align: left; text-decoration: none; }
 .inbox .disclose span { font-weight: 400; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inbox .disclose kbd { margin-left: auto; }
 .inbox .lbl-h { font-size: 13px; font-weight: 700; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.inbox .lbl-h .sp { flex: 1; }
-.inbox .lbl-h .hint { font-weight: 400; font-size: 12px; }
 .inbox .compose { border: 1px solid var(--rule-strong); border-radius: var(--r-md); overflow: hidden; }
 .inbox .compose:focus-within { border-color: var(--ink); box-shadow: var(--focus); }
 .inbox .compose textarea { display: block; border: 0; width: 100%; min-height: 84px; padding: 12px 14px; font: 400 14px/1.5 var(--font); color: inherit; background: var(--white); resize: vertical; outline: 0; }
