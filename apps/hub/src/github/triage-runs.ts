@@ -27,6 +27,8 @@ export type ObservedRuns = {
   byRepo: Map<string, Map<string, ObservedRun[]>>;
   /** Every verdict in one deployment's log names the same version; none until its first verdict lands. */
   workflowVersion?: number;
+  /** Runs in the log, one per mail it received, including those that name no pull request head. */
+  runCount: number;
 };
 
 /** Statuses the stock lifecycle settled for these runs, which it can do without a terminal event in the log. */
@@ -121,6 +123,30 @@ function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger
   });
 }
 
+export type ObserveRuns = (anchorRunId: string, domain: string) => Promise<ObservedRuns>;
+
+/** Each deployment's runs, in the order given. */
+export async function observeDeployments(observe: ObserveRuns, deployments: readonly { runId: string }[], domain: string): Promise<ObservedRuns[]> {
+  const observed: ObservedRuns[] = [];
+  for (const deployment of deployments) observed.push(await observe(deployment.runId, domain));
+  return observed;
+}
+
+/** Runs of several deployments of the same workflow, as if from one log; the first that has a verdict names the version. */
+export function mergeObservedRuns(observed: readonly ObservedRuns[]): ObservedRuns {
+  const byRepo: ObservedRuns["byRepo"] = new Map();
+  for (const runs of observed) {
+    for (const [repo, byHead] of runs.byRepo) {
+      const merged = byRepo.get(repo) ?? new Map<string, ObservedRun[]>();
+      byRepo.set(repo, merged);
+      for (const [key, list] of byHead) merged.set(key, [...(merged.get(key) ?? []), ...list]);
+    }
+  }
+  const workflowVersion = observed.find((runs) => runs.workflowVersion !== undefined)?.workflowVersion;
+  const runCount = observed.reduce((sum, runs) => sum + runs.runCount, 0);
+  return { byRepo, runCount, ...(workflowVersion !== undefined && { workflowVersion }) };
+}
+
 export function createSettledStatusReader(db: DB["db"]): ReadSettled {
   return async function readSettled(anchorRunId, runIds) {
     if (runIds.length === 0) return new Map();
@@ -202,6 +228,6 @@ export function createTriageRuns(deps: TriageRunsDeps) {
         byHead.set(key, [...(byHead.get(key) ?? []), seen]);
       }
     }
-    return { byRepo, ...(workflowVersion !== undefined && { workflowVersion }) };
+    return { byRepo, runCount: settledIds.size + latest.size, ...(workflowVersion !== undefined && { workflowVersion }) };
   };
 }

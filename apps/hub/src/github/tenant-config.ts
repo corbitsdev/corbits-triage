@@ -58,23 +58,55 @@ function nsRev(ns: CorbitsTriageNs): number {
 /**
  * Rewrites `tenant.config.corbitsTriage` under a row lock; undefined when the
  * tenant is missing. Bumps `rev` so a concurrent portal PATCH can 409 instead
- * of clobbering install writes.
+ * of clobbering install writes. A patch returning undefined writes nothing.
  */
 export async function patchCorbitsTriage(
   db: DB["db"],
   tenantId: string,
-  patch: (ns: CorbitsTriageNs) => CorbitsTriageNs,
+  patch: (ns: CorbitsTriageNs) => CorbitsTriageNs | undefined,
 ): Promise<CorbitsTriageNs | undefined> {
   return db.transaction(async function patchLocked(tx) {
     const [row] = await tx.select().from(schema.tenant).where(eq(schema.tenant.id, tenantId)).for("update");
     if (!row) return undefined;
     const existing = asRecord(row.config) ?? {};
     const current = triageNs(existing);
-    const nextNs = { ...patch(current), rev: nsRev(current) + 1 };
+    const patched = patch(current);
+    if (patched === undefined) return current;
+    const nextNs = { ...patched, rev: nsRev(current) + 1 };
     await tx.update(schema.tenant)
       .set({ config: { ...existing, [CONFIG_KEY]: nextNs }, updatedAt: new Date() })
       .where(eq(schema.tenant.id, tenantId));
     return nextNs;
+  });
+}
+
+/** The pr-triage deployment the hub replaced (`from`) and the copy it deployed for it (`to`). */
+export type RotationRecord = { from: string; to: string; at: string };
+
+export function rotationRecord(ns: CorbitsTriageNs): RotationRecord | undefined {
+  const value = asRecord(ns["rotation"]);
+  const { from, to, at } = value ?? {};
+  return typeof from === "string" && typeof to === "string" && typeof at === "string" ? { from, to, at } : undefined;
+}
+
+/** Records the rotation unless one is recorded already; true when this one was. */
+export async function claimRotation(db: DB["db"], tenantId: string, record: RotationRecord): Promise<boolean> {
+  let claimed = false;
+  await patchCorbitsTriage(db, tenantId, function claim(ns) {
+    if (rotationRecord(ns) !== undefined) return undefined;
+    claimed = true;
+    return { ...ns, rotation: record };
+  });
+  return claimed;
+}
+
+/** Clears the rotation when it is still this one. */
+export async function clearRotation(db: DB["db"], tenantId: string, record: RotationRecord): Promise<void> {
+  await patchCorbitsTriage(db, tenantId, function clear(ns) {
+    const current = rotationRecord(ns);
+    if (current?.from !== record.from || current.to !== record.to) return undefined;
+    const { rotation: _rotation, ...rest } = ns;
+    return rest;
   });
 }
 

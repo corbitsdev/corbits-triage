@@ -13,8 +13,8 @@ import { failure, githubAppCredential, portalMember, type PortalCredentialDeps }
 import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 import type { PullHeadReader } from "./tenant-open-heads.js";
-import type { LiveDeployment } from "./triage-reconciler.js";
-import type { ObservedRuns } from "./triage-runs.js";
+import { newestLive, type LiveDeployment } from "./deployment.js";
+import { mergeObservedRuns, observeDeployments, type ObserveRuns } from "./triage-runs.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
 export const GITHUB_PR_TRIAGE_PATH = "/api/integrations/github-triage";
@@ -24,8 +24,9 @@ const Body = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" });
 export type GithubPrTriageDeps = PortalCredentialDeps & {
   pullHead: PullHeadReader;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
-  liveDeployment: (tenantId: string) => Promise<LiveDeployment | null>;
-  observeRuns: (anchorRunId: string, domain: string) => Promise<ObservedRuns>;
+  /** Newest first; mail goes to the first, and a head may still be running on a replaced one. */
+  liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
+  observeRuns: ObserveRuns;
   store: TriageStateStore;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   policy: ReconcilePolicy;
@@ -44,6 +45,11 @@ async function readJson(req: Request): Promise<unknown> {
 /** A head the hub queued and has not yet given up waiting on; later the reconciler marks it failed and queues it again itself. */
 function isQueuedSince(row: PrTriageRow | undefined, now: Date, policy: ReconcilePolicy): boolean {
   return row?.status === "queued" && row.queuedAt !== undefined && now.getTime() - new Date(row.queuedAt).getTime() < policy.unstartedAfterMs;
+}
+
+/** A head the hub saw running and has not yet given up on as stuck. */
+function isRunningSince(row: PrTriageRow | undefined, now: Date, policy: ReconcilePolicy): boolean {
+  return row?.status === "running" && now.getTime() - new Date(row.updatedAt).getTime() <= policy.stuckAfterMs;
 }
 
 function queuedAgain(prior: PrTriageRow | undefined, number: number, headSha: string, at: string): PrTriageRow {
@@ -96,7 +102,8 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const pack = await deps.readCheckPack(tenantId, repo);
     if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's check pack is unreadable. Replace it on the repository page.");
     if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs check setup.");
-    const deployment = await deps.liveDeployment(tenantId);
+    const deployments = await deps.liveDeployments(tenantId);
+    const deployment = newestLive(deployments);
     if (!deployment) return failure(503, "service_not_running", "The pr-triage service is not running.");
 
     let openHead: string | undefined;
@@ -110,7 +117,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const headSha = openHead;
 
     const now = deps.now();
-    const runs = (await deps.observeRuns(deployment.runId, tenant.domain)).byRepo.get(repo)?.get(runKey(number, headSha)) ?? [];
+    const runs = mergeObservedRuns(await observeDeployments(deps.observeRuns, deployments, tenant.domain)).byRepo.get(repo)?.get(runKey(number, headSha)) ?? [];
     if (runs.some((run) => run.status === "running" && !isStuck(run, now, deps.policy))) {
       return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
     }
@@ -118,6 +125,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     async function remember(state: LoadedTriageState, retry: boolean): Promise<Remembered | Response> {
       const prior = rowOf(state.rows, number, headSha);
       if (isQueuedSince(prior, now, deps.policy)) return failure(409, "already_queued", `${repo}#${number} is already queued for triage.`);
+      if (isRunningSince(prior, now, deps.policy)) return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
       const rows = withRow(state.rows, number, headSha, queuedAgain(prior, number, headSha, now.toISOString()));
       try {
         return { prior, rows, version: await deps.store.save(tenantId, repo, rows, state.version) };
