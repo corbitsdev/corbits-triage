@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import { triageDirectorFactory } from "./directors.js";
-import { emptyPack } from "@corbits/triage-contracts";
+import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
+import type { RenderOutput } from "./logic/render.js";
 
 describe("facts director policy", () => {
   test("skips disabled draft findings from the run payload", async () => {
@@ -118,6 +119,81 @@ describe("facts director policy", () => {
     expect(JSON.parse(replies[0] ?? "{}")).toMatchObject({
       det: { state: "stale-unknown", reason: NEEDS_SETUP_REASON, needsJudgment: false },
     });
+  });
+});
+
+describe("judge on a blocked pull request", () => {
+  function director(role: "facts" | "judge" | "render", caps: Partial<Record<"executeTools" | "reply" | "infer", unknown>>) {
+    const d = triageDirectorFactory({ role }, {} as never, { systemPrompt: "" } as never);
+    return (event: unknown) => d.decide(event as ReactorInboundEvent, {} as ReactorState, caps as unknown as ReactorCapabilities);
+  }
+
+  async function facts(checkRuns: unknown[], mergeable: boolean | null): Promise<string> {
+    let reply = "";
+    const decide = director("facts", {
+      executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
+      reply(content: string) { reply = content; return { type: "reply", content }; },
+    });
+    await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") }) } });
+    const results: Record<string, unknown> = {
+      github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
+      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable, requestedReviewers: 1 },
+      "reviews:8": { reviews: [] },
+      "commits:8": { commits: [] },
+      "files:8": { files: [] },
+      "comments:8": { comments: [] },
+      "checks:8": { checks: checkRuns },
+    };
+    for (const [callId, content] of Object.entries(results)) await decide({ type: "tool.done", result: { callId, content } });
+    return reply;
+  }
+
+  async function judgeAndRender(factsReply: string, judgeError?: string): Promise<{ asked: string[]; verdict: RenderOutput }> {
+    let judged = "";
+    const asked: string[] = [];
+    const judge = director("judge", {
+      infer(request: { providerOptions: { systemOne: { questions: Array<{ id: string }> } } }) {
+        asked.push(...request.providerOptions.systemOne.questions.map((q) => q.id));
+        return { type: "infer" };
+      },
+      reply(content: string) { judged = content; return { type: "reply", content }; },
+    });
+    await judge({ type: "message.received", message: { content: JSON.stringify({ reply: factsReply }) } });
+    if (asked.length && judgeError !== undefined) await judge({ type: "inference.error", error: { message: judgeError } });
+    else if (asked.length) {
+      const text = asked.map((id) => JSON.stringify({ id, type: "noul", noul: id === "focused" ? 0.1 : 0.9 })).join("");
+      await judge({ type: "inference.done", turn: { content: [{ type: "text", text }] } });
+    }
+    let rendered = "";
+    const render = director("render", { reply(content: string) { rendered = content; return { type: "reply", content }; } });
+    await render({ type: "message.received", message: { content: JSON.stringify({ reply: judged }) } });
+    return { asked, verdict: JSON.parse(rendered) };
+  }
+
+  test("a CI-blocked pull request records the model's answers but stays driven by CI", async () => {
+    const { asked, verdict } = await judgeAndRender(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true));
+    expect(asked).toEqual(["focused", "docs", "tests"]);
+    expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", nextAction: "Fix failing CI: build" });
+    expect(verdict.feedback).not.toContain("unrelated");
+    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
+      { check: "focused", kind: "model", result: "fail", reason: "mixes unrelated changes", evidence: [] },
+      { check: "docs", kind: "model", result: "pass", reason: "documentation is up to date", evidence: [] },
+      { check: "tests", kind: "model", result: "pass", reason: "tests cover the change", evidence: [] },
+    ]);
+  });
+
+  test("a judge outage on a blocked pull request leaves the verdict settled", async () => {
+    const { verdict } = await judgeAndRender(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true), "upstream 503");
+    expect(verdict).toMatchObject({ state: "blocked", degraded: null, mirror: true });
+    expect(verdict.checks.some((c) => c.kind === "machine" && c.result === "unconfirmed")).toBe(false);
+    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["decision model unavailable", "decision model unavailable", "decision model unavailable"]);
+  });
+
+  test("stale-unknown facts skip the model", async () => {
+    const { asked, verdict } = await judgeAndRender(await facts([], null));
+    expect(asked).toEqual([]);
+    expect(verdict.state).toBe("stale-unknown");
+    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["not asked", "not asked", "not asked"]);
   });
 });
 

@@ -122,12 +122,10 @@ function finish(findings: Finding[], checks: CheckResult[], duplicateOf: number 
     findings,
     checks,
     duplicateOf,
-    needsJudgment: facts.state === "open" && JUDGED_STATES.has(state) && hasModelChecks(sources),
+    needsJudgment: facts.state === "open" && state !== "stale-unknown" && hasModelChecks(sources),
     ...(sources ? { sources } : {}),
   };
 }
-
-const JUDGED_STATES = new Set<TriageState>(["ready-monitoring", "awaiting-review"]);
 
 function hasModelChecks(sources: DeterministicResult["sources"]): boolean {
   return sources !== undefined && (sources.quality.length > 0 || sources.custom.length > 0);
