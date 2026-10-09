@@ -149,24 +149,43 @@ function Reasons({ item }: { item: PrItem }) {
 type SuggestedReplyProps = {
   item: PrItem;
   draft: ReplyDraft;
+  editing: boolean;
+  canPost: boolean;
   replyRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (text: string) => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
+  onPost: () => void;
+  onEdit: () => void;
+  onCancel: () => void;
 };
 
-function SuggestedReply({ item, draft, replyRef, onChange, onKeyDown }: SuggestedReplyProps) {
+function SuggestedReply({ item, draft, editing, canPost, replyRef, onChange, onKeyDown, onPost, onEdit, onCancel }: SuggestedReplyProps) {
   return (
     <>
       <h3 className="lbl-h">
         Suggested reply
-        {draft.edited ? <span className="tag" style={{ margin: 0 }}>Edited</span> : null}
         <span className="sp" />
-        <span className="hint"><kbd>e</kbd> edit · <kbd>⌘</kbd><kbd>⏎</kbd> send</span>
       </h3>
-      <div className="compose">
-        <textarea ref={replyRef} value={draft.text} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} aria-label="Suggested reply" />
-        {item.labels.length > 0 ? <div className="foot">Labels {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)}</div> : null}
-      </div>
+      {editing ? (
+        <div className="compose">
+          <textarea ref={replyRef} value={draft.text} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} aria-label="Suggested reply" />
+          <div className="foot">
+            <span className="hint"><kbd>⌘</kbd><kbd>⏎</kbd> send</span>
+            {draft.edited ? <span className="tag" style={{ margin: 0 }}>Edited</span> : null}
+            <span className="sp" />
+            {item.labels.length > 0 ? <span>Labels {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)}</span> : null}
+            <button type="button" className="btn btn-quiet btn-sm" disabled={!canPost} onClick={onCancel}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="suggest">
+          <p className="suggest-text">{draft.text}</p>
+          <div className="suggest-actions">
+            <button type="button" className="btn btn-sm" disabled={!canPost} onClick={onPost}>Post the suggestion</button>
+            <button type="button" className="btn btn-quiet btn-sm" disabled={!canPost} onClick={onEdit}>Edit the suggestion</button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -202,6 +221,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const { snapshot, writeGithub, triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const [reply, setReply] = useState(draftText(item));
+  const [editing, setEditing] = useState(false);
   const [composer, setComposer] = useState<Composer | null>(null);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -213,6 +233,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const gate = { item, facts, readOnly, busy };
   const { primary, more } = paneActions(gate);
   const draft = replyDraft(item, reply);
+  const canPost = draft !== null && canRun("reply", gate);
   const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
   const floor = snapshot?.config?.confidenceFloor;
   const detailFiles = pull.data === undefined ? "" : ` · ${filesText(pull.data.pr.changedFiles)}`;
@@ -220,6 +241,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   // A new verdict replaces the draft and the last note; an edit made while a run is merely in flight stays.
   useEffect(function restartDraftOnNewVerdict() {
     setReply(draftText(item));
+    setEditing(false);
     setDone(null);
   }, [item.runId, item.comment]);
 
@@ -232,6 +254,10 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [menu]);
 
+  useEffect(function focusReplyWhenEditing() {
+    if (editing && replyRef.current) replyRef.current.focus();
+  }, [editing]);
+
   async function run(kind: PaneKind) {
     if (!hasNumber(item) || !canRun(kind, gate)) return;
     setMenu(false);
@@ -239,6 +265,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
       setComposer(openComposer(composer, kind));
       return;
     }
+    if (kind === "reply") setEditing(false);
     setBusy(true);
     try {
       setError(null);
@@ -302,6 +329,24 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   return (
     <section className="panel pane" aria-label="Selected pull request">
       <button type="button" className="btn btn-quiet btn-sm pane-back" onClick={onBack}>Back to inbox</button>
+      <div className="bar">
+        {primary === null ? null : (
+          <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => void run(primary.kind)}>
+            {primaryButtonLabel(primary, draft)} <kbd>a</kbd>
+          </button>
+        )}
+        <span className="sp" />
+        <div className="menu-wrap" ref={menuRef}>
+          <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
+          {menu ? (
+            <div className="menu up" role="menu">
+              {more.map((entry) => (
+                <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => runFromMenu(entry)}>{entry.label}</button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
       <div className="scroll">
         <div className="pane-in">
           <header className="ph">
@@ -329,30 +374,25 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
             Show details
             <span>{item.checks.length} checks{detailFiles} · commits · conversation</span>
           </Link>
-          {draft === null ? null : <SuggestedReply item={item} draft={draft} replyRef={replyRef} onChange={setReply} onKeyDown={onReplyKey} />}
+          {draft === null ? null : (
+            <SuggestedReply
+              item={item}
+              draft={draft}
+              editing={editing}
+              canPost={canPost}
+              replyRef={replyRef}
+              onChange={setReply}
+              onKeyDown={onReplyKey}
+              onPost={() => void run("reply")}
+              onEdit={() => setEditing(true)}
+              onCancel={() => setEditing(false)}
+            />
+          )}
           {composer === null ? null : (
             <ComposerForm composer={composer} busy={busy} readOnly={readOnly} onChange={setComposer} onCancel={() => setComposer(null)} onSubmit={onComposerSubmit} />
           )}
           {error === null ? null : <p role="alert" className="error">{error}</p>}
           {done === null ? null : <p role="status" className="note">{done}</p>}
-        </div>
-      </div>
-      <div className="bar">
-        {primary === null ? null : (
-          <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => void run(primary.kind)}>
-            {primaryButtonLabel(primary, draft)} <kbd>a</kbd>
-          </button>
-        )}
-        <span className="sp" />
-        <div className="menu-wrap" ref={menuRef}>
-          <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
-          {menu ? (
-            <div className="menu up" role="menu">
-              {more.map((entry) => (
-                <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => runFromMenu(entry)}>{entry.label}</button>
-              ))}
-            </div>
-          ) : null}
         </div>
       </div>
     </section>

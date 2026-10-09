@@ -170,15 +170,18 @@
 .inbox .compose:focus-within { border-color: var(--ink); box-shadow: var(--focus); }
 .inbox .compose textarea { display: block; border: 0; width: 100%; min-height: 84px; padding: 12px 14px; font: 400 14px/1.5 var(--font); color: inherit; background: var(--white); resize: vertical; outline: 0; }
 .inbox .compose .foot { display: flex; gap: 6px; align-items: center; padding: 7px 12px; border-top: 1px solid var(--rule); background: var(--paper); font-size: 12px; flex-wrap: wrap; }
+.inbox .suggest { border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--fill); padding: 12px 14px; }
+.inbox .suggest-text { margin: 0 0 10px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+.inbox .suggest-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .inbox .lbl { font: 400 11px var(--mono); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 0 6px; background: var(--white); }
 .inbox .composer { margin-top: 16px; }
 .inbox .composer .foot { gap: 8px; }
 .inbox .note { font-size: 12px; margin: 8px 0 0; }
 .inbox .error { font-size: 13px; margin: 12px 0 0; }
-.inbox .bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); display: flex; gap: 8px; align-items: center; }
+.inbox .bar { display: flex; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-bottom: 1px solid var(--rule); background: var(--white); }
 .inbox .bar .sp { flex: 1; }
 .inbox .bar .btn { flex: none; white-space: nowrap; }
-.inbox .bar .menu.up { right: 0; }
+.inbox .bar .menu.up { top: calc(100% + 6px); bottom: auto; right: 0; }
 .inbox .pane-back { display: none; }
 
 @media (max-width: 960px) {
