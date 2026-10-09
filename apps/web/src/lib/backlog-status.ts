@@ -24,19 +24,21 @@ function isLiveStatus(status: string): boolean {
   return normalized === "running" || normalized === "deployed" || normalized === "pending";
 }
 
-/** Body children bound by `{ kind: "backlog", repo }` on their own events (`log.runId === run.id`). */
-function bodyRunsForRepo(logs: RunLog[], runs: HubRun[], repoName: string): HubRun[] {
-  const runIds = new Set(
-    logs.filter((log) => backlogRepoFromLog(log) === repoName).map((log) => log.runId),
-  );
-  return runs.filter((run) => runIds.has(run.id));
+/**
+ * Repositories with a live pr-triage-historical run, bound by `{ kind: "backlog", repo }`
+ * on its own events, and no projected queue item yet.
+ */
+export function catchingUpRepos(logs: RunLog[], runs: HubRun[]): Set<string> {
+  const queued = new Set(projectQueue(logs, runs, [], undefined, new Date()).map((item) => item.repo));
+  const live = new Set(runs.filter((run) => isLiveStatus(run.status)).map((run) => run.id));
+  const repos = new Set<string>();
+  for (const log of logs) {
+    const repo = backlogRepoFromLog(log);
+    if (repo !== null && !queued.has(repo) && live.has(log.runId)) repos.add(repo);
+  }
+  return repos;
 }
 
-/**
- * True while a pr-triage-historical run for this repository is live and the
- * projected queue has no item for it yet.
- */
 export function isRepoCatchingUp(logs: RunLog[], runs: HubRun[], repoName: string): boolean {
-  if (projectQueue(logs, runs, [], undefined, new Date()).some((item) => item.repo === repoName)) return false;
-  return bodyRunsForRepo(logs, runs, repoName).some((run) => isLiveStatus(run.status));
+  return catchingUpRepos(logs, runs).has(repoName);
 }
