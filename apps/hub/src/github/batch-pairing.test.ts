@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import type { WorkflowRunEvent, WorkflowRunReader } from "@intx/hub-sessions";
-import { emptyPack } from "@corbits/triage-contracts";
+import { emptyPack, stockTriggerMail } from "@corbits/triage-contracts";
 import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
 import { createTriageRuns } from "./triage-runs.js";
 
@@ -37,7 +37,7 @@ async function batchRender(numbers: number[], failGetPr: Set<number>): Promise<s
 }
 
 function events(numbers: number[], reply: string): WorkflowRunEvent[] {
-  const payload = JSON.stringify({ kind: "pr", repo: REPO, items: numbers.map((n) => ({ prNumber: n, headSha: `sha${n}` })) });
+  const payload = stockTriggerMail({ kind: "pr", repo: REPO, items: numbers.map((n) => ({ prNumber: n, headSha: `sha${n}` })) });
   return [
     { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at: "2026-10-07T01:00:00.000Z", trigger: { type: "mail", payload } } },
     { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "render", output: { ref: `inline:${JSON.stringify({ reply })}` } } },

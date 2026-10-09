@@ -1,6 +1,7 @@
 // The live pr-triage deployment's runs, read from its committed run event log
 // and keyed by the pull request head their trigger named.
 import { and, eq, inArray } from "drizzle-orm";
+import { triggerRequestOf } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -60,7 +61,7 @@ function headOf(item: unknown, repo: string, startedAt: string): Trigger[] {
 
 /** The heads a mail named: one as `prNumber`/`headSha`, or several as `items` of the same. */
 function triggersOf(started: Record<string, unknown>): Trigger[] {
-  const payload = asRecord(parseJson(asRecord(started["trigger"])?.["payload"]));
+  const payload = triggerRequestOf(asRecord(started["trigger"])?.["payload"]);
   const repo = payload?.["repo"];
   const startedAt = started["at"];
   if (payload?.["kind"] !== "pr" || typeof repo !== "string" || typeof startedAt !== "string") return [];

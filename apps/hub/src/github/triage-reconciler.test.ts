@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
-import { emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { emptyPack, stockTriggerMail, type PrTriageRow } from "@corbits/triage-contracts";
 import { DEFAULT_RECONCILE_POLICY, type OpenPr } from "./reconcile-plan.js";
 import { TriageStateConflictError } from "./triage-state-store.js";
 import { createTriageReconciler, type LiveDeployment } from "./triage-reconciler.js";
@@ -28,14 +28,16 @@ function heads(from: number, count: number): OpenPr[] {
   return Array.from({ length: count }, (_, i) => head(from + i));
 }
 
-function started(number: number, at = "2026-10-07T01:00:00.000Z"): WorkflowRunEvent {
-  const payload = JSON.stringify({ kind: "pr", repo: REPO, prNumber: number, headSha: `sha${number}` });
+function startedBy(payload: unknown, at: string): WorkflowRunEvent {
   return { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at, trigger: { type: "mail", payload } } };
 }
 
+function started(number: number, at = "2026-10-07T01:00:00.000Z"): WorkflowRunEvent {
+  return startedBy(stockTriggerMail({ kind: "pr", repo: REPO, prNumber: number, headSha: `sha${number}` }), at);
+}
+
 function startedBatch(numbers: number[], at = "2026-10-07T01:00:00.000Z"): WorkflowRunEvent {
-  const payload = JSON.stringify({ kind: "pr", repo: REPO, items: numbers.map((number) => ({ prNumber: number, headSha: `sha${number}` })) });
-  return { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at, trigger: { type: "mail", payload } } };
+  return startedBy(stockTriggerMail({ kind: "pr", repo: REPO, items: numbers.map((number) => ({ prNumber: number, headSha: `sha${number}` })) }), at);
 }
 
 function current(number: number, workflowVersion = 2): Record<string, unknown> {
@@ -321,6 +323,24 @@ describe("triage reconciler", () => {
     expect(twice.saved.get(REPO)).toBeUndefined();
     expect(twice.delivered).toEqual([]);
     expect(twice.logged).toContainEqual(expect.objectContaining({ msg: "triage_state_conflict", repo: REPO }));
+  });
+
+  test("a run triggered by the stock mail, decoded or stringified, is seen running and settles on its verdict", async () => {
+    const at = "2026-10-07T12:00:30.000Z";
+    const runs: Record<string, WorkflowRunEvent[]> = {};
+    const { reconcile, delivered, saved } = harness({ [repoKey(LIVE.runId)]: runs }, [head(1), head(2)]);
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([1, 2]);
+    runs["run_mail"] = [startedBy(stockTriggerMail({ kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] }), at)];
+    runs["run_string"] = [startedBy(JSON.stringify(stockTriggerMail({ kind: "pr", repo: REPO, items: [{ prNumber: 2, headSha: "sha2" }] })), at)];
+    await reconcile();
+    expect(saved.get(REPO)!.map((row) => [row.number, row.status, row.runId])).toEqual([[1, "running", "run_mail"], [2, "running", "run_string"]]);
+    runs["run_mail"]!.push(rendered({ items: [current(1)] }), completed);
+    runs["run_string"]!.push(rendered({ items: [current(2)] }), completed);
+    await reconcile();
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([1, 2]);
+    expect(saved.get(REPO)!.map((row) => [row.number, row.status, row.runId])).toEqual([[1, "triaged", "run_mail"], [2, "triaged", "run_string"]]);
   });
 
   test("a head still running holds one of the tenant's slots", async () => {

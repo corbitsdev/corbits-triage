@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, parseCheckPack, checkPackName, PR_TRIAGE_STUCK_RUN_MS, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, parseCheckPack, checkPackName, triggerRequestOf, PR_TRIAGE_STUCK_RUN_MS, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -1317,15 +1317,6 @@ function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
-function tryJson(value: unknown): Record<string, unknown> {
-  if (typeof value !== "string") return obj(value);
-  try {
-    return obj(JSON.parse(value));
-  } catch {
-    return {};
-  }
-}
-
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [];
 }
@@ -1439,7 +1430,7 @@ function logTime(log: RunLog): string {
 /** The pull requests a pr-triage run was triggered for, from its RunStarted trigger: one, or several `items` of a catch-up mail. */
 function triggeredPulls(log: RunLog): string[] {
   const started = log.events.find((e) => e.type === "RunStarted");
-  const payload = tryJson(obj(obj(started?.body).trigger).payload);
+  const payload = obj(triggerRequestOf(obj(obj(started?.body).trigger).payload));
   if (payload.kind !== "pr" || typeof payload.repo !== "string") return [];
   const items: unknown[] = Array.isArray(payload.items) ? payload.items : [payload];
   return items.flatMap((item) => (typeof obj(item).prNumber === "number" ? [`${payload.repo}#${obj(item).prNumber}`] : []));
@@ -1533,7 +1524,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
   for (const { log, verdicts } of logs) {
     const started = log.events.find((e) => e.type === "RunStarted");
     const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
-    const payload = eventStep ? obj(eventStep.output) : tryJson(obj(obj(started?.body).trigger).payload);
+    const payload = eventStep ? obj(eventStep.output) : obj(triggerRequestOf(obj(obj(started?.body).trigger).payload));
     const at = logTime(log) || null;
     for (const v of verdicts) {
       const key = `${v.repo}#${v.number}`;

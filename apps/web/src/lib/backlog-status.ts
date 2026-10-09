@@ -1,22 +1,14 @@
+import { triggerRequestOf } from "@corbits/triage-contracts";
 import { projectQueue, type HubRun, type RunLog } from "./hub-api.ts";
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
-function parseJson(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
 function eventPayload(body: unknown): Record<string, unknown> {
   const row = record(body);
   const trigger = record(row.trigger);
-  return record(parseJson(trigger.payload ?? row.payload ?? row.content));
+  return record(triggerRequestOf(trigger.payload ?? row.payload ?? row.content));
 }
 
 function backlogRepoFromLog(log: RunLog): string | null {

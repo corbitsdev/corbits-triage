@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { stockTriggerMail } from "@corbits/triage-contracts";
 import { isRepoCatchingUp } from "./backlog-status.ts";
 import type { HubRun, RunLog } from "./hub-api.ts";
 
@@ -17,7 +18,7 @@ const backlogRun = (status: string): HubRun => ({
 const backlogLog = (repo: string): RunLog => ({
   runId: "run-backlog",
   anchorRunId: "run-backlog",
-  events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: JSON.stringify({ kind: "backlog", repo }) } } }],
+  events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "backlog", repo }) } } }],
 });
 
 describe("isRepoCatchingUp", () => {
@@ -55,7 +56,7 @@ describe("isRepoCatchingUp", () => {
             {
               seq: 0,
               type: "RunStarted",
-              body: { trigger: { payload: JSON.stringify({ kind: "backlog", repo: "acme/widgets" }) } },
+              body: { trigger: { payload: stockTriggerMail({ kind: "backlog", repo: "acme/widgets" }) } },
             },
           ],
         },
@@ -70,7 +71,7 @@ describe("isRepoCatchingUp", () => {
         {
           runId: "run-other",
           anchorRunId: "run-other",
-          events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: JSON.stringify({ repo: "acme/widgets" }) } } }],
+          events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ repo: "acme/widgets" }) } } }],
         },
       ],
     };
