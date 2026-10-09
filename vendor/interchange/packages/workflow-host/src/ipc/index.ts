@@ -118,10 +118,9 @@
 //    The event channel carries InferenceEvents and the bracket
 //    events -- shapes whose authority is the deployment's identity
 //    (which the supervisor and child share via the HMAC key) and
-//    whose rate is high. The two channels' typed payload unions are
-//    DISJOINT BY CONSTRUCTION (the discriminated `ControlPayload`
-//    union in `control-channel.ts` does not overlap the
-//    `EventPayload` union in `event-channel.ts`). A control payload
+//    whose rate is high. The per-kind validators in `control-payloads.ts`
+//    and the `EventPayload` union in `event-channel.ts` accept disjoint
+//    payload shapes. A control payload
 //    that included an inference-event shape would defeat the split;
 //    an inference-event payload that included a `drain` or `recycle`
 //    discriminator would let a compromised child issue control-plane
@@ -156,14 +155,16 @@ export {
 export {
   DEFAULT_EVENT_BUFFER_LIMIT,
   EventPayload,
-  createEventChannelSender,
   receiveEventChannel,
-  type EventChannelSender,
-  type EventChannelSenderOpts,
   type EventChannelReceiverOpts,
   type FrameReader,
-  type FrameWriter,
 } from "./event-channel";
+export {
+  createEventChannelSender,
+  type EventChannelSender,
+  type EventChannelSenderOpts,
+  type FrameWriter,
+} from "./event-sender";
 
 export {
   FrameEnvelope,

@@ -82,4 +82,4 @@ Sidecars start through Interchange's `SidecarProvisioner` interface. The local-p
 ## Known limitations
 
 - A hub restart stops its local sidecars, but their deployments still read as live, so events are not processed until the workflows are redeployed. There is no recovery step yet.
-- The hub carries Interchange patches (PR #193, INTR-583, CL-10178); see `vendor/interchange/VENDORED.md`.
+- The hub carries Interchange patches (INTR-583, CL-10210, CL-10211); see `vendor/interchange/VENDORED.md`.
