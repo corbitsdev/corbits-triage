@@ -4,5 +4,8 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "module": "src/index.ts",
   "main": "./src/index.ts",
-  "types": "./src/index.ts"
+  "types": "./src/index.ts",
+  "devDependencies": {
+    "@intx/mime": "workspace:*"
+  }
 }
