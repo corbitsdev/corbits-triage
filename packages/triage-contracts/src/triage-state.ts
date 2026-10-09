@@ -17,6 +17,8 @@ export type PrTriageRow = {
   runId?: string;
   /** Runs the hub queued for this head; webhook and portal runs do not count. */
   attempts: number;
+  /** Times the hub reset `attempts` on a head capped by runs that never started. */
+  cappedRetries?: number;
   /** Workflow version the row was created or reset under; absent on rows from before verdicts were stamped. */
   workflowVersion?: number;
   firstSeenAt: string;
@@ -61,6 +63,8 @@ function parseRow(raw: unknown): PrTriageRow | null {
   if (typeof firstSeenAt !== "string" || typeof updatedAt !== "string") return null;
   const workflowVersion = row.workflowVersion;
   if (workflowVersion !== undefined && (typeof workflowVersion !== "number" || !Number.isInteger(workflowVersion))) return null;
+  const cappedRetries = row.cappedRetries;
+  if (cappedRetries !== undefined && (typeof cappedRetries !== "number" || !Number.isInteger(cappedRetries) || cappedRetries < 0)) return null;
   const runId = optionalString(row.runId);
   const queuedAt = optionalString(row.queuedAt);
   const error = optionalString(row.error);
@@ -70,6 +74,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
     status: status as PrTriageStatus,
     ...(runId !== undefined && { runId }),
     attempts,
+    ...(cappedRetries !== undefined && { cappedRetries }),
     ...(workflowVersion !== undefined && { workflowVersion }),
     firstSeenAt,
     ...(queuedAt !== undefined && { queuedAt }),
