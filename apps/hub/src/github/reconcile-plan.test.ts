@@ -281,6 +281,22 @@ describe("reconcile plan", () => {
     expect(mails).toBe(20 * policy.maxAttempts);
   });
 
+  test("a head capped by runs that never started gets a fresh ladder after cappedRetryAfterMs, behind never-triaged heads", () => {
+    const capped = (number: number, error: string) => row(number, { status: "failed", attempts: policy.maxAttempts, error, queuedAt: at(-11).toISOString(), updatedAt: at(0).toISOString() });
+    const rows = [capped(1, "run never started"), capped(2, "run failed")];
+    const hour = 60;
+    expect(enqueued(plan([pr(1), pr(2)], rows, at(5 * hour), [], 2))).toEqual([]);
+    const retried = plan([pr(1), pr(2)], rows, at(6 * hour), [], 2);
+    expect(enqueued(retried)).toEqual([1]);
+    expect(status(retried, 1)).toMatchObject({ status: "queued", attempts: 1, cappedRetries: 1 });
+    expect(status(retried, 2)).toMatchObject({ status: "failed", attempts: policy.maxAttempts });
+    expect(enqueued(plan([pr(1), pr(2)], rows, at(1_000 * hour), [], 2))).toEqual([1]);
+    expect(enqueued(plan([pr(1), pr(3)], [rows[0]!], at(6 * hour), [], 1))).toEqual([3]);
+    expect(status(plan([pr(1)], [rows[0]!], at(6 * hour), [], 0), 1)).toMatchObject({ status: "failed", attempts: 0 });
+    expect(enqueued(plan([pr(1)], [{ ...rows[0]!, cappedRetries: policy.cappedRetryCycles - 1 }], at(6 * hour)))).toEqual([1]);
+    expect(enqueued(plan([pr(1)], [{ ...rows[0]!, cappedRetries: policy.cappedRetryCycles }], at(1_000 * hour)))).toEqual([]);
+  });
+
   test("a stuck run from before the hub queued the head again does not fail the new attempt", () => {
     const queued = plan([pr(1)], [], at(200)).rows;
     const result = plan([pr(1)], queued, at(205), [[pr(1), [run("run_dead", "running", 0)]]]);

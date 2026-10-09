@@ -29,6 +29,10 @@ export type ReconcilePolicy = {
   backoffMaxMs: number;
   /** Runs the hub queues for one head before it leaves the pull request failed. */
   maxAttempts: number;
+  /** A head capped by runs that never started gets a fresh set of attempts this long after it was capped. */
+  cappedRetryAfterMs: number;
+  /** Fresh sets of attempts such a head gets before it stays capped. */
+  cappedRetryCycles: number;
   /** A verdict waiting only on GitHub, such as mergeability not computed yet, is retried no sooner than this after its run. */
   unconfirmedRetryMs: number;
   /** Heads a tenant has queued or running at once; further due heads wait, never-triaged ones first, then oldest waiting first. */
@@ -45,6 +49,8 @@ export const DEFAULT_RECONCILE_POLICY: ReconcilePolicy = {
   backoffBaseMs: 5 * MINUTE,
   backoffMaxMs: 6 * 60 * MINUTE,
   maxAttempts: 5,
+  cappedRetryAfterMs: 6 * 60 * MINUTE,
+  cappedRetryCycles: 3,
   unconfirmedRetryMs: 5 * MINUTE,
   maxInFlight: 5,
 };
@@ -133,12 +139,21 @@ function observe(row: PrTriageRow, observed: readonly ObservedRun[], now: Date, 
   const ended = pick(row, sinceQueued(row, runs, policy));
   if (ended) return withStatus(row, { status: "failed", run: ended, error: failure(ended, isStuck(ended, now, policy)) }, at);
   if (row.status === "queued" && row.queuedAt !== undefined && now.getTime() - ms(row.queuedAt) > policy.unstartedAfterMs) {
-    return withStatus(row, { status: "failed", error: "run never started" }, at);
+    return withStatus(row, { status: "failed", error: NEVER_STARTED }, at);
   }
   if (row.status === "running" && now.getTime() - ms(row.updatedAt) > policy.stuckAfterMs) {
     return withStatus(row, { status: "failed", runId: row.runId, error: "run lost" }, at);
   }
   return row;
+}
+
+const NEVER_STARTED = "run never started";
+
+function uncapped(row: PrTriageRow, now: Date, policy: ReconcilePolicy): PrTriageRow {
+  if (row.status !== "failed" || row.attempts < policy.maxAttempts || row.error !== NEVER_STARTED) return row;
+  const cycles = row.cappedRetries ?? 0;
+  if (cycles >= policy.cappedRetryCycles || now.getTime() - ms(row.updatedAt) < policy.cappedRetryAfterMs) return row;
+  return { ...row, attempts: 0, cappedRetries: cycles + 1 };
 }
 
 function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): boolean {
@@ -210,7 +225,7 @@ export function planTenant({ repos, runs, now, policy, workflowVersion }: Tenant
     for (const pr of prs) {
       const key = runKey(pr.number, pr.headSha);
       const runsOfHead = observed?.get(key) ?? [];
-      const row = observe(fresh(pr, byHead.get(key), workflowVersion, at), runsOfHead, now, policy);
+      const row = uncapped(observe(fresh(pr, byHead.get(key), workflowVersion, at), runsOfHead, now, policy), now, policy);
       if (inFlight(row)) busy.add(`${name} ${key}`);
       if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row });
       next.push(row);

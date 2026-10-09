@@ -37,6 +37,7 @@ const HubEnvSchema = type({
   "TRIAGE_BATCH_SIZE?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
+  "TRIAGE_CAPPED_RETRY_MS?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -131,8 +132,12 @@ export function triageRotateAfterRuns(env: HubEnv): number {
 }
 
 /** Heads a tenant may have queued or running at once; each in-flight run adds commits to the pack a rotation receives. */
-export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT">): ReconcilePolicy {
-  return { ...DEFAULT_RECONCILE_POLICY, maxInFlight: numberOr(env.TRIAGE_MAX_IN_FLIGHT, DEFAULT_RECONCILE_POLICY.maxInFlight) };
+export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" | "TRIAGE_CAPPED_RETRY_MS">): ReconcilePolicy {
+  return {
+    ...DEFAULT_RECONCILE_POLICY,
+    maxInFlight: numberOr(env.TRIAGE_MAX_IN_FLIGHT, DEFAULT_RECONCILE_POLICY.maxInFlight),
+    cappedRetryAfterMs: numberOr(env.TRIAGE_CAPPED_RETRY_MS, DEFAULT_RECONCILE_POLICY.cappedRetryAfterMs),
+  };
 }
 
 export type SignInSettings = {
