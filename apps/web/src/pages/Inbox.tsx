@@ -306,7 +306,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   }
 
   function onReplyKey(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && primary?.kind === "reply") void run("reply");
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft !== null) void run("reply");
   }
 
   useEffect(function paneShortcuts() {
