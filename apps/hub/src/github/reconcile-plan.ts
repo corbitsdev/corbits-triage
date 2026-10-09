@@ -2,13 +2,16 @@
 // to queue again. Pure, so every recovery path is decided in one place.
 import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow } from "@corbits/triage-contracts";
 
+/** A verdict whose model checks were all skipped; a settled head is triaged again for it once, whatever attempts it spent. */
+export const MODEL_NOT_ASKED = "model not asked";
+
 export type OpenPr = { number: number; headSha: string; updatedAt: string };
 
 export type ObservedRun = {
   runId: string;
   status: "running" | "completed" | "failed" | "cancelled";
   startedAt: string;
-  /** Why a completed run does not settle the head: no verdict, a degraded one, one made on another commit or with unconfirmed checks. */
+  /** Why a completed run does not settle the head: no verdict, a degraded one, one made on another commit, with unconfirmed checks or without asking the decision model. */
   unsettled?: string;
   /** The verdict only waits on GitHub for a machine check, so the head is retried after `unconfirmedRetryMs` rather than at once. */
   unconfirmed?: true;
@@ -137,7 +140,10 @@ function observe(row: PrTriageRow, observed: readonly ObservedRun[], now: Date, 
   const live = pick(row, runs.filter((run) => run.status === "running" && !isStuck(run, now, policy)));
   if (live) return withStatus(row, { status: "running", run: live }, at);
   const ended = pick(row, sinceQueued(row, runs, policy));
-  if (ended) return withStatus(row, { status: "failed", run: ended, error: failure(ended, isStuck(ended, now, policy)) }, at);
+  if (ended) {
+    const failed = withStatus(row, { status: "failed", run: ended, error: failure(ended, isStuck(ended, now, policy)) }, at);
+    return row.status === "triaged" && ended.unsettled === MODEL_NOT_ASKED ? { ...failed, attempts: 0 } : failed;
+  }
   if (row.status === "queued" && row.queuedAt !== undefined && now.getTime() - ms(row.queuedAt) > policy.unstartedAfterMs) {
     return withStatus(row, { status: "failed", error: NEVER_STARTED }, at);
   }
@@ -167,15 +173,15 @@ function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: 
 
 const STALE_VERDICT = "verdict from workflow version";
 
-/** A head settled or capped under an older workflow version starts over: its verdict may no longer be in the live log and its attempts were spent on old code. */
+/** A head settled or capped under an older workflow version starts over: its verdict may no longer be in the live log and its attempts were spent on old code. A row that names no version is not stale. */
 function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: number | undefined, at: string): PrTriageRow {
   if (prior === undefined) {
     return { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, ...(workflowVersion !== undefined && { workflowVersion }), firstSeenAt: at, updatedAt: at };
   }
-  if (workflowVersion === undefined || (prior.workflowVersion !== undefined && prior.workflowVersion >= workflowVersion)) return prior;
+  if (workflowVersion === undefined || prior.workflowVersion === undefined || prior.workflowVersion >= workflowVersion) return prior;
   if (prior.status !== "triaged" && prior.status !== "failed") return prior;
   const { runId: _run, queuedAt: _queued, ...rest } = prior;
-  return { ...rest, status: "new", attempts: 0, workflowVersion, error: `${STALE_VERDICT} ${prior.workflowVersion ?? "none"}, current is ${workflowVersion}`, updatedAt: at };
+  return { ...rest, status: "new", attempts: 0, workflowVersion, error: `${STALE_VERDICT} ${prior.workflowVersion}, current is ${workflowVersion}`, updatedAt: at };
 }
 
 /** A queued head counts until the hub marks it failed for never starting, so a backed-up queue is not mailed again. */
