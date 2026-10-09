@@ -385,7 +385,7 @@ export type CodeownersRule = {
 
 const CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
 
-/** GitHub reads the first CODEOWNERS found in .github/, the root, then docs/; none found means no rules. */
+/** GitHub reads the first CODEOWNERS in .github/, the root, then docs/; none means no rules. */
 export async function readCodeowners(gh: GithubFetch, input: { repo: string; baseRef: string }): Promise<CodeownersRule[]> {
   for (const file of CODEOWNERS_PATHS) {
     const path = `/repos/${input.repo}/contents/${file}?ref=${encodeURIComponent(input.baseRef)}`;
@@ -410,8 +410,7 @@ export function parseCodeowners(text: string): CodeownersRule[] {
   return rules;
 }
 
-// gitignore-style: a slash-free pattern matches at any depth, a leading slash anchors to the root, and a
-// directory matches everything beneath it, except that a trailing `*` stays one level deep as GitHub documents.
+// Gitignore-style, except that a trailing `*` stays one level deep as GitHub documents.
 function codeownersGlobs(pattern: string): string[] {
   const directory = pattern.endsWith("/");
   let glob = pattern.replace(/^\//, "").replace(/\/$/, "");
@@ -420,11 +419,11 @@ function codeownersGlobs(pattern: string): string[] {
   return glob.endsWith("*") ? [glob] : [glob, `${glob}/**`];
 }
 
-/** Owners of the given paths; per path the last matching rule wins, and its `@org/team` owners are returned by team slug. */
 export type Codeowners = { users: string[]; teams: string[] };
 
 const GLOB_OPTIONS = { dot: true, nonegate: true, nobrace: true, noext: true };
 
+/** Per path the last matching rule wins; `@org/team` owners are returned by team slug. */
 export function codeownersFor(rules: CodeownersRule[], paths: string[]): Codeowners {
   const users = new Set<string>();
   const teams = new Set<string>();

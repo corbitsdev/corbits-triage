@@ -1,6 +1,6 @@
-// Human-initiated pull request writes (comment, review, merge, close). The
-// operator's click is the approval, so these run synchronously in the hub
-// against the tenant's vaulted GitHub App credential instead of as workflows.
+// Human-initiated pull request writes. The operator's click is the approval, so
+// these run synchronously in the hub against the tenant's vaulted GitHub App
+// credential instead of as workflows.
 import { type, type Traversal } from "arktype";
 import {
   addAssignees,
