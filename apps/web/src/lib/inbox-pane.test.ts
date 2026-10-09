@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { GithubPullDetail, PrGithubWriteInput, PrItem } from "./hub-api.ts";
-import { paneActions, paneFacts, replyDraft, runPaneAction, type PaneGate } from "./inbox-pane.ts";
+import { canRun, paneActions, paneFacts, replyDraft, runPaneAction, type PaneGate } from "./inbox-pane.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
@@ -95,6 +95,16 @@ describe("paneActions", () => {
     expect(paneActions(gate({ canClose: true })).primary?.kind).toBe("close");
     expect(paneActions(gate({ canClose: true })).more.at(-1)).toEqual({ kind: "close", blocker: null, label: "Close as duplicate", confirm: null });
     expect(paneActions(gate({ canClose: true }, undefined, { readOnly: true })).more.at(-1)).toEqual({ kind: "close", blocker: "read-only", label: "Close as duplicate", confirm: null });
+  });
+});
+
+describe("canRun", () => {
+  test("keyboard shortcuts stop where the buttons are disabled", () => {
+    expect(canRun("approve", gate({}))).toBe(true);
+    expect(canRun("approve", gate({}, undefined, { readOnly: true }))).toBe(false);
+    expect(canRun("approve", gate({}, undefined, { busy: true }))).toBe(false);
+    expect(canRun("approve", gate({ running: true }))).toBe(false);
+    expect(canRun("merge", gate({ state: "ready", mergeable: null }))).toBe(false);
   });
 });
 

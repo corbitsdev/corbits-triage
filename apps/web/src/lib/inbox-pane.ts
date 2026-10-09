@@ -126,6 +126,10 @@ export function hasNumber(item: PrItem): item is NumberedItem {
   return item.number !== null;
 }
 
+export function canRun(kind: PrimaryAction, gate: PaneGate): boolean {
+  return actionBlocker(kind, gate) === null;
+}
+
 export async function runPaneAction(
   kind: Exclude<PrimaryAction, ComposerKind>,
   item: NumberedItem,

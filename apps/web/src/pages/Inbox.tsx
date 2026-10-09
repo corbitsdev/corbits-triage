@@ -5,6 +5,7 @@ import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
 import {
   COMPOSER_COPY,
+  canRun,
   ciStatus,
   hasNumber,
   isComposerKind,
@@ -207,7 +208,8 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const facts = paneFacts(item, pull.data);
-  const { primary, more } = paneActions({ item, facts, readOnly, busy });
+  const gate = { item, facts, readOnly, busy };
+  const { primary, more } = paneActions(gate);
   const draft = replyDraft(item, reply);
   const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
   const floor = snapshot?.config?.confidenceFloor;
@@ -223,7 +225,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   }, [menu]);
 
   async function run(kind: PrimaryAction) {
-    if (!hasNumber(item) || item.running) return;
+    if (!hasNumber(item) || !canRun(kind, gate)) return;
     setMenu(false);
     if (isComposerKind(kind)) {
       setComposer(openComposer(composer, kind));
@@ -242,7 +244,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
 
   async function onComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!hasNumber(item) || item.running || composer === null) return;
+    if (!hasNumber(item) || composer === null || !canRun(composer.kind, gate)) return;
     if (!composer.body.trim()) {
       setError("The comment must not be empty.");
       return;
