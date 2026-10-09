@@ -63,7 +63,7 @@ export type MenuEntry = PaneAction & { label: string; confirm: string | null };
 
 type PaneActions = { primary: PaneAction<PrimaryAction> | null; more: MenuEntry[] };
 
-const MORE_ORDER: PrimaryAction[] = ["approve", "changes", "comment", "merge"];
+const MORE_ORDER: PrimaryAction[] = ["reply", "approve", "changes", "comment", "merge"];
 
 const PLAIN_CLOSE = { label: "Close pull request", confirm: "Close this pull request?" };
 
@@ -89,10 +89,10 @@ function triageEntry(gate: PaneGate): MenuEntry | null {
 
 export function paneActions(gate: PaneGate): PaneActions {
   const action = inboxAction(gate.item);
-  const primaryKind = action === null ? null : primaryAction(gate.item, action);
+  const primaryKind = primaryAction(gate.item, action);
   const primary = primaryKind === null ? null : paneAction(primaryKind, gate);
   const more: MenuEntry[] = MORE_ORDER
-    .filter((kind) => kind !== primaryKind)
+    .filter((kind) => kind !== primaryKind && (kind !== "reply" || gate.item.comment !== null))
     .map((kind) => ({ ...paneAction(kind, gate), label: primaryLabel(kind), confirm: null }));
   const close = closeEntry(gate);
   if (close !== null) more.push(close);
@@ -108,9 +108,9 @@ export function draftText(item: Pick<PrItem, "comment">): string {
   return item.comment === null ? "" : item.comment;
 }
 
-/** Null when the verdict drafted no reply; the pane then has nothing to edit or post. */
+/** Null when the verdict drafted no reply or an empty one; the pane then has nothing to edit or post. */
 export function replyDraft(item: PrItem, text: string): ReplyDraft | null {
-  if (item.comment === null) return null;
+  if (item.comment === null || item.comment === "") return null;
   return { text, edited: text !== item.comment };
 }
 

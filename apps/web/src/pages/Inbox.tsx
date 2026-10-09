@@ -68,13 +68,14 @@ function filesText(count: number): string {
 
 function Row({ item, selected }: { item: PrItem; selected: boolean }) {
   const action = inboxAction(item);
+  const primary = primaryAction(item, action);
   const why = rowWhy(item);
   return (
     <Link className="row" role="option" aria-selected={selected} to={inboxHref(item)} data-inbox-row={item.key}>
       <span className={dotClass(item, action)} />
       <span className="tw"><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
-      {action === null ? null : <span className="act">{rowActionLabel(primaryAction(item, action))}</span>}
+      {primary === null ? null : <span className="act">{rowActionLabel(primary)}</span>}
     </Link>
   );
 }
@@ -279,7 +280,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   }
 
   function onReplyKey(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && primary?.kind === "reply") void run("reply");
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft !== null) void run("reply");
   }
 
   useEffect(function paneShortcuts() {

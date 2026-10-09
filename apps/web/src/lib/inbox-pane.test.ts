@@ -106,6 +106,20 @@ describe("paneActions", () => {
     expect(triage({}, { readOnly: true })?.blocker).toBe("read-only");
     expect(triage({ running: true })?.blocker).toBe("running");
   });
+
+  test("a drafted reply is the primary action when the pile has none, and in the More menu otherwise", () => {
+    expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" })).primary).toEqual({ kind: "reply", blocker: null });
+    expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" })).more.find((row) => row.kind === "reply")).toBeUndefined();
+    expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" })).more.find((row) => row.kind === "reply")).toEqual({ kind: "reply", blocker: null, label: "Post reply", confirm: null });
+    expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" }, undefined, { readOnly: true })).more.find((row) => row.kind === "reply")?.blocker).toBe("read-only");
+  });
+
+  test("an empty or absent draft shows no reply to post", () => {
+    expect(paneActions(gate({ state: "needs-author-update" })).primary).toBeNull();
+    expect(paneActions(gate({})).more.find((row) => row.kind === "reply")).toBeUndefined();
+    expect(replyDraft(item({ comment: "" }), "")).toBeNull();
+    expect(replyDraft(item({ comment: null }), "")).toBeNull();
+  });
 });
 
 describe("canRun", () => {

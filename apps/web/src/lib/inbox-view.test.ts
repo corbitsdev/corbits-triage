@@ -78,4 +78,11 @@ describe("primaryAction", () => {
     expect(primaryAction(item({}), "decide")).toBe("comment");
     expect(inboxAction(item({ state: "ready", canClose: true }))).toBe("duplicate");
   });
+
+  test("a pull request outside the piles posts its draft, and an empty draft is no draft", () => {
+    expect(primaryAction(item({ state: "needs-author-update", comment: "Please rebase" }), null)).toBe("reply");
+    expect(primaryAction(item({ state: "needs-author-update" }), null)).toBeNull();
+    expect(primaryAction(item({ state: "needs-author-update", comment: "" }), null)).toBeNull();
+    expect(primaryAction(item({ comment: "" }), "decide")).toBe("comment");
+  });
 });
