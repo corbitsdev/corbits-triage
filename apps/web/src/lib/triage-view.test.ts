@@ -43,6 +43,7 @@ function item(repo: string, number: number): PrItem {
     canClose: true,
     pendingClose: false,
     running: false,
+    failure: null,
     href: `/triage/pr/${repo}/${number}`,
   };
 }

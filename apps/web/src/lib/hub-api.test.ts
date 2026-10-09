@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
+
+const NOW = new Date("2026-10-01T02:00:00.000Z");
 import {
   createGrant,
   deleteGrant,
@@ -15,7 +17,6 @@ import {
   saveInference,
   saveRepoPolicy,
   startBacklogTriage,
-  startPullRequestTriage,
   patchAppConfig,
   type HubApproval,
   type HubRun,
@@ -71,7 +72,7 @@ const snapshot = (): PortalSnapshot => ({
 });
 
 const queue = (approvals: HubApproval[], logs: RunLog[] = [duplicateLog], openPulls?: Parameters<typeof projectQueue>[2]) =>
-  projectQueue(logs, [], approvals, openPulls);
+  projectQueue(logs, [], approvals, openPulls, NOW);
 
 describe("duplicate close projection", () => {
   test("starts open and exposes a human close action even when the ordinary mirror approval has close:false", () => {
@@ -111,14 +112,14 @@ describe("needs-human queue sources", () => {
       events: [{ seq: 4, type: "SignalAwaited", body: { signalName: "maintainer" } }],
     };
 
-    expect(projectQueue([duplicateLog, waiting], [], approvals).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
+    expect(projectQueue([duplicateLog, waiting], [], approvals, undefined, NOW).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
     expect(queueRows([duplicateLog, waiting], approvals, true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
   });
 });
 
 describe("All-view queue sources", () => {
   test("does not surface listener deployments as pull requests when the project queue is empty", () => {
-    expect(projectQueue([], [], [])).toEqual([]);
+    expect(projectQueue([], [], [], undefined, NOW)).toEqual([]);
     expect(queueRows([], [], false)).toEqual([]);
   });
 
@@ -176,7 +177,7 @@ describe("projectQueue reply unwrap", () => {
         },
       ],
     };
-    expect(projectQueue([single, listed], [], [])).toEqual([
+    expect(projectQueue([single, listed], [], [], undefined, NOW)).toEqual([
       expect.objectContaining({ key: "acme/widgets#8", confidence: 0.9, needsHuman: true }),
       expect.objectContaining({ key: "acme/gadgets#3", confidence: 0.4, state: "ready" }),
     ]);
@@ -196,19 +197,34 @@ describe("projectQueue running pull requests", () => {
     const started: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
     const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
     const rerun: RunLog = { runId: "run-8b", anchorRunId: "pr", events: [prStarted(8)] };
-    const items = projectQueue([duplicateLog, rerun, started, failed], [], [], openPulls);
+    const items = projectQueue([duplicateLog, rerun, started, failed], [], [], openPulls, NOW);
     expect(items.map(({ key, state, running }) => ({ key, state, running }))).toEqual([
       { key: "acme/widgets#8", state: "needs-decision", running: true },
       { key: "acme/widgets#9", state: "new", running: true },
       { key: "acme/widgets#10", state: "new", running: false },
     ]);
-    expect(projectQueue([rerun, duplicateLog], [], [], openPulls).find((item) => item.key === "acme/widgets#8")?.running).toBe(false);
+    expect(projectQueue([rerun, duplicateLog], [], [], openPulls, NOW).find((item) => item.key === "acme/widgets#8")?.running).toBe(false);
+  });
+
+  test("a pull request whose latest run ended without a verdict carries that failure until a newer run starts", () => {
+    const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
+    const cancelled: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
+    const stuck: RunLog = { runId: "run-8", anchorRunId: "pr", events: [{ ...prStarted(8), body: { ...prStarted(8).body, at: "2026-10-01T00:00:00.000Z" } }] };
+    const settled = [{ id: "run-9", definitionId: "d", definitionName: "pr-triage", status: "cancelled", createdAt: "2026-10-01T00:00:00.000Z" }];
+    const items = projectQueue([duplicateLog, stuck, cancelled, failed], settled, [], openPulls, NOW);
+    expect(items.map(({ key, running, failure }) => ({ key, running, failure }))).toEqual([
+      { key: "acme/widgets#8", running: false, failure: "stuck" },
+      { key: "acme/widgets#9", running: false, failure: "cancelled" },
+      { key: "acme/widgets#10", running: false, failure: "failed" },
+    ]);
+    const retried: RunLog = { runId: "run-10b", anchorRunId: "pr", events: [prStarted(10)] };
+    expect(projectQueue([failed, retried], [], [], openPulls, NOW).find((item) => item.key === "acme/widgets#10")).toMatchObject({ running: true, failure: null });
   });
 
   test("a run the hub settled without a terminal event is not running", () => {
     const started: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
     const row = (id: string, status: string): HubRun => ({ id, definitionId: "def", definitionName: "pr-triage", status, createdAt: "2026-10-01T00:00:00.000Z" });
-    const runningOf = (runs: HubRun[]) => projectQueue([started], runs, [], openPulls).find((item) => item.key === "acme/widgets#9")?.running;
+    const runningOf = (runs: HubRun[]) => projectQueue([started], runs, [], openPulls, NOW).find((item) => item.key === "acme/widgets#9")?.running;
     expect(runningOf([row("pr", "running")])).toBe(true);
     expect(runningOf([row("run-9", "failed")])).toBe(false);
     expect(runningOf([row("pr", "stopped")])).toBe(false);
@@ -636,14 +652,6 @@ describe("disabled repository triggers", () => {
   test("startBacklogTriage throws and does not mail", async () => {
     const posted: unknown[] = [];
     await expect(startBacklogTriage(transport(posted), "tenant", "acme/widgets")).rejects.toThrow(
-      "Triage is disabled for this repository. Enable it first.",
-    );
-    expect(posted).toEqual([]);
-  });
-
-  test("startPullRequestTriage throws and does not mail", async () => {
-    const posted: unknown[] = [];
-    await expect(startPullRequestTriage(transport(posted), "tenant", JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8 }))).rejects.toThrow(
       "Triage is disabled for this repository. Enable it first.",
     );
     expect(posted).toEqual([]);

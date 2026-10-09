@@ -63,11 +63,14 @@ describe("reconcile plan", () => {
     expect(enqueued(plan([fresh], [], at(62)))).toEqual([3]);
   });
 
-  test("a completed run settles the head, even after it was queued again", () => {
+  test("a queued head is settled only by a run started since it was queued; an older verdict does not count", () => {
     const queued = plan([pr(1)], [], at(0)).rows;
-    const result = plan([pr(1)], queued, at(200), [[pr(1), [run("run_old", "completed", -10), run("run_new", "failed", 1)]]]);
-    expect(enqueued(result)).toEqual([]);
-    expect(status(result, 1)).toMatchObject({ status: "triaged", runId: "run_old" });
+    const settled = plan([pr(1)], queued, at(20), [[pr(1), [run("run_old", "completed", -10), run("run_new", "completed", 1)]]]);
+    expect(enqueued(settled)).toEqual([]);
+    expect(status(settled, 1)).toMatchObject({ status: "triaged", runId: "run_new" });
+    const failed = plan([pr(1)], queued, at(200), [[pr(1), [run("run_old", "completed", -10), run("run_new", "failed", 1)]]]);
+    expect(enqueued(failed)).toEqual([1]);
+    expect(status(failed, 1)).toMatchObject({ status: "queued", attempts: 2 });
   });
 
   test("a run whose sidecar died is queued again once it is stuck", () => {
@@ -269,5 +272,19 @@ describe("reconcile plan", () => {
     const result = plan([pr(1)], queued, at(205), [[pr(1), [run("run_dead", "running", 0)]]]);
     expect(enqueued(result)).toEqual([]);
     expect(status(result, 1)).toMatchObject({ status: "queued" });
+  });
+});
+
+describe("triage again on a head that already has a verdict", () => {
+  // The route's write on top of a triaged row: queued, queuedAt now, runId and workflowVersion kept.
+  const requeued: PrTriageRow = { number: 8, headSha: "sha8", status: "queued", attempts: 0, runId: "run-old", workflowVersion: VERSION, firstSeenAt: at(-120).toISOString(), queuedAt: at(-1).toISOString(), updatedAt: at(-1).toISOString() };
+  const oldVerdict = run("run-old", "completed", -60);
+
+  test("the next pass keeps the head queued until the maintainer's run starts", () => {
+    expect(plan([pr(8)], [requeued], at(0), [[pr(8), [oldVerdict]]]).rows[0]!.status).toBe("queued");
+  });
+
+  test("the next pass reports the maintainer's running run, not the old verdict", () => {
+    expect(plan([pr(8)], [requeued], at(0), [[pr(8), [oldVerdict, run("run-new", "running", 0)]]]).rows[0]).toMatchObject({ status: "running", runId: "run-new" });
   });
 });

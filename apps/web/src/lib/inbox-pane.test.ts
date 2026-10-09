@@ -30,6 +30,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     canClose: false,
     pendingClose: false,
     running: false,
+    failure: null,
     href: "/prs/acme/widgets/1",
     ...overrides,
   };
@@ -85,16 +86,25 @@ describe("paneActions", () => {
   test("nothing runs on a running, unnumbered or read-only pull request", () => {
     expect(paneActions(gate({ running: true })).primary?.blocker).toBe("running");
     expect(paneActions(gate({ number: null })).primary?.blocker).toBe("no-number");
-    expect(paneActions(gate({}, undefined, { readOnly: true })).more.map((row) => row.blocker)).toEqual(["read-only", "read-only", "read-only"]);
+    expect(paneActions(gate({}, undefined, { readOnly: true })).more.map((row) => row.blocker)).toEqual(["read-only", "read-only", "read-only", "read-only"]);
   });
 
   test("the menu leaves out the suggested action; a duplicate keeps its close row, anything writable closes plainly after a confirm", () => {
-    expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close pull request"]);
-    expect(paneActions(gate({ comment: "Thanks" })).more.at(-1)?.confirm).toBe("Close this pull request?");
-    expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge"]);
+    expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close pull request", "Triage again"]);
+    expect(paneActions(gate({ comment: "Thanks" })).more.at(-2)?.confirm).toBe("Close this pull request?");
+    expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
     expect(paneActions(gate({ canClose: true })).primary?.kind).toBe("close");
-    expect(paneActions(gate({ canClose: true })).more.at(-1)).toEqual({ kind: "close", blocker: null, label: "Close as duplicate", confirm: null });
-    expect(paneActions(gate({ canClose: true }, undefined, { readOnly: true })).more.at(-1)).toEqual({ kind: "close", blocker: "read-only", label: "Close as duplicate", confirm: null });
+    expect(paneActions(gate({ canClose: true })).more.at(-2)).toEqual({ kind: "close", blocker: null, label: "Close as duplicate", confirm: null });
+    expect(paneActions(gate({ canClose: true }, undefined, { readOnly: true })).more.at(-2)).toEqual({ kind: "close", blocker: "read-only", label: "Close as duplicate", confirm: null });
+  });
+
+  test("triage again is offered once the hub has run or given up on the pull request, under the same gate as writes", () => {
+    const triage = (overrides: Partial<PrItem>, flags: Partial<Pick<PaneGate, "readOnly" | "busy">> = {}) => paneActions(gate(overrides, undefined, flags)).more.find((row) => row.kind === "triage");
+    expect(triage({})).toEqual({ kind: "triage", blocker: null, label: "Triage again", confirm: null });
+    expect(triage({ runId: null, state: "new" })).toBeUndefined();
+    expect(triage({ runId: null, state: "new", failure: "failed" })?.blocker).toBeNull();
+    expect(triage({}, { readOnly: true })?.blocker).toBe("read-only");
+    expect(triage({ running: true })?.blocker).toBe("running");
   });
 });
 
@@ -109,15 +119,18 @@ describe("canRun", () => {
 });
 
 describe("runPaneAction", () => {
-  async function record(kind: "reply" | "close", overrides: Partial<PrItem>, text: string): Promise<PrGithubWriteInput[]> {
-    const writes: PrGithubWriteInput[] = [];
+  async function record(kind: "reply" | "close" | "triage", overrides: Partial<PrItem>, text: string): Promise<unknown[]> {
+    const calls: unknown[] = [];
     async function write(input: PrGithubWriteInput) {
-      writes.push(input);
+      calls.push(input);
+    }
+    async function triage(repo: string, number: number) {
+      calls.push({ triage: `${repo}#${number}` });
     }
     const pr = item(overrides);
     if (pr.number === null) throw new Error("test item needs a number");
-    await runPaneAction(kind, { ...pr, number: pr.number }, replyDraft(pr, text), write);
-    return writes;
+    await runPaneAction(kind, { ...pr, number: pr.number }, replyDraft(pr, text), { write, triage });
+    return calls;
   }
 
   test("posting the reply applies the verdict's labels after it", async () => {
@@ -125,6 +138,10 @@ describe("runPaneAction", () => {
       { action: "reply", repo: "acme/widgets", number: 1, body: "Thanks, edited" },
       { action: "labels", repo: "acme/widgets", number: 1, labels: ["wanted"] },
     ]);
+  });
+
+  test("triage again asks the hub for the pull request and writes nothing to GitHub", async () => {
+    expect(await record("triage", {}, "")).toEqual([{ triage: "acme/widgets#1" }]);
   });
 
   test("closing a duplicate without a drafted comment posts none", async () => {

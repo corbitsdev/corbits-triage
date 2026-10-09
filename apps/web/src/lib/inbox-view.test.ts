@@ -30,6 +30,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     canClose: false,
     pendingClose: false,
     running: false,
+    failure: null,
     href: "/prs/acme/widgets/1",
     ...overrides,
   };
