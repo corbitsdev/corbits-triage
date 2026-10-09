@@ -82,33 +82,40 @@ async function createCheckPack(transport: Transport, tenantId: string, title: st
 }
 
 /** Writes the draft onto the artifact it was loaded from, or creates one when the form saw none; never over a pack it did not see. */
-export async function saveCheckPack(
-  transport: Transport,
-  tenantId: string,
-  repo: string,
-  pack: CheckPack,
-  options: { cleanupMode?: CleanupMode; loaded: LoadedCheckPack | null },
-): Promise<StoredCheckPack> {
+export async function writeCheckPack(transport: Transport, tenantId: string, repo: string, pack: CheckPack, loaded: LoadedCheckPack | null): Promise<StoredCheckPack> {
   const clean = validateRepo(repo);
   const parsed = parseCheckPack(pack, clean);
   if (!parsed) throw new Error("Check pack is not valid.");
   const title = checkPackName(clean);
   const content = JSON.stringify(parsed);
-  const stored = options.loaded
-    ? { id: options.loaded.id, version: await versionCheckPack(transport, tenantId, title, content, options.loaded) }
+  const stored = loaded
+    ? { id: loaded.id, version: await versionCheckPack(transport, tenantId, title, content, loaded) }
     : await createCheckPack(transport, tenantId, title, content);
+  return { kind: "pack", ...stored, pack: parsed };
+}
+
+/** A write that reached the hub but whose config link failed is reused when the same pack is saved again; only the link is redone. */
+export function alreadyWritten(unlinked: StoredCheckPack | null, pack: CheckPack): StoredCheckPack | null {
+  if (!unlinked) return null;
+  const parsed = parseCheckPack(pack, unlinked.pack.repo);
+  return parsed && JSON.stringify(parsed) === JSON.stringify(unlinked.pack) ? unlinked : null;
+}
+
+/** Points the repository's config row at its pack, and records how it posts. */
+export async function linkCheckPack(transport: Transport, tenantId: string, repo: string, cleanupMode?: CleanupMode): Promise<void> {
+  const clean = validateRepo(repo);
+  const title = checkPackName(clean);
   function linkPack(row: unknown): unknown {
     if (!row || typeof row !== "object" || (row as { name?: unknown }).name !== clean) return row;
     return {
       ...row,
       checkPack: { name: title },
-      ...(options.cleanupMode ? { cleanupMode: options.cleanupMode } : {}),
+      ...(cleanupMode ? { cleanupMode } : {}),
     };
   }
   await patchAppConfig(transport, tenantId, function linkRepoPack(current) {
     return { ...current, repos: (current.repos ?? []).map(linkPack) };
   });
-  return { kind: "pack", ...stored, pack: parsed };
 }
 
 export function customizeDraft(repo: string): CheckPack {

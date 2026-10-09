@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { listCheckPackTitles, saveCheckPack, StaleCheckPackError } from "./check-pack.ts";
+import { listCheckPackTitles, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
 import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
 import { findArtifactByTitle, loadRepoCheckPack } from "./hub-api.ts";
 
@@ -36,7 +36,7 @@ describe("duplicate check-pack titles", () => {
     const opened = await loadRepoCheckPack(hub.transport, "t", "acme/widgets");
     expect(opened).toMatchObject({ id: "X", version: 1 });
     hub.artifacts.push(row("Y", 2, { content: JSON.stringify(older) }));
-    const save = saveCheckPack(hub.transport, "t", "acme/widgets", older, { loaded: opened?.kind === "pack" ? opened : null });
+    const save = writeCheckPack(hub.transport, "t", "acme/widgets", older, opened?.kind === "pack" ? opened : null);
     await expect(save).rejects.toBeInstanceOf(StaleCheckPackError);
     expect(hub.artifacts.map((item) => item.version)).toEqual([1, 1]);
   });

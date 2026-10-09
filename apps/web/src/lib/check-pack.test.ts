@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { listCheckPackTitles, repoNeedsCheckSetup, saveCheckPack, StaleCheckPackError } from "./check-pack.ts";
+import { linkCheckPack, listCheckPackTitles, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
 import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
 import { loadRepoCheckPack } from "./hub-api.ts";
 
@@ -32,12 +32,13 @@ describe("check-pack client", () => {
   test("a first save creates the pack and links it; later saves version the artifact that was loaded", async () => {
     const hub = fakeHub([], config);
     const pack = emptyPack("acme/widgets");
-    const created = await saveCheckPack(hub.transport, "t", "acme/widgets", pack, { loaded: null, cleanupMode: "human-approved" });
+    const created = await writeCheckPack(hub.transport, "t", "acme/widgets", pack, null);
+    await linkCheckPack(hub.transport, "t", "acme/widgets", "human-approved");
     expect(created).toEqual({ kind: "pack", id: "art_1", version: 1, pack });
     expect(hub.artifacts[0]).toMatchObject({ title: "check-pack/acme/widgets", content: JSON.stringify(pack), version: 1 });
     const repos = (hub.config.corbitsTriage as { repos: Array<Record<string, unknown>> }).repos;
     expect(repos[0]).toMatchObject({ name: "acme/widgets", checkPack: { name: "check-pack/acme/widgets" }, cleanupMode: "human-approved" });
-    const revised = await saveCheckPack(hub.transport, "t", "acme/widgets", widgets, { loaded: created });
+    const revised = await writeCheckPack(hub.transport, "t", "acme/widgets", widgets, created);
     expect(revised).toEqual({ kind: "pack", id: "art_1", version: 2, pack: widgets });
     expect(hub.requests).toContain("POST /api/tenants/t/artifacts/art_1/versions");
     expect(hub.artifacts).toHaveLength(1);
@@ -45,9 +46,9 @@ describe("check-pack client", () => {
 
   test("a save refuses to overwrite a pack that changed, or appeared, since the form was opened", async () => {
     const hub = fakeHub([row("art_1", "check-pack/acme/widgets", widgets, 1, 2)], config);
-    const changed = saveCheckPack(hub.transport, "t", "acme/widgets", emptyPack("acme/widgets"), { loaded: { id: "art_1", version: 1 } });
+    const changed = writeCheckPack(hub.transport, "t", "acme/widgets", emptyPack("acme/widgets"), { id: "art_1", version: 1 });
     await expect(changed).rejects.toBeInstanceOf(StaleCheckPackError);
-    const unseen = saveCheckPack(hub.transport, "t", "acme/widgets", emptyPack("acme/widgets"), { loaded: null });
+    const unseen = writeCheckPack(hub.transport, "t", "acme/widgets", emptyPack("acme/widgets"), null);
     await expect(unseen).rejects.toBeInstanceOf(StaleCheckPackError);
     expect(hub.artifacts).toHaveLength(1);
     expect(JSON.parse(hub.artifacts[0]!.content)).toEqual(widgets);

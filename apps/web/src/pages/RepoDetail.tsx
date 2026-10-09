@@ -13,10 +13,10 @@ import {
   type DraftCheck,
   type DraftPack,
 } from "../lib/check-catalog.ts";
-import { repoNeedsCheckSetup, saveCheckPack, StaleCheckPackError, type LoadedCheckPack } from "../lib/check-pack.ts";
+import { alreadyWritten, linkCheckPack, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack, type LoadedCheckPack } from "../lib/check-pack.ts";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, loadRepoCheckPack } from "../lib/hub-api.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential, loadRepoCheckPack, type StoredCheckPack } from "../lib/hub-api.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
@@ -120,6 +120,8 @@ export default function RepoDetail() {
   const [corrupt, setCorrupt] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [staleSave, setStaleSave] = useState(false);
+  /** A pack written to the hub whose config link failed; saving it again only redoes the link. */
+  const [unlinked, setUnlinked] = useState<StoredCheckPack | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [needsSetup, setNeedsSetup] = useState(() => repoNeedsCheckSetup(config));
   const [customizing, setCustomizing] = useState(false);
@@ -131,7 +133,7 @@ export default function RepoDetail() {
   const runs = useRuns();
   const receivingEvents = config ? hasVerifiedWebhookDelivery(logs, config.name) : false;
   const catchingUp = isRepoCatchingUp(logs, runs.rows, config?.name ?? label);
-  const dirty = packJson(pack) !== packJson(saved) || (needsSetup && customizing);
+  const dirty = packJson(pack) !== packJson(saved) || (needsSetup && customizing) || unlinked !== null;
   async function syncAfterGithub() {
     try {
       await syncFromGithub();
@@ -148,6 +150,7 @@ export default function RepoDetail() {
     setLoadFailed(false);
     setError("");
     setStaleSave(false);
+    setUnlinked(null);
     setCorrupt(false);
     setCustomizing(false);
     setPicker(false);
@@ -358,10 +361,21 @@ export default function RepoDetail() {
     const transport = createHubTransport();
     const tenant = snapshot.workspace.tenantId;
     const nextDraft = draftFromCheckPack(artifact, draft.mode);
+    let written: StoredCheckPack | null = null;
     try {
-      const stored = await saveCheckPack(transport, tenant, config.name, artifact, { cleanupMode: draft.mode, loaded });
-      setLoaded({ id: stored.id, version: stored.version });
-      setCorrupt(false);
+      written = alreadyWritten(unlinked, artifact);
+      if (!written) {
+        written = await writeCheckPack(transport, tenant, config.name, artifact, loaded);
+        setLoaded({ id: written.id, version: written.version });
+        setCorrupt(false);
+        setSaved(nextDraft);
+        // The pack is live by title from here, so the setup screen gives way to the dashboard, where Save can redo the link.
+        setNeedsSetup(false);
+        setUnlinked(written);
+      }
+      await linkCheckPack(transport, tenant, config.name, draft.mode);
+      written = null;
+      setUnlinked(null);
       setPack(nextDraft);
       setSaved(nextDraft);
       setNeedsSetup(false);
@@ -369,7 +383,9 @@ export default function RepoDetail() {
       if (completingSetup) navigate(repoPath(config.name));
     } catch (cause) {
       signOutWhenRejected(cause);
-      if (cause instanceof StaleCheckPackError) {
+      if (written) {
+        setError(`The check pack is saved and in effect, but it could not be linked to the repository. Save again to link it. ${cause instanceof Error ? cause.message : String(cause)}`);
+      } else if (cause instanceof StaleCheckPackError) {
         setError(cause.message);
         setStaleSave(true);
       } else {
