@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
@@ -43,12 +43,14 @@ import {
   type InboxGrouping,
   type InboxPile,
 } from "../lib/inbox-view.ts";
+import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesFilters, type InboxFilters } from "../lib/inbox-filter.ts";
 import { useMarkReplySent, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageReadyRepos } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { findPrItem, prHref } from "../lib/triage-view.ts";
+import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { CheckIcon, ChevronIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 
 const POSTED = "Posted";
@@ -69,12 +71,12 @@ function filesText(count: number): string {
   return `${count} ${count === 1 ? "file" : "files"}`;
 }
 
-function Row({ item, selected }: { item: PrItem; selected: boolean }) {
+function Row({ item, selected, search }: { item: PrItem; selected: boolean; search: string }) {
   const action = inboxAction(item);
   const primary = primaryAction(item, action);
   const why = rowWhy(item);
   return (
-    <Link className="row" role="option" aria-selected={selected} to={inboxHref(item)} data-inbox-row={item.key}>
+    <Link className="row" role="option" aria-selected={selected} to={{ pathname: inboxHref(item), search }} data-inbox-row={item.key}>
       <span className={dotClass(item, action)} />
       <span className="tw"><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
@@ -84,11 +86,11 @@ function Row({ item, selected }: { item: PrItem; selected: boolean }) {
   );
 }
 
-function Pile({ pile, selectedKey }: { pile: InboxPile; selectedKey: string | undefined }) {
+function Pile({ pile, selectedKey, search }: { pile: InboxPile; selectedKey: string | undefined; search: string }) {
   return (
     <>
       <div className="gh">{pile.label}<span className="n">{pile.items.length}</span></div>
-      {pile.items.map((item) => <Row key={item.key} item={item} selected={item.key === selectedKey} />)}
+      {pile.items.map((item) => <Row key={item.key} item={item} selected={item.key === selectedKey} search={search} />)}
     </>
   );
 }
@@ -405,16 +407,16 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   );
 }
 
-type EmptyListProps = { loading: boolean; denied: boolean; noRepos: boolean; query: string; onClear: () => void };
+type EmptyListProps = { loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
 
-function EmptyList({ loading, denied, noRepos, query, onClear }: EmptyListProps) {
+function EmptyList({ loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
   if (noRepos) {
     return <div className="zero"><h2>No repositories yet</h2><p>Choose the repositories Triage should read.</p><Link className="btn btn-sm" to="/repositories">Choose repositories on GitHub</Link></div>;
   }
-  if (query.trim()) {
-    return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match.</p><button type="button" className="btn btn-sm" onClick={onClear}>Clear search</button></div>;
+  if (filtered) {
+    return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><button type="button" className="btn btn-sm" onClick={onClear}>Clear filters</button></div>;
   }
   return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
 }
@@ -422,6 +424,8 @@ function EmptyList({ loading, denied, noRepos, query, onClear }: EmptyListProps)
 export default function Inbox() {
   const params = useParams();
   const navigate = useNavigate();
+  const { search } = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { snapshot } = usePortal();
   const items = useQueueItems();
   const loading = useQueueLoading();
@@ -429,13 +433,27 @@ export default function Inbox() {
   const [query, setQuery] = useState("");
   const [grouping, setGrouping] = useState<InboxGrouping>("action");
   const searchRef = useRef<HTMLInputElement>(null);
+  const filterRef = useRef<HTMLButtonElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? []), [snapshot]);
-  const view = useMemo(() => groupInbox(items.filter((item) => matchesQuery(item, query)), ready), [items, query, ready]);
+  const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
+  const searched = useMemo(() => items.filter((item) => matchesQuery(item, query)), [items, query]);
+  const rows = useMemo(() => searched.filter((item) => inboxAction(item) !== null), [searched]);
+  const now = useMemo(() => Date.now(), [searched, filters]);
+  const view = useMemo(() => groupInbox(searched.filter((item) => matchesFilters(item, filters, now)), ready), [searched, filters, now, ready]);
   const piles = useMemo(() => regroupInbox(view, grouping), [view, grouping]);
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
   const selected = params.number === undefined ? flat[0] : findPrItem(items, params);
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
+
+  function setFilters(next: InboxFilters) {
+    setSearchParams(filtersToParams(next, searchParams), { replace: true });
+  }
+
+  function clearFilters() {
+    setQuery("");
+    setFilters(NO_FILTERS);
+  }
 
   useEffect(function shortcuts() {
     function onKeyDown(event: KeyboardEvent) {
@@ -458,11 +476,11 @@ export default function Inbox() {
       event.preventDefault();
       const index = flat.findIndex((item) => item.key === selected?.key);
       const next = flat[Math.min(flat.length - 1, Math.max(0, index + (event.key === "j" || event.key === "ArrowDown" ? 1 : -1)))];
-      if (next && next.key !== selected?.key) navigate(inboxHref(next));
+      if (next && next.key !== selected?.key) navigate({ pathname: inboxHref(next), search });
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [flat, navigate, selected]);
+  }, [flat, navigate, selected, search]);
 
   useEffect(function keepSelectionVisible() {
     if (!selected) return;
@@ -480,25 +498,27 @@ export default function Inbox() {
               <input ref={searchRef} placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
               <kbd>/</kbd>
             </label>
+            <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
             <div className="seg" role="group" aria-label="Group by">
               {INBOX_GROUPINGS.map((mode) => (
                 <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => setGrouping(mode)}>{GROUPING_LABEL[mode]}</button>
               ))}
             </div>
           </div>
+          <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} />
         </div>
         <div className="scroll" id="main">
           {flat.length === 0 ? (
-            <EmptyList loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} query={query} onClear={() => setQuery("")} />
+            <EmptyList loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
           ) : (
             <div className="groups">
-              {piles.map((pile) => <Pile key={pile.key} pile={pile} selectedKey={selected?.key} />)}
+              {piles.map((pile) => <Pile key={pile.key} pile={pile} selectedKey={selected?.key} search={search} />)}
             </div>
           )}
         </div>
         <footer className="list-foot"><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>a</kbd> do suggested</span><span><kbd>/</kbd> search</span></footer>
       </section>
-      {selected ? <Pane key={selected.key} item={selected} onBack={() => navigate("/inbox")} /> : (
+      {selected ? <Pane key={selected.key} item={selected} onBack={() => navigate({ pathname: "/inbox", search })} /> : (
         <section className="panel pane" aria-label="Selected pull request">
           {loading ? null : <div className="pane-empty">Select a pull request.</div>}
         </section>
