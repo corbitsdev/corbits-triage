@@ -1,5 +1,5 @@
 import type { GithubPullDetail, PrGithubWriteInput, PrItem } from "./hub-api.ts";
-import { inboxAction, inboxStatus, primaryAction, primaryLabel, type PrimaryAction } from "./inbox-view.ts";
+import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type PrimaryAction } from "./inbox-view.ts";
 
 const UNTITLED = "Untitled pull request";
 
@@ -92,7 +92,7 @@ export function paneActions(gate: PaneGate): PaneActions {
   const primaryKind = primaryAction(gate.item, action);
   const primary = primaryKind === null ? null : paneAction(primaryKind, gate);
   const more: MenuEntry[] = MORE_ORDER
-    .filter((kind) => kind !== primaryKind && (kind !== "reply" || gate.item.comment !== null))
+    .filter((kind) => kind !== primaryKind && (kind !== "reply" || hasDraftComment(gate.item.comment)))
     .map((kind) => ({ ...paneAction(kind, gate), label: primaryLabel(kind), confirm: null }));
   const close = closeEntry(gate);
   if (close !== null) more.push(close);
@@ -110,7 +110,7 @@ export function draftText(item: Pick<PrItem, "comment">): string {
 
 /** Null when the verdict drafted no reply or an empty one; the pane then has nothing to edit or post. */
 export function replyDraft(item: PrItem, text: string): ReplyDraft | null {
-  if (item.comment === null || item.comment === "") return null;
+  if (!hasDraftComment(item.comment)) return null;
   return { text, edited: text !== item.comment };
 }
 
