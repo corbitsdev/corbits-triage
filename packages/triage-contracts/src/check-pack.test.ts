@@ -4,6 +4,7 @@ import {
   catalogCheckEnabled,
   emptyPack,
   parseCheckPack,
+  type Action,
   type CheckPack,
 } from "./check-pack.ts";
 
@@ -69,6 +70,48 @@ describe("check pack contract", () => {
     expect(parseCheckPack({ kind: "corbits.triage.check-pack", schemaVersion: 2, repo: REPO })).toBeNull();
     expect(parseCheckPack("not json")).toBeNull();
     expect(parseCheckPack({ kind: "corbits.triage.check-pack", schemaVersion: 1, repo: "nope" })).toBeNull();
+  });
+
+  test("actions round-trip; legacy pack without actions parses with none", () => {
+    const custom = [{ id: "custom-1", name: "Ticket", group: "pull-request" as const, instruction: "Mention a ticket." }];
+    const actions: Action[] = [
+      {
+        id: "review-ready",
+        when: ["opened", "ready"],
+        checks: ["ci", "custom-1"],
+        branches: {
+          yes: [{ kind: "request-review", target: { to: "role", role: "maintainers" }, automatic: true }],
+          no: [{ kind: "comment", target: { body: "Please fix CI and link a ticket." }, automatic: false }],
+          unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] }, automatic: true }],
+        },
+      },
+      {
+        id: "label-type",
+        when: "every",
+        checks: [],
+        branches: { always: [{ kind: "labels", target: { from: "type" }, automatic: true }] },
+      },
+    ];
+    expect(parseCheckPack({ ...emptyPack(REPO), custom, actions })?.actions).toEqual(actions);
+    expect(parseCheckPack({ kind: "corbits.triage.check-pack", schemaVersion: 1, repo: REPO })?.actions).toEqual([]);
+  });
+
+  test("invalid actions reject the pack", () => {
+    const comment = { kind: "comment", target: { body: "Thanks!" }, automatic: false };
+    const close = { kind: "close", target: {}, automatic: true };
+    const base = { id: "a", when: ["opened"], checks: ["ci"], branches: { yes: [comment] } };
+    const rejected = [
+      { ...base, when: ["pushed"] },
+      { ...base, when: ["catch-up"] },
+      { ...base, checks: ["custom-9"] },
+      { ...base, branches: {} },
+      { ...base, branches: { always: [comment] } },
+      { ...base, checks: [] },
+      { ...base, branches: { unsure: [close] } },
+      { ...base, checks: [], branches: { always: [close] } },
+    ];
+    expect(parseCheckPack({ ...emptyPack(REPO), actions: [base] })?.actions).toHaveLength(1);
+    for (const action of rejected) expect(parseCheckPack({ ...emptyPack(REPO), actions: [action] })).toBeNull();
   });
 
   test("Use recommended keeps existing custom", () => {
