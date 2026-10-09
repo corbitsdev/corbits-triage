@@ -41,7 +41,7 @@ import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
 import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
-import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs, triageRotateAfterRuns } from "./env.js";
+import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
@@ -52,7 +52,6 @@ import { createGithubPrDetails, GITHUB_PR_DETAILS_PATH } from "./github/pr-detai
 import { createGithubPrTriage, GITHUB_PR_TRIAGE_PATH } from "./github/pr-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
-import { DEFAULT_RECONCILE_POLICY } from "./github/reconcile-plan.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
 import { createPullHeadReader, createTenantOpenHeads } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
@@ -288,6 +287,7 @@ const observeTriageRuns = createTriageRuns({
   readSettled: createSettledStatusReader(composition.db),
   maxKnownRuns: TRIAGE_KNOWN_RUNS,
 });
+const reconcilePolicy = triageReconcilePolicy(env);
 const reconcileTriage = createTriageReconciler({
   tenants: reconcileTenants,
   liveDeployments: livePrTriageDeployments,
@@ -297,7 +297,7 @@ const reconcileTriage = createTriageReconciler({
   store: triageStateStore,
   readCheckPack,
   deliver: deliverToDeployment,
-  policy: DEFAULT_RECONCILE_POLICY,
+  policy: reconcilePolicy,
   batchSize: triageBatchSize(env),
   now,
   log: logJson,
@@ -315,7 +315,7 @@ const githubPrTriage = createGithubPrTriage({
   observeRuns: observeTriageRuns,
   store: triageStateStore,
   deliver: deliverToDeployment,
-  policy: DEFAULT_RECONCILE_POLICY,
+  policy: reconcilePolicy,
   now,
   log: logJson,
 });

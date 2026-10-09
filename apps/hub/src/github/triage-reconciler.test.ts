@@ -3,6 +3,7 @@ import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type PrTriageRow } from "@corbits/triage-contracts";
 import { DEFAULT_RECONCILE_POLICY, type OpenPr } from "./reconcile-plan.js";
+import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError } from "./triage-state-store.js";
 import type { LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
@@ -120,6 +121,8 @@ function fakeReader(logs: Logs) {
 type HarnessOptions = {
   github?: boolean;
   batchSize?: number;
+  /** The `TRIAGE_MAX_IN_FLIGHT` setting; unset keeps the default. */
+  maxInFlight?: string;
   failDeliveryAt?: number;
   refuseSaves?: number;
   onRefusedSave?: (repo: string) => void;
@@ -216,7 +219,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
       delivered.push({ address, payload: payload as Record<string, unknown> });
     },
-    policy: DEFAULT_RECONCILE_POLICY,
+    policy: triageReconcilePolicy({ ...(options.maxInFlight !== undefined && { TRIAGE_MAX_IN_FLIGHT: options.maxInFlight }) }),
     batchSize: options.batchSize ?? DEFAULT_RECONCILE_POLICY.maxInFlight,
     now,
     log: (entry) => logged.push(entry),
@@ -324,6 +327,12 @@ describe("triage reconciler", () => {
     await reconcile();
     expect(delivered.map((entry) => entry.payload["repo"])).toEqual(["acme/one", "acme/two"]);
     expect(mailedHeads(delivered)).toEqual([["acme/one", 1], ["acme/one", 2], ["acme/one", 3], ["acme/two", 100], ["acme/two", 101]]);
+  });
+
+  test("TRIAGE_MAX_IN_FLIGHT caps the heads queued per pass", async () => {
+    const { reconcile, delivered } = harness({}, heads(1, 5), { maxInFlight: "2" });
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([1, 2]);
   });
 
   test("a repository's heads are mailed in batches of at most the batch size", async () => {

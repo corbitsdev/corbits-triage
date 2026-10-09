@@ -1,6 +1,7 @@
 import { type, type ArkError } from "arktype";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
+import { DEFAULT_RECONCILE_POLICY, type ReconcilePolicy } from "./github/reconcile-plan.js";
 
 const secret = type("string").narrow((value, ctx) =>
   /^[0-9a-fA-F]{64}$/.test(value) || ctx.mustBe("32 bytes encoded as 64 hexadecimal characters"));
@@ -35,6 +36,7 @@ const HubEnvSchema = type({
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_BATCH_SIZE?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
+  "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -126,6 +128,11 @@ export function triageBatchSize(env: HubEnv): number {
  */
 export function triageRotateAfterRuns(env: HubEnv): number {
   return numberOr(env.TRIAGE_ROTATE_AFTER_RUNS, 15);
+}
+
+/** Heads a tenant may have queued or running at once; each in-flight run adds commits to the pack a rotation receives. */
+export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT">): ReconcilePolicy {
+  return { ...DEFAULT_RECONCILE_POLICY, maxInFlight: numberOr(env.TRIAGE_MAX_IN_FLIGHT, DEFAULT_RECONCILE_POLICY.maxInFlight) };
 }
 
 export type SignInSettings = {
