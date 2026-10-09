@@ -4,8 +4,8 @@ import { isEndedDeployment, isSettledRunStatus, type HubRun, type RunLog } from 
 import { createHubTransport } from "./hub-transport.ts";
 import { RUN_IDS_QUERY_KEY, RUN_LOG_QUERY_KEY, RUNS_QUERY_KEY, usePortal } from "./portal.tsx";
 
-const RUN_LIST_REFRESH_MS = 60_000;
-const LIVE_LOG_REFRESH_MS = 30_000;
+const RUN_LIST_REFRESH_MS = 10_000;
+const LIVE_LOG_REFRESH_MS = 10_000;
 
 type RunRef = { anchorRunId: string; runId: string };
 
