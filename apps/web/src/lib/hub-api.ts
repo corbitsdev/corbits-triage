@@ -378,24 +378,44 @@ export async function listArtifacts(
   }, enough);
 }
 
-export async function findArtifactByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
-  const tid = enc(requireTenantId(tenantId));
-  const page = await transport.fetch<{ artifacts?: ArtifactListItem[] }>(
-    "GET",
-    `/api/tenants/${tid}/artifacts?query=${enc(title)}&limit=100`,
-  );
-  return (page.artifacts ?? []).find((row) => row.title === title) ?? null;
+/** Titles are not unique; a title resolves to its newest artifact, which the listing order puts first. */
+export function newestByTitle(rows: ArtifactListItem[]): Map<string, ArtifactListItem> {
+  const byTitle = new Map<string, ArtifactListItem>();
+  for (const row of rows) {
+    if (!byTitle.has(row.title)) byTitle.set(row.title, row);
+  }
+  return byTitle;
 }
 
-export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPack | null> {
-  const listed = await findArtifactByTitle(transport, tenantId, checkPackName(repo));
-  if (!listed) return null;
+export async function findArtifactByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
+  function found(rows: ArtifactListItem[]): boolean {
+    return rows.some((row) => row.title === title);
+  }
+  return newestByTitle(await listArtifacts(transport, tenantId, title, found)).get(title) ?? null;
+}
+
+/** A check pack with the artifact it was read from; `version` is what a save must match. */
+export type StoredCheckPack = { id: string; version: number; pack: CheckPack };
+
+/** Null when the artifact's content is not a check pack for this repository. */
+async function loadCheckPackById(transport: Transport, tenantId: string, repo: string, id: string): Promise<StoredCheckPack | null> {
   const tid = enc(requireTenantId(tenantId));
-  const detail = await transport.fetch<{ artifact?: { content?: string } }>(
+  const detail = await transport.fetch<{ artifact?: { content?: string; version?: number } }>(
     "GET",
-    `/api/tenants/${tid}/artifacts/${enc(listed.id)}`,
+    `/api/tenants/${tid}/artifacts/${enc(id)}`,
   );
-  return parseCheckPack(detail.artifact?.content, repo);
+  const version = detail.artifact?.version;
+  if (typeof version !== "number") throw new Error("The hub returned an artifact without a version.");
+  const pack = parseCheckPack(detail.artifact?.content, repo);
+  return pack ? { id, version, pack } : null;
+}
+
+/** The one title-to-detail path: the newest artifact titled for the repository, read in full. */
+export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<StoredCheckPack | null> {
+  const clean = validateRepo(repo);
+  const listed = await findArtifactByTitle(transport, tenantId, checkPackName(clean));
+  if (!listed) return null;
+  return loadCheckPackById(transport, tenantId, clean, listed.id);
 }
 
 export type CheckPackLookup = (repo: string) => Promise<boolean>;
@@ -889,7 +909,7 @@ export async function startBacklogTriage(
   const clean = validateRepo(repo);
   const policy = await loadRepoPolicy(transport, tenantId, clean);
   assertRepoEnabled(policy);
-  const pack = await loadRepoCheckPack(transport, tenantId, clean);
+  const pack = (await loadRepoCheckPack(transport, tenantId, clean))?.pack;
   if (!pack) throw new Error("This repository still needs check setup.");
   const { runId } = await triggerNamedWorkflow(
     transport,
@@ -911,7 +931,7 @@ export async function startPullRequestTriage(
   const repo = typeof parsed.repo === "string" ? parsed.repo : "";
   const policy = repo ? await loadRepoPolicy(transport, tenantId, repo) : undefined;
   if (policy) assertRepoEnabled(policy);
-  const pack = repo ? await loadRepoCheckPack(transport, tenantId, repo) : null;
+  const pack = repo ? (await loadRepoCheckPack(transport, tenantId, repo))?.pack ?? null : null;
   if (repo && !pack) throw new Error("This repository still needs check setup.");
   const content = repo
     ? JSON.stringify({ ...parsed, policy: policy ? { ...policy, checkPack: { name: checkPackName(repo) } } : policy, checkPack: pack })

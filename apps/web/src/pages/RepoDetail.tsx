@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
 import { emptyPack, recommendedPack, repoPolicy } from "@corbits/triage-contracts";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import {
@@ -14,15 +13,15 @@ import {
   type DraftCheck,
   type DraftPack,
 } from "../lib/check-catalog.ts";
-import { loadCheckPack, repoNeedsCheckSetup, saveCheckPack } from "../lib/check-pack.ts";
+import { repoNeedsCheckSetup, saveCheckPack, StaleCheckPackError, type LoadedCheckPack } from "../lib/check-pack.ts";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential } from "../lib/hub-api.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential, loadRepoCheckPack } from "../lib/hub-api.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useQueueItems } from "../lib/open-pulls.ts";
-import { rememberCheckPack, usePortal } from "../lib/portal.tsx";
+import { usePortal, useSignOutWhenRejected } from "../lib/portal.tsx";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
 
@@ -94,7 +93,7 @@ export default function RepoDetail() {
   const params = useParams();
   const navigate = useNavigate();
   const { snapshot, refreshNow, syncFromGithub, runBacklog, saveRepoPolicy, notify, readOnly } = usePortal();
-  const queryClient = useQueryClient();
+  const signOutWhenRejected = useSignOutWhenRejected();
   const fromId = params.id ? ownerAndName(params.id) : null;
   const setupTab = params.tab === "setup";
   const paired = !fromId && params.id && params.tab && params.tab !== "setup"
@@ -116,6 +115,10 @@ export default function RepoDetail() {
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [loadingPack, setLoadingPack] = useState(true);
+  const [loaded, setLoaded] = useState<LoadedCheckPack | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [staleSave, setStaleSave] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [needsSetup, setNeedsSetup] = useState(() => repoNeedsCheckSetup(config));
   const [customizing, setCustomizing] = useState(false);
   const deniedRepos = snapshot?.denied.repos ?? false;
@@ -140,6 +143,9 @@ export default function RepoDetail() {
   useEffect(function loadPack() {
     let cancelled = false;
     setLoadingPack(true);
+    setLoadFailed(false);
+    setError("");
+    setStaleSave(false);
     setCustomizing(false);
     setPicker(false);
     setCustomOpen(false);
@@ -149,6 +155,7 @@ export default function RepoDetail() {
       setPack(next);
       setSaved(next);
       setNeedsSetup(true);
+      setLoaded(null);
     }
     if (!snapshot || !tenantId || !label.includes("/")) {
       startEmpty();
@@ -157,20 +164,22 @@ export default function RepoDetail() {
     }
     async function run(id: string) {
       try {
-        const found = await loadCheckPack(createHubTransport(), id, label);
+        const found = await loadRepoCheckPack(createHubTransport(), id, label);
         if (cancelled) return;
         if (found) {
-          const draft = draftFromCheckPack(found, mode);
+          const draft = draftFromCheckPack(found.pack, mode);
           setPack(draft);
           setSaved(draft);
           setNeedsSetup(false);
+          setLoaded({ id: found.id, version: found.version });
         } else {
           startEmpty();
         }
       } catch (cause) {
         if (cancelled) return;
+        signOutWhenRejected(cause);
         setError(`Could not load the check pack. ${cause instanceof Error ? cause.message : String(cause)}`);
-        startEmpty();
+        setLoadFailed(true);
       } finally {
         if (!cancelled) setLoadingPack(false);
       }
@@ -179,7 +188,7 @@ export default function RepoDetail() {
     return function cancel() {
       cancelled = true;
     };
-  }, [label, tenantId]);
+  }, [label, tenantId, attempt]);
 
   const remaining = useMemo(function remainingChecks() {
     const have = new Set(pack.checks.map((row) => row.id));
@@ -286,6 +295,7 @@ export default function RepoDetail() {
   async function triageAgain() {
     if (!config) return;
     setError("");
+    setStaleSave(false);
     try {
       await runBacklog(config.name, `Triaging ${items.length} open pull request${items.length === 1 ? "" : "s"}`);
     } catch (cause) {
@@ -305,6 +315,7 @@ export default function RepoDetail() {
     if (!config) return;
     setToggling(true);
     setError("");
+    setStaleSave(false);
     try {
       await saveRepoPolicy(config.name, { ...repoPolicy(config), enabled: true });
       await triageOpenPullRequests(config.name);
@@ -320,6 +331,7 @@ export default function RepoDetail() {
     if (!config) return;
     setToggling(true);
     setError("");
+    setStaleSave(false);
     try {
       await saveRepoPolicy(config.name, { ...repoPolicy(config), enabled: false });
       await refreshNow();
@@ -335,22 +347,40 @@ export default function RepoDetail() {
     if (!snapshot || !config) return;
     setSaving(true);
     setError("");
+    setStaleSave(false);
+    const transport = createHubTransport();
+    const tenant = snapshot.workspace.tenantId;
+    const nextDraft = draftFromCheckPack(artifact, draft.mode);
     try {
-      await saveCheckPack(createHubTransport(), snapshot.workspace.tenantId, config.name, artifact, {
-        cleanupMode: draft.mode,
-      });
-      rememberCheckPack(queryClient, snapshot.workspace.tenantId, config.name);
-      await refreshNow();
-      const nextDraft = draftFromCheckPack(artifact, draft.mode);
+      const stored = await saveCheckPack(transport, tenant, config.name, artifact, { cleanupMode: draft.mode, loaded });
+      setLoaded({ id: stored.id, version: stored.version });
       setPack(nextDraft);
       setSaved(nextDraft);
       setNeedsSetup(false);
       setCustomizing(false);
       if (completingSetup) navigate(repoPath(config.name));
     } catch (cause) {
-      setError(`Could not save configuration. ${cause instanceof Error ? cause.message : String(cause)} Check the values, then try again.`);
-    } finally {
+      signOutWhenRejected(cause);
+      if (cause instanceof StaleCheckPackError) {
+        setError(cause.message);
+        setStaleSave(true);
+      } else {
+        setError(`Could not save configuration. ${cause instanceof Error ? cause.message : String(cause)} Check the values, then try again.`);
+      }
       setSaving(false);
+      return;
+    }
+    setSaving(false);
+    await refreshAfterSave();
+  }
+
+  /** The save is done by now; a failed refresh is reported as such, not as a failed save. */
+  async function refreshAfterSave() {
+    try {
+      await refreshNow();
+    } catch (cause) {
+      signOutWhenRejected(cause);
+      setError(`Saved, but could not refresh the page. ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }
 
@@ -396,6 +426,24 @@ export default function RepoDetail() {
   }
 
   if (!label) return <div className="empty">Unknown repository.</div>;
+  if (loadFailed) {
+    return (
+      <div className="main-shell">
+        <div className="topbar">
+          <Link className="btn ghost" to="/repositories">Back</Link>
+          <div className="topbar-id"><h1 className="mono">{label}</h1></div>
+        </div>
+        <main id="main" className="scroller">
+          <div className="content-wide">
+            <p role="alert" className="error">{error}</p>
+            <div className="actions">
+              <button type="button" className="btn" onClick={() => setAttempt((count) => count + 1)}>Retry</button>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
   if (!loadingPack && config && needsSetup && !setupTab && !customizing) {
     return <Navigate to={repoPath(label, true)} replace />;
   }
@@ -553,7 +601,9 @@ export default function RepoDetail() {
               <h1 className={needsSetup && !customizing ? undefined : "mono"}>{needsSetup && !customizing ? "Set up checks" : label}</h1>
               <p className="lede">
                 {needsSetup && !customizing
-                  ? <><span className="mono">{label}</span> needs a check pack. Use recommended adds the pack in one click. Customize starts with no checks. Saving checks does not start triage; Enable triage does.</>
+                  ? <>
+                    <span className="mono">{label}</span> needs a check pack. Use recommended adds the pack in one click. Customize starts with no checks. Saving checks does not start triage; Enable triage does.
+                  </>
                   : needsSetup
                     ? "Add checks from the catalog, or start empty. Save writes the pack."
                     : "When to post, then the checks triage reads for this repository."}
@@ -565,6 +615,12 @@ export default function RepoDetail() {
           <div className="content-wide">
             {deniedRepos && <DeniedNotice section="repositories" />}
             {error && <p role="alert" className="error">{error}</p>}
+            {staleSave && (
+              <div className="actions">
+                <button type="button" className="btn" onClick={() => setAttempt((count) => count + 1)}>Reload</button>
+                <span className="field-help">Reload discards your edits.</span>
+              </div>
+            )}
             {loadingPack ? <p className="muted" role="status">Loading…</p> : needsSetup && !customizing ? setupChoice : (
               <div className="repo-dash">
                 <div className="repo-dash-main">

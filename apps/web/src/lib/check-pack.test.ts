@@ -1,91 +1,56 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import type { Transport } from "@intx/hub-client";
-import { loadCheckPack, repoNeedsCheckSetup, saveCheckPack } from "./check-pack.ts";
+import { listCheckPackTitles, repoNeedsCheckSetup, saveCheckPack, StaleCheckPackError } from "./check-pack.ts";
+import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
+import { loadRepoCheckPack } from "./hub-api.ts";
 
-function transport(store: {
-  artifacts: Array<{ id: string; title: string; content: string }>;
-  config: Record<string, unknown>;
-  posted: unknown[];
-}): Transport {
-  return {
-    fetch: async (method, path, body) => {
-      store.posted.push({ method, path, body });
-      if (method === "GET" && path === "/api/tenants/tenant") {
-        return { id: "tenant", name: "Tenant", slug: "tenant", config: store.config } as never;
-      }
-      if (method === "PATCH" && path === "/api/tenants/tenant") {
-        store.config = (body as { config: Record<string, unknown> }).config;
-        return undefined as never;
-      }
-      if (method === "GET" && path.startsWith("/api/tenants/tenant/artifacts?")) {
-        return { artifacts: store.artifacts.map(({ id, title }) => ({ id, title })), nextCursor: null } as never;
-      }
-      if (method === "GET" && path.startsWith("/api/tenants/tenant/artifacts/")) {
-        const id = decodeURIComponent(path.split("/").at(-1) ?? "");
-        const row = store.artifacts.find((item) => item.id === id);
-        return { artifact: row } as never;
-      }
-      if (method === "POST" && path === "/api/tenants/tenant/artifacts") {
-        const created = { id: "art_1", title: (body as { title: string }).title, content: (body as { content: string }).content };
-        store.artifacts.push(created);
-        return { artifact: created } as never;
-      }
-      if (method === "POST" && path.endsWith("/versions")) {
-        const id = path.split("/").at(-2) ?? "";
-        const row = store.artifacts.find((item) => item.id === id);
-        if (row) row.content = (body as { content: string }).content;
-        return { artifactId: id, version: 2 } as never;
-      }
-      throw new Error(`unexpected ${method} ${path}`);
-    },
-    subscribe: () => () => {},
-  };
+const widgets = recommendedPack("acme/widgets");
+const gadgets = recommendedPack("acme/gadgets");
+const config = { corbitsTriage: { repos: [{ name: "acme/widgets", connected: true }] } };
+
+function row(id: string, title: string, pack: unknown, at: number, version = 1): FakeArtifact {
+  return { id, title, content: JSON.stringify(pack), version, updatedAt: at };
 }
 
 describe("check-pack client", () => {
-  test("empty default load is null when no artifact exists", async () => {
-    const store = { artifacts: [], config: { corbitsTriage: { repos: [{ name: "acme/widgets", connected: true }] } }, posted: [] as unknown[] };
-    expect(await loadCheckPack(transport(store), "tenant", "acme/widgets")).toBeNull();
+  test("the index keeps only check-pack titles, though the hub also matches the prefix in content", async () => {
+    const hub = fakeHub([
+      row("art_1", "check-pack/acme/widgets", widgets, 1),
+      row("art_2", "notes/check-pack/acme/other", {}, 2),
+      row("art_3", "check-pack/acme/gadgets", gadgets, 3),
+      row("art_4", "notes", "see check-pack/acme/widgets", 4),
+    ]);
+    expect(await listCheckPackTitles(hub.transport, "t")).toEqual(new Set(["check-pack/acme/widgets", "check-pack/acme/gadgets"]));
   });
 
-  test("save writes the artifact and empty draft is checks {} custom []", async () => {
-    const store = {
-      artifacts: [] as Array<{ id: string; title: string; content: string }>,
-      config: { corbitsTriage: { repos: [{ name: "acme/widgets", connected: true }] } },
-      posted: [] as unknown[],
-    };
+  test("a repository's pack is read with its artifact and version; a missing title reads nothing", async () => {
+    const hub = fakeHub([row("art_1", "check-pack/acme/widgets", widgets, 1, 3)]);
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ id: "art_1", version: 3, pack: widgets });
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/gadgets")).toBeNull();
+  });
+
+  test("a first save creates the pack and links it; later saves version the artifact that was loaded", async () => {
+    const hub = fakeHub([], config);
     const pack = emptyPack("acme/widgets");
-    await saveCheckPack(transport(store), "tenant", "acme/widgets", pack);
-    expect(store.posted).toContainEqual({
-      method: "POST",
-      path: "/api/tenants/tenant/artifacts",
-      body: {
-        mode: "text",
-        title: "check-pack/acme/widgets",
-        content: JSON.stringify(pack),
-        metadata: { checkPack: "check-pack/acme/widgets" },
-      },
-    });
-    expect(JSON.parse(store.artifacts[0]!.content)).toEqual(pack);
-    expect(await loadCheckPack(transport(store), "tenant", "acme/widgets")).toEqual(pack);
+    const created = await saveCheckPack(hub.transport, "t", "acme/widgets", pack, { loaded: null, cleanupMode: "human-approved" });
+    expect(created).toEqual({ id: "art_1", version: 1, pack });
+    expect(hub.artifacts[0]).toMatchObject({ title: "check-pack/acme/widgets", content: JSON.stringify(pack), version: 1 });
+    const repos = (hub.config.corbitsTriage as { repos: Array<Record<string, unknown>> }).repos;
+    expect(repos[0]).toMatchObject({ name: "acme/widgets", checkPack: { name: "check-pack/acme/widgets" }, cleanupMode: "human-approved" });
+    const revised = await saveCheckPack(hub.transport, "t", "acme/widgets", widgets, { loaded: created });
+    expect(revised).toEqual({ id: "art_1", version: 2, pack: widgets });
+    expect(hub.requests).toContain("POST /api/tenants/t/artifacts/art_1/versions");
+    expect(hub.artifacts).toHaveLength(1);
   });
 
-  test("Use recommended writes the recommended pack", async () => {
-    const store = {
-      artifacts: [] as Array<{ id: string; title: string; content: string }>,
-      config: { corbitsTriage: { repos: [{ name: "acme/widgets", connected: true }] } },
-      posted: [] as unknown[],
-    };
-    const pack = recommendedPack("acme/widgets");
-    await saveCheckPack(transport(store), "tenant", "acme/widgets", pack, { cleanupMode: "human-approved" });
-    expect(JSON.parse(store.artifacts[0]!.content).checks.size).toEqual({ enabled: true, maxFiles: 20, maxLines: 500 });
-    const ns = store.config.corbitsTriage as { repos: Array<Record<string, unknown>> };
-    expect(ns.repos[0]).toMatchObject({
-      name: "acme/widgets",
-      checkPack: { name: "check-pack/acme/widgets" },
-      cleanupMode: "human-approved",
-    });
+  test("a save refuses to overwrite a pack that changed, or appeared, since the form was opened", async () => {
+    const hub = fakeHub([row("art_1", "check-pack/acme/widgets", widgets, 1, 2)], config);
+    const changed = saveCheckPack(hub.transport, "t", "acme/widgets", emptyPack("acme/widgets"), { loaded: { id: "art_1", version: 1 } });
+    await expect(changed).rejects.toBeInstanceOf(StaleCheckPackError);
+    const unseen = saveCheckPack(hub.transport, "t", "acme/widgets", emptyPack("acme/widgets"), { loaded: null });
+    await expect(unseen).rejects.toBeInstanceOf(StaleCheckPackError);
+    expect(hub.artifacts).toHaveLength(1);
+    expect(JSON.parse(hub.artifacts[0]!.content)).toEqual(widgets);
   });
 
   test("repoNeedsCheckSetup is true until a pack pointer exists", () => {
