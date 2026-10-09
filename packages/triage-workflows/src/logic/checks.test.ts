@@ -21,6 +21,7 @@ const noisy: PrFacts = {
 const allOff: RepoPolicy = {
   cleanupMode: "human-approved",
   enabled: true,
+  triageDrafts: true,
   checks: {
     draft: false,
     ci: false,
@@ -40,7 +41,6 @@ describe("deriveState policy", () => {
     expect(deriveState(noisy)).toEqual(deriveState(noisy, DEFAULT_REPO_POLICY));
     expect(deriveState(noisy)).toEqual(deriveState(noisy, repoPolicy(undefined)));
     expect(deriveState(noisy).findings.map((finding) => finding.check)).toEqual([
-      "draft",
       "checks",
       "duplicate",
       "conflicts",
@@ -49,7 +49,9 @@ describe("deriveState policy", () => {
   });
 
   test("skips a finding when that check is disabled", () => {
-    expect(deriveState(noisy, only("draft")).findings.map((finding) => finding.check)).toEqual(["draft"]);
+    const draft = deriveState(noisy, only("draft"));
+    expect(draft.findings).toEqual([]);
+    expect(draft.checks).toEqual([{ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [] }, expect.objectContaining({ check: "review" })]);
     expect(deriveState(noisy, only("ci")).findings.map((finding) => finding.check)).toEqual(["checks"]);
     expect(deriveState(noisy, only("duplicate")).findings.map((finding) => finding.check)).toEqual(["duplicate"]);
     expect(deriveState(noisy, only("conflicts")).findings.map((finding) => finding.check)).toEqual(["conflicts"]);
@@ -102,7 +104,6 @@ describe("deriveState check pack", () => {
     const sized: PrFacts = { ...noisy, changedFiles: 80, additions: 10, deletions: 10, paths: ["src/a.ts"], changesRequested: ["maintainer"] };
     const result = deriveState(sized, allOff, pack);
     expect(result.findings.map((finding) => finding.check)).toEqual([
-      "draft",
       "checks",
       "duplicate",
       "conflicts",

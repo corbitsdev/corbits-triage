@@ -203,10 +203,12 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   /** Lists the open pull requests, then gathers facts for `targets`, or for all of them when none are named. */
   function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack) {
     return b.run([call("github_list_open_prs", { repo })], function onPrList(r) {
-      const list = data<{ prs: Array<{ number: number; title: string }> }>(r.get("github_list_open_prs"));
+      const list = data<{ prs: Array<{ number: number; title: string; draft?: boolean }> }>(r.get("github_list_open_prs"));
       if (!list && targets === undefined) return fail("github_list_open_prs failed");
-      const openPrs = (list?.prs ?? []).map(({ number, title }) => ({ number, title }));
-      return fetchTargets(repo, targets ?? openPrs.map((p) => p.number), openPrs, batch, policy, pack);
+      const listed = list?.prs ?? [];
+      const openPrs = listed.map(({ number, title }) => ({ number, title }));
+      const triageable = listed.filter((p) => policy.triageDrafts || p.draft !== true).map((p) => p.number);
+      return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack);
     });
   }
 

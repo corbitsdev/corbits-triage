@@ -11,7 +11,7 @@ function at(minutes: number): Date {
 }
 
 function pr(number: number, headSha = `sha${number}`): OpenPr {
-  return { number, headSha, updatedAt: at(-1_000).toISOString() };
+  return { number, headSha, updatedAt: at(-1_000).toISOString(), draft: false };
 }
 
 function run(runId: string, status: ObservedRun["status"], startedMinute: number, verdictVersion = VERSION): ObservedRun {

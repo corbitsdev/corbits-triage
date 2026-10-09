@@ -130,6 +130,14 @@ type Sent = { workflow: string; payload: unknown };
 
 function ignoreLog(): void {}
 
+function openHeadsOf(drafts: number[]): BridgeDeps["openHeadsFor"] {
+  return async function openHeadsFor() {
+    return async function openHeads() {
+      return [7, 8].map((number) => ({ number, headSha: `sha${number}`, updatedAt: "2026-10-07T00:00:00.000Z", draft: drafts.includes(number) }));
+    };
+  };
+}
+
 function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[] } = {}) {
   const sent = overrides.sent ?? [];
   async function recordMail(_tenant: string, workflow: string, payload: unknown) {
@@ -142,6 +150,7 @@ function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[] } = {}) {
     sendMail: recordMail,
     log: ignoreLog,
     readCheckPack: packsFor(["octocat/hello"]),
+    openHeadsFor: openHeadsOf([]),
     ...overrides,
   });
 }
@@ -297,6 +306,26 @@ describe("bridge handler", () => {
     const res = await bridge({ db, sent })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
+  });
+
+  test("a draft is 202 ignored while its repo skips drafts, read from the event or else from GitHub", async () => {
+    const skipping = { corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: true, triageDrafts: false }] } };
+    const pr = JSON.parse(prPayload);
+    const draftOpened = JSON.stringify({ ...pr, pull_request: { ...pr.pull_request, draft: true } });
+    const checkRun = JSON.stringify({
+      action: "completed",
+      repository: { full_name: "octocat/hello" },
+      check_run: { head_sha: "sha7", pull_requests: [{ number: 7, head: { sha: "sha7" } }] },
+    });
+    const sent: Sent[] = [];
+    const db = stubDb([hookRow()], skipping);
+    const drafts = bridge({ db, sent, openHeadsFor: openHeadsOf([7]) });
+    expect(await (await drafts(githubRequest(draftOpened, { delivery: "d1" }), TARGET)).json()).toEqual({ status: "ignored" });
+    expect(await (await drafts(githubRequest(checkRun, { delivery: "d2", event: "check_run" }), TARGET)).json()).toEqual({ status: "ignored" });
+    expect(sent).toHaveLength(0);
+    const ready = bridge({ db, sent, openHeadsFor: openHeadsOf([]) });
+    expect(await (await ready(githubRequest(checkRun, { delivery: "d3", event: "check_run" }), TARGET)).json()).toEqual({ status: "forwarded" });
+    expect(sent).toHaveLength(1);
   });
 
   test("a repo without a check pack is needs-setup and does not mail", async () => {

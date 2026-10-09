@@ -13,6 +13,8 @@ export type RepoCheckFlags = {
 export type RepoPolicy = {
   cleanupMode: CleanupMode;
   enabled: boolean;
+  /** Off, draft pull requests are not mailed for triage until marked ready. */
+  triageDrafts: boolean;
   checks: RepoCheckFlags;
   /** Pointer at the per-repo check-pack artifact. Not params. */
   checkPack?: { name: string };
@@ -30,6 +32,7 @@ export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
 export const DEFAULT_REPO_POLICY: RepoPolicy = {
   cleanupMode: "human-approved",
   enabled: false,
+  triageDrafts: true,
   checks: { ...DEFAULT_REPO_CHECKS },
 };
 
@@ -52,6 +55,7 @@ export function repoPolicy(raw: unknown): RepoPolicy {
   return {
     cleanupMode: source.cleanupMode === "automated" ? "automated" : "human-approved",
     enabled: flag(source.enabled, false),
+    triageDrafts: flag(source.triageDrafts, true),
     checks: {
       draft: flag(checks.draft, true),
       ci: flag(checks.ci, true),

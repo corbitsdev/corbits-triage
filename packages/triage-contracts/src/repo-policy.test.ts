@@ -12,6 +12,7 @@ describe("repoPolicy", () => {
     expect(repoPolicy({ cleanupMode: "automated", checks: { ci: false } })).toEqual({
       cleanupMode: "automated",
       enabled: false,
+      triageDrafts: true,
       checks: {
         draft: true,
         ci: false,
@@ -23,10 +24,11 @@ describe("repoPolicy", () => {
     });
     expect(repoPolicy({
       name: "acme/widgets",
-      policy: { enabled: false, checks: { draft: false, drift: false } },
+      policy: { enabled: false, triageDrafts: false, checks: { draft: false, drift: false } },
     })).toEqual({
       cleanupMode: "human-approved",
       enabled: false,
+      triageDrafts: false,
       checks: {
         draft: false,
         ci: true,

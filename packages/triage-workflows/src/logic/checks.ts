@@ -115,10 +115,12 @@ function rankTop(findings: Finding[]): Finding | null {
 function finish(findings: Finding[], checks: CheckResult[], duplicateOf: number | null, facts: PrFacts, pack?: CheckPack): DeterministicResult {
   const top = rankTop(findings);
   const sources = pack ? classificationSources(pack) : undefined;
-  const state = top?.state ?? "ready-monitoring";
+  // A draft cannot be merged, so it is never ready.
+  const parked = top === null && facts.state === "open" && facts.draft;
+  const state = parked ? "awaiting-review" : top?.state ?? "ready-monitoring";
   return {
     state,
-    reason: top?.reason ?? "all deterministic checks passed",
+    reason: parked ? "pull request is a draft" : top?.reason ?? "all deterministic checks passed",
     findings,
     checks,
     duplicateOf,
@@ -178,7 +180,6 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
   if (facts.state === "closed") add("state", "ready-monitoring", "pull request is closed");
   else {
     if (on("draft")) {
-      if (facts.draft) add("draft", "needs-author-update", "pull request is a draft");
       result("draft", facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", []);
     }
     if (on("ci")) {

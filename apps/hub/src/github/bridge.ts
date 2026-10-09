@@ -25,11 +25,13 @@ import {
   patchCorbitsTriage,
   repoRecords,
   setConnectedForInstallation,
+  triageNs,
   upsertConnectedRepos,
   type CorbitsTriageNs,
   type InstallationFields,
 } from "./tenant-config.js";
 import type { CheckPackRead } from "./check-pack-store.js";
+import type { OpenHeadsReader } from "./tenant-open-heads.js";
 
 const HOOK_VERIFY = ["bearer", "standard-webhooks", "slack"] as const;
 
@@ -57,6 +59,8 @@ export interface BridgeDeps {
   sendMail: (tenantId: string, workflow: string, payload: unknown) => Promise<unknown>;
   log?: (entry: Record<string, unknown>) => void;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  /** Tells whether a pull request is a draft when its event does not say. */
+  openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
 }
 
 function isConnectedRepoRow(row: Record<string, unknown>): boolean {
@@ -180,6 +184,16 @@ function json(status: number, body: unknown): Response {
 
 const INSTALL_EVENTS = new Set(["installation", "installation_repositories"]);
 const REPO_LIST_CAP = 50;
+
+/** A pull request no longer open is not a draft to skip; the workflow sees it closed. */
+async function isOpenDraft(d: BridgeDeps, tenantId: string, config: unknown, repo: string, number: number): Promise<boolean> {
+  const record = repoRecords(triageNs(config)).find((row) => row.name === repo);
+  if (!record) throw new Error(`${repo} has no repository record`);
+  const openHeads = await d.openHeadsFor(tenantId);
+  if (!openHeads) throw new Error("no active github credential");
+  const heads = await openHeads(record);
+  return heads.some((head) => head.number === number && head.draft);
+}
 
 export function mailPayload(repo: string, policy: RepoPolicy, pack: CheckPack, extra: Record<string, unknown>) {
   return {
@@ -441,6 +455,20 @@ export function createBridgeHandler(d: BridgeDeps) {
     if (!policy.enabled) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
       return json(202, { status: "ignored" });
+    }
+    if (!policy.triageDrafts) {
+      let draft: boolean;
+      try {
+        draft = mail.draft ?? await isOpenDraft(d, loaded.tenantId, tenantConfig, mail.repo, mail.prNumber);
+      } catch (err) {
+        d.cache.forget(`${loaded.credentialId}:${delivery}`);
+        log({ level: "error", msg: "draft_lookup_failed", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });
+        return json(500, { error: "draft_lookup_failed" });
+      }
+      if (draft) {
+        log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "draft" });
+        return json(202, { status: "ignored" });
+      }
     }
     const pack = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo);
     if (!pack) {

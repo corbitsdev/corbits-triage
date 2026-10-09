@@ -88,7 +88,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
     if (read.status !== "ok") return undefined;
-    const prs = await pass.openHeads(repo.record);
+    const heads = await pass.openHeads(repo.record);
+    const prs = repo.policy.triageDrafts ? heads : heads.filter((pr) => !pr.draft);
     const stored = await deps.store.load(pass.tenantId, repo.record.name);
     return { ...repo, pack: read.pack, prs, stored };
   }

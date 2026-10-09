@@ -353,6 +353,20 @@ export default function RepoDetail() {
     }
   }
 
+  async function setTriageDrafts(triageDrafts: boolean) {
+    if (!config) return;
+    setToggling(true);
+    setError("");
+    try {
+      await saveRepoPolicy(config.name, { ...repoPolicy(config), triageDrafts });
+      await refreshNow();
+    } catch (cause) {
+      setError(`Could not save the draft setting. ${cause instanceof Error ? cause.message : String(cause)}`);
+    } finally {
+      setToggling(false);
+    }
+  }
+
   async function persist(artifact: ReturnType<typeof checkPackFromDraft>, draft: DraftPack, completingSetup: boolean) {
     if (!snapshot || !config) return;
     setSaving(true);
@@ -676,6 +690,11 @@ export default function RepoDetail() {
                       <Link className={`btn${needs && initial.enabled ? " primary" : ""}`} to="/inbox">Open triage</Link>
                       {initial.enabled && <button type="button" className="btn" disabled={readOnly || deniedRepos || !config} onClick={() => void triageAgain()}>Triage again</button>}
                       {initial.enabled && <button type="button" className="btn" disabled={readOnly || deniedRepos || !config || toggling} onClick={() => void disableTriage()}>{toggling ? "Disabling…" : "Disable triage"}</button>}
+                      <div className="segmented" role="radiogroup" aria-label="Draft pull requests">
+                        <button type="button" role="radio" aria-checked={initial.triageDrafts} disabled={readOnly || deniedRepos || !config || toggling} onClick={() => void setTriageDrafts(true)}>Triage drafts</button>
+                        <button type="button" role="radio" aria-checked={!initial.triageDrafts} disabled={readOnly || deniedRepos || !config || toggling} onClick={() => void setTriageDrafts(false)}>Skip drafts</button>
+                      </div>
+                      <p className="field-help">Drafts are triaged like any pull request but never shown as ready, and the author is not asked to mark them ready. Skipped drafts wait until they are marked ready.</p>
                       <button type="button" className="btn" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</button>
                       {config ? <a className="ghost-link" href={`https://github.com/${config.name}`} target="_blank" rel="noreferrer">View on GitHub</a> : null}
                     </div>

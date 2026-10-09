@@ -610,6 +610,7 @@ describe("repository policy config", () => {
     await saveRepoPolicy(transport, "tenant", "acme/one", {
       cleanupMode: "automated",
       enabled: false,
+      triageDrafts: false,
       checks: {
         draft: true,
         ci: false,
@@ -629,6 +630,7 @@ describe("repository policy config", () => {
       installationId: 9,
       cleanupMode: "automated",
       enabled: false,
+      triageDrafts: false,
       checks: { ci: false, draft: true },
     });
     expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, cleanupMode: "automated" });
