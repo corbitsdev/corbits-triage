@@ -12,50 +12,45 @@ import {
 } from "@corbits/triage-contracts";
 
 export const CHECK_GROUPS = [
-  { id: "pr", label: "Pull request", help: "How many files and lines, one purpose, duplicate of another pull request, draft." },
-  { id: "issue", label: "Issue", help: "Whether a linked issue is required, where it lives, a label, and whether it matches the change." },
-  { id: "around", label: "Around it", help: "Reviewers, approvals, base drift, merge conflicts." },
-  { id: "code", label: "Code vs CI", help: "Required GitHub checks, tests in the diff, forbidden paths, contributor-written docs." },
+  { id: "pr", label: "Pull request" },
+  { id: "issue", label: "Issue" },
+  { id: "around", label: "Around it" },
+  { id: "code", label: "Code vs CI" },
 ] as const;
 
 export type CheckGroupId = (typeof CHECK_GROUPS)[number]["id"];
 
 export type CatalogCheck = {
   id: string;
-  name: string;
   group: CheckGroupId;
   kind: "machine" | "quality";
-  help: string;
-  leftover?: "draft" | "ci" | "duplicate" | "conflicts" | "reviewers" | "drift";
   param?: "number" | "select" | "text" | "globs";
   valueKey?: string;
   defaultValue?: string | number | string[];
-  suffix?: string;
   min?: number;
   options?: Array<{ value: string; label: string }>;
 };
 
 export const CHECK_CATALOG: CatalogCheck[] = [
-  { id: "files", name: "PRs touch fewer than N files", group: "pr", kind: "machine", help: "Inspects how many files the pull request touches.", param: "number", valueKey: "maxFiles", defaultValue: 20, suffix: "files", min: 1 },
-  { id: "size", name: "PRs change fewer than N lines", group: "pr", kind: "machine", help: "Inspects added and removed line count on the pull request.", param: "number", valueKey: "maxLines", defaultValue: 500, suffix: "lines", min: 1 },
-  { id: "focused", name: "One focused change", group: "pr", kind: "quality", help: "Inspects the title, body, and diff for a single purpose." },
-  { id: "duplicate", name: "Duplicate of an earlier open PR", group: "pr", kind: "machine", help: "Compares this pull request to earlier open pull requests in this repository.", leftover: "duplicate" },
-  { id: "draft", name: "Draft", group: "pr", kind: "machine", help: "Inspects whether GitHub marks the pull request as a draft.", leftover: "draft" },
-  { id: "issue", name: "PR must have an issue in", group: "issue", kind: "machine", help: "Inspects whether the pull request points at an issue in the tracker you set.", param: "select", valueKey: "tracker", defaultValue: "either", options: [
+  { id: "files", group: "pr", kind: "machine", param: "number", valueKey: "maxFiles", defaultValue: 20, min: 1 },
+  { id: "size", group: "pr", kind: "machine", param: "number", valueKey: "maxLines", defaultValue: 500, min: 1 },
+  { id: "focused", group: "pr", kind: "quality" },
+  { id: "duplicate", group: "pr", kind: "machine" },
+  { id: "draft", group: "pr", kind: "machine" },
+  { id: "issue", group: "issue", kind: "machine", param: "select", valueKey: "tracker", defaultValue: "either", options: [
     { value: "github", label: "GitHub" },
     { value: "linear", label: "Linear" },
     { value: "either", label: "GitHub or Linear" },
     { value: "none", label: "Not required" },
   ] },
-  { id: "issueLabel", name: "Issue must have a label", group: "issue", kind: "machine", help: "When on, the linked issue must carry this label.", param: "text", valueKey: "label", defaultValue: "" },
-  { id: "issueMatch", name: "Linked issue matches the change", group: "issue", kind: "quality", help: "Inspects whether the linked issue title and body match the change." },
-  { id: "reviewers", name: "Reviewers requested or approvals present", group: "around", kind: "machine", help: "Inspects requested reviewers and approvals around the pull request.", leftover: "reviewers" },
-  { id: "drift", name: "Base drift fewer than N commits", group: "around", kind: "machine", help: "Inspects how far the branch is behind the base.", leftover: "drift", param: "number", valueKey: "maxCommits", defaultValue: 50, suffix: "commits", min: 0 },
-  { id: "conflicts", name: "Merge conflicts", group: "around", kind: "machine", help: "Inspects mergeability against the base branch.", leftover: "conflicts" },
-  { id: "ci", name: "Required GitHub checks pass", group: "code", kind: "machine", help: "Inspects required GitHub checks on the head.", leftover: "ci" },
-  { id: "tests", name: "Tests for behaviour changes", group: "code", kind: "quality", help: "Inspects the diff for tests when behaviour changes." },
-  { id: "paths", name: "Forbidden paths", group: "code", kind: "machine", help: "Inspects changed paths against these globs.", param: "globs", valueKey: "globs", defaultValue: ["vendor/**", "node_modules/**"] },
-  { id: "docs", name: "Contributor-written docs", group: "code", kind: "quality", help: "Inspects documentation in the pull request." },
+  { id: "issueLabel", group: "issue", kind: "machine", param: "text", valueKey: "label", defaultValue: "" },
+  { id: "reviewers", group: "around", kind: "machine" },
+  { id: "drift", group: "around", kind: "machine", param: "number", valueKey: "maxCommits", defaultValue: 50, min: 0 },
+  { id: "conflicts", group: "around", kind: "machine" },
+  { id: "ci", group: "code", kind: "machine" },
+  { id: "tests", group: "code", kind: "quality" },
+  { id: "paths", group: "code", kind: "machine", param: "globs", valueKey: "globs", defaultValue: ["vendor/**", "node_modules/**"] },
+  { id: "docs", group: "code", kind: "quality" },
 ];
 
 export type DraftCheck = {
@@ -214,28 +209,66 @@ export function draftFromCheckPack(pack: CheckPack, mode: CleanupMode = "human-a
   };
 }
 
-export function packJson(pack: DraftPack): string {
-  try {
-    return JSON.stringify(checkPackFromDraft(pack), null, 2);
-  } catch {
-    return JSON.stringify({
-      kind: CHECK_PACK_KIND,
-      schemaVersion: CHECK_PACK_SCHEMA_VERSION,
-      repo: pack.repository,
-      checks: {},
-      custom: [],
-    }, null, 2);
-  }
+function defaultValues(spec: CatalogCheck | undefined): DraftCheck["values"] {
+  return spec?.valueKey ? { [spec.valueKey]: spec.defaultValue ?? "" } : {};
 }
 
-export function leftoverFromPack(pack: DraftPack): Record<"draft" | "ci" | "duplicate" | "conflicts" | "reviewers" | "drift", boolean> {
-  const enabled = new Set(pack.checks.filter((row) => row.enabled).map((row) => row.id));
+export function specOf(id: string): CatalogCheck | undefined {
+  return CHECK_CATALOG.find((spec) => spec.id === id);
+}
+
+/** Switching off a check the saved pack never had drops it again, so toggling back leaves nothing to save. */
+export function withChecksEnabled(pack: DraftPack, saved: DraftPack, ids: string[], enabled: boolean): DraftPack {
+  let checks = pack.checks;
+  for (const id of ids) {
+    const row = checks.find((item) => item.id === id);
+    if (!enabled && row && !rowById(saved, id)) checks = checks.filter((item) => item.id !== id);
+    else if (row) checks = checks.map((item) => (item.id === id ? { ...item, enabled } : item));
+    else if (enabled) checks = [...checks, { id, enabled, values: defaultValues(specOf(id)) }];
+  }
+  return { ...pack, checks };
+}
+
+/** Setting a value on a check the saved pack does not have adds it switched off; setting it back to the default drops it again. */
+export function withCheckValue(pack: DraftPack, saved: DraftPack, id: string, key: string, value: DraftCheck["values"][string]): DraftPack {
+  const row = rowById(pack, id) ?? { id, enabled: false, values: defaultValues(specOf(id)) };
+  const next = { ...row, values: { ...row.values, [key]: value } };
+  const others = pack.checks.filter((item) => item.id !== id);
+  const untouched = !rowById(saved, id) && !next.enabled && JSON.stringify(next.values) === JSON.stringify(defaultValues(specOf(id)));
+  if (untouched) return { ...pack, checks: others };
+  return { ...pack, checks: rowById(pack, id) ? pack.checks.map((item) => (item.id === id ? next : item)) : [...others, next] };
+}
+
+export function checkValue(pack: DraftPack, id: string): DraftCheck["values"][string] | undefined {
+  const spec = specOf(id);
+  if (!spec?.valueKey) return undefined;
+  return rowById(pack, id)?.values[spec.valueKey] ?? spec.defaultValue;
+}
+
+export function isCheckOn(pack: DraftPack, id: string): boolean {
+  return rowById(pack, id)?.enabled ?? false;
+}
+
+export function hasCheck(pack: DraftPack, id: string): boolean {
+  return rowById(pack, id) !== undefined;
+}
+
+function customNumber(id: string): number {
+  return Number(/^custom-(\d+)$/.exec(id)?.[1] ?? 0);
+}
+
+export function withCustomCheck(pack: DraftPack, check: { name: string; group: CheckGroupId; instruction: string }): DraftPack {
+  const next = Math.max(0, ...pack.custom.map((row) => customNumber(row.id))) + 1;
   return {
-    draft: enabled.has("draft"),
-    ci: enabled.has("ci"),
-    duplicate: enabled.has("duplicate"),
-    conflicts: enabled.has("conflicts"),
-    reviewers: enabled.has("reviewers"),
-    drift: enabled.has("drift"),
+    ...pack,
+    custom: [...pack.custom, { id: `custom-${next}`, enabled: true, custom: true, ...check, values: { instruction: check.instruction } }],
   };
+}
+
+export function withCustomInstruction(pack: DraftPack, id: string, instruction: string): DraftPack {
+  return { ...pack, custom: pack.custom.map((row) => (row.id === id ? { ...row, instruction, values: { instruction } } : row)) };
+}
+
+export function withoutCustomCheck(pack: DraftPack, id: string): DraftPack {
+  return { ...pack, custom: pack.custom.filter((row) => row.id !== id) };
 }

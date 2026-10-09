@@ -356,7 +356,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
         <div className="pane-in">
           <header className="ph">
             <div className="crumb">
-              <Link className="mono repo-link" to={`/repositories/${encodeURIComponent(item.repo)}`} title="Repository settings">{item.repo}</Link>
+              <Link className="mono repo-link" to={`/repositories/${item.repo}`} title="Repository settings">{item.repo}</Link>
               {item.number === null ? null : <span className="mono">#{item.number}</span>}
               <span className="sp" />
               {github === null ? null : <a className="btn btn-quiet btn-sm" href={github} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a>}
