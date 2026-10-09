@@ -33,6 +33,11 @@ function started(number: number, at = "2026-10-07T01:00:00.000Z"): WorkflowRunEv
   return { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at, trigger: { type: "mail", payload } } };
 }
 
+function startedBatch(numbers: number[], at = "2026-10-07T01:00:00.000Z"): WorkflowRunEvent {
+  const payload = JSON.stringify({ kind: "pr", repo: REPO, items: numbers.map((number) => ({ prNumber: number, headSha: `sha${number}` })) });
+  return { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at, trigger: { type: "mail", payload } } };
+}
+
 function current(number: number, workflowVersion = 2): Record<string, unknown> {
   return { degraded: null, reason: "", headSha: `sha${number}`, workflowVersion, checks: [] };
 }
@@ -45,6 +50,15 @@ function rendered(verdict: Record<string, unknown>): WorkflowRunEvent {
 const completed: WorkflowRunEvent = { seq: 2, type: "RunCompleted", body: { type: "RunCompleted", seq: 2 } };
 
 type Logs = Record<string, Record<string, WorkflowRunEvent[]>>;
+type Delivered = Array<{ address: string; payload: Record<string, unknown> }>;
+
+function mailedHeads(delivered: Delivered): Array<[string, number]> {
+  return delivered.flatMap((entry) => (entry.payload["items"] as Array<{ prNumber: number }>).map((item): [string, number] => [entry.payload["repo"] as string, item.prNumber]));
+}
+
+function mailedNumbers(delivered: Delivered): number[] {
+  return mailedHeads(delivered).map(([, number]) => number);
+}
 
 /** Drives one real triage director for one inbound event and returns its reply. */
 async function directorReply(role: "facts" | "render", event: ReactorInboundEvent): Promise<string> {
@@ -95,6 +109,7 @@ function fakeReader(logs: Logs) {
 /** `prs` is the open heads of REPO, or the open heads of several repositories by name. */
 type HarnessOptions = {
   github?: boolean;
+  batchSize?: number;
   failDeliveryAt?: number;
   refuseSaves?: number;
   onRefusedSave?: (repo: string) => void;
@@ -105,7 +120,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
   const repos = Array.isArray(prs) ? { [REPO]: prs } : prs;
   const tenant = { id: TENANT_ID, domain: DOMAIN, config: { corbitsTriage: { repos: Object.keys(repos).map((name) => ({ name, connected: true, enabled: true })) } } };
   const { reader, reads, latestOf } = fakeReader(logs);
-  const delivered: Array<{ address: string; payload: Record<string, unknown> }> = [];
+  const delivered: Delivered = [];
   const saved = new Map<string, PrTriageRow[]>();
   let refusals = options.refuseSaves ?? 0;
   const logged: Array<Record<string, unknown>> = [];
@@ -146,6 +161,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       delivered.push({ address, payload: payload as Record<string, unknown> });
     },
     policy: DEFAULT_RECONCILE_POLICY,
+    batchSize: options.batchSize ?? DEFAULT_RECONCILE_POLICY.maxInFlight,
     now: () => NOW,
     log: (entry) => logged.push(entry),
   });
@@ -163,7 +179,7 @@ describe("triage reconciler", () => {
     expect(latestOf.map(([repo]) => repo)).toEqual([repoKey(LIVE.runId)]);
     expect(reads.every((read) => read.repo === repoKey(LIVE.runId))).toBe(true);
     expect(delivered).toHaveLength(1);
-    expect(delivered[0]).toMatchObject({ address: LIVE.address, payload: { kind: "pr", repo: REPO, prNumber: 1, headSha: "sha1" } });
+    expect(delivered[0]).toMatchObject({ address: LIVE.address, payload: { kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] } });
   });
 
   test("a degraded verdict is queued again and a clean one settles the head", async () => {
@@ -175,7 +191,7 @@ describe("triage reconciler", () => {
     };
     const { reconcile, delivered, saved } = harness(logs, [head(2), head(3)]);
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([2]);
+    expect(mailedNumbers(delivered)).toEqual([2]);
     const rows = saved.get(REPO) ?? [];
     expect(rows.find((row) => row.number === 2)).toMatchObject({ status: "queued", attempts: 1 });
     expect(rows.find((row) => row.number === 3)).toMatchObject({ status: "triaged", runId: "run_clean" });
@@ -192,7 +208,7 @@ describe("triage reconciler", () => {
     };
     const { reconcile, delivered, saved, logged } = harness(logs, [head(2), head(3), head(4)]);
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([2, 3]);
+    expect(mailedNumbers(delivered)).toEqual([2, 3]);
     const reasons = logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"]);
     expect(reasons).toEqual(["verdict made on head sha2-pushed", "unconfirmed checks: conflicts"]);
     const rows = saved.get(REPO) ?? [];
@@ -207,7 +223,7 @@ describe("triage reconciler", () => {
     const logs: Logs = { [repoKey(LIVE.runId)]: { run_fail: [started(1), rendered(verdict), completed] } };
     const { reconcile, delivered, logged } = harness(logs, [head(1)]);
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1]);
+    expect(mailedNumbers(delivered)).toEqual([1]);
     expect(logged.find((entry) => entry["msg"] === "triage_requeued")?.["reason"]).toBe("degraded: facts interrupted: abort");
   });
 
@@ -217,7 +233,7 @@ describe("triage reconciler", () => {
     const settled = (number: number): PrTriageRow => ({ number, headSha: `sha${number}`, status: "triaged", attempts: 0, runId: `old_${number}`, workflowVersion: 1, firstSeenAt: LONG_AGO, updatedAt: LONG_AGO });
     saved.set(REPO, [settled(1), settled(2)]);
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1, 2]);
+    expect(mailedNumbers(delivered)).toEqual([1, 2]);
     expect(logged.filter((entry) => entry["msg"] === "triage_requeued").every((entry) => entry["reason"] === "verdict from workflow version 1, current is 2")).toBe(true);
     const rows = saved.get(REPO) ?? [];
     expect(rows.filter((row) => row.number !== 9).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === 2)).toBe(true);
@@ -233,10 +249,34 @@ describe("triage reconciler", () => {
     expect(latestOf[1]).toEqual([repoKey(LIVE.runId)]);
   });
 
-  test("the in-flight budget is per tenant across repositories, oldest pull requests first", async () => {
+  test("the in-flight budget is per tenant across repositories, oldest pull requests first, one mail per repository", async () => {
     const { reconcile, delivered } = harness({}, { "acme/one": heads(1, 3), "acme/two": heads(100, 3) });
     await reconcile();
-    expect(delivered.map((entry) => [entry.payload["repo"], entry.payload["prNumber"]])).toEqual([["acme/one", 1], ["acme/one", 2], ["acme/one", 3], ["acme/two", 100], ["acme/two", 101]]);
+    expect(delivered.map((entry) => entry.payload["repo"])).toEqual(["acme/one", "acme/two"]);
+    expect(mailedHeads(delivered)).toEqual([["acme/one", 1], ["acme/one", 2], ["acme/one", 3], ["acme/two", 100], ["acme/two", 101]]);
+  });
+
+  test("a repository's heads are mailed in batches of at most the batch size", async () => {
+    const { reconcile, delivered } = harness({}, heads(1, 5), { batchSize: 2 });
+    await reconcile();
+    expect(delivered.map((entry) => mailedNumbers([entry]))).toEqual([[1, 2], [3, 4], [5]]);
+  });
+
+  test("a batch run's verdicts settle each head it named; a batch degraded before rendering queues every head again", async () => {
+    const logs: Logs = {
+      [repoKey(LIVE.runId)]: {
+        run_batch: [startedBatch([1, 2, 3]), rendered({ items: [current(1), { ...current(2), headSha: "sha2-pushed" }, current(3)], summary: {} }), completed],
+        run_failed: [startedBatch([4, 5]), rendered({ degraded: "error", reason: "facts interrupted: abort", headSha: null }), completed],
+      },
+    };
+    const { reconcile, delivered, saved, logged } = harness(logs, heads(1, 5));
+    await reconcile();
+    expect(delivered).toHaveLength(1);
+    expect(mailedNumbers(delivered)).toEqual([2, 4, 5]);
+    expect(logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"])).toEqual(["verdict made on head sha2-pushed", "degraded: facts interrupted: abort", "degraded: facts interrupted: abort"]);
+    const rows = saved.get(REPO) ?? [];
+    expect(rows.filter((row) => row.status === "triaged").map((row) => [row.number, row.runId])).toEqual([[1, "run_batch"], [3, "run_batch"]]);
+    expect(rows.filter((row) => row.status === "queued").map((row) => row.number)).toEqual([2, 4, 5]);
   });
 
   test("queued heads that have not started hold the budget until their runs complete", async () => {
@@ -244,26 +284,26 @@ describe("triage reconciler", () => {
     const { reconcile, delivered, saved } = harness(logs, heads(1, 12));
     await reconcile();
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1, 2, 3, 4, 5]);
+    expect(mailedNumbers(delivered)).toEqual([1, 2, 3, 4, 5]);
     // Only a run started since the hub queued the head settles it.
     for (const number of [1, 2, 3, 4, 5]) logs[repoKey(LIVE.runId)]![`run_${number}`] = [started(number, "2026-10-07T12:00:30.000Z"), rendered(current(number)), completed];
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(mailedNumbers(delivered)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const rows = saved.get(REPO) ?? [];
     expect(rows.filter((row) => row.status === "triaged").map((row) => row.number)).toEqual([1, 2, 3, 4, 5]);
     expect(rows.filter((row) => row.status === "new").map((row) => row.number)).toEqual([11, 12]);
   });
 
-  test("queued heads are written before any mail goes out, and a head whose mail fails is put back", async () => {
+  test("queued heads are written before the mail goes out, and the heads of a mail that fails are put back", async () => {
     const saves: string[][] = [];
     const { reconcile, delivered, saved } = harness({}, [head(1), head(2)], {
-      failDeliveryAt: 1,
+      failDeliveryAt: 0,
       onSave: (repo, rows) => { if (repo === REPO) saves.push(rows.map((row) => row.status)); },
     });
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1]);
-    expect(saves).toEqual([["queued", "queued"], ["queued", "new"]]);
-    expect(saved.get(REPO)!.find((row) => row.number === 2)?.error).toBe("delivery failed: Error: unroutable");
+    expect(delivered).toEqual([]);
+    expect(saves).toEqual([["queued", "queued"], ["new", "new"]]);
+    expect(saved.get(REPO)!.map((row) => row.error)).toEqual(["delivery failed: Error: unroutable", "delivery failed: Error: unroutable"]);
   });
 
   test("a state write refused as stale is retried once on the other writer's rows, keeping the newer row of each head", async () => {
@@ -274,7 +314,7 @@ describe("triage reconciler", () => {
     await reconcile();
     const rows = saved.get(REPO) ?? [];
     expect(rows.map((row) => `${row.number}:${row.status}:${row.attempts}`)).toEqual(["1:queued:3", "2:queued:1"]);
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([2]);
+    expect(mailedNumbers(delivered)).toEqual([2]);
     expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_state_merged", repo: REPO, left: 1 }));
     const twice = harness({}, [head(1)], { refuseSaves: 2 });
     await twice.reconcile();
@@ -287,23 +327,23 @@ describe("triage reconciler", () => {
     const logs: Logs = { [repoKey(LIVE.runId)]: { run_going: [started(1, "2026-10-07T11:55:00.000Z")] } };
     const { reconcile, delivered } = harness(logs, heads(1, 7));
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([2, 3, 4, 5]);
+    expect(mailedNumbers(delivered)).toEqual([2, 3, 4, 5]);
   });
 
-  test("a delivery failure keeps every later head unqueued across repositories and asks for retry", async () => {
+  test("a delivery failure keeps every later repository's heads unqueued and asks for retry", async () => {
     const { reconcile, delivered, saved, logged } = harness({}, { "acme/a": heads(1, 2), "acme/b": heads(10, 2) }, { failDeliveryAt: 1 });
     const outcome = await reconcile();
     expect(outcome.retry).toBe(true);
-    expect(delivered.map((entry) => [entry.payload["repo"], entry.payload["prNumber"]])).toEqual([["acme/a", 1]]);
-    expect(saved.get("acme/a")!.map((row) => row.status)).toEqual(["queued", "new"]);
+    expect(mailedHeads(delivered)).toEqual([["acme/a", 1], ["acme/a", 2]]);
+    expect(saved.get("acme/a")!.map((row) => row.status)).toEqual(["queued", "queued"]);
     expect(saved.get("acme/b")!.every((row) => row.status === "new")).toBe(true);
-    expect(logged.filter((entry) => entry["msg"] === "triage_reconcile_failed").map((entry) => entry["repo"])).toEqual(["acme/a"]);
+    expect(logged.filter((entry) => entry["msg"] === "triage_reconcile_failed").map((entry) => entry["repo"])).toEqual(["acme/b"]);
   });
 
   test("heads first seen together queue lowest pull request number first, whatever order GitHub lists them", async () => {
     const { reconcile, delivered } = harness({}, heads(1, 10).reverse());
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["prNumber"])).toEqual([1, 2, 3, 4, 5]);
+    expect(mailedNumbers(delivered)).toEqual([1, 2, 3, 4, 5]);
   });
 
   test("a tenant without a GitHub credential is skipped with a reason", async () => {

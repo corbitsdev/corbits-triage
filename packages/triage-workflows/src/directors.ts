@@ -200,6 +200,16 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return b.run(numbers.flatMap(prCalls), onPrs);
   }
 
+  /** Lists the open pull requests, then gathers facts for `targets`, or for all of them when none are named. */
+  function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack) {
+    return b.run([call("github_list_open_prs", { repo })], function onPrList(r) {
+      const list = data<{ prs: Array<{ number: number; title: string }> }>(r.get("github_list_open_prs"));
+      if (!list && targets === undefined) return fail("github_list_open_prs failed");
+      const openPrs = (list?.prs ?? []).map(({ number, title }) => ({ number, title }));
+      return fetchTargets(repo, targets ?? openPrs.map((p) => p.number), openPrs, batch, policy, pack);
+    });
+  }
+
   function start(message: { content?: string }) {
     const input = parseInput(message.content);
     const repo = input?.repo;
@@ -208,20 +218,17 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     if (!policy.enabled) return fail("Triage is disabled for this repository.");
     const pack = packFromInput(input?.checkPack);
     if (!pack) return fail(NEEDS_SETUP_REASON);
-    if (input?.kind === "backlog") {
-      return b.run([call("github_list_open_prs", { repo })], function onBacklogList(r) {
-        const list = data<{ prs: Array<{ number: number; title: string }> }>(r.get("github_list_open_prs"));
-        if (!list) return fail("github_list_open_prs failed");
-        const openPrs = list.prs.map(({ number, title }) => ({ number, title }));
-        return fetchTargets(repo, openPrs.map((p) => p.number), openPrs, true, policy, pack);
-      });
+    if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack);
+    if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
+    // A catch-up mail names several heads as `items`; each is triaged like a single mail and rendered in this order.
+    if (Array.isArray(input.items)) {
+      const numbers = input.items.flatMap((item) => (isRecord(item) && typeof item.prNumber === "number" ? [item.prNumber] : []));
+      if (numbers.length === 0) return fail("facts: batch names no pull request");
+      return fetchListed(repo, numbers, true, policy, pack);
     }
-    const number = input?.prNumber;
-    if (input?.kind !== "pr" || typeof number !== "number") return fail("facts: input is neither pr nor backlog");
-    return b.run([call("github_list_open_prs", { repo })], function onPrList(r) {
-      const prs = data<{ prs: Array<{ number: number; title: string }> }>(r.get("github_list_open_prs"))?.prs ?? [];
-      return fetchTargets(repo, [number], prs.map(({ number, title }) => ({ number, title })), false, policy, pack);
-    });
+    const number = input.prNumber;
+    if (typeof number !== "number") return fail("facts: pr input has no prNumber");
+    return fetchListed(repo, [number], false, policy, pack);
   }
 
   return {
