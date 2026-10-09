@@ -11,7 +11,7 @@
 // a workflow rename or tool-id change breaks the build here.
 import { resolve } from "node:path";
 import { authorize, timeWindowEvaluator } from "@intx/authz";
-import { createGrantStore, schema } from "@intx/db";
+import { createGrantStore, createWorkflowRunLaunchSpecStore, schema } from "@intx/db";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { hexDecode } from "@intx/types";
 import { and, eq } from "drizzle-orm";
@@ -41,11 +41,11 @@ import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
 import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
-import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs } from "./env.js";
+import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { NoLiveDeploymentError, resolveLiveDeployment } from "./github/deployment.js";
+import { createDeploymentRotation, NoLiveDeploymentError, resolveLiveDeployment, resolveLiveDeployments } from "./github/deployment.js";
 import { createGithubOpenPulls, GITHUB_OPEN_PULLS_PATH } from "./github/open-pulls.js";
 import { createGithubPrActions, GITHUB_PR_ACTIONS_PATH } from "./github/pr-actions.js";
 import { createGithubPrDetails, GITHUB_PR_DETAILS_PATH } from "./github/pr-details.js";
@@ -269,9 +269,18 @@ function now(): Date {
 function reconcileTenants() {
   return composition.db.select({ id: schema.tenant.id, domain: schema.tenant.domain, config: schema.tenant.config }).from(schema.tenant);
 }
-function livePrTriageDeployment(tenantId: string) {
-  return resolveLiveDeployment(composition.db, tenantId, prTriageWorkflow.id);
+function livePrTriageDeployments(tenantId: string) {
+  return resolveLiveDeployments(composition.db, tenantId, prTriageWorkflow.id);
 }
+const deploymentRotation = createDeploymentRotation({
+  db: composition.db,
+  launchSpecs: createWorkflowRunLaunchSpecStore(composition.db),
+  allocation: composition.workflowAllocationService,
+  lifecycle: composition.workflowLifecycleService,
+  mayDeploy: function mayDeploy(principalId, tenantId) {
+    return authorizePortal(principalId, tenantId, "workflow:*", "create");
+  },
+});
 const tenantOpenHeads = createTenantOpenHeads({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
 const observeTriageRuns = createTriageRuns({
@@ -281,7 +290,8 @@ const observeTriageRuns = createTriageRuns({
 });
 const reconcileTriage = createTriageReconciler({
   tenants: reconcileTenants,
-  liveDeployment: livePrTriageDeployment,
+  liveDeployments: livePrTriageDeployments,
+  rotation: { afterRuns: triageRotateAfterRuns(env), ...deploymentRotation },
   openHeadsFor: tenantOpenHeads,
   observeRuns: observeTriageRuns,
   store: triageStateStore,
@@ -301,7 +311,7 @@ const githubPrTriage = createGithubPrTriage({
   authorize: authorizePortal,
   pullHead: createPullHeadReader({ githubApiOrigin: githubOrigin }),
   readCheckPack,
-  liveDeployment: livePrTriageDeployment,
+  liveDeployments: livePrTriageDeployments,
   observeRuns: observeTriageRuns,
   store: triageStateStore,
   deliver: deliverToDeployment,

@@ -34,6 +34,7 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_BATCH_SIZE?": positiveInteger,
+  "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -116,6 +117,15 @@ export function triageReconcileIntervalMs(env: HubEnv): number {
 /** Heads one catch-up mail carries at most; each run's steps share one timeout, so this bounds per-step load. */
 export function triageBatchSize(env: HubEnv): number {
   return env.TRIAGE_BATCH_SIZE === undefined ? 5 : Number(env.TRIAGE_BATCH_SIZE);
+}
+
+/**
+ * The stock hub checks every commit pushed to a deployment's run log against
+ * the whole log, so the hub replaces the pr-triage deployment with a fresh copy
+ * once its log holds more runs than this.
+ */
+export function triageRotateAfterRuns(env: HubEnv): number {
+  return numberOr(env.TRIAGE_ROTATE_AFTER_RUNS, 15);
 }
 
 export type SignInSettings = {

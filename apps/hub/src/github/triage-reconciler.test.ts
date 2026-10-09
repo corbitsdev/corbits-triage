@@ -4,7 +4,9 @@ import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type W
 import { emptyPack, stockTriggerMail, type PrTriageRow } from "@corbits/triage-contracts";
 import { DEFAULT_RECONCILE_POLICY, type OpenPr } from "./reconcile-plan.js";
 import { TriageStateConflictError } from "./triage-state-store.js";
-import { createTriageReconciler, type LiveDeployment } from "./triage-reconciler.js";
+import type { LiveDeployment } from "./deployment.js";
+import type { RotationRecord } from "./tenant-config.js";
+import { createTriageReconciler } from "./triage-reconciler.js";
 import { createTriageRuns } from "./triage-runs.js";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
 import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
@@ -12,9 +14,15 @@ import { triageDirectorFactory } from "../../../../packages/triage-workflows/src
 const REPO = "acme/widgets";
 const DOMAIN = "acme.test";
 const TENANT_ID = "tnt_acme";
-const LIVE: LiveDeployment = { runId: "run_live", address: formatRunAddress("run_live", DOMAIN) };
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const LONG_AGO = "2026-10-07T00:00:00.000Z";
+const LIVE = deployment("run_live", new Date(LONG_AGO));
+const MINUTE = 60_000;
+let failNextList = false;
+
+function deployment(runId: string, createdAt: Date): LiveDeployment {
+  return { runId, address: formatRunAddress(runId, DOMAIN), createdAt, cancelling: false };
+}
 
 function repoKey(anchorRunId: string): string {
   return workflowRunRepoIdForAddress(formatRunAddress(anchorRunId, DOMAIN)).id;
@@ -116,22 +124,68 @@ type HarnessOptions = {
   refuseSaves?: number;
   onRefusedSave?: (repo: string) => void;
   onSave?: (repo: string, rows: PrTriageRow[]) => void;
+  rotateAfterRuns?: number;
+  now?: () => Date;
+  /** Live deployments, newest first; LIVE alone by default. */
+  deployments?: LiveDeployment[];
+  /** Runs while the copy deploys, before it is listed. */
+  whileRedeploying?: (deployments: LiveDeployment[]) => void;
+  /** The rotation recorded in the tenant config; none by default. */
+  rotation?: RotationRecord;
+  /** Whether any two deployments run the same workflow source; false by default. */
+  sameSource?: boolean;
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
   const repos = Array.isArray(prs) ? { [REPO]: prs } : prs;
-  const tenant = { id: TENANT_ID, domain: DOMAIN, config: { corbitsTriage: { repos: Object.keys(repos).map((name) => ({ name, connected: true, enabled: true })) } } };
+  const records = { rotation: options.rotation };
+  function tenant() {
+    const ns = { repos: Object.keys(repos).map((name) => ({ name, connected: true, enabled: true })), ...(records.rotation && { rotation: records.rotation }) };
+    return { id: TENANT_ID, domain: DOMAIN, config: { corbitsTriage: ns } };
+  }
   const { reader, reads, latestOf } = fakeReader(logs);
   const delivered: Delivered = [];
   const saved = new Map<string, PrTriageRow[]>();
   let refusals = options.refuseSaves ?? 0;
   const logged: Array<Record<string, unknown>> = [];
+  const now = options.now ?? (() => NOW);
+  const deployments = (options.deployments ?? [LIVE]).map((live) => ({ ...live }));
+  const released: string[] = [];
   const reconcile = createTriageReconciler({
     tenants: async function tenants() {
-      return [tenant];
+      return [tenant()];
     },
-    liveDeployment: async function liveDeployment() {
-      return LIVE;
+    liveDeployments: async function liveDeployments() {
+      if (failNextList) {
+        failNextList = false;
+        throw new Error("transient list failure");
+      }
+      return deployments.map((live) => ({ ...live }));
+    },
+    rotation: {
+      afterRuns: options.rotateAfterRuns ?? 1_000,
+      async redeploy(_tenantId, anchorRunId) {
+        const runId = `${anchorRunId}_fresh`;
+        options.whileRedeploying?.(deployments);
+        deployments.unshift(deployment(runId, now()));
+        return { status: "deployed", runId };
+      },
+      async sameSource() {
+        return options.sameSource ?? false;
+      },
+      // Like the stock cancellation request, the deployment stays live until the lifecycle sweep stops it.
+      async release(_tenantId, anchorRunId) {
+        released.push(anchorRunId);
+        deployments.find((live) => live.runId === anchorRunId)!.cancelling = true;
+      },
+      async claim(_tenantId, record) {
+        if (records.rotation) return false;
+        records.rotation = record;
+        return true;
+      },
+      async clear(_tenantId, record) {
+        if (records.rotation?.from === record.from && records.rotation.to === record.to) records.rotation = undefined;
+      },
     },
     openHeadsFor: async function openHeadsFor() {
       if (options.github === false) return undefined;
@@ -164,10 +218,24 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     },
     policy: DEFAULT_RECONCILE_POLICY,
     batchSize: options.batchSize ?? DEFAULT_RECONCILE_POLICY.maxInFlight,
-    now: () => NOW,
+    now,
     log: (entry) => logged.push(entry),
   });
-  return { reconcile, delivered, saved, logged, reads, latestOf };
+  function sweep(): void {
+    const stopped = deployments.filter((live) => live.cancelling);
+    for (const live of stopped) deployments.splice(deployments.indexOf(live), 1);
+  }
+  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records };
+}
+
+function settled(from: number, count: number): Record<string, WorkflowRunEvent[]> {
+  const runs: Record<string, WorkflowRunEvent[]> = {};
+  for (const { number } of heads(from, count)) runs[`run_${number}`] = [started(number), rendered(current(number)), completed];
+  return runs;
+}
+
+function rotationLogs(logged: ReadonlyArray<Record<string, unknown>>): unknown[] {
+  return logged.map((entry) => entry["msg"]).filter((msg) => String(msg).startsWith("triage_deployment_") || String(msg).startsWith("triage_rotation_"));
 }
 
 describe("triage reconciler", () => {
@@ -364,6 +432,144 @@ describe("triage reconciler", () => {
     const { reconcile, delivered } = harness({}, heads(1, 10).reverse());
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("a deployment past its run threshold is replaced once before the pass mails, and released once after its running head settles", async () => {
+    const live = { ...settled(1, 19), run_going: [started(20, "2026-10-07T11:55:00.000Z")] };
+    const logs: Logs = { [repoKey(LIVE.runId)]: live };
+    let clock = NOW;
+    const { reconcile, delivered, saved, deployments, released, logged, sweep, records } = harness(logs, [head(20), head(21)], { rotateAfterRuns: 19, now: () => clock });
+    await reconcile();
+    expect(deployments.map((live) => live.runId)).toEqual(["run_live_fresh", LIVE.runId]);
+    expect(records.rotation).toEqual({ from: LIVE.runId, to: "run_live_fresh", at: NOW.toISOString() });
+    const fresh = deployments[0]!;
+    expect(delivered.map((entry) => entry.address)).toEqual([fresh.address]);
+    expect(mailedNumbers(delivered)).toEqual([21]);
+
+    await reconcile();
+    expect(released).toEqual([]);
+
+    live["run_going"] = [started(20, "2026-10-07T11:55:00.000Z"), rendered(current(20)), completed];
+    clock = new Date(NOW.getTime() + DEFAULT_RECONCILE_POLICY.unstartedAfterMs);
+    await reconcile();
+    await reconcile();
+    expect(released).toEqual([LIVE.runId]);
+    expect(saved.get(REPO)!.find((row) => row.number === 20)).toMatchObject({ status: "triaged", runId: "run_going" });
+    expect(delivered).toHaveLength(1);
+    expect(rotationLogs(logged)).toEqual(["triage_deployment_rotated", "triage_deployment_released"]);
+
+    sweep();
+    await reconcile();
+    expect(records.rotation).toBeUndefined();
+    await reconcile();
+    expect(deployments.map((live) => live.runId)).toEqual([fresh.runId]);
+    expect(rotationLogs(logged)).toHaveLength(2);
+  });
+
+  test("a busy deployment is not replaced while another is live, and one no rotation names is never released", async () => {
+    const fresh = deployment("run_fresh", new Date(NOW.getTime() - 2 * DEFAULT_RECONCILE_POLICY.stuckAfterMs));
+    const logs: Logs = { [repoKey(fresh.runId)]: settled(1, 20), [repoKey(LIVE.runId)]: settled(30, 1) };
+    const { reconcile, deployments, logged, released } = harness(logs, [], { rotateAfterRuns: 15, deployments: [fresh, LIVE] });
+    await reconcile();
+    expect(deployments.map((live) => live.runId)).toEqual([fresh.runId, LIVE.runId]);
+    expect(released).toEqual([]);
+    expect(rotationLogs(logged)).toEqual([]);
+  });
+
+  test("a replaced deployment is kept while a head still runs there or its copy is younger than the unstarted grace, and released once a head there is stuck", async () => {
+    const record = (to: LiveDeployment): RotationRecord => ({ from: LIVE.runId, to: to.runId, at: LONG_AGO });
+    const running = { [repoKey(LIVE.runId)]: { run_going: [started(30, "2026-10-07T11:55:00.000Z")] } };
+    const settledAgo = deployment("run_fresh", new Date(NOW.getTime() - 2 * DEFAULT_RECONCILE_POLICY.unstartedAfterMs));
+    const stillRunning = harness(running, [], { deployments: [settledAgo, LIVE], rotation: record(settledAgo) });
+    await stillRunning.reconcile();
+    expect(stillRunning.released).toEqual([]);
+
+    const young = deployment("run_fresh", new Date(NOW.getTime() - MINUTE));
+    const tooYoung = harness({ [repoKey(LIVE.runId)]: settled(1, 3) }, [], { deployments: [young, LIVE], rotation: record(young) });
+    await tooYoung.reconcile();
+    expect(tooYoung.released).toEqual([]);
+
+    const stuckLogs = { [repoKey(LIVE.runId)]: { run_stuck: [started(30)] } };
+    const longAgo = deployment("run_fresh", new Date(NOW.getTime() - DEFAULT_RECONCILE_POLICY.stuckAfterMs - MINUTE));
+    const stuck = harness(stuckLogs, [], { deployments: [longAgo, LIVE], rotation: record(longAgo) });
+    await stuck.reconcile();
+    await stuck.reconcile();
+    expect(stuck.released).toEqual([LIVE.runId]);
+    expect(rotationLogs(stuck.logged)).toEqual(["triage_deployment_released"]);
+  });
+
+  test("two live deployments of the same source with no rotation recorded retire the older one; of different sources, neither", async () => {
+    const newer = deployment("run_newer", new Date(NOW.getTime() - 2 * DEFAULT_RECONCILE_POLICY.unstartedAfterMs));
+    const logs: Logs = { [repoKey(LIVE.runId)]: settled(1, 3) };
+    const same = harness(logs, [head(20)], { deployments: [newer, LIVE], sameSource: true });
+    await same.reconcile();
+    expect(same.records.rotation).toEqual({ from: LIVE.runId, to: newer.runId, at: NOW.toISOString() });
+    expect(same.released).toEqual([LIVE.runId]);
+    expect(same.delivered.map((entry) => entry.address)).toEqual([newer.address]);
+
+    const other = harness(logs, [head(20)], { deployments: [newer, LIVE] });
+    await other.reconcile();
+    expect(other.records.rotation).toBeUndefined();
+    expect(other.released).toEqual([]);
+  });
+
+  test("a deployment made while a pass runs is not overtaken by a copy of the one it replaced", async () => {
+    const logs: Logs = { [repoKey(LIVE.runId)]: settled(1, 19) };
+    const portal = deployment("run_portal_v2", new Date(NOW.getTime() + 1));
+    let deployed = false;
+    let state: ReturnType<typeof harness> | undefined;
+    function now(): Date {
+      // The portal deploys a new workflow version and cancels the old one while this pass runs.
+      if (state && !deployed) {
+        deployed = true;
+        state.deployments.unshift(portal);
+        state.deployments.splice(state.deployments.findIndex((live) => live.runId === LIVE.runId), 1);
+      }
+      return NOW;
+    }
+    state = harness(logs, [head(20)], { rotateAfterRuns: 15, now });
+    await state.reconcile();
+    expect(state.deployments.map((live) => live.runId)).toEqual([portal.runId]);
+    expect(state.delivered.map((entry) => entry.address)).toEqual([portal.address]);
+  });
+
+  test("a copy that finished deploying after another deployment landed is released and not mailed", async () => {
+    const logs: Logs = { [repoKey(LIVE.runId)]: settled(1, 19) };
+    const portal = deployment("run_portal_v2", NOW);
+    const { reconcile, deployments, delivered, released, records } = harness(logs, [head(20)], {
+      rotateAfterRuns: 15,
+      whileRedeploying: (live) => live.unshift({ ...portal }),
+    });
+    await reconcile();
+    expect(released).toEqual(["run_live_fresh"]);
+    expect(records.rotation).toBeUndefined();
+    expect(deployments.map((live) => [live.runId, live.cancelling])).toEqual([["run_live_fresh", true], [portal.runId, false], [LIVE.runId, false]]);
+    expect(delivered.map((entry) => entry.address)).toEqual([portal.address]);
+  });
+
+  test("a copy that outlived a failed post-deploy check never overtakes the user's newer deployment", async () => {
+    const logs: Logs = { [repoKey(LIVE.runId)]: settled(1, 19) };
+    const portal = deployment("run_portal_v2", new Date(NOW.getTime() - 1));
+    let clock = NOW;
+    const state = harness(logs, [head(20)], {
+      rotateAfterRuns: 15,
+      now: () => clock,
+      whileRedeploying(live) {
+        // The user's new version lands while the copy probes; the copy's row is inserted later, so it is newer.
+        live.unshift({ ...portal });
+        failNextList = true;
+      },
+    });
+    await state.reconcile();
+    expect(state.logged.some((entry) => entry["msg"] === "triage_rotation_failed")).toBe(true);
+    expect(state.deployments.map((live) => [live.runId, live.cancelling])).toEqual([["run_live_fresh", false], [portal.runId, false], [LIVE.runId, false]]);
+    clock = new Date(NOW.getTime() + DEFAULT_RECONCILE_POLICY.unstartedAfterMs);
+    await state.reconcile();
+    expect(state.released).toEqual(["run_live_fresh"]);
+    expect(state.records.rotation).toBeUndefined();
+    expect(state.delivered.map((entry) => entry.address)).not.toContain(formatRunAddress("run_live_fresh", DOMAIN));
+    await state.reconcile();
+    expect(state.released).toEqual(["run_live_fresh"]);
   });
 
   test("a tenant without a GitHub credential is skipped with a reason", async () => {

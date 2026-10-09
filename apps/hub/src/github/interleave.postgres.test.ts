@@ -20,7 +20,7 @@ const NOW = new Date("2026-10-08T12:00:00Z");
 const LONG_AGO = "2026-10-07T00:00:00.000Z";
 const PACK = { name: checkPackName(REPO), schemaVersion: 1, repo: REPO, checks: [] } as unknown as CheckPack;
 const CONFIG = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true, installationId: 1 }] } };
-const DEPLOYMENT = { runId: "anchor-1", address: "anchor-1@tenant.example" };
+const DEPLOYMENT = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
 const FAILED: PrTriageRow = { number: 8, headSha: "abc123", status: "failed", attempts: 1, error: "run failed", firstSeenAt: LONG_AGO, queuedAt: LONG_AGO, updatedAt: LONG_AGO };
 
 type Deliver = (payload: unknown) => Promise<void>;
@@ -44,7 +44,7 @@ function request(): Request {
 }
 
 async function noRuns(): Promise<ObservedRuns> {
-  return { byRepo: new Map() };
+  return { byRepo: new Map(), runCount: 0 };
 }
 
 function route(store: TriageStateStore, deliver: Deliver) {
@@ -56,7 +56,7 @@ function route(store: TriageStateStore, deliver: Deliver) {
     trustedPortalOrigins: [PORTAL],
     pullHead: async () => "abc123",
     readCheckPack: async () => ({ status: "ok", pack: PACK }),
-    liveDeployment: async () => DEPLOYMENT,
+    liveDeployments: async () => [DEPLOYMENT],
     observeRuns: noRuns,
     store,
     deliver: async (_tenant, _address, payload) => deliver(payload),
@@ -69,7 +69,8 @@ function route(store: TriageStateStore, deliver: Deliver) {
 function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver) {
   return createTriageReconciler({
     tenants: async () => [{ id: TENANT, domain: "tenant.example", config: CONFIG }],
-    liveDeployment: async () => DEPLOYMENT,
+    liveDeployments: async () => [DEPLOYMENT],
+    rotation: { afterRuns: 15, redeploy: async () => ({ status: "skipped", reason: "unused" }), sameSource: async () => false, release: async () => {}, claim: async () => false, clear: async () => {} },
     openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt: LONG_AGO })),
     observeRuns: noRuns,
     store,
