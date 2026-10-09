@@ -79,7 +79,7 @@
 :is(.inbox, .repos) .btn kbd { margin-left: 2px; }
 :is(.inbox, .repos) .btn-primary kbd { background: rgba(255, 255, 255, 0.55); border-color: rgba(0, 0, 0, 0.25); }
 :is(.inbox, .repos) .scroll { flex: 1; min-height: 0; overflow: auto; }
-:is(.inbox, .repos) .lh { padding: 16px 16px 10px; display: grid; gap: 10px; border-bottom: 1px solid var(--rule); }
+:is(.inbox, .repos) .lh { padding: 16px 16px 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--rule); }
 :is(.inbox, .repos) .lh-top { display: flex; align-items: baseline; gap: 10px; }
 :is(.inbox, .repos) .lh-top h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
 :is(.inbox, .repos) .lh-top .n { font: 700 13px var(--mono); }
@@ -98,13 +98,38 @@
 
 /* List head */
 .inbox .lh-top .awaiting { margin-left: auto; font-size: 12px; }
-.inbox .tools { display: flex; gap: 8px; align-items: center; }
-.inbox .search { flex: 1; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
+.inbox .tools { position: relative; display: flex; gap: 8px; align-items: center; }
+.inbox .search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
 .inbox .search input { border: 0; outline: 0; font: 400 13px var(--font); flex: 1; min-width: 0; background: none; color: inherit; }
 .inbox .search:focus-within { border-color: var(--ink); }
 .inbox .seg { display: inline-flex; background: var(--fill); border-radius: var(--r-md); padding: 2px; }
 .inbox .seg button { border: 0; background: none; font: 500 12px var(--font); color: inherit; padding: 5px 9px; border-radius: 7px; cursor: pointer; }
 .inbox .seg button[aria-pressed="true"] { background: var(--white); font-weight: 700; box-shadow: 0 0 0 1px var(--rule); }
+.inbox .tbtn { height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); background: var(--white); font: 600 13px var(--font); color: inherit; cursor: pointer; white-space: nowrap; }
+.inbox .tbtn:hover, .inbox .tbtn[aria-expanded="true"] { background: var(--fill); }
+.inbox .tbtn .n { font: 700 11px var(--mono); background: var(--ink); color: var(--white); border-radius: 8px; padding: 0 5px; }
+.inbox .linkish { background: none; border: 0; padding: 0; font: 600 12px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.inbox .pills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.inbox .pill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 24px; padding: 0 4px 0 9px; border-radius: 12px; background: var(--fill-hover); font: 600 12px var(--font); color: inherit; border: 0; cursor: pointer; }
+.inbox .pill span { font-weight: 400; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox .pill b { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 13px; }
+.inbox .pill:hover b { background: var(--white); }
+
+/* Filter popover: facets on the left, the chosen facet's values on the right */
+.inbox .tools .menu-wrap { position: static; }
+.inbox .pop { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12); display: grid; grid-template-columns: 140px minmax(0, 1fr); overflow: hidden; }
+.inbox .pop .facets { border-right: 1px solid var(--rule); padding: 6px; background: var(--paper); display: grid; align-content: start; gap: 1px; }
+.inbox .pop .facets button { display: flex; justify-content: space-between; width: 100%; border: 0; background: none; padding: 7px 10px; border-radius: var(--r-sm); font: 500 13px var(--font); color: inherit; cursor: pointer; text-align: left; }
+.inbox .pop .facets button.on { background: var(--white); font-weight: 700; box-shadow: 0 0 0 1px var(--rule); }
+.inbox .pop .facets b { font: 700 11px var(--mono); }
+.inbox .pop .vals { padding: 6px; display: grid; align-content: start; gap: 1px; max-height: 320px; overflow: auto; }
+.inbox .pop .vals label { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px; border-radius: var(--r-sm); font-size: 13px; cursor: pointer; }
+.inbox .pop .vals label:hover { background: var(--fill); }
+.inbox .pop .vals .l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox .pop .vals .c { margin-left: auto; font: 400 11px var(--mono); }
+.inbox .pop input[type="checkbox"] { accent-color: var(--ink); width: 15px; height: 15px; min-height: 0; margin: 0; flex: none; }
+.inbox .pop .pfoot { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--rule); font-size: 12px; }
+.inbox .filter-scrim { display: none; }
 
 /* Rows */
 .inbox .groups { padding: 4px 8px 24px; }
@@ -187,6 +212,19 @@
   .inbox { grid-template-columns: minmax(0, 1fr); }
   .inbox.has-selection .panel.list, .inbox:not(.has-selection) .panel.pane { display: none; }
   .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }
+}
+
+/* On a phone search gets its own line and the filter popover is a bottom sheet with the facets as tabs across the top. */
+@media (max-width: 720px) {
+  .inbox .tools { flex-wrap: wrap; }
+  .inbox .search { flex-basis: 100%; }
+  .inbox .filter-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.24); }
+  .inbox .pop { position: fixed; top: auto; bottom: 0; max-height: 80dvh; border-radius: var(--r-lg) var(--r-lg) 0 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .inbox .pop .facets { border-right: 0; border-bottom: 1px solid var(--rule); grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 8px; }
+  .inbox .pop .facets button { justify-content: center; gap: 6px; padding: 9px 4px; }
+  .inbox .pop .vals { max-height: none; padding: 8px; }
+  .inbox .pop .vals label { padding: 11px 10px; font-size: 14px; }
+  .inbox .pop .pfoot { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
 }
 
 /* With nothing selected the list takes the whole width; the pane only appears for a selection. */
