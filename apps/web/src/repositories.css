@@ -1,7 +1,6 @@
 /* Repositories table. Shared panel, head, button and mark rules live in shell.css. */
 .repos { min-width: 0; min-height: 0; padding: 12px 12px 12px 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .repos .panel.rl { container: rl / inline-size; gap: 0; }
-.repos .lh { grid-template-columns: minmax(0, 1fr); }
 .repos .lh-top .sp { flex: 1; }
 .repos .lh-top .btn { align-self: center; }
 .repos .rt { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: auto; }
