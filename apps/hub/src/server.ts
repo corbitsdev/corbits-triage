@@ -41,7 +41,7 @@ import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
 import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
-import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageReconcileIntervalMs } from "./env.js";
+import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
@@ -288,6 +288,7 @@ const reconcileTriage = createTriageReconciler({
   readCheckPack,
   deliver: deliverToDeployment,
   policy: DEFAULT_RECONCILE_POLICY,
+  batchSize: triageBatchSize(env),
   now,
   log: logJson,
 });

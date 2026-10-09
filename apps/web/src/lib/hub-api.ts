@@ -1436,11 +1436,13 @@ function logTime(log: RunLog): string {
   return typeof at === "string" ? at : "";
 }
 
-/** The pull request a pr-triage run was triggered for, from its RunStarted trigger. */
-function triggeredPull(log: RunLog): string | null {
+/** The pull requests a pr-triage run was triggered for, from its RunStarted trigger: one, or several `items` of a catch-up mail. */
+function triggeredPulls(log: RunLog): string[] {
   const started = log.events.find((e) => e.type === "RunStarted");
   const payload = tryJson(obj(obj(started?.body).trigger).payload);
-  return payload.kind === "pr" && typeof payload.repo === "string" && typeof payload.prNumber === "number" ? `${payload.repo}#${payload.prNumber}` : null;
+  if (payload.kind !== "pr" || typeof payload.repo !== "string") return [];
+  const items: unknown[] = Array.isArray(payload.items) ? payload.items : [payload];
+  return items.flatMap((item) => (typeof obj(item).prNumber === "number" ? [`${payload.repo}#${obj(item).prNumber}`] : []));
 }
 
 // Hub run statuses, in both the lifecycle and the run-view vocabulary, after which a run makes no progress.
@@ -1479,9 +1481,11 @@ function runFailure(log: RunLog, settled: SettledRuns, now: Date): RunFailure | 
 function runningPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, settled: SettledRuns, now: Date): Set<string> {
   const running = new Set<string>();
   for (const { log, verdicts } of logs) {
-    const pull = triggeredPull(log);
-    if (pull && !isTerminalRunEvents(log.events) && runFailure(log, settled, now) === null) running.add(pull);
-    else if (pull) running.delete(pull);
+    const live = !isTerminalRunEvents(log.events) && runFailure(log, settled, now) === null;
+    for (const pull of triggeredPulls(log)) {
+      if (live) running.add(pull);
+      else running.delete(pull);
+    }
     for (const v of verdicts) running.delete(`${v.repo}#${v.number}`);
   }
   return running;
@@ -1491,9 +1495,8 @@ function runningPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, settled
 function failedPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, settled: SettledRuns, now: Date): Map<string, RunFailure> {
   const failed = new Map<string, RunFailure>();
   for (const { log, verdicts } of logs) {
-    const pull = triggeredPull(log);
-    if (pull) {
-      const failure = runFailure(log, settled, now);
+    const failure = runFailure(log, settled, now);
+    for (const pull of triggeredPulls(log)) {
       if (failure === null) failed.delete(pull);
       else failed.set(pull, failure);
     }
@@ -1535,8 +1538,9 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
     for (const v of verdicts) {
       const key = `${v.repo}#${v.number}`;
       const r = v.render;
-      const triggered = payload.repo === v.repo && payload.prNumber === v.number;
-      const sha = payload.headSha ?? payload.sha;
+      const named = Array.isArray(payload.items) ? payload.items.map(obj).find((item) => item.prNumber === v.number) : payload;
+      const triggered = payload.repo === v.repo && named?.prNumber === v.number;
+      const sha = named?.headSha ?? named?.sha;
       items.set(key, {
         key,
         repo: v.repo,

@@ -206,6 +206,16 @@ describe("projectQueue running pull requests", () => {
     expect(projectQueue([rerun, duplicateLog], [], [], openPulls, NOW).find((item) => item.key === "acme/widgets#8")?.running).toBe(false);
   });
 
+  test("a batch catch-up run marks each named pull running, and its verdicts carry their head sha", () => {
+    const items = [9, 10].map((n) => ({ prNumber: n, headSha: `sha${n}` }));
+    const started = { seq: 0, type: "RunStarted", body: { at: "2026-10-01T01:59:00.000Z", trigger: { payload: JSON.stringify({ kind: "pr", repo: "acme/widgets", items }) } } };
+    const running: RunLog = { runId: "run-batch", anchorRunId: "pr", events: [started] };
+    expect(projectQueue([running], [], [], openPulls, NOW).filter((item) => item.running).map((item) => item.number)).toEqual([9, 10]);
+    const render = { seq: 1, type: "StepCompleted", body: { stepId: "render", output: { ref: `inline:${JSON.stringify({ items: [{ repo: "acme/widgets", number: 9, headSha: "sha9", state: "ready-monitoring" }] })}` } } };
+    const rendered: RunLog = { runId: "run-batch", anchorRunId: "pr", events: [started, render] };
+    expect(projectQueue([rendered], [], [], undefined, NOW).find((item) => item.number === 9)?.sha).toBe("sha9");
+  });
+
   test("a pull request whose latest run ended without a verdict carries that failure until a newer run starts", () => {
     const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
     const cancelled: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };

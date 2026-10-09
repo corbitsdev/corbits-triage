@@ -24,6 +24,8 @@ export type TriageReconcilerDeps = {
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   policy: ReconcilePolicy;
+  /** Heads one mail carries at most. */
+  batchSize: number;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -126,24 +128,22 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     const claimed = await claim(pass.tenantId, name, repo.stored, plan);
     if (claimed === undefined) return undefined;
-    let failure: Failure | undefined;
-    const restored: PrTriageRow[] = [];
-    for (const queued of claimed.enqueue) {
-      const headSha = claimed.rows.find((row) => row.number === queued.number)!.headSha;
-      if (failure !== undefined) {
-        restored.push(queued.undelivered);
-        continue;
-      }
+    // One mail carries up to `batchSize` heads: each mail costs the deployment a fixed set of commits, whatever it carries.
+    for (let from = 0; from < claimed.enqueue.length; from += deps.batchSize) {
+      const batch = claimed.enqueue.slice(from, from + deps.batchSize);
+      const items = batch.map((queued) => ({ prNumber: queued.number, headSha: claimed.rows.find((row) => row.number === queued.number)!.headSha }));
       try {
-        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo.pack, { prNumber: queued.number, headSha }));
-        deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha, reason: queued.reason });
+        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo.pack, { items }));
       } catch (err) {
-        failure = { repo: name, error: err };
-        restored.push({ ...queued.undelivered, error: `delivery failed: ${String(err)}` });
+        const restored = claimed.enqueue.slice(from).map((queued) => ({ ...queued.undelivered, error: `delivery failed: ${String(err)}` }));
+        await restoreRows(pass.tenantId, name, claimed, restored);
+        return { repo: name, error: err };
+      }
+      for (const [i, queued] of batch.entries()) {
+        deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha: items[i]!.headSha, reason: queued.reason });
       }
     }
-    if (restored.length > 0) await restoreRows(pass.tenantId, name, claimed, restored);
-    return failure;
+    return undefined;
   }
 
   /** A save refused because someone else wrote first is retried once on their rows, keeping the newer row of each head; refused again, it waits for the next pass. */
