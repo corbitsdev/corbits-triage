@@ -1,19 +1,53 @@
-// Human-initiated pull request writes (comment, review, merge, close). The
-// operator's click is the approval, so these run synchronously in the hub
-// against the tenant's vaulted GitHub App credential instead of as workflows.
-import { type } from "arktype";
-import { addLabels, createIssueComment, createReview, mergePr, mirror, upsertTriageComment, type GithubFetch } from "@corbits/github-tool/github";
+// Human-initiated pull request writes. The operator's click is the approval, so
+// these run synchronously in the hub against the tenant's vaulted GitHub App
+// credential instead of as workflows.
+import { type, type Traversal } from "arktype";
+import {
+  addAssignees,
+  addLabels,
+  codeownersForPr,
+  createIssueComment,
+  createReview,
+  mergePr,
+  mirror,
+  requestReviewers,
+  upsertTriageComment,
+  type GithubFetch,
+} from "@corbits/github-tool/github";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
-const VERB = { comment: "comment on", reply: "reply on", labels: "label", review: "review", merge: "merge", close: "close" } as const;
+const VERB = {
+  comment: "comment on",
+  reply: "reply on",
+  labels: "label",
+  assign: "assign",
+  "request-review": "request reviewers on",
+  review: "review",
+  merge: "merge",
+  close: "close",
+} as const;
+
+const handle = type("string.trim").to("string > 0");
+
+function namesReviewers(body: { codeowners?: true; reviewers?: string[]; teamReviewers?: string[] }, ctx: Traversal) {
+  const named = (body.reviewers?.length ?? 0) + (body.teamReviewers?.length ?? 0);
+  return (body.codeowners ? named === 0 : named > 0) || ctx.reject("either codeowners or at least one reviewer or team");
+}
 
 const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" }).and(
   type({ action: "'comment'", body: "string > 0" })
     .or({ action: "'reply'", body: "string > 0" })
     .or({ action: "'labels'", labels: "string[] > 0" })
+    .or({ action: "'assign'", assignees: handle.array().atLeastLength(1) })
+    .or(type({
+      action: "'request-review'",
+      "codeowners?": "true",
+      "reviewers?": handle.array(),
+      "teamReviewers?": handle.array(),
+    }).narrow(namesReviewers))
     .or({ action: "'review'", event: "'APPROVE' | 'REQUEST_CHANGES'", body: "string" })
     .or({ action: "'merge'" })
     .or({ action: "'close'", labels: "string[]", comment: "string" }),
@@ -28,6 +62,14 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
       return upsertTriageComment(gh, { repo, number, body: body.body });
     case "labels":
       return addLabels(gh, { repo, number, labels: body.labels });
+    case "assign":
+      return addAssignees(gh, { repo, number, assignees: body.assignees });
+    case "request-review": {
+      if (!body.codeowners) return requestReviewers(gh, { repo, number, reviewers: body.reviewers, teamReviewers: body.teamReviewers });
+      const owners = await codeownersForPr(gh, repo, number);
+      if (owners.users.length + owners.teams.length === 0) return failure(400, "no_codeowners", "no code owners for the changed files");
+      return requestReviewers(gh, { repo, number, reviewers: owners.users, teamReviewers: owners.teams });
+    }
     case "review":
       return createReview(gh, { repo, number, body: body.body, event: body.event });
     case "merge":
@@ -60,6 +102,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
     try {
       const { repo, number } = body;
       const result = await runAction(gh, body);
+      if (result instanceof Response) return result;
       console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number }));
       return Response.json(result);
     } catch (err) {

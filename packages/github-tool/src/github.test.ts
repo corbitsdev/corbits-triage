@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { githubWrite } from "./sidecar-bundle.js";
-import { listOpenPrs, mergePr, mirror, upsertTriageComment, type GithubFetch } from "./github.js";
+import {
+  codeownersFor,
+  codeownersForPr,
+  listOpenPrs,
+  mergePr,
+  mirror,
+  parseCodeowners,
+  upsertTriageComment,
+  type GithubFetch,
+} from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
 
@@ -102,6 +111,8 @@ describe("github write tool approval", () => {
       { name: "github_mirror_auto" },
       { name: "github_create_review", approval: "ask" },
       { name: "github_create_issue_comment", approval: "ask" },
+      { name: "github_add_assignees", approval: "ask" },
+      { name: "github_request_reviewers", approval: "ask" },
       { name: "github_merge_pr", approval: "ask" },
     ]);
   });
@@ -153,5 +164,43 @@ describe("listOpenPrs", () => {
     const { gh } = recorder(() => [{ number: 7, title: "T", head: { sha: "s" } }]);
     const [pr] = await listOpenPrs(gh, "acme/widgets");
     expect(pr?.author).toBeNull();
+  });
+});
+
+describe("codeownersFor", () => {
+  const rules = parseCodeowners(`
+# default owners
+*            @ada
+/apps/       @acme/web   # the apps
+*.sql        @grace
+docs/*       @linus
+/apps/hub/legacy.ts
+!README.md   @mallory
+[Rr]EADME.md @mallory
+`);
+
+  test("the last matching rule wins per path, splitting users from team slugs", () => {
+    expect(codeownersFor(rules, ["apps/hub/src/server.ts"])).toEqual({ users: [], teams: ["web"] });
+    expect(codeownersFor(rules, ["apps/hub/db/001.sql", "docs/intro.md"])).toEqual({ users: ["grace", "linus"], teams: [] });
+  });
+
+  test("a trailing * stays one level deep, and an ownerless last rule leaves no owners", () => {
+    expect(codeownersFor(rules, ["docs/guides/setup.md"])).toEqual({ users: ["ada"], teams: [] });
+    expect(codeownersFor(rules, ["apps/hub/legacy.ts"])).toEqual({ users: [], teams: [] });
+    expect(codeownersFor([], ["README.md"])).toEqual({ users: [], teams: [] });
+  });
+
+  test("negations and character ranges are ignored as GitHub does", () => {
+    expect(codeownersFor(rules, ["README.md", "LICENSE.md"])).toEqual({ users: ["ada"], teams: [] });
+  });
+
+  test("a pull request's owners come from its base branch and exclude its author", async () => {
+    const { gh, requests } = recorder(function respond(path) {
+      if (path.endsWith("/pulls/8")) return { base: { ref: "main" }, user: { login: "ada" } };
+      if (path.includes("/contents/")) return new Response("* @ada @grace @acme/core");
+      return [{ filename: "src/index.ts" }];
+    });
+    expect(await codeownersForPr(gh, "acme/widgets", 8)).toEqual({ users: ["grace"], teams: ["core"] });
+    expect(requests[1]?.path).toBe("/repos/acme/widgets/contents/.github/CODEOWNERS?ref=main");
   });
 });
