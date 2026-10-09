@@ -116,6 +116,14 @@ describe("canRun", () => {
     expect(canRun("approve", gate({ running: true }))).toBe(false);
     expect(canRun("merge", gate({ state: "ready", mergeable: null }))).toBe(false);
   });
+
+  test("posting the reply is gated by the same blockers as the primary button", () => {
+    expect(canRun("reply", gate({ comment: "Thanks" }))).toBe(true);
+    expect(canRun("reply", gate({ comment: "Thanks", number: null }))).toBe(false);
+    expect(canRun("reply", gate({ comment: "Thanks", running: true }))).toBe(false);
+    expect(canRun("reply", gate({ comment: "Thanks" }, undefined, { readOnly: true }))).toBe(false);
+    expect(canRun("reply", gate({ comment: "Thanks" }, undefined, { busy: true }))).toBe(false);
+  });
 });
 
 describe("runPaneAction", () => {
