@@ -8,6 +8,7 @@ import { usePullRequestItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
+import { errorText } from "../lib/error-text.ts";
 import { paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import {
@@ -91,10 +92,6 @@ function DiffViewer({ file }: { file: PullFile | undefined }) {
       </div>
     </article>
   );
-}
-
-function errorText(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function IssueList({ issues, pending, error }: { issues: GithubPullDetail["issues"]; pending: boolean; error: unknown }) {
@@ -285,8 +282,8 @@ function RecommendedComment({ item, posted, onPosted, onDismiss }: {
     setBusy(true);
     try {
       setError("");
-      await writeGithub({ action: "reply", repo: item.repo, number: item.number, body });
-      if (item.labels.length > 0) await writeGithub({ action: "labels", repo: item.repo, number: item.number, labels: item.labels });
+      await writeGithub({ action: "reply", repo: item.repo, number: item.number, body }, "now");
+      if (item.labels.length > 0) await writeGithub({ action: "labels", repo: item.repo, number: item.number, labels: item.labels }, "now");
       onPosted();
       await queryClient.invalidateQueries({ queryKey: ["github-pull"] });
     } catch (cause) {
@@ -391,7 +388,7 @@ export default function PRDetail() {
     try {
       setError("");
       if (kind === "merge") {
-        await writeGithub({ action: "merge", repo: item.repo, number: item.number });
+        await writeGithub({ action: "merge", repo: item.repo, number: item.number }, "now");
       } else {
         await writeGithub({
           action: "close",
@@ -399,7 +396,7 @@ export default function PRDetail() {
           number: item.number,
           labels: item.labels,
           comment: item.comment ?? "",
-        });
+        }, "now");
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -419,7 +416,7 @@ export default function PRDetail() {
     try {
       setError("");
       if (composer.kind === "comment") {
-        await writeGithub({ action: "comment", repo: item.repo, number: item.number, body });
+        await writeGithub({ action: "comment", repo: item.repo, number: item.number, body }, "now");
       } else {
         await writeGithub({
           action: "review",
@@ -427,7 +424,7 @@ export default function PRDetail() {
           number: item.number,
           event: composer.kind === "approve" ? "APPROVE" : "REQUEST_CHANGES",
           body,
-        });
+        }, "now");
       }
       setComposer(null);
     } catch (cause) {

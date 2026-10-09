@@ -207,6 +207,26 @@
 .inbox .bar .btn { flex: none; white-space: nowrap; }
 .inbox .bar .menu.up { top: calc(100% + 6px); bottom: auto; right: 0; }
 .inbox .pane-back { display: none; }
+.inbox .pane:focus { outline: none; }
+
+/* Undo toast and the close-as-duplicate confirm */
+.inbox .toasts { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; justify-items: center; }
+.inbox .toast { position: relative; display: flex; align-items: center; gap: 14px; padding: 9px 9px 9px 16px; background: var(--ink); color: var(--white); border-radius: var(--r-md); font-size: 14px; white-space: nowrap; }
+.inbox .toast.note { padding: 9px 16px; max-width: min(560px, calc(100vw - 32px)); white-space: normal; }
+.inbox .toast button { flex: none; display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid rgba(255, 255, 255, 0.4); color: var(--white); border-radius: var(--r-sm); padding: 3px 10px; font: 700 13px var(--font); cursor: pointer; }
+.inbox .toast button:hover { background: rgba(255, 255, 255, 0.12); }
+.inbox .toast button:focus-visible { outline: 2px solid var(--white); outline-offset: 2px; }
+.inbox .toast kbd { background: none; color: var(--white); border-color: rgba(255, 255, 255, 0.4); }
+.inbox .toast .drain { position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; background: rgba(255, 255, 255, 0.25); border-radius: 1px; overflow: hidden; }
+.inbox .toast .drain i { display: block; height: 100%; background: var(--white); animation: drain linear forwards; }
+@keyframes drain { from { width: 100%; } to { width: 0; } }
+@media (prefers-reduced-motion: reduce) { .inbox .toast .drain i { animation: none; } }
+.inbox .dialog { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 22px; border: 1px solid var(--rule-strong); border-radius: var(--r-lg); background: var(--white); color: var(--ink); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18); }
+.inbox .dialog[open] { display: grid; gap: 14px; }
+.inbox .dialog::backdrop { background: rgba(0, 0, 0, 0.18); }
+.inbox .dialog h2 { margin: 0; font-size: 18px; }
+.inbox .dialog p { margin: 0; font-size: 14px; }
+.inbox .dialog .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 @media (max-width: 960px) {
   .inbox { grid-template-columns: minmax(0, 1fr); }
@@ -214,7 +234,7 @@
   .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }
 }
 
-/* On a phone search gets its own line and the filter popover is a bottom sheet with the facets as tabs across the top. */
+/* On a phone search gets its own line, the filter popover is a bottom sheet with the facets as tabs across the top, and toasts span the width above the mobile nav. */
 @media (max-width: 720px) {
   .inbox .tools { flex-wrap: wrap; }
   .inbox .search { flex-basis: 100%; }
@@ -225,6 +245,9 @@
   .inbox .pop .vals { max-height: none; padding: 8px; }
   .inbox .pop .vals label { padding: 11px 10px; font-size: 14px; }
   .inbox .pop .pfoot { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .inbox .toasts { left: 16px; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); transform: none; justify-items: stretch; }
+  .inbox .toast { white-space: normal; }
+  .inbox .toast button { margin-left: auto; }
 }
 
 /* With nothing selected the list takes the whole width; the pane only appears for a selection. */

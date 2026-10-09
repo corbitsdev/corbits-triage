@@ -4,7 +4,7 @@ import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
 import { isTerminalRunEvents } from "@intx/hub-client";
-import { ApiError, createHubTransport } from "./hub-transport.ts";
+import { ApiError, createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
 import {
   configureGithubApp,
   hasActiveGithubCredential,
@@ -40,6 +40,9 @@ import { hasDecisionModelCredential } from "./decision-models.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
 import { checkPackName, type RepoPolicy } from "@corbits/triage-contracts";
 
+/** `now` confirms the write with a toast; `held` writes were announced by the inbox's Undo toast; `leaving` ones are held writes sent as the page goes away, so they must outlive it. */
+type GithubDelivery = "now" | "held" | "leaving";
+
 interface PortalContextValue {
   configured: boolean;
   loading: boolean;
@@ -57,7 +60,7 @@ interface PortalContextValue {
   runBacklog: (repo: string, message?: string) => Promise<void>;
   triagePullRequest: (repo: string, number: number) => Promise<void>;
   closeDuplicate: (item: PrItem) => Promise<void>;
-  writeGithub: (input: PrGithubWriteInput) => Promise<PrGithubWriteResult>;
+  writeGithub: (input: PrGithubWriteInput, delivery: GithubDelivery) => Promise<PrGithubWriteResult>;
   decide: (approvalId: string, decision: "once" | "always" | "deny") => Promise<void>;
   replaceSecret: (credentialId: string, secret: string) => Promise<void>;
   revoke: (credentialId: string) => Promise<void>;
@@ -300,10 +303,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   );
 
   const writeGithub = useCallback(
-    async function writeGithub(input: PrGithubWriteInput) {
+    async function writeGithub(input: PrGithubWriteInput, delivery: GithubDelivery) {
       const current = requireSnapshot();
-      const result = await githubPrAction(createHubTransport(), current.workspace.tenantId, input);
-      notify(`${GITHUB_ACTION_DONE[input.action]} ${input.repo}#${input.number}.`);
+      const transport = delivery === "leaving" ? createLeavingHubTransport() : createHubTransport();
+      const result = await githubPrAction(transport, current.workspace.tenantId, input);
+      if (delivery === "now") notify(`${GITHUB_ACTION_DONE[input.action]} ${input.repo}#${input.number}.`);
       refresh();
       return result;
     },
