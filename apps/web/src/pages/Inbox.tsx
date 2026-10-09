@@ -3,6 +3,9 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "reac
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
+import { errorText } from "../lib/error-text.ts";
+import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
+import { useHeldInbox } from "../lib/held-inbox.tsx";
 import {
   COMPOSER_COPY,
   canRun,
@@ -10,18 +13,23 @@ import {
   draftText,
   hasNumber,
   isComposerKind,
+  needsConfirm,
   openComposer,
   paneActions,
   paneFacts,
+  paneWrite,
   primaryButtonLabel,
   replyDraft,
-  runPaneAction,
   titleText,
+  triageStartedText,
   verdictHeadline,
   type Composer,
-  type MenuEntry,
+  type NumberedItem,
+  type PaneDraft,
   type PaneKind,
+  type PaneWrite,
   type ReplyDraft,
+  type WriteKind,
 } from "../lib/inbox-pane.ts";
 import {
   INBOX_GROUPINGS,
@@ -29,6 +37,7 @@ import {
   ageText,
   awaitingText,
   groupInbox,
+  hasDraftComment,
   inboxAction,
   inboxHref,
   inboxStatus,
@@ -44,7 +53,7 @@ import {
   type InboxPile,
 } from "../lib/inbox-view.ts";
 import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesFilters, type InboxFilters } from "../lib/inbox-filter.ts";
-import { useMarkReplySent, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
+import { useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageReadyRepos } from "../lib/repo-rows.ts";
@@ -223,19 +232,58 @@ function ComposerForm({ composer, busy, readOnly, onChange, onCancel, onSubmit }
   );
 }
 
-function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
-  const { snapshot, writeGithub, triagePullRequest, readOnly } = usePortal();
+/** Shortcuts stay out of the way while a modal dialog, such as the filter popover, asks something. */
+function modalOpen(): boolean {
+  return document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]') !== null;
+}
+
+function ConfirmDuplicate({ item, onCancel, onConfirm }: { item: NumberedItem; onCancel: () => void; onConfirm: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(function openAsModal() {
+    dialogRef.current?.showModal();
+    confirmRef.current?.focus();
+  }, []);
+
+  return (
+    <dialog ref={dialogRef} className="dialog" aria-labelledby="confirm-duplicate" onClose={onCancel}>
+      <h2 id="confirm-duplicate">Close #{item.number} as a duplicate?</h2>
+      <p>
+        Triage {hasDraftComment(item.comment) ? "posts the suggested reply, " : null}
+        {item.labels.length > 0 ? <>adds {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)} and </> : null}
+        closes it on GitHub. You can reopen it there.
+      </p>
+      <div className="acts">
+        <button type="button" className="btn btn-quiet" onClick={() => dialogRef.current?.close()}>Cancel</button>
+        <button ref={confirmRef} type="button" className="btn btn-primary" onClick={onConfirm}>Close as duplicate <kbd aria-hidden="true">⏎</kbd></button>
+      </div>
+    </dialog>
+  );
+}
+
+type PaneProps = {
+  item: PrItem;
+  restored: PaneDraft | null;
+  sectionRef: RefObject<HTMLElement | null>;
+  onHold: (item: NumberedItem, write: PaneWrite, draft: PaneDraft) => void;
+  onBack: () => void;
+};
+
+function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
+  const { snapshot, triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
-  const replySent = useMarkReplySent();
-  const [reply, setReply] = useState(draftText(item));
-  const [editing, setEditing] = useState(false);
-  const [composer, setComposer] = useState<Composer | null>(null);
+  const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
+  const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
+  const [composer, setComposer] = useState<Composer | null>(restored === null ? null : restored.composer);
+  const [confirming, setConfirming] = useState(false);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
+  const verdict = useRef({ runId: item.runId, comment: item.comment });
   const facts = paneFacts(item, pull.data);
   const gate = { item, facts, readOnly, busy };
   const { primary, more } = paneActions(gate);
@@ -245,8 +293,10 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const floor = snapshot?.config?.confidenceFloor;
   const detailFiles = pull.data === undefined ? "" : ` · ${filesText(pull.data.pr.changedFiles)}`;
 
-  // A new verdict replaces the draft and the last note; an edit made while a run is merely in flight stays.
-  useEffect(function restartDraftOnNewVerdict() {
+  // A new verdict replaces the suggested reply and the last note; composer text and an edit made while a run is merely in flight stay.
+  useEffect(function restartReplyOnNewVerdict() {
+    if (verdict.current.runId === item.runId && verdict.current.comment === item.comment) return;
+    verdict.current = { runId: item.runId, comment: item.comment };
     setReply(draftText(item));
     setEditing(false);
     setDone(null);
@@ -265,64 +315,64 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     if (editing && replyRef.current) replyRef.current.focus();
   }, [editing]);
 
-  async function run(kind: PaneKind) {
+  function hold(kind: WriteKind, body: string) {
+    if (!hasNumber(item)) return;
+    let write: PaneWrite;
+    try {
+      write = paneWrite(kind, item, body);
+    } catch (cause) {
+      setError(errorText(cause));
+      return;
+    }
+    onHold(item, write, { reply, composer });
+  }
+
+  async function startTriage(pr: NumberedItem) {
+    setBusy(true);
+    try {
+      setError(null);
+      await triagePullRequest(pr.repo, pr.number);
+      setDone(triageStartedText(pr.number));
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function run(kind: PaneKind) {
     if (!hasNumber(item) || !canRun(kind, gate)) return;
     setMenu(false);
     if (isComposerKind(kind)) {
       setComposer(openComposer(composer, kind));
       return;
     }
-    if (kind === "reply") setEditing(false);
-    setBusy(true);
-    try {
-      setError(null);
-      setDone(await runPaneAction(kind, item, draft, { write: writeGithub, triage: triagePullRequest, replySent }));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onComposerSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!hasNumber(item) || composer === null || !canRun(composer.kind, gate)) return;
-    if (!composer.body.trim()) {
-      setError("The comment must not be empty.");
+    if (kind === "triage") {
+      void startTriage(item);
       return;
     }
-    const { repo, number } = item;
-    setBusy(true);
-    try {
-      setError(null);
-      if (composer.kind === "comment") {
-        await writeGithub({ action: "comment", repo, number, body: composer.body });
-      } else {
-        await writeGithub({ action: "review", repo, number, event: "REQUEST_CHANGES", body: composer.body });
-      }
-      setComposer(null);
-      setDone(`Posted to GitHub on #${number}.`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
+    if (needsConfirm(kind, item)) {
+      setConfirming(true);
+      return;
     }
+    hold(kind, reply);
   }
 
-  function runFromMenu(entry: MenuEntry) {
-    if (entry.confirm === null || window.confirm(entry.confirm)) void run(entry.kind);
+  function onComposerSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (composer !== null && canRun(composer.kind, gate)) hold(composer.kind, composer.body);
   }
 
   function onReplyKey(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft !== null) void run("reply");
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft !== null) run("reply");
   }
 
   useEffect(function paneShortcuts() {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.metaKey || event.ctrlKey || event.altKey || isInteractiveShortcutTarget(event.target)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.repeat || modalOpen() || isInteractiveShortcutTarget(event.target)) return;
       if (event.key === "a" && primary !== null) {
         event.preventDefault();
-        void run(primary.kind);
+        run(primary.kind);
       }
       if (event.key === "e" && replyRef.current) {
         event.preventDefault();
@@ -334,11 +384,11 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   });
 
   return (
-    <section className="panel pane" aria-label="Selected pull request">
+    <section ref={sectionRef} className="panel pane" aria-label="Selected pull request" tabIndex={-1}>
       <button type="button" className="btn btn-quiet btn-sm pane-back" onClick={onBack}>Back to inbox</button>
       <div className="bar">
         {primary === null ? null : (
-          <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => void run(primary.kind)}>
+          <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => run(primary.kind)}>
             {primaryButtonLabel(primary, draft)} <kbd>a</kbd>
           </button>
         )}
@@ -348,7 +398,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
           {menu ? (
             <div className="menu up" role="menu">
               {more.map((entry) => (
-                <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => runFromMenu(entry)}>{entry.label}</button>
+                <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => run(entry.kind)}>{entry.label}</button>
               ))}
             </div>
           ) : null}
@@ -391,7 +441,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
               replyRef={replyRef}
               onChange={setReply}
               onKeyDown={onReplyKey}
-              onPost={() => void run("reply")}
+              onPost={() => run("reply")}
               onEdit={() => setEditing(true)}
               onCancel={() => setEditing(false)}
             />
@@ -399,6 +449,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
           {composer === null ? null : (
             <ComposerForm composer={composer} busy={busy} readOnly={readOnly} onChange={setComposer} onCancel={() => setComposer(null)} onSubmit={onComposerSubmit} />
           )}
+          {confirming && hasNumber(item) ? <ConfirmDuplicate item={item} onCancel={() => setConfirming(false)} onConfirm={() => hold("close", reply)} /> : null}
           {error === null ? null : <p role="alert" className="error">{error}</p>}
           {done === null ? null : <p role="status" className="note">{done}</p>}
         </div>
@@ -421,12 +472,38 @@ function EmptyList({ loading, denied, noRepos, filtered, onClear }: EmptyListPro
   return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
 }
 
+function Outcome({ outcome }: { outcome: Notices["outcome"] }) {
+  if (outcome === null) return null;
+  if (outcome.result === "sent") return <span key={outcome.id} className="sr-only">{outcome.message}</span>;
+  return <div key={outcome.id} className="toast note">{outcome.message}</div>;
+}
+
+/** One polite live region: the held action with its Undo, then what really happened once it was sent. */
+function Toasts({ notices, onUndo }: { notices: Notices; onUndo: () => void }) {
+  const { held, outcome } = notices;
+  return (
+    <div className="toasts" role="status" aria-live="polite">
+      <Outcome outcome={outcome} />
+      {held === null ? null : (
+        <div key={held.id} className="toast">
+          <span>{held.message}</span>
+          <button type="button" aria-keyshortcuts="u" onClick={onUndo}>Undo <kbd aria-hidden="true">u</kbd></button>
+          <span className="drain" aria-hidden="true"><i style={{ animationDuration: `${HOLD_MS}ms` }} /></span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Inbox() {
   const params = useParams();
   const navigate = useNavigate();
   const { search } = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { snapshot } = usePortal();
+  const held = useHeldInbox();
+  const focusOnArrival = useRef<string | null | undefined>(undefined);
+  const sectionRef = useRef<HTMLElement>(null);
   const items = useQueueItems();
   const loading = useQueueLoading();
   const { denied } = useRunLogs();
@@ -457,7 +534,7 @@ export default function Inbox() {
 
   useEffect(function shortcuts() {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.metaKey || event.ctrlKey || event.altKey || isInteractiveShortcutTarget(event.target)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || modalOpen() || isInteractiveShortcutTarget(event.target)) return;
       if (event.key === "/") {
         event.preventDefault();
         searchRef.current?.focus();
@@ -465,6 +542,10 @@ export default function Inbox() {
       }
       if (event.key === "Enter") {
         paneRef.current?.focus();
+        return;
+      }
+      if (event.key === "u") {
+        if (!event.repeat && held.undo()) event.preventDefault();
         return;
       }
       const digit = INBOX_GROUPINGS[Number(event.key) - 1];
@@ -480,7 +561,40 @@ export default function Inbox() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [flat, navigate, selected, search]);
+  }, [flat, held.undo, navigate, selected, search]);
+
+  useEffect(function sendHeldWhenLeaving() {
+    return held.enter();
+  }, [held.enter]);
+
+  useEffect(function focusAfterAutoAdvance() {
+    const target = focusOnArrival.current;
+    if (target === undefined || target !== (selected?.key ?? null)) return;
+    focusOnArrival.current = undefined;
+    (selected ? sectionRef.current : paneRef.current)?.focus();
+  }, [selected]);
+
+  /** Focus follows the selection once it lands, so the keyboard stays in the pane after an action or Undo. */
+  function moveTo(item: PrItem | undefined) {
+    focusOnArrival.current = item === undefined ? null : item.key;
+    navigate({ pathname: item === undefined ? "/inbox" : inboxHref(item), search });
+  }
+
+  function holdAction(item: NumberedItem, write: PaneWrite, draft: PaneDraft) {
+    const index = flat.findIndex((row) => row.key === item.key);
+    const next = flat[index + 1] ?? flat[index - 1];
+    moveTo(next);
+    held.hold(item, write, draft, function backToItem() {
+      moveTo(item);
+    });
+  }
+
+  const restoredDraft = selected === undefined ? undefined : held.restored[selected.key];
+  const paneDraft = restoredDraft !== undefined && restoredDraft.runId === selected?.runId ? restoredDraft.draft : null;
+
+  useEffect(function forgetRestoredOnceShown() {
+    if (selected !== undefined && Object.hasOwn(held.restored, selected.key)) held.forgetRestored(selected.key);
+  }, [held.forgetRestored, held.restored, selected]);
 
   useEffect(function keepSelectionVisible() {
     if (!selected) return;
@@ -518,11 +632,21 @@ export default function Inbox() {
         </div>
         <footer className="list-foot"><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>a</kbd> do suggested</span><span><kbd>/</kbd> search</span></footer>
       </section>
-      {selected ? <Pane key={selected.key} item={selected} onBack={() => navigate({ pathname: "/inbox", search })} /> : (
+      {selected ? (
+        <Pane
+          key={selected.key}
+          item={selected}
+          restored={paneDraft}
+          sectionRef={sectionRef}
+          onHold={holdAction}
+          onBack={() => navigate({ pathname: "/inbox", search })}
+        />
+      ) : (
         <section className="panel pane" aria-label="Selected pull request">
           {loading ? null : <div className="pane-empty">Select a pull request.</div>}
         </section>
       )}
+      <Toasts notices={held.notices} onUndo={() => held.undo()} />
     </div>
   );
 }

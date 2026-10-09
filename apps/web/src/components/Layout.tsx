@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { inboxAction, initialsOf } from "../lib/inbox-view.ts";
+import { useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { useQueueItems } from "../lib/open-pulls.ts";
 import { useSession } from "../lib/session.tsx";
 import { GearIcon, InboxIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function UserBlock() {
-  const { session, signOut } = useSession();
+  const { session } = useSession();
+  const signOut = useSignOutAfterSending();
   const location = useLocation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
