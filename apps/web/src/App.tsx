@@ -4,7 +4,7 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import { del, get, set } from "idb-keyval";
 import { Toaster } from "sonner";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { isFinishedRunLogQuery, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { SessionProvider, useSession } from "./lib/session.tsx";
 import { DeniedNotice } from "./lib/denied.tsx";
@@ -18,17 +18,10 @@ import { Welcome } from "./pages/Welcome.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
 import Repositories from "./pages/Repositories.tsx";
-import RepoDetail from "./pages/RepoDetail.tsx";
 import Settings from "./pages/Settings.tsx";
 
 function InboxRedirect() {
   return <Navigate to="/inbox" replace />;
-}
-
-/** Keyed by repository and tab so a draft, its loaded artifact and any error never carry over between them. */
-function RepoDetailRoute() {
-  const params = useParams();
-  return <RepoDetail key={[params.id, params.tab].filter(Boolean).join("/")} />;
 }
 
 function NotConfigured() {
@@ -137,9 +130,7 @@ function Gate() {
         <Route path="/approvals" element={<InboxRedirect />} />
         <Route path="/audit" element={<InboxRedirect />} />
         <Route path="/runs/*" element={<InboxRedirect />} />
-        <Route path="/repositories" element={<Repositories />} />
-        <Route path="/repositories/:id" element={<RepoDetailRoute />} />
-        <Route path="/repositories/:id/:tab" element={<RepoDetailRoute />} />
+        <Route path="/repositories/:owner?/:repo?" element={<Repositories />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/:tab" element={<Settings />} />
         <Route path="/" element={<InboxRedirect />} />

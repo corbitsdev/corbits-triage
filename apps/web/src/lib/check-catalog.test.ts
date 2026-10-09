@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { checkPackFromDraft, draftFromCheckPack, emptyDraft } from "../lib/check-catalog.ts";
+import { checkPackFromDraft, draftFromCheckPack, emptyDraft } from "./check-catalog.ts";
 
 describe("draft pack conversion", () => {
   test("Use recommended round-trips to recommendedPack", () => {

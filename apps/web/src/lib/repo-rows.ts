@@ -69,7 +69,7 @@ export function repoRows(
     const error = pullsError?.message ?? errors.get(repo.name);
     return {
       name: repo.name,
-      href: `/repositories/${encodeURIComponent(repo.name)}${needsSetup ? "/setup" : ""}`,
+      href: `/repositories/${repo.name}`,
       needsSetup,
       posting: policy.cleanupMode === "automated" ? "Post automatically" : "Ask me",
       pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), triageReady(repo)) : { error },

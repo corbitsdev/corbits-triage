@@ -55,7 +55,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : "inbox";
   const inboxActive = path.startsWith("/inbox") || path.startsWith("/triage");
   // The inbox and the repositories table draw their own inset panels, so they skip the stage card.
-  const ownPanels = room === "inbox" || /^\/repositories\/?$/.test(path);
+  const ownPanels = room === "inbox" || room === "repos";
 
   useEffect(function markBody() {
     document.body.dataset.room = room;
