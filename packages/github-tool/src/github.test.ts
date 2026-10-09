@@ -4,6 +4,7 @@ import {
   codeownersFor,
   codeownersForPr,
   listOpenPrs,
+  listPrFiles,
   mergePr,
   mirror,
   parseCodeowners,
@@ -225,5 +226,26 @@ docs/*       @linus
     });
     expect(await codeownersForPr(gh, "acme/widgets", 8)).toEqual({ users: ["grace"], teams: ["core"] });
     expect(requests[1]?.path).toBe("/repos/acme/widgets/contents/.github/CODEOWNERS?ref=main");
+  });
+});
+
+describe("listPrFiles", () => {
+  test("preserves the previous filename for renamed files", async () => {
+    const { gh } = recorder(() => [{
+      filename: "src/current.ts",
+      previous_filename: "src/previous.ts",
+      status: "renamed",
+      additions: 3,
+      deletions: 2,
+      patch: "@@ -1 +1 @@",
+    }]);
+    expect(await listPrFiles(gh, "acme/widgets", 8)).toEqual([{
+      path: "src/current.ts",
+      previousPath: "src/previous.ts",
+      status: "renamed",
+      additions: 3,
+      deletions: 2,
+      patch: "@@ -1 +1 @@",
+    }]);
   });
 });
