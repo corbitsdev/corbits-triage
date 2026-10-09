@@ -9,7 +9,7 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { repoPolicy, type CheckPack, type CleanupMode } from "@corbits/triage-contracts";
+import { PR_TRIAGE_WORKFLOW_VERSION, repoPolicy, type CheckPack, type CleanupMode } from "@corbits/triage-contracts";
 import { deriveState, NEEDS_SETUP_REASON, packFromInput, type DeterministicResult, type PrFacts } from "./logic/checks.js";
 import { asText, parseJsonText } from "./logic/extract.js";
 import { qualityQuestions, qualityState } from "./logic/quality.js";
@@ -29,9 +29,11 @@ interface Item {
   judgeError?: string;
   cleanupMode?: CleanupMode;
   pack?: CheckPack;
+  /** Why no facts were gathered; the verdict is then degraded with this reason. */
+  error?: string;
 }
 
-type Verdict = RenderOutput & { repo: string; number: number; request: MirrorRequest; cleanupMode?: CleanupMode };
+type Verdict = RenderOutput & { repo: string; number: number; headSha: string | null; workflowVersion: number; request: MirrorRequest; cleanupMode?: CleanupMode };
 
 function errorText(e: unknown) {
   return e instanceof Error ? e.message : String(e);
@@ -46,6 +48,7 @@ function degradedItem(reason: string): Item {
   return {
     facts: NO_FACTS,
     det: { state: "stale-unknown", reason, findings: [], checks: [], duplicateOf: null, needsJudgment: false },
+    error: reason,
   };
 }
 
@@ -92,7 +95,7 @@ function cleanupModeOf(v: Record<string, unknown>): CleanupMode | undefined {
 function itemsOf(input: Record<string, unknown>): { items: Item[]; batch: boolean } {
   return Array.isArray(input.items)
     ? { items: input.items as Item[], batch: true }
-    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, judgeError: input.judgeError as string | undefined, cleanupMode: cleanupModeOf(input) }], batch: false };
+    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, judgeError: input.judgeError as string | undefined, cleanupMode: cleanupModeOf(input), error: input.error as string | undefined }], batch: false };
 }
 
 function verdictsOf(input: Record<string, unknown>): { verdicts: Verdict[]; batch: boolean } {
@@ -280,14 +283,23 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
   };
 }
 
+/** A facts failure or malformed input reaches the render step without facts: the verdict then names no head and is degraded. */
+function stamp(facts: PrFacts | undefined) {
+  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null, workflowVersion: PR_TRIAGE_WORKFLOW_VERSION };
+}
+
 function renderDirector(caps: ReactorCapabilities): ReactorDirector {
   function verdictOf(it: Item): Verdict {
+    if (it.error !== undefined) {
+      const verdict = { ...stamp(undefined), ...degradedVerdict(it.error), cleanupMode: it.cleanupMode };
+      return { ...verdict, request: toMirrorRequest(verdict) };
+    }
     try {
       const answers = it.judge !== undefined ? parseAnswers(it.judge) : null;
-      const verdict = { repo: it.facts.repo, number: it.facts.number, ...renderVerdict({ author: it.facts.author, det: it.det, answers, judgeError: it.judgeError, reviewers: it.facts.reviewers }), cleanupMode: it.cleanupMode };
+      const verdict = { ...stamp(it.facts), ...renderVerdict({ author: it.facts.author, det: it.det, answers, judgeError: it.judgeError, reviewers: it.facts.reviewers }), cleanupMode: it.cleanupMode };
       return { ...verdict, request: toMirrorRequest(verdict) };
     } catch (e) {
-      const verdict = { repo: it.facts?.repo ?? "", number: it.facts?.number ?? 0, ...degradedVerdict(`render failed: ${errorText(e)}`), cleanupMode: it.cleanupMode };
+      const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`), cleanupMode: it.cleanupMode };
       return { ...verdict, request: toMirrorRequest(verdict) };
     }
   }

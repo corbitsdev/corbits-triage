@@ -66,7 +66,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       }
       try {
         await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo.pack, { prNumber: queued.number, headSha }));
-        deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha });
+        deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha, reason: queued.reason });
       } catch (err) {
         failure = { repo: name, error: err };
         rows[index] = { ...queued.undelivered, error: `delivery failed: ${String(err)}` };
@@ -94,7 +94,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_github_credential" });
       return false;
     }
-    // Only the live deployment's log is read; heads triaged under an earlier one are already settled in the stored state.
+    // Only the live deployment's log is read; heads triaged under an earlier one stay settled in the stored state until this one reports a newer workflow version.
     const pass: TenantPass = { tenantId: tenant.id, deployment, openHeads, runs: await deps.observeRuns(deployment.runId, tenant.domain) };
     const loaded: LoadedRepo[] = [];
     for (const repo of repos) {
@@ -107,9 +107,10 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     const plans = planTenant({
       repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored })),
-      runs: pass.runs,
+      runs: pass.runs.byRepo,
       now: deps.now(),
       policy: deps.policy,
+      workflowVersion: pass.runs.workflowVersion,
     });
     let failure: Failure | undefined;
     for (const repo of loaded) {

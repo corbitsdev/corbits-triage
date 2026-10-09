@@ -15,12 +15,17 @@ const INLINE_PREFIX = "inline:";
 const NO_VERDICT = "run completed without a verdict";
 
 type Trigger = { repo: string; number: number; headSha: string; startedAt: string };
-type Terminal = { status: Exclude<ObservedRun["status"], "running">; degraded?: string };
+type Unsettled = Pick<ObservedRun, "unsettled" | "unconfirmed">;
+type Terminal = Unsettled & Pick<ObservedRun, "verdictVersion"> & { status: Exclude<ObservedRun["status"], "running"> };
 /** A null trigger names no single pull request head, such as a portal run typed without a sha. */
 type KnownRun = { anchorRunId: string; trigger: Trigger | null; terminal?: Terminal };
 
-/** Runs by repository, then by `runKey`. */
-export type ObservedRuns = Map<string, Map<string, ObservedRun[]>>;
+export type ObservedRuns = {
+  /** Runs by repository, then by `runKey`. */
+  byRepo: Map<string, Map<string, ObservedRun[]>>;
+  /** Every verdict in one deployment's log names the same version; none until its first verdict lands. */
+  workflowVersion?: number;
+};
 
 /** Statuses the stock lifecycle settled for these runs, which it can do without a terminal event in the log. */
 export type ReadSettled = (anchorRunId: string, runIds: string[]) => Promise<Map<string, Terminal["status"]>>;
@@ -60,24 +65,42 @@ function isRenderCompleted(event: WorkflowRunEvent): boolean {
   return event.type === "StepCompleted" && String(event.body["stepId"]).split(/[/.]/).pop() === "render";
 }
 
-/** The render step's reply is the verdict; a degraded one carries its reason. */
-function degradedReason(events: readonly WorkflowRunEvent[]): string | undefined {
-  const ref = asRecord(events.findLast(isRenderCompleted)?.body["output"])?.["ref"];
-  if (typeof ref !== "string" || !ref.startsWith(INLINE_PREFIX)) return NO_VERDICT;
-  const verdict = asRecord(parseJson(asRecord(parseJson(ref.slice(INLINE_PREFIX.length)))?.["reply"]));
-  if (!verdict) return NO_VERDICT;
-  const degraded = verdict["degraded"];
-  if (degraded === undefined || degraded === null) return undefined;
-  const reason = verdict["reason"];
-  return typeof reason === "string" && reason !== "" ? reason : String(degraded);
+function isUnconfirmedMachineCheck(check: unknown): boolean {
+  const result = asRecord(check);
+  return result?.["kind"] === "machine" && result["result"] === "unconfirmed";
 }
 
-function terminalOf(events: readonly WorkflowRunEvent[]): Terminal | undefined {
+function verdictOf(events: readonly WorkflowRunEvent[]): Record<string, unknown> | undefined {
+  const ref = asRecord(events.findLast(isRenderCompleted)?.body["output"])?.["ref"];
+  if (typeof ref !== "string" || !ref.startsWith(INLINE_PREFIX)) return undefined;
+  return asRecord(parseJson(asRecord(parseJson(ref.slice(INLINE_PREFIX.length)))?.["reply"]));
+}
+
+/** Why the verdict does not settle the triggered head: degraded, made on another commit, or a machine check GitHub had not computed yet. */
+function unsettledBy(verdict: Record<string, unknown>, headSha: string): Unsettled {
+  const degraded = verdict["degraded"];
+  if (degraded !== undefined && degraded !== null) {
+    const reason = verdict["reason"];
+    return { unsettled: `degraded: ${typeof reason === "string" && reason !== "" ? reason : String(degraded)}` };
+  }
+  const made = verdict["headSha"];
+  // A verdict from before heads were stamped settles until the deployment moves to a versioned workflow.
+  if (typeof made === "string" && made !== headSha) return { unsettled: `verdict made on head ${made}` };
+  const checks = verdict["checks"];
+  const unconfirmed = Array.isArray(checks) ? checks.filter(isUnconfirmedMachineCheck).map((check) => String(asRecord(check)?.["check"])) : [];
+  if (unconfirmed.length > 0) return { unsettled: `unconfirmed checks: ${unconfirmed.join(", ")}`, unconfirmed: true };
+  return {};
+}
+
+/** The render step's reply is the verdict. */
+function terminalOf(events: readonly WorkflowRunEvent[], trigger: Trigger | null): Terminal | undefined {
   const status = TERMINAL_EVENTS[events.at(-1)?.type ?? ""];
   if (status === undefined) return undefined;
-  if (status !== "completed") return { status };
-  const degraded = degradedReason(events);
-  return degraded === undefined ? { status } : { status, degraded };
+  if (status !== "completed" || trigger === null) return { status };
+  const verdict = verdictOf(events);
+  if (!verdict) return { status, unsettled: NO_VERDICT };
+  const version = verdict["workflowVersion"];
+  return { status, ...unsettledBy(verdict, trigger.headSha), ...(typeof version === "number" && { verdictVersion: version }) };
 }
 
 export function createSettledStatusReader(db: DB["db"]): ReadSettled {
@@ -131,7 +154,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
       // A run that has not committed RunStarted yet is read again next pass.
       if (!started) continue;
       const trigger = triggerOf(started.body);
-      const terminal = terminalOf(events);
+      const terminal = terminalOf(events, trigger);
       remember(runId, { anchorRunId, trigger, ...(terminal !== undefined && { terminal }) });
       if (trigger !== null && terminal === undefined) open.push(runId);
     }
@@ -141,18 +164,28 @@ export function createTriageRuns(deps: TriageRunsDeps) {
       if (run) remember(runId, { ...run, terminal: { status } });
     }
 
-    const observed: ObservedRuns = new Map();
+    const byRepo: ObservedRuns["byRepo"] = new Map();
+    let workflowVersion: number | undefined;
     for (const runId of [...settledIds, ...latest.keys()]) {
       const run = known.get(runId);
       if (!run?.trigger) continue;
       const { repo, number, headSha, startedAt } = run.trigger;
-      const byHead = observed.get(repo) ?? new Map<string, ObservedRun[]>();
-      observed.set(repo, byHead);
+      const byHead = byRepo.get(repo) ?? new Map<string, ObservedRun[]>();
+      byRepo.set(repo, byHead);
       const key = runKey(number, headSha);
-      const degraded = run.terminal?.degraded;
-      const seen: ObservedRun = { runId, status: run.terminal?.status ?? "running", startedAt, ...(degraded !== undefined && { degraded }) };
+      const terminal = run.terminal;
+      const verdictVersion = terminal?.verdictVersion;
+      workflowVersion ??= verdictVersion;
+      const seen: ObservedRun = {
+        runId,
+        status: terminal?.status ?? "running",
+        startedAt,
+        ...(terminal?.unsettled !== undefined && { unsettled: terminal.unsettled }),
+        ...(terminal?.unconfirmed && { unconfirmed: true }),
+        ...(verdictVersion !== undefined && { verdictVersion }),
+      };
       byHead.set(key, [...(byHead.get(key) ?? []), seen]);
     }
-    return observed;
+    return { byRepo, ...(workflowVersion !== undefined && { workflowVersion }) };
   };
 }

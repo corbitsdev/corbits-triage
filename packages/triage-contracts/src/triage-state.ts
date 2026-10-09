@@ -1,5 +1,7 @@
 export const TRIAGE_STATE_KIND = "corbits.triage.state";
 export const TRIAGE_STATE_SCHEMA_VERSION = 1;
+/** Stamped on every verdict; bump it when verdicts change meaning so open pull requests are triaged again. */
+export const PR_TRIAGE_WORKFLOW_VERSION = 1;
 
 export const PR_TRIAGE_STATUSES = ["new", "queued", "running", "triaged", "failed"] as const;
 export type PrTriageStatus = (typeof PR_TRIAGE_STATUSES)[number];
@@ -12,6 +14,8 @@ export type PrTriageRow = {
   runId?: string;
   /** Runs the hub queued for this head; webhook and portal runs do not count. */
   attempts: number;
+  /** Workflow version the row was created or reset under; absent on rows from before verdicts were stamped. */
+  workflowVersion?: number;
   firstSeenAt: string;
   queuedAt?: string;
   updatedAt: string;
@@ -52,6 +56,8 @@ function parseRow(raw: unknown): PrTriageRow | null {
   if (typeof status !== "string" || !STATUS_SET.has(status)) return null;
   if (typeof attempts !== "number" || !Number.isInteger(attempts) || attempts < 0) return null;
   if (typeof firstSeenAt !== "string" || typeof updatedAt !== "string") return null;
+  const workflowVersion = row.workflowVersion;
+  if (workflowVersion !== undefined && (typeof workflowVersion !== "number" || !Number.isInteger(workflowVersion))) return null;
   const runId = optionalString(row.runId);
   const queuedAt = optionalString(row.queuedAt);
   const error = optionalString(row.error);
@@ -61,6 +67,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
     status: status as PrTriageStatus,
     ...(runId !== undefined && { runId }),
     attempts,
+    ...(workflowVersion !== undefined && { workflowVersion }),
     firstSeenAt,
     ...(queuedAt !== undefined && { queuedAt }),
     updatedAt,
