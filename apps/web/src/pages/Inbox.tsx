@@ -175,12 +175,18 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const more: Array<{ kind: PrimaryAction; label: string; enabled: boolean; shown: boolean }> = [
+  const more: Array<{ kind: PrimaryAction; label: string; enabled: boolean; shown: boolean; confirm?: string }> = [
     { kind: "approve", label: "Approve", enabled: canWrite, shown: true },
     { kind: "changes", label: "Request changes", enabled: canWrite, shown: true },
     { kind: "comment", label: "Comment", enabled: canWrite, shown: true },
     { kind: "merge", label: "Merge", enabled: canMerge, shown: true },
     { kind: "close", label: "Close as duplicate", enabled: canWrite, shown: item.canClose },
+    // Both close rows share kind "close" but are mutually exclusive: the duplicate
+    // entry shows for flagged duplicates, the plain one for the rest. A flagged
+    // duplicate's primary bar action is already "close", so the generic
+    // row.kind !== primary filter would hide its close row; keep close rows out of
+    // that filter so the appropriate one always renders.
+    { kind: "close", label: "Close pull request", enabled: canWrite, shown: canWrite && !item.canClose, confirm: "Close this pull request?" },
   ];
 
   return (
@@ -279,8 +285,16 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
           <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
           {menu ? (
             <div className="menu up" role="menu">
-              {more.filter((row) => row.shown && row.kind !== primary).map((row) => (
-                <button key={row.kind} type="button" role="menuitem" disabled={!row.enabled} onClick={() => void run(row.kind)}>{row.label}</button>
+              {more.filter((row) => row.shown && (row.kind === "close" || row.kind !== primary)).map((row) => (
+                <button
+                  key={`${row.kind}-${row.label}`}
+                  type="button"
+                  role="menuitem"
+                  disabled={!row.enabled}
+                  onClick={() => { if (!row.confirm || window.confirm(row.confirm)) void run(row.kind); }}
+                >
+                  {row.label}
+                </button>
               ))}
             </div>
           ) : null}
