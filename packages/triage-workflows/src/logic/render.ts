@@ -1,4 +1,4 @@
-import { render, type Rendered } from "@corbits/rule-packs";
+import { render, type Rendered, type TriageState } from "@corbits/rule-packs";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import { asText } from "./extract.js";
 import { actionText, failureText, passText, qualityQuestions } from "./quality.js";
@@ -76,6 +76,8 @@ interface Step {
   action: string;
 }
 
+// Only these states let model answers drive the verdict; anything worse is driven by its machine findings.
+const JUDGED_STATES = new Set<TriageState>(["ready-monitoring", "awaiting-review"]);
 const ACTOR_ORDER: Actor[] = ["author", "maintainer", "system"];
 const MAX_ACTIONS = 2;
 
@@ -86,6 +88,12 @@ function modelChecks(sources: NonNullable<Sources>, answers: Record<string, numb
     const failed = p < 0.5;
     return { check: id, kind: "model", result: failed ? "fail" : "pass", reason: failed ? failureText(id, sources) : passText(id, sources), evidence: [] };
   });
+}
+
+function recordedModelChecks({ det, answers, judgeError }: RenderInput): CheckResult[] {
+  if (!det.sources) return [];
+  if (!det.needsJudgment) return modelChecks(det.sources, null, "not asked");
+  return modelChecks(det.sources, judgeError === undefined ? answers : null, "decision model unavailable");
 }
 
 function withoutLimit(evidence: string[]): string {
@@ -139,19 +147,20 @@ function withChecks<T extends Rendered>(rendered: T, checks: CheckResult[], { au
   return { ...rendered, ...nextStep(checks, sources, reviewers), feedback: authorComment(author, checks, sources), checks };
 }
 
-export function renderVerdict({ author, det, answers, judgeError, reviewers = [] }: RenderInput): RenderOutput {
+export function renderVerdict(input: RenderInput): RenderOutput {
+  const { author, det, answers, judgeError, reviewers = [] } = input;
   const ctx = { author, sources: det.sources, reviewers };
-  if (!det.needsJudgment || !det.sources) {
+  const checks = [...det.checks, ...recordedModelChecks(input)];
+  if (!det.needsJudgment || !det.sources || !JUDGED_STATES.has(det.state)) {
     const duplicate = det.duplicateOf !== null && det.state === "needs-decision";
-    const checks = [...det.checks, ...(det.sources ? modelChecks(det.sources, null, "not asked") : [])];
-    return withChecks({ ...render(det.state), mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null, reason: det.reason }, checks, ctx);
+    const verdict = withChecks({ ...render(det.state), mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null, reason: det.reason }, det.checks, ctx);
+    return { ...verdict, checks };
   }
   const sources = det.sources;
   const asked = qualityQuestions(sources).map((q) => q.id);
   const passes = asked.map((id) => answers?.[id]);
   if (judgeError !== undefined || passes.some((p) => p === undefined)) {
     const reason = `decision model unavailable: ${judgeError ?? "no answer"}`;
-    const checks = [...det.checks, ...modelChecks(sources, judgeError === undefined ? answers : null, "decision model unavailable")];
     return withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: "inference-outage" as const, reason }, checks, ctx);
   }
   const scores = passes as number[];
@@ -159,7 +168,7 @@ export function renderVerdict({ author, det, answers, judgeError, reviewers = []
   const failing = asked.filter((_, i) => scores[i]! < 0.5);
   const reason = failing.length ? failing.map((id) => failureText(id, sources)).join("; ") : det.reason;
   const rendered = render(failing.length ? "needs-author-update" : det.state);
-  return withChecks({ ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null, reason }, [...det.checks, ...modelChecks(sources, answers, "decision model unavailable")], ctx);
+  return withChecks({ ...rendered, mirror: true, duplicate: false, close: false, confidence, degraded: null, reason }, checks, ctx);
 }
 
 export function degradedVerdict(reason: string): RenderOutput {
