@@ -241,8 +241,6 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
               <h3 className="lbl-h">
                 Suggested reply
                 {edited ? <span className="tag" style={{ margin: 0 }}>Edited</span> : null}
-                <span className="sp" />
-                <span className="hint"><kbd>e</kbd> edit · <kbd>⌘</kbd><kbd>⏎</kbd> send</span>
               </h3>
               <div className="compose">
                 <textarea ref={replyRef} value={reply} onChange={(event) => setReply(event.target.value)} onKeyDown={onReplyKey} aria-label="Suggested reply" />
@@ -360,7 +358,6 @@ export default function Inbox() {
             <label className="search">
               <SearchIcon />
               <input ref={searchRef} placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
-              <kbd>/</kbd>
             </label>
             <div className="seg" role="group" aria-label="Group by">
               {INBOX_GROUPINGS.map((mode) => (
@@ -395,7 +392,6 @@ export default function Inbox() {
             </>
           ) : null}
         </div>
-        <footer className="list-foot"><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>a</kbd> do suggested</span><span><kbd>/</kbd> search</span></footer>
       </section>
       {selected ? <Pane key={selected.key} item={selected} onBack={() => navigate("/inbox")} /> : (
         <section className="panel pane" aria-label="Selected pull request">

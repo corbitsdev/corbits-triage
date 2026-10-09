@@ -118,7 +118,6 @@
 .inbox .fold { display: flex; justify-content: space-between; align-items: center; margin: 14px 8px 0; padding: 10px 8px; border-top: 1px solid var(--rule); font-size: 13px; }
 .inbox .fold-list { padding: 0 8px; }
 .inbox .fold-list .row { grid-template-columns: 10px minmax(0, 1fr) auto; }
-.inbox .list-foot { border-top: 1px solid var(--rule); padding: 9px 16px; font-size: 12px; display: flex; gap: 14px; }
 .inbox .zero { margin: auto; text-align: center; display: grid; gap: 10px; justify-items: center; padding: 40px; max-width: 420px; }
 .inbox .zero h2 { margin: 0; font-size: 26px; letter-spacing: -0.015em; }
 .inbox .zero p { margin: 0; font-size: 15px; }
@@ -165,7 +164,6 @@
 .inbox .disclose kbd { margin-left: auto; }
 .inbox .lbl-h { font-size: 13px; font-weight: 700; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .inbox .lbl-h .sp { flex: 1; }
-.inbox .lbl-h .hint { font-weight: 400; font-size: 12px; }
 .inbox .compose { border: 1px solid var(--rule-strong); border-radius: var(--r-md); overflow: hidden; }
 .inbox .compose:focus-within { border-color: var(--ink); box-shadow: var(--focus); }
 .inbox .compose textarea { display: block; border: 0; width: 100%; min-height: 84px; padding: 12px 14px; font: 400 14px/1.5 var(--font); color: inherit; background: var(--white); resize: vertical; outline: 0; }
