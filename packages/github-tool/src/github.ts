@@ -183,6 +183,7 @@ export type PrCommit = {
 
 export type PrFile = {
   path: string;
+  previousPath?: string;
   status: string;
   additions: number;
   deletions: number;
@@ -218,6 +219,7 @@ export async function listPrFiles(gh: GithubFetch, repo: string, number: number)
       additions: typeof row.additions === "number" ? row.additions : 0,
       deletions: typeof row.deletions === "number" ? row.deletions : 0,
     };
+    if (typeof row.previous_filename === "string") file.previousPath = row.previous_filename;
     if (typeof row.patch === "string") file.patch = row.patch;
     return file;
   });

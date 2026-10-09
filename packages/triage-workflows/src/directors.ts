@@ -10,7 +10,7 @@ import type {
 } from "@intx/types/runtime";
 import { type } from "arktype";
 import { repoPolicy, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
-import { NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "./logic/checks.js";
+import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
 import { qualityQuestions, qualityState } from "./logic/quality.js";
 import { triageEventOf } from "./logic/events.js";
@@ -100,11 +100,31 @@ function call(name: string, args: Record<string, unknown>, id = name): ToolCall 
   return { id, name, arguments: args };
 }
 
-type ChangedFile = { filename?: string; path?: string };
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
 
-function pathOf(file: ChangedFile): string[] {
-  const name = file.filename ?? file.path;
-  return typeof name === "string" && name.length > 0 ? [name] : [];
+function optionalCount(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
+}
+
+function fileFacts(value: unknown): PrFileFacts[] {
+  if (!isRecord(value)) return [];
+  const path = optionalString(value.path) ?? optionalString(value.filename);
+  if (path === undefined) return [];
+  const previousPath = optionalString(value.previousPath) ?? optionalString(value.previous_filename);
+  const status = optionalString(value.status);
+  const additions = optionalCount(value.additions);
+  const deletions = optionalCount(value.deletions);
+  const patch = typeof value.patch === "string" ? value.patch : undefined;
+  return [{
+    path,
+    ...(previousPath === undefined ? {} : { previousPath }),
+    ...(status === undefined ? {} : { status }),
+    ...(additions === undefined ? {} : { additions }),
+    ...(deletions === undefined ? {} : { deletions }),
+    ...(patch === undefined ? {} : { patch }),
+  }];
 }
 
 function firstLine(commit: { message?: string }): string {
@@ -144,9 +164,11 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           if (!pr) return { error: `github_get_pr failed for #${n}` };
           const checks = data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [];
           const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
-          const paths = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files?.flatMap(pathOf) ?? [];
+          const fileRows = data<{ files?: unknown }>(r1.get(`files:${n}`))?.files;
+          const files = Array.isArray(fileRows) ? fileRows.flatMap(fileFacts) : [];
+          const paths = files.map((file) => file.path);
           const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
-          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, commits, ...(event === null ? {} : { event }) };
+          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, files, commits, ...(event === null ? {} : { event }) };
           return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
         }
         return reply(numbers.map(itemFor), batch);

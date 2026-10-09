@@ -29,7 +29,7 @@ describe("facts director policy", () => {
           kind: "pr",
           repo: "acme/widgets",
           prNumber: 8,
-          policy: { checks: { draft: false } },
+          policy: { enabled: true, checks: { draft: false } },
           checkPack: emptyPack("acme/widgets"),
         }),
       },
@@ -55,11 +55,31 @@ describe("facts director policy", () => {
     } as ReactorInboundEvent);
     await decide({
       type: "tool.done",
-      result: { callId: "files:8", content: { files: [] } },
-    } as ReactorInboundEvent);
-    await decide({
-      type: "tool.done",
-      result: { callId: "comments:8", content: { comments: [] } },
+      result: {
+        callId: "files:8",
+        content: {
+          files: [
+            {
+              path: "src/current.ts",
+              previousPath: "src/previous.ts",
+              status: "renamed",
+              additions: 3,
+              deletions: 2,
+              patch: "@@ -1 +1 @@",
+            },
+            {
+              filename: "legacy.ts",
+              previous_filename: "old-legacy.ts",
+              status: 7,
+              additions: "many",
+              deletions: 4,
+              patch: null,
+            },
+            null,
+            { path: "", filename: 7 },
+          ],
+        },
+      },
     } as ReactorInboundEvent);
     await decide({
       type: "tool.done",
@@ -67,6 +87,18 @@ describe("facts director policy", () => {
     } as ReactorInboundEvent);
     const { items } = await rules({ reply: replies[0] }, ctx, signal);
     expect(items[0]!.det.findings.map((finding) => finding.check)).not.toContain("draft");
+    expect(items[0]!.facts.paths).toEqual(["src/current.ts", "legacy.ts"]);
+    expect(items[0]!.facts.files).toEqual([
+      {
+        path: "src/current.ts",
+        previousPath: "src/previous.ts",
+        status: "renamed",
+        additions: 3,
+        deletions: 2,
+        patch: "@@ -1 +1 @@",
+      },
+      { path: "legacy.ts", previousPath: "old-legacy.ts", deletions: 4 },
+    ]);
   });
 
   test("a backlog skips drafts while the repository skips them", async () => {
