@@ -31,7 +31,7 @@ export type ReconcilePolicy = {
   maxAttempts: number;
   /** A verdict waiting only on GitHub, such as mergeability not computed yet, is retried no sooner than this after its run. */
   unconfirmedRetryMs: number;
-  /** Heads a tenant has queued or running at once; further due heads wait, oldest waiting first. */
+  /** Heads a tenant has queued or running at once; further due heads wait, never-triaged ones first, then oldest waiting first. */
   maxInFlight: number;
 };
 
@@ -150,6 +150,8 @@ function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: 
   return now.getTime() >= Math.max(last + backoffMs(row.attempts, policy), unconfirmedUntil);
 }
 
+const STALE_VERDICT = "verdict from workflow version";
+
 /** A head settled or capped under an older workflow version starts over: its verdict may no longer be in the live log and its attempts were spent on old code. */
 function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: number | undefined, at: string): PrTriageRow {
   if (prior === undefined) {
@@ -158,7 +160,7 @@ function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: numb
   if (workflowVersion === undefined || (prior.workflowVersion !== undefined && prior.workflowVersion >= workflowVersion)) return prior;
   if (prior.status !== "triaged" && prior.status !== "failed") return prior;
   const { runId: _run, queuedAt: _queued, ...rest } = prior;
-  return { ...rest, status: "new", attempts: 0, workflowVersion, error: `verdict from workflow version ${prior.workflowVersion ?? "none"}, current is ${workflowVersion}`, updatedAt: at };
+  return { ...rest, status: "new", attempts: 0, workflowVersion, error: `${STALE_VERDICT} ${prior.workflowVersion ?? "none"}, current is ${workflowVersion}`, updatedAt: at };
 }
 
 /** A queued head counts until the hub marks it failed for never starting, so a backed-up queue is not mailed again. */
@@ -183,12 +185,19 @@ function runningHeads(runs: TenantPlanInput["runs"], now: Date, policy: Reconcil
 
 type Due = { repo: string; index: number; row: PrTriageRow };
 
-/** Oldest waiting first, a retried head by the time it was last queued; among equals, the oldest pull request first. */
-function byWait(a: Due, b: Due): number {
-  return ms(a.row.queuedAt ?? a.row.firstSeenAt) - ms(b.row.queuedAt ?? b.row.firstSeenAt) || a.row.number - b.row.number;
+/** A head with no run and no verdict, even if its mail failed to deliver; a version-stale reset also has no run, so only its reason tells it apart. */
+function neverTriaged(row: PrTriageRow): boolean {
+  return row.status === "new" && row.runId === undefined && !row.error?.startsWith(STALE_VERDICT);
 }
 
-/** Queues due heads across the tenant's repositories while fewer than `maxInFlight` heads are queued or running. */
+/** Never-attempted heads first, then oldest waiting first, a retried head by the time it was last queued; among equals, the oldest pull request first. */
+function byWait(a: Due, b: Due): number {
+  return Number(neverTriaged(b.row)) - Number(neverTriaged(a.row))
+    || ms(a.row.queuedAt ?? a.row.firstSeenAt) - ms(b.row.queuedAt ?? b.row.firstSeenAt)
+    || a.row.number - b.row.number;
+}
+
+/** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running. */
 export function planTenant({ repos, runs, now, policy, workflowVersion }: TenantPlanInput): Map<string, RepoPlan> {
   const at = now.toISOString();
   const plans = new Map<string, RepoPlan>();

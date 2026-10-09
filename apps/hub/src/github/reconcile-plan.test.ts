@@ -229,6 +229,19 @@ describe("reconcile plan", () => {
     expect(passes.flat().sort((a, b) => a - b)).toEqual(prs.map((open) => open.number));
   });
 
+  test("never-triaged heads are queued before heads due again, even when they were seen later", () => {
+    const stale = [1, 2, 3, 4].map((number) => row(number, { firstSeenAt: at(-100 + number).toISOString(), error: "verdict from workflow version 1, current is 2" }));
+    const result = plan([pr(5), pr(6), pr(7), ...stale.map((row) => pr(row.number))], stale, at(0), [], policy.maxInFlight);
+    expect(enqueued(result)).toEqual([5, 6, 7, 1, 2]);
+  });
+
+  test("a never-attempted head whose mail failed to deliver still goes before version-stale heads", () => {
+    const stale = [1, 2, 3].map((number) => row(number, { firstSeenAt: at(-100 + number).toISOString(), error: "verdict from workflow version 1, current is 2" }));
+    const undelivered = row(9, { firstSeenAt: at(-5).toISOString(), error: "delivery failed: Error: unroutable" });
+    const result = plan([pr(9), pr(1), pr(2), pr(3)], [undelivered, ...stale], at(0), [], 1);
+    expect(enqueued(result)).toEqual([9]);
+  });
+
   test("a run still going for a superseded head, a closed pull request or an unloaded repository holds its slot", () => {
     const running = [run("r_live", "running", -5)];
     const runs = new Map([
@@ -241,7 +254,7 @@ describe("reconcile plan", () => {
     expect(enqueued(plans.get(REPO)!)).toEqual([1, 2]);
   });
 
-  test("a retried head waits behind never-tried heads first seen before it was last queued, ahead of later ones", () => {
+  test("a retried head waits behind every never-attempted head, even ones first seen after it was last queued", () => {
     const rows = [
       row(1, { status: "failed", attempts: 1, queuedAt: at(-60).toISOString() }),
       ...[2, 3, 4, 5, 6].map((n) => row(n, { firstSeenAt: at(-100).toISOString() })),
@@ -249,7 +262,8 @@ describe("reconcile plan", () => {
     ];
     const prs = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => pr(n));
     expect(enqueued(plan(prs, rows, at(0), [], 5))).toEqual([2, 3, 4, 5, 6]);
-    expect(enqueued(plan(prs, rows, at(0), [], 6))).toEqual([2, 3, 4, 5, 6, 1]);
+    expect(enqueued(plan(prs, rows, at(0), [], 6))).toEqual([2, 3, 4, 5, 6, 7]);
+    expect(enqueued(plan(prs, rows, at(0), [], 8))).toEqual([2, 3, 4, 5, 6, 7, 8, 1]);
   });
 
   test("a wedged hub whose runs never start spends at most five queued heads at a time and five attempts per head", () => {
