@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { groupInbox, inboxAction, inboxStatus, primaryAction } from "./inbox-view.ts";
+import { groupInbox, hasDraftComment, inboxAction, inboxStatus, primaryAction } from "./inbox-view.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
@@ -69,6 +69,21 @@ describe("groupInbox", () => {
     const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true })]);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => [row.key, inboxStatus(row)])])).toEqual([["decide", [["rerun", "Running"]]]]);
     expect(view.waiting.map((row) => [row.key, inboxStatus(row)])).toEqual([["first", "Running"]]);
+  });
+});
+
+describe("hasDraftComment", () => {
+  test("a real draft is a draft", () => {
+    expect(hasDraftComment("approve this")).toBe(true);
+  });
+
+  test("null and empty are not drafts", () => {
+    expect(hasDraftComment(null)).toBe(false);
+    expect(hasDraftComment("")).toBe(false);
+  });
+
+  test("whitespace-only is not a draft", () => {
+    expect(hasDraftComment("   ")).toBe(false);
   });
 });
 
