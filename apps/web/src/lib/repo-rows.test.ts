@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { projectQueue, type PrItem, type RunLog } from "./hub-api.ts";
 import { groupInbox, regroupInbox } from "./inbox-view.ts";
-import { repoHealth, repoRows } from "./repo-rows.ts";
+import { repoHealth, repoRows, triageReadyRepos } from "./repo-rows.ts";
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   return {
@@ -26,7 +26,7 @@ describe("repository rows", () => {
       item("acme/api", 3, { state: "new", failure: "failed" }),
       item("acme/api", 4, { state: "new", owner: "Author", updatedAt: "2026-10-02T00:00:00Z" }),
     ];
-    const pile = regroupInbox(groupInbox(items), "repo").find((group) => group.key === "acme/api");
+    const pile = regroupInbox(groupInbox(items, triageReadyRepos(repos)), "repo").find((group) => group.key === "acme/api");
     const [api] = repoRows(repos, items, [], new Set(), { repos: [{ repo: "acme/api", prs: [] }] }, null);
     expect(api).toMatchObject({
       href: "/repositories/acme%2Fapi",
@@ -34,6 +34,21 @@ describe("repository rows", () => {
       pulls: { open: 4, needsYou: pile?.items.length, awaiting: 1, owners: ["Maintainer", "Unassigned"], lastActivity: "2026-10-03T00:00:00Z" },
     });
     expect(pile?.items).toHaveLength(3);
+  });
+
+  test("only enabled, set-up repositories count pull requests awaiting triage, and the inbox header agrees", () => {
+    const all = [...repos, { name: "acme/off", connected: true, enabled: false, checkPack: { name: "check-pack/acme/off" } }, { name: "acme/raw", connected: true, enabled: true }];
+    const items = [
+      item("acme/api", 1, {}),
+      item("acme/api", 2, {}),
+      item("acme/web", 3, {}),
+      item("acme/web", 4, { state: "ready" }),
+      item("acme/off", 5, {}),
+      item("acme/raw", 6, {}),
+    ];
+    const rows = repoRows(all, items, [], new Set(), undefined, null);
+    expect(rows.map((row) => ("error" in row.pulls ? null : [row.pulls.awaiting, row.pulls.needsYou]))).toEqual([[2, 0], [0, 1], [0, 0], [0, 0]]);
+    expect(groupInbox(items, triageReadyRepos(all)).awaiting).toBe(2);
   });
 
   test("a GitHub failure replaces only the GitHub counts; setup still shows", () => {

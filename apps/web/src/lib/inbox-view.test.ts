@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
 import { groupInbox, hasDraftComment, inboxAction, inboxStatus, primaryAction } from "./inbox-view.ts";
 
+const READY = new Set(["acme/widgets"]);
+
 function item(overrides: Partial<PrItem>): PrItem {
   return {
     key: "acme/widgets#1",
@@ -49,7 +51,7 @@ describe("groupInbox", () => {
       item({ key: "f", state: "needs-decision", comment: "Looks wanted." }),
       item({ key: "g", state: "stale" }),
       item({ key: "h", state: "new", runId: null, failure: "failed" }),
-    ]);
+    ], READY);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([
       ["decide", ["f", "g"]],
       ["unblock", ["c", "b"]],
@@ -67,14 +69,20 @@ describe("groupInbox", () => {
       item({ key: "early", priority: "P2", waitingSince: "2026-10-01T00:00:00.000Z" }),
       item({ key: "human", priority: "P2", needsHuman: true, waitingSince: "2026-10-06T00:00:00.000Z" }),
       item({ key: "urgent", priority: "P1", waitingSince: "2026-10-07T00:00:00.000Z" }),
-    ]);
+    ], READY);
     expect(view.groups[0]?.items.map((row) => row.key)).toEqual(["urgent", "human", "early", "late"]);
   });
 
   test("a running pull request keeps its previous verdict's pile and reads Running", () => {
-    const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true })]);
+    const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true })], READY);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => [row.key, inboxStatus(row)])])).toEqual([["decide", [["rerun", "Running"]]]]);
     expect(view.awaiting).toBe(1);
+  });
+
+  test("a repository that cannot be triaged keeps its verdicts as rows but counts nothing as awaiting", () => {
+    const view = groupInbox([item({ key: "verdict", state: "ready" }), item({ key: "untriaged", state: "new", runId: null })], new Set());
+    expect(view.groups.map((group) => group.items.map((row) => row.key))).toEqual([["verdict"]]);
+    expect(view.awaiting).toBe(0);
   });
 });
 

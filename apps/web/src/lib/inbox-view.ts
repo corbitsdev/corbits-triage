@@ -130,15 +130,16 @@ export function compareInboxItems(a: PrItem, b: PrItem): number {
 
 export type InboxGroup = { action: InboxAction; label: string; items: PrItem[] };
 
-/** `awaiting` counts the pull requests with no verdict and no failed run; they are not rows. */
+/** `awaiting` counts the pull requests with no verdict and no failed run in repositories that can be triaged; they are not rows. */
 export type InboxView = { groups: InboxGroup[]; awaiting: number };
 
-export function groupInbox(items: PrItem[]): InboxView {
+/** `ready` names the repositories that are enabled and set up; no other repository's pull requests can be triaged. */
+export function groupInbox(items: PrItem[], ready: ReadonlySet<string>): InboxView {
   const sorted = [...items].sort(compareInboxItems);
   const groups = INBOX_ACTION_ORDER
     .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inboxAction(item) === action) }))
     .filter((group) => group.items.length > 0);
-  return { groups, awaiting: items.filter((item) => inboxAction(item) === null).length };
+  return { groups, awaiting: items.filter((item) => ready.has(item.repo) && inboxAction(item) === null).length };
 }
 
 export function awaitingText(count: number): string {

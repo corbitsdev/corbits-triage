@@ -46,6 +46,7 @@ import {
 import { useMarkReplySent, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
+import { triageReadyRepos } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { findPrItem, prHref } from "../lib/triage-view.ts";
 import { CheckIcon, ChevronIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
@@ -429,7 +430,8 @@ export default function Inbox() {
   const [grouping, setGrouping] = useState<InboxGrouping>("action");
   const searchRef = useRef<HTMLInputElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
-  const view = useMemo(() => groupInbox(items.filter((item) => matchesQuery(item, query))), [items, query]);
+  const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? []), [snapshot]);
+  const view = useMemo(() => groupInbox(items.filter((item) => matchesQuery(item, query)), ready), [items, query, ready]);
   const piles = useMemo(() => regroupInbox(view, grouping), [view, grouping]);
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
   const selected = params.number === undefined ? flat[0] : findPrItem(items, params);
