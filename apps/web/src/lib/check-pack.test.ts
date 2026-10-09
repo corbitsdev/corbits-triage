@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { linkCheckPack, listCheckPackTitles, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
+import { linkCheckPack, listCheckPacks, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
 import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
 import { loadRepoCheckPack } from "./hub-api.ts";
 
@@ -20,7 +20,7 @@ describe("check-pack client", () => {
       row("art_3", "check-pack/acme/gadgets", gadgets, 3),
       row("art_4", "notes", "see check-pack/acme/widgets", 4),
     ]);
-    expect(await listCheckPackTitles(hub.transport, "t")).toEqual(new Set(["check-pack/acme/widgets", "check-pack/acme/gadgets"]));
+    expect(new Set((await listCheckPacks(hub.transport, "t")).keys())).toEqual(new Set(["check-pack/acme/widgets", "check-pack/acme/gadgets"]));
   });
 
   test("a repository's pack is read with its artifact and version; a missing title reads nothing", async () => {
