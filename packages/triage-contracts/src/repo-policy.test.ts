@@ -21,10 +21,21 @@ describe("repoPolicy", () => {
         reviewers: false,
         drift: true,
       },
+      roles: {},
     });
     expect(repoPolicy({
       name: "acme/widgets",
-      policy: { enabled: false, triageDrafts: false, checks: { draft: false, drift: false } },
+      policy: {
+        enabled: false,
+        triageDrafts: false,
+        checks: { draft: false, drift: false },
+        roles: {
+          " maintainers ": { teams: ["core", " core "], users: [] },
+          "": { users: ["ghost"] },
+          empty: { users: [" "] },
+          broken: { users: "ghost", teams: ["core"] },
+        },
+      },
     })).toEqual({
       cleanupMode: "human-approved",
       enabled: false,
@@ -37,6 +48,7 @@ describe("repoPolicy", () => {
         reviewers: false,
         drift: false,
       },
+      roles: { maintainers: { teams: ["core"] } },
     });
   });
 });
