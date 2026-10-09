@@ -5,7 +5,7 @@ import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persi
 import { del, get, set } from "idb-keyval";
 import { Toaster } from "sonner";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
-import { PortalProvider, usePortal } from "./lib/portal.tsx";
+import { isFinishedRunLogQuery, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { SessionProvider, useSession } from "./lib/session.tsx";
 import { DeniedNotice } from "./lib/denied.tsx";
 import type { PortalSnapshot } from "./lib/hub-api.ts";
@@ -14,7 +14,6 @@ import LoadingIndicator from "./components/LoadingIndicator.tsx";
 import Connect from "./pages/Connect.tsx";
 import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
-import { isFinishedRunLogQuery } from "./lib/run-logs.ts";
 import { Welcome } from "./pages/Welcome.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
