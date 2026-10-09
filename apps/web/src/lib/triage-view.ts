@@ -4,15 +4,7 @@ function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
-export function relativeTime(iso: string | null | undefined, now = Date.now()): string {
-  const at = iso ? Date.parse(iso) : NaN;
-  if (Number.isNaN(at)) return "unknown time";
-  const s = Math.max(0, Math.round((now - at) / 1000));
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
+export { relativeTime } from "./duration.ts";
 
 function points(value: number): number {
   return Math.round(value * 100);
