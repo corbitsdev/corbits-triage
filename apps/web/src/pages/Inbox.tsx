@@ -44,13 +44,14 @@ function dotClass(item: PrItem, action: InboxAction | null): string {
 
 function Row({ item, selected }: { item: PrItem; selected: boolean }) {
   const action = inboxAction(item);
+  const primary = primaryAction(item, action);
   const why = rowWhy(item);
   return (
     <Link className="row" role="option" aria-selected={selected} to={inboxHref(item)} data-inbox-row={item.key}>
       <span className={dotClass(item, action)} />
       <span className="tw"><b>{item.title ?? item.key}</b>{why ? <span className="why">{why}</span> : null}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
-      {action === null ? null : <span className="act">{rowActionLabel(primaryAction(item, action))}</span>}
+      {primary === null ? null : <span className="act">{rowActionLabel(primary)}</span>}
     </Link>
   );
 }
@@ -78,7 +79,8 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const action = inboxAction(item);
-  const primary = action === null ? null : primaryAction(item, action);
+  const primary = primaryAction(item, action);
+  const draft = Boolean(item.comment);
   const pr = pull.data?.pr;
   const github = item.number === null ? null : `https://github.com/${item.repo}/pull/${item.number}`;
   const floor = snapshot?.config?.confidenceFloor;
@@ -100,7 +102,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   }, [menu]);
 
   async function run(kind: PrimaryAction) {
-    if (item.number === null || item.running) return;
+    if (item.number === null || (kind === "merge" ? !canMerge : !canWrite)) return;
     setMenu(false);
     if (kind === "comment" || kind === "changes") {
       setComposer({ kind, body: composer?.kind === kind ? composer.body : "" });
@@ -121,7 +123,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
         await writeGithub({ action: "merge", repo: item.repo, number: item.number });
         setDone(`Merged #${item.number}.`);
       } else {
-        await writeGithub({ action: "close", repo: item.repo, number: item.number, labels: item.labels, comment: item.comment ?? "" });
+        await writeGithub({ action: "close", repo: item.repo, number: item.number, labels: item.labels, comment: reply });
         setDone(`Closed #${item.number}.`);
       }
     } catch (cause) {
@@ -156,7 +158,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   }
 
   function onReplyKey(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && primary === "reply") void run("reply");
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && draft) void run("reply");
   }
 
   useEffect(function paneShortcuts() {
@@ -176,6 +178,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   });
 
   const more: Array<{ kind: PrimaryAction; label: string; enabled: boolean; shown: boolean }> = [
+    { kind: "reply", label: edited ? "Post edited reply" : "Post reply", enabled: canWrite, shown: draft },
     { kind: "approve", label: "Approve", enabled: canWrite, shown: true },
     { kind: "changes", label: "Request changes", enabled: canWrite, shown: true },
     { kind: "comment", label: "Comment", enabled: canWrite, shown: true },
@@ -236,7 +239,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
             Show details
             <span>{item.checks.length} checks{pr ? ` · ${pr.changedFiles} ${pr.changedFiles === 1 ? "file" : "files"}` : ""} · commits · conversation</span>
           </Link>
-          {item.comment !== null ? (
+          {draft ? (
             <>
               <h3 className="lbl-h">
                 Suggested reply

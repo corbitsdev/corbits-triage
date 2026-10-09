@@ -70,8 +70,10 @@ export function inboxAction(item: PrItem): InboxAction | null {
   }
 }
 
-export function primaryAction(item: PrItem, action: InboxAction): PrimaryAction {
+export function primaryAction(item: PrItem, action: InboxAction | null): PrimaryAction | null {
   switch (action) {
+    case null:
+      return item.comment ? "reply" : null;
     case "decide":
       return item.comment ? "reply" : "comment";
     case "review":
