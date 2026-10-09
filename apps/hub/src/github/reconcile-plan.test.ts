@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrTriageRow } from "@corbits/triage-contracts";
-import { DEFAULT_RECONCILE_POLICY, planRepo, runKey, type ObservedRun, type OpenPr, type RepoPlan } from "./reconcile-plan.js";
+import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr, type RepoPlan } from "./reconcile-plan.js";
 
 const MINUTE = 60_000;
 const T0 = new Date("2026-10-07T00:00:00.000Z");
@@ -18,9 +18,15 @@ function run(runId: string, status: ObservedRun["status"], startedMinute: number
   return { runId, status, startedAt: at(startedMinute).toISOString() };
 }
 
-function plan(prs: OpenPr[], rows: readonly PrTriageRow[], now: Date, runs: Array<[OpenPr, ObservedRun[]]> = []): RepoPlan {
+const REPO = "acme/widgets";
+
+function plan(prs: OpenPr[], rows: readonly PrTriageRow[], now: Date, runs: Array<[OpenPr, ObservedRun[]]> = [], maxInFlight = prs.length): RepoPlan {
   const byHead = new Map(runs.map(([open, observed]) => [runKey(open.number, open.headSha), observed]));
-  return planRepo({ prs, rows, runs: byHead, now, policy });
+  return planTenant({ repos: [{ name: REPO, prs, rows }], runs: new Map([[REPO, byHead]]), now, policy: { ...policy, maxInFlight } }).get(REPO)!;
+}
+
+function row(number: number, extra: Partial<PrTriageRow>): PrTriageRow {
+  return { number, headSha: `sha${number}`, status: "new", attempts: 0, firstSeenAt: at(-500).toISOString(), updatedAt: at(-500).toISOString(), ...extra };
 }
 
 function enqueued(result: RepoPlan): number[] {
@@ -134,6 +140,63 @@ describe("reconcile plan", () => {
 
     const ended = plan([pr(1)], result.rows, at(4), [[pr(1), [run("run_hub", "failed", 0.1), run("run_hook", "failed", 2)]]]);
     expect(status(ended, 1)).toMatchObject({ status: "failed", runId: "run_hub" });
+  });
+
+  test("only maxInFlight heads are queued at once, oldest waiting first, and the rest drain as runs complete", () => {
+    const prs = Array.from({ length: 300 }, (_, i) => pr(i + 1));
+    const seen = plan(prs, [], at(0), [], 0);
+    expect(enqueued(seen)).toEqual([]);
+    let rows = seen.rows.map((row, i) => ({ ...row, firstSeenAt: at(-i).toISOString() }));
+    const runs: Array<[OpenPr, ObservedRun[]]> = [];
+    const passes: number[][] = [];
+    for (let minute = 1; rows.some((row) => row.status !== "triaged"); minute += 1) {
+      const pass = plan(prs, rows, at(minute), runs, policy.maxInFlight);
+      expect(pass.rows.filter((row) => row.status === "queued")).toHaveLength(Math.min(policy.maxInFlight, pass.enqueue.length));
+      if (pass.enqueue.length > 0) passes.push(enqueued(pass));
+      for (const queued of pass.enqueue) runs.push([pr(queued.number), [run(`run_${queued.number}`, "completed", minute)]]);
+      rows = pass.rows;
+    }
+    expect(passes).toHaveLength(300 / policy.maxInFlight);
+    expect(passes[0]).toEqual([300, 299, 298, 297, 296]);
+    expect(passes.flat().sort((a, b) => a - b)).toEqual(prs.map((open) => open.number));
+  });
+
+  test("a run still going for a superseded head, a closed pull request or an unloaded repository holds its slot", () => {
+    const running = [run("r_live", "running", -5)];
+    const runs = new Map([
+      [REPO, new Map([[runKey(1, "sha1-old"), running], [runKey(99, "sha99"), running]])],
+      ["acme/unloaded", new Map([[runKey(7, "sha7"), running]])],
+    ]);
+    const rows = [row(1, { headSha: "sha1-old", status: "running", runId: "r_live", queuedAt: at(-6).toISOString() })];
+    const prs = [pr(1, "sha1-new"), pr(2), pr(3), pr(4), pr(5), pr(6)];
+    const plans = planTenant({ repos: [{ name: REPO, prs, rows }], runs, now: at(0), policy });
+    expect(enqueued(plans.get(REPO)!)).toEqual([1, 2]);
+  });
+
+  test("a retried head waits behind never-tried heads first seen before it was last queued, ahead of later ones", () => {
+    const rows = [
+      row(1, { status: "failed", attempts: 1, queuedAt: at(-60).toISOString() }),
+      ...[2, 3, 4, 5, 6].map((n) => row(n, { firstSeenAt: at(-100).toISOString() })),
+      ...[7, 8].map((n) => row(n, { firstSeenAt: at(-10).toISOString() })),
+    ];
+    const prs = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => pr(n));
+    expect(enqueued(plan(prs, rows, at(0), [], 5))).toEqual([2, 3, 4, 5, 6]);
+    expect(enqueued(plan(prs, rows, at(0), [], 6))).toEqual([2, 3, 4, 5, 6, 1]);
+  });
+
+  test("a wedged hub whose runs never start spends at most five queued heads at a time and five attempts per head", () => {
+    const prs = Array.from({ length: 20 }, (_, i) => pr(i + 1));
+    let rows: PrTriageRow[] = [];
+    let mails = 0;
+    const exhausted = () => rows.length > 0 && rows.every((r) => r.status === "failed" && r.attempts === policy.maxAttempts);
+    for (let minute = 0; minute < 60 * 48 && !exhausted(); minute += 5) {
+      const pass = plan(prs, rows, at(minute), [], policy.maxInFlight);
+      mails += pass.enqueue.length;
+      expect(pass.rows.filter((r) => r.status === "queued").length).toBeLessThanOrEqual(policy.maxInFlight);
+      rows = pass.rows;
+    }
+    expect(exhausted()).toBe(true);
+    expect(mails).toBe(20 * policy.maxAttempts);
   });
 
   test("a stuck run from before the hub queued the head again does not fail the new attempt", () => {

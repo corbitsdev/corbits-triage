@@ -2,10 +2,10 @@
 // without relying on any webhook, sidecar or portal visit having survived:
 // reads GitHub's open pull requests, the live deployment's run log and the
 // stored state, then queues what the plan says to that deployment.
-import { repoPolicy, type CheckPack, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, type CheckPack, type PrTriageRow, type RepoPolicy } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead } from "./check-pack-store.js";
-import { planRepo, type ReconcilePolicy } from "./reconcile-plan.js";
+import { planTenant, type OpenPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import type { ObservedRuns } from "./triage-runs.js";
@@ -30,9 +30,8 @@ export type TriageReconcilerDeps = {
 
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
-
-/** Deliveries stop for the tenant once one fails: its deployment is unreachable until a later pass. */
-class DeliveryFailed extends Error {}
+type LoadedRepo = EnabledRepo & { pack: CheckPack; prs: OpenPr[]; stored: PrTriageRow[] };
+type Failure = { repo: string; error: unknown };
 
 /** `retry` asks for another pass soon: a deployment was not routable yet. */
 export type ReconcileOutcome = { retry: boolean };
@@ -45,13 +44,19 @@ function enabledRepos(config: unknown): EnabledRepo[] {
 }
 
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
-  async function reconcileRepo(pass: TenantPass, repo: EnabledRepo, pack: CheckPack): Promise<void> {
-    const name = repo.record.name;
+  async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
+    const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
+    if (read.status !== "ok") return undefined;
     const prs = await pass.openHeads(repo.record);
-    const stored = await deps.store.load(pass.tenantId, name);
-    const plan = planRepo({ prs, rows: stored, runs: pass.runs.get(name) ?? new Map(), now: deps.now(), policy: deps.policy });
+    const stored = await deps.store.load(pass.tenantId, repo.record.name);
+    return { ...repo, pack: read.pack, prs, stored };
+  }
+
+  /** Deliveries stop for the tenant once one fails: the failure is passed on so later repositories keep their heads unqueued. */
+  async function deliverRepo(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan, failed: Failure | undefined): Promise<Failure | undefined> {
+    const name = repo.record.name;
     const rows = [...plan.rows];
-    let failure: unknown;
+    let failure = failed;
     for (const queued of plan.enqueue) {
       const index = rows.findIndex((row) => row.number === queued.number);
       const headSha = rows[index]!.headSha;
@@ -60,15 +65,19 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         continue;
       }
       try {
-        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, pack, { prNumber: queued.number, headSha }));
+        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo.pack, { prNumber: queued.number, headSha }));
         deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha });
       } catch (err) {
-        failure = err;
+        failure = { repo: name, error: err };
         rows[index] = { ...queued.undelivered, error: `delivery failed: ${String(err)}` };
       }
     }
-    if (JSON.stringify(rows) !== JSON.stringify(stored)) await deps.store.save(pass.tenantId, name, rows);
-    if (failure !== undefined) throw new DeliveryFailed(String(failure));
+    try {
+      if (JSON.stringify(rows) !== JSON.stringify(repo.stored)) await deps.store.save(pass.tenantId, name, rows);
+    } catch (err) {
+      deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: pass.tenantId, repo: name, error: String(err) });
+    }
+    return failure;
   }
 
   /** True when a delivery failed: the deployment was not routable yet, so the pass is worth repeating soon. */
@@ -86,18 +95,33 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       return false;
     }
     // Only the live deployment's log is read; heads triaged under an earlier one are already settled in the stored state.
-    const pass = { tenantId: tenant.id, deployment, openHeads, runs: await deps.observeRuns(deployment.runId, tenant.domain) };
+    const pass: TenantPass = { tenantId: tenant.id, deployment, openHeads, runs: await deps.observeRuns(deployment.runId, tenant.domain) };
+    const loaded: LoadedRepo[] = [];
     for (const repo of repos) {
-      const read = await deps.readCheckPack(tenant.id, repo.record.name);
-      if (read.status !== "ok") continue;
       try {
-        await reconcileRepo(pass, repo, read.pack);
+        const repoLoaded = await loadRepo(pass, repo);
+        if (repoLoaded) loaded.push(repoLoaded);
       } catch (err) {
         deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: repo.record.name, error: String(err) });
-        if (err instanceof DeliveryFailed) return true;
       }
     }
-    return false;
+    const plans = planTenant({
+      repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored })),
+      runs: pass.runs,
+      now: deps.now(),
+      policy: deps.policy,
+    });
+    let failure: Failure | undefined;
+    for (const repo of loaded) {
+      try {
+        failure = await deliverRepo(pass, repo, plans.get(repo.record.name)!, failure);
+      } catch (err) {
+        failure = { repo: repo.record.name, error: err };
+      }
+    }
+    if (failure === undefined) return false;
+    deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: failure.repo, error: String(failure.error) });
+    return true;
   }
 
   return async function reconcileTriage(): Promise<ReconcileOutcome> {
