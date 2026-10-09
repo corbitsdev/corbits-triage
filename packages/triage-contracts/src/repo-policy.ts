@@ -10,12 +10,16 @@ export type RepoCheckFlags = {
   drift: boolean;
 };
 
+export type RepoRole = { users?: string[]; teams?: string[] };
+
 export type RepoPolicy = {
   cleanupMode: CleanupMode;
   enabled: boolean;
   /** Off, draft pull requests are not mailed for triage until marked ready. */
   triageDrafts: boolean;
   checks: RepoCheckFlags;
+  /** Named reviewer groups that pack actions target by role. */
+  roles: Record<string, RepoRole>;
   /** Pointer at the per-repo check-pack artifact. Not params. */
   checkPack?: { name: string };
 };
@@ -34,6 +38,7 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
   enabled: false,
   triageDrafts: true,
   checks: { ...DEFAULT_REPO_CHECKS },
+  roles: {},
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -42,6 +47,27 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function flag(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function members(value: unknown): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const out = new Set<string>();
+  for (const item of value) if (typeof item === "string" && item.trim().length > 0) out.add(item.trim());
+  return [...out];
+}
+
+function roles(value: unknown): Record<string, RepoRole> {
+  const out: Record<string, RepoRole> = {};
+  for (const [rawName, raw] of Object.entries(asRecord(value))) {
+    const name = rawName.trim();
+    const row = asRecord(raw);
+    const users = members(row.users);
+    const teams = members(row.teams);
+    if (!name || !users || !teams || users.length + teams.length === 0) continue;
+    out[name] = { ...(users.length > 0 ? { users } : {}), ...(teams.length > 0 ? { teams } : {}) };
+  }
+  return out;
 }
 
 /** Defaults missing fields so pre-policy tenant config keeps all checks on. */
@@ -64,6 +90,7 @@ export function repoPolicy(raw: unknown): RepoPolicy {
       reviewers: flag(checks.reviewers, false),
       drift: flag(checks.drift, true),
     },
+    roles: roles(source.roles),
     ...(pointerName.length > 0 ? { checkPack: { name: pointerName } } : {}),
   };
 }
