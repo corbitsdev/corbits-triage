@@ -22,8 +22,15 @@ The hub runs sidecars as local child processes, one per live deployment, on its 
    - `HUB_DATA_DIR` on a persistent volume
    - `PORT` (3000 in the image)
    - `HUB_SIDECAR_STOP_TIMEOUT_MS` (optional, default 25000): how long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. Sidecars stop in parallel, so shutdown takes about one timeout. The platform's drain time must exceed it: on Railway set `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` (for example 30).
-4. Terminate TLS in front of the hub.
-5. Sign up in the portal and follow [SELF_HOST.md](SELF_HOST.md).
+4. On the hub's database role, set `idle_in_transaction_session_timeout` to `10min`:
+
+   ```sql
+   alter role <hub role> set idle_in_transaction_session_timeout = '10min';
+   ```
+
+   A workflow-run pack receive holds the deployment's allocation row lock for its whole transaction. If that receive wedges, the lock is held until the session ends; with the timeout, Postgres ends it after ten minutes, the hub logs a failed receive and the sidecar pushes again.
+5. Terminate TLS in front of the hub.
+6. Sign up in the portal and follow [SELF_HOST.md](SELF_HOST.md).
 
 The hub validates its variables at startup (`apps/hub/src/env.ts`), exits on a missing or malformed value, and runs migrations on every start. Secrets are runtime variables only, never build arguments.
 
