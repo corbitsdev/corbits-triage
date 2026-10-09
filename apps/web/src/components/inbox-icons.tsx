@@ -15,6 +15,9 @@ export function ShieldIcon() {
 export function SearchIcon() {
   return <Icon><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3.5 3.5" /></Icon>;
 }
+export function FilterIcon() {
+  return <Icon><path d="M2 3.5h12M4.5 8h7M7 12.5h2" /></Icon>;
+}
 export function ChevronIcon() {
   return <Icon className="chev"><path d="m6 3.5 4.5 4.5L6 12.5" /></Icon>;
 }
