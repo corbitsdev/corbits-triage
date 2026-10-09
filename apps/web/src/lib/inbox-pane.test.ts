@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { Outcome } from "./held-actions.ts";
 import type { GithubPullDetail, PrGithubWriteInput, PrItem } from "./hub-api.ts";
-import { canRun, paneActions, paneFacts, replyDraft, runPaneAction, type PaneGate } from "./inbox-pane.ts";
+import { canRun, needsConfirm, paneActions, paneFacts, paneWrite, replyDraft, type PaneGate } from "./inbox-pane.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
@@ -91,18 +92,19 @@ describe("paneActions", () => {
     expect(paneActions(gate({}, undefined, { readOnly: true })).more.map((row) => row.blocker)).toEqual(["read-only", "read-only", "read-only", "read-only"]);
   });
 
-  test("the menu leaves out the suggested action; a duplicate keeps its close row, anything writable closes plainly after a confirm", () => {
+  test("the menu leaves out the suggested action; a duplicate keeps its close row and is confirmed, anything writable closes plainly", () => {
     expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close pull request", "Triage again"]);
-    expect(paneActions(gate({ comment: "Thanks" })).more.at(-2)?.confirm).toBe("Close this pull request?");
+    expect(needsConfirm("close", item({}))).toBe(false);
+    expect(needsConfirm("close", item({ canClose: true }))).toBe(true);
     expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
     expect(paneActions(gate({ canClose: true })).primary?.kind).toBe("close");
-    expect(paneActions(gate({ canClose: true })).more.at(-2)).toEqual({ kind: "close", blocker: null, label: "Close as duplicate", confirm: null });
-    expect(paneActions(gate({ canClose: true }, undefined, { readOnly: true })).more.at(-2)).toEqual({ kind: "close", blocker: "read-only", label: "Close as duplicate", confirm: null });
+    expect(paneActions(gate({ canClose: true })).more.at(-2)).toEqual({ kind: "close", blocker: null, label: "Close as duplicate" });
+    expect(paneActions(gate({ canClose: true }, undefined, { readOnly: true })).more.at(-2)).toEqual({ kind: "close", blocker: "read-only", label: "Close as duplicate" });
   });
 
   test("triage again is offered once the hub has run or given up on the pull request, under the same gate as writes", () => {
     const triage = (overrides: Partial<PrItem>, flags: Partial<Pick<PaneGate, "readOnly" | "busy">> = {}) => paneActions(gate(overrides, undefined, flags)).more.find((row) => row.kind === "triage");
-    expect(triage({})).toEqual({ kind: "triage", blocker: null, label: "Triage again", confirm: null });
+    expect(triage({})).toEqual({ kind: "triage", blocker: null, label: "Triage again" });
     expect(triage({ runId: null, state: "new" })).toBeUndefined();
     expect(triage({}, { readOnly: true })?.blocker).toBe("read-only");
     expect(triage({ running: true })?.blocker).toBe("running");
@@ -116,7 +118,7 @@ describe("paneActions", () => {
     expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" }, undefined, { readOnly: true })).primary).toEqual({ kind: "reply", blocker: "read-only" });
     expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" })).more.find((row) => row.kind === "reply")).toBeUndefined();
     expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase", posted: true })).primary).toBeNull();
-    expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" })).more.find((row) => row.kind === "reply")).toEqual({ kind: "reply", blocker: null, label: "Post reply", confirm: null });
+    expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" })).more.find((row) => row.kind === "reply")).toEqual({ kind: "reply", blocker: null, label: "Post reply" });
     expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" }, undefined, { readOnly: true })).more.find((row) => row.kind === "reply")?.blocker).toBe("read-only");
   });
 
@@ -149,40 +151,53 @@ describe("canRun", () => {
   });
 });
 
-describe("runPaneAction", () => {
-  async function record(kind: "reply" | "close" | "triage", overrides: Partial<PrItem>, text: string, commentId?: number | null): Promise<unknown[]> {
+describe("paneWrite", () => {
+  type Options = { commentId?: number | null; labelsFail?: string; replyFail?: string };
+  async function record(kind: "reply" | "close", overrides: Partial<PrItem>, text: string, options: Options = {}): Promise<{ calls: unknown[]; outcome: Outcome }> {
     const calls: unknown[] = [];
     async function write(input: PrGithubWriteInput) {
       calls.push(input);
-      return { commentId: commentId === undefined ? 7 : commentId };
+      if (input.action === "labels" && options.labelsFail !== undefined) throw new Error(options.labelsFail);
+      if (input.action === "reply" && options.replyFail !== undefined) throw new Error(options.replyFail);
+      return { commentId: options.commentId === undefined ? 7 : options.commentId };
     }
     function replySent(sent: PrItem) {
       calls.push({ sent: sent.key });
     }
-    async function triage(repo: string, number: number) {
-      calls.push({ triage: `${repo}#${number}` });
-    }
     const pr = item(overrides);
     if (pr.number === null) throw new Error("test item needs a number");
-    await runPaneAction(kind, { ...pr, number: pr.number }, replyDraft(pr, text), { write, triage, replySent });
-    return calls;
+    const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent });
+    return { calls, outcome };
   }
 
-  test("posting the reply marks the verdict sent once the hub names the comment, then applies its labels", async () => {
-    expect(await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks, edited")).toEqual([
-      { action: "reply", repo: "acme/widgets", number: 1, body: "Thanks, edited" },
-      { sent: "acme/widgets#1" },
-      { action: "labels", repo: "acme/widgets", number: 1, labels: ["wanted"] },
-    ]);
-    await expect(record("reply", { comment: "Thanks" }, "Thanks", null)).rejects.toThrow("did not confirm");
+  test("the reply and its labels start together, and the verdict is marked sent once the hub names the comment", async () => {
+    expect(await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks, edited")).toEqual({
+      calls: [
+        { action: "reply", repo: "acme/widgets", number: 1, body: "Thanks, edited" },
+        { action: "labels", repo: "acme/widgets", number: 1, labels: ["wanted"] },
+        { sent: "acme/widgets#1" },
+      ],
+      outcome: { message: "Posted to GitHub on #1.", complete: true, kept: true },
+    });
+    await expect(record("reply", { comment: "Thanks" }, "Thanks", { commentId: null })).rejects.toThrow("did not confirm");
+    await expect(record("reply", { comment: "Thanks" }, "  ")).rejects.toThrow("must not be empty");
   });
 
-  test("triage again asks the hub for the pull request and writes nothing to GitHub", async () => {
-    expect(await record("triage", {}, "")).toEqual([{ triage: "acme/widgets#1" }]);
+  test("a posted reply whose labels failed is reported as posted, not as unsent", async () => {
+    const { calls, outcome } = await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks", { labelsFail: "Label does not exist" });
+    expect(calls).toContainEqual({ sent: "acme/widgets#1" });
+    expect(outcome).toEqual({ message: "Reply posted to #1; labels were not added. Label does not exist", complete: false, kept: true });
+  });
+
+  test("labels that landed without their reply are reported, and the pull request comes back for the reply", async () => {
+    const { calls, outcome } = await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks", { replyFail: "Secondary rate limit" });
+    expect(calls).not.toContainEqual({ sent: "acme/widgets#1" });
+    expect(outcome).toEqual({ message: "Labels added to #1; the reply was not posted. Secondary rate limit", complete: false, kept: false });
+    await expect(record("reply", { comment: "Thanks" }, "Thanks", { replyFail: "Secondary rate limit" })).rejects.toThrow("Secondary rate limit");
   });
 
   test("closing a duplicate without a drafted comment posts none", async () => {
-    expect(await record("close", { canClose: true, labels: ["duplicate"] }, "")).toEqual([
+    expect((await record("close", { canClose: true, labels: ["duplicate"] }, "")).calls).toEqual([
       { action: "close", repo: "acme/widgets", number: 1, labels: ["duplicate"], comment: "" },
     ]);
   });

@@ -15,11 +15,20 @@ function assertAllowedEventName(eventName: string | undefined): string {
 }
 
 export function createHubTransport(): Transport {
+  return hubTransport(false);
+}
+
+/** Its requests outlive the page, for a write sent as the user leaves it. */
+export function createLeavingHubTransport(): Transport {
+  return hubTransport(true);
+}
+
+function hubTransport(keepalive: boolean): Transport {
   return {
     async fetch<T>(method: string, path: string, body?: unknown): Promise<T> {
       let response: Response;
       try {
-        const init: RequestInit = { method, credentials: "include" };
+        const init: RequestInit = { method, credentials: "include", keepalive };
         if (body !== undefined) {
           init.headers = { "content-type": "application/json" };
           init.body = JSON.stringify(body);

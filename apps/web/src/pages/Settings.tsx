@@ -12,6 +12,7 @@ import {
   type GrantEffect,
 } from "../lib/grant-actions.ts";
 import { githubWebhookUrl } from "../lib/github-manifest.ts";
+import { useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../lib/github-manifest.ts";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential, type HubCredential, type HubGrant, type HubPrincipal, type HubRole } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
@@ -296,7 +297,8 @@ function CredentialRow({
 
 export default function Settings() {
   const { snapshot, replaceSecret, revoke, saveConfig, addGrant, removeGrant, syncFromGithub, readOnly } = usePortal();
-  const { session, signOut } = useSession();
+  const { session } = useSession();
+  const signOut = useSignOutAfterSending();
   const params = useParams();
   const navigate = useNavigate();
   const tab = parseTab(params.tab);

@@ -2138,13 +2138,11 @@ details.setup-help[open] { display: grid; gap: 12px; }
   .mobile-nav svg { width: 22px; height: 22px; }
   .mobile-nav a[aria-current="page"],
   .mobile-nav a.active { color: var(--heat); }
-  .toast { left: 16px; right: 16px; bottom: 84px; }
   .dirty-bar {
     left: 0;
     bottom: 68px;
     padding-bottom: calc(8px + env(safe-area-inset-bottom));
   }
-  body:has(.dirty-bar) .toast { bottom: 148px; }
 }
 
 /* Product extras: auth, forms, connect conversion, dirty bar aliases */
@@ -2298,18 +2296,6 @@ textarea { min-height: 88px; resize: vertical; }
 }
 .status-ok > span[aria-hidden] { background: var(--ok); }
 .status-failed > span[aria-hidden] { background: var(--bad); }
-.toast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
-  padding: 10px 16px;
-  background: var(--rail);
-  color: var(--rail-text);
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(10, 12, 17, 0.28);
-}
 .segmented {
   display: flex;
   flex-wrap: wrap;
