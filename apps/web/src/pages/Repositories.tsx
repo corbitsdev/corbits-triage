@@ -8,6 +8,7 @@ import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE } from "../lib/github-manifest.ts";
 import { repoNeedsCheckSetup } from "../lib/check-pack.ts";
 import { useGithubSync } from "../lib/github-sync.ts";
+import { awaitingText, inboxAction } from "../lib/inbox-view.ts";
 import { useQueueItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useRunLogs } from "../lib/run-logs.ts";
@@ -59,6 +60,7 @@ export default function Repositories() {
     const needs = open.filter((item) => item.needsHuman).length;
     const prLine = open.length === 0 ? "No open pull requests" : open.length === 1 ? "1 open" : `${open.length} open`;
     const needsLine = needs === 0 ? "None need action" : needs === 1 ? "1 needs action" : `${needs} need action`;
+    const awaiting = open.filter((item) => inboxAction(item) === null).length;
     const mode = repo.cleanupMode === "automated" ? "Automated" : "Human approved";
     return (
       <Link key={repo.name} className="repo-card" to={to}>
@@ -66,7 +68,7 @@ export default function Repositories() {
         <span className={`status${needsSetup || disabled ? " needs-setup" : catchingUp ? " catching" : ""}`}><i />{status}</span>
         {needsSetup
           ? <p className="small muted"><span className="repo-needs">Set up checks</span> · not classifying yet</p>
-          : <p className="small muted">{prLine} · <span className={needs ? "repo-needs" : ""}>{needsLine}</span> · {mode}</p>}
+          : <p className="small muted">{prLine} · <span className={needs ? "repo-needs" : ""}>{needsLine}</span>{awaiting > 0 ? ` · ${awaitingText(awaiting)}` : ""} · {mode}</p>}
       </Link>
     );
   }

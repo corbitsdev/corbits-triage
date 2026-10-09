@@ -1,4 +1,4 @@
-import type { GithubPullDetail, PrGithubWriteInput, PrItem } from "./hub-api.ts";
+import type { GithubPullDetail, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type PrimaryAction } from "./inbox-view.ts";
 
 const UNTITLED = "Untitled pull request";
@@ -43,7 +43,7 @@ type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "mergeabil
 export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean };
 
 /** Everything the pane can run: the GitHub writes, plus asking the hub to triage the pull request again. */
-export type PaneKind = PrimaryAction | "triage";
+export type PaneKind = PrimaryAction;
 
 function actionBlocker(kind: PaneKind, gate: PaneGate): ActionBlocker | null {
   if (gate.item.number === null) return "no-number";
@@ -67,8 +67,6 @@ const MORE_ORDER: PrimaryAction[] = ["reply", "approve", "changes", "comment", "
 
 const PLAIN_CLOSE = { label: "Close pull request", confirm: "Close this pull request?" };
 
-const TRIAGE_AGAIN = "Triage again";
-
 function paneAction<K extends PaneKind>(kind: K, gate: PaneGate): PaneAction<K> {
   return { kind, blocker: actionBlocker(kind, gate) };
 }
@@ -82,9 +80,10 @@ function closeEntry(gate: PaneGate): MenuEntry | null {
 }
 
 /** A pull request the hub has run before, or gave up on, can be run again; one still waiting for its first run cannot. */
-function triageEntry(gate: PaneGate): MenuEntry | null {
+function triageEntry(gate: PaneGate, primaryKind: PrimaryAction | null): MenuEntry | null {
+  if (primaryKind === "triage") return null;
   if (gate.item.runId === null && gate.item.failure === null) return null;
-  return { ...paneAction("triage", gate), label: TRIAGE_AGAIN, confirm: null };
+  return { ...paneAction("triage", gate), label: primaryLabel("triage"), confirm: null };
 }
 
 export function paneActions(gate: PaneGate): PaneActions {
@@ -96,7 +95,7 @@ export function paneActions(gate: PaneGate): PaneActions {
     .map((kind) => ({ ...paneAction(kind, gate), label: primaryLabel(kind), confirm: null }));
   const close = closeEntry(gate);
   if (close !== null) more.push(close);
-  const triage = triageEntry(gate);
+  const triage = triageEntry(gate, primaryKind);
   if (triage !== null) more.push(triage);
   return { primary, more };
 }
@@ -136,9 +135,10 @@ export function isComposerKind(kind: PaneKind): kind is ComposerKind {
   return kind === "comment" || kind === "changes";
 }
 
-type GithubWrite = (input: PrGithubWriteInput) => Promise<void>;
+type GithubWrite = (input: PrGithubWriteInput) => Promise<PrGithubWriteResult>;
 
-export type PaneIo = { write: GithubWrite; triage: (repo: string, number: number) => Promise<void> };
+/** `replySent` records a reply the hub confirmed it wrote, so the row shows it posted until a new verdict. */
+export type PaneIo = { write: GithubWrite; triage: (repo: string, number: number) => Promise<void>; replySent: (item: PrItem) => void };
 
 type NumberedItem = PrItem & { number: number };
 
@@ -161,7 +161,9 @@ export async function runPaneAction(
   switch (kind) {
     case "reply": {
       if (draft === null || !draft.text.trim()) throw new Error("The reply must not be empty.");
-      await write({ action: "reply", repo, number, body: draft.text });
+      const { commentId } = await write({ action: "reply", repo, number, body: draft.text });
+      if (commentId === null) throw new Error("The hub did not confirm the reply was posted.");
+      io.replySent(item);
       if (item.labels.length > 0) await write({ action: "labels", repo, number, labels: item.labels });
       return `Posted to GitHub on #${number}.`;
     }

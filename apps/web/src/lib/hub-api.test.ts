@@ -217,6 +217,19 @@ describe("projectQueue running pull requests", () => {
     expect(projectQueue([rendered], [], [], undefined, NOW).find((item) => item.number === 9)?.sha).toBe("sha9");
   });
 
+  test("a verdict is posted only when its run's mirror step wrote a non-empty reply to GitHub", () => {
+    const mirror = (output: unknown) => ({ seq: 2, type: "StepCompleted", body: { stepId: "mirror", output: inline({ reply: JSON.stringify(output) }) } });
+    const verdict = (number: number, feedback: string) => ({ repo: "acme/widgets", number, state: "needs-author-update", feedback });
+    const render = (items: unknown[]) => ({ seq: 1, type: "StepCompleted", body: { stepId: "renderAll", output: inline({ items }) } });
+    const postedOf = (items: unknown[], output: unknown) =>
+      projectQueue([{ runId: "run-mirror", anchorRunId: "run-mirror", events: [render(items), mirror(output)] }], [], [], undefined, NOW).map((item) => [item.number, item.posted]);
+    expect(postedOf([verdict(8, "Please rebase")], { call: "github_mirror_auto:acme/widgets#8", ok: true })).toEqual([[8, true]]);
+    expect(postedOf([verdict(8, "")], { call: "github_mirror_auto:acme/widgets#8", ok: true })).toEqual([[8, false]]);
+    expect(postedOf([verdict(8, "Please rebase"), verdict(9, "Please add tests")], {
+      results: [{ call: "github_mirror_auto:acme/widgets#8", ok: false, error: "403" }, { call: "github_mirror_auto:acme/widgets#9", ok: true }],
+    })).toEqual([[8, false], [9, true]]);
+  });
+
   test("a pull request whose latest run ended without a verdict carries that failure until a newer run starts", () => {
     const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
     const cancelled: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };

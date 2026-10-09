@@ -28,6 +28,7 @@ import {
   triagePullRequest as requestPullRequestTriage,
   type HubGrant,
   type PrGithubWriteInput,
+  type PrGithubWriteResult,
   type PrItem,
   type RunLog,
   type PortalSnapshot,
@@ -56,7 +57,7 @@ interface PortalContextValue {
   runBacklog: (repo: string, message?: string) => Promise<void>;
   triagePullRequest: (repo: string, number: number) => Promise<void>;
   closeDuplicate: (item: PrItem) => Promise<void>;
-  writeGithub: (input: PrGithubWriteInput) => Promise<void>;
+  writeGithub: (input: PrGithubWriteInput) => Promise<PrGithubWriteResult>;
   decide: (approvalId: string, decision: "once" | "always" | "deny") => Promise<void>;
   replaceSecret: (credentialId: string, secret: string) => Promise<void>;
   revoke: (credentialId: string) => Promise<void>;
@@ -301,9 +302,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const writeGithub = useCallback(
     async function writeGithub(input: PrGithubWriteInput) {
       const current = requireSnapshot();
-      await githubPrAction(createHubTransport(), current.workspace.tenantId, input);
+      const result = await githubPrAction(createHubTransport(), current.workspace.tenantId, input);
       notify(`${GITHUB_ACTION_DONE[input.action]} ${input.repo}#${input.number}.`);
       refresh();
+      return result;
     },
     [notify, refresh, requireSnapshot],
   );
