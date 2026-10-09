@@ -33,6 +33,7 @@ const HubEnvSchema = type({
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
+  "TRIAGE_BATCH_SIZE?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -110,6 +111,11 @@ export function migrationEnv(db: DatabaseConfig): Record<string, string> {
 /** How often the hub re-queues open pull requests whose head is not triaged. */
 export function triageReconcileIntervalMs(env: HubEnv): number {
   return env.TRIAGE_RECONCILE_INTERVAL_MS === undefined ? 5 * 60_000 : Number(env.TRIAGE_RECONCILE_INTERVAL_MS);
+}
+
+/** Heads one catch-up mail carries at most; each run's steps share one timeout, so this bounds per-step load. */
+export function triageBatchSize(env: HubEnv): number {
+  return env.TRIAGE_BATCH_SIZE === undefined ? 5 : Number(env.TRIAGE_BATCH_SIZE);
 }
 
 export type SignInSettings = {

@@ -76,6 +76,7 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver) 
     readCheckPack: async () => ({ status: "ok", pack: PACK }),
     deliver: async (_tenant, _address, payload) => deliver(payload),
     policy: DEFAULT_RECONCILE_POLICY,
+    batchSize: DEFAULT_RECONCILE_POLICY.maxInFlight,
     now: () => NOW,
     log: () => {},
   });
@@ -103,8 +104,12 @@ async function withStore(body: (store: TriageStateStore) => Promise<void>): Prom
   }
 }
 
+/** The route mails one head as `prNumber`; the reconciler mails its heads as `items`. */
 function mailsFor8(payloads: unknown[]): number {
-  return payloads.filter((payload) => (payload as { prNumber?: number }).prNumber === 8).length;
+  return payloads.filter(function names8(payload) {
+    const mail = payload as { prNumber?: number; items?: Array<{ prNumber: number }> };
+    return mail.prNumber === 8 || mail.items?.some((item) => item.prNumber === 8) === true;
+  }).length;
 }
 
 test("PostgreSQL: a click while the reconciler is mailing the same head starts one run, not two", async () => {
