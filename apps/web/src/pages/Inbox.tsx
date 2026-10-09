@@ -1,10 +1,29 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { PrItem } from "../lib/hub-api.ts";
+import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
 import {
+  COMPOSER_COPY,
+  canRun,
+  ciStatus,
+  hasNumber,
+  isComposerKind,
+  openComposer,
+  paneActions,
+  paneFacts,
+  primaryButtonLabel,
+  replyDraft,
+  runPaneAction,
+  titleText,
+  verdictHeadline,
+  type Composer,
+  type MenuEntry,
+  type ReplyDraft,
+} from "../lib/inbox-pane.ts";
+import {
   INBOX_GROUPINGS,
+  UNASSIGNED,
   ageText,
   groupInbox,
   inboxAction,
@@ -13,13 +32,13 @@ import {
   initialsOf,
   matchesQuery,
   primaryAction,
-  primaryLabel,
   regroupInbox,
   rowActionLabel,
   rowWhy,
   type InboxAction,
   type InboxGrouping,
   type InboxPile,
+  type InboxView,
   type PrimaryAction,
 } from "../lib/inbox-view.ts";
 import { useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
@@ -42,13 +61,17 @@ function dotClass(item: PrItem, action: InboxAction | null): string {
   return item.running ? `${actionDot(action)} live` : actionDot(action);
 }
 
+function filesText(count: number): string {
+  return `${count} ${count === 1 ? "file" : "files"}`;
+}
+
 function Row({ item, selected }: { item: PrItem; selected: boolean }) {
   const action = inboxAction(item);
   const why = rowWhy(item);
   return (
     <Link className="row" role="option" aria-selected={selected} to={inboxHref(item)} data-inbox-row={item.key}>
       <span className={dotClass(item, action)} />
-      <span className="tw"><b>{item.title ?? item.key}</b>{why ? <span className="why">{why}</span> : null}</span>
+      <span className="tw"><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
       {action === null ? null : <span className="act">{rowActionLabel(primaryAction(item, action))}</span>}
     </Link>
@@ -64,31 +87,133 @@ function Pile({ pile, selectedKey }: { pile: InboxPile; selectedKey: string | un
   );
 }
 
-type Composer = { kind: "comment" | "changes"; body: string };
+function Byline({ item, author, detail }: { item: PrItem; author: string | null; detail: GithubPullDetail | undefined }) {
+  const ci = ciStatus(detail);
+  return (
+    <div className="byline">
+      {author === null ? null : <span className="who"><span className="av">{initialsOf(author)}</span><span className="nm">{author}</span></span>}
+      <span>opened {ageText(item.waitingSince)} ago</span>
+      {detail === undefined ? null : <span><span className="mono">+{detail.pr.additions} −{detail.pr.deletions}</span></span>}
+      {detail === undefined ? null : <span>{filesText(detail.pr.changedFiles)}</span>}
+      {ci === null ? null : <span className="ci"><span className={ci === "passing" ? "dot ready" : "dot hollow"} />CI {ci}</span>}
+    </div>
+  );
+}
+
+function Owner({ owner }: { owner: string | null }) {
+  const avatarClass = owner === null ? "av none" : "av";
+  const initials = owner === null ? null : initialsOf(owner);
+  const name = owner === null ? UNASSIGNED : owner;
+  const source = owner === null ? "" : " from the verdict";
+  return (
+    <div className="route">
+      <span className={avatarClass}>{initials}</span>
+      <div className="route-t"><div className="l1"><b>{name}</b>{source}</div></div>
+    </div>
+  );
+}
+
+function Certainty({ confidence, floor }: { confidence: number | null; floor: number | undefined }) {
+  if (confidence === null) return null;
+  const sure = <b className="mono">{Math.round(confidence * 100)}%</b>;
+  if (floor !== undefined && confidence < floor) return <span>{sure} sure, under your {Math.round(floor * 100)}% bar</span>;
+  return <span>{sure} sure</span>;
+}
+
+const CHECK_MARK: Record<CheckResult["result"], { className: string; glyph: string }> = {
+  pass: { className: "mk ok", glyph: "✓" },
+  fail: { className: "mk flag", glyph: "!" },
+  unconfirmed: { className: "mk judge", glyph: "?" },
+};
+
+function CheckRow({ check }: { check: CheckResult }) {
+  const mark = CHECK_MARK[check.result];
+  return (
+    <li>
+      <span className={mark.className}>{mark.glyph}</span>
+      <span>{check.reason || check.check}<small>{check.kind === "model" ? "Decision model" : check.check}</small></span>
+    </li>
+  );
+}
+
+function Reasons({ item }: { item: PrItem }) {
+  if (item.checks.length > 0) {
+    return <ul className="why">{item.checks.map((check) => <CheckRow key={check.check} check={check} />)}</ul>;
+  }
+  if (item.evidence.length === 0) return null;
+  return <ul className="why">{item.evidence.map((reason) => <li key={reason}><span className="mk judge">?</span><span>{reason}</span></li>)}</ul>;
+}
+
+type SuggestedReplyProps = {
+  item: PrItem;
+  draft: ReplyDraft;
+  replyRef: RefObject<HTMLTextAreaElement | null>;
+  onChange: (text: string) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
+};
+
+function SuggestedReply({ item, draft, replyRef, onChange, onKeyDown }: SuggestedReplyProps) {
+  return (
+    <>
+      <h3 className="lbl-h">
+        Suggested reply
+        {draft.edited ? <span className="tag" style={{ margin: 0 }}>Edited</span> : null}
+        <span className="sp" />
+        <span className="hint"><kbd>e</kbd> edit · <kbd>⌘</kbd><kbd>⏎</kbd> send</span>
+      </h3>
+      <div className="compose">
+        <textarea ref={replyRef} value={draft.text} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} aria-label="Suggested reply" />
+        {item.labels.length > 0 ? <div className="foot">Labels {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)}</div> : null}
+      </div>
+    </>
+  );
+}
+
+type ComposerFormProps = {
+  composer: Composer;
+  busy: boolean;
+  readOnly: boolean;
+  onChange: (composer: Composer) => void;
+  onCancel: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+};
+
+function ComposerForm({ composer, busy, readOnly, onChange, onCancel, onSubmit }: ComposerFormProps) {
+  const copy = COMPOSER_COPY[composer.kind];
+  return (
+    <form className="compose composer" onSubmit={onSubmit}>
+      <textarea
+        value={composer.body}
+        onChange={(event) => onChange({ ...composer, body: event.target.value })}
+        placeholder={copy.placeholder}
+        aria-label={copy.label}
+      />
+      <div className="foot">
+        <button type="submit" className="btn btn-sm" disabled={busy || readOnly}>{copy.submit}</button>
+        <button type="button" className="btn btn-quiet btn-sm" disabled={busy} onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
 
 function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   const { snapshot, writeGithub, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
-  const [reply, setReply] = useState(item.comment ?? "");
+  const [reply, setReply] = useState(item.comment === null ? "" : item.comment);
   const [composer, setComposer] = useState<Composer | null>(null);
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [done, setDone] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
-  const action = inboxAction(item);
-  const primary = action === null ? null : primaryAction(item, action);
-  const pr = pull.data?.pr;
-  const github = item.number === null ? null : `https://github.com/${item.repo}/pull/${item.number}`;
+  const facts = paneFacts(item, pull.data);
+  const gate = { item, facts, readOnly, busy };
+  const { primary, more } = paneActions(gate);
+  const draft = replyDraft(item, reply);
+  const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
   const floor = snapshot?.config?.confidenceFloor;
-  const author = pr?.author ?? item.author;
-  // A running pull request's verdict is about to be superseded, so nothing acts on it.
-  const canWrite = item.number !== null && !item.running && !readOnly && !busy;
-  const canMerge = canWrite && (pr?.mergeable ?? item.mergeable) === true && (pr?.draft ?? item.draft) !== true;
-  const ciChecks = pull.data?.checks ?? [];
-  const ciPassing = ciChecks.length > 0 && ciChecks.every((check) => /pass|success|neutral|skipped/i.test(check.conclusion ?? check.status));
-  const edited = item.comment !== null && reply !== item.comment;
+  const detailFiles = pull.data === undefined ? "" : ` · ${filesText(pull.data.pr.changedFiles)}`;
 
   useEffect(function closeMenuOnOutsideClick() {
     if (!menu) return;
@@ -100,30 +225,16 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   }, [menu]);
 
   async function run(kind: PrimaryAction) {
-    if (item.number === null || item.running) return;
+    if (!hasNumber(item) || !canRun(kind, gate)) return;
     setMenu(false);
-    if (kind === "comment" || kind === "changes") {
-      setComposer({ kind, body: composer?.kind === kind ? composer.body : "" });
+    if (isComposerKind(kind)) {
+      setComposer(openComposer(composer, kind));
       return;
     }
     setBusy(true);
     try {
-      setError("");
-      if (kind === "reply") {
-        if (!reply.trim()) throw new Error("The reply must not be empty.");
-        await writeGithub({ action: "reply", repo: item.repo, number: item.number, body: reply });
-        if (item.labels.length > 0) await writeGithub({ action: "labels", repo: item.repo, number: item.number, labels: item.labels });
-        setDone(`Posted to GitHub on #${item.number}.`);
-      } else if (kind === "approve") {
-        await writeGithub({ action: "review", repo: item.repo, number: item.number, event: "APPROVE", body: "" });
-        setDone(`Approved #${item.number}.`);
-      } else if (kind === "merge") {
-        await writeGithub({ action: "merge", repo: item.repo, number: item.number });
-        setDone(`Merged #${item.number}.`);
-      } else {
-        await writeGithub({ action: "close", repo: item.repo, number: item.number, labels: item.labels, comment: item.comment ?? "" });
-        setDone(`Closed #${item.number}.`);
-      }
+      setError(null);
+      setDone(await runPaneAction(kind, item, draft, writeGithub));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -131,23 +242,24 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     }
   }
 
-  async function submitComposer(event: FormEvent<HTMLFormElement>) {
+  async function onComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (item.number === null || item.running || !composer) return;
+    if (!hasNumber(item) || composer === null || !canRun(composer.kind, gate)) return;
     if (!composer.body.trim()) {
       setError("The comment must not be empty.");
       return;
     }
+    const { repo, number } = item;
     setBusy(true);
     try {
-      setError("");
+      setError(null);
       if (composer.kind === "comment") {
-        await writeGithub({ action: "comment", repo: item.repo, number: item.number, body: composer.body });
+        await writeGithub({ action: "comment", repo, number, body: composer.body });
       } else {
-        await writeGithub({ action: "review", repo: item.repo, number: item.number, event: "REQUEST_CHANGES", body: composer.body });
+        await writeGithub({ action: "review", repo, number, event: "REQUEST_CHANGES", body: composer.body });
       }
       setComposer(null);
-      setDone(`Posted to GitHub on #${item.number}.`);
+      setDone(`Posted to GitHub on #${number}.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -155,8 +267,12 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     }
   }
 
+  function runFromMenu(entry: MenuEntry) {
+    if (entry.confirm === null || window.confirm(entry.confirm)) void run(entry.kind);
+  }
+
   function onReplyKey(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && primary === "reply") void run("reply");
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && primary?.kind === "reply") void run("reply");
   }
 
   useEffect(function paneShortcuts() {
@@ -164,7 +280,7 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
       if (event.metaKey || event.ctrlKey || event.altKey || isInteractiveShortcutTarget(event.target)) return;
       if (event.key === "a" && primary !== null) {
         event.preventDefault();
-        void run(primary);
+        void run(primary.kind);
       }
       if (event.key === "e" && replyRef.current) {
         event.preventDefault();
@@ -174,20 +290,6 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   });
-
-  const more: Array<{ kind: PrimaryAction; label: string; enabled: boolean; shown: boolean; confirm?: string }> = [
-    { kind: "approve", label: "Approve", enabled: canWrite, shown: true },
-    { kind: "changes", label: "Request changes", enabled: canWrite, shown: true },
-    { kind: "comment", label: "Comment", enabled: canWrite, shown: true },
-    { kind: "merge", label: "Merge", enabled: canMerge, shown: true },
-    { kind: "close", label: "Close as duplicate", enabled: canWrite, shown: item.canClose },
-    // Both close rows share kind "close" but are mutually exclusive: the duplicate
-    // entry shows for flagged duplicates, the plain one for the rest. A flagged
-    // duplicate's primary bar action is already "close", so the generic
-    // row.kind !== primary filter would hide its close row; keep close rows out of
-    // that filter so the appropriate one always renders.
-    { kind: "close", label: "Close pull request", enabled: canWrite, shown: canWrite && !item.canClose, confirm: "Close this pull request?" },
-  ];
 
   return (
     <section className="panel pane" aria-label="Selected pull request">
@@ -199,85 +301,38 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
               <Link className="mono repo-link" to={`/repositories/${encodeURIComponent(item.repo)}`} title="Repository settings">{item.repo}</Link>
               {item.number === null ? null : <span className="mono">#{item.number}</span>}
               <span className="sp" />
-              {github ? <a className="btn btn-quiet btn-sm" href={github} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a> : null}
+              {github === null ? null : <a className="btn btn-quiet btn-sm" href={github} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a>}
             </div>
-            <h2 className="title">{pr?.title ?? item.title ?? item.key}</h2>
-            <div className="byline">
-              {author ? <span className="who"><span className="av">{initialsOf(author)}</span><span className="nm">{author}</span></span> : null}
-              <span>opened {ageText(item.waitingSince)} ago</span>
-              {pr ? <span><span className="mono">+{pr.additions} −{pr.deletions}</span></span> : null}
-              {pr ? <span>{pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}</span> : null}
-              {ciChecks.length > 0 ? <span className="ci"><span className={ciPassing ? "dot ready" : "dot hollow"} />CI {ciPassing ? "passing" : "waiting"}</span> : null}
-            </div>
+            <h2 className="title">{titleText(facts.title)}</h2>
+            <Byline item={item} author={facts.author} detail={pull.data} />
           </header>
-          <div className="route">
-            {item.owner ? <span className="av">{initialsOf(item.owner)}</span> : <span className="av none" />}
-            <div className="route-t">
-              <div className="l1"><b>{item.owner ?? "Unassigned"}</b>{item.owner ? " from the verdict" : ""}</div>
-            </div>
-          </div>
+          <Owner owner={item.owner} />
           <section className="verdict">
-            <p className="vh">{item.running ? inboxStatus(item) : (item.nextAction ?? item.evidence[0] ?? inboxStatus(item))}</p>
+            <p className="vh">{verdictHeadline(item)}</p>
             <div className="vm">
-              <span><span className="st"><span className={dotClass(item, action)} />{inboxStatus(item)}</span></span>
-              {item.priority ? <span><b>{item.priority}</b></span> : null}
-              {item.confidence === null ? null : (
-                <span><b className="mono">{Math.round(item.confidence * 100)}%</b> sure{floor !== undefined && item.confidence < floor ? `, under your ${Math.round(floor * 100)}% bar` : ""}</span>
-              )}
+              <span><span className="st"><span className={dotClass(item, inboxAction(item))} />{inboxStatus(item)}</span></span>
+              {item.priority === null ? null : <span><b>{item.priority}</b></span>}
+              <Certainty confidence={item.confidence} floor={floor} />
             </div>
           </section>
-          {item.checks.length > 0 || item.evidence.length > 0 ? (
-            <ul className="why">
-              {item.checks.map((check) => (
-                <li key={check.check}>
-                  <span className={`mk ${check.result === "pass" ? "ok" : check.result === "fail" ? "flag" : "judge"}`}>{check.result === "pass" ? "✓" : check.result === "fail" ? "!" : "?"}</span>
-                  <span>{check.reason || check.check}<small>{check.kind === "model" ? "Decision model" : check.check}</small></span>
-                </li>
-              ))}
-              {item.checks.length === 0 ? item.evidence.map((reason) => <li key={reason}><span className="mk judge">?</span><span>{reason}</span></li>) : null}
-            </ul>
-          ) : null}
+          <Reasons item={item} />
           <Link className="disclose" to={prHref(item)}>
             <ChevronIcon />
             Show details
-            <span>{item.checks.length} checks{pr ? ` · ${pr.changedFiles} ${pr.changedFiles === 1 ? "file" : "files"}` : ""} · commits · conversation</span>
+            <span>{item.checks.length} checks{detailFiles} · commits · conversation</span>
           </Link>
-          {item.comment !== null ? (
-            <>
-              <h3 className="lbl-h">
-                Suggested reply
-                {edited ? <span className="tag" style={{ margin: 0 }}>Edited</span> : null}
-                <span className="sp" />
-                <span className="hint"><kbd>e</kbd> edit · <kbd>⌘</kbd><kbd>⏎</kbd> send</span>
-              </h3>
-              <div className="compose">
-                <textarea ref={replyRef} value={reply} onChange={(event) => setReply(event.target.value)} onKeyDown={onReplyKey} aria-label="Suggested reply" />
-                {item.labels.length > 0 ? <div className="foot">Labels {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)}</div> : null}
-              </div>
-            </>
-          ) : null}
-          {composer ? (
-            <form className="compose composer" onSubmit={submitComposer}>
-              <textarea
-                value={composer.body}
-                onChange={(event) => setComposer({ ...composer, body: event.target.value })}
-                placeholder={composer.kind === "changes" ? "What needs to change" : "Write a comment"}
-                aria-label={composer.kind === "changes" ? "Requested changes" : "Comment"}
-              />
-              <div className="foot">
-                <button type="submit" className="btn btn-sm" disabled={busy || readOnly}>{composer.kind === "changes" ? "Request changes" : "Comment"}</button>
-                <button type="button" className="btn btn-quiet btn-sm" disabled={busy} onClick={() => setComposer(null)}>Cancel</button>
-              </div>
-            </form>
-          ) : null}
-          {error ? <p role="alert" className="error">{error}</p> : null}
-          {done ? <p role="status" className="note">{done}</p> : null}
+          {draft === null ? null : <SuggestedReply item={item} draft={draft} replyRef={replyRef} onChange={setReply} onKeyDown={onReplyKey} />}
+          {composer === null ? null : (
+            <ComposerForm composer={composer} busy={busy} readOnly={readOnly} onChange={setComposer} onCancel={() => setComposer(null)} onSubmit={onComposerSubmit} />
+          )}
+          {error === null ? null : <p role="alert" className="error">{error}</p>}
+          {done === null ? null : <p role="status" className="note">{done}</p>}
         </div>
       </div>
       <div className="bar">
         {primary === null ? null : (
-          <button type="button" className="btn btn-primary" disabled={primary === "merge" ? !canMerge : !canWrite} onClick={() => void run(primary)}>
-            {primary === "reply" && edited ? "Post edited reply" : primaryLabel(primary)} <kbd>a</kbd>
+          <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => void run(primary.kind)}>
+            {primaryButtonLabel(primary, draft)} <kbd>a</kbd>
           </button>
         )}
         <span className="sp" />
@@ -285,16 +340,8 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
           <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
           {menu ? (
             <div className="menu up" role="menu">
-              {more.filter((row) => row.shown && (row.kind === "close" || row.kind !== primary)).map((row) => (
-                <button
-                  key={`${row.kind}-${row.label}`}
-                  type="button"
-                  role="menuitem"
-                  disabled={!row.enabled}
-                  onClick={() => { if (!row.confirm || window.confirm(row.confirm)) void run(row.kind); }}
-                >
-                  {row.label}
-                </button>
+              {more.map((entry) => (
+                <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => runFromMenu(entry)}>{entry.label}</button>
               ))}
             </div>
           ) : null}
@@ -302,6 +349,21 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
       </div>
     </section>
   );
+}
+
+type EmptyListProps = { loading: boolean; denied: boolean; noRepos: boolean; query: string; view: InboxView; onClear: () => void };
+
+function EmptyList({ loading, denied, noRepos, query, view, onClear }: EmptyListProps) {
+  if (loading) return null;
+  if (denied) return <DeniedNotice section="logs" />;
+  if (noRepos) {
+    return <div className="zero"><h2>No repositories yet</h2><p>Choose the repositories Triage should read.</p><Link className="btn btn-sm" to="/repositories">Choose repositories on GitHub</Link></div>;
+  }
+  if (query.trim()) {
+    return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match.</p><button type="button" className="btn btn-sm" onClick={onClear}>Clear search</button></div>;
+  }
+  const waiting = view.waiting.length > 0 ? ` ${view.waiting.length} pull requests are waiting on authors or triage.` : "";
+  return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.{waiting}</p></div>;
 }
 
 export default function Inbox() {
@@ -319,9 +381,9 @@ export default function Inbox() {
   const view = useMemo(() => groupInbox(items.filter((item) => matchesQuery(item, query))), [items, query]);
   const piles = useMemo(() => regroupInbox(view, grouping), [view, grouping]);
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
-  const routed = params.number === undefined ? undefined : findPrItem(items, params);
-  const selected = routed ?? (params.number === undefined ? flat[0] : undefined);
-  const connectedRepos = snapshot?.repos.filter((repo) => repo.connected) ?? [];
+  const selected = params.number === undefined ? flat[0] : findPrItem(items, params);
+  const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
+  const showFold = view.waiting.length > 0 && !loading;
 
   useEffect(function shortcuts() {
     function onKeyDown(event: KeyboardEvent) {
@@ -355,16 +417,6 @@ export default function Inbox() {
     document.querySelector(`[data-inbox-row="${CSS.escape(selected.key)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  const empty = loading ? null
-    : denied ? <DeniedNotice section="logs" />
-    : connectedRepos.length === 0 && items.length === 0 ? (
-      <div className="zero"><h2>No repositories yet</h2><p>Choose the repositories Triage should read.</p><Link className="btn btn-sm" to="/repositories">Choose repositories on GitHub</Link></div>
-    ) : query.trim() ? (
-      <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match.</p><button type="button" className="btn btn-sm" onClick={() => setQuery("")}>Clear search</button></div>
-    ) : (
-      <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.{view.waiting.length > 0 ? ` ${view.waiting.length} pull requests are waiting on authors or triage.` : ""}</p></div>
-    );
-
   return (
     <div className={`inbox${selected ? " has-selection" : ""}`} ref={paneRef} tabIndex={-1}>
       <section className="panel list" aria-label="Pull requests">
@@ -384,12 +436,14 @@ export default function Inbox() {
           </div>
         </div>
         <div className="scroll" id="main">
-          {flat.length === 0 ? empty : (
+          {flat.length === 0 ? (
+            <EmptyList loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} query={query} view={view} onClear={() => setQuery("")} />
+          ) : (
             <div className="groups">
               {piles.map((pile) => <Pile key={pile.key} pile={pile} selectedKey={selected?.key} />)}
             </div>
           )}
-          {view.waiting.length > 0 && !loading ? (
+          {showFold ? (
             <>
               <div className="fold">
                 <span>{view.waiting.length} waiting on authors or triage</span>
@@ -400,7 +454,7 @@ export default function Inbox() {
                   {view.waiting.map((item) => (
                     <Link key={item.key} className="row" to={inboxHref(item)} aria-selected={item.key === selected?.key}>
                       <span className={dotClass(item, null)} />
-                      <span className="tw"><b>{item.title ?? item.key}</b><span className="why">{inboxStatus(item)}</span></span>
+                      <span className="tw"><b>{titleText(item.title)}</b><span className="why">{inboxStatus(item)}</span></span>
                       <span className="age">{ageText(item.waitingSince)}</span>
                     </Link>
                   ))}

@@ -8,6 +8,7 @@ import { usePullRequestItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
+import { paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import {
   approvalHeadline,
@@ -147,12 +148,13 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
   const { snapshot } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const pr = pull.data?.pr;
+  const facts = paneFacts(item, pull.data);
   const checks = (pull.data?.checks ?? []).map((row) => ({ name: row.name, status: row.conclusion ?? row.status }));
   const approvals = [...new Set((pull.data?.reviews ?? []).filter((row) => row.state.toUpperCase() === "APPROVED").map((row) => row.reviewer))];
   const issues = pull.data?.issues ?? [];
-  const title = pr?.title ?? item.title ?? item.key;
-  const author = pr?.author ?? item.author;
-  const draft = pr?.draft ?? item.draft;
+  const title = titleText(facts.title);
+  const author = facts.author;
+  const draft = facts.draft;
   const fileCount = pr?.changedFiles ?? null;
   const fail = checks.filter((row) => /fail/i.test(row.status)).length;
   const wait = checks.filter((row) => /pend|wait|progress|queued/i.test(row.status)).length;
@@ -337,9 +339,10 @@ export default function PRDetail() {
   const pending = approval?.status.toLowerCase() === "pending";
   const gated = Boolean(item?.needsHuman && pending);
   const floor = snapshot?.config?.confidenceFloor ?? 0.7;
-  const mergeable = pull.data?.pr.mergeable ?? item?.mergeable ?? null;
+  const facts = item === undefined ? null : paneFacts(item, pull.data);
+  const mergeable = facts === null ? null : facts.mergeable;
   const closed = pull.data?.pr.state === "closed";
-  const canMerge = mergeable === true && (pull.data?.pr.draft ?? item?.draft) !== true;
+  const canMerge = facts !== null && facts.mergeable === true && facts.draft !== true;
   const [handled, setHandled] = useState<Record<string, "posted" | "dismissed">>({});
   const head = pull.data?.pr.sha ?? item?.sha ?? "";
   const handledKey = `${item?.key}@${head}`;

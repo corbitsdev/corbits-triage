@@ -148,4 +148,10 @@ describe("listOpenPrs", () => {
     expect(paths[1]).toBe("/repos/acme/widgets/pulls?state=open&per_page=100&page=2");
     expect(prs.map((pr) => pr.number)).toEqual(all.map((pr) => pr.number));
   });
+
+  test("a pull request whose GitHub user is missing has a null author", async () => {
+    const { gh } = recorder(() => [{ number: 7, title: "T", head: { sha: "s" } }]);
+    const [pr] = await listOpenPrs(gh, "acme/widgets");
+    expect(pr?.author).toBeNull();
+  });
 });

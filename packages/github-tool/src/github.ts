@@ -97,7 +97,7 @@ export async function listOpenPrs(gh: GithubFetch, repo: string) {
   return prs.map((p: any) => ({
     number: p.number,
     title: p.title,
-    author: p.user?.login,
+    author: p.user?.login ?? null,
     draft: p.draft,
     sha: p.head?.sha,
     updatedAt: p.updated_at,
@@ -136,7 +136,7 @@ export async function getPr(gh: GithubFetch, repo: string, number: number) {
     state: p.state,
     merged: p.merged,
     draft: p.draft,
-    author: p.user?.login,
+    author: p.user?.login ?? null,
     sha: p.head?.sha,
     branch: p.head?.ref,
     base: p.base?.ref,

@@ -895,7 +895,7 @@ export async function startPullRequestTriage(
 export type OpenPulls = {
   repos: Array<{
     repo: string;
-    prs: Array<{ number: number; title: string; author: string; draft: boolean; sha: string; updatedAt: string; labels: string[] }>;
+    prs: Array<{ number: number; title: string; author: string | null; draft: boolean; sha: string; updatedAt: string; labels: string[] }>;
     error?: string;
   }>;
 };
@@ -926,7 +926,7 @@ export type GithubPullDetail = {
     state: string;
     merged: boolean;
     draft: boolean;
-    author: string;
+    author: string | null;
     sha: string;
     base: string;
     mergeable: boolean | null;
@@ -1242,7 +1242,7 @@ export type CheckResult = {
   check: string;
   kind: "machine" | "model";
   result: "pass" | "fail" | "unconfirmed";
-  reason: string;
+  reason: string | null;
   evidence: string[];
 };
 
@@ -1254,7 +1254,7 @@ function checkResults(value: unknown): CheckResult[] {
     if (typeof c.check !== "string") continue;
     if (c.kind !== "machine" && c.kind !== "model") continue;
     if (c.result !== "pass" && c.result !== "fail" && c.result !== "unconfirmed") continue;
-    out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : "", evidence: strings(c.evidence) });
+    out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence) });
   }
   return out;
 }
