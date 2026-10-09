@@ -334,6 +334,7 @@ const bridge = createBridgeHandler({
   cache: new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` }),
   sendMail: sendBridgeMail,
   readCheckPack,
+  openHeadsFor: tenantOpenHeads,
 });
 
 function decodeSegments(rest: string): string[] | null {

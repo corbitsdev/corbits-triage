@@ -235,7 +235,7 @@ describe("createGithubPrTriage", () => {
     const deps = { store, observeRuns: observed([oldVerdict]) };
     expect((await handler(ENABLED, s, deps)(request(), TENANT_ID)).status).toBe(202);
     rows = planTenant({
-      repos: [{ name: REPO, prs: [{ number: 8, headSha: "abc123", updatedAt: at(3_600_000) }], rows }],
+      repos: [{ name: REPO, prs: [{ number: 8, headSha: "abc123", updatedAt: at(3_600_000), draft: false }], rows }],
       runs: new Map([[REPO, new Map([["8@abc123", [oldVerdict]]])]]),
       now: NOW, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: 1,
     }).get(REPO)!.rows;

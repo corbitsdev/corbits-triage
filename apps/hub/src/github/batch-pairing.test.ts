@@ -88,17 +88,17 @@ describe("verdicts the decision model was never asked about", () => {
 
   function plan(rows: PrTriageRow[], runs: ObservedRun[], minute: number) {
     const byHead = new Map([["1@sha1", runs]]);
-    const repos = [{ name: REPO, prs: [{ number: 1, headSha: "sha1", updatedAt: at(-60) }], rows }];
+    const repos = [{ name: REPO, prs: [{ number: 1, headSha: "sha1", updatedAt: at(-60), draft: false }], rows }];
     return planTenant({ repos, runs: new Map([[REPO, byHead]]), now: new Date(at(minute)), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: 1 }).get(REPO)!;
   }
 
   test("are triaged again once and settle on a verdict that asked", async () => {
-    const skipped = (await observe([1], await batchRender([1], new Set(), { pack, pr: { draft: true }, skipJudge: true }), "run_old", at(0))).get("1@sha1")!;
+    const skipped = (await observe([1], await batchRender([1], new Set(), { pack, pr: { mergeable: false }, skipJudge: true }), "run_old", at(0))).get("1@sha1")!;
     expect(skipped[0]!.unsettled).toBe("model not asked");
     const triaged: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: 0, runId: "run_old", workflowVersion: 1, firstSeenAt: at(-1), queuedAt: at(-1), updatedAt: at(1) };
     const redo = plan([triaged], skipped, 10);
     expect(redo.enqueue.map((queued) => queued.reason)).toEqual(["model not asked"]);
-    const asked = (await observe([1], await batchRender([1], new Set(), { pack, pr: { draft: true } }), "run_new", at(11))).get("1@sha1")!;
+    const asked = (await observe([1], await batchRender([1], new Set(), { pack, pr: { mergeable: false } }), "run_new", at(11))).get("1@sha1")!;
     expect(asked[0]!.unsettled).toBeUndefined();
     const settled = plan(redo.rows, [...skipped, ...asked], 20);
     expect(settled.rows[0]).toMatchObject({ status: "triaged", runId: "run_new" });
@@ -106,7 +106,7 @@ describe("verdicts the decision model was never asked about", () => {
   });
 
   test("are triaged again once even after the head spent its attempts", async () => {
-    const skipped = (await observe([1], await batchRender([1], new Set(), { pack, pr: { draft: true }, skipJudge: true }), "run_old", at(0))).get("1@sha1")!;
+    const skipped = (await observe([1], await batchRender([1], new Set(), { pack, pr: { mergeable: false }, skipJudge: true }), "run_old", at(0))).get("1@sha1")!;
     const capped: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: DEFAULT_RECONCILE_POLICY.maxAttempts, runId: "run_old", workflowVersion: 1, firstSeenAt: at(-1), queuedAt: at(-1), updatedAt: at(1) };
     const redo = plan([capped], skipped, 10);
     expect(redo.enqueue.map((queued) => queued.reason)).toEqual(["model not asked"]);

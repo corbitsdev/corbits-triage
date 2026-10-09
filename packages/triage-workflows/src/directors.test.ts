@@ -63,6 +63,26 @@ describe("facts director policy", () => {
     expect(body.det?.findings.map((finding) => finding.check) ?? []).not.toContain("draft");
   });
 
+  test("a backlog skips drafts while the repository skips them", async () => {
+    async function fetched(triageDrafts: boolean): Promise<string[]> {
+      const calls: ToolCall[][] = [];
+      const caps = {
+        executeTools(next: ToolCall[]) { calls.push(next); return { type: "execute_tools", calls: next }; },
+        reply(content: string) { return { type: "reply", content }; },
+      } as unknown as ReactorCapabilities;
+      const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
+      const policy = { enabled: true, triageDrafts };
+      const start = { kind: "backlog", repo: "acme/widgets", policy, checkPack: emptyPack("acme/widgets") };
+      await director.decide({ type: "message.received", message: { content: JSON.stringify(start) } } as ReactorInboundEvent, {} as ReactorState, caps);
+      const listed = { prs: [{ number: 7, title: "WIP", draft: true }, { number: 8, title: "Fix", draft: false }] };
+      const done = { type: "tool.done", result: { callId: "github_list_open_prs", content: listed } };
+      await director.decide(done as ReactorInboundEvent, {} as ReactorState, caps);
+      return (calls[1] ?? []).map((call) => call.id);
+    }
+    expect(await fetched(false)).toEqual(["pr:8", "reviews:8", "commits:8", "files:8"]);
+    expect((await fetched(true)).filter((id) => id.startsWith("pr:"))).toEqual(["pr:7", "pr:8"]);
+  });
+
   test("a disabled repository replies a degraded item without fetching", async () => {
     const calls: ToolCall[][] = [];
     const replies: string[] = [];
@@ -128,7 +148,7 @@ describe("judge on a blocked pull request", () => {
     return (event: unknown) => d.decide(event as ReactorInboundEvent, {} as ReactorState, caps as unknown as ReactorCapabilities);
   }
 
-  async function facts(checkRuns: unknown[], mergeable: boolean | null): Promise<string> {
+  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false): Promise<string> {
     let reply = "";
     const decide = director("facts", {
       executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
@@ -137,7 +157,7 @@ describe("judge on a blocked pull request", () => {
     await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") }) } });
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
-      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable, requestedReviewers: 1 },
+      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
       "files:8": { files: [] },
@@ -148,7 +168,7 @@ describe("judge on a blocked pull request", () => {
     return reply;
   }
 
-  async function judgeAndRender(factsReply: string, judgeError?: string): Promise<{ asked: string[]; verdict: RenderOutput }> {
+  async function judgeAndRender(factsReply: string, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; verdict: RenderOutput }> {
     let judged = "";
     const asked: string[] = [];
     const judge = director("judge", {
@@ -161,7 +181,7 @@ describe("judge on a blocked pull request", () => {
     await judge({ type: "message.received", message: { content: JSON.stringify({ reply: factsReply }) } });
     if (asked.length && judgeError !== undefined) await judge({ type: "inference.error", error: { message: judgeError } });
     else if (asked.length) {
-      const text = asked.map((id) => JSON.stringify({ id, type: "noul", noul: id === "focused" ? 0.1 : 0.9 })).join("");
+      const text = asked.map((id) => JSON.stringify({ id, type: "noul", noul: failing.includes(id) ? 0.1 : 0.9 })).join("");
       await judge({ type: "inference.done", turn: { content: [{ type: "text", text }] } });
     }
     let rendered = "";
@@ -187,6 +207,14 @@ describe("judge on a blocked pull request", () => {
     expect(verdict).toMatchObject({ state: "blocked", degraded: null, mirror: true });
     expect(verdict.checks.some((c) => c.kind === "machine" && c.result === "unconfirmed")).toBe(false);
     expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["decision model unavailable", "decision model unavailable", "decision model unavailable"]);
+  });
+
+  test("a clean draft awaits review with an informational draft check and labels only", async () => {
+    const { asked, verdict } = await judgeAndRender(await facts([], true, true), undefined, []);
+    expect(asked).toEqual(["focused", "docs", "tests"]);
+    expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, feedback: "", actor: "maintainer", nextAction: "Review once marked ready" });
+    expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [] });
+    expect((verdict as RenderOutput & { request?: unknown }).request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, comment: "", close: false });
   });
 
   test("stale-unknown facts skip the model", async () => {

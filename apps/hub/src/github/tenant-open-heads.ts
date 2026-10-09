@@ -36,7 +36,7 @@ export function createTenantOpenHeads(deps: { db: DB["db"]; cipher: CredentialCi
     const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
     return async function openHeads(record) {
       const prs = await listOpenPrs(forInstallation(gh, record.installationId), record.name);
-      return prs.flatMap((pr) => (typeof pr.sha === "string" && pr.sha !== "" ? [{ number: pr.number, headSha: pr.sha, updatedAt: pr.updatedAt }] : []));
+      return prs.flatMap((pr) => (typeof pr.sha === "string" && pr.sha !== "" ? [{ number: pr.number, headSha: pr.sha, updatedAt: pr.updatedAt, draft: pr.draft }] : []));
     };
   };
 }
