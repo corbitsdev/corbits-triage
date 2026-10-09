@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
+import { stockTriggerMail } from "@corbits/triage-contracts";
 
 const NOW = new Date("2026-10-01T02:00:00.000Z");
 import {
@@ -30,7 +31,7 @@ const duplicateLog: RunLog = {
   runId: "run-triage",
   anchorRunId: "run-triage",
   events: [
-    { seq: 0, type: "RunStarted", body: { trigger: { payload: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } },
+    { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } },
     {
       seq: 1,
       type: "StepCompleted",
@@ -139,7 +140,7 @@ describe("projectQueue reply unwrap", () => {
       runId: "run-reply",
       anchorRunId: "run-reply",
       events: [
-        { seq: 0, type: "RunStarted", body: { trigger: { payload: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } },
+        { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } },
         {
           seq: 1,
           type: "StepCompleted",
@@ -162,7 +163,7 @@ describe("projectQueue reply unwrap", () => {
       runId: "run-items",
       anchorRunId: "run-items",
       events: [
-        { seq: 0, type: "RunStarted", body: { trigger: { payload: JSON.stringify({ kind: "backlog", repo: "acme/gadgets" }) } } },
+        { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "backlog", repo: "acme/gadgets" }) } } },
         {
           seq: 1,
           type: "StepCompleted",
@@ -188,7 +189,7 @@ describe("projectQueue running pull requests", () => {
   const prStarted = (number: number) => ({
     seq: 0,
     type: "RunStarted",
-    body: { trigger: { payload: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: number, headSha: "abc" }) } },
+    body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: number, headSha: "abc" }) } },
   });
   const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: "abc", updatedAt: "2026-10-01T00:00:00.000Z", labels: [] });
   const openPulls = { repos: [{ repo: "acme/widgets", prs: [pr(8), pr(9), pr(10)] }] };
@@ -208,7 +209,7 @@ describe("projectQueue running pull requests", () => {
 
   test("a batch catch-up run marks each named pull running, and its verdicts carry their head sha", () => {
     const items = [9, 10].map((n) => ({ prNumber: n, headSha: `sha${n}` }));
-    const started = { seq: 0, type: "RunStarted", body: { at: "2026-10-01T01:59:00.000Z", trigger: { payload: JSON.stringify({ kind: "pr", repo: "acme/widgets", items }) } } };
+    const started = { seq: 0, type: "RunStarted", body: { at: "2026-10-01T01:59:00.000Z", trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", items }) } } };
     const running: RunLog = { runId: "run-batch", anchorRunId: "pr", events: [started] };
     expect(projectQueue([running], [], [], openPulls, NOW).filter((item) => item.running).map((item) => item.number)).toEqual([9, 10]);
     const render = { seq: 1, type: "StepCompleted", body: { stepId: "render", output: { ref: `inline:${JSON.stringify({ items: [{ repo: "acme/widgets", number: 9, headSha: "sha9", state: "ready-monitoring" }] })}` } } };
