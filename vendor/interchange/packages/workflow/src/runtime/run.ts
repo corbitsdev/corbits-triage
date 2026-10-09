@@ -8,7 +8,7 @@
 // us swap the env implementations underneath without re-validating the
 // body.
 
-import { correlationIdFromSignalName, signalName } from "@intx/types";
+import { correlationIdFromSignalName, signalName } from "@intx/types/signals";
 import type { ApprovalSnapshot, ControlParkKind } from "@intx/types/runtime";
 
 import type {
@@ -67,7 +67,7 @@ import {
   resolveMaxChildSpawnDepth,
 } from "./child-depth";
 import { RuntimeResumeUnsupportedError } from "./errors";
-import { loopBodyRunId, scopedStepId } from "./step-scope";
+import { loopBodyRunId, scopedStepId, sectionBodyRunId } from "./step-scope";
 import { inlineBodyRef } from "../ontrigger-bodies";
 import {
   controlParkKindOf,
@@ -2430,8 +2430,10 @@ async function driveSuspendableOccurrence(
  * a body run ends non-`completed` (terminal-is-final) or the run is
  * cancelled/aborted.
  *
- * Each event's body is a full sub-run under `runs/<sectionId>__<index>/`, so
- * per-event detail lives in its own log; the parent log carries only the
+ * Each event's body is a full sub-run under
+ * `runs/<parentRunId>__<sectionId>__<index>/` (`sectionBodyRunId`). A body
+ * already recorded as `runs/<sectionId>__<index>/` stays on that id. Per-event
+ * detail lives in its own log; the parent log carries only the
  * container `StepStarted`, a `ChildSpawned`/`ChildCompleted` pair per event,
  * and the input-park `SignalAwaited`/`SignalReceived` re-arm -- all existing
  * event kinds, so the state machine is untouched.
@@ -2485,7 +2487,6 @@ async function runOnTrigger(
     | { kind: "reestablish"; name: string; awaitSeq: number }
     | { kind: "relay"; name: string; payload: unknown; signalId: string }
     | undefined;
-  let resumedChild: OnTriggerChild | undefined;
 
   if (!initial.steps.has(primitive.id)) {
     await emitStepStartedWithValue(env, runId, primitive.id, {
@@ -2501,14 +2502,7 @@ async function runOnTrigger(
     // after a crash. Reconstruct the drive position from the reduced state and
     // the log rather than re-running from event 0.
     const log = await env.repoStore.read(runId);
-    resumedChild = latestOnTriggerChild(runId, primitive, initial);
-    const plan = await planOnTriggerResume(
-      env,
-      primitive,
-      initial,
-      log,
-      resumedChild,
-    );
+    const plan = await planOnTriggerResume(env, primitive, initial, log);
     switch (plan.kind) {
       case "fresh":
         eventIndex = 0;
@@ -2518,7 +2512,7 @@ async function runOnTrigger(
         // The body already ended non-`completed` before the crash; end the
         // section the same way the steady-state loop does.
         throw new Error(
-          `onTrigger ${primitive.id} body run ${plan.childRunId} ended ${plan.terminalStatus}`,
+          `onTrigger ${primitive.id} body run ${recordedSectionBodyRunId(runId, primitive.id, plan.eventIndex, initial.children)} ended ${plan.terminalStatus}`,
         );
       case "reestablish-approval":
         eventIndex = plan.eventIndex;
@@ -2597,10 +2591,12 @@ async function runOnTrigger(
   }
 
   while (true) {
-    const childRunId =
-      resumedChild?.eventIndex === eventIndex
-        ? resumedChild.childRunId
-        : `${runId}__${primitive.id}__${String(eventIndex)}`;
+    const childRunId = recordedSectionBodyRunId(
+      runId,
+      primitive.id,
+      eventIndex,
+      (await reloadState(env, runId)).children,
+    );
     let resume: SuspendableOccurrenceResume | undefined;
     if (resumeApproval !== undefined) {
       resume = {
@@ -2960,7 +2956,6 @@ type OnTriggerResumePlan =
   | {
       kind: "terminal-is-final";
       eventIndex: number;
-      childRunId: string;
       terminalStatus: "failed" | "cancelled";
     };
 
@@ -3003,30 +2998,86 @@ function bodyParkedSignals(childState: RunState): {
   return { author, controlPlane };
 }
 
-type OnTriggerChild = { eventIndex: number; childRunId: string };
+/** Decimal event index with no leading zero. `section__01` is not index 1. */
+const CANONICAL_EVENT_INDEX = /^(0|[1-9][0-9]*)$/;
+
+function canonicalEventIndex(text: string): number | undefined {
+  if (!CANONICAL_EVENT_INDEX.test(text)) return undefined;
+  return Number(text);
+}
 
 /**
- * The section's highest-indexed body child. Children spawned before body ids
- * were run-scoped carry the bare `<stepId>__<eventIndex>` id; a section that
- * spans that upgrade must still resume them under their durable id.
+ * Event index carried by a section body run id. The minted form
+ * (`sectionBodyRunId`) is tried before the legacy `<sectionId>__<index>`
+ * form, so a parent run id that itself begins with `<sectionId>__` still
+ * parses as the minted id.
  */
-function latestOnTriggerChild(
-  runId: string,
-  primitive: OnTriggerPrimitive,
-  state: RunState,
-): OnTriggerChild | undefined {
-  const prefixes = [`${runId}__${primitive.id}__`, `${primitive.id}__`];
-  let latest: OnTriggerChild | undefined;
-  for (const childRunId of state.children.keys()) {
-    const prefix = prefixes.find((p) => childRunId.startsWith(p));
-    if (prefix === undefined) continue;
-    const parsed = Number.parseInt(childRunId.slice(prefix.length), 10);
-    if (!Number.isInteger(parsed)) continue;
-    if (latest === undefined || parsed > latest.eventIndex) {
-      latest = { eventIndex: parsed, childRunId };
-    }
+function sectionBodyEventIndex(
+  parentRunId: string,
+  sectionId: string,
+  childRunId: string,
+): number | undefined {
+  const mintedPrefix = `${parentRunId}__${sectionId}__`;
+  if (childRunId.startsWith(mintedPrefix)) {
+    return canonicalEventIndex(childRunId.slice(mintedPrefix.length));
   }
-  return latest;
+  const legacyPrefix = `${sectionId}__`;
+  if (childRunId.startsWith(legacyPrefix)) {
+    return canonicalEventIndex(childRunId.slice(legacyPrefix.length));
+  }
+  return undefined;
+}
+
+/**
+ * The body run id to drive for one event of this section. A child already
+ * recorded under the minted key or the legacy key is returned as that key.
+ * Neither key mints `sectionBodyRunId`. Both keys is a corrupt log: throw
+ * before any spawn. `spawnedBy` keeps a same-shaped id another step recorded
+ * from counting as this section's body.
+ */
+function recordedSectionBodyRunId(
+  parentRunId: string,
+  sectionId: string,
+  eventIndex: number,
+  children: RunState["children"],
+): string {
+  const minted = sectionBodyRunId(parentRunId, sectionId, eventIndex);
+  const legacy = `${sectionId}__${String(eventIndex)}`;
+  const hasMinted = children.get(minted)?.spawnedBy === sectionId;
+  const hasLegacy = children.get(legacy)?.spawnedBy === sectionId;
+  if (hasMinted && hasLegacy) {
+    throw new Error(
+      `onTrigger ${sectionId} event ${String(eventIndex)} records both ${minted} and ${legacy}`,
+    );
+  }
+  if (hasMinted) return minted;
+  if (hasLegacy) return legacy;
+  return minted;
+}
+
+/**
+ * Highest event index this section has spawned, or `undefined` when it has
+ * spawned nothing (the crash after the container `StepStarted` and before
+ * the first `ChildSpawned`). A child this section spawned whose id is neither
+ * body-run form throws: that log is not a fresh section.
+ */
+function highestSectionEventIndex(
+  parentRunId: string,
+  sectionId: string,
+  children: RunState["children"],
+): number | undefined {
+  let eventIndex: number | undefined;
+  for (const [childRunId, child] of children) {
+    if (child.spawnedBy !== sectionId) continue;
+    const parsed = sectionBodyEventIndex(parentRunId, sectionId, childRunId);
+    if (parsed === undefined) {
+      throw new Error(
+        `onTrigger ${sectionId} child ${childRunId} is not a section body run id`,
+      );
+    }
+    if (eventIndex === undefined || parsed > eventIndex) eventIndex = parsed;
+  }
+  return eventIndex;
 }
 
 async function planOnTriggerResume(
@@ -3034,13 +3085,22 @@ async function planOnTriggerResume(
   primitive: OnTriggerPrimitive,
   state: RunState,
   log: readonly WorkflowEvent[],
-  latest: OnTriggerChild | undefined,
 ): Promise<OnTriggerResumePlan> {
-  if (latest === undefined) {
+  const eventIndex = highestSectionEventIndex(
+    state.runId,
+    primitive.id,
+    state.children,
+  );
+  if (eventIndex === undefined) {
     // The container `StepStarted` is durable but no body was ever spawned.
     return { kind: "fresh" };
   }
-  const { eventIndex, childRunId } = latest;
+  const childRunId = recordedSectionBodyRunId(
+    state.runId,
+    primitive.id,
+    eventIndex,
+    state.children,
+  );
   const child = state.children.get(childRunId);
   if (child === undefined) {
     throw new Error(
@@ -3073,7 +3133,6 @@ async function planOnTriggerResume(
     return {
       kind: "terminal-is-final",
       eventIndex,
-      childRunId,
       terminalStatus: child.terminalStatus,
     };
   }

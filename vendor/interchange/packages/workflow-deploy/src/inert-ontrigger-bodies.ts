@@ -153,10 +153,8 @@ const RefChildWorkflowStep = type({
 // matches a full inert agent while typing only `modelSources`.
 const AgentWithModelSources = type({ modelSources: InertModelSource.array() });
 
-// The two agent-bearing primitive shapes, mirroring live `extractAgent`
-// (`@intx/workflow/definition`): a `step` carries `agent`, a `map` carries
-// `step.agent`. This walk is over unknown/arktype inert JSON, not `Primitive`,
-// so it cannot share that helper.
+// The two agent-bearing primitive shapes, mirroring `extractAgent`: a `step`
+// carries `agent`, a `map` carries `step.agent`.
 const StepWithAgent = type({ kind: "'step'", agent: AgentWithModelSources });
 const MapWithAgent = type({
   kind: "'map'",
@@ -398,11 +396,9 @@ export function inertFlatNamespaceStepIds(args: {
 
 /**
  * Read an inert projection step's inference shape: whether it is agent-bearing
- * and its declared `(provider, model)` preference. Mirrors live `extractAgent`
- * in `@intx/workflow/definition`: a `step` carries the agent directly, a `map`
- * carries it on its inner step, and any other primitive is a non-agent
- * (`{ isAgent: false, preference: null }`). This walk is over unknown/arktype
- * inert JSON, not `Primitive`, so it cannot share that helper.
+ * and its declared `(provider, model)` preference. Mirrors `extractAgent`: a
+ * `step` carries the agent directly, a `map` carries it on its inner step, and
+ * any other primitive is a non-agent (`{ isAgent: false, preference: null }`).
  * A `step`/`map` that fails the agent shape is a malformed projection and
  * throws. An agent with an empty `modelSources` reads as `{ isAgent: true,
  * preference: null }`, so a caller can tell it apart from a non-agent step and

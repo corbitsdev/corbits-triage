@@ -7,14 +7,14 @@
 // from its record key and applies the default-input convention so the
 // runtime sees a fully-specified definition with no implicit shape.
 
-import { canonicalizeForHash } from "@intx/agent";
+import { canonicalizeForHash } from "@intx/agent/canonicalize";
 import type { AgentDefinition, BaseEnv } from "@intx/agent";
 import type {
   CredentialBinding,
   GrantRequirement,
   SidecarCapabilityPolicy,
 } from "@intx/types";
-import type { InboundMailPolicy } from "@intx/types/runtime";
+import type { InboundMailPolicy } from "@intx/types/inbound-mail-policy";
 
 import { normalizeSingularShorthand } from "./shorthand";
 import {
@@ -53,11 +53,10 @@ export interface WorkflowDefinition {
   grantRequirements?: readonly GrantRequirement[];
   /**
    * The credential bindings a launch resolves against tenant-owned
-   * credentials, each mapping a tool package's declared handle to a
-   * concrete provider and authorizing the delegation against the
-   * binding's authority. The launch reads these from the folded body and
-   * materializes a consumer-scoped `credential:{id}` / `use` grant per
-   * binding.
+   * credentials. Each maps a tool package's declared handle to a
+   * provider. Ownership authorizes the use, and the launch stamps a
+   * consumer-scoped `credential:{id}` / `use` grant with
+   * `origin = 'system'`.
    */
   credentialBindings?: readonly CredentialBinding[];
   sidecarPlacement?: SidecarCapabilityPolicy;
@@ -436,11 +435,13 @@ function validateStepIds(steps: Record<string, Primitive>): void {
     // derives from it: an inline-body ref (`<workflowId>__<stepId>`, and under
     // nesting `<parentRef>__<stepId>`), a loop iteration body run id
     // (`<runId>__<loopId>__<index>`), and an onTrigger section body run id
-    // (`<sectionId>__<index>`, which is parsed back). A `__` inside a step id
-    // would make one of those ids ambiguous with a different chain -- and they
-    // key the durable store, so the collision is silent shared-state
-    // corruption. A body step id feeds those same joins, which is why this pass
-    // has to reach a body rather than trust it to have normalized itself.
+    // (`<parentRunId>__<sectionId>__<index>` via `sectionBodyRunId`, which is
+    // parsed back, as is a body already recorded as `<sectionId>__<index>`).
+    // A `__` inside a step id would make one of those ids ambiguous with a
+    // different chain -- and they key the durable store, so the collision is
+    // silent shared-state corruption. A body step id feeds those same joins,
+    // which is why this pass has to reach a body rather than trust it to have
+    // normalized itself.
     if (stepId.includes("__")) {
       throw new Error(
         `step id ${JSON.stringify(stepId)} must not contain "__"; ` +

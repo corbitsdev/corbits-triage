@@ -69,6 +69,86 @@
       "intx-src": "./src/testing/index.ts",
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
+    },
+    "./inbound-mail-policy": {
+      "intx-src": "./src/inbound-mail-policy.ts",
+      "types": "./dist/inbound-mail-policy.d.ts",
+      "default": "./dist/inbound-mail-policy.js"
+    },
+    "./workflow-definition": {
+      "intx-src": "./src/workflow-definition.ts",
+      "types": "./dist/workflow-definition.d.ts",
+      "default": "./dist/workflow-definition.js"
+    },
+    "./format-safety-rating": {
+      "intx-src": "./src/format-safety-rating.ts",
+      "types": "./dist/format-safety-rating.d.ts",
+      "default": "./dist/format-safety-rating.js"
+    },
+    "./hex": {
+      "intx-src": "./src/hex.ts",
+      "types": "./dist/hex.d.ts",
+      "default": "./dist/hex.js"
+    },
+    "./grant-snapshot": {
+      "intx-src": "./src/grant-snapshot.ts",
+      "types": "./dist/grant-snapshot.d.ts",
+      "default": "./dist/grant-snapshot.js"
+    },
+    "./credential-delivery": {
+      "intx-src": "./src/credential-delivery.ts",
+      "types": "./dist/credential-delivery.d.ts",
+      "default": "./dist/credential-delivery.js"
+    },
+    "./repo": {
+      "intx-src": "./src/repo.ts",
+      "types": "./dist/repo.d.ts",
+      "default": "./dist/repo.js"
+    },
+    "./runtime-core": {
+      "intx-src": "./src/runtime-core.ts",
+      "types": "./dist/runtime-core.d.ts",
+      "default": "./dist/runtime-core.js"
+    },
+    "./inference-events": {
+      "intx-src": "./src/inference-events.ts",
+      "types": "./dist/inference-events.d.ts",
+      "default": "./dist/inference-events.js"
+    },
+    "./attachments": {
+      "intx-src": "./src/attachments.ts",
+      "types": "./dist/attachments.d.ts",
+      "default": "./dist/attachments.js"
+    },
+    "./base64": {
+      "intx-src": "./src/base64.ts",
+      "types": "./dist/base64.d.ts",
+      "default": "./dist/base64.js"
+    },
+    "./signals": {
+      "intx-src": "./src/signals.ts",
+      "types": "./dist/signals.d.ts",
+      "default": "./dist/signals.js"
+    },
+    "./agent-address": {
+      "intx-src": "./src/agent-address.ts",
+      "types": "./dist/agent-address.d.ts",
+      "default": "./dist/agent-address.js"
+    },
+    "./has-code": {
+      "intx-src": "./src/has-code.ts",
+      "types": "./dist/has-code.d.ts",
+      "default": "./dist/has-code.js"
+    },
+    "./concat": {
+      "intx-src": "./src/concat.ts",
+      "types": "./dist/concat.d.ts",
+      "default": "./dist/concat.js"
+    },
+    "./workflow-run-id": {
+      "intx-src": "./src/workflow-run-id.ts",
+      "types": "./dist/workflow-run-id.d.ts",
+      "default": "./dist/workflow-run-id.js"
     }
   },
   "dependencies": {

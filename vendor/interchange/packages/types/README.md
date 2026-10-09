@@ -6,9 +6,9 @@ wire frames. Nearly every other package imports from here, which
 makes this the canonical home for any shape that crosses a package
 boundary.
 
-Each entry point pairs an ArkType validator with its inferred
-TypeScript type so consumers can validate at the boundary and
-trust the resulting value internally.
+Runtime validators expose their inferred TypeScript types so consumers can
+validate at the boundary and trust the resulting value internally. Dedicated
+helper entry points avoid loading unrelated schema collections.
 
 ## Surface
 
@@ -23,6 +23,7 @@ pull in the shapes they need:
   discovery view), observability, sidecar status enums (distinct from
   the wire frames under `@intx/types/sidecar` below), run addresses,
   hex and base64 helpers, and the `hasCode` error guard.
+- `@intx/types/hex` — hexadecimal byte encoding and decoding.
 - `@intx/types/authz` — grant rules, condition contexts, and
   authorization result shapes shared between `@intx/authz` and the
   hub.
@@ -30,14 +31,33 @@ pull in the shapes they need:
   `ErrorRecord` shapes for tool-authorization and error records.
 - `@intx/types/content-type` — `detectResponseKind`, which classifies a
   response's `Headers` as an SSE stream or a JSON body.
-- `@intx/types/runtime` — inference and harness contracts:
+- `@intx/types/runtime` — aggregate entry for runtime contracts and
+  inference-event wire schemas.
+- `@intx/types/runtime-core` — inference and harness contracts:
   `ContextStore`, `ToolRunner`, `ToolDefinition`, `AuditStore`,
   `InferenceSource` (the resolved provider/model/credential a call
-  executes against), retry policy, director and reactor types.
+  executes against), retry policy, director and reactor types. Use this
+  lighter entry in child processes that need runtime contracts without
+  constructing the inference-event union.
+- `@intx/types/inference-events` — the `InferenceEvent` wire validator,
+  its discriminated TypeScript type, and `parseInferenceEvent`.
+- `@intx/types/inbound-mail-policy` — `InboundMailOutcome`,
+  `AuthorControllableOutcome`, and the authored `InboundMailPolicy` schema.
+- `@intx/types/format-safety-rating` — `formatSafetyRatingText`, the plain-text
+  rendering helper, without runtime schema initialization.
 - `@intx/types/runtime-capabilities` — the capability-registry
   contract harness extensions resolve against (e.g. mail transport,
   blob reader).
 - `@intx/types/sidecar` — hub-sidecar WebSocket wire frames.
+- `@intx/types/credential-delivery` — credential material and binding
+  descriptors delivered to running workflow children.
+- `@intx/types/repo` — `RepoKind`, `RepoAction`, and `RepoId` without the
+  sidecar frame schemas.
+- `@intx/types/workflow-definition` — `workflowDefinitionEnvelopeSchema`,
+  the structural workflow envelope validator used by definition loaders
+  and the repository substrate.
+- `@intx/types/grant-snapshot` — `GrantWalkSnapshot`, the per-step grant
+  declarations and workflow grant requirements serialized for deployment.
 - `@intx/types/grant-wire` — grant-update wire frames pushed from
   the hub to the sidecar.
 - `@intx/types/tool-packages` — schemas for the tool-package
@@ -60,3 +80,13 @@ pull in the shapes they need:
   workflow definition's bytes come from: `WorkflowDefinitionRegistrySource`,
   `WorkflowDefinitionAssetSource` (with its `tarball` and `source`
   `package` arms), unioned as `WorkflowDefinitionSource`.
+- `@intx/types/attachments` — MIME classification, attachment categories,
+  and attachment size/count limits.
+- `@intx/types/signals` — signal kinds, approval decisions, and correlation
+  signal-name helpers.
+- `@intx/types/agent-address` — formatting and parsing run mail addresses.
+- `@intx/types/workflow-run-id` — `deriveWorkflowRunId`, which extracts a
+  deployment's top-level run ID from its mail address.
+- `@intx/types/base64` — byte encoding and decoding.
+- `@intx/types/concat` — `concatBytes` for combining byte arrays.
+- `@intx/types/has-code` — the `hasCode` error guard.

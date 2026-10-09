@@ -3,6 +3,16 @@
 Production-host implementations for the abstract
 `WorkflowRuntimeEnv` from `@intx/workflow`.
 
+The one-shot probe has separate entry points: the sidecar host imports
+`createWorkflowProbeExecutor` from `@intx/workflow-host/probe`, while its
+child imports `runWorkflowProbeChildFromProcessEnv` from
+`@intx/workflow-host/probe/child`. The child takes `walkCapabilities` from
+`@intx/workflow-deploy/capabilities`. These child entry points load the
+workflow definition and projection helpers without importing the supervisor,
+repository storage, or execution-frame schemas. Workflow packages can use
+`@intx/workflow/definition` and `@intx/agent/authoring` to preserve that
+separation when their own entry modules load.
+
 The host is the part of the workflow runtime that knows how to
 talk to real infrastructure: a `workflow-run` repo, the
 substrate's per-repo lock, an inference harness, child-workflow
@@ -329,11 +339,15 @@ The contract is intentionally narrow:
    host's binary decides the exit semantics (the convention is
    `process.exit(1)` with a stderr message on rejection).
 
+Use the `/child` entry to keep supervisor orchestration and parent wire
+validators out of the child. Its control receiver validates each message with
+an ArkType schema cached on first receipt of that message kind.
+
 Example host binary (`apps/<host>/bin/workflow-child`):
 
 ```ts
 #!/usr/bin/env bun
-import { runWorkflowChildFromProcessEnv } from "@intx/workflow-host";
+import { runWorkflowChildFromProcessEnv } from "@intx/workflow-host/child";
 import { createSubstrate } from "../src/workflow-child-bindings";
 
 await runWorkflowChildFromProcessEnv(createSubstrate, {
