@@ -116,6 +116,8 @@ export default function RepoDetail() {
   const [toggling, setToggling] = useState(false);
   const [loadingPack, setLoadingPack] = useState(true);
   const [loaded, setLoaded] = useState<LoadedCheckPack | null>(null);
+  /** The newest artifact for the repository is not a check pack; the setup choices replace it in place. */
+  const [corrupt, setCorrupt] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [staleSave, setStaleSave] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -146,6 +148,7 @@ export default function RepoDetail() {
     setLoadFailed(false);
     setError("");
     setStaleSave(false);
+    setCorrupt(false);
     setCustomizing(false);
     setPicker(false);
     setCustomOpen(false);
@@ -166,7 +169,7 @@ export default function RepoDetail() {
       try {
         const found = await loadRepoCheckPack(createHubTransport(), id, label);
         if (cancelled) return;
-        if (found) {
+        if (found?.kind === "pack") {
           const draft = draftFromCheckPack(found.pack, mode);
           setPack(draft);
           setSaved(draft);
@@ -174,6 +177,10 @@ export default function RepoDetail() {
           setLoaded({ id: found.id, version: found.version });
         } else {
           startEmpty();
+          if (found) {
+            setCorrupt(true);
+            setLoaded({ id: found.id, version: found.version });
+          }
         }
       } catch (cause) {
         if (cancelled) return;
@@ -354,6 +361,7 @@ export default function RepoDetail() {
     try {
       const stored = await saveCheckPack(transport, tenant, config.name, artifact, { cleanupMode: draft.mode, loaded });
       setLoaded({ id: stored.id, version: stored.version });
+      setCorrupt(false);
       setPack(nextDraft);
       setSaved(nextDraft);
       setNeedsSetup(false);
@@ -598,11 +606,11 @@ export default function RepoDetail() {
         <header className="workspace-head">
           <div className="page-heading">
             <div>
-              <h1 className={needsSetup && !customizing ? undefined : "mono"}>{needsSetup && !customizing ? "Set up checks" : label}</h1>
+              <h1 className={needsSetup && !customizing ? undefined : "mono"}>{needsSetup && !customizing ? (corrupt ? "Replace checks" : "Set up checks") : label}</h1>
               <p className="lede">
                 {needsSetup && !customizing
                   ? <>
-                    <span className="mono">{label}</span> needs a check pack. Use recommended adds the pack in one click. Customize starts with no checks. Saving checks does not start triage; Enable triage does.
+                    <span className="mono">{label}</span> {corrupt ? "has a check pack that is unreadable; replace it." : "needs a check pack."} Use recommended adds the pack in one click. Customize starts with no checks. Saving checks does not start triage; Enable triage does.
                   </>
                   : needsSetup
                     ? "Add checks from the catalog, or start empty. Save writes the pack."

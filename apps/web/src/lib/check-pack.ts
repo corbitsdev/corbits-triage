@@ -108,7 +108,7 @@ export async function saveCheckPack(
   await patchAppConfig(transport, tenantId, function linkRepoPack(current) {
     return { ...current, repos: (current.repos ?? []).map(linkPack) };
   });
-  return { ...stored, pack: parsed };
+  return { kind: "pack", ...stored, pack: parsed };
 }
 
 export function customizeDraft(repo: string): CheckPack {

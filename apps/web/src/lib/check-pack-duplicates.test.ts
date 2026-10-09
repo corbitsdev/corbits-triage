@@ -16,7 +16,7 @@ describe("duplicate check-pack titles", () => {
   test("the direct read resolves to the newest artifact", async () => {
     const hub = fakeHub([row("old", 1, { content: JSON.stringify(older) }), row("new", 2, { content: JSON.stringify(newer) })]);
     expect((await findArtifactByTitle(hub.transport, "t", title))?.id).toBe("new");
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ id: "new", version: 1, pack: newer });
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "new", version: 1, pack: newer });
   });
 
   test("findArtifactByTitle stops once the exact title is on page one", async () => {
@@ -36,7 +36,7 @@ describe("duplicate check-pack titles", () => {
     const opened = await loadRepoCheckPack(hub.transport, "t", "acme/widgets");
     expect(opened).toMatchObject({ id: "X", version: 1 });
     hub.artifacts.push(row("Y", 2, { content: JSON.stringify(older) }));
-    const save = saveCheckPack(hub.transport, "t", "acme/widgets", older, { loaded: opened });
+    const save = saveCheckPack(hub.transport, "t", "acme/widgets", older, { loaded: opened?.kind === "pack" ? opened : null });
     await expect(save).rejects.toBeInstanceOf(StaleCheckPackError);
     expect(hub.artifacts.map((item) => item.version)).toEqual([1, 1]);
   });

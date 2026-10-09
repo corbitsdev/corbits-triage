@@ -25,7 +25,7 @@ describe("check-pack client", () => {
 
   test("a repository's pack is read with its artifact and version; a missing title reads nothing", async () => {
     const hub = fakeHub([row("art_1", "check-pack/acme/widgets", widgets, 1, 3)]);
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ id: "art_1", version: 3, pack: widgets });
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "art_1", version: 3, pack: widgets });
     expect(await loadRepoCheckPack(hub.transport, "t", "acme/gadgets")).toBeNull();
   });
 
@@ -33,12 +33,12 @@ describe("check-pack client", () => {
     const hub = fakeHub([], config);
     const pack = emptyPack("acme/widgets");
     const created = await saveCheckPack(hub.transport, "t", "acme/widgets", pack, { loaded: null, cleanupMode: "human-approved" });
-    expect(created).toEqual({ id: "art_1", version: 1, pack });
+    expect(created).toEqual({ kind: "pack", id: "art_1", version: 1, pack });
     expect(hub.artifacts[0]).toMatchObject({ title: "check-pack/acme/widgets", content: JSON.stringify(pack), version: 1 });
     const repos = (hub.config.corbitsTriage as { repos: Array<Record<string, unknown>> }).repos;
     expect(repos[0]).toMatchObject({ name: "acme/widgets", checkPack: { name: "check-pack/acme/widgets" }, cleanupMode: "human-approved" });
     const revised = await saveCheckPack(hub.transport, "t", "acme/widgets", widgets, { loaded: created });
-    expect(revised).toEqual({ id: "art_1", version: 2, pack: widgets });
+    expect(revised).toEqual({ kind: "pack", id: "art_1", version: 2, pack: widgets });
     expect(hub.requests).toContain("POST /api/tenants/t/artifacts/art_1/versions");
     expect(hub.artifacts).toHaveLength(1);
   });
