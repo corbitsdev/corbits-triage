@@ -15,22 +15,14 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: interchange
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    runs-on: ubuntu-24.04
     steps:
+      # The runner image ships Postgres 16; starting it avoids Docker Hub pulls and their rate limits.
+      - name: Start Postgres
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres createdb interchange
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
