@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { minimatch } from "minimatch";
 
 /** Authenticated fetch pinned to the GitHub API origin; takes a path. */
 export type GithubFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -339,6 +340,32 @@ export async function addLabels(gh: GithubFetch, input: { repo: string; number: 
   return { labels: input.labels };
 }
 
+export async function addAssignees(gh: GithubFetch, input: { repo: string; number: number; assignees: string[] }) {
+  const issue = await json(gh, `/repos/${input.repo}/issues/${input.number}/assignees`, send("POST", { assignees: input.assignees }));
+  return { assignees: (issue.assignees ?? []).map((u: any) => u.login) as string[] };
+}
+
+export type RequestReviewersInput = {
+  repo: string;
+  number: number;
+  reviewers?: string[];
+  teamReviewers?: string[];
+};
+
+export async function requestReviewers(gh: GithubFetch, input: RequestReviewersInput) {
+  const reviewers = input.reviewers ?? [];
+  const teamReviewers = input.teamReviewers ?? [];
+  if (reviewers.length + teamReviewers.length === 0) throw new Error("request at least one reviewer or team");
+  const pr = await json(gh, `/repos/${input.repo}/pulls/${input.number}/requested_reviewers`, send("POST", {
+    reviewers,
+    team_reviewers: teamReviewers,
+  }));
+  return {
+    reviewers: (pr.requested_reviewers ?? []).map((u: any) => u.login) as string[],
+    teamReviewers: (pr.requested_teams ?? []).map((t: any) => t.slug) as string[],
+  };
+}
+
 export type MergePrInput = {
   repo: string;
   number: number;
@@ -349,4 +376,75 @@ export async function mergePr(gh: GithubFetch, input: MergePrInput) {
   if (pr.mergeable !== true) throw new Error("pull request is not mergeable");
   const merged = await json(gh, `/repos/${input.repo}/pulls/${input.number}/merge`, send("PUT", pr.sha ? { sha: pr.sha } : {}));
   return { merged: merged.merged === true, sha: merged.sha ?? pr.sha };
+}
+
+export type CodeownersRule = {
+  pattern: string;
+  owners: string[];
+};
+
+const CODEOWNERS_PATHS = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
+
+/** GitHub reads the first CODEOWNERS in .github/, the root, then docs/; none means no rules. */
+export async function readCodeowners(gh: GithubFetch, input: { repo: string; baseRef: string }): Promise<CodeownersRule[]> {
+  for (const file of CODEOWNERS_PATHS) {
+    const path = `/repos/${input.repo}/contents/${file}?ref=${encodeURIComponent(input.baseRef)}`;
+    const res = await gh(path, { headers: { accept: "application/vnd.github.raw+json" } });
+    if (res.status === 404) continue;
+    if (!res.ok) throw new Error(`github GET ${path} -> ${res.status}`);
+    return parseCodeowners(await res.text());
+  }
+  return [];
+}
+
+// GitHub ignores negations and character ranges, so those rules never match.
+const UNSUPPORTED_PATTERN = /^!|\[/;
+
+export function parseCodeowners(text: string): CodeownersRule[] {
+  const rules: CodeownersRule[] = [];
+  for (const line of text.split("\n")) {
+    const [pattern, ...rest] = line.replace(/(^|\s)#.*$/, "").trim().split(/\s+/);
+    if (!pattern || UNSUPPORTED_PATTERN.test(pattern)) continue;
+    rules.push({ pattern, owners: rest.filter((owner) => owner.startsWith("@")) });
+  }
+  return rules;
+}
+
+// Gitignore-style, except that a trailing `*` stays one level deep as GitHub documents.
+function codeownersGlobs(pattern: string): string[] {
+  const directory = pattern.endsWith("/");
+  let glob = pattern.replace(/^\//, "").replace(/\/$/, "");
+  if (!pattern.slice(0, -1).includes("/")) glob = `**/${glob}`;
+  if (directory) return [`${glob}/**`];
+  return glob.endsWith("*") ? [glob] : [glob, `${glob}/**`];
+}
+
+export type Codeowners = { users: string[]; teams: string[] };
+
+const GLOB_OPTIONS = { dot: true, nonegate: true, nobrace: true, noext: true };
+
+/** Per path the last matching rule wins; `@org/team` owners are returned by team slug. */
+export function codeownersFor(rules: CodeownersRule[], paths: string[]): Codeowners {
+  const users = new Set<string>();
+  const teams = new Set<string>();
+  const matchers = rules.map((rule) => ({ owners: rule.owners, globs: codeownersGlobs(rule.pattern) }));
+  for (const path of paths) {
+    const rule = matchers.findLast((m) => m.globs.some((glob) => minimatch(path, glob, GLOB_OPTIONS)));
+    for (const owner of rule?.owners ?? []) {
+      const [name, team] = owner.slice(1).split("/");
+      if (team) teams.add(team);
+      else if (name) users.add(name);
+    }
+  }
+  return { users: [...users], teams: [...teams] };
+}
+
+/** Code owners of a pull request's changed files, without its author. */
+export async function codeownersForPr(gh: GithubFetch, repo: string, number: number): Promise<Codeowners> {
+  const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
+  // GitHub applies the base branch's CODEOWNERS, so a pull request cannot edit its own reviewers.
+  const rules = await readCodeowners(gh, { repo, baseRef: pr.base.ref });
+  const files = await listPrFiles(gh, repo, number);
+  const owners = codeownersFor(rules, files.map((file) => file.path));
+  return { users: owners.users.filter((user) => user !== pr.user?.login), teams: owners.teams };
 }

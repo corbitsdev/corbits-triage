@@ -3,6 +3,8 @@ import type { ToolDefinition } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 
 import {
+  addAssignees,
+  codeownersForPr,
   createIssueComment,
   createReview,
   getChecks,
@@ -18,6 +20,7 @@ import {
   listInstallationRepositories,
   mergePr,
   mirror,
+  requestReviewers,
   type GithubFetch,
 } from "./github";
 
@@ -77,6 +80,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     description: "List every member of the organization that owns a repository.",
     inputSchema: obj({ repo }),
   },
+  {
+    name: "github_codeowners_for_pr",
+    description: "List the code owners (users and team slugs) of a pull request's changed files from the base branch's CODEOWNERS, without the author.",
+    inputSchema: obj({ repo, number: { type: "integer" } }),
+  },
 ];
 
 const MIRROR_INPUT = obj({
@@ -116,6 +124,19 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
     inputSchema: obj({ repo, number: { type: "integer" }, body: str }),
   },
   {
+    name: "github_add_assignees",
+    description: "Add assignees to a pull request. Never merges.",
+    inputSchema: obj({ repo, number: { type: "integer" }, assignees: { type: "array", items: str } }),
+  },
+  {
+    name: "github_request_reviewers",
+    description: "Request reviews on a pull request from users and teams (team slugs). Never merges.",
+    inputSchema: obj(
+      { repo, number: { type: "integer" }, reviewers: { type: "array", items: str }, teamReviewers: { type: "array", items: str } },
+      ["repo", "number"],
+    ),
+  },
+  {
     name: "github_merge_pr",
     description: "Merge a pull request only when GitHub reports mergeable is true. Refuses otherwise. Never called from github_mirror.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
@@ -153,6 +174,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
       return { comments: await listIssueComments(gh, a.repo, a.number) };
     case "github_list_org_members":
       return listOrgMembersForRepo(gh, a.repo);
+    case "github_codeowners_for_pr":
+      return codeownersForPr(gh, a.repo, a.number);
     case "github_mirror":
     case "github_mirror_auto":
       return mirror(gh, {
@@ -166,6 +189,10 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
       return createReview(gh, { repo: a.repo, number: a.number, body: a.body ?? "", event: a.event });
     case "github_create_issue_comment":
       return createIssueComment(gh, { repo: a.repo, number: a.number, body: a.body });
+    case "github_add_assignees":
+      return addAssignees(gh, { repo: a.repo, number: a.number, assignees: a.assignees });
+    case "github_request_reviewers":
+      return requestReviewers(gh, { repo: a.repo, number: a.number, reviewers: a.reviewers, teamReviewers: a.teamReviewers });
     case "github_merge_pr":
       return mergePr(gh, { repo: a.repo, number: a.number });
     default:
@@ -219,5 +246,7 @@ export const githubWrite = defineGithubTool("@corbits/github-write-tool/sidecar-
   "github_mirror",
   "github_create_review",
   "github_create_issue_comment",
+  "github_add_assignees",
+  "github_request_reviewers",
   "github_merge_pr",
 ]);
