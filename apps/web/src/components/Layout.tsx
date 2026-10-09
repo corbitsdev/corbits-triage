@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { groupInbox, initialsOf } from "../lib/inbox-view.ts";
+import { inboxAction, initialsOf } from "../lib/inbox-view.ts";
 import { useQueueItems } from "../lib/open-pulls.ts";
 import { useSession } from "../lib/session.tsx";
 import { GearIcon, InboxIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
@@ -50,7 +50,7 @@ function UserBlock() {
 
 export default function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const inboxCount = groupInbox(useQueueItems()).groups.reduce((n, group) => n + group.items.length, 0);
+  const inboxCount = useQueueItems().filter((item) => inboxAction(item) !== null).length;
   const path = location.pathname;
   const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : "inbox";
   const inboxActive = path.startsWith("/inbox") || path.startsWith("/triage");

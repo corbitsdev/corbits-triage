@@ -14,6 +14,15 @@ export function repoHealth(state: { needsSetup: boolean; enabled: boolean; catch
   return { tone: "idle", label: "No events yet" };
 }
 
+function triageReady(repo: RepoRecord): boolean {
+  return !repoNeedsCheckSetup(repo) && repoPolicy(repo).enabled;
+}
+
+/** The repositories whose pull requests can be triaged. */
+export function triageReadyRepos(repos: RepoRecord[]): Set<string> {
+  return new Set(repos.filter(triageReady).map((repo) => repo.name));
+}
+
 /** What GitHub's open pull requests say about one repository, or why they could not be read. */
 export type RepoPulls =
   | { open: number; needsYou: number; awaiting: number; owners: string[]; lastActivity: string | null }
@@ -32,13 +41,13 @@ function newest(times: Array<string | null>): string | null {
   return times.reduce<string | null>((latest, at) => (at && (!latest || Date.parse(at) > Date.parse(latest)) ? at : latest), null);
 }
 
-/** Needs you is the inbox's pile for the repository; the rest wait for a first verdict. */
-function pullsOf(open: PrItem[]): RepoPulls {
+/** Needs you is the inbox's pile for the repository; the rest wait for a first verdict, but only once the repository can be triaged. */
+function pullsOf(open: PrItem[], ready: boolean): RepoPulls {
   const actionable = open.filter((item) => inboxAction(item) !== null);
   return {
     open: open.length,
     needsYou: actionable.length,
-    awaiting: open.length - actionable.length,
+    awaiting: ready ? open.length - actionable.length : 0,
     owners: [...new Set(actionable.map((item) => item.owner ?? UNASSIGNED))],
     lastActivity: newest(open.map((item) => item.updatedAt)),
   };
@@ -63,7 +72,7 @@ export function repoRows(
       href: `/repositories/${encodeURIComponent(repo.name)}${needsSetup ? "/setup" : ""}`,
       needsSetup,
       posting: policy.cleanupMode === "automated" ? "Post automatically" : "Ask me",
-      pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name)) : { error },
+      pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), triageReady(repo)) : { error },
       health: repoHealth({ needsSetup, enabled: policy.enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: hasVerifiedWebhookDelivery(logs, repo.name) }),
     };
   });
