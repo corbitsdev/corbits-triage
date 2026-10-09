@@ -237,27 +237,37 @@ function requireContent(content: string, what: string): string {
   return trimmed;
 }
 
-async function listAll<T>(transport: Transport, path: string): Promise<T[]> {
+type Listed<T> = { rows: T[] | undefined; next: string | null };
+
+/** Follows `nextCursor` until the hub runs out of pages or `enough` says the caller has what it came for. */
+async function listPages<T>(transport: Transport, path: string, read: (raw: unknown) => Listed<T>, enough?: (items: T[]) => boolean): Promise<T[]> {
   const items: T[] = [];
   const seen = new Set<string>();
   let cursor: string | null = null;
   for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
     const separator = path.includes("?") ? "&" : "?";
-    const raw: Page<T> | T[] = await transport.fetch<Page<T> | T[]>(
+    const raw = await transport.fetch<unknown>(
       "GET",
       `${path}${separator}limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     );
-    const rows = Array.isArray(raw) ? raw : raw?.data;
+    const { rows, next } = read(raw);
     if (!Array.isArray(rows)) {
       throw new Error("The hub returned a page without data.");
     }
     items.push(...rows);
-    const next: string | null = Array.isArray(raw) ? null : (raw.nextCursor ?? null);
-    if (!next || seen.has(next)) return items;
+    if (!next || seen.has(next) || enough?.(items)) return items;
     seen.add(next);
     cursor = next;
   }
   throw new Error("The hub paginated past its page limit.");
+}
+
+async function listAll<T>(transport: Transport, path: string): Promise<T[]> {
+  return listPages<T>(transport, path, function readPage(raw) {
+    if (Array.isArray(raw)) return { rows: raw as T[], next: null };
+    const page = raw as Page<T> | undefined;
+    return { rows: page?.data, next: page?.nextCursor ?? null };
+  });
 }
 
 export const CONFIG_KEY = "corbitsTriage";
@@ -349,6 +359,24 @@ export function reposFromConfig(config: unknown): RepoRecord[] {
 }
 
 export type ArtifactListItem = { id: string; title: string; kind?: string };
+type ArtifactPage = { artifacts?: ArtifactListItem[]; nextCursor?: string | null };
+
+/**
+ * Artifact pages come newest first under `artifacts`. The hub matches `query`
+ * against title or content, so callers filter titles exactly.
+ */
+export async function listArtifacts(
+  transport: Transport,
+  tenantId: string,
+  query: string,
+  enough?: (rows: ArtifactListItem[]) => boolean,
+): Promise<ArtifactListItem[]> {
+  const tid = enc(requireTenantId(tenantId));
+  return listPages<ArtifactListItem>(transport, `/api/tenants/${tid}/artifacts?query=${enc(query)}`, function readPage(raw) {
+    const page = raw as ArtifactPage | undefined;
+    return { rows: page?.artifacts, next: page?.nextCursor ?? null };
+  }, enough);
+}
 
 export async function findArtifactByTitle(transport: Transport, tenantId: string, title: string): Promise<ArtifactListItem | null> {
   const tid = enc(requireTenantId(tenantId));
