@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { emptyPack, recommendedPack, repoPolicy } from "@corbits/triage-contracts";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import {
@@ -14,14 +15,16 @@ import {
   type DraftPack,
 } from "../lib/check-catalog.ts";
 import { alreadyWritten, linkCheckPack, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack, type LoadedCheckPack } from "../lib/check-pack.ts";
+import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "../lib/check-packs.ts";
 import { hasVerifiedWebhookDelivery } from "../lib/connect-view.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, loadRepoCheckPack, type StoredCheckPack } from "../lib/hub-api.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential, type StoredCheckPack } from "../lib/hub-api.ts";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { useQueueItems } from "../lib/open-pulls.ts";
 import { usePortal, useSignOutWhenRejected } from "../lib/portal.tsx";
+import { repoHealth } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
 
@@ -92,6 +95,7 @@ function CheckControl({ spec, row, onChange }: { spec: CatalogCheck; row: DraftC
 export default function RepoDetail() {
   const params = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { snapshot, refreshNow, syncFromGithub, runBacklog, saveRepoPolicy, notify, readOnly } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
   const fromId = params.id ? ownerAndName(params.id) : null;
@@ -143,6 +147,7 @@ export default function RepoDetail() {
   }
   const { arm } = useGithubReturnSync(() => { void syncAfterGithub(); });
   const tenantId = snapshot?.workspace.tenantId;
+  const repoName = config?.name;
 
   useEffect(function loadPack() {
     let cancelled = false;
@@ -163,14 +168,20 @@ export default function RepoDetail() {
       setNeedsSetup(true);
       setLoaded(null);
     }
-    if (!snapshot || !tenantId || !label.includes("/")) {
+    if (!snapshot || !tenantId || !repoName) {
       startEmpty();
       setLoadingPack(false);
       return;
     }
-    async function run(id: string) {
+    async function run(id: string, repo: string) {
       try {
-        const found = await loadRepoCheckPack(createHubTransport(), id, label);
+        const query = checkPackQuery(queryClient, id, repo);
+        if (attempt > 0) {
+          // Retry and Reload read past the cache, which may predate the change that made them necessary.
+          await queryClient.invalidateQueries({ queryKey: [CHECK_PACK_INDEX_QUERY_KEY, id] });
+          await queryClient.invalidateQueries({ queryKey: query.queryKey });
+        }
+        const found = await queryClient.fetchQuery(query);
         if (cancelled) return;
         if (found?.kind === "pack") {
           const draft = draftFromCheckPack(found.pack, mode);
@@ -194,11 +205,11 @@ export default function RepoDetail() {
         if (!cancelled) setLoadingPack(false);
       }
     }
-    void run(tenantId);
+    void run(tenantId, repoName);
     return function cancel() {
       cancelled = true;
     };
-  }, [label, tenantId, attempt]);
+  }, [repoName, tenantId, attempt]);
 
   const remaining = useMemo(function remainingChecks() {
     const have = new Set(pack.checks.map((row) => row.id));
@@ -380,6 +391,7 @@ export default function RepoDetail() {
       written = alreadyWritten(unlinked, artifact);
       if (!written) {
         written = await writeCheckPack(transport, tenant, config.name, artifact, loaded);
+        queryClient.setQueryData(checkPackQuery(queryClient, tenant, config.name).queryKey, written);
         setLoaded({ id: written.id, version: written.version });
         setCorrupt(false);
         setSaved(nextDraft);
@@ -493,13 +505,7 @@ export default function RepoDetail() {
     ? "Availability unknown."
     : !config
       ? "Repository not found."
-      : needsSetup
-        ? "Needs setup"
-        : catchingUp
-          ? "Catching up open pull requests"
-          : receivingEvents
-            ? "Receiving events"
-            : "No events yet";
+      : repoHealth({ needsSetup, enabled: initial.enabled, catchingUp, receivingEvents }).label;
 
   function renderCheckRow({ row, spec }: { row: DraftCheck; spec: CatalogCheck | undefined }) {
     const tall = spec?.param === "globs" || row.custom;

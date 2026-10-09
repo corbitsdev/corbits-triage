@@ -54,6 +54,8 @@ export default function Layout({ children }: { children: ReactNode }) {
   const path = location.pathname;
   const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : "inbox";
   const inboxActive = path.startsWith("/inbox") || path.startsWith("/triage");
+  // The inbox and the repositories table draw their own inset panels, so they skip the stage card.
+  const ownPanels = room === "inbox" || /^\/repositories\/?$/.test(path);
 
   useEffect(function markBody() {
     document.body.dataset.room = room;
@@ -81,7 +83,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <span className="grow" />
         <UserBlock />
       </nav>
-      {room === "inbox" ? children : (
+      {ownPanels ? children : (
         <div className={room === "pr" ? "stage has-sliver" : "stage"} id="stage">
           {children}
         </div>

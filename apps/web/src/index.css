@@ -558,7 +558,6 @@ body[data-rail="collapsed"] .nav-count {
 }
 @media (prefers-reduced-motion: reduce) {
   .merge-live .dot,
-  .status.catching i,
   .activity-dot,
   .inbox .dot.live { animation: none; }
 }
@@ -1673,8 +1672,6 @@ body[data-rail="collapsed"] .nav-count {
   border-color: transparent;
   color: var(--heat-ink);
 }
-.status.fail i { background: var(--bad); }
-.status.pending i { background: var(--heat); }
 
 .actions {
   display: flex;
@@ -1683,59 +1680,6 @@ body[data-rail="collapsed"] .nav-count {
   padding-top: 4px;
 }
 .actions-end { justify-content: flex-end; }
-
-.repo-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0;
-  border-top: 1px solid var(--rule);
-}
-.repo-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
-  column-gap: 16px;
-  row-gap: 4px;
-  padding: 14px 8px;
-  border: 0;
-  border-bottom: 1px solid var(--rule);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  text-decoration: none;
-  color: inherit;
-  min-height: 44px;
-  transition: background var(--duration) var(--ease);
-}
-.repo-card:hover {
-  background: var(--sheet);
-  color: inherit;
-  box-shadow: none;
-}
-.repo-card:active {
-  background: var(--inset);
-}
-.repo-card:focus-visible {
-  outline-offset: -2px;
-  background: var(--sheet);
-}
-.repo-card h2 {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 700;
-  grid-column: 1;
-  grid-row: 1;
-}
-.repo-card .status {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
-}
-.repo-card .small {
-  grid-column: 1 / -1;
-  grid-row: 2;
-}
-.repo-needs { color: var(--heat); font-weight: 650; }
 
 .repo-dash {
   display: grid;
@@ -1813,25 +1757,6 @@ body[data-rail="collapsed"] .nav-count {
   display: inline-flex;
   vertical-align: baseline;
 }
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--ink-soft);
-}
-.status i {
-  width: 7px;
-  height: 7px;
-  border-radius: 99px;
-  background: var(--ok);
-}
-.status.catching i {
-  background: var(--heat);
-  animation: live-pulse 1.4s ease-in-out infinite;
-}
-.status.quiet i { background: var(--rule-strong); }
-.status.needs-setup i { background: var(--heat); }
 
 .segmented {
   display: flex;

@@ -9,7 +9,7 @@ import {
   type CheckPack,
   type CleanupMode,
 } from "@corbits/triage-contracts";
-import { CONFIG_KEY, findArtifactByTitle, listArtifacts, patchAppConfig, validateRepo, type StoredCheckPack } from "./hub-api.ts";
+import { CONFIG_KEY, findArtifactByTitle, listArtifacts, newestByTitle, patchAppConfig, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
 
 export {
   applyRecommended,
@@ -27,10 +27,10 @@ function collection(tenantId: string): string {
   return `/api/tenants/${enc(tenantId)}/artifacts`;
 }
 
-/** Every check pack title the tenant has, from one listing of its check-pack artifacts. */
-export async function listCheckPackTitles(transport: Transport, tenantId: string): Promise<Set<string>> {
+/** The tenant's newest check pack artifact per title, from one listing of its check-pack artifacts. */
+export async function listCheckPacks(transport: Transport, tenantId: string): Promise<Map<string, ArtifactListItem>> {
   const rows = await listArtifacts(transport, tenantId, CHECK_PACK_TITLE_PREFIX);
-  return new Set(rows.map((row) => row.title).filter((title) => title.startsWith(CHECK_PACK_TITLE_PREFIX)));
+  return newestByTitle(rows.filter((row) => row.title.startsWith(CHECK_PACK_TITLE_PREFIX)));
 }
 
 export class StaleCheckPackError extends Error {

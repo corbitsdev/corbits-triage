@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { listCheckPackTitles, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
+import { listCheckPacks, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
 import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
 import { findArtifactByTitle, loadRepoCheckPack } from "./hub-api.ts";
 
@@ -28,7 +28,7 @@ describe("duplicate check-pack titles", () => {
   test("the title listing and the direct read page past substring-only matches to the exact title", async () => {
     const hub = fakeHub([row("target", 0), ...Array.from({ length: 150 }, (_, i) => row(`n${i}`, i + 1, { title: `${title}-${i}` }))]);
     expect((await findArtifactByTitle(hub.transport, "t", title))?.id).toBe("target");
-    expect((await listCheckPackTitles(hub.transport, "t")).has(title)).toBe(true);
+    expect((await listCheckPacks(hub.transport, "t")).has(title)).toBe(true);
   });
 
   test("a draft loaded from one artifact cannot save while a newer one carries the title", async () => {
