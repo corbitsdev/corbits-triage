@@ -25,6 +25,8 @@ export type ReconcilePolicy = {
   backoffMaxMs: number;
   /** Runs the hub queues for one head before it leaves the pull request failed. */
   maxAttempts: number;
+  /** Heads a tenant has queued or running at once; further due heads wait, oldest waiting first. */
+  maxInFlight: number;
 };
 
 const MINUTE = 60_000;
@@ -38,13 +40,15 @@ export const DEFAULT_RECONCILE_POLICY: ReconcilePolicy = {
   backoffBaseMs: 5 * MINUTE,
   backoffMaxMs: 6 * 60 * MINUTE,
   maxAttempts: 5,
+  maxInFlight: 5,
 };
 
-export type RepoPlanInput = {
-  prs: readonly OpenPr[];
-  rows: readonly PrTriageRow[];
-  /** Every observed run for a head, keyed by `${number}@${headSha}`. */
-  runs: ReadonlyMap<string, readonly ObservedRun[]>;
+export type RepoPlanInput = { name: string; prs: readonly OpenPr[]; rows: readonly PrTriageRow[] };
+
+export type TenantPlanInput = {
+  repos: readonly RepoPlanInput[];
+  /** Every observed run of the deployment, by repository, then by `${number}@${headSha}`, whether or not its repository or head is still here. */
+  runs: ReadonlyMap<string, ReadonlyMap<string, readonly ObservedRun[]>>;
   now: Date;
   policy: ReconcilePolicy;
 };
@@ -124,22 +128,58 @@ function isDue(row: PrTriageRow, pr: OpenPr, now: Date, policy: ReconcilePolicy)
   return now.getTime() - last >= backoffMs(row.attempts, policy);
 }
 
-export function planRepo({ prs, rows, runs, now, policy }: RepoPlanInput): RepoPlan {
-  const at = now.toISOString();
-  const byHead = new Map(rows.map((row) => [runKey(row.number, row.headSha), row]));
-  const next: PrTriageRow[] = [];
-  const enqueue: QueuedPr[] = [];
-  for (const pr of prs) {
-    const key = runKey(pr.number, pr.headSha);
-    const prior = byHead.get(key) ?? { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, firstSeenAt: at, updatedAt: at };
-    const row = observe(prior, runs.get(key) ?? [], now, policy);
-    if (!isDue(row, pr, now, policy)) {
-      next.push(row);
-      continue;
+/** A queued head counts until the hub marks it failed for never starting, so a backed-up queue is not mailed again. */
+function inFlight(row: PrTriageRow): boolean {
+  return row.status === "queued" || row.status === "running";
+}
+
+/**
+ * Heads the deployment is still running, by repository and run key: the slot is
+ * held whether or not the head is still open, its pull request still enabled
+ * or its repository loaded this pass.
+ */
+function runningHeads(runs: TenantPlanInput["runs"], now: Date, policy: ReconcilePolicy): Set<string> {
+  const busy = new Set<string>();
+  for (const [repo, byHead] of runs) {
+    for (const [key, observed] of byHead) {
+      if (observed.some((run) => run.status === "running" && !isStuck(run, now, policy))) busy.add(`${repo} ${key}`);
     }
-    const { runId: _run, error: _error, ...rest } = row;
-    next.push({ ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at });
-    enqueue.push({ number: pr.number, undelivered: row });
   }
-  return { rows: next, enqueue };
+  return busy;
+}
+
+type Due = { repo: string; index: number; row: PrTriageRow };
+
+/** Oldest waiting first, a retried head by the time it was last queued; among equals, the oldest pull request first. */
+function byWait(a: Due, b: Due): number {
+  return ms(a.row.queuedAt ?? a.row.firstSeenAt) - ms(b.row.queuedAt ?? b.row.firstSeenAt) || a.row.number - b.row.number;
+}
+
+/** Queues due heads across the tenant's repositories while fewer than `maxInFlight` heads are queued or running. */
+export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<string, RepoPlan> {
+  const at = now.toISOString();
+  const plans = new Map<string, RepoPlan>();
+  const due: Due[] = [];
+  const busy = runningHeads(runs, now, policy);
+  for (const { name, prs, rows } of repos) {
+    const byHead = new Map(rows.map((row) => [runKey(row.number, row.headSha), row]));
+    const observed = runs.get(name);
+    const next: PrTriageRow[] = [];
+    for (const pr of prs) {
+      const key = runKey(pr.number, pr.headSha);
+      const prior = byHead.get(key) ?? { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, firstSeenAt: at, updatedAt: at };
+      const row = observe(prior, observed?.get(key) ?? [], now, policy);
+      if (inFlight(row)) busy.add(`${name} ${key}`);
+      if (isDue(row, pr, now, policy)) due.push({ repo: name, index: next.length, row });
+      next.push(row);
+    }
+    plans.set(name, { rows: next, enqueue: [] });
+  }
+  for (const { repo, index, row } of due.sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0))) {
+    const plan = plans.get(repo)!;
+    const { runId: _run, error: _error, ...rest } = row;
+    plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
+    plan.enqueue.push({ number: row.number, undelivered: row });
+  }
+  return plans;
 }
