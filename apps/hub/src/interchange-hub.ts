@@ -203,6 +203,7 @@ export async function createInterchangeHub({
     ...(settings.probeTimeoutMs !== undefined
       ? { probeTimeoutMs: settings.probeTimeoutMs }
       : {}),
+    ...settings.sidecarLink,
   });
 
   // Wire the reconnect credential resync now that the router exists (the lookup
