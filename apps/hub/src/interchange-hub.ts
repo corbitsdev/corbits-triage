@@ -2,12 +2,13 @@
 // Keep the bootstrap below synchronized with upstream. Corbits deltas: the
 // function name; the return shape, which adds the Hono `app` (so extra tenant
 // routes mount on the same instance as `resolveTenant`), the live sidecar
-// router and what those routes share (database, credential cipher, principal
-// key store, and `getSession`, hoisted out of `createApp` for reuse); and the
-// injected database config, auth config, credential cipher and Interchange
-// settings, whose defaults env.ts `interchangeSettings` mirrors from upstream.
-// The caller builds the cipher so sidecar provisioners created before the hub
-// share it.
+// router, what those routes share (database, credential cipher, principal
+// key store, and `getSession`, hoisted out of `createApp` for reuse) and the
+// workflow allocation and lifecycle services the pr-triage deployment
+// rotation calls; and the injected database config, auth config, credential
+// cipher and Interchange settings, whose defaults env.ts `interchangeSettings`
+// mirrors from upstream. The caller builds the cipher so sidecar provisioners
+// created before the hub share it.
 import {
   createDB,
   createGrantStore,
@@ -493,5 +494,7 @@ export async function createInterchangeHub({
     principalKeyStore,
     getSession,
     runReader,
+    workflowAllocationService,
+    workflowLifecycleService,
   };
 }

@@ -11,6 +11,7 @@ const CREDENTIAL_ID = "crd_github";
 const NOW = new Date("2026-10-08T12:00:00Z");
 const PACK: CheckPack = { name: checkPackName(REPO), schemaVersion: 1, repo: REPO, checks: [] } as unknown as CheckPack;
 const ENABLED = { name: REPO, connected: true, enabled: true };
+const ANCHOR = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
 
 type Delivered = { address: string; payload: unknown };
 type Stub = { delivered: Delivered[]; saved: PrTriageRow[][]; authorized: unknown[][] };
@@ -27,7 +28,7 @@ function stubDb(repo: Record<string, unknown>) {
 
 function observed(runs: ObservedRun[]): GithubPrTriageDeps["observeRuns"] {
   return async function observeRuns() {
-    return { byRepo: new Map([[REPO, new Map([["8@abc123", runs]])]]) };
+    return { byRepo: new Map([[REPO, new Map([["8@abc123", runs]])]]), runCount: runs.length };
   };
 }
 
@@ -69,7 +70,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
     trustedPortalOrigins: [PORTAL],
     pullHead: async (_app, _record, number) => (number === 8 ? "abc123" : undefined),
     readCheckPack: async () => ({ status: "ok", pack: PACK }),
-    liveDeployment: async () => ({ runId: "anchor-1", address: "anchor-1@tenant.example" }),
+    liveDeployments: async () => [ANCHOR],
     observeRuns: observed([]),
     store: stored([], s.saved),
     deliver: async (_tenant, address, payload) => {
@@ -159,6 +160,26 @@ describe("createGithubPrTriage", () => {
     expect(s.delivered).toEqual([]);
     expect((await handler(ENABLED, s, { observeRuns: observed([stuck]) })(request(), TENANT_ID)).status).toBe(202);
     expect(s.delivered).toHaveLength(1);
+  });
+
+  test("refuses a head still running on a replaced deployment or stored as running, but not one stored running past the stuck time", async () => {
+    const live: ObservedRun = { runId: "run-live", status: "running", startedAt: new Date(NOW.getTime() - 60_000).toISOString() };
+    const replaced = { ...ANCHOR, runId: "anchor-0", address: "anchor-0@tenant.example" };
+    const onReplaced: GithubPrTriageDeps["observeRuns"] = async (anchorRunId, domain) => (anchorRunId === replaced.runId ? observed([live]) : observed([]))(anchorRunId, domain);
+    const s = stub();
+    await refused(await handler(ENABLED, s, { liveDeployments: async () => [ANCHOR, replaced], observeRuns: onReplaced })(request(), TENANT_ID), 409, "already_running");
+    const running = (agoMs: number): PrTriageRow => ({ ...queuedRow(agoMs), status: "running", runId: "run-live" });
+    await refused(await handler(ENABLED, s, { store: stored([running(60_000)], s.saved) })(request(), TENANT_ID), 409, "already_running");
+    expect(s.delivered).toEqual([]);
+    expect((await handler(ENABLED, s, { store: stored([running(2 * DEFAULT_RECONCILE_POLICY.stuckAfterMs)], s.saved) })(request(), TENANT_ID)).status).toBe(202);
+    expect(s.delivered).toEqual([{ address: ANCHOR.address, payload: expect.anything() }]);
+  });
+
+  test("never mails a deployment whose cancellation was requested, even when it is the newest", async () => {
+    const copy = { ...ANCHOR, runId: "anchor-copy", address: "anchor-copy@tenant.example", createdAt: new Date(NOW.getTime() + 1), cancelling: true };
+    const s = stub();
+    expect((await handler(ENABLED, s, { liveDeployments: async () => [copy, ANCHOR] })(request(), TENANT_ID)).status).toBe(202);
+    expect(s.delivered.map((entry) => entry.address)).toEqual([ANCHOR.address]);
   });
 
   test("refuses a head the hub queued within the unstarted grace; one queued longer ago is requeued keeping its attempts", async () => {

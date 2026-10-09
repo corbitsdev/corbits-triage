@@ -87,13 +87,23 @@ function newestFirst(a: WorkflowDeployment, b: WorkflowDeployment): number {
   return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
 }
 
-/** Cancels every live deployment of the asset except the newest; a failed cancel is retried on the next converge. */
+/** Cancels every live deployment of the asset except the newest. */
 async function cancelSuperseded(transport: Transport, tenantId: string, assetId: string): Promise<void> {
   const deployments = await listWorkflowDeployments(transport, tenantId);
   const ofAsset = deployments.filter((d) => d.definitionAssetId === assetId).sort(newestFirst);
   for (const old of ofAsset.slice(1)) {
     if (isLiveDeployment(old.status)) await cancelDeployment(transport, tenantId, old.id);
   }
+}
+
+/**
+ * The hub replaces a busy pr-triage deployment with a copy and releases the
+ * old one itself, so pr-triage's superseded deployments are cancelled here
+ * only right after a deploy; other workflows' are cancelled on every converge,
+ * which retries a failed cancel.
+ */
+export function cancelsSuperseded(workflow: string, deployed: boolean): boolean {
+  return deployed || workflow !== "pr-triage";
 }
 
 export async function ensureWorkflows(transport: Transport, tenantId: string, offerings: OfferingSuggestion, redeploy: boolean): Promise<string[]> {
@@ -105,7 +115,8 @@ export async function ensureWorkflows(transport: Transport, tenantId: string, of
     const ofAsset = deployments.filter((d) => d.definitionAssetId === asset.id).sort(newestFirst);
     const { commitSha, changed } = await pushWorkflow(transport, tenantId, asset, workflow);
     const live = ofAsset.some((d) => isLiveDeployment(d.status));
-    if (changed || redeploy || !live) {
+    const deploy = changed || redeploy || !live;
+    if (deploy) {
       await deployWorkflow(transport, tenantId, {
         source: { kind: "asset", assetId: asset.id, package: { format: "source", commitSha, packageName: workflow.packageName } },
         entry: workflow.entry,
@@ -114,7 +125,7 @@ export async function ensureWorkflows(transport: Transport, tenantId: string, of
       });
       deployed.push(workflow.name);
     }
-    await cancelSuperseded(transport, tenantId, asset.id);
+    if (cancelsSuperseded(workflow.name, deploy)) await cancelSuperseded(transport, tenantId, asset.id);
   }
   return deployed;
 }
