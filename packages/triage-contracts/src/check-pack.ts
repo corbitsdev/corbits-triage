@@ -95,10 +95,12 @@ function asRepo(value: unknown): string | undefined {
   return trimmed;
 }
 
+export const CHECK_PACK_TITLE_PREFIX = "check-pack/";
+
 export function checkPackName(repo: string): string {
   const clean = asRepo(repo);
   if (!clean) throw new Error("Repository must be owner/name.");
-  return `check-pack/${clean}`;
+  return `${CHECK_PACK_TITLE_PREFIX}${clean}`;
 }
 
 export function emptyPack(repo: string): CheckPack {
