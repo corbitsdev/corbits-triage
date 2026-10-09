@@ -151,11 +151,10 @@ describe("reconcile plan", () => {
     expect(plan([pr(1)], [], at(0), [], 1, null).rows[0]?.workflowVersion).toBeUndefined();
   });
 
-  test("rows from before verdicts were stamped start over once the deployment is versioned", () => {
+  test("rows from before verdicts were stamped are not triaged again once the deployment is versioned", () => {
     const legacy = plan([pr(1)], [triaged(1, null)], at(0));
-    expect(enqueued(legacy)).toEqual([1]);
-    expect(legacy.enqueue[0]?.reason).toBe(`verdict from workflow version none, current is ${VERSION}`);
-    expect(legacy.rows[0]).toMatchObject({ status: "queued", attempts: 1, workflowVersion: VERSION });
+    expect(enqueued(legacy)).toEqual([]);
+    expect(legacy.rows[0]).toEqual(triaged(1, null));
   });
 
   test("a verdict waiting on an unconfirmed check is retried after its own delay, up to the attempt cap", () => {

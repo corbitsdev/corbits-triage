@@ -5,7 +5,7 @@ import { triggerRequestOf } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
-import { runKey, type ObservedRun } from "./reconcile-plan.js";
+import { MODEL_NOT_ASKED, runKey, type ObservedRun } from "./reconcile-plan.js";
 
 const TERMINAL_EVENTS: Record<string, Terminal["status"]> = {
   RunCompleted: "completed",
@@ -80,6 +80,12 @@ function isUnconfirmedMachineCheck(check: unknown): boolean {
   return result?.["kind"] === "machine" && result["result"] === "unconfirmed";
 }
 
+/** Every model check of the verdict was skipped, outside a stale-unknown verdict that skips them by design. */
+function modelNotAsked(verdict: Record<string, unknown>, checks: unknown[]): boolean {
+  const model = checks.map(asRecord).filter((check) => check?.["kind"] === "model");
+  return verdict["state"] !== "stale-unknown" && model.length > 0 && model.every((check) => check?.["reason"] === "not asked");
+}
+
 /** A batch run renders `{ items }` in the order its mail named the heads; a single run renders the verdict itself. */
 function verdictsOf(events: readonly WorkflowRunEvent[]): Array<Record<string, unknown> | undefined> {
   const ref = asRecord(events.findLast(isRenderCompleted)?.body["output"])?.["ref"];
@@ -89,7 +95,7 @@ function verdictsOf(events: readonly WorkflowRunEvent[]): Array<Record<string, u
   return Array.isArray(items) ? items.map(asRecord) : [reply];
 }
 
-/** Why the verdict does not settle the triggered head: degraded, made on another commit, or a machine check GitHub had not computed yet. */
+/** Why the verdict does not settle the triggered head: degraded, made on another commit, a machine check GitHub had not computed yet, or the decision model never asked. */
 function unsettledBy(verdict: Record<string, unknown>, headSha: string): Unsettled {
   const degraded = verdict["degraded"];
   if (degraded !== undefined && degraded !== null) {
@@ -97,11 +103,12 @@ function unsettledBy(verdict: Record<string, unknown>, headSha: string): Unsettl
     return { unsettled: `degraded: ${typeof reason === "string" && reason !== "" ? reason : String(degraded)}` };
   }
   const made = verdict["headSha"];
-  // A verdict from before heads were stamped settles until the deployment moves to a versioned workflow.
+  // A verdict from before heads were stamped settles.
   if (typeof made === "string" && made !== headSha) return { unsettled: `verdict made on head ${made}` };
-  const checks = verdict["checks"];
-  const unconfirmed = Array.isArray(checks) ? checks.filter(isUnconfirmedMachineCheck).map((check) => String(asRecord(check)?.["check"])) : [];
+  const checks = Array.isArray(verdict["checks"]) ? verdict["checks"] : [];
+  const unconfirmed = checks.filter(isUnconfirmedMachineCheck).map((check) => String(asRecord(check)?.["check"]));
   if (unconfirmed.length > 0) return { unsettled: `unconfirmed checks: ${unconfirmed.join(", ")}`, unconfirmed: true };
+  if (modelNotAsked(verdict, checks)) return { unsettled: MODEL_NOT_ASKED };
   return {};
 }
 
