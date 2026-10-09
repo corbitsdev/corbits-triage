@@ -33,6 +33,8 @@ export function rowWhy(item: Pick<PrItem, "running" | "state" | "evidence">): st
   return item.running ? inboxStatus(item) : (item.evidence[0] ?? null);
 }
 
+export const UNASSIGNED = "Unassigned";
+
 export type PrimaryAction = "reply" | "comment" | "approve" | "changes" | "close" | "merge";
 
 const PRIMARY_LABEL: Record<PrimaryAction, string> = {
@@ -155,7 +157,7 @@ export type InboxPile = { key: string; label: string; action: InboxAction | null
 export function regroupInbox(view: InboxView, grouping: InboxGrouping): InboxPile[] {
   if (grouping === "action") return view.groups.map((group) => ({ key: group.action, label: group.label, action: group.action, items: group.items }));
   const ordered = view.groups.flatMap((group) => group.items);
-  const keyOf = grouping === "repo" ? (item: PrItem) => item.repo : (item: PrItem) => item.owner ?? "Unassigned";
+  const keyOf = grouping === "repo" ? (item: PrItem) => item.repo : (item: PrItem) => item.owner ?? UNASSIGNED;
   const piles = new Map<string, PrItem[]>();
   for (const item of ordered) {
     const key = keyOf(item);
