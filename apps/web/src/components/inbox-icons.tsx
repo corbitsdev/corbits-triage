@@ -45,3 +45,6 @@ export function SignOutIcon() {
 export function UpDownIcon() {
   return <Icon className="updown" size={14}><path d="m5 6 3-3 3 3M5 10l3 3 3-3" /></Icon>;
 }
+export function CloseIcon() {
+  return <Icon><path d="m4 4 8 8M12 4l-8 8" /></Icon>;
+}
