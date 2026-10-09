@@ -8,8 +8,12 @@ export type ObservedRun = {
   runId: string;
   status: "running" | "completed" | "failed" | "cancelled";
   startedAt: string;
-  /** Why a completed run's verdict is degraded; a degraded verdict does not settle the head. */
-  degraded?: string;
+  /** Why a completed run does not settle the head: no verdict, a degraded one, one made on another commit or with unconfirmed checks. */
+  unsettled?: string;
+  /** The verdict only waits on GitHub for a machine check, so the head is retried after `unconfirmedRetryMs` rather than at once. */
+  unconfirmed?: true;
+  /** The workflow version the verdict names; the row remembers it so a later deployment can tell the head needs triage again. */
+  verdictVersion?: number;
 };
 
 export type ReconcilePolicy = {
@@ -25,6 +29,8 @@ export type ReconcilePolicy = {
   backoffMaxMs: number;
   /** Runs the hub queues for one head before it leaves the pull request failed. */
   maxAttempts: number;
+  /** A verdict waiting only on GitHub, such as mergeability not computed yet, is retried no sooner than this after its run. */
+  unconfirmedRetryMs: number;
   /** Heads a tenant has queued or running at once; further due heads wait, oldest waiting first. */
   maxInFlight: number;
 };
@@ -40,6 +46,7 @@ export const DEFAULT_RECONCILE_POLICY: ReconcilePolicy = {
   backoffBaseMs: 5 * MINUTE,
   backoffMaxMs: 6 * 60 * MINUTE,
   maxAttempts: 5,
+  unconfirmedRetryMs: 5 * MINUTE,
   maxInFlight: 5,
 };
 
@@ -51,10 +58,12 @@ export type TenantPlanInput = {
   runs: ReadonlyMap<string, ReadonlyMap<string, readonly ObservedRun[]>>;
   now: Date;
   policy: ReconcilePolicy;
+  /** The newest workflow version the live deployment has produced a verdict with; none before its first. */
+  workflowVersion: number | undefined;
 };
 
-/** A head to queue, and the row to keep instead when its mail cannot be delivered. */
-export type QueuedPr = { number: number; undelivered: PrTriageRow };
+/** A head to queue, why, and the row to keep instead when its mail cannot be delivered. */
+export type QueuedPr = { number: number; reason: string; undelivered: PrTriageRow };
 
 /** Rows for exactly the open heads; queued heads are already marked queued. */
 export type RepoPlan = { rows: PrTriageRow[]; enqueue: QueuedPr[] };
@@ -72,21 +81,25 @@ export function backoffMs(attempts: number, policy: ReconcilePolicy): number {
   return Math.min(policy.backoffBaseMs * 2 ** (attempts - 1), policy.backoffMaxMs);
 }
 
-function withStatus(row: PrTriageRow, status: PrTriageRow["status"], runId: string | undefined, error: string | undefined, now: string): PrTriageRow {
-  if (row.status === status && row.runId === runId && row.error === error) return row;
-  const { runId: _run, error: _error, ...rest } = row;
+type Observation = { status: PrTriageRow["status"]; run?: ObservedRun; runId?: string; error?: string };
+
+function withStatus(row: PrTriageRow, { status, run, runId = run?.runId, error }: Observation, now: string): PrTriageRow {
+  const workflowVersion = run?.verdictVersion ?? row.workflowVersion;
+  if (row.status === status && row.runId === runId && row.error === error && row.workflowVersion === workflowVersion) return row;
+  const { runId: _run, error: _error, workflowVersion: _version, ...rest } = row;
   return {
     ...rest,
     status,
     ...(runId !== undefined && { runId }),
     ...(error !== undefined && { error }),
+    ...(workflowVersion !== undefined && { workflowVersion }),
     updatedAt: now,
   };
 }
 
 function failure(run: ObservedRun, stuck: boolean): string {
   if (stuck) return "run stuck";
-  return run.degraded ?? `run ${run.status}`;
+  return run.unsettled ?? `run ${run.status}`;
 }
 
 function isStuck(run: ObservedRun, now: Date, policy: ReconcilePolicy): boolean {
@@ -105,27 +118,40 @@ function pick(row: PrTriageRow, runs: readonly ObservedRun[]): ObservedRun | und
  */
 function observe(row: PrTriageRow, runs: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): PrTriageRow {
   const at = now.toISOString();
-  const settled = runs.find((run) => run.status === "completed" && run.degraded === undefined);
-  if (settled) return withStatus(row, "triaged", settled.runId, undefined, at);
+  const settled = runs.find((run) => run.status === "completed" && run.unsettled === undefined);
+  if (settled) return withStatus(row, { status: "triaged", run: settled }, at);
   const live = pick(row, runs.filter((run) => run.status === "running" && !isStuck(run, now, policy)));
-  if (live) return withStatus(row, "running", live.runId, undefined, at);
+  if (live) return withStatus(row, { status: "running", run: live }, at);
   const since = row.queuedAt === undefined ? -Infinity : ms(row.queuedAt) - policy.clockSkewMs;
   const ended = pick(row, runs.filter((run) => ms(run.startedAt) >= since));
-  if (ended) return withStatus(row, "failed", ended.runId, failure(ended, isStuck(ended, now, policy)), at);
+  if (ended) return withStatus(row, { status: "failed", run: ended, error: failure(ended, isStuck(ended, now, policy)) }, at);
   if (row.status === "queued" && row.queuedAt !== undefined && now.getTime() - ms(row.queuedAt) > policy.unstartedAfterMs) {
-    return withStatus(row, "failed", undefined, "run never started", at);
+    return withStatus(row, { status: "failed", error: "run never started" }, at);
   }
   if (row.status === "running" && now.getTime() - ms(row.updatedAt) > policy.stuckAfterMs) {
-    return withStatus(row, "failed", row.runId, "run lost", at);
+    return withStatus(row, { status: "failed", runId: row.runId, error: "run lost" }, at);
   }
   return row;
 }
 
-function isDue(row: PrTriageRow, pr: OpenPr, now: Date, policy: ReconcilePolicy): boolean {
+function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): boolean {
   if (row.status === "new") return now.getTime() - ms(pr.updatedAt) >= policy.webhookGraceMs;
   if (row.status !== "failed" || row.attempts >= policy.maxAttempts) return false;
   const last = row.queuedAt === undefined ? -Infinity : ms(row.queuedAt);
-  return now.getTime() - last >= backoffMs(row.attempts, policy);
+  const verdict = runs.find((run) => run.runId === row.runId);
+  const unconfirmedUntil = verdict?.unconfirmed ? ms(verdict.startedAt) + policy.unconfirmedRetryMs : -Infinity;
+  return now.getTime() >= Math.max(last + backoffMs(row.attempts, policy), unconfirmedUntil);
+}
+
+/** A head settled or capped under an older workflow version starts over: its verdict may no longer be in the live log and its attempts were spent on old code. */
+function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: number | undefined, at: string): PrTriageRow {
+  if (prior === undefined) {
+    return { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, ...(workflowVersion !== undefined && { workflowVersion }), firstSeenAt: at, updatedAt: at };
+  }
+  if (workflowVersion === undefined || (prior.workflowVersion !== undefined && prior.workflowVersion >= workflowVersion)) return prior;
+  if (prior.status !== "triaged" && prior.status !== "failed") return prior;
+  const { runId: _run, queuedAt: _queued, ...rest } = prior;
+  return { ...rest, status: "new", attempts: 0, workflowVersion, error: `verdict from workflow version ${prior.workflowVersion ?? "none"}, current is ${workflowVersion}`, updatedAt: at };
 }
 
 /** A queued head counts until the hub marks it failed for never starting, so a backed-up queue is not mailed again. */
@@ -156,7 +182,7 @@ function byWait(a: Due, b: Due): number {
 }
 
 /** Queues due heads across the tenant's repositories while fewer than `maxInFlight` heads are queued or running. */
-export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<string, RepoPlan> {
+export function planTenant({ repos, runs, now, policy, workflowVersion }: TenantPlanInput): Map<string, RepoPlan> {
   const at = now.toISOString();
   const plans = new Map<string, RepoPlan>();
   const due: Due[] = [];
@@ -167,10 +193,10 @@ export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<s
     const next: PrTriageRow[] = [];
     for (const pr of prs) {
       const key = runKey(pr.number, pr.headSha);
-      const prior = byHead.get(key) ?? { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, firstSeenAt: at, updatedAt: at };
-      const row = observe(prior, observed?.get(key) ?? [], now, policy);
+      const runsOfHead = observed?.get(key) ?? [];
+      const row = observe(fresh(pr, byHead.get(key), workflowVersion, at), runsOfHead, now, policy);
       if (inFlight(row)) busy.add(`${name} ${key}`);
-      if (isDue(row, pr, now, policy)) due.push({ repo: name, index: next.length, row });
+      if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row });
       next.push(row);
     }
     plans.set(name, { rows: next, enqueue: [] });
@@ -179,7 +205,7 @@ export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<s
     const plan = plans.get(repo)!;
     const { runId: _run, error: _error, ...rest } = row;
     plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
-    plan.enqueue.push({ number: row.number, undelivered: row });
+    plan.enqueue.push({ number: row.number, reason: row.error ?? "never triaged", undelivered: row });
   }
   return plans;
 }

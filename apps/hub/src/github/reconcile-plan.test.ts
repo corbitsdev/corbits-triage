@@ -14,19 +14,29 @@ function pr(number: number, headSha = `sha${number}`): OpenPr {
   return { number, headSha, updatedAt: at(-1_000).toISOString() };
 }
 
-function run(runId: string, status: ObservedRun["status"], startedMinute: number): ObservedRun {
-  return { runId, status, startedAt: at(startedMinute).toISOString() };
+function run(runId: string, status: ObservedRun["status"], startedMinute: number, verdictVersion = VERSION): ObservedRun {
+  return { runId, status, startedAt: at(startedMinute).toISOString(), ...(status === "completed" && { verdictVersion }) };
 }
 
 const REPO = "acme/widgets";
 
-function plan(prs: OpenPr[], rows: readonly PrTriageRow[], now: Date, runs: Array<[OpenPr, ObservedRun[]]> = [], maxInFlight = prs.length): RepoPlan {
+const VERSION = 2;
+
+/** `null` is a deployment that has not produced a versioned verdict yet. */
+function plan(prs: OpenPr[], rows: readonly PrTriageRow[], now: Date, runs: Array<[OpenPr, ObservedRun[]]> = [], maxInFlight = prs.length, workflowVersion: number | null = VERSION): RepoPlan {
   const byHead = new Map(runs.map(([open, observed]) => [runKey(open.number, open.headSha), observed]));
-  return planTenant({ repos: [{ name: REPO, prs, rows }], runs: new Map([[REPO, byHead]]), now, policy: { ...policy, maxInFlight } }).get(REPO)!;
+  const input = { repos: [{ name: REPO, prs, rows }], runs: new Map([[REPO, byHead]]), now, policy: { ...policy, maxInFlight }, workflowVersion: workflowVersion ?? undefined };
+  return planTenant(input).get(REPO)!;
 }
 
-function row(number: number, extra: Partial<PrTriageRow>): PrTriageRow {
-  return { number, headSha: `sha${number}`, status: "new", attempts: 0, firstSeenAt: at(-500).toISOString(), updatedAt: at(-500).toISOString(), ...extra };
+/** A row the deployment's current workflow already knows; `null` is one from before verdicts were stamped. */
+function row(number: number, extra: Partial<PrTriageRow>, workflowVersion: number | null = VERSION): PrTriageRow {
+  const base = { number, headSha: `sha${number}`, status: "new" as const, attempts: 0, firstSeenAt: at(-500).toISOString(), updatedAt: at(-500).toISOString() };
+  return { ...base, ...(workflowVersion !== null && { workflowVersion }), ...extra };
+}
+
+function triaged(number: number, workflowVersion: number | null = VERSION): PrTriageRow {
+  return row(number, { status: "triaged", runId: `old${number}` }, workflowVersion);
 }
 
 function enqueued(result: RepoPlan): number[] {
@@ -112,8 +122,8 @@ describe("reconcile plan", () => {
     expect(pushed.rows[0]).toMatchObject({ headSha: "sha1b", attempts: 1 });
   });
 
-  test("a completed run with a degraded verdict counts as failed with its reason", () => {
-    const degraded = { ...run("run_d", "completed", 1), degraded: "This repository still needs check setup." };
+  test("a completed run with an unsettled verdict counts as failed with its reason", () => {
+    const degraded = { ...run("run_d", "completed", 1), unsettled: "This repository still needs check setup." };
     const result = plan([pr(1)], [], at(60), [[pr(1), [degraded]]]);
     expect(enqueued(result)).toEqual([1]);
     expect(plan([pr(1)], [], at(60), [[pr(1), [degraded]]]).enqueue[0]?.undelivered).toMatchObject({
@@ -121,6 +131,61 @@ describe("reconcile plan", () => {
       runId: "run_d",
       error: "This repository still needs check setup.",
     });
+  });
+
+  test("a workflow bump re-triages settled heads in bursts of maxInFlight while the rest wait as new", () => {
+    const prs = Array.from({ length: 50 }, (_, i) => pr(i + 1));
+    const rows = prs.map((open) => triaged(open.number, VERSION - 1));
+    const first = plan(prs, rows, at(0), [], policy.maxInFlight);
+    expect(enqueued(first)).toEqual([1, 2, 3, 4, 5]);
+    expect(first.enqueue.every((queued) => queued.reason === `verdict from workflow version ${VERSION - 1}, current is ${VERSION}`)).toBe(true);
+    expect(first.rows.filter((row) => row.status === "new")).toHaveLength(45);
+    expect(enqueued(plan(prs, first.rows, at(1), [], policy.maxInFlight))).toEqual([]);
+  });
+
+  test("a deployment that has not produced a versioned verdict resets nothing and stamps no version", () => {
+    expect(enqueued(plan([pr(1)], [triaged(1, VERSION - 1)], at(0), [], 1, null))).toEqual([]);
+    expect(plan([pr(1)], [], at(0), [], 1, null).rows[0]?.workflowVersion).toBeUndefined();
+  });
+
+  test("rows from before verdicts were stamped start over once the deployment is versioned", () => {
+    const legacy = plan([pr(1)], [triaged(1, null)], at(0));
+    expect(enqueued(legacy)).toEqual([1]);
+    expect(legacy.enqueue[0]?.reason).toBe(`verdict from workflow version none, current is ${VERSION}`);
+    expect(legacy.rows[0]).toMatchObject({ status: "queued", attempts: 1, workflowVersion: VERSION });
+  });
+
+  test("a verdict waiting on an unconfirmed check is retried after its own delay, up to the attempt cap", () => {
+    const unconfirmed = (runId: string, minute: number): ObservedRun => ({ ...run(runId, "completed", minute), unsettled: "unconfirmed checks: conflicts", unconfirmed: true });
+    const runs: ObservedRun[] = [unconfirmed("run_w", 0)];
+    const early = plan([pr(1)], [], at(4), [[pr(1), runs]]);
+    expect(enqueued(early)).toEqual([]);
+    expect(status(early, 1)).toMatchObject({ status: "failed", attempts: 0, error: "unconfirmed checks: conflicts" });
+    let rows = early.rows;
+    let deliveries = 0;
+    for (let minute = 5; minute < 24 * 60; minute += 5) {
+      const pass = plan([pr(1)], rows, at(minute), [[pr(1), runs]]);
+      if (pass.enqueue.length > 0) {
+        deliveries += 1;
+        runs.push(unconfirmed(`run_${minute}`, minute + 1));
+      }
+      rows = pass.rows;
+    }
+    expect(deliveries).toBe(policy.maxAttempts);
+    expect(rows[0]).toMatchObject({ status: "failed", attempts: policy.maxAttempts });
+  });
+
+  test("a head capped under old code is triaged again once a redeployed workflow runs a newer version", () => {
+    const capped: PrTriageRow = { number: 1, headSha: "sha1", status: "failed", attempts: policy.maxAttempts, workflowVersion: VERSION, firstSeenAt: at(0).toISOString(), queuedAt: at(5).toISOString(), updatedAt: at(5).toISOString() };
+    expect(enqueued(plan([pr(1)], [capped], at(100_000)))).toEqual([]);
+    // The redeployed workflow is a new deployment: its log holds none of the old runs.
+    const upgraded = plan([pr(1)], [capped], at(100_000), [], 1, VERSION + 1);
+    expect(enqueued(upgraded)).toEqual([1]);
+    expect(upgraded.rows[0]).toMatchObject({ status: "queued", attempts: 1, workflowVersion: VERSION + 1 });
+    expect(upgraded.enqueue[0]?.reason).toBe(`verdict from workflow version ${VERSION}, current is ${VERSION + 1}`);
+    const triaged = plan([pr(1)], upgraded.rows, at(100_010), [[pr(1), [run("run_new", "completed", 100_001, VERSION + 1)]]], 1, VERSION + 1);
+    expect(triaged.rows[0]).toMatchObject({ status: "triaged", runId: "run_new", workflowVersion: VERSION + 1 });
+    expect(enqueued(plan([pr(1)], triaged.rows, at(100_020), [], 1, VERSION + 1))).toEqual([]);
   });
 
   test("a run started on a sidecar whose clock trails the hub still matches the hub's queue", () => {
@@ -169,7 +234,7 @@ describe("reconcile plan", () => {
     ]);
     const rows = [row(1, { headSha: "sha1-old", status: "running", runId: "r_live", queuedAt: at(-6).toISOString() })];
     const prs = [pr(1, "sha1-new"), pr(2), pr(3), pr(4), pr(5), pr(6)];
-    const plans = planTenant({ repos: [{ name: REPO, prs, rows }], runs, now: at(0), policy });
+    const plans = planTenant({ repos: [{ name: REPO, prs, rows }], runs, now: at(0), policy, workflowVersion: VERSION });
     expect(enqueued(plans.get(REPO)!)).toEqual([1, 2]);
   });
 
