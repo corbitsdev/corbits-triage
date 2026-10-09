@@ -178,10 +178,10 @@
 .inbox .composer .foot { gap: 8px; }
 .inbox .note { font-size: 12px; margin: 8px 0 0; }
 .inbox .error { font-size: 13px; margin: 12px 0 0; }
-.inbox .bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); display: flex; gap: 8px; align-items: center; }
+.inbox .bar { display: flex; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-bottom: 1px solid var(--rule); background: var(--white); }
 .inbox .bar .sp { flex: 1; }
 .inbox .bar .btn { flex: none; white-space: nowrap; }
-.inbox .bar .menu.up { right: 0; }
+.inbox .bar .menu.up { top: calc(100% + 6px); bottom: auto; right: 0; }
 .inbox .pane-back { display: none; }
 
 @media (max-width: 960px) {

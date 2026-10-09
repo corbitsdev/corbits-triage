@@ -328,6 +328,24 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
   return (
     <section className="panel pane" aria-label="Selected pull request">
       <button type="button" className="btn btn-quiet btn-sm pane-back" onClick={onBack}>Back to inbox</button>
+      <div className="bar">
+        {primary === null ? null : (
+          <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => void run(primary.kind)}>
+            {primaryButtonLabel(primary, draft)} <kbd>a</kbd>
+          </button>
+        )}
+        <span className="sp" />
+        <div className="menu-wrap" ref={menuRef}>
+          <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
+          {menu ? (
+            <div className="menu up" role="menu">
+              {more.map((entry) => (
+                <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => runFromMenu(entry)}>{entry.label}</button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
       <div className="scroll">
         <div className="pane-in">
           <header className="ph">
@@ -374,24 +392,6 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {
           )}
           {error === null ? null : <p role="alert" className="error">{error}</p>}
           {done === null ? null : <p role="status" className="note">{done}</p>}
-        </div>
-      </div>
-      <div className="bar">
-        {primary === null ? null : (
-          <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => void run(primary.kind)}>
-            {primaryButtonLabel(primary, draft)} <kbd>a</kbd>
-          </button>
-        )}
-        <span className="sp" />
-        <div className="menu-wrap" ref={menuRef}>
-          <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
-          {menu ? (
-            <div className="menu up" role="menu">
-              {more.map((entry) => (
-                <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => runFromMenu(entry)}>{entry.label}</button>
-              ))}
-            </div>
-          ) : null}
         </div>
       </div>
     </section>
