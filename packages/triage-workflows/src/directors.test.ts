@@ -282,6 +282,21 @@ describe("judge on a blocked pull request", () => {
     return { asked, verdict: await evaluate(judged, ctx, signal) as Verdict };
   }
 
+  test("a coalesced run wakes an action on any event it carries, not only the latest", async () => {
+    const checkPack = {
+      ...emptyPack("acme/widgets"),
+      checks: { ci: { enabled: true } },
+      actions: [{ id: "greet", when: ["opened"], checks: ["ci"], branches: { yes: [{ kind: "comment", automatic: false, target: { body: "Welcome" } }] } }],
+    };
+    const latest = { checkPack, event: "check_run", action: "completed" };
+    async function actionIds(setup: Record<string, unknown>): Promise<string[]> {
+      const { verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "success" }], true, false, setup));
+      return verdict.actions.map((action) => action.id);
+    }
+    expect(await actionIds({ ...latest, events: ["opened", "checks"] })).toEqual(["greet"]);
+    expect(await actionIds(latest)).toEqual([]);
+  });
+
   test("a CI-blocked pull request records the model's answers but stays driven by CI", async () => {
     const { asked, verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true));
     expect(asked).toEqual(["docs", "tests"]);
