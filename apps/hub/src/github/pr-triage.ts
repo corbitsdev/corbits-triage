@@ -100,7 +100,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const policy = repoPolicy(record);
     if (!policy.enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
     const pack = await deps.readCheckPack(tenantId, repo);
-    if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's check pack is unreadable. Replace it on the repository page.");
+    if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's check pack is unreadable. Replace it on the repository page.", { reason: pack.reason });
     if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs check setup.");
     const deployments = await deps.liveDeployments(tenantId);
     const deployment = newestLive(deployments);
