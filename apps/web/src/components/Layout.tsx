@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { inboxAction, initialsOf } from "../lib/inbox-view.ts";
+import { initialsOf, listCounts } from "../lib/inbox-view.ts";
 import { useSignOutAfterSending } from "../lib/held-inbox.tsx";
-import { useOpenPullsUnanswered, useQueueItems } from "../lib/open-pulls.ts";
+import { useOpenItems, useOpenPullsUnanswered } from "../lib/open-pulls.ts";
 import { useSession } from "../lib/session.tsx";
-import { GearIcon, InboxIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { GearIcon, InboxIcon, ListIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function UserBlock() {
   const { session } = useSession();
@@ -52,11 +52,13 @@ function UserBlock() {
 
 export default function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const inboxCount = useQueueItems().filter((item) => inboxAction(item) !== null).length;
+  const open = useOpenItems();
+  const counts = useMemo(() => listCounts(open), [open]);
   const openPullsUnanswered = useOpenPullsUnanswered();
   const path = location.pathname;
   const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : "inbox";
-  const inboxActive = path.startsWith("/inbox") || path.startsWith("/triage");
+  const needsYouActive = path.startsWith("/inbox") || path.startsWith("/triage");
+  const allOpenActive = path.startsWith("/open");
   // The inbox and the repositories table draw their own inset panels, so they skip the stage card.
   const ownPanels = room === "inbox" || room === "repos";
 
@@ -78,10 +80,15 @@ export default function Layout({ children }: { children: ReactNode }) {
           Triage
         </Link>
         <h3>Inbox</h3>
-        <Link className="nav-a" to="/inbox" aria-current={inboxActive ? "true" : undefined}>
+        <Link className="nav-a" to="/inbox" aria-current={needsYouActive ? "true" : undefined}>
           <InboxIcon />
-          Inbox
-          {openPullsUnanswered ? null : <span className="n">{inboxCount}</span>}
+          Needs you
+          {openPullsUnanswered ? null : <span className="n">{counts["needs-you"]}</span>}
+        </Link>
+        <Link className="nav-a" to="/open" aria-current={allOpenActive ? "true" : undefined}>
+          <ListIcon />
+          All open
+          {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
         </Link>
         <span className="grow" />
         <UserBlock />
@@ -92,9 +99,13 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
       )}
       <nav className="mobile-nav" aria-label="Mobile">
-        <NavLink to="/inbox" className={inboxActive ? "active" : undefined}>
+        <NavLink to="/inbox" className={needsYouActive ? "active" : undefined}>
           <InboxIcon />
-          Inbox
+          Needs you
+        </NavLink>
+        <NavLink to="/open" className={allOpenActive ? "active" : undefined}>
+          <ListIcon />
+          All open
         </NavLink>
         <NavLink to="/repositories">
           <RepoIcon />
