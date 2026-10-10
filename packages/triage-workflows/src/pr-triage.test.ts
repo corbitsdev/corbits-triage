@@ -132,6 +132,20 @@ describe("pr-triage body", () => {
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["docs", "pass"], ["tests", "pass"]]);
   });
 
+  test("a pull request past the decision model budget is judged in several calls on every model check", async () => {
+    const sources = Array.from({ length: 20 }, (_, index) => ({
+      ...FLAG,
+      filename: `src/feature-${index}.ts`,
+      patch: ["@@ -0,0 +1,41 @@", `+export const feature${index} = true;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(6)}${line}`)].join("\n"),
+    }));
+    expect(sources.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(45_000);
+    const files = [...sources, { ...FLAG, filename: "docs/flag.md" }, { ...FLAG, filename: "src/flag.test.ts" }];
+    const { path, verdict } = await triage(recommendedPack(REPO), { files });
+    expect(path.invoked.filter((agent) => agent === "triage-judge").length).toBeGreaterThanOrEqual(2);
+    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"], ["tests", "pass"]]);
+    expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toHaveLength(files.length);
+  });
+
   test("facts that fail degrade the verdict and suggest no actions", async () => {
     const { path, verdict } = await triage({ ...recommendedPack(REPO), actions: [HELLO] }, { missing: true });
     expect(path).toEqual(RULES_PATH);

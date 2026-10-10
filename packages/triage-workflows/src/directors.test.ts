@@ -4,12 +4,38 @@ import { triageDirectorFactory } from "./directors.js";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
+import { MAX_SYSTEM_ONE_CONTEXT_BYTES, MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES } from "./logic/quality.js";
 import type { Verdict } from "./logic/render.js";
 import { evaluate, rules } from "./actions/index.js";
+import type { RulesOutput } from "./actions/rules.js";
 import type { EffectContext } from "@intx/workflow";
 
 const ctx = {} as EffectContext;
 const signal = new AbortController().signal;
+
+type SystemOneRequest = { providerOptions: { systemOne: { state: Record<string, any>; questions: Array<{ id: string; instructions: string }> } } };
+
+/** Runs one judge step per rules chunk, as the workflow's map does; `respond` answers a call's questions as text or fails it. */
+async function judgeChunks(ruled: RulesOutput, respond: (questions: Array<{ id: string }>, call: number) => string | { error: string }) {
+  const requests: SystemOneRequest[] = [];
+  const output: Array<{ reply: string }> = [];
+  for (const chunk of ruled.chunks) {
+    let reply = "";
+    const caps = {
+      infer(request: SystemOneRequest) { requests.push(request); return { type: "infer" }; },
+      reply(content: string) { reply = content; return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
+    await director.decide({ type: "message.received", message: { content: JSON.stringify(chunk) } } as ReactorInboundEvent, {} as ReactorState, caps);
+    const response = respond(requests.at(-1)!.providerOptions.systemOne.questions, requests.length - 1);
+    const event = typeof response === "string"
+      ? { type: "inference.done", turn: { content: [{ type: "text", text: response }] } }
+      : { type: "inference.error", error: { message: response.error } };
+    await director.decide(event as ReactorInboundEvent, {} as ReactorState, caps);
+    output.push({ reply });
+  }
+  return { requests, judged: { ...ruled, judge: { output } } };
+}
 
 describe("facts director policy", () => {
   test("skips disabled draft findings from the run payload", async () => {
@@ -249,22 +275,11 @@ describe("judge on a blocked pull request", () => {
   async function judgeAndEvaluate(factsReply: string, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; verdict: Verdict }> {
     const ruled = await rules({ reply: factsReply }, ctx, signal);
     if (!ruled.needsJudgment) return { asked: [], verdict: await evaluate(ruled, ctx, signal) as Verdict };
-    let judged = "";
-    const asked: string[] = [];
-    const judge = director("judge", {
-      infer(request: { providerOptions: { systemOne: { questions: Array<{ id: string }> } } }) {
-        asked.push(...request.providerOptions.systemOne.questions.map((q) => q.id));
-        return { type: "infer" };
-      },
-      reply(content: string) { judged = content; return { type: "reply", content }; },
-    });
-    await judge({ type: "message.received", message: { content: JSON.stringify(ruled) } });
-    if (asked.length && judgeError !== undefined) await judge({ type: "inference.error", error: { message: judgeError } });
-    else if (asked.length) {
-      const text = asked.map((id) => JSON.stringify(answer(id, failing))).join("");
-      await judge({ type: "inference.done", turn: { content: [{ type: "text", text }] } });
-    }
-    return { asked, verdict: await evaluate({ ...ruled, reply: judged }, ctx, signal) as Verdict };
+    const { requests, judged } = await judgeChunks(ruled, (questions) => (judgeError !== undefined
+      ? { error: judgeError }
+      : questions.map(({ id }) => JSON.stringify(answer(id, failing))).join("")));
+    const asked = requests.flatMap((request) => request.providerOptions.systemOne.questions.map((q) => q.id));
+    return { asked, verdict: await evaluate(judged, ctx, signal) as Verdict };
   }
 
   test("a CI-blocked pull request records the model's answers but stays driven by CI", async () => {
@@ -341,8 +356,6 @@ describe("judge on a blocked pull request", () => {
 });
 
 describe("focused candidate judge input", () => {
-  const sources = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [] };
-
   function prFacts(files: Array<Record<string, unknown>>) {
     return {
       repo: "acme/widgets",
@@ -363,29 +376,27 @@ describe("focused candidate judge input", () => {
     };
   }
 
-  function rulesOutput(files: Array<Record<string, unknown>>) {
-    const det = { state: "ready-monitoring", reason: "all configured checks pass", findings: [], checks: [], duplicateOf: null, needsJudgment: true, sources };
-    return { items: [{ facts: prFacts(files), det }], batch: false, needsJudgment: true };
+  const pack = { ...emptyPack("acme/widgets"), checks: { focused: { enabled: true } } };
+  const probabilities = { primary_or_supporting: 0.9, unrelated: 0.05, movement_or_superseded: 0.03, ambiguous: 0.02 };
+
+  function ruledFor(files: Array<Record<string, unknown>>) {
+    return rules({ items: [{ facts: prFacts(files), pack }], batch: false }, ctx, signal);
+  }
+
+  function primary(questions: Array<{ id: string }>) {
+    return questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: "primary_or_supporting", probabilities, confidence: 0.9 })).join("");
   }
 
   test("sends one typed choice per candidate with matching ID-keyed state", async () => {
-    const requests: Array<Record<string, any>> = [];
-    const caps = {
-      infer(request: Record<string, any>) { requests.push(request); return { type: "infer" }; },
-      reply(content: string) { return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
-    await director.decide({
-      type: "message.received",
-      message: { content: JSON.stringify(rulesOutput([{
-        path: "src/a.ts",
-        previousPath: "src/old-a.ts",
-        status: "renamed",
-        patch: "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };",
-      }])) },
-    } as ReactorInboundEvent, {} as ReactorState, caps);
+    const ruled = await ruledFor([{
+      path: "src/a.ts",
+      previousPath: "src/old-a.ts",
+      status: "renamed",
+      patch: "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };",
+    }]);
+    const { requests } = await judgeChunks(ruled, primary);
     expect(requests).toHaveLength(1);
-    const systemOne = requests[0]?.providerOptions.systemOne;
+    const systemOne = requests[0]!.providerOptions.systemOne;
     expect(systemOne.questions.map((question: Record<string, unknown>) => ({
       id: question.id,
       type: question.type,
@@ -421,72 +432,76 @@ describe("focused candidate judge input", () => {
   });
 
   test("an author's label cannot mention, link or format in the judge prompt or the comment", async () => {
-    const requests: Array<Record<string, any>> = [];
-    let judged = "";
-    const caps = {
-      infer(request: Record<string, any>) { requests.push(request); return { type: "infer" }; },
-      reply(content: string) { judged = content; return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
     const payload = JSON.stringify({ name: "@acme/security [click](https://evil.example)" });
-    const ruled = rulesOutput([{ path: "src/owner.ts", patch: `@@ -0,0 +1 @@\n+export const owner = ${payload};` }]);
-    await director.decide({ type: "message.received", message: { content: JSON.stringify(ruled) } } as ReactorInboundEvent, {} as ReactorState, caps);
-    const systemOne = requests[0]?.providerOptions.systemOne;
-    expect(systemOne.questions[0].instructions).toEndWith("Candidate label: acme/security click.");
+    const ruled = await ruledFor([{ path: "src/owner.ts", patch: `@@ -0,0 +1 @@\n+export const owner = ${payload};` }]);
+    const unrelated = { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 };
+    const { requests, judged } = await judgeChunks(ruled, () => JSON.stringify({ id: "focused-candidate-001", type: "choice", choice: "unrelated", probabilities: unrelated, confidence: 0.9 }));
+    const systemOne = requests[0]!.providerOptions.systemOne;
+    expect(systemOne.questions[0]!.instructions).toEndWith("Candidate label: acme/security click.");
     expect(systemOne.state.changeCandidates["focused-candidate-001"].label).toBe("acme/security click");
-    const probabilities = { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 };
-    const text = JSON.stringify({ id: "focused-candidate-001", type: "choice", choice: "unrelated", probabilities, confidence: 0.9 });
-    await director.decide({ type: "inference.done", turn: { content: [{ type: "text", text }] } } as ReactorInboundEvent, {} as ReactorState, caps);
-    const verdict = await evaluate({ ...ruled, reply: judged }, ctx, signal) as Verdict;
+    const verdict = await evaluate(judged, ctx, signal) as Verdict;
     expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Split out unrelated change: `acme/security click — src/owner.ts`"]);
   });
 
-  test("replies without inference when focused has no candidates and no other questions", async () => {
-    let inferred = 0;
-    const replies: string[] = [];
-    const caps = {
-      infer() { inferred++; return { type: "infer" }; },
-      reply(content: string) { replies.push(content); return { type: "reply", content }; },
-    } as unknown as ReactorCapabilities;
-    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
-    await director.decide({
-      type: "message.received",
-      message: { content: JSON.stringify(rulesOutput([])) },
-    } as ReactorInboundEvent, {} as ReactorState, caps);
-    expect(inferred).toBe(0);
-    expect(replies.map((reply) => JSON.parse(reply))).toEqual([{ answers: [{}] }]);
+  test("skips the judge when focused has no candidates and no other questions", async () => {
+    const ruled = await ruledFor([]);
+    expect(ruled).toMatchObject({ chunks: [], needsJudgment: false });
   });
 
-  test("an oversized evaluation skips the judge and human-gates the verdict without accusation", async () => {
-    const patch = Array.from({ length: 200 }, (_, index) => [
-      `@@ -${index + 1} +${index + 1} @@`,
-      `+// ${"evidence".repeat(27)}`,
-      `+const value${index} = { name: "Candidate ${index}" };`,
-    ].join("\n")).join("\n");
-    const pack = { ...emptyPack("acme/widgets"), checks: { focused: { enabled: true } } };
-    const ruled = await rules({ items: [{ facts: prFacts([{ path: "src/config.ts", patch }]), pack }], batch: false }, ctx, signal);
+  function largeFiles(prefix: string, count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      path: `src/${prefix}${index}.ts`,
+      patch: [`@@ -1 +1,40 @@`, `+export const ${prefix}${index} = 1;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(6)}${line}`)].join("\n"),
+    }));
+  }
+
+  function withinBudget(request: SystemOneRequest): boolean {
+    const { state, questions } = request.providerOptions.systemOne;
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    const context = bytes(state) + Math.max(...questions.map(bytes));
+    return context <= MAX_SYSTEM_ONE_CONTEXT_BYTES && bytes({ state, questions }) <= MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+  }
+
+  test("a pull request over the request budget is asked in several calls that together cover every candidate", async () => {
+    const files = largeFiles("large", 24);
+    expect(files.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(45_000);
+    const ruled = await ruledFor(files);
+    const { requests, judged } = await judgeChunks(ruled, primary);
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    expect(requests.every(withinBudget)).toBe(true);
+    const asked = requests.flatMap((request) => request.providerOptions.systemOne.questions.map((question) => question.id));
+    expect(asked).toEqual(files.map((_, index) => `focused-candidate-${String(index + 1).padStart(3, "0")}`));
+
+    const verdict = await evaluate(judged, ctx, signal) as Verdict;
+    expect(verdict.degraded).toBeNull();
+    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [] }]);
+  });
+
+  test("a batch asks per pull request per chunk, and a failed chunk degrades only its own pull request", async () => {
+    const items = Array.from({ length: 3 }, (_, index) => ({ facts: { ...prFacts(largeFiles(`batch${index}x`, 24)), number: index + 1 }, pack }));
+    const ruled = await rules({ items, batch: true }, ctx, signal);
+    expect(new Set(ruled.chunks.map((chunk) => chunk.item))).toEqual(new Set([0, 1, 2]));
+    expect(ruled.chunks.length).toBeGreaterThanOrEqual(6);
+    const failed = ruled.chunks.findLastIndex((chunk) => chunk.item === 0);
+    const { requests, judged } = await judgeChunks(ruled, (questions, call) => (call === failed ? { error: "upstream 503" } : primary(questions)));
+    expect(requests).toHaveLength(ruled.chunks.length);
+    expect(requests.every(withinBudget)).toBe(true);
+
+    const { items: verdicts } = await evaluate(judged, ctx, signal) as { items: Verdict[] };
+    expect(verdicts.map((verdict) => verdict.degraded)).toEqual(["inference-outage", null, null]);
+    expect(verdicts[0]!.reason).toBe("decision model unavailable: upstream 503");
+    expect(verdicts[0]!.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "decision model unavailable", evidence: [] }]);
+  });
+
+  test("an evaluation whose metadata alone is over the budget skips the judge and human-gates the verdict without accusation", async () => {
+    const files = Array.from({ length: 100 }, (_, index) => ({ path: `src/${"nested/".repeat(60)}${index}.ts` }));
+    const ruled = await rules({ items: [{ facts: { ...prFacts(files), paths: files.map((file) => file.path) }, pack }], batch: false }, ctx, signal);
     expect(ruled.needsJudgment).toBe(false);
-    expect(ruled.items[0]).toMatchObject({ judgeError: "quality evaluation exceeds the safe System One byte budget", judgeLimitExceeded: true });
+    expect(ruled.items[0]).toMatchObject({ judgeError: "pull request too large for the decision model", judgeLimitExceeded: true });
 
     const verdict = await evaluate(ruled, ctx, signal) as Verdict;
-    expect(verdict).toMatchObject({ mirror: false, humanGated: true, degraded: null, feedback: "" });
-    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "decision model unavailable", evidence: [] }]);
-    expect(verdict.reason).not.toContain("unrelated");
-  });
-
-  test("33 compact mixed questions skip the judge", async () => {
-    const patch = Array.from({ length: 30 }, (_, index) => [
-      `@@ -${index + 1} +${index + 1} @@`,
-      `+const value${index} = { name: "Candidate ${index}" };`,
-    ].join("\n")).join("\n");
-    const pack = {
-      ...emptyPack("acme/widgets"),
-      checks: { focused: { enabled: true }, docs: { enabled: true }, tests: { enabled: true } },
-      custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }],
-    };
-    const ruled = await rules({ items: [{ facts: prFacts([{ path: "src/config.ts", patch }]), pack }], batch: false }, ctx, signal);
-    expect(ruled.needsJudgment).toBe(false);
-    expect(ruled.items[0]).toMatchObject({ judgeError: "quality evaluation exceeds the safe System One byte budget" });
+    expect(verdict).toMatchObject({ mirror: false, humanGated: true, degraded: null, feedback: "", reason: "pull request too large for the decision model" });
+    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "pull request too large for the decision model", evidence: [] }]);
   });
 });
 

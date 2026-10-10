@@ -12,10 +12,8 @@ import { type } from "arktype";
 import { repoPolicy, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { prepareQualityEvaluation } from "./logic/quality.js";
 import { triageEventOf } from "./logic/events.js";
 import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, type CheckRun, type PrData, type Review } from "./logic/facts.js";
-import { asksJudge, type Item } from "./logic/item.js";
 import type { Verdict } from "./logic/render.js";
 import type { Judgment } from "./actions/evaluate.js";
 import type { RulesItem } from "./actions/rules.js";
@@ -249,47 +247,26 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   };
 }
 
-/** The only inference path: asks Jev about the rules output's items that need judgment, one at a time, and replies the answers in item order. */
+/** The only inference path: one System One call for one rules chunk, replied as that chunk's `Judgment`. */
 function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): ReactorDirector {
-  let items: Item[] = [];
-  let answers: Judgment[] = [];
-  let queue: number[] = [];
-  let current = -1;
-
-  function finish() {
-    return caps.reply(JSON.stringify({ answers }));
-  }
-
-  function ask() {
-    while (true) {
-      const next = queue.shift();
-      if (next === undefined) return finish();
-      current = next;
-      const { facts, det } = items[current];
-      const evaluation = prepareQualityEvaluation(facts, det.sources);
-      if (evaluation.questions.length === 0) continue;
-      return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: evaluation.state, questions: evaluation.questions } } });
-    }
+  function answer(judgment: Judgment) {
+    return caps.reply(JSON.stringify(judgment));
   }
 
   return {
     async decide(event: ReactorInboundEvent) {
       switch (event.type) {
         case "message.received": {
-          const input = parseInput(event.message.content);
-          items = Array.isArray(input?.items) ? (input.items as Item[]) : [];
-          answers = items.map(() => ({}));
-          queue = items.flatMap((it, i) => (asksJudge(it) ? [i] : []));
-          return ask();
+          const chunk = parseInput(event.message.content);
+          if (!isRecord(chunk?.state) || !Array.isArray(chunk.questions)) return answer({ judgeError: "judge input is not a chunk" });
+          return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: chunk.state, questions: chunk.questions } } });
         }
         case "inference.done":
-          answers[current] = { judge: turnText(event.turn) };
-          return ask();
+          return answer({ judge: turnText(event.turn) });
         case "inference.error":
-          answers[current] = { judgeError: event.error.message };
-          return ask();
+          return answer({ judgeError: event.error.message });
         case "abort":
-          return finish();
+          return answer({});
         default:
           return [];
       }

@@ -13,6 +13,8 @@ export interface ChangeCandidate {
   status?: string;
   label: string;
   evidence: string;
+  /** The evidence was cut to fit one decision model request. */
+  trimmed?: true;
 }
 
 const ESCAPE = String.fromCharCode(27);
