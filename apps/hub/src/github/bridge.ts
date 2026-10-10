@@ -3,8 +3,9 @@
 // header are verified here against the app-level hook credential
 // (metadata.webhook) and delivered through the stock run-trigger deliverer as
 // the tenant system sender, so the run executes under its own materialized
-// grants. No live or routable deployment maps to 503 so GitHub retries; any
-// other delivery failure is 502.
+// grants. Pull request events are marked queued and handed to the coalescer,
+// which mails one run per pull request after a short window; a failed queue
+// write is 500 so GitHub retries.
 //
 // TODO (upstream github verifier): delete this bridge once @corbits/webhooks
 // ships an X-Hub-Signature-256 verifier (with X-GitHub-Delivery replay keyed
@@ -15,8 +16,6 @@ import { schema, type DB } from "@intx/db";
 import { checkPackName, repoPolicy, triageEventOf, type CheckPack, type RepoPolicy } from "@corbits/triage-contracts";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
-import { isRunTriggerUnroutable } from "@corbits/webhooks";
-import { DeploymentNotReadyError, NoLiveDeploymentError } from "./deployment.js";
 import { normalize } from "./normalize.js";
 import { verifySignature } from "./signature.js";
 import {
@@ -29,8 +28,11 @@ import {
   upsertConnectedRepos,
   type CorbitsTriageNs,
   type InstallationFields,
+  type RepoRecord,
 } from "./tenant-config.js";
 import type { CheckPackRead } from "./check-pack-store.js";
+import type { Accepted, Coalescer } from "./coalescer.js";
+import type { OpenPr } from "./reconcile-plan.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 
 const HOOK_VERIFY = ["bearer", "standard-webhooks", "slack"] as const;
@@ -56,19 +58,11 @@ export interface BridgeDeps {
   db: DB["db"];
   cipher: CredentialCipher;
   cache: DeliveryCache;
-  sendMail: (tenantId: string, workflow: string, payload: unknown) => Promise<unknown>;
+  coalescer: Pick<Coalescer, "accept">;
   log?: (entry: Record<string, unknown>) => void;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
-  /** Tells whether a pull request is a draft when its event does not say. */
+  /** Tells a pull request's head and whether it is a draft when its event does not say. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
-}
-
-function isConnectedRepoRow(row: Record<string, unknown>): boolean {
-  return typeof row["name"] === "string" && row["connected"] === true;
-}
-
-function configuredRepos(config: unknown): Set<unknown> {
-  return new Set(repoRows(config).filter(isConnectedRepoRow).map((row) => row["name"]));
 }
 
 function repoRows(config: unknown): Array<Record<string, unknown>> {
@@ -185,14 +179,12 @@ function json(status: number, body: unknown): Response {
 const INSTALL_EVENTS = new Set(["installation", "installation_repositories"]);
 const REPO_LIST_CAP = 50;
 
-/** A pull request no longer open is not a draft to skip; the workflow sees it closed. */
-async function isOpenDraft(d: BridgeDeps, tenantId: string, config: unknown, repo: string, number: number): Promise<boolean> {
-  const record = repoRecords(triageNs(config)).find((row) => row.name === repo);
-  if (!record) throw new Error(`${repo} has no repository record`);
+/** Undefined when the pull request is no longer open. */
+async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, number: number): Promise<OpenPr | undefined> {
   const openHeads = await d.openHeadsFor(tenantId);
   if (!openHeads) throw new Error("no active github credential");
   const heads = await openHeads(record);
-  return heads.some((head) => head.number === number && head.draft);
+  return heads.find((head) => head.number === number);
 }
 
 export function mailPayload(repo: string, policy: RepoPolicy, pack: CheckPack, extra: Record<string, unknown>) {
@@ -317,12 +309,6 @@ function applyInstallAction(
   return undefined;
 }
 
-function mailFailure(err: unknown): Response {
-  if (err instanceof DeploymentNotReadyError) return json(503, { error: err.code });
-  const stale = err instanceof NoLiveDeploymentError || isRunTriggerUnroutable(err);
-  return json(stale ? 503 : 502, { error: stale ? "stale_deployment" : "hub_unavailable" });
-}
-
 async function handleInstallEvent(
   d: BridgeDeps,
   log: (entry: Record<string, unknown>) => void,
@@ -426,7 +412,8 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, hook: loaded.credentialId });
       return json(202, { status: "ignored" });
     }
-    if (triageEventOf(mail) === null) {
+    const triageEvent = triageEventOf(mail);
+    if (triageEvent === null) {
       log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "no_triage_event" });
       return json(202, { status: "ignored" });
     }
@@ -452,7 +439,8 @@ export function createBridgeHandler(d: BridgeDeps) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       return json(500, { error: "tenant_config_unavailable" });
     }
-    if (!configuredRepos(tenantConfig).has(mail.repo)) {
+    const record = repoRecords(triageNs(tenantConfig)).find((row) => row.name === mail.repo && row.connected);
+    if (!record) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
       return json(202, { status: "ignored" });
     }
@@ -461,37 +449,40 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
       return json(202, { status: "ignored" });
     }
-    if (!policy.triageDrafts) {
-      let draft: boolean;
+    let head: OpenPr | undefined;
+    if (mail.headSha === null || (!policy.triageDrafts && mail.draft === null)) {
       try {
-        draft = mail.draft ?? await isOpenDraft(d, loaded.tenantId, tenantConfig, mail.repo, mail.prNumber);
+        head = await openHead(d, loaded.tenantId, record, mail.prNumber);
       } catch (err) {
         d.cache.forget(`${loaded.credentialId}:${delivery}`);
-        log({ level: "error", msg: "draft_lookup_failed", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });
-        return json(500, { error: "draft_lookup_failed" });
+        log({ level: "error", msg: "head_lookup_failed", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });
+        return json(500, { error: "head_lookup_failed" });
       }
-      if (draft) {
-        log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "draft" });
-        return json(202, { status: "ignored" });
-      }
+    }
+    // A pull request no longer open is not a draft to skip; the workflow sees it closed.
+    if (!policy.triageDrafts && (mail.draft ?? head?.draft ?? false)) {
+      log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "draft" });
+      return json(202, { status: "ignored" });
+    }
+    const headSha = mail.headSha ?? head?.headSha;
+    if (headSha === undefined) {
+      log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "not_open" });
+      return json(202, { status: "ignored" });
     }
     const pack = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo);
     if (!pack) {
       log({ level: "info", msg: "needs_setup", delivery, event, repo: mail.repo, hook: loaded.credentialId });
       return json(202, { status: "needs-setup" });
     }
+    let accepted: Accepted;
     try {
-      await d.sendMail(
-        loaded.tenantId,
-        loaded.workflow,
-        mailPayload(mail.repo, policy, pack, mail as unknown as Record<string, unknown>),
-      );
+      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack, mail, number: mail.prNumber, headSha, event: triageEvent });
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
-      log({ level: "error", msg: "forward_failed", delivery, event, repo: mail.repo, error: String(err) });
-      return mailFailure(err);
+      log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });
+      return json(500, { error: "triage_state_unavailable" });
     }
-    log({ level: "info", msg: "forwarded", delivery, event, action: mail.action, repo: mail.repo, pr: mail.prNumber, workflow: loaded.workflow });
-    return json(202, { status: "forwarded" });
+    log({ level: "info", msg: accepted, delivery, event, action: mail.action, repo: mail.repo, pr: mail.prNumber, headSha, workflow: loaded.workflow });
+    return json(202, { status: accepted });
   };
 }
