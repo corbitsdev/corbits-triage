@@ -7,7 +7,7 @@ import { errorText } from "../lib/error-text.ts";
 import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
 import type { PendingDo } from "../lib/pending-dos.ts";
-import { usePendingDos, useRanDoMarks } from "../lib/ran-dos.ts";
+import { useHeldDos, usePendingDos } from "../lib/do-runs.ts";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import {
   COMPOSER_COPY,
@@ -301,7 +301,7 @@ function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
   const draft = replyDraft(item, reply);
   const canPost = draft !== null && canRun("reply", gate);
   const dos = usePendingDos(item);
-  const ranDos = useRanDoMarks();
+  const heldDos = useHeldDos();
   const doBlocked = writeBlocker(gate) !== null;
   const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
   const floor = snapshot?.config?.confidenceFloor;
@@ -356,12 +356,11 @@ function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
 
   function runDo(pending: PendingDo) {
     if (!hasNumber(item) || doBlocked) return;
-    if (pending.kind === "close") {
-      run("close");
-      return;
+    heldDos.hold(pending.key);
+    function release() {
+      heldDos.release(pending.key);
     }
-    ranDos.mark(item, pending.key);
-    onHold(item, doWrite(item, pending, () => ranDos.unmark(item, pending.key)), { reply, composer });
+    onHold(item, doWrite(item, pending, release), { reply, composer });
   }
 
   function run(kind: PaneKind) {
