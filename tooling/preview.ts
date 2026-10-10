@@ -6,7 +6,7 @@
 //
 //   bun tooling/preview.ts [owner/repo]
 import { evaluate } from "@corbits/system-one";
-import { DEFAULT_REPO_POLICY, recommendedPack } from "../packages/triage-contracts/src/index.js";
+import { DEFAULT_REPO_POLICY, packMergeThreshold, recommendedPack } from "../packages/triage-contracts/src/index.js";
 import { deriveState, type DeterministicResult, type PrFacts, type PrFileFacts } from "../packages/triage-workflows/src/logic/checks.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "../packages/triage-workflows/src/logic/facts.js";
 import { prepareQualityEvaluation, type QualityEvaluation } from "../packages/triage-workflows/src/logic/quality.js";
@@ -86,7 +86,7 @@ if (import.meta.main) {
     const facts = factsFor(number, open);
     const det = deriveState(facts, undefined, pack);
     const evaluation = previewEvaluation(facts, det);
-    const v = renderVerdict({ author: facts.author, det, candidates: evaluation.candidates, reviewers: facts.reviewers, ...(await previewJudge(det, evaluation)) });
+    const v = renderVerdict({ author: facts.author, det, candidates: evaluation.candidates, reviewers: facts.reviewers, threshold: packMergeThreshold(pack), ...(await previewJudge(det, evaluation)) });
     rows.push({
       pr: `#${number}`,
       title: facts.title.slice(0, 40),
