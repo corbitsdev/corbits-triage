@@ -5,7 +5,8 @@ import { writeCheckPack } from "./check-pack.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import { loadRepoPolicy } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
-import { changeCount, fromPack, validate, type RepoDraft } from "./pack-draft.ts";
+import { changeCount, fromPack, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
+import { shownReason } from "./pack-prose.ts";
 import { usePortal, useSignOutWhenRejected } from "./portal.tsx";
 import { openSession, saveDraft, type PackSession } from "./repo-pack-save.ts";
 import { draftPolicy, packArtifact, transportRepoPackStore, type RepoPackStore } from "./repo-pack-store.ts";
@@ -57,10 +58,8 @@ export type RepoPack = {
   changes: number;
   /** The checks were written but the repository does not point at them yet; Save redoes the link. */
   unlinked: boolean;
-  /** Why the draft cannot be saved as it stands. */
-  blocked: string | null;
-  /** No readable check pack yet; saving checks sets the repository up. */
-  needsSetup: boolean;
+  /** Why the draft cannot be saved as it stands, and where. */
+  problem: DraftProblem | null;
   /** Why the newest artifact for the repository is not a check pack; saving replaces it in place. */
   corrupt: string | null;
   /** The pack changed on the hub since it was loaded; only a reload can save again. */
@@ -120,7 +119,7 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
   }
 
   async function save() {
-    if (!store || blocked) return;
+    if (!store || problem) return;
     setSaving(true);
     setError("");
     setStale(false);
@@ -152,7 +151,8 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
     setAttempt((count) => count + 1);
   }
 
-  const blocked = validate(draft)?.reason ?? null;
+  const found = validate(draft);
+  const problem = found && { ...found, reason: shownReason(found.reason, draft.pack) };
 
   return {
     status,
@@ -160,8 +160,7 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
     saved: session.saved,
     changes: changeCount(session.saved, draft),
     unlinked: session.unlinked,
-    blocked,
-    needsSetup: session.loaded === null || session.corrupt !== null,
+    problem,
     corrupt: session.corrupt,
     stale,
     saving,

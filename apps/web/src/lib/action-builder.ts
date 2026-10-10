@@ -6,6 +6,7 @@ import {
   type CheckPackGroup,
   type CheckRef,
   type CustomCheck,
+  type Do,
   type LabelsTarget,
   type ModelShape,
   type PeopleTarget,
@@ -136,22 +137,45 @@ function validated(candidate: unknown, repo: string): CheckPack | Refusal {
   }
 }
 
-/** Builds the next action of `pack`; the reason is readCheckPack's, unchanged. */
-export function buildAction(form: ActionForm, pack: CheckPack): Action | Refusal {
-  const id = nextId("action", pack.actions.map((action) => action.id));
+function placed<T extends { id: string }>(rows: T[], row: T): T[] {
+  return rows.some((item) => item.id === row.id) ? rows.map((item) => (item.id === row.id ? row : item)) : [...rows, row];
+}
+
+/** Builds the next action of `pack`, or replaces action `id` in place; the reason is readCheckPack's, unchanged. */
+export function buildAction(form: ActionForm, pack: CheckPack, id = nextId("action", pack.actions.map((action) => action.id))): Action | Refusal {
   const action = { id, when: form.when, checks: form.checks, branches: buildBranches(form) };
-  const read = validated({ ...pack, actions: [...pack.actions, action] }, pack.repo);
+  const read = validated({ ...pack, actions: placed<{ id: string }>(pack.actions, action) }, pack.repo);
   if ("reason" in read) return read;
   return read.actions.find((row) => row.id === id)!;
 }
 
-/** Builds the next custom check of `pack`, keeping only its rule's or shape's parameters. */
-export function buildCustomCheck(form: CheckForm, pack: CheckPack): CustomCheck | Refusal {
-  const id = nextId("custom", pack.custom.map((row) => row.id));
+/** Builds the next custom check of `pack`, or replaces check `id` in place, keeping only its rule's or shape's parameters. */
+export function buildCustomCheck(form: CheckForm, pack: CheckPack, id = nextId("custom", pack.custom.map((row) => row.id))): CustomCheck | Refusal {
   const variant = form.kind === "rule" ? { kind: form.kind, rule: form.rule } : { kind: form.kind, shape: form.shape };
   const params = PARAMS[form.kind === "rule" ? form.rule : form.shape].map((key) => [key, form[key]]);
   const check = { id, name: form.name, group: form.group, ...variant, ...Object.fromEntries(params) };
-  const read = validated({ ...pack, custom: [...pack.custom, check] }, pack.repo);
+  const read = validated({ ...pack, custom: placed<{ id: string }>(pack.custom, check) }, pack.repo);
   if ("reason" in read) return read;
   return read.custom.find((row) => row.id === id)!;
+}
+
+function isActionEvent(event: TriageEvent): event is ActionEvent {
+  return event !== "catch-up";
+}
+
+function doFormOf(step: Do): DoForm {
+  return { kind: step.kind, automatic: step.automatic, ...step.target };
+}
+
+/** The editor's view of a stored action, so editing it and building again gives the same action back. */
+export function actionFormOf(action: Action): ActionForm {
+  const branches: Partial<Record<"yes" | "no" | "unsure" | "always", Do[]>> = action.branches;
+  const dos = (key: keyof typeof branches) => (branches[key] ?? []).map(doFormOf);
+  return { when: action.when === "every" ? "every" : action.when.filter(isActionEvent), checks: action.checks, yes: dos("yes"), no: dos("no"), unsure: dos("unsure"), always: dos("always") };
+}
+
+/** The editor's view of a stored custom check. */
+export function checkFormOf(check: CustomCheck): CheckForm {
+  const { id: _id, ...form } = check;
+  return form;
 }
