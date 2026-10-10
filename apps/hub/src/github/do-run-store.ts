@@ -1,6 +1,6 @@
 // One row per pack Do effect, holding its latest state; the claim makes two
 // requests for the same effect write to GitHub at most once.
-import { and, desc, eq, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, lt, or, sql, type SQL } from "drizzle-orm";
 import { integer, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 import type { DB } from "@intx/db";
 import type { ActionKind } from "@corbits/triage-contracts";
@@ -122,6 +122,11 @@ export function createDoRunStore(db: DB["db"]) {
         filter.runId === undefined ? undefined : eq(doRun.runId, filter.runId),
       );
       return db.select().from(doRun).where(where).orderBy(desc(doRun.createdAt)).limit(LIST_LIMIT);
+    },
+
+    /** Every Do of the repository claimed at or after `from`. */
+    since(tenantId: string, repo: string, from: Date): Promise<DoRun[]> {
+      return db.select().from(doRun).where(and(eq(doRun.tenantId, tenantId), eq(doRun.repo, repo), gte(doRun.createdAt, from)));
     },
   };
 }

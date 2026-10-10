@@ -15,6 +15,7 @@ import { DoBody, DoRunList, DoRunResponse, GITHUB_DOS_PATH } from "../github/pr-
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
+import { TRIAGE_STATS_PATH, TriageStats } from "../github/triage-stats.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { DeployedVersions, WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
@@ -34,6 +35,7 @@ export type IntegrationHandlers = {
   openPulls: TenantHandler;
   prDetails: TenantHandler;
   prPreview: TenantHandler;
+  triageStats: TenantHandler;
   workflowDeploy: TenantHandler;
   workflowVersions: TenantHandler;
 };
@@ -290,6 +292,21 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       },
     }),
     tenantRoute(handlers.prPreview),
+  );
+
+  app.get(
+    `${TRIAGE_STATS_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Triage stats of a repository over the last whole UTC days",
+      description: "From the recorded verdicts and Dos, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. Cached for a minute.",
+      tags: TAGS,
+      parameters: [
+        { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
+        { in: "query", name: "days", required: false, schema: { type: "integer", minimum: 1, maximum: 30, default: 7 } },
+      ],
+      responses: { 200: json("Counts, rates and daily triaged pull requests", TriageStats), ...invalid, 401: failures[401], 403: failures[403] },
+    }),
+    tenantRoute(handlers.triageStats),
   );
 
   app.post(
