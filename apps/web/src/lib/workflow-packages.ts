@@ -15,3 +15,6 @@ export const WORKFLOW_PACKAGES = [
 export function workflowPackageFiles(workflow: WorkflowPackage): string[] {
   return ["package.json", workflow.entry.slice(2), "directors.mjs", "actions.mjs"];
 }
+
+/** One tarball in `public/packages/index.json`, so the portal publishes without re-reading tarballs. */
+export type PackageIndexEntry = { name: string; version: string; filename: string; integrity: string };
