@@ -21,7 +21,6 @@ import {
   resolveApproval,
   revokeCredential,
   saveInference,
-  saveSettings,
   startBacklogTriage,
   githubPrAction,
   triagePullRequest as requestPullRequestTriage,
@@ -67,7 +66,6 @@ interface PortalContextValue {
   revoke: (credentialId: string) => Promise<void>;
   addGrant: (input: CreateGrantInput) => Promise<void>;
   removeGrant: (grant: HubGrant) => Promise<void>;
-  saveConfig: (patch: Parameters<typeof saveSettings>[2]) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
 }
 
@@ -382,16 +380,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const saveConfig = useCallback(
-    async function saveConfig(patch: Parameters<typeof saveSettings>[2]) {
-      const current = requireSnapshot();
-      await saveSettings(createHubTransport(), current.workspace.tenantId, patch);
-      notify("Settings saved.");
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
   /** Reads the App's repositories from GitHub, so returning from GitHub never waits on a webhook. */
   const syncFromGithub = useCallback(async function syncFromGithub() {
     const current = requireSnapshot();
@@ -436,7 +424,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         revoke,
         addGrant,
         removeGrant,
-        saveConfig,
         saveInferenceSecret,
       };
     },
@@ -462,7 +449,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       revoke,
       addGrant,
       removeGrant,
-      saveConfig,
       saveInferenceSecret,
     ],
   );

@@ -1,6 +1,7 @@
 import {
   CATALOG_IDS,
   catalogCheckEnabled,
+  packMergeThreshold,
   readCheckPack,
   RECOMMENDED_DRIFT,
   RECOMMENDED_ISSUE,
@@ -26,6 +27,7 @@ export type DraftWhere =
   | { section: "actions"; id: string }
   | { section: "custom"; id?: string }
   | { section: "triage" }
+  | { section: "merge" }
   | { section: "pack" };
 
 export type DraftProblem = { reason: string; where: DraftWhere };
@@ -99,6 +101,15 @@ export function removeCustom(draft: RepoDraft, id: string): RepoDraft | Refused 
   });
 }
 
+/** A threshold the saved pack lacks goes back to absent once it equals the default again. */
+export function setMergeThreshold(draft: RepoDraft, saved: CheckPack, value: number): RepoDraft {
+  if (saved.mergeThreshold === undefined && value === packMergeThreshold(undefined)) {
+    const { mergeThreshold: _dropped, ...pack } = draft.pack;
+    return { ...draft, pack };
+  }
+  return withPack(draft, { mergeThreshold: value });
+}
+
 export function upsertAction(draft: RepoDraft, action: Action): RepoDraft {
   return withPack(draft, { actions: upsert(draft.pack.actions, action) });
 }
@@ -136,9 +147,10 @@ function reordered(saved: Action[], draft: Action[]): boolean {
   return !same(before, after);
 }
 
-/** One change per catalog check, custom check and action that differs, plus one when the actions were reordered. */
+/** One change per catalog check, custom check and action that differs, plus one each for a reorder of the actions and a new merge threshold. */
 export function packChanges(saved: CheckPack, draft: CheckPack): number {
-  return CATALOG_IDS.filter((id) => !same(saved.checks[id], draft.checks[id])).length
+  return Number(!Object.is(saved.mergeThreshold, draft.mergeThreshold))
+    + CATALOG_IDS.filter((id) => !same(saved.checks[id], draft.checks[id])).length
     + changedIds(saved.custom, draft.custom)
     + changedIds(saved.actions, draft.actions)
     + Number(reordered(saved.actions, draft.actions));
@@ -172,6 +184,7 @@ function whereOf(message: string, pack: CheckPack): DraftWhere {
   if (action !== undefined) return { section: "actions", id: action };
   const custom = idAt(message, "Custom check", pack.custom);
   if (custom !== undefined) return { section: "custom", id: custom };
+  if (message.startsWith("Merge score threshold ")) return { section: "merge" };
   if (message.startsWith("Custom check ") || message.startsWith("Check pack must have at most")) return { section: "custom" };
   return { section: "pack" };
 }

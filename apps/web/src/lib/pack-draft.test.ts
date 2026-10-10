@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CATALOG_IDS, catalogCheckEnabled, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type Action, type CheckPack, type CustomCheck, type Do } from "@corbits/triage-contracts";
-import { changeCount, fromPack, removeCustom, setCatalogCheck, toPack, upsertAction, validate } from "./pack-draft.ts";
+import { changeCount, fromPack, removeCustom, setCatalogCheck, setMergeThreshold, toPack, upsertAction, validate } from "./pack-draft.ts";
 
 const repo = "acme/widgets";
 
@@ -74,6 +74,16 @@ describe("pack draft", () => {
     const saved = fromPack(packs["every action form and Do target"]!, policy);
     const edited = upsertAction(saved, { ...actions[1]!, when: ["opened"] });
     expect(changeCount(saved, edited)).toBe(1);
+  });
+
+  test("the merge threshold round trips through the pack, and setting the default back leaves it absent", () => {
+    const stored = recommendedPack(repo);
+    const saved = fromPack(stored, policy);
+    const edited = setMergeThreshold(saved, stored, 0.85);
+    expect(changeCount(saved, edited)).toBe(1);
+    expect(readCheckPack(JSON.stringify(toPack(edited))).mergeThreshold).toBe(0.85);
+    expect(setMergeThreshold(edited, stored, 0.7).pack).toEqual(stored);
+    expect(validate(setMergeThreshold(saved, stored, 1.5))).toEqual({ reason: "Merge score threshold must be between 0 and 1.", where: { section: "merge" } });
   });
 
   test("removing a custom check detaches it from actions, and refuses when that leaves branches with no checks", () => {
