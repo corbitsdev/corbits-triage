@@ -53,12 +53,13 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
 
 - `src/lib/portal.tsx`: convergence on sign-in.
 - `src/lib/workflow-deploy.ts`: `suggestOfferings` matches tenant offerings;
-  `ensureWorkflows` creates each workflow asset, pushes its source and
-  deploys, redeploying only when the source changed.
-- `src/lib/git-push.ts`: browser git push with isomorphic-git and
-  LightningFS, speaking receive-pack to the hub's asset git endpoint.
-- `scripts/build-workflows.ts`: bundles `packages/triage-workflows` into
-  `public/workflows/<name>/` (`package.json`, entry `.mjs`, `directors.mjs`).
+  `ensureWorkflows` publishes the tool and workflow tarballs to the tenant's
+  `corbits` package registry and deploys each workflow pinned to its version
+  through the hub's workflow-deploy route, redeploying only when a new version
+  was published.
+- `scripts/build-workflows.ts`: packs the GitHub tool and each workflow of
+  `packages/triage-workflows` as tarballs into `public/packages/`, listed in
+  `index.json`.
 - `src/lib/hub-api.ts`: typed calls over stock hub routes.
 - `src/lib/decision-models.ts`: presets (TypeSafe, Vercel AI Gateway) plus
   custom. Saving stores the key as a vault credential, sets the
