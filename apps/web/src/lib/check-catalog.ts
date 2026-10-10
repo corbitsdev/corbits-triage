@@ -61,6 +61,8 @@ export type DraftCheck = {
   name?: string;
   group?: CheckGroupId;
   instruction?: string;
+  /** A stored custom check that is not an is-true question; the panel does not edit it, so saving keeps it as is. */
+  typed?: CustomCheck;
   values: Record<string, string | number | string[]>;
 };
 
@@ -102,6 +104,7 @@ export function emptyDraft(repository: string, mode: CleanupMode = "human-approv
 export const emptyPack = emptyDraft;
 
 function customCheckFromDraft(row: DraftPack["custom"][number], index: number): CustomCheck[] {
+  if (row.typed) return [row.typed];
   const name = (row.name ?? "").trim();
   const instruction = (row.instruction ?? "").trim();
   const group = row.group ?? "pr";
@@ -110,7 +113,9 @@ function customCheckFromDraft(row: DraftPack["custom"][number], index: number): 
     id: /^custom-\d+$/.test(row.id) ? row.id : `custom-${index + 1}`,
     name,
     group: toPackGroup(group),
-    instruction,
+    kind: "model",
+    shape: "is-true",
+    claim: instruction,
   }];
 }
 
@@ -164,6 +169,12 @@ export function checkPackFromDraft(pack: DraftPack): CheckPack {
   return parsed;
 }
 
+function draftFromCustomCheck(row: CustomCheck): DraftCheck {
+  const draft: DraftCheck = { id: row.id, enabled: true, custom: true, name: row.name, group: fromPackGroup(row.group), values: {} };
+  if (row.kind === "model" && row.shape === "is-true") return { ...draft, instruction: row.claim, values: { instruction: row.claim } };
+  return { ...draft, typed: row };
+}
+
 export function draftFromCheckPack(pack: CheckPack, mode: CleanupMode = "human-approved"): DraftPack {
   const byId = new Map<string, DraftCheck>();
   const size = pack.checks.size;
@@ -201,15 +212,7 @@ export function draftFromCheckPack(pack: CheckPack, mode: CleanupMode = "human-a
     repository: pack.repo,
     mode,
     checks: CHECK_CATALOG.flatMap((spec) => byId.get(spec.id) ?? []),
-    custom: pack.custom.map((row) => ({
-      id: row.id,
-      enabled: true,
-      custom: true,
-      name: row.name,
-      group: fromPackGroup(row.group),
-      instruction: row.instruction,
-      values: { instruction: row.instruction },
-    })),
+    custom: pack.custom.map(draftFromCustomCheck),
     actions: pack.actions,
   };
 }

@@ -363,10 +363,14 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
           <div className="sentences">
             {pack.custom.map((check) => (
               <div className="sentence own" key={check.id}>
-                <label className="txt"><b>{check.name}</b>
-                  <input className="val w" aria-label={`What ${check.name} checks`} aria-invalid={!(check.instruction ?? "").trim()} disabled={locked} value={check.instruction ?? ""} onChange={(event) => editPack((current) => withCustomInstruction(current, check.id, event.target.value))} />
-                </label>
-                <span className="model">Decision model</span>
+                {check.typed ? (
+                  <span className="txt"><b>{check.name}</b></span>
+                ) : (
+                  <label className="txt"><b>{check.name}</b>
+                    <input className="val w" aria-label={`What ${check.name} checks`} aria-invalid={!(check.instruction ?? "").trim()} disabled={locked} value={check.instruction ?? ""} onChange={(event) => editPack((current) => withCustomInstruction(current, check.id, event.target.value))} />
+                  </label>
+                )}
+                <span className="model">{check.typed?.kind === "rule" ? "Rule" : "Decision model"}</span>
                 <button type="button" className="btn btn-quiet btn-sm icon" aria-label={`Remove ${check.name}`} disabled={locked} onClick={() => removeCustom(check.id)}><CloseIcon /></button>
               </div>
             ))}

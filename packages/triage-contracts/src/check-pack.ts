@@ -63,12 +63,49 @@ export type CatalogCheck = {
   forbiddenGlobs?: string[];
 };
 
-export type CustomCheck = {
-  id: string;
-  name: string;
-  group: CheckPackGroup;
-  instruction: string;
+export const RULE_KINDS = [
+  "paths-unchanged",
+  "paths-together",
+  "title-pattern",
+  "branch-pattern",
+  "label-required",
+  "diff-excludes",
+  "min-approvals",
+] as const;
+export type RuleKind = (typeof RULE_KINDS)[number];
+
+export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
+export type ModelShape = (typeof MODEL_SHAPES)[number];
+
+/** Patterns are regular expressions without flags; globs use `*` within a path segment and `**` across segments. */
+type RuleParams = {
+  "paths-unchanged": { globs: string[] };
+  "paths-together": { changed: string[]; requires: string[] };
+  "title-pattern": { pattern: string };
+  "branch-pattern": { pattern: string };
+  "label-required": { label: string };
+  "diff-excludes": { pattern: string };
+  "min-approvals": { count: number };
 };
+export type RuleCheck = { [K in RuleKind]: { rule: K } & RuleParams[K] }[RuleKind];
+
+/** `score` passes at `min` or above on a 0 to 10 scale; `choose` fails when the answer is one of `failOn`. */
+type ModelParams = {
+  "is-true": { claim: string };
+  score: { subject: string; min: number };
+  choose: { options: string[]; failOn: string[] };
+};
+export type ModelCheck = { [K in ModelShape]: { shape: K } & ModelParams[K] }[ModelShape];
+
+export type CustomCheck = { id: string; name: string; group: CheckPackGroup } & (
+  | ({ kind: "rule" } & RuleCheck)
+  | ({ kind: "model" } & ModelCheck)
+);
+export type ModelCustomCheck = Extract<CustomCheck, { kind: "model" }>;
+
+const SCORE_MAX = 10;
+const PATTERN_MAX = 200;
+const CUSTOM_ID = /^custom-\d+$/;
 
 export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "close", "agent"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
@@ -177,20 +214,26 @@ const CatalogCheckSchema = type({
   "forbiddenGlobs?": "string[]",
 });
 
-const CustomCheckSchema = type({
-  id: /^custom-\d+$/,
-  name: Text,
-  group: type.enumerated(...CHECK_PACK_GROUPS),
-  instruction: Text,
-});
+const CUSTOM_BASE = { id: CUSTOM_ID, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS) } as const;
+const RULE = { ...CUSTOM_BASE, kind: "'rule'" } as const;
+const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
+
+const CustomCheckSchema = type({ ...RULE, rule: "'paths-unchanged'", globs: Texts })
+  .or({ ...RULE, rule: "'paths-together'", changed: Texts, requires: Texts })
+  .or({ ...RULE, rule: "'title-pattern' | 'branch-pattern' | 'diff-excludes'", pattern: Text.atMostLength(PATTERN_MAX) })
+  .or({ ...RULE, rule: "'label-required'", label: Text })
+  .or({ ...RULE, rule: "'min-approvals'", count: "number.integer >= 1" })
+  .or({ ...MODEL, shape: "'is-true'", claim: Text })
+  .or({ ...MODEL, shape: "'score'", subject: Text, min: `0 <= number.integer <= ${SCORE_MAX}` })
+  .or({ ...MODEL, shape: "'choose'", options: Text.array().atLeastLength(2), failOn: Texts });
 
 const CatalogChecksSchema = type(
   Object.fromEntries(CATALOG_IDS.map((id) => [`${id}?`, CatalogCheckSchema])) as Record<`${CatalogId}?`, typeof CatalogCheckSchema>,
 );
 
 /**
- * Published as JSON Schema. `readCheckPack` stays the authority: it also drops catalog and custom rows it cannot read,
- * and checks references, branch sets and automatic steps.
+ * Published as JSON Schema. `readCheckPack` stays the authority: it also drops catalog and blank legacy custom rows,
+ * and checks patterns, choices, references, branch sets and automatic steps.
  */
 export const checkPackSchema = type({
   kind: type.unit(CHECK_PACK_KIND),
@@ -313,36 +356,18 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
   return check;
 }
 
-function parseCustom(raw: unknown): CustomCheck[] {
-  if (!Array.isArray(raw)) return [];
-  const byId = new Map<string, CustomCheck>();
-  let next = 1;
-  for (const item of raw) {
-    const row = asRecord(item);
-    if (!row) continue;
-    const name = typeof row.name === "string" ? row.name.trim() : "";
-    const instruction = typeof row.instruction === "string" ? row.instruction.trim() : "";
-    const group = typeof row.group === "string" ? row.group.trim() : "";
-    if (!name || !instruction || !GROUP_SET.has(group)) continue;
-    const requested = typeof row.id === "string" ? row.id.trim() : "";
-    const id = /^custom-\d+$/.test(requested) ? requested : `custom-${next}`;
-    const n = Number(id.slice("custom-".length));
-    if (Number.isInteger(n) && n >= next) next = n + 1;
-    else next += 1;
-    if (!byId.has(id) && byId.size >= CUSTOM_CHECK_CAP) continue;
-    byId.set(id, { id, name, group: group as CheckPackGroup, instruction });
-  }
-  return [...byId.values()];
-}
-
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], where: string): T {
   if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
   throw new Error(`${where} must be one of ${allowed.join(", ")}.`);
 }
 
-function text(value: unknown, where: string): string {
+function verbatim(value: unknown, where: string): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${where} must be a non-empty string.`);
-  return value.trim();
+  return value;
+}
+
+function text(value: unknown, where: string): string {
+  return verbatim(value, where).trim();
 }
 
 function list(value: unknown, where: string): unknown[] {
@@ -367,6 +392,104 @@ function exactKeys(row: Record<string, unknown>, expected: readonly string[], wh
   if (keys.length !== expected.length || !expected.every((key) => keys.includes(key))) {
     throw new Error(`${where} must set exactly ${expected.join(", ") || "nothing"}.`);
   }
+}
+
+function pattern(value: unknown, where: string): string {
+  const source = verbatim(value, where);
+  if (source.length > PATTERN_MAX) throw new Error(`${where} must be at most ${PATTERN_MAX} characters.`);
+  try {
+    new RegExp(source);
+  } catch {
+    throw new Error(`${where} must be a valid regular expression.`);
+  }
+  return source;
+}
+
+function distinctTexts(value: unknown, where: string): string[] {
+  const out = list(value, where).map((item) => text(item, where));
+  if (new Set(out).size !== out.length) throw new Error(`${where} must not repeat a value.`);
+  return out;
+}
+
+function integer(value: unknown, min: number, max: number, where: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${where} must be a whole number from ${min} to ${max}.`);
+  }
+  return value;
+}
+
+function parseRule(row: Record<string, unknown>, where: string): RuleCheck {
+  const rule = oneOf(row.rule, RULE_KINDS, `${where} rule`);
+  switch (rule) {
+    case "paths-unchanged":
+      return { rule, globs: texts(row.globs, `${where} globs`) };
+    case "paths-together":
+      return { rule, changed: texts(row.changed, `${where} changed`), requires: texts(row.requires, `${where} requires`) };
+    case "title-pattern":
+    case "branch-pattern":
+    case "diff-excludes":
+      return { rule, pattern: pattern(row.pattern, `${where} pattern`) };
+    case "label-required":
+      return { rule, label: verbatim(row.label, `${where} label`) };
+    case "min-approvals":
+      return { rule, count: integer(row.count, 1, Number.MAX_SAFE_INTEGER, `${where} count`) };
+  }
+}
+
+function parseModel(row: Record<string, unknown>, where: string): ModelCheck {
+  const shape = oneOf(row.shape, MODEL_SHAPES, `${where} shape`);
+  switch (shape) {
+    case "is-true":
+      return { shape, claim: text(row.claim, `${where} claim`) };
+    case "score":
+      return { shape, subject: text(row.subject, `${where} subject`), min: integer(row.min, 0, SCORE_MAX, `${where} min`) };
+    case "choose": {
+      const options = distinctTexts(row.options, `${where} options`);
+      if (options.length < 2) throw new Error(`${where} options must list at least two choices.`);
+      const failOn = distinctTexts(row.failOn, `${where} failOn`);
+      if (failOn.some((option) => !options.includes(option))) throw new Error(`${where} failOn must be among options.`);
+      return { shape, options, failOn };
+    }
+  }
+}
+
+function parseTypedCustom(row: Record<string, unknown>, index: number): CustomCheck {
+  const where = `Custom check ${typeof row.id === "string" ? row.id : index + 1}`;
+  if (typeof row.id !== "string" || !CUSTOM_ID.test(row.id)) throw new Error(`${where} id must be custom- and a number.`);
+  const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`) };
+  const kind = oneOf(row.kind, ["rule", "model"] as const, `${where} kind`);
+  return kind === "rule" ? { ...base, kind, ...parseRule(row, where) } : { ...base, kind, ...parseModel(row, where) };
+}
+
+/** A legacy row has no kind; it asks its instruction as an is-true question and is dropped when blank. */
+function parseLegacyCustom(row: Record<string, unknown>, next: number): CustomCheck | undefined {
+  const name = typeof row.name === "string" ? row.name.trim() : "";
+  const instruction = typeof row.instruction === "string" ? row.instruction.trim() : "";
+  const group = typeof row.group === "string" ? row.group.trim() : "";
+  if (!name || !instruction || !GROUP_SET.has(group)) return undefined;
+  const requested = typeof row.id === "string" ? row.id.trim() : "";
+  const id = CUSTOM_ID.test(requested) ? requested : `custom-${next}`;
+  return { id, name, group: group as CheckPackGroup, kind: "model", shape: "is-true", claim: instruction };
+}
+
+function parseCustom(raw: unknown): CustomCheck[] {
+  if (!Array.isArray(raw)) return [];
+  const byId = new Map<string, CustomCheck>();
+  let next = 1;
+  for (const [index, item] of raw.entries()) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const check = row.kind === undefined ? parseLegacyCustom(row, next) : parseTypedCustom(row, index);
+    if (!check) continue;
+    const n = Number(check.id.slice("custom-".length));
+    if (Number.isInteger(n) && n >= next) next = n + 1;
+    else next += 1;
+    if (!byId.has(check.id) && byId.size >= CUSTOM_CHECK_CAP) {
+      throw new Error(`Check pack must have at most ${CUSTOM_CHECK_CAP} custom checks.`);
+    }
+    byId.set(check.id, check);
+  }
+  return [...byId.values()];
 }
 
 function parseLabelsTarget(target: Record<string, unknown>, where: string): LabelsTarget {
@@ -551,16 +674,20 @@ export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack |
   }
 }
 
-/** Custom instructions are handed to the classifier as plain text, never evaluated. */
+function isModelCheck(row: CustomCheck): row is ModelCustomCheck {
+  return row.kind === "model";
+}
+
+/** Model rows are handed to the classifier as plain text, never evaluated; rule rows are not questions. */
 export function classificationSources(pack: CheckPack): {
   quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>;
-  custom: Array<{ id: string; name: string; group: CheckPackGroup; instruction: string }>;
+  custom: ModelCustomCheck[];
 } {
   return {
     quality: QUALITY_CHECK_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id) => ({
       id,
       group: CHECK_CATALOG[id].group,
     })),
-    custom: pack.custom.map(({ id, name, group, instruction }) => ({ id, name, group, instruction })),
+    custom: pack.custom.filter(isModelCheck),
   };
 }
