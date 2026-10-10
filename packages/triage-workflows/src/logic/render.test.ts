@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { classificationSources, emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict, toMirrorRequest } from "./render.js";
-import { focusedCandidateId, qualityQuestions } from "./quality.js";
+import { focusedCandidateId, QUALITY_EVALUATION_LIMIT_ERROR, qualityQuestions } from "./quality.js";
 import type { ChangeCandidate } from "./candidates.js";
 import type { DeterministicResult } from "./checks.js";
 
@@ -134,6 +134,15 @@ describe("focused candidate rendering", () => {
     expect(verdict.reason).not.toContain("mixes unrelated changes");
   });
 
+  test("does not degrade deterministic evaluation limits but keeps transient judge errors retryable", () => {
+    const candidates = [candidate("src/a.ts", "A")];
+    const limited = renderVerdict({ author: "octocat", det: FOCUSED_DET, candidates, judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true });
+    expect(limited).toMatchObject({ mirror: false, humanGated: true, degraded: null });
+    expect(limited.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "decision model unavailable", evidence: [] }]);
+    const outage = renderVerdict({ author: "octocat", det: FOCUSED_DET, candidates, judgeError: "upstream 503" });
+    expect(outage).toMatchObject({ mirror: false, humanGated: true, degraded: "inference-outage" });
+  });
+
   test("names confirmed unrelated candidates but human-gates a mixed unresolved result", () => {
     const verdict = focusedVerdict(
       [candidate("src/a.ts", "A"), candidate("src/b.ts", "B")],
@@ -142,6 +151,29 @@ describe("focused candidate rendering", () => {
     expect(verdict).toMatchObject({ mirror: false, humanGated: true });
     expect(verdict.checks[0]).toMatchObject({ check: "focused", result: "fail", evidence: ["A — src/a.ts"] });
     expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Split out unrelated change: A — src/a.ts"]);
+  });
+
+  test("dedupes exact unrelated display evidence only after validating every candidate", () => {
+    const candidates = [
+      candidate("src/a.ts", "Repeated"),
+      candidate("src/a.ts", "Repeated"),
+      candidate("src/a.ts", "Distinct"),
+    ];
+    const allUnrelated = focusedVerdict(candidates, [0, 1, 2].map((index) => decision(focusedCandidateId(index), "unrelated")).join(""));
+    expect(allUnrelated.checks[0]?.evidence).toEqual(["Repeated — src/a.ts", "Distinct — src/a.ts"]);
+    expect(allUnrelated.feedback.split("\n").slice(1)).toEqual([
+      "- Split out unrelated change: Repeated — src/a.ts",
+      "- Split out unrelated change: Distinct — src/a.ts",
+    ]);
+    expect(allUnrelated.reason).toContain("Repeated — src/a.ts, Distinct — src/a.ts");
+
+    const unresolvedDuplicate = focusedVerdict(candidates, [
+      decision("focused-candidate-001", "unrelated"),
+      decision("focused-candidate-002", "ambiguous"),
+      decision("focused-candidate-003", "unrelated"),
+    ].join(""));
+    expect(unresolvedDuplicate).toMatchObject({ mirror: false, humanGated: true });
+    expect(unresolvedDuplicate.checks[0]?.evidence).toEqual(["Repeated — src/a.ts", "Distinct — src/a.ts"]);
   });
 
   test("rejects duplicate decisions and illegal choice probability keys", () => {

@@ -1,6 +1,6 @@
 import type { ModelCustomCheck, QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
-import type { ChangeCandidate } from "./candidates.js";
+import { extractChangeCandidates, type ChangeCandidate } from "./candidates.js";
 
 interface BooleanQualityQuestion {
   id: string;
@@ -55,6 +55,10 @@ const PASSES: Record<QualityCheckId, string> = {
 const MAX_BODY = 4000;
 const MAX_PATHS = 200;
 const MAX_COMMITS = 50;
+export const MAX_SYSTEM_ONE_CONTEXT_BYTES = 30_000;
+export const MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES = 60_000;
+export const MAX_SYSTEM_ONE_QUESTIONS = 32;
+export const QUALITY_EVALUATION_LIMIT_ERROR = "quality evaluation exceeds the safe System One byte budget";
 
 /** The judge answers yes or no, so every shape is asked as a pass question. */
 function customInstructions(row: ModelCustomCheck): string {
@@ -113,6 +117,28 @@ export function qualityState(facts: PrFacts, candidates?: readonly ChangeCandida
 
 function customCheck(id: string, sources: NonNullable<DeterministicResult["sources"]>) {
   return sources.custom.find((c) => c.id === id);
+}
+
+function jsonBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicResult["sources"]) {
+  const candidates = extractChangeCandidates(facts.files);
+  const focused = sources?.quality.some((source) => source.id === "focused") ?? false;
+  const state = qualityState(facts, focused ? candidates : undefined);
+  const questions = sources ? qualityQuestions(sources, candidates) : [];
+  const contextBytes = jsonBytes(state) + questions.reduce((longest, question) => Math.max(longest, jsonBytes(question)), 0);
+  const requestContentBytes = jsonBytes({ state, questions });
+  const oversized = questions.length > MAX_SYSTEM_ONE_QUESTIONS ||
+    contextBytes > MAX_SYSTEM_ONE_CONTEXT_BYTES || requestContentBytes > MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+  return {
+    candidates,
+    state,
+    questions,
+    measurements: { contextBytes, requestContentBytes },
+    ...(oversized ? { judgeError: QUALITY_EVALUATION_LIMIT_ERROR } : {}),
+  };
 }
 
 export function failureText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {

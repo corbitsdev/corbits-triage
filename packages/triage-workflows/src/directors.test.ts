@@ -400,6 +400,38 @@ describe("focused candidate judge input", () => {
     expect(inferred).toBe(0);
     expect(replies.map((reply) => JSON.parse(reply))).toEqual([{ answers: [{}] }]);
   });
+
+  test("an oversized evaluation skips the judge and human-gates the verdict without accusation", async () => {
+    const patch = Array.from({ length: 200 }, (_, index) => [
+      `@@ -${index + 1} +${index + 1} @@`,
+      `+// ${"evidence".repeat(27)}`,
+      `+const value${index} = { name: "Candidate ${index}" };`,
+    ].join("\n")).join("\n");
+    const pack = { ...emptyPack("acme/widgets"), checks: { focused: { enabled: true } } };
+    const ruled = await rules({ items: [{ facts: prFacts([{ path: "src/config.ts", patch }]), pack }], batch: false }, ctx, signal);
+    expect(ruled.needsJudgment).toBe(false);
+    expect(ruled.items[0]).toMatchObject({ judgeError: "quality evaluation exceeds the safe System One byte budget", judgeLimitExceeded: true });
+
+    const verdict = await evaluate(ruled, ctx, signal) as Verdict;
+    expect(verdict).toMatchObject({ mirror: false, humanGated: true, degraded: null, feedback: "" });
+    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "decision model unavailable", evidence: [] }]);
+    expect(verdict.reason).not.toContain("unrelated");
+  });
+
+  test("33 compact mixed questions skip the judge", async () => {
+    const patch = Array.from({ length: 30 }, (_, index) => [
+      `@@ -${index + 1} +${index + 1} @@`,
+      `+const value${index} = { name: "Candidate ${index}" };`,
+    ].join("\n")).join("\n");
+    const pack = {
+      ...emptyPack("acme/widgets"),
+      checks: { focused: { enabled: true }, docs: { enabled: true }, tests: { enabled: true } },
+      custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }],
+    };
+    const ruled = await rules({ items: [{ facts: prFacts([{ path: "src/config.ts", patch }]), pack }], batch: false }, ctx, signal);
+    expect(ruled.needsJudgment).toBe(false);
+    expect(ruled.items[0]).toMatchObject({ judgeError: "quality evaluation exceeds the safe System One byte budget" });
+  });
 });
 
 describe("mirror director cleanup mode", () => {
