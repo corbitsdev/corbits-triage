@@ -9,7 +9,7 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { repoPolicy, triageEventOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import { repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
 import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, type CheckRun, type PrData, type Review } from "./logic/facts.js";
@@ -226,8 +226,8 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     }
     const number = input.prNumber;
     if (typeof number !== "number") return fail("facts: pr input has no prNumber");
-    const event = triageEventOf({ event: input.event, action: input.action, review: input.review });
-    return fetchListed(repo, [number], false, policy, pack, event === null ? [] : [event]);
+    const events = triageEventsOf({ event: input.event, action: input.action, review: input.review, events: input.events });
+    return fetchListed(repo, [number], false, policy, pack, events);
   }
 
   return {
