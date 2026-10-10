@@ -8,9 +8,8 @@
 import { evaluate } from "@corbits/system-one";
 import { DEFAULT_REPO_POLICY, recommendedPack } from "../packages/triage-contracts/src/index.js";
 import { deriveState, type DeterministicResult, type PrFacts, type PrFileFacts } from "../packages/triage-workflows/src/logic/checks.js";
-import { extractChangeCandidates, type ChangeCandidate } from "../packages/triage-workflows/src/logic/candidates.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "../packages/triage-workflows/src/logic/facts.js";
-import { qualityQuestions, qualityState } from "../packages/triage-workflows/src/logic/quality.js";
+import { prepareQualityEvaluation } from "../packages/triage-workflows/src/logic/quality.js";
 import { parseAnswers, renderVerdict, type RenderInput } from "../packages/triage-workflows/src/logic/render.js";
 
 const repo = process.argv[2] ?? "corbitsdev/corbits-triage-sandbox";
@@ -57,22 +56,20 @@ const endpoint = process.env.AI_GATEWAY_API_KEY ? { kind: "gateway" as const } :
 const hasKey = Boolean(process.env.AI_GATEWAY_API_KEY || process.env.TYPESAFE_API_KEY);
 
 export function previewEvaluation(facts: PrFacts, det: DeterministicResult) {
-  const candidates = extractChangeCandidates(facts.files);
-  return {
-    candidates,
-    state: qualityState(facts, det.sources?.quality.some((source) => source.id === "focused") ? candidates : undefined),
-    questions: det.sources ? qualityQuestions(det.sources, candidates) : [],
-  };
+  return prepareQualityEvaluation(facts, det.sources);
 }
 
-async function judge(
+export async function previewJudge(
   det: RenderInput["det"],
-  evaluation: { candidates: ChangeCandidate[]; state: ReturnType<typeof qualityState>; questions: ReturnType<typeof qualityQuestions> },
-): Promise<Pick<RenderInput, "answers" | "judgeError">> {
+  evaluation: ReturnType<typeof prepareQualityEvaluation>,
+  evaluateQuality: typeof evaluate = evaluate,
+  credentialAvailable = hasKey,
+): Promise<Pick<RenderInput, "answers" | "judgeError" | "judgeLimitExceeded">> {
   if (!det.needsJudgment || !det.sources) return {};
   if (evaluation.questions.length === 0) return {};
-  if (!hasKey) return { judgeError: "no key exported" };
-  const result = await evaluate({
+  if (evaluation.judgeError) return { judgeError: evaluation.judgeError, judgeLimitExceeded: true };
+  if (!credentialAvailable) return { judgeError: "no key exported" };
+  const result = await evaluateQuality({
     state: evaluation.state,
     questions: evaluation.questions,
     config: { endpoint, timeoutMs: 30_000 },
@@ -88,7 +85,7 @@ if (import.meta.main) {
     const facts = factsFor(number, open);
     const det = deriveState(facts, undefined, pack);
     const evaluation = previewEvaluation(facts, det);
-    const v = renderVerdict({ author: facts.author, det, candidates: evaluation.candidates, reviewers: facts.reviewers, ...(await judge(det, evaluation)) });
+    const v = renderVerdict({ author: facts.author, det, candidates: evaluation.candidates, reviewers: facts.reviewers, ...(await previewJudge(det, evaluation)) });
     rows.push({
       pr: `#${number}`,
       title: facts.title.slice(0, 40),

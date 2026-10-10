@@ -6,6 +6,8 @@ export interface Item {
   det: DeterministicResult;
   judge?: string;
   judgeError?: string;
+  /** The quality evaluation exceeds the System One budget, so the judge is not asked and a human decides. */
+  judgeLimitExceeded?: true;
   cleanupMode?: CleanupMode;
   pack?: CheckPack;
   roles?: Record<string, RepoRole>;
@@ -24,4 +26,9 @@ export function degradedItem(reason: string): Item {
     det: { state: "stale-unknown", reason, findings: [], checks: [], duplicateOf: null, needsJudgment: false },
     error: reason,
   };
+}
+
+/** Whether the judge asks about this item; an item over the evaluation budget is left to a human instead. */
+export function asksJudge(it: Item): boolean {
+  return it.det?.needsJudgment === true && it.judgeLimitExceeded !== true;
 }

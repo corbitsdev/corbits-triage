@@ -101,6 +101,7 @@ export interface RenderInput {
   answers?: ParsedAnswers | Record<string, number> | null;
   candidates?: ChangeCandidate[];
   judgeError?: string;
+  judgeLimitExceeded?: true;
   /** Logins of requested reviewers. */
   reviewers?: string[];
 }
@@ -179,7 +180,8 @@ function evaluateModel({ det, answers, candidates = [], judgeError }: RenderInpu
         if (!candidate.evidence || answer.confidence < 0.5 || answer.choice === "ambiguous") {
           candidateUnresolved = true;
         } else if (answer.choice === "unrelated") {
-          unrelated.push(`${candidate.label} — ${candidate.path}`);
+          const evidence = `${candidate.label} — ${candidate.path}`;
+          if (!unrelated.includes(evidence)) unrelated.push(evidence);
         }
       }
       focusedUnresolved ||= candidateUnresolved;
@@ -279,7 +281,7 @@ function enforceMirrorCommentBound(verdict: RenderOutput): RenderOutput {
 }
 
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, det, judgeError, reviewers = [] } = input;
+  const { author, det, judgeError, judgeLimitExceeded, reviewers = [] } = input;
   const ctx = { author, sources: det.sources, reviewers };
   const evaluated = evaluateModel(input);
   const checks = [...det.checks, ...evaluated.checks];
@@ -287,6 +289,10 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     const duplicate = det.duplicateOf !== null && det.state === "needs-decision";
     const verdict = withChecks({ ...render(det.state), mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null, reason: det.reason }, det.checks, ctx);
     return enforceMirrorCommentBound({ ...verdict, checks });
+  }
+  if (judgeLimitExceeded === true) {
+    const reason = `decision model unavailable: ${judgeError}`;
+    return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: null, reason }, checks, ctx));
   }
   if (judgeError !== undefined || evaluated.noulUnresolved) {
     const reason = `decision model unavailable: ${judgeError ?? "no answer"}`;

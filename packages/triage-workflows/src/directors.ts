@@ -12,11 +12,10 @@ import { type } from "arktype";
 import { repoPolicy, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { qualityQuestions, qualityState } from "./logic/quality.js";
+import { prepareQualityEvaluation } from "./logic/quality.js";
 import { triageEventOf } from "./logic/events.js";
-import { extractChangeCandidates } from "./logic/candidates.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
-import type { Item } from "./logic/item.js";
+import { asksJudge, type Item } from "./logic/item.js";
 import type { Verdict } from "./logic/render.js";
 import type { Judgment } from "./actions/evaluate.js";
 import type { RulesItem } from "./actions/rules.js";
@@ -248,11 +247,9 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
       if (next === undefined) return finish();
       current = next;
       const { facts, det } = items[current];
-      const candidates = extractChangeCandidates(facts.files);
-      const questions = qualityQuestions(det.sources!, candidates);
-      if (questions.length === 0) continue;
-      const focused = det.sources!.quality.some((source) => source.id === "focused");
-      return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: qualityState(facts, focused ? candidates : undefined), questions } } });
+      const evaluation = prepareQualityEvaluation(facts, det.sources);
+      if (evaluation.questions.length === 0) continue;
+      return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: evaluation.state, questions: evaluation.questions } } });
     }
   }
 
@@ -263,7 +260,7 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
           const input = parseInput(event.message.content);
           items = Array.isArray(input?.items) ? (input.items as Item[]) : [];
           answers = items.map(() => ({}));
-          queue = items.flatMap((it, i) => (it.det?.needsJudgment ? [i] : []));
+          queue = items.flatMap((it, i) => (asksJudge(it) ? [i] : []));
           return ask();
         }
         case "inference.done":
