@@ -1350,8 +1350,9 @@ const TRIAGE_TO_QUEUE: Record<string, QueueState> = {
   "stale-unknown": "stale",
 };
 
-const RENDER_STEPS = new Set(["render", "renderJudged", "renderDet", "renderAll"]);
-const CHECK_STEPS = new Set(["facts", "checks", "checkAll"]);
+const VERDICT_STEPS = new Set(["evaluate", "evaluateRules", "render", "renderJudged", "renderDet", "renderAll"]);
+const CHECK_STEPS = new Set(["rules", "facts", "checks", "checkAll"]);
+const MIRROR_STEPS = new Set(["mirror", "mirrorRules"]);
 
 type StepOutput = { stepId: string; output: unknown };
 
@@ -1397,7 +1398,7 @@ function evidenceOf(det: unknown): string[] {
   return [...new Set([...findings, d.reason].filter((r): r is string => typeof r === "string" && r.length > 0))];
 }
 
-/** Verdicts in a run: render outputs (pr-triage: renderJudged/renderDet; backlog: renderAll.items) joined to checks evidence by repo#number. */
+/** Verdicts in a run: evaluate outputs (older runs: render, renderJudged/renderDet, renderAll.items) joined to rules evidence by repo#number. */
 function runVerdicts(log: RunLog): Verdict[] {
   const steps = stepOutputs(log);
   const evidence = new Map<string, string[]>();
@@ -1418,7 +1419,7 @@ function runVerdicts(log: RunLog): Verdict[] {
   }
   const verdicts: Verdict[] = [];
   for (const { stepId, output } of steps) {
-    if (!RENDER_STEPS.has(stepId)) continue;
+    if (!VERDICT_STEPS.has(stepId)) continue;
     for (const item of renderRows(output)) {
       const render = obj(item);
       if (typeof render.repo !== "string" || !render.repo || typeof render.number !== "number" || render.number < 1) continue;
@@ -1435,7 +1436,7 @@ const MIRROR_CALL_PREFIX = "github_mirror_auto:";
 function mirroredPulls(log: RunLog): Set<string> {
   const posted = new Set<string>();
   for (const { stepId, output } of stepOutputs(log)) {
-    if (stepId !== "mirror") continue;
+    if (!MIRROR_STEPS.has(stepId)) continue;
     const o = obj(output);
     const results: unknown[] = Array.isArray(o.results) ? o.results : [o];
     for (const result of results) {
