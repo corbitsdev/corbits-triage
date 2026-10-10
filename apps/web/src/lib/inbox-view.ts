@@ -210,11 +210,16 @@ export function listHref(view: ListView, item: Pick<PrItem, "repo" | "number">):
 /** An open pull request with its handled mark, held or sent; null while it is in Needs you. */
 export type OpenItem = { item: PrItem; handled: HandledMark | null };
 
-/** The rail counts: Needs you counts its rows, so not pull requests still awaiting their first verdict; All open counts everything open. */
-export function listCounts(open: OpenItem[]): Record<ListView, number> {
+/** All open lists the open pull requests of the repositories with triage enabled. */
+export function allOpen(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
+  return open.filter((entry) => enabled.has(entry.item.repo));
+}
+
+/** The rail counts: Needs you counts its rows, so not pull requests still awaiting their first verdict; All open counts its list. */
+export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Record<ListView, number> {
   return {
     "needs-you": open.filter((entry) => entry.handled === null && inboxAction(entry.item) !== null).length,
-    "all-open": open.length,
+    "all-open": allOpen(open, enabled).length,
   };
 }
 
