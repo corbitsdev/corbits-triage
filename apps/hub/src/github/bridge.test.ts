@@ -215,6 +215,24 @@ describe("bridge handler", () => {
     }]);
   });
 
+  test("carries the review state only on a pull request review", async () => {
+    const sent: Sent[] = [];
+    const handle = bridge({ sent });
+    const pr = JSON.parse(prPayload);
+    const review = JSON.stringify({ ...pr, action: "submitted", review: { state: "approved" } });
+    const checkRun = JSON.stringify({
+      action: "completed",
+      repository: { full_name: "octocat/hello" },
+      check_run: { head_sha: "sha7", pull_requests: [{ number: 7, head: { sha: "sha7" } }] },
+    });
+    await handle(githubRequest(review, { delivery: "r1", event: "pull_request_review" }), TARGET);
+    await handle(githubRequest(checkRun, { delivery: "r2", event: "check_run" }), TARGET);
+    expect(sent.map((item) => item.payload)).toEqual([
+      expect.objectContaining({ event: "pull_request_review", review: { state: "approved" } }),
+      expect.objectContaining({ event: "check_run", review: null }),
+    ]);
+  });
+
   test("routes to the hook's configured workflow", async () => {
     const sent: Sent[] = [];
     const db = stubDb([hookRow({ metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage-historical" } } })]);
