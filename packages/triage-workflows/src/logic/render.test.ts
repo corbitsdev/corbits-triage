@@ -60,7 +60,7 @@ describe("custom check rendering", () => {
   });
 });
 
-const FOCUSED_SOURCES = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [] };
+const FOCUSED_SOURCES = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
 const FOCUSED_DET: DeterministicResult = {
   state: "ready-monitoring",
   reason: "all configured checks pass",
@@ -211,6 +211,7 @@ describe("focused candidate rendering", () => {
       sources: {
         quality: [{ id: "docs", group: "code-vs-ci" }],
         custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "Keeps boundaries" }],
+        rules: [],
       },
     };
     const answers = parseAnswers([
@@ -265,7 +266,7 @@ describe("focused candidate rendering", () => {
 
 const MODEL_DET: DeterministicResult = {
   ...FOCUSED_DET,
-  sources: { quality: [{ id: "docs", group: "code-vs-ci" }, { id: "tests", group: "code-vs-ci" }], custom: [] },
+  sources: { quality: [{ id: "docs", group: "code-vs-ci" }, { id: "tests", group: "code-vs-ci" }], custom: [], rules: [] },
 };
 
 function noul(answers: Record<string, number>) {

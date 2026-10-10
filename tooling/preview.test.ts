@@ -35,7 +35,7 @@ test("preview builds the same focused candidate questions and state as productio
     checks: [],
     duplicateOf: null,
     needsJudgment: true,
-    sources: { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [] },
+    sources: { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] },
   };
 
   const evaluation = previewEvaluation(facts, det);
@@ -53,7 +53,7 @@ test("preview refuses an evaluation whose metadata alone is over the budget befo
   };
   const det = {
     state: "ready-monitoring" as const, reason: "all configured checks pass", findings: [], checks: [], duplicateOf: null,
-    needsJudgment: true, sources: { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [] },
+    needsJudgment: true, sources: { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] },
   };
   const preview = previewEvaluation(facts, det);
   expect(preview).toEqual(prepareQualityEvaluation(facts, det.sources));
