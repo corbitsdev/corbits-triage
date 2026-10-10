@@ -131,6 +131,7 @@ test("composed hub documents the integration routes and still answers an invalid
     .map(([path, methods]) => [path, Object.keys(methods)]);
   expect(Object.fromEntries(integrations)).toEqual({
     "/api/integrations/auth-methods": ["get"],
+    "/api/integrations/pack-schema": ["get"],
     "/api/integrations/github-manifest/{tenantId}/start": ["post"],
     "/api/integrations/github-manifest/{tenantId}/cancel": ["post"],
     "/api/integrations/github-manifest/callback": ["get"],

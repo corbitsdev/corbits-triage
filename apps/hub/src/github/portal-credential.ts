@@ -15,8 +15,8 @@ export type PortalCredentialDeps = {
   trustedPortalOrigins: readonly string[];
 };
 
-export function failure(status: number, code: string, message: string): Response {
-  return Response.json({ error: { code, message } }, { status });
+export function failure(status: number, code: string, message: string, details?: Record<string, string>): Response {
+  return Response.json({ error: { ...details, code, message } }, { status });
 }
 
 /** The signed-in member's principal id, or the error response to return. */
