@@ -8,7 +8,7 @@ test("buildFacts carries the author's trust tier", () => {
 });
 
 test("assembleItem turns an unreadable file list into an error item", () => {
-  const context = { repo: "acme/widgets", openPrs: [], policy: DEFAULT_REPO_POLICY, pack: emptyPack("acme/widgets"), event: null };
+  const context = { repo: "acme/widgets", openPrs: [], policy: DEFAULT_REPO_POLICY, pack: emptyPack("acme/widgets"), events: [] };
   const pull = { pr: { author: "alice", branch: "a", sha: "abc" }, checks: [], reviews: [], commits: [{ message: "fix: a\n\nbody" }] };
   expect(assembleItem(8, { ...pull, files: "github_list_pr_files result was truncated for #8" }, context)).toEqual({ error: "github_list_pr_files result was truncated for #8" });
   const item = assembleItem(8, { ...pull, files: [{ path: "src/a.ts" }] }, context);

@@ -71,8 +71,9 @@ function joined(names: string[]): string {
 }
 
 /** Catch-up runs every action. */
-function wakes(action: Action, facts: PrFacts): boolean {
-  return action.when === "every" || facts.event === "catch-up" || (facts.event !== undefined && action.when.includes(facts.event));
+function wakes({ when }: Action, facts: PrFacts): boolean {
+  const events = facts.events ?? [];
+  return when === "every" || events.includes("catch-up") || events.some((event) => when.includes(event));
 }
 
 type Picked = { branch: Branch; dos: Do[]; reason: string } | { skipped: string };
