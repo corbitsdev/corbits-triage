@@ -34,6 +34,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     posted: false,
     running: false,
     failure: null,
+    actions: [],
     href: "/prs/acme/widgets/1",
     ...overrides,
   };
@@ -100,6 +101,11 @@ describe("paneActions", () => {
     expect(paneActions(gate({ canClose: true })).primary?.kind).toBe("close");
     expect(paneActions(gate({ canClose: true })).more.at(-2)).toEqual({ kind: "close", blocker: null, label: "Close as duplicate" });
     expect(paneActions(gate({ canClose: true }, undefined, { readOnly: true })).more.at(-2)).toEqual({ kind: "close", blocker: "read-only", label: "Close as duplicate" });
+  });
+
+  test("a pack close Do stands in for the menu's plain close", () => {
+    const actions = [{ id: "stale", kind: "close" as const, reason: "Stale.", target: {} }];
+    expect(paneActions(gate({ actions })).more.map((row) => row.kind)).not.toContain("close");
   });
 
   test("triage again is offered once the hub has run or given up on the pull request, under the same gate as writes", () => {

@@ -10,7 +10,10 @@ import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "../lib/error-text.ts";
 import { paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
+import { usePendingDos, useRanDoMarks } from "../lib/ran-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
+import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import {
   approvalHeadline,
   findPrItem,
@@ -350,6 +353,8 @@ export default function PRDetail() {
   );
   const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
   const moreRef = useRef<HTMLDetailsElement>(null);
+  const dos = usePendingDos(item);
+  const ranDos = useRanDoMarks();
 
   async function act(decision: "once" | "deny") {
     if (!approval) return;
@@ -400,6 +405,24 @@ export default function PRDetail() {
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runDo(pending: PendingDo) {
+    if (!item || item.number === null || item.running) return;
+    if (pending.kind === "close") {
+      await requestWrite("close");
+      return;
+    }
+    setBusy(true);
+    try {
+      setError("");
+      await writeGithub(pending.request, "now");
+      ranDos.mark(item, pending.key);
+    } catch (cause) {
+      setError(errorText(cause));
     } finally {
       setBusy(false);
     }
@@ -550,7 +573,7 @@ export default function PRDetail() {
                     <div className="more-menu-list" role="menu">
                       <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("approve")}>Approve</button>
                       <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("changes")}>Request changes</button>
-                      <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("close")}>Close pull request</button>
+                      {offersClose(item) ? null : <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("close")}>Close pull request</button>}
                     </div>
                   </details>
                 </>
@@ -582,6 +605,11 @@ export default function PRDetail() {
             onDismiss={() => setHandled({ ...handled, [handledKey]: "dismissed" })}
           />
         ) : null}
+        {closed || dos.length === 0 ? null : (
+          <div className="pr-composer">
+            <SuggestedActions dos={dos} disabled={!item.number || item.running || busy || readOnly} onRun={(pending) => void runDo(pending)} />
+          </div>
+        )}
         {error && <p role="alert" className="error">{error}</p>}
         <main id="main" className="content content-pr-shell">
           <div className="pr-workspace">{pane}</div>
