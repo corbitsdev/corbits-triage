@@ -1,15 +1,16 @@
 // The hub bridge finds deployments by workflow name, so each workflow is
-// redeployed only when its source changed, no live deployment exists, or the
-// decision model changed (a deployment resolves its offering when deployed).
-import { ApiError, deployWorkflow, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
-import { pushFiles } from "./git-push.ts";
+// redeployed only when a new version of it was published, no live deployment
+// exists, or the decision model changed (a deployment resolves its offering
+// when deployed).
+import { ApiError, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { requestOrigin } from "./hub-origin.ts";
 import { DECISION_MODEL_ALIAS, isLiveDeployment } from "./hub-api.ts";
-import { WORKFLOW_PACKAGES, workflowPackageFiles, type WorkflowPackage } from "./workflow-packages.ts";
+import { WORKFLOW_PACKAGES, type PackageIndexEntry } from "./workflow-packages.ts";
 
 /** Provider plugin the triage agents infer through (packages/triage-workflows/src/agents.ts). */
 const INFERENCE_PLUGIN = "corbits-system-one";
-const GIT_TOKEN_TTL_MS = 10 * 60_000;
+/** The tenant's package registry the tool and workflow tarballs are published to. */
+const REGISTRY_NAME = "corbits";
 
 type ModelInfo = { canonicalName: string; offerings: Array<{ offeringId: string; plugin: string; priority: number }> };
 type Asset = { id: string; kind: string; name: string };
@@ -25,37 +26,62 @@ export async function suggestOfferings(transport: Transport, tenantId: string): 
   return offering ? { ids: [offering.offeringId], defaultId: offering.offeringId } : null;
 }
 
-async function ensureAsset(transport: Transport, tenantId: string, name: string): Promise<Asset> {
+async function ensureAsset(transport: Transport, tenantId: string, kind: "workflow" | "package-registry", name: string): Promise<Asset> {
   const base = `/api/tenants/${encodeURIComponent(tenantId)}/assets`;
-  const assets = await transport.fetch<Asset[]>("GET", `${base}?kind=workflow`);
+  const assets = await transport.fetch<Asset[]>("GET", `${base}?kind=${kind}`);
   return assets.find((asset) => asset.name === name)
-    ?? transport.fetch<Asset>("POST", base, { kind: "workflow", name });
+    ?? transport.fetch<Asset>("POST", base, { kind, name });
 }
 
-async function packageFiles(workflow: WorkflowPackage): Promise<Record<string, string>> {
-  async function readFile(file: string) {
-    const response = await fetch(`/workflows/${workflow.name}/${file}`);
-    if (!response.ok) throw new Error(`The portal build is missing the ${workflow.name} workflow (${file}).`);
-    return [file, await response.text()] as const;
+/** Reads a file the portal build wrote to `public/packages`. */
+async function portalPackage(fetchRaw: typeof fetch, file: string): Promise<Response> {
+  const response = await fetchRaw(`/packages/${file}`);
+  if (!response.ok) throw new Error(`The portal build is missing ${file}.`);
+  return response;
+}
+
+async function putTarball(fetchRaw: typeof fetch, tenantId: string, registryId: string, entry: PackageIndexEntry, bytes: ArrayBuffer): Promise<void> {
+  const path = `/api/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(registryId)}/tarballs/${encodeURIComponent(entry.filename)}`;
+  const response = await fetchRaw(`${requestOrigin()}${path}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "content-type": "application/octet-stream" },
+    body: bytes,
+  });
+  if (response.ok) return;
+  let detail: { error?: { code?: string; message?: string } } = {};
+  try { detail = await response.json() as typeof detail; } catch { /* generic error below */ }
+  throw new ApiError(response.status, detail.error?.code ?? "unknown", detail.error?.message ?? `HTTP ${response.status}`);
+}
+
+/**
+ * Publishes each tarball the registry lacks, in index order so the tool lands
+ * before the workflows that depend on it. A version is never overwritten.
+ * Returns the filenames published now.
+ */
+async function publishPackages(
+  transport: Transport,
+  fetchRaw: typeof fetch,
+  tenantId: string,
+  registryId: string,
+  index: PackageIndexEntry[],
+): Promise<Set<string>> {
+  const listed = await transport.fetch<Array<{ filename: string; integrity: string }>>(
+    "GET",
+    `/api/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(registryId)}/tarballs`,
+  );
+  const missing: PackageIndexEntry[] = [];
+  for (const entry of index) {
+    const existing = listed.find((tarball) => tarball.filename === entry.filename);
+    if (!existing) missing.push(entry);
+    else if (existing.integrity !== entry.integrity) {
+      throw new Error(`${entry.name}@${entry.version} is already published with different contents. Bump its version.`);
+    }
   }
-  return Object.fromEntries(await Promise.all(workflowPackageFiles(workflow).map(readFile)));
-}
-
-async function pushWorkflow(transport: Transport, tenantId: string, asset: Asset, workflow: WorkflowPackage) {
-  const tid = encodeURIComponent(tenantId);
-  const { secret } = await transport.fetch<{ secret: string }>("POST", `/api/tenants/${tid}/git-tokens`, {
-    name: `portal-${workflow.name}-${Date.now()}`,
-    resource: `asset:${asset.id}`,
-    refPattern: "refs/heads/main",
-    actions: ["can_read", "can_push"],
-    expiresAt: new Date(Date.now() + GIT_TOKEN_TTL_MS).toISOString(),
-  });
-  return pushFiles({
-    url: new URL(`${requestOrigin()}/api/tenants/${tid}/assets/workflow/${encodeURIComponent(asset.name)}.git`, window.location.href).href,
-    token: secret,
-    files: await packageFiles(workflow),
-    message: `${workflow.name} workflow`,
-  });
+  for (const entry of missing) {
+    await putTarball(fetchRaw, tenantId, registryId, entry, await (await portalPackage(fetchRaw, entry.filename)).arrayBuffer());
+  }
+  return new Set(missing.map((entry) => entry.filename));
 }
 
 /** The longest lifetime Interchange accepts, so a deployment lives until a newer one replaces it. */
@@ -106,19 +132,33 @@ export function cancelsSuperseded(workflow: string, deployed: boolean): boolean 
   return deployed || workflow !== "pr-triage";
 }
 
-export async function ensureWorkflows(transport: Transport, tenantId: string, offerings: OfferingSuggestion, redeploy: boolean): Promise<string[]> {
+export async function ensureWorkflows(
+  transport: Transport,
+  tenantId: string,
+  offerings: OfferingSuggestion,
+  redeploy: boolean,
+  fetchRaw: typeof fetch = fetch,
+): Promise<string[]> {
   const deployments = await listWorkflowDeployments(transport, tenantId);
   await ensureKeepDeployedLifetime(transport, tenantId);
+  const registry = await ensureAsset(transport, tenantId, "package-registry", REGISTRY_NAME);
+  const index = await (await portalPackage(fetchRaw, "index.json")).json() as PackageIndexEntry[];
+  const published = await publishPackages(transport, fetchRaw, tenantId, registry.id, index);
   const deployed: string[] = [];
   for (const workflow of WORKFLOW_PACKAGES) {
-    const asset = await ensureAsset(transport, tenantId, workflow.name);
-    const ofAsset = deployments.filter((d) => d.definitionAssetId === asset.id).sort(newestFirst);
-    const { commitSha, changed } = await pushWorkflow(transport, tenantId, asset, workflow);
-    const live = ofAsset.some((d) => isLiveDeployment(d.status));
-    const deploy = changed || redeploy || !live;
+    const pkg = index.find((entry) => entry.name === workflow.packageName);
+    if (!pkg) throw new Error(`The portal build is missing the ${workflow.name} workflow.`);
+    // The deploy route needs a workflow asset to name the definition; the code comes from the registry.
+    const asset = await ensureAsset(transport, tenantId, "workflow", workflow.name);
+    const live = deployments.some((d) => d.definitionAssetId === asset.id && isLiveDeployment(d.status));
+    // No stock route exposes a deployment's pin, so a version published by a converge whose deploy then
+    // failed stays undeployed while an older deployment is live, until the next model save redeploys.
+    const deploy = published.has(pkg.filename) || redeploy || !live;
     if (deploy) {
-      await deployWorkflow(transport, tenantId, {
-        source: { kind: "asset", assetId: asset.id, package: { format: "source", commitSha, packageName: workflow.packageName } },
+      await transport.fetch<WorkflowDeployment>("POST", `/api/integrations/workflow-deploy/${encodeURIComponent(tenantId)}`, {
+        registryAssetId: registry.id,
+        definitionAssetId: asset.id,
+        pin: `${pkg.name}@${pkg.version}`,
         entry: workflow.entry,
         sourceOfferingIds: offerings.ids,
         defaultSourceOfferingId: offerings.defaultId,

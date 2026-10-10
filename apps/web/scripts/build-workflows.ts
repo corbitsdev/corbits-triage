@@ -1,7 +1,7 @@
-// Bundles each workflow package into public/workflows/<name>/ so the portal can push it to the hub,
-// and packs each as a tarball into public/packages/ beside the GitHub tool it depends on.
+// Packs each workflow as a tarball into public/packages/ beside the GitHub tool it depends on,
+// so the portal can publish them to the hub.
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildEntry, packTool } from "../../../packages/github-tool/build.ts";
@@ -14,21 +14,11 @@ const PUBLIC = resolve(import.meta.dir, "../public");
 const DIRECTORS = "directors.mjs";
 const ACTIONS = "actions.mjs";
 
-type BundleOptions = Pick<Bun.BuildConfig, "external" | "minify" | "sourcemap">;
-
-const PACKED: BundleOptions = {
-  // The packed tool exports only its root, so a subpath import would not resolve at run time.
-  external: [tool.name],
-  // Strips the per-module path comments: the version hash must not depend on the lockfile layout.
-  minify: { whitespace: true },
-  sourcemap: "none",
-};
-
 function interchangeEntries(workflow: WorkflowPackage) {
   return { workflow: workflow.entry, directors: `./${DIRECTORS}`, actions: `./${ACTIONS}` };
 }
 
-async function bundle(workflow: WorkflowPackage, outdir: string, options: BundleOptions = {}): Promise<void> {
+async function bundle(workflow: WorkflowPackage, outdir: string): Promise<void> {
   const entries = [[workflow.src, workflow.entry.slice(2)], ["src/directors.ts", DIRECTORS], ["src/actions/index.ts", ACTIONS]];
   for (const [src, naming] of entries) {
     await Bun.build({
@@ -39,22 +29,14 @@ async function bundle(workflow: WorkflowPackage, outdir: string, options: Bundle
       format: "esm",
       conditions: ["intx-src"],
       define: { "process.env.TRIAGE_WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
-      ...options,
+      // The packed tool exports only its root, so a subpath import would not resolve at run time.
+      external: [tool.name],
+      // Strips the per-module path comments: the version hash must not depend on the lockfile layout.
+      minify: { whitespace: true },
+      sourcemap: "none",
       throw: true,
     });
   }
-}
-
-async function writeSourcePackage(workflow: WorkflowPackage, outDir: string): Promise<void> {
-  const dir = join(outDir, workflow.name);
-  await mkdir(dir, { recursive: true });
-  await bundle(workflow, dir);
-  await Bun.write(join(dir, "package.json"), `${JSON.stringify({
-    name: workflow.packageName,
-    version: "0.1.0",
-    type: "module",
-    interchange: interchangeEntries(workflow),
-  }, null, 2)}\n`);
 }
 
 // The tarball resolves only from the registry asset it is published to, which holds nothing but the tool.
@@ -72,7 +54,7 @@ function assertOnlyToolImports(workflow: WorkflowPackage, code: string): void {
 async function packWorkflow(workflow: WorkflowPackage, outDir: string): Promise<PackedTarball> {
   const stage = await mkdtemp(join(tmpdir(), `${workflow.name}-`));
   try {
-    await bundle(workflow, stage, PACKED);
+    await bundle(workflow, stage);
     const files = {
       [workflow.entry]: join(stage, workflow.entry),
       [`./${DIRECTORS}`]: join(stage, DIRECTORS),
@@ -118,11 +100,7 @@ export async function packWorkflows(outDir: string): Promise<PackageIndexEntry[]
 }
 
 if (import.meta.main) {
-  // The git-push deploy still reads public/workflows; it goes away once the portal deploys the tarballs.
-  const sourceOut = join(PUBLIC, "workflows");
   const packagesOut = join(PUBLIC, "packages");
-  await rm(sourceOut, { recursive: true, force: true });
-  for (const workflow of WORKFLOW_PACKAGES) await writeSourcePackage(workflow, sourceOut);
   const index = await packWorkflows(packagesOut);
-  console.log(`built ${WORKFLOW_PACKAGES.length} workflow packages into ${sourceOut} and ${index.length} tarballs into ${packagesOut}`);
+  console.log(`packed ${index.length} tarballs into ${packagesOut}`);
 }
