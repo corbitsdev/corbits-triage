@@ -4,7 +4,7 @@ import { emptyPack } from "@corbits/triage-contracts";
 import { applyInstallationListing, createBridgeHandler, loadBridgeHook, MAX_BODY_BYTES, type BridgeDeps } from "./bridge.js";
 import { repoRecords } from "./tenant-config.js";
 import { DeliveryCache } from "./dedupe.js";
-import { NoLiveDeploymentError } from "./deployment.js";
+import type { CoalescedEvent } from "./coalescer.js";
 import { verifySignature } from "./signature.js";
 
 const SECRET = "test-webhook-secret";
@@ -126,7 +126,7 @@ function hookRow(overrides: Partial<Row> = {}): Row {
   };
 }
 
-type Sent = { workflow: string; payload: unknown };
+type Sent = CoalescedEvent;
 
 function ignoreLog(): void {}
 
@@ -140,14 +140,15 @@ function openHeadsOf(drafts: number[]): BridgeDeps["openHeadsFor"] {
 
 function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[] } = {}) {
   const sent = overrides.sent ?? [];
-  async function recordMail(_tenant: string, workflow: string, payload: unknown) {
-    sent.push({ workflow, payload });
+  async function accept(input: CoalescedEvent) {
+    sent.push(input);
+    return "queued" as const;
   }
   return createBridgeHandler({
     db: stubDb([hookRow()]),
     cipher: stubCipher,
     cache: new DeliveryCache(),
-    sendMail: recordMail,
+    coalescer: { accept },
     log: ignoreLog,
     readCheckPack: packsFor(["octocat/hello"]),
     openHeadsFor: openHeadsOf([]),
@@ -155,13 +156,16 @@ function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[] } = {}) {
   });
 }
 
-/** Fails the first `failures` sends, then records. */
-function flakyMail(sent: Sent[], failures: number): BridgeDeps["sendMail"] {
+/** Fails the first `failures` accepts, then records. */
+function flakyCoalescer(sent: Sent[], failures: number): BridgeDeps["coalescer"] {
   let calls = 0;
-  return async function sendMail(_tenant, workflow, payload) {
-    calls += 1;
-    if (calls <= failures) throw new Error("hub down");
-    sent.push({ workflow, payload });
+  return {
+    async accept(input) {
+      calls += 1;
+      if (calls <= failures) throw new Error("state store down");
+      sent.push(input);
+      return "queued";
+    },
   };
 }
 
@@ -196,23 +200,23 @@ describe("loadBridgeHook", () => {
 });
 
 describe("bridge handler", () => {
-  test("forwards a valid delivery with the repo policy to the hook workflow", async () => {
+  test("queues a valid delivery with the repo policy for the hook workflow", async () => {
     const sent: Sent[] = [];
     const res = await bridge({ sent })(githubRequest(prPayload), TARGET);
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: "forwarded" });
-    expect(sent).toEqual([{
+    expect(await res.json()).toEqual({ status: "queued" });
+    expect(sent).toEqual([expect.objectContaining({
       workflow: "pr-triage",
-      payload: expect.objectContaining({
-        repo: "octocat/hello",
-        prNumber: 7,
-        policy: expect.objectContaining({
-          cleanupMode: "human-approved",
-          enabled: true,
-          checks: { draft: true, ci: true, duplicate: true, conflicts: true, reviewers: false, drift: true },
-        }),
+      number: 7,
+      headSha: "abc",
+      event: "opened",
+      mail: expect.objectContaining({ repo: "octocat/hello", prNumber: 7 }),
+      policy: expect.objectContaining({
+        cleanupMode: "human-approved",
+        enabled: true,
+        checks: { draft: true, ci: true, duplicate: true, conflicts: true, reviewers: false, drift: true },
       }),
-    }]);
+    })]);
   });
 
   test("carries the review state only on a pull request review", async () => {
@@ -227,7 +231,7 @@ describe("bridge handler", () => {
     });
     await handle(githubRequest(review, { delivery: "r1", event: "pull_request_review" }), TARGET);
     await handle(githubRequest(checkRun, { delivery: "r2", event: "check_run" }), TARGET);
-    expect(sent.map((item) => item.payload)).toEqual([
+    expect(sent.map((item) => item.mail)).toEqual([
       expect.objectContaining({ event: "pull_request_review", review: { state: "approved" } }),
       expect.objectContaining({ event: "check_run", review: null }),
     ]);
@@ -312,13 +316,13 @@ describe("bridge handler", () => {
     const deliveries: Array<[string, string, string]> = [
       ["pull_request", JSON.stringify({ ...pr, action: "labeled" }), "ignored"],
       ["check_run", checkRun("created"), "ignored"],
-      ["check_run", checkRun("completed"), "forwarded"],
-      ["pull_request", JSON.stringify({ ...pr, action: "synchronize" }), "forwarded"],
+      ["check_run", checkRun("completed"), "queued"],
+      ["pull_request", JSON.stringify({ ...pr, action: "synchronize" }), "queued"],
     ];
     for (const [index, [event, body, status]] of deliveries.entries()) {
       expect(await (await handle(githubRequest(body, { delivery: `e${index}`, event }), TARGET)).json()).toEqual({ status });
     }
-    expect(sent.map((item) => (item.payload as { action: string }).action)).toEqual(["completed", "synchronize"]);
+    expect(sent.map((item) => item.mail.action)).toEqual(["completed", "synchronize"]);
   });
 
   test("events sent by the workspace's own app bot are ignored", async () => {
@@ -327,7 +331,7 @@ describe("bridge handler", () => {
     const res = await bridge({ sent })(githubRequest(own), TARGET);
     expect(await res.json()).toEqual({ status: "ignored" });
     const other = JSON.stringify({ ...JSON.parse(prPayload), action: "synchronize", sender: { type: "Bot", login: "dependabot[bot]" } });
-    expect(await (await bridge({ sent })(githubRequest(other, { delivery: "del-2" }), TARGET)).json()).toEqual({ status: "forwarded" });
+    expect(await (await bridge({ sent })(githubRequest(other, { delivery: "del-2" }), TARGET)).json()).toEqual({ status: "queued" });
     expect(sent).toHaveLength(1);
   });
 
@@ -365,7 +369,7 @@ describe("bridge handler", () => {
     expect(await (await drafts(githubRequest(checkRun, { delivery: "d2", event: "check_run" }), TARGET)).json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
     const ready = bridge({ db, sent, openHeadsFor: openHeadsOf([]) });
-    expect(await (await ready(githubRequest(checkRun, { delivery: "d3", event: "check_run" }), TARGET)).json()).toEqual({ status: "forwarded" });
+    expect(await (await ready(githubRequest(checkRun, { delivery: "d3", event: "check_run" }), TARGET)).json()).toEqual({ status: "queued" });
     expect(sent).toHaveLength(1);
   });
 
@@ -376,19 +380,12 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("no live deployment is 503 so GitHub retries", async () => {
-    async function noDeployment(): Promise<never> {
-      throw new NoLiveDeploymentError("pr-triage");
-    }
-    const res = await bridge({ sendMail: noDeployment })(githubRequest(prPayload), TARGET);
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: "stale_deployment" });
-  });
-
-  test("a failed delivery releases the id for retry", async () => {
+  test("a failed queue write is 500 and releases the id for retry", async () => {
     const sent: Sent[] = [];
-    const handle = bridge({ sendMail: flakyMail(sent, 1) });
-    expect((await handle(githubRequest(prPayload, { delivery: "retry" }), TARGET)).status).toBe(502);
+    const handle = bridge({ coalescer: flakyCoalescer(sent, 1) });
+    const failed = await handle(githubRequest(prPayload, { delivery: "retry" }), TARGET);
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: "triage_state_unavailable" });
     expect((await handle(githubRequest(prPayload, { delivery: "retry" }), TARGET)).status).toBe(202);
     expect(sent).toHaveLength(1);
   });
