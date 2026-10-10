@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, type Action, type CheckRef, type Do } from "@corbits/triage-contracts";
-import { evaluateActions, type ActionInput, type SuggestedAction } from "./actions.js";
+import { doEffectId, evaluateActions, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
 import type { PrFacts } from "./checks.js";
 
 const facts: PrFacts = {
@@ -65,7 +65,7 @@ describe("evaluateActions", () => {
 
   test("names the checks behind the branch", () => {
     expect(run([branching(["opened"], ["ci", "tests"])])).toEqual([
-      { id: "a", branch: "no", kind: "comment", automatic: false, target: { body: "no" }, reason: "Tests failed." },
+      { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "no" }, reason: "Tests failed." },
     ]);
   });
 
@@ -97,12 +97,30 @@ describe("evaluateActions", () => {
       { kind: "assign", automatic: false, target: { to: "teams", teams: ["core"] } },
     ];
     const base = { id: "a", branch: "always", automatic: false } as const;
+    const effectId = expect.any(String);
     expect(run([always(dos)], { leads: { users: ["dave", "octocat"], teams: ["@acme/core"] } })).toEqual([
-      { ...base, kind: "request-review", target: { users: ["dave"], teams: ["core"] }, reason: "Always applies." },
-      { ...base, kind: "request-review", skipped: true, reason: "Role ghost is not defined in the repository policy." },
-      { ...base, kind: "request-review", skipped: true, reason: "No reviewer is left once the author is excluded." },
-      { ...base, kind: "assign", target: { users: ["octocat"] }, reason: "Always applies." },
-      { ...base, kind: "assign", skipped: true, reason: "Assignees must be users and this target names none." },
+      { ...base, index: 0, effectId, kind: "request-review", target: { users: ["dave"], teams: ["core"] }, reason: "Always applies." },
+      { ...base, index: 1, kind: "request-review", skipped: true, reason: "Role ghost is not defined in the repository policy." },
+      { ...base, index: 2, kind: "request-review", skipped: true, reason: "No reviewer is left once the author is excluded." },
+      { ...base, index: 3, effectId, kind: "assign", target: { users: ["octocat"] }, reason: "Always applies." },
+      { ...base, index: 4, kind: "assign", skipped: true, reason: "Assignees must be users and this target names none." },
     ]);
+  });
+
+  test("a step keeps its index when steps before it are satisfied or skipped", () => {
+    const behind = run([always([
+      { kind: "labels", automatic: false, target: { from: "list", labels: ["api"] } },
+      { kind: "assign", automatic: false, target: { to: "teams", teams: ["core"] } },
+      say("hello"),
+    ])]);
+    const ref = { repo: "acme/widgets", number: 8, headSha: "abc", actionId: "a", branch: "always", index: 2, kind: "comment", target: { body: "hello" } } as const;
+    expect(behind).toEqual([expect.objectContaining({ kind: "assign", index: 1, skipped: true }), expect.objectContaining({ kind: "comment", index: 2, effectId: doEffectId(ref) })]);
+  });
+
+  test("a Do inserted earlier by a pack edit does not take the id of the Do that held its index", () => {
+    const [before] = run([always([say("hello")])]) as SuggestedDo[];
+    const [inserted, moved] = run([always([{ kind: "labels", automatic: false, target: { from: "list", labels: ["search"] } }, say("hello")])]) as SuggestedDo[];
+    expect(inserted!.effectId).not.toBe(before!.effectId);
+    expect(moved!.effectId).not.toBe(before!.effectId);
   });
 });
