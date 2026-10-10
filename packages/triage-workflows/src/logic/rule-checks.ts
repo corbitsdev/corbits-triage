@@ -40,26 +40,36 @@ function unscanned(file: PrFileFacts): boolean {
   return (file.additions ?? 0) > 0 && (file.patch === undefined || file.patchTruncated === true);
 }
 
-function people(check: Extract<RuleCustomCheck, { rule: "author" }>, roles: Record<string, RepoRole>): string[] | { unconfirmed: string } {
-  if (check.who === "users") return check.users;
-  if (check.who === "kinds") return [];
+type AuthorRule = Extract<RuleCustomCheck, { rule: "author" }>;
+
+/** Team membership is not in the facts, so a role that also names teams cannot say no. */
+function named(check: Exclude<AuthorRule, { who: "kinds" }>, author: string, roles: Record<string, RepoRole>): Omit<Outcome, "gate"> {
+  if (check.who === "users") return oneOf(check.users, author);
   const role = roles[check.role];
-  if (!role) return { unconfirmed: `role ${check.role} is not defined` };
-  return role.users?.length ? role.users : { unconfirmed: `role ${check.role} names no people` };
+  if (!role) return { failed: null, reason: `role ${check.role} is not defined` };
+  const users = role.users ?? [];
+  const teams = role.teams ?? [];
+  if (!users.length && !teams.length) return { failed: null, reason: `role ${check.role} names no people` };
+  const outcome = oneOf(users, author);
+  if (outcome.failed && teams.length) return { failed: null, reason: `role ${check.role} names teams, and team membership is not known` };
+  return outcome;
 }
 
-function author(check: Extract<RuleCustomCheck, { rule: "author" }>, facts: PrFacts, roles: Record<string, RepoRole>): Outcome {
+function oneOf(users: string[], author: string): Omit<Outcome, "gate"> {
+  const failed = missingFrom(users, [author]).length > 0;
+  return { failed, reason: failed ? "author is not one of the people named" : "author is one of the people named" };
+}
+
+function author(check: AuthorRule, facts: PrFacts, roles: Record<string, RepoRole>): Outcome {
   const kind = facts.authorKind;
+  if (!facts.author) return { failed: null, reason: "the author is not known", gate: true };
   const evidence = [`@${facts.author}${kind ? ` (${kind})` : ""}`];
   if (check.who === "kinds") {
-    if (!kind) return { failed: null, reason: "the author's kind is not known", gate: true };
+    if (!kind) return { failed: null, reason: "the author's kind is not known", evidence, gate: true };
     const failed = !check.kinds.includes(kind);
     return { failed, reason: failed ? `author is ${kind}, not ${check.kinds.join(" or ")}` : `author is ${kind}`, evidence, gate: true };
   }
-  const named = people(check, roles);
-  if ("unconfirmed" in named) return { failed: null, reason: named.unconfirmed, gate: true };
-  const failed = missingFrom(named, [facts.author]).length > 0;
-  return { failed, reason: failed ? "author is not one of the people named" : "author is one of the people named", evidence, gate: true };
+  return { ...named(check, facts.author, roles), evidence, gate: true };
 }
 
 function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, RepoRole>): Outcome {
@@ -112,7 +122,7 @@ export function evaluateRuleChecks(facts: PrFacts, rules: RuleCustomCheck[], rol
     const { failed, reason: detail, evidence = [], state = "needs-author-update", gate } = outcome(check, facts, roles);
     const reason = `${check.name}: ${detail}`;
     if (failed && !gate) findings.push({ check: check.id, state, reason });
-    checks.push({ check: check.id, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence });
+    checks.push({ check: check.id, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence, ...(gate ? { gate } : {}) });
   }
   return { findings, checks };
 }

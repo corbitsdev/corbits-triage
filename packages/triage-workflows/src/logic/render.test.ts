@@ -374,7 +374,7 @@ describe("rule custom check rendering", () => {
       state: "ready-monitoring",
       reason: "all deterministic checks passed",
       findings: [],
-      checks: [{ check: "custom-9", kind: "machine", result: "fail", reason: "Mine: author is not one of the people named", evidence: ["@octocat (outside)"] }],
+      checks: [{ check: "custom-9", kind: "machine", result: "fail", reason: "Mine: author is not one of the people named", evidence: ["@octocat (outside)"], gate: true }],
       sources: { quality: [], custom: [], rules: [gate] },
     };
     const verdict = renderVerdict({ author: "octocat", det: gated, threshold: DEFAULT_MERGE_THRESHOLD });

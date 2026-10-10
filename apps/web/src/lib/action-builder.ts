@@ -1,5 +1,6 @@
 import {
   type AuthorKind,
+  type AuthorWho,
   readCheckPack,
   type Action,
   type ActionKind,
@@ -55,7 +56,7 @@ type CheckParams = {
   min?: number;
   options?: string[];
   failOn?: string[];
-  who?: "users" | "role" | "kinds";
+  who?: AuthorWho;
   users?: string[];
   role?: string;
   kinds?: AuthorKind[];

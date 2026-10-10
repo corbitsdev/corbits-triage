@@ -181,9 +181,14 @@ const CHECK_MARK: Record<CheckResult["result"], { className: string; glyph: stri
   fail: { className: "mk flag", glyph: "!" },
   unconfirmed: { className: "mk judge", glyph: "?" },
 };
+const GATE_MARK: Record<CheckResult["result"], { className: string; glyph: string }> = {
+  pass: { className: "mk match", glyph: "=" },
+  fail: { className: "mk match", glyph: "≠" },
+  unconfirmed: { className: "mk judge", glyph: "?" },
+};
 
 export function CheckRow({ check }: { check: CheckResult }) {
-  const mark = CHECK_MARK[check.result];
+  const mark = (check.gate ? GATE_MARK : CHECK_MARK)[check.result];
   return (
     <li>
       <span className={mark.className} aria-hidden="true">{mark.glyph}</span>

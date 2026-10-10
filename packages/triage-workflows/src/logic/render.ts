@@ -281,17 +281,13 @@ function ruleStep(rule: RuleCustomCheck, c: CheckResult): Step {
     case "diff-excludes": return { actor: "author", action: `Remove the excluded content at ${where}` };
     case "label-required": return { actor: "maintainer", action: `Add label ${inlineCode(rule.label)}` };
     case "min-approvals": return { actor: "maintainer", action: `Approve (${where})` };
-    case "author": return { actor: "system", action: c.reason };
+    case "author": throw new Error("an author gate never produces a step");
   }
 }
 
-/** An author rule gates actions; it is never something to fix, so it stays out of steps, the comment and the merge verdict. */
-function isGate(c: CheckResult, sources: Sources): boolean {
-  return sources?.rules.some((rule) => rule.id === c.check && rule.rule === "author") ?? false;
-}
-
-function judged(checks: CheckResult[], sources: Sources): CheckResult[] {
-  return checks.filter((c) => !isGate(c, sources));
+/** Gates decide action branches; they are never something to fix. */
+function judged(checks: CheckResult[]): CheckResult[] {
+  return checks.filter((c) => !c.gate);
 }
 
 function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
@@ -301,7 +297,7 @@ function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
 }
 
 function nextStep(all: CheckResult[], sources: Sources, reviewers: string[]): { actor: Actor; nextAction: string } {
-  const checks = judged(all, sources);
+  const checks = judged(all);
   const failing = checks.filter((c) => c.result === "fail").map((c) => failedStep(c, sources));
   const steps = failing.length ? failing : checks.filter((c) => c.result === "unconfirmed").flatMap((c) => unconfirmedSteps(c, sources));
   if (!steps.length) {
@@ -346,7 +342,7 @@ function bounded(lines: string[]): string {
 
 /** Public: only what the author must fix and what is not yet confirmed; never a score or model reasoning. */
 function authorComment(author: string, all: CheckResult[], sources: Sources): string {
-  const checks = judged(all, sources);
+  const checks = judged(all);
   const mine = checks.filter((c) => c.result === "fail" && failedStep(c, sources).actor === "author");
   const unconfirmed = sources ? checks.filter(unsure) : [];
   const lines: string[] = [];
@@ -373,7 +369,7 @@ function scoreOf(scores: number[]): number | null {
 
 /** Red when anything fails or is unconfirmed, or the score is under the threshold; a null score skips the threshold. */
 function mergeVerdict(all: CheckResult[], sources: Sources, score: number | null, threshold: number): MergeVerdict {
-  const checks = judged(all, sources);
+  const checks = judged(all);
   const outage = outageCount(checks);
   const reasons = [
     ...(outage > 0 ? [`Could not evaluate ${outage} ${outage === 1 ? "check" : "checks"}`] : []),
