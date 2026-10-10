@@ -19,7 +19,7 @@ import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore
 
 export const GITHUB_PR_TRIAGE_PATH = "/api/integrations/github-triage";
 
-const Body = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" });
+export const TriageBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" });
 
 export type GithubPrTriageDeps = PortalCredentialDeps & {
   pullHead: PullHeadReader;
@@ -87,7 +87,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
   return async function handle(req: Request, tenantId: string): Promise<Response> {
     const principalId = await portalMember(deps, req, tenantId);
     if (principalId instanceof Response) return principalId;
-    const body = Body(await readJson(req));
+    const body = TriageBody(await readJson(req));
     if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
     const { repo, number } = body;
     const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
