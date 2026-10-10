@@ -105,6 +105,8 @@ export interface RenderInput {
   judgeSkipped?: true;
   /** Logins of requested reviewers. */
   reviewers?: string[];
+  /** The pack's merge threshold. */
+  threshold: number;
 }
 
 export type Actor = "author" | "maintainer" | "system";
@@ -113,22 +115,36 @@ export const MAX_MIRROR_COMMENT_BYTES = 60_000;
 
 export const NEEDS_JUDGE_REASON = "needs the judge";
 
+const UNAVAILABLE_REASON = "decision model unavailable";
+
 /** The decision model answered, but the evidence it had did not settle every candidate. */
 const UNDECIDED_REASON = "not enough evidence to decide";
+
+/** Whether this pull request should merge now; shown in the portal, never posted to GitHub. */
+export interface MergeVerdict {
+  verdict: "ready" | "not-recommended";
+  score: number | null;
+  threshold: number;
+  reasons: string[];
+}
 
 export interface RenderOutput extends Rendered {
   mirror: boolean;
   duplicate: boolean;
   /** Only a human-confirmed duplicate closes a PR; no automated path sets this. */
   close: boolean;
+  /** The weakest model answer's confidence; null when no model check was asked. */
+  score: number | null;
+  /** @deprecated Read `score`; kept for one release because old run logs carry it. */
   confidence: number | "unknown";
+  merge: MergeVerdict;
   degraded: "inference-outage" | "error" | null;
   checks: CheckResult[];
   /** The reason the verdict was rendered with. */
   reason: string;
   nextAction: string;
   actor: Actor;
-  /** The comment to post for the author; empty when nothing is required of them. */
+  /** The comment to post for the author; empty only when nothing is posted. */
   feedback: string;
 }
 
@@ -147,8 +163,8 @@ const MAX_ACTIONS = 2;
 type ModelEvaluation = {
   checks: CheckResult[];
   scores: number[];
-  focusedUnresolved: boolean;
-  noulUnresolved: boolean;
+  /** Some asked question got no usable answer. */
+  unanswered: boolean;
 };
 
 function answerSet(answers: RenderInput["answers"]): ParsedAnswers {
@@ -162,16 +178,15 @@ function answerSet(answers: RenderInput["answers"]): ParsedAnswers {
 }
 
 function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
-  if (!det.sources) return { checks: [], scores: [], focusedUnresolved: false, noulUnresolved: false };
+  if (!det.sources) return { checks: [], scores: [], unanswered: false };
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
   const expectedIds = new Set(qualityQuestions(det.sources, candidates).map((question) => question.id));
-  const unavailable = !det.needsJudgment ? "not asked" : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : "decision model unavailable";
+  const unavailable = !det.needsJudgment ? "not asked" : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
   const invalid = parsed.malformed || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
   const checks: CheckResult[] = [];
   const scores: number[] = [];
-  let focusedUnresolved = false;
-  let noulUnresolved = false;
+  let anyUnanswered = false;
 
   for (const source of det.sources.quality) {
     if (source.id === "focused") {
@@ -197,7 +212,7 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitEx
           if (!unrelated.includes(evidence)) unrelated.push(evidence);
         }
       }
-      focusedUnresolved ||= candidateUnresolved;
+      anyUnanswered ||= unanswered;
       checks.push(unrelated.length > 0
         ? { check: "focused", kind: "model", result: "fail", reason: failureText("focused", det.sources), evidence: unrelated }
         : candidateUnresolved
@@ -207,7 +222,7 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitEx
     }
     const answer = invalid ? undefined : parsed.decisions[source.id];
     if (answer?.type !== "noul") {
-      noulUnresolved = true;
+      anyUnanswered = true;
       checks.push({ check: source.id, kind: "model", result: "unconfirmed", reason: unavailable, evidence: [] });
       continue;
     }
@@ -218,7 +233,7 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitEx
   for (const { id } of det.sources.custom) {
     const answer = invalid ? undefined : parsed.decisions[id];
     if (answer?.type !== "noul") {
-      noulUnresolved = true;
+      anyUnanswered = true;
       checks.push({ check: id, kind: "model", result: "unconfirmed", reason: unavailable, evidence: [] });
       continue;
     }
@@ -226,7 +241,7 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitEx
     const failed = answer.noul < 0.5;
     checks.push({ check: id, kind: "model", result: failed ? "fail" : "pass", reason: failed ? failureText(id, det.sources) : passText(id, det.sources), evidence: [] });
   }
-  return { checks, scores, focusedUnresolved, noulUnresolved };
+  return { checks, scores, unanswered: anyUnanswered };
 }
 
 function withoutLimit(evidence: string[]): string {
@@ -275,65 +290,137 @@ function inlineCode(text: string): string {
   return `\`${text.replace(/`/g, "'")}\``;
 }
 
-/** Only checks the author can fix are posted; everything else is for maintainers in the portal. */
+/** A model check the judge was asked about but did not settle; a decision model outage is counted on its own. */
+function unsure(c: CheckResult): boolean {
+  return c.kind === "model" && c.result === "unconfirmed" && c.reason !== "not asked" && c.reason !== UNAVAILABLE_REASON;
+}
+
+function outageCount(checks: CheckResult[]): number {
+  return checks.filter((c) => c.kind === "model" && c.result === "unconfirmed" && c.reason === UNAVAILABLE_REASON).length;
+}
+
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+/** Cut at line boundaries so the comment stays postable, counting the list lines left out. */
+function bounded(lines: string[]): string {
+  const whole = lines.join("\n");
+  if (byteLength(whole) <= MAX_MIRROR_COMMENT_BYTES) return whole;
+  for (let kept = lines.length - 1; kept > 0; kept--) {
+    const omitted = lines.slice(kept).filter((line) => line.startsWith("- ")).length;
+    const cut = [...lines.slice(0, kept), ...(omitted > 0 ? [`- and ${omitted} more`] : [])].join("\n");
+    if (byteLength(cut) <= MAX_MIRROR_COMMENT_BYTES) return cut;
+  }
+  return `- and ${lines.filter((line) => line.startsWith("- ")).length} more`;
+}
+
+/** Public: only what the author must fix and what is not yet confirmed; never a score or model reasoning. */
 function authorComment(author: string, checks: CheckResult[], sources: Sources): string {
   const mine = checks.filter((c) => c.result === "fail" && failedStep(c, sources).actor === "author");
-  if (!mine.length) return "";
-  const lines = mine.flatMap((c) => c.check === "focused"
-    ? c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}`)
-    : [`- ${c.reason}${c.evidence.length ? `: ${c.evidence.join(", ")}` : ""}`]);
-  return [`@${author}, please address the following:`, ...lines].join("\n");
+  const unconfirmed = sources ? checks.filter(unsure) : [];
+  const lines: string[] = [];
+  if (mine.length) {
+    lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
+      ? c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}`)
+      : [`- ${c.reason}${c.evidence.length ? `: ${c.evidence.join(", ")}` : ""}`]));
+  }
+  if (unconfirmed.length) {
+    if (lines.length) lines.push("");
+    lines.push("Not yet confirmed, a maintainer will check:", ...unconfirmed.map((c) => `- ${passText(c.check, sources!)}`));
+  }
+  if (outageCount(checks) > 0) {
+    if (lines.length) lines.push("");
+    lines.push("Some checks could not run this time. Triage will re-check this pull request.");
+  }
+  if (!lines.length) lines.push("No changes needed from you. A maintainer will review this pull request.");
+  return bounded(lines);
 }
 
-function withChecks<T extends Rendered>(rendered: T, checks: CheckResult[], { author, sources, reviewers }: { author: string; sources: Sources; reviewers: string[] }) {
-  return { ...rendered, ...nextStep(checks, sources, reviewers), feedback: authorComment(author, checks, sources), checks };
+function scoreOf(scores: number[]): number | null {
+  return scores.length > 0 ? Math.round(Math.min(...scores) * 100) / 100 : null;
 }
 
-function enforceMirrorCommentBound(verdict: RenderOutput): RenderOutput {
-  if (new TextEncoder().encode(verdict.feedback).byteLength <= MAX_MIRROR_COMMENT_BYTES) return verdict;
+/** Red when anything fails or is unconfirmed, or the score is under the threshold; a null score skips the threshold. */
+function mergeVerdict(checks: CheckResult[], sources: Sources, score: number | null, threshold: number): MergeVerdict {
+  const outage = outageCount(checks);
+  const reasons = [
+    ...(outage > 0 ? [`Could not evaluate ${outage} ${outage === 1 ? "check" : "checks"}`] : []),
+    ...checks.flatMap((c) => {
+      if (c.result === "fail") return [`Failed: ${c.reason}`];
+      if (c.result !== "unconfirmed" || c.reason === "not asked" || c.reason === UNAVAILABLE_REASON) return [];
+      return [`Not confirmed: ${c.kind === "model" && sources ? passText(c.check, sources) : c.reason}`];
+    }),
+    ...(score !== null && score < threshold ? [`Score ${score} is below the threshold ${threshold}`] : []),
+  ];
+  return { verdict: reasons.length ? "not-recommended" : "ready", score, threshold, reasons };
+}
+
+type VerdictBase = Omit<RenderOutput, "nextAction" | "actor" | "feedback" | "checks" | "merge" | "score" | "confidence" | "mirror">;
+
+interface RenderContext {
+  author: string;
+  sources: Sources;
+  reviewers: string[];
+  threshold: number;
+}
+
+function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, { author, sources, reviewers, threshold }: RenderContext, commented = checks): RenderOutput {
   return {
-    ...verdict,
-    mirror: false,
-    humanGated: true,
+    ...rendered,
+    ...nextStep(checks, sources, reviewers),
+    mirror: rendered.state !== "stale-unknown",
+    score,
+    confidence: score ?? "unknown",
+    merge: mergeVerdict(checks, sources, score, threshold),
+    feedback: authorComment(author, commented, sources),
+    checks,
   };
 }
 
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [] } = input;
-  const ctx = { author, sources: det.sources, reviewers };
+  const { author, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], threshold } = input;
+  const ctx = { author, sources: det.sources, reviewers, threshold };
   const evaluated = evaluateModel(input);
   const checks = [...det.checks, ...evaluated.checks];
+  const score = scoreOf(evaluated.scores);
   if (!det.needsJudgment || !det.sources || !JUDGED_STATES.has(det.state)) {
     const duplicate = det.duplicateOf !== null && det.state === "needs-decision";
-    const verdict = withChecks({ ...render(det.state), mirror: det.state !== "stale-unknown", duplicate, close: false, confidence: "unknown" as const, degraded: null, reason: det.reason }, det.checks, ctx);
-    return enforceMirrorCommentBound({ ...verdict, checks });
+    const verdict = withChecks({ ...render(det.state), duplicate, close: false, degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
+    // Model answers do not drive this verdict, so the comment speaks only to the machine checks; a closed pull request gets none.
+    return det.findings.some((f) => f.check === "state") ? { ...verdict, feedback: "" } : verdict;
   }
-  if (judgeLimitExceeded === true) {
-    return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: null, reason: judgeError! }, checks, ctx));
-  }
-  if (judgeSkipped === true) {
-    return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: null, reason: NEEDS_JUDGE_REASON }, checks, ctx));
-  }
-  if (judgeError !== undefined || evaluated.noulUnresolved) {
-    const reason = `decision model unavailable: ${judgeError ?? "no answer"}`;
-    return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: "inference-outage" as const, reason }, checks, ctx));
-  }
-  const confidence = evaluated.scores.length > 0
-    ? Math.round(Math.min(...evaluated.scores) * 100) / 100
-    : "unknown" as const;
   const failing = evaluated.checks.filter((check) => check.result === "fail");
+  const unconfirmed = evaluated.checks.some((check) => check.result === "unconfirmed" && check.reason !== "not asked");
+  const state = failing.length ? "needs-author-update" : unconfirmed ? "awaiting-review" : det.state;
+  const outage = judgeLimitExceeded !== true && judgeSkipped !== true && (judgeError !== undefined || evaluated.unanswered);
   const focused = failing.find((check) => check.check === "focused");
   const reasons = failing.map((check) => check === focused && check.evidence.length
     ? `${check.reason}: ${check.evidence.join(", ")}`
     : check.reason);
-  const reason = reasons.length ? reasons.join("; ") : det.reason;
-  const state = failing.length ? "needs-author-update" : det.state;
-  const rendered = render(state, { humanGated: evaluated.focusedUnresolved });
-  return enforceMirrorCommentBound(withChecks({ ...rendered, mirror: !evaluated.focusedUnresolved, duplicate: false, close: false, confidence, degraded: null, reason }, checks, ctx));
+  const reason = judgeLimitExceeded === true ? judgeError!
+    : judgeSkipped === true ? NEEDS_JUDGE_REASON
+      : outage ? `${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`
+        : reasons.length ? reasons.join("; ") : det.reason;
+  return withChecks({ ...render(state), duplicate: false, close: false, degraded: outage ? "inference-outage" : null, reason }, checks, score, ctx);
 }
 
-export function degradedVerdict(reason: string): RenderOutput {
-  return { ...render("stale-unknown"), mirror: false, duplicate: false, close: false, confidence: "unknown", degraded: "error", checks: [], reason, nextAction: "Retry when data is available", actor: "system", feedback: "" };
+export function degradedVerdict(reason: string, threshold: number): RenderOutput {
+  return {
+    ...render("stale-unknown"),
+    mirror: false,
+    duplicate: false,
+    close: false,
+    score: null,
+    confidence: "unknown",
+    merge: { verdict: "not-recommended", score: null, threshold, reasons: ["Could not evaluate"] },
+    degraded: "error",
+    checks: [],
+    reason,
+    nextAction: "Retry when data is available",
+    actor: "system",
+    feedback: "",
+  };
 }
 
 export interface MirrorRequest {

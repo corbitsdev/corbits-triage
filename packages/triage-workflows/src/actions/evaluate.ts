@@ -1,4 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
+import { packMergeThreshold } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { evaluateActions } from "../logic/actions.js";
 import type { PrFacts } from "../logic/checks.js";
@@ -43,7 +44,7 @@ function judgmentOf(replies: unknown[]): Judgment {
 /** Takes the item's own chunk replies off the front of `replies`. */
 function verdictOf(it: Item, replies: unknown[]): Verdict {
   if (it.error !== undefined) {
-    const verdict = { ...stamp(undefined), ...degradedVerdict(it.error), cleanupMode: it.cleanupMode, actions: [] };
+    const verdict = { ...stamp(undefined), ...degradedVerdict(it.error, packMergeThreshold(it.pack)), cleanupMode: it.cleanupMode, actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
   }
   try {
@@ -51,13 +52,13 @@ function verdictOf(it: Item, replies: unknown[]): Verdict {
     const { candidates, requests } = prepareQualityEvaluation(it.facts, it.det.sources);
     const { judge, judgeError } = it.det.needsJudgment ? { ...it, ...judgmentOf(replies.splice(0, requests.length)) } : it;
     const answers = judge !== undefined ? parseAnswers(judge) : null;
-    const rendered = renderVerdict({ author: it.facts.author, det: it.det, answers, candidates, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers });
+    const rendered = renderVerdict({ author: it.facts.author, det: it.det, answers, candidates, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, threshold: packMergeThreshold(it.pack) });
     // A degraded verdict is incomplete, so nothing is suggested from it.
     const actions = it.pack && rendered.degraded === null ? evaluateActions({ facts: it.facts, checks: rendered.checks, pack: it.pack, roles: it.roles ?? {} }) : [];
     const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions };
     return { ...verdict, request: toMirrorRequest(verdict) };
   } catch (e) {
-    const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`), cleanupMode: it.cleanupMode, actions: [] };
+    const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`, packMergeThreshold(it.pack)), cleanupMode: it.cleanupMode, actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
   }
 }
