@@ -16,7 +16,7 @@ import {
   reposFromConfig,
   removeRepository,
   saveInference,
-  saveRepoPolicy,
+  saveRepoSettings,
   startBacklogTriage,
   triagePullRequest,
   untilDeploymentReady,
@@ -603,7 +603,7 @@ describe("repository policy config", () => {
     })]);
   });
 
-  test("saveRepoPolicy PATCHes only that repo and spreads other fields", async () => {
+  test("saveRepoSettings PATCHes only that repo and spreads other fields", async () => {
     let config: Record<string, unknown> = {
       other: 1,
       corbitsTriage: {
@@ -628,19 +628,12 @@ describe("repository policy config", () => {
       subscribe: () => () => {},
     };
 
-    await saveRepoPolicy(transport, "tenant", "acme/one", {
+    await saveRepoSettings(transport, "tenant", "acme/one", {
       cleanupMode: "automated",
       enabled: false,
       triageDrafts: false,
-      checks: {
-        draft: true,
-        ci: false,
-        duplicate: true,
-        conflicts: true,
-        reviewers: true,
-        drift: true,
-      },
-    });
+      roles: {},
+    }, false);
 
     expect(config.other).toBe(1);
     const ns = config.corbitsTriage as { confidenceFloor: number; repos: Array<Record<string, unknown>> };
@@ -652,8 +645,9 @@ describe("repository policy config", () => {
       cleanupMode: "automated",
       enabled: false,
       triageDrafts: false,
-      checks: { ci: false, draft: true },
+      roles: {},
     });
+    expect(ns.repos[0]).not.toHaveProperty("checkPack");
     expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, cleanupMode: "automated" });
   });
 });
