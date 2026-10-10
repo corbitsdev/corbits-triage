@@ -11,8 +11,13 @@ export function SuggestedActions({ dos, disabled, onRun }: SuggestedActionsProps
         <div key={group.actionId} className="suggest">
           <p className="suggest-text">{group.reason}</p>
           <div className="suggest-actions">
-            {group.dos.map((pending) => <button key={pending.key} type="button" className="btn btn-sm" disabled={disabled} onClick={() => onRun(pending)}>{pending.label}</button>)}
+            {group.dos.map((pending) => (
+              <button key={pending.key} type="button" className="btn btn-sm" disabled={disabled || pending.running} onClick={() => onRun(pending)}>
+                {pending.running ? `${pending.label}: already running` : pending.label}
+              </button>
+            ))}
           </div>
+          {group.dos.filter((pending) => pending.error !== null).map((pending) => <p key={pending.key} role="alert" className="error">{pending.label} failed last time: {pending.error}</p>)}
         </div>
       ))}
     </section>

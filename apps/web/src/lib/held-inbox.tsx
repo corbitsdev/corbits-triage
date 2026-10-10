@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { browserTimers, createHoldQueue, HOLD_MS, type Notices } from "./held-actions.ts";
-import type { PrGithubWriteInput } from "./hub-api.ts";
+import { useRunDo } from "./do-runs.ts";
+import type { DoRef, PrGithubWriteInput } from "./hub-api.ts";
 import type { NumberedItem, PaneDraft, PaneWrite } from "./inbox-pane.ts";
 import { useHandledPulls, useMarkReplySent } from "./open-pulls.ts";
 import { usePortal } from "./portal.tsx";
@@ -32,6 +33,7 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
   const { writeGithub, notify } = usePortal();
   const replySent = useMarkReplySent();
   const handledPulls = useHandledPulls();
+  const runDo = useRunDo();
   const [queue] = useState(() => createHoldQueue(browserTimers, HOLD_MS));
   const notices = useSyncExternalStore(queue.subscribe, queue.notices);
   const [restored, setRestored] = useState<Restored>({});
@@ -74,7 +76,10 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
       pending: write.pending,
       async send(leaving) {
         if (!write.stay) handledPulls.markHandled(item);
-        const outcome = await write.send({ write: leaving ? writeLeaving : writeHeld, replySent });
+        function runHeldDo(ref: DoRef) {
+          return runDo(ref, leaving);
+        }
+        const outcome = await write.send({ write: leaving ? writeLeaving : writeHeld, replySent, runDo: runHeldDo });
         if (!outcome.complete) tellIfAway(outcome.message);
         return outcome;
       },

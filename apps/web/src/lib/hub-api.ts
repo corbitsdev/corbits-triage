@@ -1007,6 +1007,49 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
   return { commentId: typeof result.commentId === "number" ? result.commentId : null };
 }
 
+/** Names one pack Do by the run whose verdict suggested it; the hub looks the Do up and decides what to write. */
+export type DoRef = { runId: string; repo: string; number: number; actionId: string; branch: DoBranch; index: number };
+
+/** The hub's record of one Do, by its effect id; only `failed` leaves it to run again. */
+export type DoRun = { effectId: string; status: "running" | "done" | "satisfied" | "failed"; error: string | null };
+
+const DO_STATUSES: ReadonlyArray<DoRun["status"]> = ["running", "done", "satisfied", "failed"];
+
+function doRun(value: unknown): DoRun {
+  const row = obj(value);
+  if (typeof row.effectId !== "string" || !DO_STATUSES.includes(row.status as DoRun["status"])) throw new Error("The hub returned a malformed Do record.");
+  return { effectId: row.effectId, status: row.status as DoRun["status"], error: typeof row.error === "string" ? row.error : null };
+}
+
+const OUTDATED = "This verdict is out of date. Run triage again.";
+
+/** The hub's refusals that name its internals; the rest of its text is already plain. */
+const DO_REFUSALS: Record<string, string> = {
+  verdict_outdated: OUTDATED,
+  effect_mismatch: OUTDATED,
+  do_in_progress: "This action is already running.",
+};
+
+function doRefusal(cause: unknown): unknown {
+  if (!(cause instanceof ApiError)) return cause;
+  if (cause.code === "do_not_runnable") return new Error(`This action cannot run from the portal: ${cause.message}`);
+  const plain = DO_REFUSALS[cause.code];
+  return plain === undefined ? cause : new Error(plain);
+}
+
+export async function runPackDo(transport: Transport, tenantId: string, ref: DoRef): Promise<DoRun> {
+  try {
+    return doRun(await transport.fetch<unknown>("POST", `/api/integrations/github-dos/${enc(requireTenantId(tenantId))}`, { ...ref, repo: validateRepo(ref.repo) }));
+  } catch (cause) {
+    throw doRefusal(cause);
+  }
+}
+
+export async function listDoRuns(transport: Transport, tenantId: string, repo: string, number: number): Promise<DoRun[]> {
+  const listed = obj(await transport.fetch<unknown>("GET", `/api/integrations/github-dos/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`));
+  return Array.isArray(listed.dos) ? listed.dos.map(doRun) : [];
+}
+
 export type GithubPullDetail = {
   pr: {
     number: number;
@@ -1335,10 +1378,18 @@ export type PrItem = {
 };
 
 // The portal reads verdict JSON and does not import the workflow package, so this keeps only the fields it uses.
-export type SuggestedAction = { id: string; kind: ActionKind; reason: string; target: Record<string, unknown> };
+export type SuggestedAction = { id: string; branch: DoBranch; index: number; effectId: string; kind: ActionKind; reason: string; target: Record<string, unknown> };
+
+const DO_BRANCHES = ["yes", "no", "unsure", "always"] as const;
+
+export type DoBranch = (typeof DO_BRANCHES)[number];
 
 function isActionKind(value: unknown): value is ActionKind {
   return (ACTION_KINDS as readonly unknown[]).includes(value);
+}
+
+function isDoBranch(value: unknown): value is DoBranch {
+  return (DO_BRANCHES as readonly unknown[]).includes(value);
 }
 
 function suggestedActions(value: unknown): SuggestedAction[] {
@@ -1347,7 +1398,9 @@ function suggestedActions(value: unknown): SuggestedAction[] {
   for (const entry of value) {
     const a = obj(entry);
     if (a.skipped === true || typeof a.id !== "string" || typeof a.reason !== "string" || !isActionKind(a.kind) || !a.target || typeof a.target !== "object") continue;
-    out.push({ id: a.id, kind: a.kind, reason: a.reason, target: obj(a.target) });
+    // A verdict from before Dos by reference names none the hub can run.
+    if (!isDoBranch(a.branch) || !Number.isInteger(a.index) || typeof a.effectId !== "string") continue;
+    out.push({ id: a.id, branch: a.branch, index: a.index as number, effectId: a.effectId, kind: a.kind, reason: a.reason, target: obj(a.target) });
   }
   return out;
 }
