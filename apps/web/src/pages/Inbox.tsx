@@ -44,6 +44,7 @@ import {
   UNASSIGNED,
   WAITS_ON_LABEL,
   ageText,
+  allOpen,
   awaitingText,
   groupInbox,
   groupOpen,
@@ -74,7 +75,7 @@ import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesF
 import { leavesOpen, useOpenItems, useOpenPulls, useOpenPullsUnanswered, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
-import { triageReadyRepos } from "../lib/repo-rows.ts";
+import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { findPrItem, prHref } from "../lib/triage-view.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
@@ -591,8 +592,9 @@ export default function Inbox({ view }: { view: ListView }) {
   const filterRef = useRef<HTMLButtonElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? []), [snapshot]);
+  const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
-  const entries = useMemo(() => (view === "needs-you" ? open.filter((entry) => entry.handled === null) : open), [open, view]);
+  const entries = useMemo(() => (view === "needs-you" ? open.filter((entry) => entry.handled === null) : allOpen(open, enabled)), [open, view, enabled]);
   const items = useMemo(() => entries.map((entry) => entry.item), [entries]);
   const searched = useMemo(() => entries.filter((entry) => matchesQuery(entry.item, query)), [entries, query]);
   const rows = useMemo(() => searched.map((entry) => entry.item).filter((item) => view === "all-open" || inboxAction(item) !== null), [searched, view]);
