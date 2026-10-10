@@ -18,6 +18,9 @@ export const PRESETS: Record<TriageState, Preset> = {
   "stale-unknown": { labels: ["triage:stale-unknown"], owner: "system" },
 };
 
+/** Every label a verdict state can set; the mirror removes only these. */
+export const TRIAGE_LABELS: readonly string[] = Object.values(PRESETS).flatMap((preset) => preset.labels);
+
 export interface Rendered {
   state: TriageState;
   priority: Priority;

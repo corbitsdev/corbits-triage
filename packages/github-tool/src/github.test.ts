@@ -32,11 +32,11 @@ type FakeComment = { id: number; user: { login: string; type: string }; body: st
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 /** GitHub that keeps pull request 8's issue comments, so repeated runs see each other's writes. */
-function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = []) {
+function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [], labels: string[] = []) {
   let nextId = 100;
   const { gh, requests } = recorder(function respond(path, init) {
     const body = typeof init?.body === "string" ? JSON.parse(init.body).body : undefined;
-    if (path.endsWith("/pulls/8") && !init?.method) return { head: { sha: "abc123" } };
+    if (path.endsWith("/pulls/8") && !init?.method) return { head: { sha: "abc123" }, labels: labels.map((name) => ({ name })) };
     if (path.includes("/comments?per_page")) return comments;
     if (path.endsWith("/issues/8/comments") && init?.method === "POST") {
       const created = { id: nextId++, user: APP, body };
@@ -56,7 +56,7 @@ function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [
   return { gh, requests, comments };
 }
 
-const MIRROR = { repo: "acme/widgets", number: 8, labels: ["needs-decision"], comment: "Duplicate" };
+const MIRROR = { repo: "acme/widgets", number: 8, labels: ["triage:needs-decision"], owned: ["triage:needs-decision", "triage:blocked"], comment: "Duplicate" };
 
 describe("triage comment", () => {
   test("first run creates it, later runs edit the same one", async () => {
@@ -75,7 +75,7 @@ describe("triage comment", () => {
       { id: 42, user: APP, body: "<!-- corbits-triage:acme/widgets#8@old -->\nOld" },
     ]);
     await mirror(gh, { ...MIRROR, close: false });
-    expect(requests.some((request) => request.method === "POST")).toBe(false);
+    expect(requests.some((request) => request.method === "POST" && request.path.endsWith("/comments"))).toBe(false);
     expect(comments).toEqual([{ id: 42, user: APP, body: "<!-- corbits-triage -->\nDuplicate" }]);
   });
 
@@ -101,6 +101,29 @@ describe("github mirror", () => {
     await mirror(gh, { ...MIRROR, close: true });
     expect(requests).toContainEqual({ path: "/repos/acme/widgets/pulls/8", method: "PATCH", body: { state: "closed" } });
     expect(requests.some((request) => request.path.includes("/merge"))).toBe(false);
+  });
+
+  test("swaps a stale triage label and leaves a foreign label alone", async () => {
+    const { gh, requests } = fakeGithub([], [], ["bug", "triage:blocked"]);
+    await mirror(gh, { ...MIRROR, comment: "", close: false });
+    expect(requests.filter((request) => request.path.includes("/labels"))).toEqual([
+      { path: "/repos/acme/widgets/issues/8/labels", method: "POST", body: { labels: ["triage:needs-decision"] } },
+      { path: "/repos/acme/widgets/issues/8/labels/triage%3Ablocked", method: "DELETE", body: null },
+    ]);
+  });
+
+  test("without owned adds the missing label and removes nothing", async () => {
+    const { gh, requests } = fakeGithub([], [], ["triage:blocked"]);
+    await mirror(gh, { ...MIRROR, owned: undefined, comment: "", close: false });
+    expect(requests.filter((request) => request.path.includes("/labels"))).toEqual([
+      { path: "/repos/acme/widgets/issues/8/labels", method: "POST", body: { labels: ["triage:needs-decision"] } },
+    ]);
+  });
+
+  test("makes no label requests when the labels already match", async () => {
+    const { gh, requests } = fakeGithub([], [], ["bug", "triage:needs-decision"]);
+    await mirror(gh, { ...MIRROR, comment: "", close: false });
+    expect(requests.some((request) => request.path.includes("/labels"))).toBe(false);
   });
 });
 

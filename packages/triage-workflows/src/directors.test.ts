@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import { triageDirectorFactory } from "./directors.js";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
+import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
 import type { RenderOutput } from "./logic/render.js";
 
@@ -214,7 +215,7 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual(["focused", "docs", "tests"]);
     expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, feedback: "", actor: "maintainer", nextAction: "Review once marked ready" });
     expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [] });
-    expect((verdict as RenderOutput & { request?: unknown }).request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, comment: "", close: false });
+    expect((verdict as RenderOutput & { request?: unknown }).request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "", close: false });
   });
 
   test("stale-unknown facts skip the model", async () => {
@@ -226,7 +227,7 @@ describe("judge on a blocked pull request", () => {
 });
 
 describe("mirror director cleanup mode", () => {
-  const request = { repo: "acme/widgets", number: 8, labels: ["ready-monitoring"], comment: "Looks good", close: false };
+  const request = { repo: "acme/widgets", number: 8, labels: ["ready-monitoring"], owned: TRIAGE_LABELS, comment: "Looks good", close: false };
   const verdict = {
     repo: "acme/widgets",
     number: 8,

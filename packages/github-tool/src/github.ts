@@ -267,15 +267,30 @@ export interface MirrorInput {
   repo: string;
   number: number;
   labels: string[];
+  /** Labels the caller owns; the mirror removes only these. Optional so requests built before it existed remove nothing. */
+  owned?: readonly string[];
   comment: string;
   close: boolean;
+}
+
+function lowercase(name: string): string {
+  return name.toLowerCase();
 }
 
 export async function mirror(gh: GithubFetch, i: MirrorInput) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   const posted = i.comment ? await upsertTriageComment(gh, { repo, number, body: i.comment }) : null;
-  await json(gh, `/repos/${repo}/issues/${number}/labels`, send("PUT", { labels: i.labels }));
+  const current: string[] = pr.labels.map((label: { name: string }) => label.name);
+  // GitHub label names are case-insensitive.
+  const present = new Set(current.map(lowercase));
+  const removable = new Set((i.owned ?? []).map(lowercase));
+  for (const name of i.labels) removable.delete(lowercase(name));
+  const missing = i.labels.filter((name) => !present.has(lowercase(name)));
+  const stale = current.filter((name) => removable.has(lowercase(name)));
+  // Adding first means a failure part-way leaves an extra triage label rather than none.
+  if (missing.length) await json(gh, `/repos/${repo}/issues/${number}/labels`, send("POST", { labels: missing }));
+  for (const name of stale) await json(gh, `/repos/${repo}/issues/${number}/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
   return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha };
 }
