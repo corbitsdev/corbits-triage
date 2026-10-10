@@ -1,23 +1,20 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Switch } from "@corbits/react-ui";
-import { CUSTOM_CHECK_CAP, type CleanupMode } from "@corbits/triage-contracts";
 import {
-  CHECK_GROUPS,
-  checkValue,
-  hasCheck,
-  isCheckOn,
-  specOf,
-  withCheckValue,
-  withChecksEnabled,
-  withCustomCheck,
-  withCustomInstruction,
-  withoutCustomCheck,
-  type CheckGroupId,
-  type DraftPack,
-} from "../lib/check-catalog.ts";
+  applyRecommended,
+  CATALOG_IDS,
+  catalogCheckEnabled,
+  CUSTOM_CHECK_CAP,
+  type CatalogCheck,
+  type CatalogId,
+  type CheckPack,
+  type CheckPackGroup,
+  type CleanupMode,
+  type IssueTracker,
+} from "@corbits/triage-contracts";
 import type { RepoRecord } from "../lib/hub-api.ts";
+import { CATALOG_DEFAULTS, removeCustom, setCatalogCheck, upsertCustom } from "../lib/pack-draft.ts";
 import { usePortal } from "../lib/portal.tsx";
-import { catalogChecksOn, recommendedDraft } from "../lib/repo-draft.ts";
 import { useRepoSettings } from "../lib/repo-settings.ts";
 import type { RepoHealth, RepoRow } from "../lib/repo-rows.ts";
 import { relativeTime } from "../lib/triage-view.ts";
@@ -46,24 +43,42 @@ function Sentence({ label, on, onChange, model, disabled, children }: SentencePr
   );
 }
 
-type ValueProps = { pack: DraftPack; id: string; label: string; disabled: boolean; onChange: (value: string | number) => void };
+const CHECK_GROUPS: Array<{ id: CheckPackGroup; label: string }> = [
+  { id: "pull-request", label: "Pull request" },
+  { id: "issue", label: "Issue" },
+  { id: "around", label: "Around it" },
+  { id: "code-vs-ci", label: "Code vs CI" },
+];
 
-function NumberValue({ pack, id, label, disabled, onChange }: ValueProps) {
-  const spec = specOf(id);
-  return <input className="val" type="number" min={spec?.min ?? 0} step={1} aria-label={label} disabled={disabled} value={Number(checkValue(pack, id))} onChange={(event) => onChange(Number(event.target.value))} />;
+const TRACKERS: Array<{ value: IssueTracker; label: string }> = [
+  { value: "github", label: "GitHub" },
+  { value: "linear", label: "Linear" },
+  { value: "either", label: "GitHub or Linear" },
+  { value: "off", label: "Not required" },
+];
+
+function catalogValue<K extends keyof CatalogCheck>(pack: CheckPack, id: CatalogId, key: K): CatalogCheck[K] {
+  return pack.checks[id]?.[key] ?? CATALOG_DEFAULTS[id]?.[key] as CatalogCheck[K];
 }
 
-function SelectValue({ pack, id, label, disabled, onChange }: ValueProps) {
-  const spec = specOf(id);
+type NumberProps = { value: number; min: number; label: string; disabled: boolean; onChange: (value: number) => void };
+
+function NumberValue({ value, min, label, disabled, onChange }: NumberProps) {
+  return <input className="val" type="number" min={min} step={1} aria-label={label} disabled={disabled} value={value} onChange={(event) => onChange(Number(event.target.value))} />;
+}
+
+type TextProps = { value: string; label: string; disabled: boolean; onChange: (value: string) => void };
+
+function SelectTracker({ value, label, disabled, onChange }: TextProps) {
   return (
-    <select className="val" aria-label={label} disabled={disabled} value={String(checkValue(pack, id))} onChange={(event) => onChange(event.target.value)}>
-      {(spec?.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+    <select className="val" aria-label={label} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}>
+      {TRACKERS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
   );
 }
 
-function TextValue({ pack, id, label, disabled, onChange }: ValueProps) {
-  return <input className="val w" aria-label={label} disabled={disabled} value={String(checkValue(pack, id) ?? "")} onChange={(event) => onChange(event.target.value)} />;
+function TextValue({ value, label, disabled, onChange }: TextProps) {
+  return <input className="val w" aria-label={label} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} />;
 }
 
 type GlobsProps = { globs: string[]; disabled: boolean; onChange: (globs: string[]) => void };
@@ -118,11 +133,11 @@ function Globs({ globs, disabled, onChange }: GlobsProps) {
   );
 }
 
-type CustomFormProps = { onAdd: (check: { name: string; group: CheckGroupId; instruction: string }) => void; onCancel: () => void };
+type CustomFormProps = { onAdd: (check: { name: string; group: CheckPackGroup; instruction: string }) => void; onCancel: () => void };
 
 function CustomCheckForm({ onAdd, onCancel }: CustomFormProps) {
   const [name, setName] = useState("");
-  const [group, setGroup] = useState<CheckGroupId>("pr");
+  const [group, setGroup] = useState<CheckPackGroup>("pull-request");
   const [instruction, setInstruction] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -135,7 +150,7 @@ function CustomCheckForm({ onAdd, onCancel }: CustomFormProps) {
     <form className="own-form" onSubmit={submit} aria-label="Add a check">
       <label>Name<input className="val w" required maxLength={80} autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
       <label>Where it looks
-        <select className="val" value={group} onChange={(event) => setGroup(event.target.value as CheckGroupId)}>
+        <select className="val" value={group} onChange={(event) => setGroup(event.target.value as CheckPackGroup)}>
           {CHECK_GROUPS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </label>
@@ -166,13 +181,14 @@ type RepoPanelProps = { repo: RepoRecord; row: RepoRow; live: boolean; onClose: 
 export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) {
   const { readOnly, snapshot, runBacklog } = usePortal();
   const settings = useRepoSettings(repo);
-  const { draft, saved } = settings;
+  const { draft } = settings;
   const pack = draft.pack;
   const [adding, setAdding] = useState(false);
   const [rerunError, setRerunError] = useState("");
+  const [removeError, setRemoveError] = useState("");
   const headingRef = useRef<HTMLHeadingElement>(null);
   const locked = readOnly || (snapshot?.denied.repos ?? false) || settings.status !== "ready" || settings.saving;
-  const checksOn = catalogChecksOn(pack);
+  const checksOn = CATALOG_IDS.filter((id) => catalogCheckEnabled(pack, id)).length;
   const addCheckRef = useRef<HTMLButtonElement>(null);
   /** Set when the focused control is about to disappear, so focus lands on Add a check rather than the page. */
   const refocusAdd = useRef(false);
@@ -197,25 +213,42 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  function editPack(update: (current: DraftPack) => DraftPack) {
+  function editPack(update: (current: CheckPack) => CheckPack) {
     settings.edit((current) => ({ ...current, pack: update(current.pack) }));
   }
 
-  function toggle(ids: string[]) {
-    return function setOn(on: boolean) {
-      editPack((current) => withChecksEnabled(current, saved.pack, ids, on));
+  function editCatalog(id: CatalogId, row: Partial<CatalogCheck>) {
+    settings.edit((current) => setCatalogCheck(current, settings.saved.pack, id, row));
+  }
+
+  function toggle(id: CatalogId) {
+    return function setOn(enabled: boolean) {
+      editCatalog(id, { enabled });
     };
   }
 
-  function value(id: string, key: string) {
-    return function setValue(next: string | number | string[]) {
-      editPack((current) => withCheckValue(current, saved.pack, id, key, next));
+  function value<K extends keyof CatalogCheck>(id: CatalogId, key: K) {
+    return function setValue(next: CatalogCheck[K]) {
+      editCatalog(id, { [key]: next });
     };
   }
 
-  function addCustom(check: { name: string; group: CheckGroupId; instruction: string }) {
-    editPack((current) => withCustomCheck(current, check));
+  function nextCustomId(): string {
+    const taken = pack.custom.map((row) => Number(row.id.slice("custom-".length)));
+    return `custom-${Math.max(0, ...taken) + 1}`;
+  }
+
+  function addCustom(check: { name: string; group: CheckPackGroup; instruction: string }) {
+    const id = nextCustomId();
+    settings.edit((current) => upsertCustom(current, { id, name: check.name, group: check.group, kind: "model", shape: "is-true", claim: check.instruction }));
     closeCustomForm();
+  }
+
+  function setClaim(id: string, claim: string) {
+    settings.edit(function withClaim(current) {
+      const row = current.pack.custom.find((item) => item.id === id);
+      return row?.kind === "model" && row.shape === "is-true" ? upsertCustom(current, { ...row, claim }) : current;
+    });
   }
 
   function closeCustomForm() {
@@ -223,9 +256,15 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
     setAdding(false);
   }
 
-  function removeCustom(id: string) {
+  function remove(id: string) {
+    const next = removeCustom(draft, id);
+    if ("reason" in next) {
+      setRemoveError(next.reason);
+      return;
+    }
+    setRemoveError("");
     refocusAdd.current = true;
-    editPack((current) => withoutCustomCheck(current, id));
+    settings.edit(() => next);
   }
 
   /** The bar goes away once nothing is left to save, so focus returns to the panel heading. */
@@ -239,8 +278,8 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
     headingRef.current?.focus();
   }
 
-  function setMode(mode: CleanupMode) {
-    editPack((current) => ({ ...current, mode }));
+  function setMode(cleanupMode: CleanupMode) {
+    settings.edit((current) => ({ ...current, policy: { ...current.policy, cleanupMode } }));
   }
 
   async function triageAgain() {
@@ -252,9 +291,8 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
     }
   }
 
-  const sizeParts = hasCheck(pack, "files") || !hasCheck(pack, "size") ? ["files"] : [];
-  if (hasCheck(pack, "size") || !hasCheck(pack, "files")) sizeParts.push("size");
-  const globs = checkValue(pack, "paths");
+  const mode = draft.policy.cleanupMode;
+  const issueOn = catalogCheckEnabled(pack, "issue");
 
   function renderBody() {
     if (settings.status === "loading") return <p className="note" role="status">Loading settings…</p>;
@@ -270,20 +308,20 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
               <b>{settings.corrupt ? "Checks unreadable" : "Needs setup"}</b>
               <span>{settings.corrupt ? "The saved checks could not be read. Saving replaces them." : "Triage has no checks for this repository yet. Start from the recommended ones, or switch on the checks you want, then save."}</span>
             </div>
-            <button type="button" className="btn btn-sm" disabled={locked} onClick={() => editPack(recommendedDraft)}>Use recommended</button>
+            <button type="button" className="btn btn-sm" disabled={locked} onClick={() => editPack(applyRecommended)}>Use recommended</button>
           </div>
         ) : null}
 
         <section className="rs" aria-labelledby="rs-posting">
           <h3 id="rs-posting">Posting</h3>
           <div className="radio-cards" role="radiogroup" aria-labelledby="rs-posting">
-            <label className={pack.mode === "human-approved" ? "on" : undefined}>
-              <input className="sr-only" type="radio" name="posting" checked={pack.mode === "human-approved"} disabled={locked} onChange={() => setMode("human-approved")} />
+            <label className={mode === "human-approved" ? "on" : undefined}>
+              <input className="sr-only" type="radio" name="posting" checked={mode === "human-approved"} disabled={locked} onChange={() => setMode("human-approved")} />
               <span className="rdot" />
               <span><b>Ask me before posting</b> You approve each reply and label.</span>
             </label>
-            <label className={pack.mode === "automated" ? "on" : undefined}>
-              <input className="sr-only" type="radio" name="posting" checked={pack.mode === "automated"} disabled={locked} onChange={() => setMode("automated")} />
+            <label className={mode === "automated" ? "on" : undefined}>
+              <input className="sr-only" type="radio" name="posting" checked={mode === "automated"} disabled={locked} onChange={() => setMode("automated")} />
               <span className="rdot" />
               <span><b>Post automatically</b> Labels and one reply. Never merges or closes.</span>
             </label>
@@ -293,16 +331,16 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
         <section className="rs" aria-labelledby="rs-triage">
           <h3 id="rs-triage">Triage</h3>
           <p>
-            {saved.enabled
+            {settings.saved.policy.enabled
               ? <>Triage reads each pull request as it opens or changes. <button type="button" className="linkish" disabled={locked} onClick={() => void triageAgain()}>Triage open pull requests again</button></>
               : "Nothing runs until triage is on."}
           </p>
           {rerunError ? <p role="alert" className="error">{rerunError}</p> : null}
           <div className="sentences">
-            <Sentence label="Triage pull requests in this repository" on={draft.enabled} disabled={locked} onChange={(enabled) => settings.edit((current) => ({ ...current, enabled }))}>
+            <Sentence label="Triage pull requests in this repository" on={draft.policy.enabled} disabled={locked} onChange={(enabled) => settings.edit((current) => ({ ...current, policy: { ...current.policy, enabled } }))}>
               Triage pull requests in this repository
             </Sentence>
-            <Sentence label="Triage pull requests while they are drafts" on={draft.triageDrafts} disabled={locked} onChange={(triageDrafts) => settings.edit((current) => ({ ...current, triageDrafts }))}>
+            <Sentence label="Triage pull requests while they are drafts" on={draft.policy.triageDrafts} disabled={locked} onChange={(triageDrafts) => settings.edit((current) => ({ ...current, policy: { ...current.policy, triageDrafts } }))}>
               Triage pull requests while they are drafts
               <small>Drafts are never shown as ready. Off, they wait until marked ready.</small>
             </Sentence>
@@ -310,48 +348,48 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
         </section>
 
         <section className="rs" aria-labelledby="rs-checks">
-          <h3 id="rs-checks">Checks {checksOn === null ? null : <span className="n">{checksOn} on</span>}</h3>
-          <p>The rules Triage applies to every pull request. <button type="button" className="linkish" disabled={locked} onClick={() => editPack(recommendedDraft)}>Reset to recommended</button></p>
+          <h3 id="rs-checks">Checks <span className="n">{checksOn} on</span></h3>
+          <p>The rules Triage applies to every pull request. <button type="button" className="linkish" disabled={locked} onClick={() => editPack(applyRecommended)}>Reset to recommended</button></p>
           <div className="sentences">
-            <Sentence label="Flag draft pull requests" on={isCheckOn(pack, "draft")} disabled={locked} onChange={toggle(["draft"])}>
+            <Sentence label="Flag draft pull requests" on={catalogCheckEnabled(pack, "draft")} disabled={locked} onChange={toggle("draft")}>
               Flag pull requests that are still drafts
             </Sentence>
-            <Sentence label="Flag large pull requests" on={isCheckOn(pack, "files") || isCheckOn(pack, "size")} disabled={locked} onChange={toggle(sizeParts)}>
+            <Sentence label="Flag large pull requests" on={catalogCheckEnabled(pack, "size")} disabled={locked} onChange={toggle("size")}>
               Flag pull requests larger than
-              {sizeParts.includes("files") ? <span className="vu"><NumberValue pack={pack} id="files" label="Most files" disabled={locked} onChange={value("files", "maxFiles")} />{sizeParts.length === 2 ? "files or" : "files"}</span> : null}
-              {sizeParts.includes("size") ? <span className="vu"><NumberValue pack={pack} id="size" label="Most lines" disabled={locked} onChange={value("size", "maxLines")} />lines</span> : null}
+              <span className="vu"><NumberValue value={catalogValue(pack, "size", "maxFiles") ?? 0} min={1} label="Most files" disabled={locked} onChange={value("size", "maxFiles")} />files or</span>
+              <span className="vu"><NumberValue value={catalogValue(pack, "size", "maxLines") ?? 0} min={1} label="Most lines" disabled={locked} onChange={value("size", "maxLines")} />lines</span>
             </Sentence>
-            <Sentence label="Spot duplicates" on={isCheckOn(pack, "duplicate")} disabled={locked} onChange={toggle(["duplicate"])}>
+            <Sentence label="Spot duplicates" on={catalogCheckEnabled(pack, "duplicate")} disabled={locked} onChange={toggle("duplicate")}>
               Spot duplicates of earlier open pull requests
             </Sentence>
-            <Sentence label="Require a linked issue" on={isCheckOn(pack, "issue")} disabled={locked} onChange={toggle(["issue"])}>
-              Require a linked issue in <SelectValue pack={pack} id="issue" label="Issue tracker" disabled={locked} onChange={value("issue", "tracker")} />
+            <Sentence label="Require a linked issue" on={catalogCheckEnabled(pack, "issue")} disabled={locked} onChange={toggle("issue")}>
+              Require a linked issue in <SelectTracker value={catalogValue(pack, "issue", "tracker") ?? "either"} label="Issue tracker" disabled={locked} onChange={(tracker) => value("issue", "tracker")(tracker as IssueTracker)} />
             </Sentence>
-            <Sentence label="Require a label on the linked issue" on={isCheckOn(pack, "issueLabel")} disabled={locked || !isCheckOn(pack, "issue")} onChange={toggle(["issueLabel"])}>
-              Require the linked issue to have the label <TextValue pack={pack} id="issueLabel" label="Issue label" disabled={locked || !isCheckOn(pack, "issue")} onChange={value("issueLabel", "label")} />
+            <Sentence label="Require a label on the linked issue" on={issueOn && pack.checks.issue?.requireLabel === true} disabled={locked || !issueOn} onChange={value("issue", "requireLabel")}>
+              Require the linked issue to have the label <TextValue value={catalogValue(pack, "issue", "label") ?? ""} label="Issue label" disabled={locked || !issueOn} onChange={value("issue", "label")} />
             </Sentence>
-            <Sentence label="Flag unreviewed pull requests" on={isCheckOn(pack, "reviewers")} disabled={locked} onChange={toggle(["reviewers"])}>
+            <Sentence label="Flag unreviewed pull requests" on={catalogCheckEnabled(pack, "reviewers")} disabled={locked} onChange={toggle("reviewers")}>
               Flag when no reviewers are requested and nobody has approved
             </Sentence>
-            <Sentence label="Flag base drift" on={isCheckOn(pack, "drift")} disabled={locked} onChange={toggle(["drift"])}>
-              Flag when <NumberValue pack={pack} id="drift" label="Commits behind" disabled={locked} onChange={value("drift", "maxCommits")} /> or more commits behind the base branch
+            <Sentence label="Flag base drift" on={catalogCheckEnabled(pack, "drift")} disabled={locked} onChange={toggle("drift")}>
+              Flag when <NumberValue value={catalogValue(pack, "drift", "maxBehindBy") ?? 0} min={0} label="Commits behind" disabled={locked} onChange={value("drift", "maxBehindBy")} /> or more commits behind the base branch
             </Sentence>
-            <Sentence label="Flag merge conflicts" on={isCheckOn(pack, "conflicts")} disabled={locked} onChange={toggle(["conflicts"])}>
+            <Sentence label="Flag merge conflicts" on={catalogCheckEnabled(pack, "conflicts")} disabled={locked} onChange={toggle("conflicts")}>
               Flag merge conflicts with the base branch
             </Sentence>
-            <Sentence label="Require GitHub checks to pass" on={isCheckOn(pack, "ci")} disabled={locked} onChange={toggle(["ci"])}>
+            <Sentence label="Require GitHub checks to pass" on={catalogCheckEnabled(pack, "ci")} disabled={locked} onChange={toggle("ci")}>
               Require GitHub's required checks to pass
             </Sentence>
-            <Sentence label="Forbid paths" on={isCheckOn(pack, "paths")} disabled={locked} onChange={toggle(["paths"])}>
-              Never accept changes to <Globs globs={Array.isArray(globs) ? globs : []} disabled={locked} onChange={value("paths", "globs")} />
+            <Sentence label="Forbid paths" on={catalogCheckEnabled(pack, "paths")} disabled={locked} onChange={toggle("paths")}>
+              Never accept changes to <Globs globs={catalogValue(pack, "paths", "forbiddenGlobs") ?? []} disabled={locked} onChange={value("paths", "forbiddenGlobs")} />
             </Sentence>
-            <Sentence label="Check the change is focused" model on={isCheckOn(pack, "focused")} disabled={locked} onChange={toggle(["focused"])}>
+            <Sentence label="Check the change is focused" model on={catalogCheckEnabled(pack, "focused")} disabled={locked} onChange={toggle("focused")}>
               Check the change is focused on one thing
             </Sentence>
-            <Sentence label="Check tests are added" model on={isCheckOn(pack, "tests")} disabled={locked} onChange={toggle(["tests"])}>
+            <Sentence label="Check tests are added" model on={catalogCheckEnabled(pack, "tests")} disabled={locked} onChange={toggle("tests")}>
               Check tests are added when behaviour changes
             </Sentence>
-            <Sentence label="Check docs are updated" model on={isCheckOn(pack, "docs")} disabled={locked} onChange={toggle(["docs"])}>
+            <Sentence label="Check docs are updated" model on={catalogCheckEnabled(pack, "docs")} disabled={locked} onChange={toggle("docs")}>
               Check docs are updated when behaviour changes
             </Sentence>
           </div>
@@ -360,18 +398,19 @@ export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) 
         <section className="rs" aria-labelledby="rs-own">
           <h3 id="rs-own">Your own checks</h3>
           <p>Plain sentences, up to {CUSTOM_CHECK_CAP}.</p>
+          {removeError ? <p role="alert" className="error">{removeError}</p> : null}
           <div className="sentences">
             {pack.custom.map((check) => (
               <div className="sentence own" key={check.id}>
-                {check.typed ? (
-                  <span className="txt"><b>{check.name}</b></span>
-                ) : (
+                {check.kind === "model" && check.shape === "is-true" ? (
                   <label className="txt"><b>{check.name}</b>
-                    <input className="val w" aria-label={`What ${check.name} checks`} aria-invalid={!(check.instruction ?? "").trim()} disabled={locked} value={check.instruction ?? ""} onChange={(event) => editPack((current) => withCustomInstruction(current, check.id, event.target.value))} />
+                    <input className="val w" aria-label={`What ${check.name} checks`} aria-invalid={!check.claim.trim()} disabled={locked} value={check.claim} onChange={(event) => setClaim(check.id, event.target.value)} />
                   </label>
+                ) : (
+                  <span className="txt"><b>{check.name}</b></span>
                 )}
-                <span className="model">{check.typed?.kind === "rule" ? "Rule" : "Decision model"}</span>
-                <button type="button" className="btn btn-quiet btn-sm icon" aria-label={`Remove ${check.name}`} disabled={locked} onClick={() => removeCustom(check.id)}><CloseIcon /></button>
+                <span className="model">{check.kind === "rule" ? "Rule" : "Decision model"}</span>
+                <button type="button" className="btn btn-quiet btn-sm icon" aria-label={`Remove ${check.name}`} disabled={locked} onClick={() => remove(check.id)}><CloseIcon /></button>
               </div>
             ))}
             {adding ? (

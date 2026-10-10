@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, parseCheckPack, checkPackName, triggerRequestOf, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, readCheckPack, checkPackName, triggerRequestOf, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -396,7 +396,7 @@ export async function findArtifactByTitle(transport: Transport, tenantId: string
 /** A check pack with the artifact it was read from; `version` is what a save must match. */
 export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack };
 /** The newest artifact titled for the repository holds something that is not a check pack; a save replaces it in place. */
-export type CorruptCheckPack = { kind: "corrupt"; id: string; version: number };
+export type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack;
 
 export async function loadCheckPackById(transport: Transport, tenantId: string, repo: string, id: string): Promise<CheckPackArtifact> {
@@ -407,8 +407,12 @@ export async function loadCheckPackById(transport: Transport, tenantId: string, 
   );
   const version = detail.artifact?.version;
   if (typeof version !== "number") throw new Error("The hub returned an artifact without a version.");
-  const pack = parseCheckPack(detail.artifact?.content, repo);
-  return pack ? { kind: "pack", id, version, pack } : { kind: "corrupt", id, version };
+  try {
+    return { kind: "pack", id, version, pack: readCheckPack(detail.artifact?.content, repo) };
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return { kind: "corrupt", id, version, reason: error.message };
+  }
 }
 
 /** The one title-to-detail path: the newest artifact titled for the repository, read in full. */
@@ -950,7 +954,7 @@ export async function startBacklogTriage(
   assertRepoEnabled(policy);
   const read = await loadRepoCheckPack(transport, tenantId, clean);
   if (!read) throw new Error("This repository still needs check setup.");
-  if (read.kind === "corrupt") throw new Error("This repository's check pack is unreadable. Replace it on the repository page.");
+  if (read.kind === "corrupt") throw new Error(`This repository's check pack is unreadable: ${read.reason} Replace it on the repository page.`);
   const pack = read.pack;
   const { runId } = await triggerNamedWorkflow(
     transport,

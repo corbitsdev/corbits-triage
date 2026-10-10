@@ -12,7 +12,7 @@ describe("check-pack recovery", () => {
   test("an unreadable newest pack loads as corrupt and is replaced in place, never created beside", async () => {
     const hub = fakeHub([{ id: "c", title, content: "{\"not\":\"a pack\"}", version: 1, updatedAt: 1 }], config);
     const opened = await loadRepoCheckPack(hub.transport, "t", "acme/widgets");
-    expect(opened).toEqual({ kind: "corrupt", id: "c", version: 1 });
+    expect(opened).toEqual({ kind: "corrupt", id: "c", version: 1, reason: "kind must be corbits.triage.check-pack." });
     const replaced = await writeCheckPack(hub.transport, "t", "acme/widgets", recommended, { id: "c", version: 1 });
     expect(replaced).toEqual({ kind: "pack", id: "c", version: 2, pack: recommended });
     expect(hub.artifacts).toHaveLength(1);
