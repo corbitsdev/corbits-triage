@@ -4,6 +4,7 @@ import { type } from "arktype";
 import { Hono, type Context } from "hono";
 import { routePath } from "hono/route";
 import { describeRoute, resolver } from "hono-openapi";
+import { checkPackSchema, repoPolicySchema } from "@corbits/triage-contracts";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody } from "../github/manifest.js";
@@ -13,6 +14,8 @@ import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 
 export const INTEGRATIONS_PREFIX = "/api/integrations/";
+const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
+const packSchemas = { checkPack: checkPackSchema.toJsonSchema(), repoPolicy: repoPolicySchema.toJsonSchema() };
 
 type TenantHandler = (req: Request, tenantId: string) => Promise<Response>;
 
@@ -31,6 +34,7 @@ const TAGS = ["integrations"];
 const Failure = type({ error: { code: "string", message: "string" } });
 const ManifestFailure = type({ error: "string", "owned?": "boolean" });
 const AuthMethods = type({ google: "boolean", emailPassword: "boolean" });
+const PackSchemas = type({ checkPack: "Record<string, unknown>", repoPolicy: "Record<string, unknown>" });
 const ManifestStart = type({ manifest: "Record<string, unknown>", state: "string" });
 const ManifestCancel = type({ cancelled: "boolean" });
 const InstallationsSynced = type({ installations: "number", repos: "string[]" });
@@ -99,6 +103,18 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     }),
     function authMethods() {
       return Response.json(handlers.authMethods);
+    },
+  );
+
+  app.get(
+    PACK_SCHEMA_PATH,
+    describeRoute({
+      summary: "JSON Schemas of the check pack and repository policy",
+      tags: TAGS,
+      responses: { 200: json("Check pack and repository policy JSON Schemas", PackSchemas) },
+    }),
+    function packSchema() {
+      return Response.json(packSchemas);
     },
   );
 

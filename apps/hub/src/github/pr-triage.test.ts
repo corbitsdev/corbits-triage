@@ -91,9 +91,9 @@ function request(number = 8): Request {
   });
 }
 
-async function refused(res: Response, status: number, code: string): Promise<void> {
+async function refused(res: Response, status: number, code: string, details?: Record<string, string>): Promise<void> {
   expect(res.status).toBe(status);
-  expect(await res.json()).toMatchObject({ error: { code } });
+  expect(await res.json()).toMatchObject({ error: { code, ...details } });
 }
 
 function queuedRow(agoMs: number): PrTriageRow {
@@ -142,7 +142,7 @@ describe("createGithubPrTriage", () => {
   test("refuses a repository whose check pack is missing or unreadable, each by name", async () => {
     const s = stub();
     await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "missing" }) })(request(), TENANT_ID), 409, "needs_setup");
-    await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "corrupt" }) })(request(), TENANT_ID), 409, "check_pack_unreadable");
+    await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "corrupt", reason: "repo must be owner/name." }) })(request(), TENANT_ID), 409, "check_pack_unreadable", { reason: "repo must be owner/name." });
     expect(s.delivered).toEqual([]);
   });
 

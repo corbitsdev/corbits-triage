@@ -1,3 +1,5 @@
+import { type } from "arktype";
+
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
 export const CHECK_PACK_SCHEMA_VERSION = 1;
 export const CUSTOM_CHECK_CAP = 8;
@@ -131,6 +133,73 @@ export type CheckPack = {
   custom: CustomCheck[];
   actions: Action[];
 };
+
+const Text = type(/\S/);
+const Texts = Text.array().atLeastLength(1);
+const RepoName = type(/^\s*(?!.*\.\.)(?!\.\/)[^\s\\/]+\/(?!\.\s*$)[^\s\\/]+\s*$/);
+
+const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
+  .or({ "+": "reject", to: "'teams'", teams: Texts })
+  .or({ "+": "reject", to: "'role'", role: Text })
+  .or({ "+": "reject", to: "'codeowners'" });
+
+const DoSchema = type({
+  kind: "'labels'",
+  automatic: "boolean",
+  target: type({ "+": "reject", from: "'list'", labels: Texts }).or({ "+": "reject", from: "'type' | 'paths'" }),
+})
+  .or({ kind: "'assign'", automatic: "boolean", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
+  .or({ kind: "'request-review'", automatic: "boolean", target: ReviewTargetSchema })
+  .or({ kind: "'comment'", automatic: "boolean", target: { "+": "reject", body: Text } })
+  .or({ kind: "'close'", automatic: "boolean", target: { "+": "reject" } })
+  .or({ kind: "'agent'", automatic: "boolean", target: { "+": "reject", prompt: Text, tools: Text.array() } });
+
+const ActionSchema = type({
+  id: Text,
+  when: type("'every'").or(type.enumerated(...TRIAGE_EVENTS.filter((event) => event !== "catch-up")).array().atLeastLength(1)),
+  checks: Text.array(),
+  branches: type({ "+": "reject", always: DoSchema.array().atLeastLength(1) }).or({
+    "+": "reject",
+    "yes?": DoSchema.array(),
+    "no?": DoSchema.array(),
+    "unsure?": DoSchema.array(),
+  }),
+});
+
+const CatalogCheckSchema = type({
+  enabled: "boolean",
+  "maxFiles?": "number",
+  "maxLines?": "number",
+  "tracker?": type.enumerated(...ISSUE_TRACKERS),
+  "requireLabel?": "boolean",
+  "label?": "string",
+  "maxBehindBy?": "number",
+  "forbiddenGlobs?": "string[]",
+});
+
+const CustomCheckSchema = type({
+  id: /^custom-\d+$/,
+  name: Text,
+  group: type.enumerated(...CHECK_PACK_GROUPS),
+  instruction: Text,
+});
+
+const CatalogChecksSchema = type(
+  Object.fromEntries(CATALOG_IDS.map((id) => [`${id}?`, CatalogCheckSchema])) as Record<`${CatalogId}?`, typeof CatalogCheckSchema>,
+);
+
+/**
+ * Published as JSON Schema. `readCheckPack` stays the authority: it also drops catalog and custom rows it cannot read,
+ * and checks references, branch sets and automatic steps.
+ */
+export const checkPackSchema = type({
+  kind: type.unit(CHECK_PACK_KIND),
+  schemaVersion: type.unit(CHECK_PACK_SCHEMA_VERSION),
+  repo: RepoName,
+  "checks?": CatalogChecksSchema,
+  "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
+  "actions?": ActionSchema.array(),
+});
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
 const GROUP_SET = new Set<string>(CHECK_PACK_GROUPS);
@@ -441,23 +510,21 @@ function parseJson(value: unknown): unknown {
   try {
     return JSON.parse(value);
   } catch {
-    return undefined;
+    throw new Error("Check pack must be JSON.");
   }
 }
 
-export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack | null {
+/** Reads a stored pack, throwing an Error whose message says why it is rejected. */
+export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const body = asRecord(parseJson(raw));
-  if (!body) return null;
-  if (body.kind !== CHECK_PACK_KIND) return null;
-  if (body.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) return null;
+  if (!body) throw new Error("Check pack must be an object.");
+  if (body.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
+  if (body.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
   const repo = asRepo(body.repo);
-  if (!repo) return null;
-  if (expectedRepo !== undefined) {
-    const expected = asRepo(expectedRepo);
-    if (!expected || expected !== repo) return null;
-  }
+  if (!repo) throw new Error("repo must be owner/name.");
+  if (expectedRepo !== undefined && asRepo(expectedRepo) !== repo) throw new Error(`repo must be ${expectedRepo}.`);
   const checksRaw = body.checks === undefined ? {} : asRecord(body.checks);
-  if (!checksRaw) return null;
+  if (!checksRaw) throw new Error("checks must be an object.");
   const checks: CheckPack["checks"] = {};
   for (const [id, value] of Object.entries(checksRaw)) {
     if (!CATALOG_SET.has(id)) continue;
@@ -465,12 +532,7 @@ export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack |
     if (parsed) checks[id as CatalogId] = parsed;
   }
   const custom = parseCustom(body.custom);
-  let actions: Action[];
-  try {
-    actions = parseActions(body.actions, new Set(custom.map((row) => row.id)));
-  } catch {
-    return null;
-  }
+  const actions = parseActions(body.actions, new Set(custom.map((row) => row.id)));
   return {
     kind: CHECK_PACK_KIND,
     schemaVersion: CHECK_PACK_SCHEMA_VERSION,
@@ -479,6 +541,14 @@ export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack |
     custom,
     actions,
   };
+}
+
+export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack | null {
+  try {
+    return readCheckPack(raw, expectedRepo);
+  } catch {
+    return null;
+  }
 }
 
 /** Custom instructions are handed to the classifier as plain text, never evaluated. */
