@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { runCredentialAction, uniqueSecretDisplayNames } from "../lib/credential-actions.ts";
@@ -329,16 +329,13 @@ function CredentialRow({
 }
 
 export default function Settings() {
-  const { snapshot, replaceSecret, revoke, saveConfig, addGrant, removeGrant, syncFromGithub, readOnly } = usePortal();
+  const { snapshot, replaceSecret, revoke, addGrant, removeGrant, syncFromGithub, readOnly } = usePortal();
   const { session } = useSession();
   const signOut = useSignOutAfterSending();
   const params = useParams();
   const navigate = useNavigate();
   const tab = parseTab(params.tab);
   const [error, setError] = useState("");
-  const config = snapshot?.config ?? {};
-  const savedFloor = String(config.confidenceFloor ?? 0.7);
-  const [floor, setFloor] = useState(savedFloor);
   const repos = snapshot?.repos ?? [];
   const grants = useGrants();
   const principals = usePrincipals();
@@ -359,11 +356,6 @@ export default function Settings() {
     }
   }
   const { arm } = useGithubReturnSync(() => { void syncAfterGithub(); });
-  const triageDirty = floor !== savedFloor;
-
-  useEffect(function resetFloor() {
-    setFloor(savedFloor);
-  }, [savedFloor]);
 
   async function chooseOnGithub() {
     if (!snapshot) return;
@@ -383,35 +375,6 @@ export default function Settings() {
       setError(`Could not open GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }
-
-  async function saveTriage() {
-    setError("");
-    const confidenceFloor = Number(floor);
-    if (!Number.isFinite(confidenceFloor) || confidenceFloor < 0 || confidenceFloor > 1) {
-      setError("Confidence floor must be between 0 and 1.");
-      return;
-    }
-    try {
-      await saveConfig({ confidenceFloor });
-    } catch (cause: unknown) {
-      setError(`Could not save settings. ${cause instanceof Error ? cause.message : String(cause)} Check the values, then try again.`);
-    }
-  }
-
-  function submitTriage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void saveTriage();
-  }
-
-  function cancelEdits() {
-    if (tab === "Triage") setFloor(savedFloor);
-  }
-
-  function saveTab() {
-    if (tab === "Triage") void saveTriage();
-  }
-
-  const dirty = tab === "Triage" && triageDirty;
 
   return (
     <div className="main-shell">
@@ -439,17 +402,10 @@ export default function Settings() {
             ))}
           </div>
         </header>
-        <main id="main" className={`scroller${dirty ? " has-dirty" : ""}`}>
+        <main id="main" className="scroller">
           <div className="content-wide">
             {error && <p role="alert" className="error">{error}</p>}
             <div role="tabpanel" id={panelId("Triage")} aria-labelledby={tabId("Triage")} hidden={tab !== "Triage"}>
-              <form className="panel settings-panel" onSubmit={submitTriage}>
-                <label className="field">
-                  Confidence floor
-                  <span className="field-help">Pull requests below this score wait for a person.</span>
-                  <input value={floor} inputMode="decimal" onChange={(event) => setFloor(event.target.value)} disabled={readOnly} />
-                </label>
-              </form>
               <DeployedVersions section={deployed} />
             </div>
             <div role="tabpanel" id={panelId("GitHub")} aria-labelledby={tabId("GitHub")} hidden={tab !== "GitHub"}>
@@ -527,12 +483,6 @@ export default function Settings() {
           </div>
         </main>
       </div>
-      {dirty && (
-        <div className="dirty-bar">
-          <button type="button" className="btn" onClick={cancelEdits}>Cancel</button>
-          <button type="button" className="btn primary" disabled={readOnly} onClick={saveTab}>Save</button>
-        </div>
-      )}
     </div>
   );
 }

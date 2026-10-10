@@ -25,7 +25,6 @@ export type InstallationFields = {
 
 export type CorbitsTriageNs = {
   repos?: RepoRecord[];
-  confidenceFloor?: unknown;
   allowlist?: unknown;
   labelMap?: unknown;
   rev?: number;

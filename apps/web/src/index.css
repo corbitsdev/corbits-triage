@@ -53,7 +53,6 @@
   --primary-hover: var(--heat-hover);
   --primary-ink: var(--heat-ink);
   --accent-soft: var(--heat-wash);
-  --success: var(--ok);
   --danger: var(--bad);
   --sidebar: var(--rail);
   --sidebar-text: var(--rail-text);
@@ -1772,23 +1771,6 @@ textarea {
 .artifact[open] summary::before { transform: rotate(45deg); }
 .artifact .field-help { margin-bottom: 8px; }
 
-.scroller.has-dirty { padding-bottom: 72px; }
-.dirty-bar {
-  position: fixed;
-  left: var(--rail-width);
-  right: 0;
-  bottom: 0;
-  z-index: 18;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
-  min-height: 56px;
-  padding: 8px var(--pane-inset);
-  background: var(--paper);
-  border-top: 1px solid var(--rule);
-}
-
 .people { display: grid; gap: 0; }
 .person {
   display: grid;
@@ -2140,14 +2122,9 @@ details.setup-help[open] { display: grid; gap: 12px; }
   .mobile-nav svg { width: 22px; height: 22px; }
   .mobile-nav a[aria-current="page"],
   .mobile-nav a.active { color: var(--heat); }
-  .dirty-bar {
-    left: 0;
-    bottom: 68px;
-    padding-bottom: calc(8px + env(safe-area-inset-bottom));
-  }
 }
 
-/* Product extras: auth, forms, connect conversion, dirty bar aliases */
+/* Product extras: auth, forms, connect conversion */
 .app.is-auth {
   grid-template-columns: minmax(0, 1fr);
 }

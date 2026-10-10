@@ -9,6 +9,7 @@ import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
 import type { PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDos, usePendingDos } from "../lib/do-runs.ts";
+import { MergeChip, MergeVerdictLine } from "../components/MergeChip.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import {
   COMPOSER_COPY,
@@ -127,6 +128,7 @@ function OpenRow({ entry, selected, search }: Omit<RowProps, "item"> & { entry: 
       <span className={dotClass(item, inboxAction(item))} />
       <span className="tw"><b>{titleText(item.title)}</b><span className="why">{rowWhy(item) ?? inboxStatus(item)}</span></span>
       <span className="age">{ageText(item.waitingSince)}</span>
+      <MergeChip merge={item.merge} compact className="merge-chip" />
       <Badge tone={WAITS_ON_TONE[waits]}>{WAITS_ON_LABEL[waits]}</Badge>
       {posted === null ? null : <span className="act done">{posted}</span>}
     </Link>
@@ -171,13 +173,6 @@ function Owner({ owner }: { owner: string | null }) {
       <div className="route-t"><div className="l1"><b>{name}</b>{source}</div></div>
     </div>
   );
-}
-
-function Certainty({ confidence, floor }: { confidence: number | null; floor: number | undefined }) {
-  if (confidence === null) return null;
-  const sure = <b className="mono">{Math.round(confidence * 100)}%</b>;
-  if (floor !== undefined && confidence < floor) return <span>{sure} sure, under your {Math.round(floor * 100)}% bar</span>;
-  return <span>{sure} sure</span>;
 }
 
 const CHECK_MARK: Record<CheckResult["result"], { className: string; glyph: string }> = {
@@ -322,7 +317,7 @@ type PaneProps = {
 };
 
 function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }: PaneProps) {
-  const { snapshot, triagePullRequest, readOnly } = usePortal();
+  const { triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
   const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
@@ -344,7 +339,6 @@ function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }:
   const heldDos = useHeldDos();
   const doBlocked = writeBlocker(gate) !== null;
   const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
-  const floor = snapshot?.config?.confidenceFloor;
   const detailFiles = pull.data === undefined ? "" : ` · ${filesText(pull.data.pr.changedFiles)}`;
 
   // A new verdict replaces the suggested reply and the last note; composer text and an edit made while a run is merely in flight stay.
@@ -486,8 +480,8 @@ function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }:
               <span><span className="st"><span className={dotClass(item, inboxAction(item))} />{inboxStatus(item)}</span></span>
               {posted === null ? null : <span>{posted}</span>}
               {item.priority === null ? null : <span><b>{item.priority}</b></span>}
-              <Certainty confidence={item.confidence} floor={floor} />
             </div>
+            <MergeVerdictLine merge={item.merge} />
           </section>
           <Reasons item={item} />
           <Link className="disclose" to={prHref(item)}>

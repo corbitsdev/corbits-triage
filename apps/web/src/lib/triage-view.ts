@@ -1,4 +1,4 @@
-import { resolveInlineRef, type HubApproval, type PrItem, type RunLog } from "./hub-api.ts";
+import { resolveInlineRef, type HubApproval, type MergeVerdict, type PrItem, type RunLog } from "./hub-api.ts";
 
 function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -10,17 +10,40 @@ function points(value: number): number {
   return Math.round(value * 100);
 }
 
-export function scoreText(item: Pick<PrItem, "confidence" | "checks" | "degraded">, floor: number): string {
-  if (item.confidence !== null) {
-    const score = points(item.confidence);
-    const threshold = points(floor);
-    const side = score < threshold ? "below" : "at or above";
-    return `Certainty ${score} · ${side} ${threshold} auto-post threshold`;
-  }
-  if (item.degraded === "inference-outage") return "Not scored · decision model unavailable";
-  if (item.degraded === "error") return "Not scored · data unavailable";
-  if (item.checks.some((check) => check.result === "fail")) return "Not scored · fix blockers first";
-  return "Not scored";
+const SCORE_REASON = /^Score \S+ is below the threshold \S+$/;
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+export const MERGE_LABEL: Record<MergeVerdict["verdict"], string> = { ready: "Ready to merge", "not-recommended": "Merge not recommended" };
+
+export const MERGE_SHORT_LABEL: Record<MergeVerdict["verdict"], string> = { ready: "Ready", "not-recommended": "Not ready" };
+
+export const NOT_EVALUATED = "Not evaluated";
+
+/** The weakest model answer against the pack's threshold, in points; rules only when a ready verdict asked no model check, none when no model answered. */
+export function mergeScoreText(merge: MergeVerdict): string | null {
+  if (merge.score !== null) return `score ${points(merge.score)} (threshold ${points(merge.threshold)})`;
+  return merge.verdict === "ready" ? "rules only" : null;
+}
+
+/** Why the merge is not recommended, with the score in points like the rest of the portal. */
+export function mergeReasons(merge: MergeVerdict): string[] {
+  return merge.reasons.map((reason) => (SCORE_REASON.test(reason) && merge.score !== null
+    ? `Score ${points(merge.score)} is below the threshold ${points(merge.threshold)}`
+    : reason));
+}
+
+/** The merge verdict in one line: ready with its score, or not recommended with the first thing in the way, a low score last. */
+export function mergeText(item: Pick<PrItem, "merge">): string {
+  const { merge } = item;
+  if (merge === null) return NOT_EVALUATED;
+  if (merge.verdict === "ready") return `${MERGE_LABEL.ready} · ${mergeScoreText(merge)}`;
+  const reasons = mergeReasons(merge);
+  const blocker = reasons.find((reason) => !reason.startsWith("Score ")) ?? reasons[0];
+  if (blocker === undefined) return MERGE_LABEL["not-recommended"];
+  return `${MERGE_LABEL["not-recommended"]} · ${lowerFirst(blocker.replace(/^Failed: /, ""))}`;
 }
 
 export function approvalHeadline(approval: HubApproval): string {

@@ -273,7 +273,6 @@ export const CONFIG_KEY = "corbitsTriage";
 
 export type AppConfig = {
   repos?: unknown[];
-  confidenceFloor?: number;
   allowlist?: Record<string, string[]>;
   labelMap?: Record<string, string>;
   inference?: { endpoint: string; model: string };
@@ -1160,7 +1159,9 @@ export type PullPreview = {
     labels: string[];
     owner: string;
     humanGated: boolean;
+    score: number | null;
     confidence: number | "unknown";
+    merge: MergeVerdict;
     degraded: "inference-outage" | "error" | null;
     reason: string;
     nextAction: string;
@@ -1439,6 +1440,18 @@ function isCiState(value: unknown): value is CiState {
   return CI_STATES.includes(value);
 }
 
+/** Whether a pull request should merge now; shown in the portal, never posted to GitHub. */
+export type MergeVerdict = { verdict: "ready" | "not-recommended"; score: number | null; threshold: number; reasons: string[] };
+
+/** Null for a verdict rendered before it carried a merge verdict. */
+function mergeVerdict(value: unknown): MergeVerdict | null {
+  const merge = obj(value);
+  const { verdict, score, threshold } = merge;
+  if (verdict !== "ready" && verdict !== "not-recommended") return null;
+  if (typeof threshold !== "number" || (typeof score !== "number" && score !== null)) return null;
+  return { verdict, score, threshold, reasons: strings(merge.reasons) };
+}
+
 export type PrItem = {
   key: string;
   repo: string;
@@ -1452,6 +1465,7 @@ export type PrItem = {
   owner: string | null;
   nextAction: string | null;
   confidence: number | null;
+  merge: MergeVerdict | null;
   evidence: string[];
   checks: CheckResult[];
   labels: string[];
@@ -1820,6 +1834,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         owner: typeof r.owner === "string" ? r.owner : null,
         nextAction: typeof r.nextAction === "string" ? r.nextAction : null,
         confidence: typeof r.confidence === "number" ? r.confidence : null,
+        merge: mergeVerdict(r.merge),
         evidence: v.evidence,
         checks: checkResults(r.checks),
         labels: strings(r.labels),
@@ -1891,6 +1906,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         owner: null,
         nextAction: null,
         confidence: null,
+        merge: null,
         evidence: [],
         checks: [],
         labels: pr.labels,
@@ -1986,14 +2002,4 @@ export function auditTimeline(logs: RunLog[], approvals: HubApproval[]): AuditEn
     });
   }
   return entries.sort((x, y) => (y.at ?? "").localeCompare(x.at ?? ""));
-}
-
-export async function saveSettings(
-  transport: Transport,
-  tenantId: string,
-  patch: Pick<AppConfig, "confidenceFloor" | "allowlist" | "labelMap">,
-): Promise<void> {
-  await patchAppConfig(transport, tenantId, function applySettings(current) {
-    return { ...current, ...patch };
-  });
 }

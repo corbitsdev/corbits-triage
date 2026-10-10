@@ -57,7 +57,14 @@ export const PreviewResponse = type({
     labels: "string[]",
     owner: "string",
     humanGated: "boolean",
+    score: "number | null",
     confidence: "number | 'unknown'",
+    merge: {
+      verdict: "'ready' | 'not-recommended'",
+      score: "number | null",
+      threshold: "number",
+      reasons: "string[]",
+    },
     degraded: "'inference-outage' | 'error' | null",
     reason: "string",
     nextAction: "string",
@@ -176,7 +183,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     const ruledItem = ruled.items[0]!;
     const judged = ruled.needsJudgment ? { ...ruledItem, judgeSkipped: true as const } : ruledItem;
     const verdict = await evaluate({ items: [judged], batch: false }, NO_EFFECTS, req.signal) as Verdict;
-    const { state, priority, labels, owner, humanGated, confidence, degraded, reason, nextAction, actor, feedback } = verdict;
+    const { state, priority, labels, owner, humanGated, score, confidence, merge, degraded, reason, nextAction, actor, feedback } = verdict;
     const checks = verdict.checks.map((c) => ({
       ...c,
       name: checkName(c.check, pack),
@@ -191,7 +198,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
       event,
       pack: candidate === undefined ? "saved" : "candidate",
       judge: ruled.needsJudgment ? "not-run" : "not-needed",
-      verdict: { state, priority, labels, owner, humanGated, confidence, degraded, reason, nextAction, actor, feedback },
+      verdict: { state, priority, labels, owner, humanGated, score, confidence, merge, degraded, reason, nextAction, actor, feedback },
       checks,
       actions,
     });

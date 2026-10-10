@@ -476,9 +476,10 @@ test("a pack preview evaluates an open pull request without writing anything", a
       dos: [{ id: "tag", branch: "yes", index: 0, kind: "labels", automatic: false, reason: "CI passed.", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: "tag", branch: "yes", index: 0, kind: "labels", target }) }],
     }]);
     expect(rule.verdict).not.toHaveProperty("request");
+    expect(rule.verdict.merge).toEqual({ verdict: "ready", score: null, threshold: 0.7, reasons: [] });
 
     const judged = await previewed({ repo: REPO, number: 8, pack: JUDGED_PACK });
-    expect(judged).toMatchObject({ pack: "candidate", judge: "not-run", verdict: { state: "needs-author-update", degraded: null } });
+    expect(judged).toMatchObject({ pack: "candidate", judge: "not-run", verdict: { state: "needs-author-update", degraded: null, merge: { verdict: "not-recommended" } } });
     expect(judged.checks).toContainEqual({ check: "custom-1", name: "Explains why", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [] });
     const [waiting, sized] = judged.actions;
     if (waiting?.status !== "waits-on-judge") throw new Error("the judged action must wait on the judge");
@@ -488,8 +489,8 @@ test("a pack preview evaluates an open pull request without writing anything", a
       ["unsure", [{ body: "unsure" }]],
     ]);
     expect(sized).toMatchObject({ id: "judged-and-sized", status: "decided", branch: "no", dos: [{ target: { body: "no" } }] });
-    const unsized = await previewed({ repo: REPO, number: 8, pack: { ...JUDGED_PACK, checks: {} } });
-    expect(unsized).toMatchObject({ judge: "not-run", verdict: { state: "awaiting-review", reason: "needs the judge", humanGated: false, degraded: null } });
+    const unsized = await previewed({ repo: REPO, number: 8, pack: { ...JUDGED_PACK, checks: {}, mergeThreshold: 0.9 } });
+    expect(unsized).toMatchObject({ judge: "not-run", verdict: { state: "awaiting-review", reason: "needs the judge", humanGated: false, degraded: null, merge: { threshold: 0.9 } } });
 
     expect(github.repoRequests.filter((request) => !request.startsWith("GET "))).toEqual([]);
     expect(await findArtifactByTitle(db, tenantId, triageStateName(REPO))).toBeNull();
