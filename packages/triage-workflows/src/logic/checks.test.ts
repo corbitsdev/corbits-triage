@@ -126,7 +126,7 @@ describe("deriveState check pack", () => {
       evidence: ["80 files (max 20)"],
     });
     expect(result.checks.find((check) => check.check === "paths")?.result).toBe("pass");
-    expect(result.sources?.custom).toEqual([{ name: "Bomb", group: "pull-request", instruction: "process.exit(1)" }]);
+    expect(result.sources?.custom).toEqual([{ id: "custom-1", name: "Bomb", group: "pull-request", instruction: "process.exit(1)" }]);
     expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused", "tests"]);
   });
 });

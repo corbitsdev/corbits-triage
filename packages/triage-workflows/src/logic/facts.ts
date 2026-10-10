@@ -16,6 +16,8 @@ export interface PrData {
   additions?: number;
   deletions?: number;
   changedFiles?: number;
+  labels?: string[];
+  assignees?: string[];
 }
 export interface CheckRun {
   name?: string;
@@ -25,6 +27,7 @@ export interface CheckRun {
 export interface Review {
   reviewer?: string;
   state?: string;
+  commitId?: string;
 }
 
 const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required"]);
@@ -47,6 +50,13 @@ function latestDecisive(reviews: Review[]): Map<string, string> {
     if (r.reviewer && r.state && r.state !== "COMMENTED" && r.state !== "PENDING") latest.set(r.reviewer, r.state);
   }
   return latest;
+}
+
+/** Reviewers whose latest review still stands on the current head, when the review names its commit. */
+function reviewedOnHead(reviews: Review[], headSha: string): string[] {
+  const latest = new Map<string, Review>();
+  for (const r of reviews) if (r.reviewer && r.state !== "PENDING") latest.set(r.reviewer, r);
+  return [...latest].flatMap(([login, r]) => (r.state !== "DISMISSED" && (r.commitId === undefined || r.commitId === headSha) ? [login] : []));
 }
 
 function reviewersWith(latest: Map<string, string>, state: string): string[] {
@@ -81,6 +91,9 @@ export function buildFacts(
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested: reviewersWith(latest, "CHANGES_REQUESTED"),
+    reviewedBy: reviewedOnHead(reviews, pr.sha ?? ""),
+    labels: pr.labels ?? [],
+    assignees: pr.assignees ?? [],
     openPrs,
     changedFiles: Number(pr.changedFiles ?? 0),
     additions: Number(pr.additions ?? 0),

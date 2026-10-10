@@ -2,6 +2,10 @@ export function asText(v: unknown) {
   return typeof v === "string" ? v : JSON.stringify(v ?? "");
 }
 
+export function errorText(e: unknown) {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function parseJsonText(text: string, open: "{" | "[" = "{"): unknown {
   const close = open === "{" ? "}" : "]";
   const start = text.indexOf(open);

@@ -39,8 +39,8 @@ const MAX_COMMITS = 50;
 export function qualityQuestions(sources: NonNullable<DeterministicResult["sources"]>): QualityQuestion[] {
   return [
     ...sources.quality.map(({ id }) => ({ id, type: "boolean" as const, instructions: INSTRUCTIONS[id] })),
-    ...sources.custom.map(({ name, instruction }, i) => ({
-      id: `custom-${i + 1}`,
+    ...sources.custom.map(({ id, name, instruction }) => ({
+      id,
       type: "boolean" as const,
       instructions: `${name}: ${instruction} Answer true when the pull request meets this.`,
     })),
@@ -59,20 +59,24 @@ export function qualityState(facts: PrFacts) {
   };
 }
 
+function customCheck(id: string, sources: NonNullable<DeterministicResult["sources"]>) {
+  return sources.custom.find((c) => c.id === id);
+}
+
 export function failureText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {
   if (id in FAILURES) return FAILURES[id as QualityCheckId];
-  const custom = sources.custom[Number(id.slice("custom-".length)) - 1];
+  const custom = customCheck(id, sources);
   return custom ? `does not meet "${custom.name}"` : `does not pass ${id}`;
 }
 
 export function actionText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {
   if (id in ACTIONS) return ACTIONS[id as QualityCheckId];
-  const custom = sources.custom[Number(id.slice("custom-".length)) - 1];
+  const custom = customCheck(id, sources);
   return custom ? `Meet "${custom.name}"` : `Pass ${id}`;
 }
 
 export function passText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {
   if (id in PASSES) return PASSES[id as QualityCheckId];
-  const custom = sources.custom[Number(id.slice("custom-".length)) - 1];
+  const custom = customCheck(id, sources);
   return custom ? `meets "${custom.name}"` : `passes ${id}`;
 }
