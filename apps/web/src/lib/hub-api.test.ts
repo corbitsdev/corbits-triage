@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
-import { stockTriggerMail } from "@corbits/triage-contracts";
+import { recommendedPack, stockTriggerMail } from "@corbits/triage-contracts";
 
 const NOW = new Date("2026-10-01T02:00:00.000Z");
 import {
@@ -11,6 +11,7 @@ import {
   githubAppSecret,
   GITHUB_HOOK_CREDENTIAL_NAME,
   portalConnected,
+  previewPull,
   projectQueue,
   queueRows,
   reposFromConfig,
@@ -777,4 +778,19 @@ describe("pending maintainer write approvals", () => {
     const [item] = queue([merge]);
     expect(item).toMatchObject({ pendingApprovalId: "merge", pendingClose: false, needsHuman: true });
   });
+});
+
+test("a preview posts the draft pack and roles, so unsaved edits are previewed", async () => {
+  const sent: Array<{ method: string; path: string; body: unknown }> = [];
+  const transport: Transport = {
+    async fetch(method, path, body) {
+      sent.push({ method, path, body });
+      return {} as never;
+    },
+    subscribe: () => () => {},
+  };
+  const pack = { ...recommendedPack("acme/widgets"), actions: [{ id: "action-1", when: "every" as const, checks: [], branches: { always: [{ kind: "close" as const, automatic: false, target: {} }] } }] };
+  const roles = { maintainers: { users: ["ada"] } };
+  await previewPull(transport, "tenant", { repo: "acme/widgets", number: 12, pack, roles });
+  expect(sent).toEqual([{ method: "POST", path: "/api/integrations/github-preview/tenant", body: { repo: "acme/widgets", number: 12, pack, roles } }]);
 });

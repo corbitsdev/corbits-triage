@@ -1,15 +1,10 @@
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import type { Action, CheckPack, Do } from "@corbits/triage-contracts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
-import { BRANCH_NAMES, doText, whenText, type Branch } from "../../lib/pack-prose.ts";
+import { BRANCH_NAMES, doText, sentence, whenText, type Branch } from "../../lib/pack-prose.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
 import CheckName from "./CheckName.tsx";
 import Joined from "./Joined.tsx";
-
-/** Ends with a full stop unless a quoted comment already ends the sentence. */
-function sentence(text: string): string {
-  return /[.!?]”$/.test(text) ? text : `${text}.`;
-}
 
 type ActionRowProps = {
   action: Action;

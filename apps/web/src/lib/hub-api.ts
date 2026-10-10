@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, readCheckPack, checkPackName, triggerRequestOf, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, readCheckPack, checkPackName, triggerRequestOf, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -1112,6 +1112,54 @@ export async function loadGithubPull(
     "GET",
     `/api/integrations/github-pull/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`,
   );
+}
+
+/** One Do as a preview resolves it; `skipped` ones carry why instead of an effect id. */
+export type PreviewDo = { id: string; branch: DoBranch; index: number; kind: ActionKind; automatic: boolean; reason: string; effectId?: string; target?: Record<string, unknown>; skipped?: true };
+
+export type PreviewBranch = { branch: DoBranch; reason: string; dos: PreviewDo[] };
+
+export type PreviewAction =
+  | { id: string; status: "not-woken" }
+  | { id: string; status: "skipped"; reason: string }
+  | ({ id: string; status: "decided" } & PreviewBranch)
+  | { id: string; status: "waits-on-judge"; branches: PreviewBranch[] };
+
+export type PreviewCheck = { check: string; name: string; kind: "machine" | "model"; result: "pass" | "fail" | "unconfirmed" | "needs-judge"; reason: string; evidence: string[] };
+
+export type PullPreview = {
+  repo: string;
+  number: number;
+  headSha: string;
+  event: TriageEvent;
+  pack: "saved" | "candidate";
+  judge: "not-needed" | "not-run";
+  verdict: {
+    state: string;
+    priority: string;
+    labels: string[];
+    owner: string;
+    humanGated: boolean;
+    confidence: number | "unknown";
+    degraded: "inference-outage" | "error" | null;
+    reason: string;
+    nextAction: string;
+    actor: "author" | "maintainer" | "system";
+    feedback: string;
+  };
+  checks: PreviewCheck[];
+  actions: PreviewAction[];
+};
+
+/** Evaluates `pack` and `roles`, saved or not, against one open pull request; the hub writes nothing and does not run the judge. */
+export async function previewPull(
+  transport: Transport,
+  tenantId: string,
+  input: { repo: string; number: number; pack: CheckPack; roles: Record<string, RepoRole> },
+): Promise<PullPreview> {
+  const repo = validateRepo(input.repo);
+  if (!Number.isInteger(input.number) || input.number < 1) throw new Error("Pull request number must be a positive integer.");
+  return transport.fetch<PullPreview>("POST", `/api/integrations/github-preview/${enc(requireTenantId(tenantId))}`, { ...input, repo });
 }
 
 const connectChains = new Map<string, Promise<unknown>>();
