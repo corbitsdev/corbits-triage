@@ -72,8 +72,6 @@ export {
   type WorkflowStepWalkArgs,
 } from "./step-walk";
 
-export { extractAgent } from "./extract-agent";
-
 export type {
   ManualTrigger,
   MailTrigger,

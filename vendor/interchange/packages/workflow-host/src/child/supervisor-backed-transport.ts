@@ -18,7 +18,8 @@
 // method fails with `SERVERBUG` "not wired". A spawned child has no inbox
 // surface, and that failure is the wiring error, not a mailbox policy.
 
-import { base64Decode, deriveWorkflowRunId } from "@intx/types";
+import { base64Decode } from "@intx/types/base64";
+import { deriveWorkflowRunId } from "@intx/types/workflow-run-id";
 import type {
   BodyStructure,
   InboundMessage,
@@ -38,8 +39,8 @@ import type {
   SyncState,
   Thread,
   Unsubscribe,
-} from "@intx/types/runtime";
-import { MessageTransportError } from "@intx/types/runtime";
+} from "@intx/types/runtime-core";
+import { MessageTransportError } from "@intx/types/runtime-core";
 
 import type { ChildMailboxCallBridge } from "./mailbox-call-bridge";
 import type { MailboxCallSuccess } from "./mailbox-call-bridge";

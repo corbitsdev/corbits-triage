@@ -20,13 +20,13 @@
  */
 
 import { type } from "arktype";
-import { base64Decode, base64Encode } from "@intx/types";
+import { base64Decode, base64Encode } from "@intx/types/base64";
 import type {
   MessageAttachment,
   MessageHeaders as ParsedMessageHeaders,
   MessagePart,
-} from "@intx/types/runtime";
-import { InterchangeType } from "@intx/types/runtime";
+} from "@intx/types/runtime-core";
+import { InterchangeType } from "@intx/types/runtime-core";
 
 // ---------------------------------------------------------------------------
 // Types

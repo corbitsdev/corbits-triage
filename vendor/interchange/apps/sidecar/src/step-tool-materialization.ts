@@ -8,9 +8,9 @@ import path from "node:path";
 
 import { agentDir, readDeployTree } from "@intx/hub-agent/paths";
 import { materializeToolPackages } from "@intx/tool-packaging";
-import { parseRunAddress } from "@intx/types";
+import { parseRunAddress } from "@intx/types/agent-address";
 import { baseStepId } from "@intx/workflow";
-import { resolveStepAddress } from "@intx/workflow-deploy";
+import { resolveStepAddress } from "@intx/workflow-deploy/addresses";
 import type {
   StepToolCacheConfig,
   StepToolMaterialization,

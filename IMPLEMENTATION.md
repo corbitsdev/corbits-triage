@@ -76,7 +76,7 @@ deployment resolves its offering when deployed.
 ## Packages
 
 - `triage-workflows`: `pr-triage`, `pr-triage-historical`, custom
-  directors (needs vendored PR #193).
+  directors.
 - `github-tool`: GitHub reads, mirror write (marker-comment upsert) and
   merge; sidecar tool bundles.
 - `github-write-tool`: build wrapper for the write bundle.
@@ -89,9 +89,7 @@ deployment resolves its offering when deployed.
 
 | Delta | Why | Kill date |
 | --- | --- | --- |
-| PR #193 / INTR-581 | Custom directors | 2026-11-01 |
 | INTR-583 | Operator-registered model provider plugins | 2026-11-01 |
-| CL-10178 | Run-scoped `onTrigger` child run ids, with backward-compatible resume | 2026-11-01 |
 
 ## Deployment
 

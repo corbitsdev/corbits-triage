@@ -8,34 +8,13 @@
 # ignored. Keep entries justified: each must cite the tracking issue for
 # its upstream resolution.
 #
-# Composite pin: stock 779b47f59c47026b14f02eb54eefa90e15b7fd9a plus the
+# Composite pin: stock 74c57b39bc9613ab38ae8eab73af743797d589e2 plus the
 # allowlisted deltas below. Full rationale is in vendor/interchange/VENDORED.md.
 #
-# PR #193 / INTR-581 production and regression subset, upstream commit
-# 13129bb5b23df2dd11d0437fc2c2511f29ac6960 rebased onto the stock pin.
-# Required by the custom director in @corbits/triage-workflows. Remove by
-# 2026-11-01 after re-pinning to a stock commit containing PR #193.
-packages/agent/src/index.ts
-packages/agent/src/namespace.ts
-packages/agent/src/namespace.test.ts
-packages/tool-packaging/src/loader.test.ts
-packages/tool-packaging/src/loader.ts
-packages/workflow/src/definition/extract-agent.ts
-packages/workflow/src/definition/index.ts
-packages/workflow-deploy/src/capability-walk.ts
-packages/workflow-deploy/src/inert-ontrigger-bodies.ts
-packages/workflow-host/src/child/index.ts
-packages/workflow-host/src/child/run-child.ts
+# Upstream PR #193 step-env director threading: the step env and spawned-child
+# deps resolve the closure's own directors. Remove by 2026-11-01 or when
+# upstream's step env loads the closure registry.
 packages/workflow-host/src/child/substrate-factory.ts
-packages/workflow-host/src/child/workflow-substrate-factory-abort.test.ts
-packages/workflow-host/src/child/workflow-substrate-factory-child-depth.test.ts
-packages/workflow-host/src/child/workflow-substrate-factory-child-grants.test.ts
-packages/workflow-host/src/child/workflow-substrate-factory-step-storage.test.ts
-packages/workflow-host/src/child/workflow-substrate-factory-suspendable-child.test.ts
-packages/workflow-host/src/index.ts
-packages/workflow-host/src/probe/index.ts
-packages/workflow-host/src/workflow-definition-loader.test.ts
-packages/workflow-host/src/workflow-definition-loader.ts
 
 # INTR-583 operator-plugin grammar from upstream commit
 # 44170ebbcf819e1f48e0ec4c7a0d9f682635d10d (branch tip 2d815607).
@@ -45,13 +24,6 @@ packages/types/src/catalog.ts
 packages/types/src/catalog.test.ts
 packages/db/src/schema/catalog.ts
 packages/db/src/parse-row.test.ts
-
-# CL-10178 local carry: scope onTrigger body run ids to their container run
-# so two deployments of one workflow do not collide on the hub. Not upstream
-# yet. Remove by 2026-11-01 or when re-pinning to a stock commit that fixes it.
-packages/workflow/src/runtime/run.ts
-packages/workflow/src/runtime/on-trigger-run.test.ts
-packages/workflow/src/runtime/on-trigger-tolerate-abort.test.ts
 
 # CL-10210 local carry: consume a replayed signal mail the run already
 # recorded instead of wedging the deployment inbox. Not upstream yet.

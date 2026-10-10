@@ -14,6 +14,21 @@
       "intx-src": "./src/testing/index.ts",
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
+    },
+    "./capabilities": {
+      "intx-src": "./src/capability-walk.ts",
+      "types": "./dist/capability-walk.d.ts",
+      "default": "./dist/capability-walk.js"
+    },
+    "./addresses": {
+      "intx-src": "./src/addresses.ts",
+      "types": "./dist/addresses.d.ts",
+      "default": "./dist/addresses.js"
+    },
+    "./child-grants": {
+      "intx-src": "./src/child-grant-filter.ts",
+      "types": "./dist/child-grant-filter.d.ts",
+      "default": "./dist/child-grant-filter.js"
     }
   },
   "dependencies": {
