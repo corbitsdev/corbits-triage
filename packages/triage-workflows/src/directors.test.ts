@@ -182,7 +182,7 @@ describe("judge on a blocked pull request", () => {
     return (event: unknown) => d.decide(event as ReactorInboundEvent, {} as ReactorState, caps as unknown as ReactorCapabilities);
   }
 
-  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false, setup: Record<string, unknown> = {}): Promise<string> {
+  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false, setup: Record<string, unknown> = {}, files: unknown[] = []): Promise<string> {
     let reply = "";
     const decide = director("facts", {
       executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
@@ -194,12 +194,20 @@ describe("judge on a blocked pull request", () => {
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
-      "files:8": { files: [] },
+      "files:8": { files },
       "comments:8": { comments: [] },
       "checks:8": { checks: checkRuns },
     };
     for (const [callId, content] of Object.entries(results)) await decide({ type: "tool.done", result: { callId, content } });
     return reply;
+  }
+
+  /** A focused candidate is unrelated when focused is failing; every other question is a noul pass or fail. */
+  function answer(id: string, failing: string[]) {
+    if (!id.startsWith("focused-candidate-")) return { id, type: "noul", noul: failing.includes(id) ? 0.1 : 0.9 };
+    const choice = failing.includes("focused") ? "unrelated" : "primary_or_supporting";
+    const probabilities = { primary_or_supporting: 0.1, unrelated: 0.1, movement_or_superseded: 0.1, ambiguous: 0.1, [choice]: 0.7 };
+    return { id, type: "choice", choice, probabilities, confidence: 0.9 };
   }
 
   /** Runs rules, the judge only when the gate would, and evaluate, as the workflow does. */
@@ -218,7 +226,7 @@ describe("judge on a blocked pull request", () => {
     await judge({ type: "message.received", message: { content: JSON.stringify(ruled) } });
     if (asked.length && judgeError !== undefined) await judge({ type: "inference.error", error: { message: judgeError } });
     else if (asked.length) {
-      const text = asked.map((id) => JSON.stringify({ id, type: "noul", noul: failing.includes(id) ? 0.1 : 0.9 })).join("");
+      const text = asked.map((id) => JSON.stringify(answer(id, failing))).join("");
       await judge({ type: "inference.done", turn: { content: [{ type: "text", text }] } });
     }
     return { asked, verdict: await evaluate({ ...ruled, reply: judged }, ctx, signal) as Verdict };
@@ -226,11 +234,11 @@ describe("judge on a blocked pull request", () => {
 
   test("a CI-blocked pull request records the model's answers but stays driven by CI", async () => {
     const { asked, verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true));
-    expect(asked).toEqual(["focused", "docs", "tests"]);
+    expect(asked).toEqual(["docs", "tests"]);
     expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", nextAction: "Fix failing CI: build" });
     expect(verdict.feedback).not.toContain("unrelated");
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
-      { check: "focused", kind: "model", result: "fail", reason: "mixes unrelated changes", evidence: [] },
+      { check: "focused", kind: "model", result: "unconfirmed", reason: "no change candidates", evidence: [] },
       { check: "docs", kind: "model", result: "pass", reason: "documentation is up to date", evidence: [] },
       { check: "tests", kind: "model", result: "pass", reason: "tests cover the change", evidence: [] },
     ]);
@@ -240,13 +248,13 @@ describe("judge on a blocked pull request", () => {
     const { verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true), "upstream 503");
     expect(verdict).toMatchObject({ state: "blocked", degraded: null, mirror: true });
     expect(verdict.checks.some((c) => c.kind === "machine" && c.result === "unconfirmed")).toBe(false);
-    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["decision model unavailable", "decision model unavailable", "decision model unavailable"]);
+    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["no change candidates", "decision model unavailable", "decision model unavailable"]);
   });
 
   test("a clean draft awaits review with an informational draft check and labels only", async () => {
     const { asked, verdict } = await judgeAndEvaluate(await facts([], true, true), undefined, []);
-    expect(asked).toEqual(["focused", "docs", "tests"]);
-    expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, feedback: "", actor: "maintainer", nextAction: "Review once marked ready" });
+    expect(asked).toEqual(["docs", "tests"]);
+    expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: false, humanGated: true, feedback: "", actor: "maintainer", nextAction: "Review once marked ready" });
     expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [] });
     expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "", close: false });
   });
@@ -264,7 +272,8 @@ describe("judge on a blocked pull request", () => {
       actions: [{ id: "ask-leads", when: "every", checks: ["focused"], branches: { no: [{ kind: "request-review", automatic: true, target: { to: "role", role: "leads" } }] } }],
     };
     const policy = { enabled: true, roles: { leads: { users: ["dave"] } } };
-    const { verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }));
+    const files = [{ filename: "src/flag.ts", patch: "@@ -0,0 +1 @@\n+export const flag = true;" }];
+    const { verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }, files));
     expect(verdict.actions).toEqual([
       { id: "ask-leads", branch: "no", kind: "request-review", automatic: true, target: { users: ["dave"], teams: [] }, reason: "Focused change failed." },
     ]);
@@ -293,6 +302,103 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual([]);
     expect(verdict.state).toBe("stale-unknown");
     expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["not asked", "not asked", "not asked"]);
+  });
+});
+
+describe("focused candidate judge input", () => {
+  const sources = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [] };
+
+  function prFacts(files: Array<Record<string, unknown>>) {
+    return {
+      repo: "acme/widgets",
+      number: 8,
+      title: "Refactor",
+      author: "octocat",
+      tier: "external",
+      headSha: "abc",
+      state: "open",
+      draft: false,
+      mergeable: true,
+      baseBehindBy: 0,
+      checks: "success",
+      requestedReviewers: 0,
+      approvals: 0,
+      openPrs: [],
+      files,
+    };
+  }
+
+  function rulesOutput(files: Array<Record<string, unknown>>) {
+    const det = { state: "ready-monitoring", reason: "all configured checks pass", findings: [], checks: [], duplicateOf: null, needsJudgment: true, sources };
+    return { items: [{ facts: prFacts(files), det }], batch: false, needsJudgment: true };
+  }
+
+  test("sends one typed choice per candidate with matching ID-keyed state", async () => {
+    const requests: Array<Record<string, any>> = [];
+    const caps = {
+      infer(request: Record<string, any>) { requests.push(request); return { type: "infer" }; },
+      reply(content: string) { return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
+    await director.decide({
+      type: "message.received",
+      message: { content: JSON.stringify(rulesOutput([{
+        path: "src/a.ts",
+        previousPath: "src/old-a.ts",
+        status: "renamed",
+        patch: "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };",
+      }])) },
+    } as ReactorInboundEvent, {} as ReactorState, caps);
+    expect(requests).toHaveLength(1);
+    const systemOne = requests[0]?.providerOptions.systemOne;
+    expect(systemOne.questions.map((question: Record<string, unknown>) => ({
+      id: question.id,
+      type: question.type,
+      choices: Object.keys(question.criteria as Record<string, unknown>),
+    }))).toEqual([
+      {
+        id: "focused-candidate-001",
+        type: "choice",
+        choices: ["primary_or_supporting", "unrelated", "movement_or_superseded", "ambiguous"],
+      },
+      {
+        id: "focused-candidate-002",
+        type: "choice",
+        choices: ["primary_or_supporting", "unrelated", "movement_or_superseded", "ambiguous"],
+      },
+    ]);
+    expect(systemOne.state.changeCandidates).toEqual({
+      "focused-candidate-001": {
+        path: "src/a.ts",
+        previousPath: "src/old-a.ts",
+        status: "renamed",
+        label: "Old",
+        evidence: "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };",
+      },
+      "focused-candidate-002": {
+        path: "src/a.ts",
+        previousPath: "src/old-a.ts",
+        status: "renamed",
+        label: "New",
+        evidence: "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };",
+      },
+    });
+  });
+
+  test("replies without inference when focused has no candidates and no other questions", async () => {
+    let inferred = 0;
+    const replies: string[] = [];
+    const caps = {
+      infer() { inferred++; return { type: "infer" }; },
+      reply(content: string) { replies.push(content); return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
+    await director.decide({
+      type: "message.received",
+      message: { content: JSON.stringify(rulesOutput([])) },
+    } as ReactorInboundEvent, {} as ReactorState, caps);
+    expect(inferred).toBe(0);
+    expect(replies.map((reply) => JSON.parse(reply))).toEqual([{ answers: [{}] }]);
   });
 });
 
