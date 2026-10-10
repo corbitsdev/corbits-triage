@@ -17,6 +17,7 @@ import {
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { readJson } from "../read-json.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
@@ -77,14 +78,6 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
       return mergePr(gh, { repo, number });
     case "close":
       return mirror(gh, { repo, number, labels: body.labels, owned: TRIAGE_LABELS, comment: body.comment, close: true });
-  }
-}
-
-async function readJson(req: Request): Promise<unknown> {
-  try {
-    return await req.json();
-  } catch {
-    return null;
   }
 }
 
