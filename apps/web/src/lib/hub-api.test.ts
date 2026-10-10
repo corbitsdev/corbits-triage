@@ -155,6 +155,13 @@ describe("projectQueue reply unwrap", () => {
                 state: "needs-decision",
                 confidence: 0.9,
                 humanGated: true,
+                checks: [{
+                  check: "focused",
+                  kind: "model",
+                  result: "fail",
+                  reason: "mixes unrelated changes",
+                  evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"],
+                }],
               }),
             }),
           },
@@ -181,7 +188,12 @@ describe("projectQueue reply unwrap", () => {
       ],
     };
     expect(projectQueue([single, listed], [], [], undefined, NOW)).toEqual([
-      expect.objectContaining({ key: "acme/widgets#8", confidence: 0.9, needsHuman: true }),
+      expect.objectContaining({
+        key: "acme/widgets#8",
+        confidence: 0.9,
+        needsHuman: true,
+        checks: [expect.objectContaining({ evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"] })],
+      }),
       expect.objectContaining({ key: "acme/gadgets#3", confidence: 0.4, state: "ready" }),
     ]);
   });
