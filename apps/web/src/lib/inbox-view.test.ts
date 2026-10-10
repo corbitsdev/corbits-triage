@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { groupInbox, hasDraftComment, inboxAction, inboxStatus, postedLabel, primaryAction, waitsOn } from "./inbox-view.ts";
+import { groupInbox, groupOpen, hasDraftComment, inboxAction, inboxStatus, listCounts, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -145,5 +145,43 @@ describe("postedLabel", () => {
     expect(postedLabel(item({ posted: true }), { kind: "changes" })).toBe("Requested changes");
     expect(postedLabel(item({ posted: true }), { kind: null })).toBe("Posted");
     expect(postedLabel(item({}), null)).toBeNull();
+  });
+});
+
+describe("groupOpen", () => {
+  const open: OpenItem[] = [
+    { item: item({ key: "web#1", repo: "acme/web", owner: "ada", priority: "P2" }), handled: null },
+    { item: item({ key: "api#2", repo: "acme/api", priority: "P1" }), handled: { kind: "approve" } },
+    { item: item({ key: "api#3", repo: "acme/api", owner: "ada", ci: "pending" }), handled: { kind: "approve" } },
+    { item: item({ key: "web#4", repo: "acme/web", state: "ready" }), handled: { kind: "changes" } },
+  ];
+
+  function keys(grouping: Parameters<typeof groupOpen>[1]) {
+    return groupOpen(open, grouping).map((pile) => [pile.label, pile.items.map((entry) => entry.item.key)]);
+  }
+
+  test("groups every open pull request by repository or owner, in inbox order inside each group", () => {
+    expect(keys("repo")).toEqual([["acme/api", ["api#2", "api#3"]], ["acme/web", ["web#1", "web#4"]]]);
+    expect(keys("owner")).toEqual([["ada", ["web#1", "api#3"]], ["Unassigned", ["api#2", "web#4"]]]);
+  });
+
+  test("groups by who it waits on, in the order the inbox asks", () => {
+    expect(keys("waits")).toEqual([
+      ["Waits on you", ["web#1"]],
+      ["Waits on author", ["web#4"]],
+      ["Waits on CI", ["api#3"]],
+      ["Waits on nobody", ["api#2"]],
+    ]);
+  });
+});
+
+describe("listCounts", () => {
+  test("Needs you counts its rows; All open counts every open pull request", () => {
+    expect(listCounts([
+      { item: item({}), handled: null },
+      { item: item({ state: "new", runId: null }), handled: null },
+      { item: item({ state: "ready" }), handled: { kind: "approve" } },
+    ])).toEqual({ "needs-you": 1, "all-open": 3 });
+    expect(listCounts([])).toEqual({ "needs-you": 0, "all-open": 0 });
   });
 });
