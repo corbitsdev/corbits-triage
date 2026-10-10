@@ -33,6 +33,9 @@ export function CheckIcon() {
 export function InboxIcon() {
   return <Icon><path d="M2 9.5 4 3h8l2 6.5V13H2zM2 9.5h3.5l1 1.5h3l1-1.5H14" /></Icon>;
 }
+export function ListIcon() {
+  return <Icon><path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.5M2.5 8h.5M2.5 12h.5" /></Icon>;
+}
 export function RepoIcon() {
   return <Icon><path d="M3.5 2.5h9v11h-9zM6 2.5v11" /></Icon>;
 }

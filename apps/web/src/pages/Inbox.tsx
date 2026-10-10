@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { Badge, EmptyState, type BadgeTone } from "@corbits/react-ui";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
@@ -38,27 +39,38 @@ import {
 } from "../lib/inbox-pane.ts";
 import {
   INBOX_GROUPINGS,
+  OPEN_GROUPINGS,
   UNASSIGNED,
+  WAITS_ON_LABEL,
   ageText,
   awaitingText,
   groupInbox,
+  groupOpen,
   hasDraftComment,
   inboxAction,
-  inboxHref,
   inboxStatus,
   initialsOf,
   isPostedToAuthor,
+  listHref,
+  listRoot,
   matchesQuery,
+  postedLabel,
   primaryAction,
   regroupInbox,
   rowActionLabel,
   rowWhy,
+  waitsOn,
   type InboxAction,
   type InboxGrouping,
   type InboxPile,
+  type ListView,
+  type OpenGrouping,
+  type OpenItem,
+  type OpenPile,
+  type WaitsOn,
 } from "../lib/inbox-view.ts";
 import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesFilters, type InboxFilters } from "../lib/inbox-filter.ts";
-import { useOpenPullsUnanswered, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
+import { leavesOpen, useOpenItems, useOpenPulls, useOpenPullsUnanswered, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageReadyRepos } from "../lib/repo-rows.ts";
@@ -69,7 +81,11 @@ import { CheckIcon, ChevronIcon, DownIcon, ExternalIcon, SearchIcon } from "../c
 
 const POSTED = "Posted";
 
-const GROUPING_LABEL: Record<InboxGrouping, string> = { action: "Action", repo: "Repo", owner: "Owner" };
+const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
+
+const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", "all-open": "All open" };
+
+const WAITS_ON_TONE: Record<WaitsOn, BadgeTone> = { maintainer: "accent", author: "info", ci: "neutral", nobody: "neutral" };
 
 function actionDot(action: InboxAction | null): string {
   if (action === "merge") return "dot ready";
@@ -85,12 +101,14 @@ function filesText(count: number): string {
   return `${count} ${count === 1 ? "file" : "files"}`;
 }
 
-function Row({ item, selected, search }: { item: PrItem; selected: boolean; search: string }) {
+type RowProps = { item: PrItem; selected: boolean; search: string };
+
+function Row({ item, selected, search }: RowProps) {
   const action = inboxAction(item);
   const primary = primaryAction(item, action);
   const why = rowWhy(item);
   return (
-    <Link className="row" role="option" aria-selected={selected} to={{ pathname: inboxHref(item), search }} data-inbox-row={item.key}>
+    <Link className="row" role="option" aria-selected={selected} to={{ pathname: listHref("needs-you", item), search }} data-inbox-row={item.key}>
       <span className={dotClass(item, action)} />
       <span className="tw"><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
@@ -100,11 +118,31 @@ function Row({ item, selected, search }: { item: PrItem; selected: boolean; sear
   );
 }
 
-function Pile({ pile, selectedKey, search }: { pile: InboxPile; selectedKey: string | undefined; search: string }) {
+function OpenRow({ entry, selected, search }: Omit<RowProps, "item"> & { entry: OpenItem }) {
+  const { item, handled } = entry;
+  const waits = waitsOn(item, handled);
+  const posted = postedLabel(item, handled);
+  return (
+    <Link className="row open-row" role="option" aria-selected={selected} to={{ pathname: listHref("all-open", item), search }} data-inbox-row={item.key}>
+      <span className={dotClass(item, inboxAction(item))} />
+      <span className="tw"><b>{titleText(item.title)}</b><span className="why">{rowWhy(item) ?? inboxStatus(item)}</span></span>
+      <span className="age">{ageText(item.waitingSince)}</span>
+      <Badge tone={WAITS_ON_TONE[waits]}>{WAITS_ON_LABEL[waits]}</Badge>
+      {posted === null ? null : <span className="act done">{posted}</span>}
+    </Link>
+  );
+}
+
+function PileRow({ view, entry, selected, search }: Omit<RowProps, "item"> & { view: ListView; entry: OpenItem }) {
+  if (view === "all-open") return <OpenRow entry={entry} selected={selected} search={search} />;
+  return <Row item={entry.item} selected={selected} search={search} />;
+}
+
+function Pile({ view, pile, selectedKey, search }: { view: ListView; pile: OpenPile; selectedKey: string | undefined; search: string }) {
   return (
     <>
       <div className="gh">{pile.label}<span className="n">{pile.items.length}</span></div>
-      {pile.items.map((item) => <Row key={item.key} item={item} selected={item.key === selectedKey} search={search} />)}
+      {pile.items.map((entry) => <PileRow key={entry.item.key} view={view} entry={entry} selected={entry.item.key === selectedKey} search={search} />)}
     </>
   );
 }
@@ -275,13 +313,15 @@ function ConfirmDuplicate({ item, onCancel, onConfirm }: { item: NumberedItem; o
 
 type PaneProps = {
   item: PrItem;
+  posted: string | null;
+  listTitle: string;
   restored: PaneDraft | null;
   sectionRef: RefObject<HTMLElement | null>;
   onHold: (item: NumberedItem, write: PaneWrite, draft: PaneDraft) => void;
   onBack: () => void;
 };
 
-function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
+function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }: PaneProps) {
   const { snapshot, triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
@@ -408,7 +448,7 @@ function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
 
   return (
     <section ref={sectionRef} className="panel pane" aria-label="Selected pull request" tabIndex={-1}>
-      <button type="button" className="btn btn-quiet btn-sm pane-back" onClick={onBack}>Back to inbox</button>
+      <button type="button" className="btn btn-quiet btn-sm pane-back" onClick={onBack}>Back to {listTitle}</button>
       <div className="bar">
         {primary === null ? null : (
           <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => run(primary.kind)}>
@@ -444,7 +484,7 @@ function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
             <p className="vh">{verdictHeadline(item)}</p>
             <div className="vm">
               <span><span className="st"><span className={dotClass(item, inboxAction(item))} />{inboxStatus(item)}</span></span>
-              {isPostedToAuthor(item) ? <span>{POSTED}</span> : null}
+              {posted === null ? null : <span>{posted}</span>}
               {item.priority === null ? null : <span><b>{item.priority}</b></span>}
               <Certainty confidence={item.confidence} floor={floor} />
             </div>
@@ -482,9 +522,21 @@ function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
   );
 }
 
-type EmptyListProps = { loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
+function repositoriesText(count: number): string {
+  return `${count} ${count === 1 ? "repository" : "repositories"}`;
+}
 
-function EmptyList({ loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
+/** None open is only true when GitHub answered for every repository; a failed read says nothing about its pull requests. */
+function NoneOpen() {
+  const openPulls = useOpenPulls();
+  const repos = openPulls.data?.repos;
+  if (repos === undefined || openPulls.isError || repos.some((repo) => repo.error !== undefined)) return null;
+  return <EmptyState title="No open pull requests" description={`${repositoriesText(repos.length)} checked.`} />;
+}
+
+type EmptyListProps = { view: ListView; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
+
+function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
   if (noRepos) {
@@ -493,6 +545,7 @@ function EmptyList({ loading, denied, noRepos, filtered, onClear }: EmptyListPro
   if (filtered) {
     return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><button type="button" className="btn btn-sm" onClick={onClear}>Clear filters</button></div>;
   }
+  if (view === "all-open") return <NoneOpen />;
   return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
 }
 
@@ -519,7 +572,12 @@ function Toasts({ notices, onUndo }: { notices: Notices; onUndo: () => void }) {
   );
 }
 
-export default function Inbox() {
+/** Needs you rows are never handled; their piles keep the action order inside repository and owner groups. */
+function needsYouPiles(piles: InboxPile[]): OpenPile[] {
+  return piles.map((pile) => ({ key: pile.key, label: pile.label, items: pile.items.map((item) => ({ item, handled: null })) }));
+}
+
+export default function Inbox({ view }: { view: ListView }) {
   const params = useParams();
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -528,24 +586,35 @@ export default function Inbox() {
   const held = useHeldInbox();
   const focusOnArrival = useRef<string | null | undefined>(undefined);
   const sectionRef = useRef<HTMLElement>(null);
-  const items = useQueueItems();
+  const open = useOpenItems();
   const loading = useQueueLoading();
   const openPullsUnanswered = useOpenPullsUnanswered();
   const { denied } = useRunLogs();
   const [query, setQuery] = useState("");
-  const [grouping, setGrouping] = useState<InboxGrouping>("action");
+  const [needsYouGrouping, setNeedsYouGrouping] = useState<InboxGrouping>("action");
+  const [allOpenGrouping, setAllOpenGrouping] = useState<OpenGrouping>("repo");
   const searchRef = useRef<HTMLInputElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? []), [snapshot]);
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
-  const searched = useMemo(() => items.filter((item) => matchesQuery(item, query)), [items, query]);
-  const rows = useMemo(() => searched.filter((item) => inboxAction(item) !== null), [searched]);
+  const entries = useMemo(() => (view === "needs-you" ? open.filter((entry) => entry.handled === null) : open), [open, view]);
+  const items = useMemo(() => entries.map((entry) => entry.item), [entries]);
+  const searched = useMemo(() => entries.filter((entry) => matchesQuery(entry.item, query)), [entries, query]);
+  const rows = useMemo(() => searched.map((entry) => entry.item).filter((item) => view === "all-open" || inboxAction(item) !== null), [searched, view]);
   const now = useMemo(() => Date.now(), [searched, filters]);
-  const view = useMemo(() => groupInbox(searched.filter((item) => matchesFilters(item, filters, now)), ready), [searched, filters, now, ready]);
-  const piles = useMemo(() => regroupInbox(view, grouping), [view, grouping]);
+  const shown = useMemo(() => searched.filter((entry) => matchesFilters(entry.item, filters, now)), [searched, filters, now]);
+  const needsYou = useMemo(() => groupInbox(shown.map((entry) => entry.item), ready), [shown, ready]);
+  const piles = useMemo(function pilesOfView() {
+    return view === "all-open" ? groupOpen(shown, allOpenGrouping) : needsYouPiles(regroupInbox(needsYou, needsYouGrouping));
+  }, [view, shown, allOpenGrouping, needsYou, needsYouGrouping]);
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
-  const selected = params.number === undefined ? flat[0] : findPrItem(items, params);
+  const selected = params.number === undefined ? flat[0]?.item : findPrItem(items, params);
+  const selectedMark = entries.find((entry) => entry.item.key === selected?.key)?.handled ?? null;
+  // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
+  const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
+  const groupings: Array<InboxGrouping | OpenGrouping> = view === "all-open" ? OPEN_GROUPINGS : INBOX_GROUPINGS;
+  const grouping = view === "all-open" ? allOpenGrouping : needsYouGrouping;
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
 
   function setFilters(next: InboxFilters) {
@@ -555,6 +624,16 @@ export default function Inbox() {
   function clearFilters() {
     setQuery("");
     setFilters(NO_FILTERS);
+  }
+
+  function groupBy(index: number) {
+    if (view === "all-open") {
+      const mode = OPEN_GROUPINGS[index];
+      if (mode !== undefined) setAllOpenGrouping(mode);
+      return;
+    }
+    const mode = INBOX_GROUPINGS[index];
+    if (mode !== undefined) setNeedsYouGrouping(mode);
   }
 
   useEffect(function shortcuts() {
@@ -573,20 +652,19 @@ export default function Inbox() {
         if (!event.repeat && held.undo()) event.preventDefault();
         return;
       }
-      const digit = INBOX_GROUPINGS[Number(event.key) - 1];
-      if (digit !== undefined && /^[1-3]$/.test(event.key)) {
-        setGrouping(digit);
+      if (/^[1-3]$/.test(event.key)) {
+        groupBy(Number(event.key) - 1);
         return;
       }
       if (event.key !== "j" && event.key !== "k" && event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
       event.preventDefault();
-      const index = flat.findIndex((item) => item.key === selected?.key);
+      const index = flat.findIndex((entry) => entry.item.key === selected?.key);
       const next = flat[Math.min(flat.length - 1, Math.max(0, index + (event.key === "j" || event.key === "ArrowDown" ? 1 : -1)))];
-      if (next && next.key !== selected?.key) navigate({ pathname: inboxHref(next), search });
+      if (next && next.item.key !== selected?.key) navigate({ pathname: listHref(view, next.item), search });
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [flat, held.undo, navigate, selected, search]);
+  });
 
   useEffect(function sendHeldWhenLeaving() {
     return held.enter();
@@ -602,14 +680,17 @@ export default function Inbox() {
   /** Focus follows the selection once it lands, so the keyboard stays in the pane after an action or Undo. */
   function moveTo(item: PrItem | undefined) {
     focusOnArrival.current = item === undefined ? null : item.key;
-    navigate({ pathname: item === undefined ? "/inbox" : inboxHref(item), search });
+    navigate({ pathname: item === undefined ? listRoot(view) : listHref(view, item), search });
   }
 
+  /** Needs you moves on to the next row; All open keeps the pull request selected unless it left the list. */
   function holdAction(item: NumberedItem, write: PaneWrite, draft: PaneDraft) {
-    if (write.settles !== null) {
-      const index = flat.findIndex((row) => row.key === item.key);
+    if (write.settles !== null && (view === "needs-you" || leavesOpen(write.settles))) {
+      const index = flat.findIndex((row) => row.item.key === item.key);
       const next = flat[index + 1] ?? flat[index - 1];
-      moveTo(next);
+      moveTo(next?.item);
+    } else if (write.settles !== null) {
+      moveTo(item);
     }
     held.hold(item, write, draft, function backToItem() {
       moveTo(item);
@@ -632,7 +713,7 @@ export default function Inbox() {
     <div className={`inbox${selected ? " has-selection" : ""}`} ref={paneRef} tabIndex={-1}>
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
-          <div className="lh-top"><h1>Inbox</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view.awaiting > 0 ? <span className="awaiting">{awaitingText(view.awaiting)}</span> : null}</div>
+          <div className="lh-top"><h1>{LIST_TITLE[view]}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}</div>
           <div className="tools">
             <label className="search">
               <SearchIcon />
@@ -641,8 +722,8 @@ export default function Inbox() {
             </label>
             <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
             <div className="seg" role="group" aria-label="Group by">
-              {INBOX_GROUPINGS.map((mode) => (
-                <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => setGrouping(mode)}>{GROUPING_LABEL[mode]}</button>
+              {groupings.map((mode, index) => (
+                <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
               ))}
             </div>
           </div>
@@ -650,10 +731,10 @@ export default function Inbox() {
         </div>
         <div className="scroll" id="main">
           {flat.length === 0 ? (
-            <EmptyList loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
+            <EmptyList view={view} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
           ) : (
             <div className="groups">
-              {piles.map((pile) => <Pile key={pile.key} pile={pile} selectedKey={selected?.key} search={search} />)}
+              {piles.map((pile) => <Pile key={pile.key} view={view} pile={pile} selectedKey={selected?.key} search={search} />)}
             </div>
           )}
         </div>
@@ -661,12 +742,14 @@ export default function Inbox() {
       </section>
       {selected ? (
         <Pane
-          key={selected.key}
+          key={paneKey}
           item={selected}
+          posted={view === "all-open" ? postedLabel(selected, selectedMark) : isPostedToAuthor(selected) ? POSTED : null}
+          listTitle={LIST_TITLE[view]}
           restored={paneDraft}
           sectionRef={sectionRef}
           onHold={holdAction}
-          onBack={() => navigate({ pathname: "/inbox", search })}
+          onBack={() => navigate({ pathname: listRoot(view), search })}
         />
       ) : (
         <section className="panel pane" aria-label="Selected pull request">

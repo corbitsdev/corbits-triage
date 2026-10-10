@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useIsRestoring, useQuery, useQueryClient, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { projectQueue, type PrItem } from "./hub-api.ts";
-import type { HandledKind, HandledMark } from "./inbox-view.ts";
+import type { HandledKind, HandledMark, OpenItem } from "./inbox-view.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
 import { usePortal } from "./portal.tsx";
 import { useRunLogs } from "./run-logs.ts";
@@ -70,6 +70,11 @@ const HELD_PULLS_QUERY_KEY = "held-pulls";
 
 /** Merged and closed pull requests leave every list, not just the inbox. */
 const LEAVING: ReadonlySet<HandledKind | null> = new Set(["merge", "close"]);
+
+/** All open keeps a pull request selected after an action, unless the action takes it out of the list. */
+export function leavesOpen(kind: HandledKind): boolean {
+  return LEAVING.has(kind);
+}
 
 function handledKey(tenantId: string | undefined) {
   return [HANDLED_PULLS_QUERY_KEY, tenantId];
@@ -223,8 +228,6 @@ export function useQueueLoadingPulse(): boolean {
   const openPullsUnanswered = useOpenPullsUnanswered();
   return pending || approvalsLoading || openPullsUnanswered;
 }
-
-export type OpenItem = { item: PrItem; handled: HandledMark | null };
 
 /** Open pull requests with their handled mark, held or sent; merged and closed ones are gone. */
 export function openItems(items: PrItem[], handled: Handled, held: Handled): OpenItem[] {
