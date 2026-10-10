@@ -1,9 +1,11 @@
+import { authorAssociation, tierOf, type RepoPolicy } from "@corbits/triage-contracts";
 import type { PrFacts } from "./checks.js";
 
 export interface PrData {
   title?: string;
   body?: string | null;
   author?: string;
+  authorAssociation?: string | null;
   sha?: string;
   branch: string;
   state?: string;
@@ -58,13 +60,16 @@ export function buildFacts(
   checks: CheckRun[],
   reviews: Review[],
   openPrs: PrFacts["openPrs"],
+  policy: RepoPolicy,
 ): PrFacts {
   const latest = latestDecisive(reviews);
+  const author = pr.author ?? "";
   return {
     repo,
     number,
     title: pr.title ?? "",
-    author: pr.author ?? "",
+    author,
+    tier: tierOf(authorAssociation(pr.authorAssociation), author, policy.approvedAuthors),
     headSha: pr.sha ?? "",
     state: pr.state === "closed" ? "closed" : "open",
     draft: pr.draft === true,
