@@ -1,6 +1,7 @@
 import { errorText } from "./error-text.ts";
 import type { Outcome } from "./held-actions.ts";
 import type { GithubPullDetail, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
+import { offersClose, type PendingDo } from "./pending-dos.ts";
 import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type PrimaryAction } from "./inbox-view.ts";
 
 const UNTITLED = "Untitled pull request";
@@ -47,12 +48,18 @@ export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy
 /** Everything the pane can run: the GitHub writes, plus asking the hub to triage the pull request again. */
 export type PaneKind = PrimaryAction;
 
-function actionBlocker(kind: PaneKind, gate: PaneGate): ActionBlocker | null {
+/** What stops any write to the pull request; merge has its own checks on top. */
+export function writeBlocker(gate: PaneGate): ActionBlocker | null {
   if (gate.item.number === null) return "no-number";
   if (gate.item.running) return "running";
   if (gate.readOnly) return "read-only";
   if (gate.busy) return "busy";
-  if (kind !== "merge") return null;
+  return null;
+}
+
+function actionBlocker(kind: PaneKind, gate: PaneGate): ActionBlocker | null {
+  const blocker = writeBlocker(gate);
+  if (blocker !== null || kind !== "merge") return blocker;
   if (gate.facts.mergeable === null) return "mergeability-unknown";
   if (!gate.facts.mergeable) return "not-mergeable";
   if (gate.facts.draft === true) return "draft";
@@ -73,11 +80,11 @@ function paneAction<K extends PaneKind>(kind: K, gate: PaneGate): PaneAction<K> 
   return { kind, blocker: actionBlocker(kind, gate) };
 }
 
-/** A flagged duplicate closes as one, even when that is already the suggested action; anything else may close plainly, when writable. */
+/** A flagged duplicate closes as one, even when that is already the suggested action; anything else may close plainly, when writable and the pack offers no close of its own. */
 function closeEntry(gate: PaneGate): MenuEntry | null {
   const close = paneAction("close", gate);
   if (gate.item.canClose) return { ...close, label: primaryLabel("close") };
-  if (close.blocker !== null) return null;
+  if (close.blocker !== null || offersClose(gate.item)) return null;
   return { ...close, label: PLAIN_CLOSE_LABEL };
 }
 
@@ -162,8 +169,12 @@ export function needsConfirm(kind: PaneKind, item: PrItem): boolean {
 
 export type WriteKind = Exclude<PaneKind, "triage">;
 
-/** A GitHub write as the inbox holds it: what the toast says while it waits for Undo, and how it is sent afterwards. */
-export type PaneWrite = { pending: string; send: (io: PaneIo) => Promise<Outcome> };
+/**
+ * A GitHub write as the inbox holds it: what the toast says while it waits for Undo, and how it is sent afterwards.
+ * `stay` keeps the pull request in the inbox and selected, for a write that does not settle it; `restore` puts back
+ * what the pane hid when it held the write, on Undo or a failed send.
+ */
+export type PaneWrite = { pending: string; send: (io: PaneIo) => Promise<Outcome>; stay?: boolean; restore?: () => void };
 
 function requireBody(body: string, what: string): string {
   if (!body.trim()) throw new Error(`The ${what} must not be empty.`);
@@ -258,6 +269,19 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
         },
       };
   }
+}
+
+/** Close never comes here: it settles the pull request through the pane's own close. */
+export function doWrite(item: NumberedItem, pending: PendingDo, restore: () => void): PaneWrite {
+  return {
+    stay: true,
+    restore,
+    pending: `${pending.label} on #${item.number}…`,
+    async send({ write }) {
+      await write(pending.request);
+      return sent(`${pending.label}: done on #${item.number}.`);
+    },
+  };
 }
 
 export function triageStartedText(number: number): string {
