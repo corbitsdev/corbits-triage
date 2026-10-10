@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Action, ActionKind, CatalogId, CheckPack, Do, LabelsTarget, RepoRole } from "@corbits/triage-contracts";
+import { CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type LabelsTarget, type RepoRole } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { errorText } from "./extract.js";
 
@@ -52,23 +52,8 @@ export interface ActionInput {
   roles: Record<string, RepoRole>;
 }
 
-const CHECK_NAMES: Record<CatalogId, string> = {
-  draft: "Draft",
-  size: "Size",
-  duplicate: "Duplicate",
-  focused: "Focused change",
-  docs: "Docs",
-  issue: "Linked issue",
-  reviewers: "Reviewers",
-  conflicts: "Merge conflicts",
-  drift: "Base drift",
-  ci: "CI",
-  tests: "Tests",
-  paths: "Forbidden paths",
-};
-
 function checkName(id: string, pack: CheckPack): string {
-  return CHECK_NAMES[id as CatalogId] ?? pack.custom.find((c) => c.id === id)?.name ?? id;
+  return CHECK_CATALOG[id as CatalogId]?.name ?? pack.custom.find((c) => c.id === id)?.name ?? id;
 }
 
 /** GitHub logins, org names, team slugs and label names are case-insensitive. */
