@@ -1,4 +1,4 @@
-import type { QualityCheckId } from "@corbits/triage-contracts";
+import type { ModelCustomCheck, QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 
 export interface QualityQuestion {
@@ -36,14 +36,22 @@ const MAX_BODY = 4000;
 const MAX_PATHS = 200;
 const MAX_COMMITS = 50;
 
+/** The judge answers yes or no, so every shape is asked as a pass question. */
+function customInstructions(row: ModelCustomCheck): string {
+  switch (row.shape) {
+    case "is-true":
+      return `${row.name}: ${row.claim} Answer true when the pull request meets this.`;
+    case "score":
+      return `${row.name}: On a scale of 0 to 10, does the pull request score at least ${row.min} for ${row.subject}? Answer true when it does.`;
+    case "choose":
+      return `${row.name}: Which of ${row.options.join(", ")} describes the pull request? Answer false when it is ${row.failOn.join(" or ")}, true otherwise.`;
+  }
+}
+
 export function qualityQuestions(sources: NonNullable<DeterministicResult["sources"]>): QualityQuestion[] {
   return [
     ...sources.quality.map(({ id }) => ({ id, type: "boolean" as const, instructions: INSTRUCTIONS[id] })),
-    ...sources.custom.map(({ id, name, instruction }) => ({
-      id,
-      type: "boolean" as const,
-      instructions: `${name}: ${instruction} Answer true when the pull request meets this.`,
-    })),
+    ...sources.custom.map((row) => ({ id: row.id, type: "boolean" as const, instructions: customInstructions(row) })),
   ];
 }
 

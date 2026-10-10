@@ -101,7 +101,9 @@ describe("deriveState check pack", () => {
       id: "custom-1",
       name: "Bomb",
       group: "pull-request",
-      instruction: "process.exit(1)",
+      kind: "model",
+      shape: "is-true",
+      claim: "process.exit(1)",
     }];
     const sized: PrFacts = { ...noisy, changedFiles: 80, additions: 10, deletions: 10, paths: ["src/a.ts"], changesRequested: ["maintainer"] };
     const result = deriveState(sized, allOff, pack);
@@ -126,7 +128,7 @@ describe("deriveState check pack", () => {
       evidence: ["80 files (max 20)"],
     });
     expect(result.checks.find((check) => check.check === "paths")?.result).toBe("pass");
-    expect(result.sources?.custom).toEqual([{ id: "custom-1", name: "Bomb", group: "pull-request", instruction: "process.exit(1)" }]);
+    expect(result.sources?.custom).toEqual(pack.custom);
     expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused", "tests"]);
   });
 });

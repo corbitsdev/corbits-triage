@@ -42,9 +42,9 @@ export function catalogChecksOn(pack: DraftPack): number | null {
   return built ? CATALOG_IDS.filter((id) => catalogCheckEnabled(built, id)).length : null;
 }
 
-/** Every own check needs its instruction; the pack drops one without it. */
+/** Every own is-true check needs its instruction; the pack drops one without it. */
 export function hasBlankCustomCheck(pack: DraftPack): boolean {
-  return pack.custom.some((row) => !(row.instruction ?? "").trim());
+  return pack.custom.some((row) => !row.typed && !(row.instruction ?? "").trim());
 }
 
 /** Whether the draft keeps at least one check, which triage needs before it can be switched on. */
