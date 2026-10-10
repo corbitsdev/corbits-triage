@@ -1,17 +1,23 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { useIsRestoring, useQuery, useQueryClient, type Query } from "@tanstack/react-query";
+import { useIsRestoring, useQuery, useQueryClient, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { projectQueue, type PrItem } from "./hub-api.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
 import { usePortal } from "./portal.tsx";
 import { useRunLogs } from "./run-logs.ts";
 import { useApprovals, useApprovalsFirstLoad, useRuns } from "./tenant-entities.ts";
 
+export const OPEN_PULLS_QUERY_KEY = "open-pulls";
+
+export function isOpenPullsQuery(query: Query): boolean {
+  return query.queryKey[0] === OPEN_PULLS_QUERY_KEY;
+}
+
 /** Reads the open pull requests from GitHub, so PRs without a verdict still show up. */
 export function useOpenPulls() {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   return useQuery({
-    queryKey: ["open-pulls", tenantId],
+    queryKey: [OPEN_PULLS_QUERY_KEY, tenantId],
     queryFn: async function fetchOpenPulls() {
       return loadOpenPulls(tenantId ?? "");
     },
@@ -91,8 +97,9 @@ function repoOf(key: string): string {
 }
 
 /**
- * Forgets pull requests that closed or got a newer verdict, once the cache is restored and every source has loaded.
- * Only repositories GitHub just answered for are judged; one whose read failed says nothing about its pull requests.
+ * Forgets pull requests that closed or got a newer verdict, once every source has loaded and GitHub answered in this session;
+ * a list restored from the cache may be stale. Only repositories GitHub just answered for are judged; one whose read failed
+ * says nothing about its pull requests.
  */
 function usePruneHandled(items: PrItem[], handled: Handled) {
   const { snapshot } = usePortal();
@@ -102,12 +109,12 @@ function usePruneHandled(items: PrItem[], handled: Handled) {
   const openPulls = useOpenPulls();
   const tenantId = snapshot?.workspace.tenantId;
   useEffect(function pruneHandled() {
-    if (restoring || loading || openPulls.isError || openPulls.data === undefined) return;
+    if (restoring || loading || !openPulls.isFetchedAfterMount || openPulls.isError || openPulls.data === undefined) return;
     const read = new Set(openPulls.data.repos.filter((repo) => repo.error === undefined).map((repo) => repo.repo));
     const open = new Map(items.filter((item) => !item.closed).map((item) => [item.key, item.runId]));
     const live = Object.entries(handled).filter(([key, runId]) => !read.has(repoOf(key)) || (open.has(key) && open.get(key) === runId));
     if (live.length < Object.keys(handled).length) queryClient.setQueryData<Handled>(handledKey(tenantId), Object.fromEntries(live));
-  }, [handled, items, loading, openPulls.data, openPulls.isError, queryClient, restoring, tenantId]);
+  }, [handled, items, loading, openPulls.data, openPulls.isError, openPulls.isFetchedAfterMount, queryClient, restoring, tenantId]);
 }
 
 function isHandled(handled: Handled, item: PrItem): boolean {
@@ -155,11 +162,15 @@ export function usePullRequestItems(): PrItem[] {
 
 /**
  * Until GitHub first answers, every pull request with a verdict looks open, closed ones included.
- * A failed read counts as an answer, so the inbox falls back to the verdicts it has.
+ * A list restored from the cache counts as an answer and is refetched; a failed read counts too, so the inbox falls back to the verdicts it has.
  */
+export function isOpenPullsAnswered(openPulls: Pick<UseQueryResult, "data" | "isError">): boolean {
+  return openPulls.data !== undefined || openPulls.isError;
+}
+
 export function useOpenPullsUnanswered(): boolean {
   const openPulls = useOpenPulls();
-  return openPulls.isEnabled && !openPulls.isFetched;
+  return openPulls.isEnabled && !isOpenPullsAnswered(openPulls);
 }
 
 /** True until every source the queue is projected from has loaded; the lists are not meaningful before that. */
