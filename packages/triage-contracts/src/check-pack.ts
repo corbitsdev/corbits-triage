@@ -169,7 +169,15 @@ export type CheckPack = {
   checks: Partial<Record<CatalogId, CatalogCheck>>;
   custom: CustomCheck[];
   actions: Action[];
+  /** The lowest model score at which a pull request whose checks all pass is ready to merge, from 0 to 1. */
+  mergeThreshold?: number;
 };
+
+export const DEFAULT_MERGE_THRESHOLD = 0.7;
+
+export function packMergeThreshold(pack: CheckPack | undefined): number {
+  return pack?.mergeThreshold ?? DEFAULT_MERGE_THRESHOLD;
+}
 
 const Text = type(/\S/);
 const Texts = Text.array().atLeastLength(1);
@@ -242,6 +250,7 @@ export const checkPackSchema = type({
   "checks?": CatalogChecksSchema,
   "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
   "actions?": ActionSchema.array(),
+  "mergeThreshold?": "0 <= number <= 1",
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
@@ -311,8 +320,7 @@ export function recommendedPack(repo: string): CheckPack {
 }
 
 export function applyRecommended(pack: CheckPack): CheckPack {
-  const rec = recommendedPack(pack.repo);
-  return { ...rec, custom: pack.custom, actions: pack.actions };
+  return { ...pack, checks: recommendedPack(pack.repo).checks };
 }
 
 export function catalogCheckEnabled(pack: CheckPack, id: CatalogId): boolean {
@@ -628,6 +636,13 @@ function parseActions(raw: unknown, customIds: ReadonlySet<string>): Action[] {
   return actions;
 }
 
+function parseMergeThreshold(raw: unknown): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = finiteNumber(raw);
+  if (value === undefined || value < 0 || value > 1) throw new Error("mergeThreshold must be a number from 0 to 1.");
+  return value;
+}
+
 function parseJson(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
@@ -656,6 +671,7 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   }
   const custom = parseCustom(body.custom);
   const actions = parseActions(body.actions, new Set(custom.map((row) => row.id)));
+  const mergeThreshold = parseMergeThreshold(body.mergeThreshold);
   return {
     kind: CHECK_PACK_KIND,
     schemaVersion: CHECK_PACK_SCHEMA_VERSION,
@@ -663,6 +679,7 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
     checks,
     custom,
     actions,
+    ...(mergeThreshold !== undefined && { mergeThreshold }),
   };
 }
 

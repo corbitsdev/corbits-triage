@@ -489,7 +489,7 @@ test("a pack preview evaluates an open pull request without writing anything", a
     ]);
     expect(sized).toMatchObject({ id: "judged-and-sized", status: "decided", branch: "no", dos: [{ target: { body: "no" } }] });
     const unsized = await previewed({ repo: REPO, number: 8, pack: { ...JUDGED_PACK, checks: {} } });
-    expect(unsized).toMatchObject({ judge: "not-run", verdict: { reason: "needs the judge", humanGated: true, degraded: null } });
+    expect(unsized).toMatchObject({ judge: "not-run", verdict: { state: "awaiting-review", reason: "needs the judge", humanGated: false, degraded: null } });
 
     expect(github.repoRequests.filter((request) => !request.startsWith("GET "))).toEqual([]);
     expect(await findArtifactByTitle(db, tenantId, triageStateName(REPO))).toBeNull();
