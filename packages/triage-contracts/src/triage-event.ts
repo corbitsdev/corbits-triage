@@ -1,4 +1,4 @@
-import type { TriageEvent } from "@corbits/triage-contracts";
+import type { TriageEvent } from "./check-pack.js";
 
 export interface MailEvent {
   event?: unknown;
@@ -13,6 +13,7 @@ const PULL_REQUEST: Record<string, TriageEvent> = {
   reopened: "opened",
   synchronize: "updated",
   edited: "updated",
+  review_requested: "updated",
   ready_for_review: "ready",
   converted_to_draft: "drafted",
 };
@@ -39,7 +40,7 @@ export function triageEventOf({ event, action, review, merged }: MailEvent): Tri
       if (action !== "submitted") return null;
       return REVIEW[reviewState(review)] ?? "reviewed";
     case "check_run":
-      return "checks";
+      return action === "completed" ? "checks" : null;
     default:
       return null;
   }

@@ -169,7 +169,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     const policy = repoPolicy(body.roles === undefined ? record : { ...record, roles: body.roles });
     const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId);
 
-    const item = await readItem(gh, number, { repo, policy, pack, event });
+    const item = await readItem(gh, number, { repo, policy, pack, events: [event] });
     if (item instanceof Response) return item;
 
     const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, req.signal);
