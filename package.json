@@ -37,6 +37,7 @@
   "devDependencies": {
     "@types/bun": "1.3.9",
     "oxlint": "^1.87.0",
+    "tar": "catalog:",
     "typescript": "^7.0.2"
   },
   "dependencies": {
