@@ -12,7 +12,6 @@ import { rules, type RulesItem } from "../../../../packages/triage-workflows/src
 import { checkName } from "../../../../packages/triage-workflows/src/logic/actions.js";
 import type { PrFileFacts } from "../../../../packages/triage-workflows/src/logic/checks.js";
 import { assembleItem, fileFacts, MAX_PATCH_CHARS, type ItemContext } from "../../../../packages/triage-workflows/src/logic/facts.js";
-import { asksJudge } from "../../../../packages/triage-workflows/src/logic/item.js";
 import { previewActions } from "../../../../packages/triage-workflows/src/logic/preview.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "../../../../packages/triage-workflows/src/logic/render.js";
 import type { CheckPackRead } from "./check-pack-store.js";
@@ -175,7 +174,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
 
     const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, req.signal);
     const ruledItem = ruled.items[0]!;
-    const judged = asksJudge(ruledItem) ? { ...ruledItem, judgeSkipped: true as const } : ruledItem;
+    const judged = ruled.needsJudgment ? { ...ruledItem, judgeSkipped: true as const } : ruledItem;
     const verdict = await evaluate({ items: [judged], batch: false }, NO_EFFECTS, req.signal) as Verdict;
     const { state, priority, labels, owner, humanGated, confidence, degraded, reason, nextAction, actor, feedback } = verdict;
     const checks = verdict.checks.map((c) => ({

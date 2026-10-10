@@ -131,44 +131,45 @@ describe("verdicts the decision model was never asked about", () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { focused: { enabled: true } } };
     const ctx = {} as never;
     const signal = new AbortController().signal;
-    function facts(patch: string) {
+    function facts(files: Array<{ path: string; patch?: string }>) {
       return {
         repo: REPO, number: 1, title: "Change", author: "octocat", tier: "external", headSha: "sha1", state: "open", draft: false,
         mergeable: true, baseBehindBy: 0, checks: "success", requestedReviewers: 0, approvals: 0, openPrs: [],
-        files: [{ path: "src/config.ts", patch }],
+        files,
+        paths: files.map((file) => file.path),
       };
     }
-    /** Runs rules, the judge when the gate would, and evaluate, as the workflow does. */
-    async function triage(patch: string, event?: ReactorInboundEvent) {
-      const ruled = await rules({ items: [{ facts: facts(patch), pack }], batch: true }, ctx, signal);
+    /** Runs rules, the judge once per chunk when the gate would, and evaluate, as the workflow does. */
+    async function triage(files: Array<{ path: string; patch?: string }>, event?: ReactorInboundEvent) {
+      const ruled = await rules({ items: [{ facts: facts(files), pack }], batch: true }, ctx, signal);
       if (!ruled.needsJudgment) return { ruled, judged: undefined, reply: JSON.stringify(await evaluate(ruled, ctx, signal)) };
-      let judged = "";
-      const judgeCaps = {
-        infer() { return { type: "infer" }; },
-        reply(content: string) { judged = content; return { type: "reply", content }; },
-      } as unknown as ReactorCapabilities;
-      const judge = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
-      await judge.decide({ type: "message.received", message: { content: JSON.stringify(ruled) } } as ReactorInboundEvent, {} as ReactorState, judgeCaps);
-      if (!judged && event) await judge.decide(event, {} as ReactorState, judgeCaps);
-      return { ruled, judged: JSON.parse(judged) as { answers: Array<Record<string, unknown>> }, reply: JSON.stringify(await evaluate({ ...ruled, reply: judged }, ctx, signal)) };
+      const output: Array<{ reply: string }> = [];
+      for (const chunk of ruled.chunks) {
+        let reply = "";
+        const judgeCaps = {
+          infer() { return { type: "infer" }; },
+          reply(content: string) { reply = content; return { type: "reply", content }; },
+        } as unknown as ReactorCapabilities;
+        const judge = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
+        await judge.decide({ type: "message.received", message: { content: JSON.stringify(chunk) } } as ReactorInboundEvent, {} as ReactorState, judgeCaps);
+        if (event) await judge.decide(event, {} as ReactorState, judgeCaps);
+        output.push({ reply });
+      }
+      return { ruled, judged: output.map(({ reply }) => JSON.parse(reply) as Record<string, unknown>), reply: JSON.stringify(await evaluate({ ...ruled, judge: { output } }, ctx, signal)) };
     }
 
-    const compactPatch = '@@ -0,0 +1 @@\n+const value = { name: "Candidate" };';
-    const oversizedPatch = Array.from({ length: 200 }, (_, index) => [
-      `@@ -${index + 1} +${index + 1} @@`,
-      `+// ${"evidence".repeat(27)}`,
-      `+const value${index} = { name: "Candidate ${index}" };`,
-    ].join("\n")).join("\n");
-    const local = await triage(oversizedPatch);
-    const provider = await triage(compactPatch, { type: "inference.error", error: { message: QUALITY_EVALUATION_LIMIT_ERROR } } as ReactorInboundEvent);
+    const compact = [{ path: "src/config.ts", patch: '@@ -0,0 +1 @@\n+const value = { name: "Candidate" };' }];
+    const oversized = Array.from({ length: 100 }, (_, index) => ({ path: `src/${"nested/".repeat(60)}${index}.ts` }));
+    const local = await triage(oversized);
+    const provider = await triage(compact, { type: "inference.error", error: { message: QUALITY_EVALUATION_LIMIT_ERROR } } as ReactorInboundEvent);
     const ambiguousDecision = JSON.stringify({
       id: "focused-candidate-001", type: "choice", choice: "ambiguous", confidence: 0.9,
       probabilities: { primary_or_supporting: 0.03, unrelated: 0.03, movement_or_superseded: 0.04, ambiguous: 0.9 },
     });
-    const ambiguousResult = await triage(compactPatch, { type: "inference.done", turn: { content: [{ type: "text", text: ambiguousDecision }] } } as ReactorInboundEvent);
+    const ambiguousResult = await triage(compact, { type: "inference.done", turn: { content: [{ type: "text", text: ambiguousDecision }] } } as ReactorInboundEvent);
     expect(local.judged).toBeUndefined();
     expect(local.ruled.items[0]).toMatchObject({ judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true });
-    expect(provider.judged?.answers).toEqual([{ judgeError: QUALITY_EVALUATION_LIMIT_ERROR }]);
+    expect(provider.judged).toEqual([{ judgeError: QUALITY_EVALUATION_LIMIT_ERROR }]);
 
     const deterministic = (await observe([1], local.reply, "run_limit", at(0))).get("1@sha1")!;
     const ambiguous = (await observe([1], ambiguousResult.reply, "run_ambiguous", at(0))).get("1@sha1")!;

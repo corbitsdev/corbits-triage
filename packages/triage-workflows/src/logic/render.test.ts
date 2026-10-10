@@ -138,7 +138,8 @@ describe("focused candidate rendering", () => {
     const candidates = [candidate("src/a.ts", "A")];
     const limited = renderVerdict({ author: "octocat", det: FOCUSED_DET, candidates, judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true });
     expect(limited).toMatchObject({ mirror: false, humanGated: true, degraded: null });
-    expect(limited.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "decision model unavailable", evidence: [] }]);
+    expect(limited.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: QUALITY_EVALUATION_LIMIT_ERROR, evidence: [] }]);
+    expect(limited.reason).toBe(QUALITY_EVALUATION_LIMIT_ERROR);
     const outage = renderVerdict({ author: "octocat", det: FOCUSED_DET, candidates, judgeError: "upstream 503" });
     expect(outage).toMatchObject({ mirror: false, humanGated: true, degraded: "inference-outage" });
   });
