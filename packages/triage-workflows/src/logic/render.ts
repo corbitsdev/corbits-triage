@@ -1,4 +1,4 @@
-import { render, type Rendered, type TriageState } from "@corbits/rule-packs";
+import { render, TRIAGE_LABELS, type Rendered, type TriageState } from "@corbits/rule-packs";
 import type { CleanupMode } from "@corbits/triage-contracts";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import { asText } from "./extract.js";
@@ -181,6 +181,7 @@ export interface MirrorRequest {
   repo: string;
   number: number;
   labels: string[];
+  owned: readonly string[];
   comment: string;
   close: boolean;
 }
@@ -192,6 +193,7 @@ export function toMirrorRequest(v: RenderOutput & { repo: string; number: number
     repo: v.repo,
     number: v.number,
     labels: v.labels,
+    owned: TRIAGE_LABELS,
     comment: v.feedback,
     close: v.close,
   };
