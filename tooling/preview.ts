@@ -7,10 +7,11 @@
 //   bun tooling/preview.ts [owner/repo]
 import { evaluate } from "@corbits/system-one";
 import { DEFAULT_REPO_POLICY, recommendedPack } from "../packages/triage-contracts/src/index.js";
-import { deriveState, type PrFacts } from "../packages/triage-workflows/src/logic/checks.js";
+import { deriveState, type DeterministicResult, type PrFacts, type PrFileFacts } from "../packages/triage-workflows/src/logic/checks.js";
+import { extractChangeCandidates, type ChangeCandidate } from "../packages/triage-workflows/src/logic/candidates.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "../packages/triage-workflows/src/logic/facts.js";
 import { qualityQuestions, qualityState } from "../packages/triage-workflows/src/logic/quality.js";
-import { renderVerdict, type RenderInput } from "../packages/triage-workflows/src/logic/render.js";
+import { parseAnswers, renderVerdict, type RenderInput } from "../packages/triage-workflows/src/logic/render.js";
 
 const repo = process.argv[2] ?? "corbitsdev/corbits-triage-sandbox";
 const pack = recommendedPack(repo);
@@ -39,45 +40,67 @@ function factsFor(n: number, openPrs: Pull[]): PrFacts {
   };
   const checks = ghOne<{ check_runs: CheckRun[] }>(`repos/${repo}/commits/${p.head.sha}/check-runs`).check_runs;
   const reviews = gh<any[]>(`repos/${repo}/pulls/${n}/reviews`).map((r): Review => ({ reviewer: r.user?.login, state: r.state }));
-  const paths = gh<any[]>(`repos/${repo}/pulls/${n}/files`).map((f) => String(f.filename));
+  const files = gh<any[]>(`repos/${repo}/pulls/${n}/files`).map((row): PrFileFacts => ({
+    path: String(row.filename),
+    ...(typeof row.previous_filename === "string" ? { previousPath: row.previous_filename } : {}),
+    ...(typeof row.status === "string" ? { status: row.status } : {}),
+    ...(typeof row.additions === "number" ? { additions: row.additions } : {}),
+    ...(typeof row.deletions === "number" ? { deletions: row.deletions } : {}),
+    ...(typeof row.patch === "string" ? { patch: row.patch } : {}),
+  }));
+  const paths = files.map((file) => file.path);
   const commits = gh<any[]>(`repos/${repo}/pulls/${n}/commits`).map((c) => String(c.commit.message).split("\n", 1)[0]!);
-  return { ...buildFacts(repo, n, pr, checks, reviews, openPrs, DEFAULT_REPO_POLICY), paths, commits };
+  return { ...buildFacts(repo, n, pr, checks, reviews, openPrs, DEFAULT_REPO_POLICY), paths, files, commits };
 }
 
 const endpoint = process.env.AI_GATEWAY_API_KEY ? { kind: "gateway" as const } : { kind: "official" as const };
 const hasKey = Boolean(process.env.AI_GATEWAY_API_KEY || process.env.TYPESAFE_API_KEY);
 
-async function judge(facts: PrFacts, det: RenderInput["det"]): Promise<Pick<RenderInput, "answers" | "judgeError">> {
+export function previewEvaluation(facts: PrFacts, det: DeterministicResult) {
+  const candidates = extractChangeCandidates(facts.files);
+  return {
+    candidates,
+    state: qualityState(facts, det.sources?.quality.some((source) => source.id === "focused") ? candidates : undefined),
+    questions: det.sources ? qualityQuestions(det.sources, candidates) : [],
+  };
+}
+
+async function judge(
+  det: RenderInput["det"],
+  evaluation: { candidates: ChangeCandidate[]; state: ReturnType<typeof qualityState>; questions: ReturnType<typeof qualityQuestions> },
+): Promise<Pick<RenderInput, "answers" | "judgeError">> {
   if (!det.needsJudgment || !det.sources) return {};
+  if (evaluation.questions.length === 0) return {};
   if (!hasKey) return { judgeError: "no key exported" };
   const result = await evaluate({
-    state: qualityState(facts),
-    questions: qualityQuestions(det.sources),
+    state: evaluation.state,
+    questions: evaluation.questions,
     config: { endpoint, timeoutMs: 30_000 },
   });
   if (result.fallback) return { judgeError: `${result.reason}${result.detail ? `: ${result.detail}` : ""}` };
-  const answers: Record<string, number> = {};
-  for (const d of result.decisions) if (d.type === "noul") answers[d.id] = d.noul;
-  return { answers };
+  return { answers: parseAnswers(result.decisions.map((decision) => JSON.stringify(decision)).join("")) };
 }
 
-const open = gh<Pull[]>(`repos/${repo}/pulls?state=open&per_page=100`).map(({ number, title }) => ({ number, title }));
-const rows = [];
-for (const { number } of open.sort((a, b) => a.number - b.number)) {
-  const facts = factsFor(number, open);
-  const det = deriveState(facts, undefined, pack);
-  const v = renderVerdict({ author: facts.author, det, reviewers: facts.reviewers, ...(await judge(facts, det)) });
-  rows.push({
-    pr: `#${number}`,
-    title: facts.title.slice(0, 40),
-    state: v.state,
-    priority: v.priority,
-    model: det.needsJudgment ? "asked" : "-",
-    score: v.confidence === "unknown" ? "-" : v.confidence,
-    failing: v.checks.filter((c) => c.result === "fail").map((c) => c.check).join(", "),
-    next: `${v.actor}: ${v.nextAction}`,
-    comment: v.feedback ? v.feedback.replaceAll("\n", " | ") : "none",
-    degraded: v.degraded ?? "",
-  });
+if (import.meta.main) {
+  const open = gh<Pull[]>(`repos/${repo}/pulls?state=open&per_page=100`).map(({ number, title }) => ({ number, title }));
+  const rows = [];
+  for (const { number } of open.sort((a, b) => a.number - b.number)) {
+    const facts = factsFor(number, open);
+    const det = deriveState(facts, undefined, pack);
+    const evaluation = previewEvaluation(facts, det);
+    const v = renderVerdict({ author: facts.author, det, candidates: evaluation.candidates, reviewers: facts.reviewers, ...(await judge(det, evaluation)) });
+    rows.push({
+      pr: `#${number}`,
+      title: facts.title.slice(0, 40),
+      state: v.state,
+      priority: v.priority,
+      model: det.needsJudgment ? "asked" : "-",
+      score: v.confidence === "unknown" ? "-" : v.confidence,
+      failing: v.checks.filter((c) => c.result === "fail").map((c) => c.check).join(", "),
+      next: `${v.actor}: ${v.nextAction}`,
+      comment: v.feedback ? v.feedback.replaceAll("\n", " | ") : "none",
+      degraded: v.degraded ?? "",
+    });
+  }
+  console.table(rows);
 }
-console.table(rows);

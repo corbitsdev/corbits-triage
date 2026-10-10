@@ -26,6 +26,7 @@ function fakeGithub(missing: boolean) {
       return Response.json({ number: 8, title: "Fix #3", state: "open", draft: false, user: { login: "octocat" }, head: { sha: "abc", ref: "fix" }, base: { ref: "main" }, mergeable: true, labels: [], requested_reviewers: [{ login: "rev" }] });
     }
     if (path.includes("/check-runs")) return Response.json({ check_runs: [] });
+    if (path.startsWith(`/repos/${REPO}/pulls/8/files`)) return Response.json([{ filename: "src/flag.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+export const flag = true;" }]);
     if (method === "GET") return Response.json([]);
     return Response.json({});
   }
@@ -34,8 +35,13 @@ function fakeGithub(missing: boolean) {
 
 const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrants: [], resolvedBy: null });
 
+/** Calls every focused candidate unrelated and passes every other question. */
 function judgeText(questions: Array<{ id: string }>) {
-  return questions.map((q) => JSON.stringify({ id: q.id, type: "noul", noul: q.id === "focused" ? 0.1 : 0.9 })).join("");
+  function answer({ id }: { id: string }) {
+    if (!id.startsWith("focused-candidate-")) return { id, type: "noul", noul: 0.9 };
+    return { id, type: "choice", choice: "unrelated", probabilities: { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 }, confidence: 0.9 };
+  }
+  return questions.map((q) => JSON.stringify(answer(q))).join("");
 }
 
 /** Runs each agent step's real director against the fake GitHub and a canned decision model, as the reactor would. */
@@ -97,6 +103,7 @@ describe("pr-triage body", () => {
     const { path, verdict } = await triage(recommendedPack(REPO));
     expect(path).toEqual(JUDGE_PATH);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"], ["tests", "pass"]]);
+    expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toEqual(["flag — src/flag.ts"]);
   });
 
   test("facts that fail degrade the verdict and suggest no actions", async () => {

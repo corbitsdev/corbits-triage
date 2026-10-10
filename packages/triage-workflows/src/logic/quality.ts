@@ -1,11 +1,31 @@
 import type { ModelCustomCheck, QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
+import type { ChangeCandidate } from "./candidates.js";
 
-export interface QualityQuestion {
+interface BooleanQualityQuestion {
   id: string;
   type: "boolean";
   instructions: string;
 }
+
+interface ChoiceQualityQuestion {
+  id: string;
+  type: "choice";
+  instructions: string;
+  criteria: Record<FocusedChoice, string>;
+}
+
+export type QualityQuestion = BooleanQualityQuestion | ChoiceQualityQuestion;
+
+export const FOCUSED_CHOICES = ["primary_or_supporting", "unrelated", "movement_or_superseded", "ambiguous"] as const;
+export type FocusedChoice = typeof FOCUSED_CHOICES[number];
+
+const FOCUSED_CRITERIA: Record<FocusedChoice, string> = {
+  primary_or_supporting: "The candidate is the primary change or directly supports the primary change.",
+  unrelated: "The candidate is a separate purpose that should be split into another pull request.",
+  movement_or_superseded: "The candidate only moves, renames, deletes, or supersedes code as part of the primary change.",
+  ambiguous: "The available evidence is insufficient to classify the candidate safely.",
+};
 
 /** Each question is answered true when the pull request passes the check. */
 const INSTRUCTIONS: Record<QualityCheckId, string> = {
@@ -48,15 +68,34 @@ function customInstructions(row: ModelCustomCheck): string {
   }
 }
 
-export function qualityQuestions(sources: NonNullable<DeterministicResult["sources"]>): QualityQuestion[] {
+export function focusedCandidateId(index: number): string {
+  return `focused-candidate-${String(index + 1).padStart(3, "0")}`;
+}
+
+function focusedQuestion(candidate: ChangeCandidate, index: number): ChoiceQualityQuestion {
+  const id = focusedCandidateId(index);
+  return {
+    id,
+    type: "choice",
+    instructions: `Classify changeCandidates.${id}. Direct support required by the primary change is primary_or_supporting, not unrelated. Pure movement, rename, deletion, or superseded code is movement_or_superseded, not unrelated. Choose unrelated only for a separate purpose; choose ambiguous when the evidence cannot decide. Candidate label: ${candidate.label}.`,
+    criteria: FOCUSED_CRITERIA,
+  };
+}
+
+export function qualityQuestions(sources: NonNullable<DeterministicResult["sources"]>, candidates: readonly ChangeCandidate[] = []): QualityQuestion[] {
+  const quality: QualityQuestion[] = [];
+  for (const { id } of sources.quality) {
+    if (id === "focused") quality.push(...candidates.map(focusedQuestion));
+    else quality.push({ id, type: "boolean", instructions: INSTRUCTIONS[id] });
+  }
   return [
-    ...sources.quality.map(({ id }) => ({ id, type: "boolean" as const, instructions: INSTRUCTIONS[id] })),
+    ...quality,
     ...sources.custom.map((row) => ({ id: row.id, type: "boolean" as const, instructions: customInstructions(row) })),
   ];
 }
 
-export function qualityState(facts: PrFacts) {
-  return {
+export function qualityState(facts: PrFacts, candidates?: readonly ChangeCandidate[]) {
+  const state = {
     title: facts.title,
     body: (facts.body ?? "").slice(0, MAX_BODY),
     commits: (facts.commits ?? []).slice(0, MAX_COMMITS),
@@ -64,6 +103,11 @@ export function qualityState(facts: PrFacts) {
     changedFiles: facts.changedFiles,
     additions: facts.additions,
     deletions: facts.deletions,
+  };
+  if (candidates === undefined) return state;
+  return {
+    ...state,
+    changeCandidates: Object.fromEntries(candidates.map((candidate, index) => [focusedCandidateId(index), candidate])),
   };
 }
 

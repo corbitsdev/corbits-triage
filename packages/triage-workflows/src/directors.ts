@@ -14,6 +14,7 @@ import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } fro
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
 import { qualityQuestions, qualityState } from "./logic/quality.js";
 import { triageEventOf } from "./logic/events.js";
+import { extractChangeCandidates } from "./logic/candidates.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
 import type { Item } from "./logic/item.js";
 import type { Verdict } from "./logic/render.js";
@@ -242,12 +243,17 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
   }
 
   function ask() {
-    const next = queue.shift();
-    if (next === undefined) return finish();
-    current = next;
-    const { facts, det } = items[current];
-    const questions = qualityQuestions(det.sources!);
-    return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: qualityState(facts), questions } } });
+    while (true) {
+      const next = queue.shift();
+      if (next === undefined) return finish();
+      current = next;
+      const { facts, det } = items[current];
+      const candidates = extractChangeCandidates(facts.files);
+      const questions = qualityQuestions(det.sources!, candidates);
+      if (questions.length === 0) continue;
+      const focused = det.sources!.quality.some((source) => source.id === "focused");
+      return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: qualityState(facts, focused ? candidates : undefined), questions } } });
+    }
   }
 
   return {
