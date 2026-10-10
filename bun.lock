@@ -81,7 +81,7 @@
     },
     "packages/github-tool": {
       "name": "@corbits/github-tool",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
@@ -89,6 +89,7 @@
       },
       "devDependencies": {
         "@types/bun": "latest",
+        "tar": "catalog:",
       },
     },
     "packages/github-write-tool": {
