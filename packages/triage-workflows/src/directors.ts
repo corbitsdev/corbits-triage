@@ -8,13 +8,16 @@ import type {
   ToolCall,
   ToolResult,
 } from "@intx/types/runtime";
+import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { PR_TRIAGE_WORKFLOW_VERSION, repoPolicy, type CheckPack, type CleanupMode } from "@corbits/triage-contracts";
-import { deriveState, NEEDS_SETUP_REASON, packFromInput, type DeterministicResult, type PrFacts } from "./logic/checks.js";
+import { repoPolicy, type CheckPack, type CleanupMode } from "@corbits/triage-contracts";
+import { NEEDS_SETUP_REASON, packFromInput, type DeterministicResult, type PrFacts } from "./logic/checks.js";
 import { asText, parseJsonText } from "./logic/extract.js";
 import { qualityQuestions, qualityState } from "./logic/quality.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
-import { degradedVerdict, parseAnswers, renderVerdict, summarize, toMirrorRequest, type MirrorRequest, type RenderOutput } from "./logic/render.js";
+import { degradedItem, type Item } from "./logic/item.js";
+import type { Verdict } from "./logic/render.js";
+import { evaluate, rules } from "./actions/index.js";
 
 export type Role = "facts" | "judge" | "render" | "mirror";
 
@@ -22,35 +25,13 @@ export interface TriageDirectorConfig {
   role: Role;
 }
 
-interface Item {
-  facts: PrFacts;
-  det: DeterministicResult;
-  judge?: string;
-  judgeError?: string;
-  cleanupMode?: CleanupMode;
-  pack?: CheckPack;
-  /** Why no facts were gathered; the verdict is then degraded with this reason. */
-  error?: string;
-}
-
-type Verdict = RenderOutput & { repo: string; number: number; headSha: string | null; workflowVersion: number; request: MirrorRequest; cleanupMode?: CleanupMode };
-
-function errorText(e: unknown) {
-  return e instanceof Error ? e.message : String(e);
-}
-
-const NO_FACTS: PrFacts = {
-  repo: "", number: 0, title: "", author: "", headSha: "", state: "open", draft: false, mergeable: null,
-  baseBehindBy: 0, checks: "none", requestedReviewers: 0, approvals: 0, openPrs: [],
+/** Directors call the action handlers in-process, where nothing performs effects or cancels them. */
+const NO_EFFECTS: EffectContext = {
+  perform() {
+    throw new Error("triage directors perform no effects");
+  },
 };
-
-function degradedItem(reason: string): Item {
-  return {
-    facts: NO_FACTS,
-    det: { state: "stale-unknown", reason, findings: [], checks: [], duplicateOf: null, needsJudgment: false },
-    error: reason,
-  };
-}
+const NEVER_ABORTED = new AbortController().signal;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -115,7 +96,7 @@ function data<T>(r: ToolResult | undefined): T | null {
 }
 
 type BatchResults = Map<string, ToolResult>;
-type DirectorActions = ReactorAction | ReactorAction[];
+type DirectorActions = ReactorAction | ReactorAction[] | Promise<ReactorAction | ReactorAction[]>;
 
 function noFollowUp(): DirectorActions {
   return [];
@@ -179,18 +160,18 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         return sha ? [call("github_get_checks", { repo, sha }, `checks:${n}`)] : [];
       }
 
-      function onChecks(r2: BatchResults) {
-        function itemFor(n: number): Item {
+      async function onChecks(r2: BatchResults) {
+        function itemFor(n: number) {
           const pr = prs.get(n);
-          if (!pr) return degradedItem(`github_get_pr failed for #${n}`);
+          if (!pr) return { error: `github_get_pr failed for #${n}` };
           const checks = data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [];
           const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
           const paths = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files?.flatMap(pathOf) ?? [];
           const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
           const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs), paths, commits };
-          return { facts, det: deriveState(facts, policy, pack), cleanupMode: policy.cleanupMode, pack };
+          return { facts, pack, cleanupMode: policy.cleanupMode };
         }
-        const items = numbers.map(itemFor);
+        const { items } = await rules({ items: numbers.map(itemFor) }, NO_EFFECTS, NEVER_ABORTED);
         return caps.reply(JSON.stringify(batch ? { items } : items[0]));
       }
 
@@ -292,25 +273,9 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
   };
 }
 
-/** A facts failure or malformed input reaches the render step without facts: the verdict then names no head and is degraded. */
-function stamp(facts: PrFacts | undefined) {
-  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null, workflowVersion: PR_TRIAGE_WORKFLOW_VERSION };
-}
-
 function renderDirector(caps: ReactorCapabilities): ReactorDirector {
-  function verdictOf(it: Item): Verdict {
-    if (it.error !== undefined) {
-      const verdict = { ...stamp(undefined), ...degradedVerdict(it.error), cleanupMode: it.cleanupMode };
-      return { ...verdict, request: toMirrorRequest(verdict) };
-    }
-    try {
-      const answers = it.judge !== undefined ? parseAnswers(it.judge) : null;
-      const verdict = { ...stamp(it.facts), ...renderVerdict({ author: it.facts.author, det: it.det, answers, judgeError: it.judgeError, reviewers: it.facts.reviewers }), cleanupMode: it.cleanupMode };
-      return { ...verdict, request: toMirrorRequest(verdict) };
-    } catch (e) {
-      const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`), cleanupMode: it.cleanupMode };
-      return { ...verdict, request: toMirrorRequest(verdict) };
-    }
+  async function degraded(reason: string) {
+    return caps.reply(JSON.stringify(await evaluate({ items: [degradedItem(reason)], batch: false }, NO_EFFECTS, NEVER_ABORTED)));
   }
 
   return {
@@ -318,14 +283,12 @@ function renderDirector(caps: ReactorCapabilities): ReactorDirector {
       switch (event.type) {
         case "message.received": {
           const input = parseInput(event.message.content);
-          if (!input) return caps.reply(JSON.stringify(verdictOf(degradedItem("render: input is not JSON"))));
-          const { items, batch } = itemsOf(input);
-          const verdicts = items.map(verdictOf);
-          return caps.reply(JSON.stringify(batch ? { items: verdicts, summary: summarize(verdicts) } : verdicts[0]));
+          if (!input) return degraded("render: input is not JSON");
+          return caps.reply(JSON.stringify(await evaluate(itemsOf(input), NO_EFFECTS, NEVER_ABORTED)));
         }
         case "abort":
         case "inference.error":
-          return caps.reply(JSON.stringify(verdictOf(degradedItem(`render interrupted: ${event.type}`))));
+          return degraded(`render interrupted: ${event.type}`);
         default:
           return [];
       }
