@@ -13,7 +13,7 @@ import { failure, githubAppCredential, portalMember, type PortalCredentialDeps }
 import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 import type { PullHeadReader } from "./tenant-open-heads.js";
-import { newestLive, type LiveDeployment } from "./deployment.js";
+import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
 import { mergeObservedRuns, observeDeployments, type ObserveRuns } from "./triage-runs.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
@@ -147,6 +147,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
       } catch (restoreErr) {
         deps.log({ level: "error", msg: "triage_state_restore_failed", tenantId, repo, pr: number, headSha, error: String(restoreErr) });
       }
+      if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
       const reason = err instanceof Error ? err.message : String(err);
       return failure(isRunTriggerUnroutable(err) ? 503 : 502, isRunTriggerUnroutable(err) ? "service_not_running" : "hub_unavailable", `Could not queue ${repo}#${number}: ${reason}. Try again.`);
     }

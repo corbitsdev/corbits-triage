@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkPackName, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { DeploymentNotReadyError } from "./deployment.js";
 import { createGithubPrTriage, type GithubPrTriageDeps } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
 import { TriageStateConflictError, type TriageStateVersion } from "./triage-state-store.js";
@@ -224,6 +225,17 @@ describe("createGithubPrTriage", () => {
     const fresh = stub();
     await handler(ENABLED, fresh, { store: stored([], fresh.saved), deliver })(request(), TENANT_ID);
     expect(fresh.saved.at(-1)).toEqual([]);
+  });
+
+  test("a deployment that is not ready yet is refused with deployment_not_ready and the row is put back", async () => {
+    const s = stub();
+    async function deliver(): Promise<void> {
+      throw new DeploymentNotReadyError();
+    }
+    const res = await handler(ENABLED, s, { deliver })(request(), TENANT_ID);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: { code: "deployment_not_ready", message: "The workflow deployment is still starting." } });
+    expect(s.saved.at(-1)).toEqual([]);
   });
 
   test("a second click before the run starts is refused once the hub has passed over the queued head", async () => {

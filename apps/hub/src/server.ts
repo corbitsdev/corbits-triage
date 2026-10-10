@@ -46,7 +46,7 @@ import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migra
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { createDeploymentRotation, NoLiveDeploymentError, resolveLiveDeployment, resolveLiveDeployments } from "./github/deployment.js";
+import { createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments } from "./github/deployment.js";
 import { createGithubOpenPulls } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
@@ -166,11 +166,11 @@ const systemSender = createTenantSystemSender({
 function runTriggerDeliverer(senderLocalPart: string) {
   return createRunTriggerDeliverer({
     router: composition.sidecarRouter,
-    materialize: createMailTriggeredRunGrantsMaterializer({
+    materialize: readyMaterializer(createMailTriggeredRunGrantsMaterializer({
       db: composition.db,
       principalKeyStore: composition.principalKeyStore,
       grantStore: createGrantStore(composition.db),
-    }),
+    })),
     tenantDomain,
     senderLocalPart,
     systemSender,
@@ -179,6 +179,7 @@ function runTriggerDeliverer(senderLocalPart: string) {
 cronTicker = createCronTicker({
   db: composition.db,
   deliver: createRunTriggerCronDeliver(runTriggerDeliverer("cron")),
+  onDeliveryError: function logCronDeliveryError(error, schedule) { logJson({ level: "warn", msg: "cron_delivery_failed", scheduleId: schedule.id, tenantId: schedule.tenantId, error: String(error) }); },
 });
 cronTicker.start();
 await migrateGithubManifest(composition.db);

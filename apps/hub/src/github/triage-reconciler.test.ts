@@ -5,7 +5,8 @@ import { emptyPack, stockTriggerMail, type PrTriageRow } from "@corbits/triage-c
 import { DEFAULT_RECONCILE_POLICY, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError } from "./triage-state-store.js";
-import type { LiveDeployment } from "./deployment.js";
+import { createRunTriggerDeliverer, type RunTriggerMaterialize } from "@corbits/webhooks";
+import { readyMaterializer, type LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
 import { createTriageRuns } from "./triage-runs.js";
@@ -124,6 +125,8 @@ type HarnessOptions = {
   /** The `TRIAGE_MAX_IN_FLIGHT` setting; unset keeps the default. */
   maxInFlight?: string;
   failDeliveryAt?: number;
+  /** Stands in for the mail delivery; recorded only when it resolves. */
+  deliver?: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   refuseSaves?: number;
   onRefusedSave?: (repo: string) => void;
   onSave?: (repo: string, rows: PrTriageRow[]) => void;
@@ -217,8 +220,9 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     readCheckPack: async function readCheckPack(_tenantId, repo) {
       return { status: "ok", pack: emptyPack(repo) };
     },
-    deliver: async function deliver(_tenantId, address, payload) {
+    deliver: async function deliver(tenantId, address, payload) {
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
+      await options.deliver?.(tenantId, address, payload);
       delivered.push({ address, payload: payload as Record<string, unknown> });
     },
     policy: triageReconcilePolicy({ ...(options.maxInFlight !== undefined && { TRIAGE_MAX_IN_FLIGHT: options.maxInFlight }) }),
@@ -395,6 +399,45 @@ describe("triage reconciler", () => {
     expect(delivered).toEqual([]);
     expect(saves).toEqual([["queued", "queued"], ["new", "new"]]);
     expect(saved.get(REPO)!.map((row) => row.error)).toEqual(["delivery failed: Error: unroutable", "delivery failed: Error: unroutable"]);
+  });
+
+  test("a deployment that has not recorded credential resolution keeps its heads unqueued until a later pass delivers", async () => {
+    const outcomes: Array<Awaited<ReturnType<RunTriggerMaterialize>>> = [{ outcome: "notReady" }, { outcome: "materialized", stepGrants: [] }];
+    const routed: string[] = [];
+    async function materialize() {
+      return outcomes.shift()!;
+    }
+    async function routeMail(address: string) {
+      routed.push(address);
+      return true;
+    }
+    async function tenantDomain() {
+      return DOMAIN;
+    }
+    async function sign() {
+      return new Uint8Array(64);
+    }
+    async function resolve() {
+      return { address: `github@${DOMAIN}`, publicKey: "00".repeat(32), sign };
+    }
+    const trigger = createRunTriggerDeliverer({
+      materialize: readyMaterializer(materialize),
+      router: { routeMail },
+      tenantDomain,
+      senderLocalPart: "github",
+      systemSender: { resolve },
+    });
+    async function deliver(tenantId: string, address: string, payload: unknown) {
+      await trigger.to(address, JSON.stringify(payload), tenantId, undefined);
+    }
+    const { reconcile, delivered, saved } = harness({}, [head(1)], { deliver });
+    expect(await reconcile()).toEqual({ retry: true });
+    expect(routed).toEqual([]);
+    expect(saved.get(REPO)!.map((row) => `${row.status}:${row.error}`)).toEqual(["new:delivery failed: Error: The workflow deployment is still starting."]);
+    expect(await reconcile()).toEqual({ retry: false });
+    expect(routed).toEqual([LIVE.address]);
+    expect(mailedNumbers(delivered)).toEqual([1]);
+    expect(saved.get(REPO)!.map((row) => row.status)).toEqual(["queued"]);
   });
 
   test("a state write refused as stale is retried once on the other writer's rows, keeping the newer row of each head", async () => {
