@@ -7,6 +7,9 @@ import { eq } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
+import { PreviewResponse } from "./github/pr-preview.js";
+import { findArtifactByTitle } from "@corbits/artifacts";
+import { checkPackName, emptyPack, triageStateName } from "@corbits/triage-contracts";
 import { doEffectId, type Branch, type ResolvedTarget } from "../../../packages/triage-workflows/src/logic/actions.js";
 import { doMarker } from "../../../packages/triage-workflows/src/logic/execute-do.js";
 import { homedir, tmpdir } from "node:os";
@@ -186,6 +189,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-triage/{tenantId}": ["post"],
     "/api/integrations/github-open-pulls/{tenantId}": ["get"],
     "/api/integrations/github-pull/{tenantId}": ["get"],
+    "/api/integrations/github-preview/{tenantId}": ["post"],
     "/api/integrations/workflow-deploy/{tenantId}": ["post"],
     "/api/integrations/workflow-versions/{tenantId}": ["get"],
   });
@@ -226,17 +230,33 @@ const REPO = "acme/widgets";
 const HEAD = "abc";
 const APP_BOT = { login: "corbits[bot]", type: "Bot" };
 
-/** GitHub holding open pull request 8 of REPO; a label named `boom` is refused with 422. */
+/** GitHub holding open pull request 8 and closed pull request 9 of REPO; a label named `boom` is refused with 422. */
 function fakeGithub() {
   const labels: string[] = [];
   const comments: Array<{ id: number; user: typeof APP_BOT; body: string }> = [];
   const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const repoRequests: string[] = [];
+  const reads: Record<string, unknown> = {
+    [`/repos/${REPO}/pulls`]: [{ number: 8, title: "Fix the widget", draft: false, head: { sha: HEAD } }],
+    [`/repos/${REPO}/pulls/9`]: { number: 9, state: "closed", head: { sha: "def" } },
+    [`/repos/${REPO}/pulls/8/reviews`]: [],
+    [`/repos/${REPO}/pulls/8/commits`]: [{ sha: HEAD, commit: { message: "fix: the widget" } }],
+    [`/repos/${REPO}/pulls/8/files`]: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+fixed" }],
+    [`/repos/${REPO}/commits/${HEAD}/check-runs`]: { check_runs: [{ name: "build", status: "completed", conclusion: "success" }] },
+  };
   async function github(req: Request): Promise<Response> {
     const { pathname } = new URL(req.url);
+    if (pathname.startsWith("/repos/")) repoRequests.push(`${req.method} ${pathname}`);
     if (pathname === `/repos/${REPO}/installation`) return Response.json({ id: 1 });
     if (pathname === "/app/installations/1/access_tokens") return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
-    if (pathname === `/repos/${REPO}/pulls/8`) return Response.json({ number: 8, state: "open", head: { sha: HEAD }, labels: labels.map((name) => ({ name })), assignees: [] });
+    if (pathname === `/repos/${REPO}/pulls/8`) {
+      return Response.json({
+        number: 8, title: "Fix the widget", state: "open", user: { login: "octocat" }, head: { sha: HEAD, ref: "fix-widget" }, mergeable: true,
+        changed_files: 1, additions: 1, deletions: 0, labels: labels.map((name) => ({ name })), assignees: [],
+      });
+    }
     if (pathname === `/repos/${REPO}/issues/8/comments` && req.method === "GET") return Response.json(comments);
+    if (req.method === "GET" && pathname in reads) return Response.json(reads[pathname]);
     if (req.method !== "POST") return new Response(null, { status: 404 });
     const body = type("Record<string, unknown>").assert(await req.json());
     if (pathname === `/repos/${REPO}/issues/8/labels`) {
@@ -254,7 +274,26 @@ function fakeGithub() {
     return new Response(null, { status: 404 });
   }
   const server = Bun.serve({ port: 0, fetch: github });
-  return { origin: `http://127.0.0.1:${server.port}`, comments, writes, stop: () => server.stop(true) };
+  return { origin: `http://127.0.0.1:${server.port}`, comments, writes, repoRequests, stop: () => server.stop(true) };
+}
+
+/** Connects the tenant's GitHub App to `githubOrigin` with REPO connected and triage enabled. */
+async function connectGithub(origin: string, headers: Record<string, string>, tenantId: string, githubOrigin: string): Promise<void> {
+  const provider = await fetch(`${origin}/api/tenants/${tenantId}/providers`, {
+    method: "POST", headers, body: JSON.stringify({ name: "github", plugin: "http", apiBaseUrl: githubOrigin }),
+  });
+  expect(provider.status).toBe(201);
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
+  const credential = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ providerId: type({ id: "string" }).assert(await provider.json()).id, name: "github", type: "api_key", secret: JSON.stringify({ appId: "1", privateKey }) }),
+  });
+  expect(credential.status).toBe(201);
+  const enable = await fetch(`${origin}/api/tenants/${tenantId}`, {
+    method: "PATCH", headers, body: JSON.stringify({ config: { corbitsTriage: { rev: 0, repos: [{ name: REPO, connected: true, enabled: true }] } } }),
+  });
+  expect(enable.status).toBe(200);
 }
 
 type SeededDo = { id: string; kind: "labels" | "comment" | "agent"; target: ResolvedTarget; index?: number; effectId?: string };
@@ -314,21 +353,7 @@ test("a pack Do runs once by reference and is recorded", async () => {
     const tenantId = await createTenant(origin, headers);
     const otherTenantId = await createTenant(origin, headers);
 
-    const provider = await fetch(`${origin}/api/tenants/${tenantId}/providers`, {
-      method: "POST", headers, body: JSON.stringify({ name: "github", plugin: "http", apiBaseUrl: github.origin }),
-    });
-    expect(provider.status).toBe(201);
-    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-    const credential = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ providerId: type({ id: "string" }).assert(await provider.json()).id, name: "github", type: "api_key", secret: JSON.stringify({ appId: "1", privateKey }) }),
-    });
-    expect(credential.status).toBe(201);
-    const enable = await fetch(`${origin}/api/tenants/${tenantId}`, {
-      method: "PATCH", headers, body: JSON.stringify({ config: { corbitsTriage: { rev: 0, repos: [{ name: REPO, connected: true, enabled: true }] } } }),
-    });
-    expect(enable.status).toBe(200);
+    await connectGithub(origin, headers, tenantId, github.origin);
 
     const runId = await seedRun(db, dataDir, tenantId, [
       { id: "label", kind: "labels", target: { labels: ["api"] }, index: 0 },
@@ -369,6 +394,95 @@ test("a pack Do runs once by reference and is recorded", async () => {
     expect(listed.status).toBe(200);
     const { dos } = type({ dos: type({ actionId: "string", status: "string" }).array() }).assert(await listed.json());
     expect(Object.fromEntries(dos.map((row) => [row.actionId, row.status]))).toEqual({ label: "done", note: "done", posted: "satisfied", refused: "failed" });
+  } finally {
+    github.stop();
+    await close();
+  }
+}, 60_000);
+
+function comments(): Record<"yes" | "no" | "unsure", Array<{ kind: "comment"; automatic: false; target: { body: string } }>> {
+  return {
+    yes: [{ kind: "comment", automatic: false, target: { body: "yes" } }],
+    no: [{ kind: "comment", automatic: false, target: { body: "no" } }],
+    unsure: [{ kind: "comment", automatic: false, target: { body: "unsure" } }],
+  };
+}
+
+const SAVED_PACK = {
+  ...emptyPack(REPO),
+  checks: { ci: { enabled: true } },
+  actions: [{ id: "tag", when: "every", checks: ["ci"], branches: { yes: [{ kind: "labels", automatic: false, target: { from: "list", labels: ["checked"] } }] } }],
+};
+
+const JUDGED_PACK = {
+  ...emptyPack(REPO),
+  checks: { size: { enabled: true, maxFiles: 0 } },
+  custom: [{ id: "custom-1", name: "Explains why", group: "pull-request", kind: "model", shape: "is-true", claim: "The description says why." }],
+  actions: [
+    { id: "judged", when: "every", checks: ["custom-1"], branches: comments() },
+    { id: "judged-and-sized", when: "every", checks: ["size", "custom-1"], branches: comments() },
+  ],
+};
+
+test("a pack preview evaluates an open pull request without writing anything", async () => {
+  const github = fakeGithub();
+  const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  try {
+    const origin = await startHub({ GITHUB_API_ORIGIN: github.origin });
+    const headers = await signedIn(origin);
+    const tenantId = await createTenant(origin, headers);
+    await connectGithub(origin, headers, tenantId, github.origin);
+    const title = checkPackName(REPO);
+    const saved = await fetch(`${origin}/api/tenants/${tenantId}/artifacts`, {
+      method: "POST", headers, body: JSON.stringify({ mode: "text", title, content: JSON.stringify(SAVED_PACK), metadata: { checkPack: title } }),
+    });
+    expect(saved.status).toBe(201);
+
+    async function preview(body: Record<string, unknown>, as: Record<string, string> = headers) {
+      const res = await fetch(`${origin}/api/integrations/github-preview/${tenantId}`, { method: "POST", headers: as, body: JSON.stringify(body) });
+      return { status: res.status, body: await res.json() };
+    }
+
+    async function previewed(body: Record<string, unknown>) {
+      const res = await preview(body);
+      expect(res.status).toBe(200);
+      return PreviewResponse.assert(res.body);
+    }
+
+    const rule = await previewed({ repo: REPO, number: 8 });
+    expect(rule).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-needed" });
+    expect(rule.checks).toContainEqual({ check: "ci", name: "CI", kind: "machine", result: "pass", reason: "checks are success", evidence: [] });
+    const target = { labels: ["checked"] };
+    expect(rule.actions).toEqual([{
+      id: "tag", status: "decided", branch: "yes", reason: "CI passed.",
+      dos: [{ id: "tag", branch: "yes", index: 0, kind: "labels", automatic: false, reason: "CI passed.", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: "tag", branch: "yes", index: 0, kind: "labels", target }) }],
+    }]);
+    expect(rule.verdict).not.toHaveProperty("request");
+
+    const judged = await previewed({ repo: REPO, number: 8, pack: JUDGED_PACK });
+    expect(judged).toMatchObject({ pack: "candidate", judge: "not-run", verdict: { state: "needs-author-update", degraded: null } });
+    expect(judged.checks).toContainEqual({ check: "custom-1", name: "Explains why", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [] });
+    const [waiting, sized] = judged.actions;
+    if (waiting?.status !== "waits-on-judge") throw new Error("the judged action must wait on the judge");
+    expect(waiting.branches.map((b) => [b.branch, b.dos.map((d) => d.target)])).toEqual([
+      ["yes", [{ body: "yes" }]],
+      ["no", [{ body: "no" }]],
+      ["unsure", [{ body: "unsure" }]],
+    ]);
+    expect(sized).toMatchObject({ id: "judged-and-sized", status: "decided", branch: "no", dos: [{ target: { body: "no" } }] });
+    const unsized = await previewed({ repo: REPO, number: 8, pack: { ...JUDGED_PACK, checks: {} } });
+    expect(unsized).toMatchObject({ judge: "not-run", verdict: { reason: "needs the judge", humanGated: true, degraded: null } });
+
+    expect(github.repoRequests.filter((request) => !request.startsWith("GET "))).toEqual([]);
+    expect(await findArtifactByTitle(db, tenantId, triageStateName(REPO))).toBeNull();
+
+    expect(await preview({ repo: REPO, number: 9 })).toMatchObject({ status: 409, body: { error: { code: "pull_request_not_open" } } });
+    expect(await preview({ repo: REPO, number: 7 })).toMatchObject({ status: 404, body: { error: { code: "pull_request_not_found" } } });
+    expect(await preview({ repo: REPO, number: 8, pack: emptyPack("acme/gadgets") })).toMatchObject({ status: 400, body: { error: { code: "invalid_pack" } } });
+    expect(await preview({ repo: REPO, number: 8 }, { ...headers, origin: "https://elsewhere.example" })).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
+    const { cookie: _cookie, ...signedOut } = headers;
+    expect(await preview({ repo: REPO, number: 8 }, signedOut)).toMatchObject({ status: 401, body: { error: { code: "unauthorized" } } });
+    expect(await preview({ repo: REPO, number: 8 }, await signedIn(origin))).toMatchObject({ status: 401, body: { error: { code: "unauthorized" } } });
   } finally {
     github.stop();
     await close();

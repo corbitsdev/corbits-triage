@@ -8,6 +8,8 @@ export interface Item {
   judgeError?: string;
   /** The quality evaluation exceeds the System One budget, so the judge is not asked and a human decides. */
   judgeLimitExceeded?: true;
+  /** A preview does not run the judge, so the checks it would answer wait on it and a human decides. */
+  judgeSkipped?: true;
   cleanupMode?: CleanupMode;
   pack?: CheckPack;
   roles?: Record<string, RepoRole>;

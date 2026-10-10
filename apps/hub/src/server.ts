@@ -54,6 +54,7 @@ import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubPrDos } from "./github/pr-dos.js";
 import { createDoRunStore, migrateDoRuns } from "./github/do-run-store.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
+import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
@@ -392,6 +393,15 @@ const integrations = createIntegrationsApp({
   prTriage: githubPrTriage,
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,
+  prPreview: createGithubPrPreview({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    getSession: composition.getSession,
+    trustedPortalOrigins,
+    githubApiOrigin: githubOrigin,
+    authorize: authorizePortal,
+    readCheckPack,
+  }),
   workflowDeploy: createWorkflowDeploy({
     db: composition.db,
     cipher: composition.credentialCipher,

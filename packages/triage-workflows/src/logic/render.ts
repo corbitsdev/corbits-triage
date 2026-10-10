@@ -102,6 +102,7 @@ export interface RenderInput {
   candidates?: ChangeCandidate[];
   judgeError?: string;
   judgeLimitExceeded?: true;
+  judgeSkipped?: true;
   /** Logins of requested reviewers. */
   reviewers?: string[];
 }
@@ -109,6 +110,8 @@ export interface RenderInput {
 export type Actor = "author" | "maintainer" | "system";
 
 export const MAX_MIRROR_COMMENT_BYTES = 60_000;
+
+export const NEEDS_JUDGE_REASON = "needs the judge";
 
 export interface RenderOutput extends Rendered {
   mirror: boolean;
@@ -155,11 +158,11 @@ function answerSet(answers: RenderInput["answers"]): ParsedAnswers {
   return { decisions, malformed: false };
 }
 
-function evaluateModel({ det, answers, candidates = [], judgeError }: RenderInput): ModelEvaluation {
+function evaluateModel({ det, answers, candidates = [], judgeError, judgeSkipped }: RenderInput): ModelEvaluation {
   if (!det.sources) return { checks: [], scores: [], focusedUnresolved: false, noulUnresolved: false };
   const parsed = answerSet(det.needsJudgment && judgeError === undefined ? answers : null);
   const expectedIds = new Set(qualityQuestions(det.sources, candidates).map((question) => question.id));
-  const unavailable = det.needsJudgment ? "decision model unavailable" : "not asked";
+  const unavailable = !det.needsJudgment ? "not asked" : judgeSkipped ? NEEDS_JUDGE_REASON : "decision model unavailable";
   const invalid = parsed.malformed || judgeError !== undefined || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
   const checks: CheckResult[] = [];
   const scores: number[] = [];
@@ -286,7 +289,7 @@ function enforceMirrorCommentBound(verdict: RenderOutput): RenderOutput {
 }
 
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, det, judgeError, judgeLimitExceeded, reviewers = [] } = input;
+  const { author, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [] } = input;
   const ctx = { author, sources: det.sources, reviewers };
   const evaluated = evaluateModel(input);
   const checks = [...det.checks, ...evaluated.checks];
@@ -298,6 +301,9 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   if (judgeLimitExceeded === true) {
     const reason = `decision model unavailable: ${judgeError}`;
     return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: null, reason }, checks, ctx));
+  }
+  if (judgeSkipped === true) {
+    return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: null, reason: NEEDS_JUDGE_REASON }, checks, ctx));
   }
   if (judgeError !== undefined || evaluated.noulUnresolved) {
     const reason = `decision model unavailable: ${judgeError ?? "no answer"}`;

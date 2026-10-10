@@ -52,7 +52,7 @@ export interface ActionInput {
   roles: Record<string, RepoRole>;
 }
 
-function checkName(id: string, pack: CheckPack): string {
+export function checkName(id: string, pack: CheckPack): string {
   return CHECK_CATALOG[id as CatalogId]?.name ?? pack.custom.find((c) => c.id === id)?.name ?? id;
 }
 
@@ -169,28 +169,35 @@ function sentence(text: string): string {
   return `${text[0]!.toUpperCase()}${text.slice(1)}.`;
 }
 
-/** Suggest only: nothing here writes to GitHub, and automatic steps are suggested like the rest. */
-export function evaluateActions(input: ActionInput): SuggestedAction[] {
+export type ActionOutcome = { skipped: string } | { branch: Branch; reason: string; dos: SuggestedAction[] };
+
+/** One action's branch and Dos on this head, or why it is skipped whole; undefined when the event does not wake it. */
+export function evaluateAction(action: Action, input: ActionInput): ActionOutcome | undefined {
+  if (!wakes(action, input.facts)) return undefined;
+  const picked = pick(action, input);
+  if ("skipped" in picked) return picked;
+  const { branch, dos, reason } = picked;
   const out: SuggestedAction[] = [];
-  for (const action of input.pack.actions) {
-    if (!wakes(action, input.facts)) continue;
-    const picked = pick(action, input);
-    if ("skipped" in picked) {
-      out.push({ id: action.id, skipped: true, reason: picked.skipped });
-      continue;
-    }
-    const { branch, dos, reason } = picked;
-    for (const [index, task] of dos.entries()) {
-      const base = { id: action.id, branch, index, kind: task.kind, automatic: task.automatic };
-      try {
-        const target = resolve(task, input);
-        const { repo, number, headSha } = input.facts;
-        const effectId = doEffectId({ repo, number, headSha, actionId: action.id, branch, index, kind: task.kind, target });
-        if (!satisfied(task.kind, target, input.facts)) out.push({ ...base, effectId, target, reason });
-      } catch (e) {
-        out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
-      }
+  for (const [index, task] of dos.entries()) {
+    const base = { id: action.id, branch, index, kind: task.kind, automatic: task.automatic };
+    try {
+      const target = resolve(task, input);
+      const { repo, number, headSha } = input.facts;
+      const effectId = doEffectId({ repo, number, headSha, actionId: action.id, branch, index, kind: task.kind, target });
+      if (!satisfied(task.kind, target, input.facts)) out.push({ ...base, effectId, target, reason });
+    } catch (e) {
+      out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
     }
   }
-  return out;
+  return { branch, reason, dos: out };
+}
+
+/** Suggest only: nothing here writes to GitHub, and automatic steps are suggested like the rest. */
+export function evaluateActions(input: ActionInput): SuggestedAction[] {
+  return input.pack.actions.flatMap(function suggested(action): SuggestedAction[] {
+    const outcome = evaluateAction(action, input);
+    if (outcome === undefined) return [];
+    if ("skipped" in outcome) return [{ id: action.id, skipped: true, reason: outcome.skipped }];
+    return outcome.dos;
+  });
 }
