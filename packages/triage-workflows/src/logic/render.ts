@@ -1,4 +1,5 @@
 import { render, type Rendered, type TriageState } from "@corbits/rule-packs";
+import type { CleanupMode } from "@corbits/triage-contracts";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import { asText } from "./extract.js";
 import { actionText, failureText, passText, qualityQuestions } from "./quality.js";
@@ -183,6 +184,8 @@ export interface MirrorRequest {
   comment: string;
   close: boolean;
 }
+
+export type Verdict = RenderOutput & { repo: string; number: number; headSha: string | null; workflowVersion: number; request: MirrorRequest; cleanupMode?: CleanupMode };
 
 export function toMirrorRequest(v: RenderOutput & { repo: string; number: number }): MirrorRequest {
   return {
