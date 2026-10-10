@@ -58,15 +58,12 @@
         "@corbits/react-ui": "0.3.1",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/hub-client": "workspace:*",
-        "@isomorphic-git/lightning-fs": "^4.10.3",
         "@radix-ui/react-slot": "^1.4.0",
         "@tanstack/query-async-storage-persister": "5.104.1",
         "@tanstack/react-query": "^5.80.7",
         "@tanstack/react-query-persist-client": "5.104.1",
         "arktype": "catalog:",
-        "buffer": "^6.0.3",
         "idb-keyval": "^6.3.0",
-        "isomorphic-git": "catalog:",
         "lucide-react": "^1.52.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
@@ -801,7 +798,7 @@
 
     "@isomorphic-git/idb-keyval": ["@isomorphic-git/idb-keyval@3.3.2", "", {}, "sha512-r8/AdpiS0/WJCNR/t/gsgL+M8NMVj/ek7s60uz3LmpCaTF2mEVlZJlB01ZzalgYzRLXwSPC92o+pdzjM7PN/pA=="],
 
-    "@isomorphic-git/lightning-fs": ["@isomorphic-git/lightning-fs@4.10.3", "", { "dependencies": { "@isomorphic-git/idb-keyval": "^3.3.2", "isomorphic-textencoder": "^1.0.1", "just-debounce-it": "^3.2.0", "just-once": "^2.2.0" }, "bin": { "superblocktxt": "src/superblocktxt.js" } }, "sha512-A6U3yD1v29XaARaYwVbnqRo0L2St+OfXn/CKPwtNlIrL8sGYsFMyQlDnbZ7JYgf2VHFqR1CJeWOjZygUKnQuxA=="],
+    "@isomorphic-git/lightning-fs": ["@isomorphic-git/lightning-fs@4.7.0", "", { "dependencies": { "@isomorphic-git/idb-keyval": "3.3.2", "isomorphic-textencoder": "1.0.1", "just-debounce-it": "1.1.0", "just-once": "1.1.0" }, "bin": { "superblocktxt": "src/superblocktxt.js" } }, "sha512-eJg541itXKCOyj3DBAnd0KNY1mNgi29GCpy7FgKWsgatu/ulEKv+dMxxjhUNL68Jh3uPTaGNfeAjdJiHUYEGnw=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 
@@ -1183,9 +1180,9 @@
 
     "jsonparse": ["jsonparse@1.3.1", "", {}, "sha512-POQXvpdL69+CluYsillJ7SUhKvytYjW9vG/GKpnf+xP8UWgYEM/RaMzHHofbALDiKbbP1W8UEYmgGl39WkPZsg=="],
 
-    "just-debounce-it": ["just-debounce-it@3.2.0", "", {}, "sha512-WXzwLL0745uNuedrCsCs3rpmfD6DBaf7uuVwaq98/8dafURfgQaBsSpjiPp5+CW6Vjltwy9cOGI6qE71b3T8iQ=="],
+    "just-debounce-it": ["just-debounce-it@1.1.0", "", {}, "sha512-87Nnc0qZKgBZuhFZjYVjSraic0x7zwjhaTMrCKlj0QYKH6lh0KbFzVnfu6LHan03NO7J8ygjeBeD0epejn5Zcg=="],
 
-    "just-once": ["just-once@2.2.0", "", {}, "sha512-Wo547FgUOUZ98jbrZ1KX8nRezdEdtgIlC2NK1u1RvR1oZ/WoU++FjprP8J8hRbaox776MHyeMZZED4DvhhHVjg=="],
+    "just-once": ["just-once@1.1.0", "", {}, "sha512-+rZVpl+6VyTilK7vB/svlMPil4pxqIJZkbnN7DKZTOzyXfun6ZiFeq2Pk4EtCEHZ0VU4EkdFzG8ZK5F3PErcDw=="],
 
     "kysely": ["kysely@0.29.6", "", {}, "sha512-hHaB8C/rfzDDtr/t8YZwxAuPJTT0zHyaPoVzcXwDYhYNAgH/4sIfVhi/XLLIY+bL/FqaIJnjATDbi8ObSELmxg=="],
 
@@ -1379,8 +1376,6 @@
 
     "@esbuild-kit/core-utils/esbuild": ["esbuild@0.18.20", "", { "optionalDependencies": { "@esbuild/android-arm": "0.18.20", "@esbuild/android-arm64": "0.18.20", "@esbuild/android-x64": "0.18.20", "@esbuild/darwin-arm64": "0.18.20", "@esbuild/darwin-x64": "0.18.20", "@esbuild/freebsd-arm64": "0.18.20", "@esbuild/freebsd-x64": "0.18.20", "@esbuild/linux-arm": "0.18.20", "@esbuild/linux-arm64": "0.18.20", "@esbuild/linux-ia32": "0.18.20", "@esbuild/linux-loong64": "0.18.20", "@esbuild/linux-mips64el": "0.18.20", "@esbuild/linux-ppc64": "0.18.20", "@esbuild/linux-riscv64": "0.18.20", "@esbuild/linux-s390x": "0.18.20", "@esbuild/linux-x64": "0.18.20", "@esbuild/netbsd-x64": "0.18.20", "@esbuild/openbsd-x64": "0.18.20", "@esbuild/sunos-x64": "0.18.20", "@esbuild/win32-arm64": "0.18.20", "@esbuild/win32-ia32": "0.18.20", "@esbuild/win32-x64": "0.18.20" }, "bin": { "esbuild": "bin/esbuild" } }, "sha512-ceqxoedUrcayh7Y7ZX6NdbbDzGROiyVBgC4PriJThBKSVPWnnFHZAkfI1lJT8QFkOwH4qOS2SJkS4wvpGl8BpA=="],
 
-    "@intx/storage-isogit/@isomorphic-git/lightning-fs": ["@isomorphic-git/lightning-fs@4.7.0", "", { "dependencies": { "@isomorphic-git/idb-keyval": "3.3.2", "isomorphic-textencoder": "1.0.1", "just-debounce-it": "1.1.0", "just-once": "1.1.0" }, "bin": { "superblocktxt": "src/superblocktxt.js" } }, "sha512-eJg541itXKCOyj3DBAnd0KNY1mNgi29GCpy7FgKWsgatu/ulEKv+dMxxjhUNL68Jh3uPTaGNfeAjdJiHUYEGnw=="],
-
     "@npmcli/agent/lru-cache": ["lru-cache@11.5.3", "", {}, "sha512-U4N8FgzmWxc8k1VH8Kr6lQg18U7Fjvby6wXHVRX/ZZ7IwWbRMgrRbP0Wrb5q5NVinryp4SQampHKdvtecItxUg=="],
 
     "@types/ssri/@types/node": ["@types/node@26.6.4", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg=="],
@@ -1462,10 +1457,6 @@
     "@esbuild-kit/core-utils/esbuild/@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.18.20", "", { "os": "win32", "cpu": "ia32" }, "sha512-Wv7QBi3ID/rROT08SABTS7eV4hX26sVduqDOTe1MvGMjNd3EjOz4b7zeexIR62GTIEKrfJXKL9LFxTYgkyeu7g=="],
 
     "@esbuild-kit/core-utils/esbuild/@esbuild/win32-x64": ["@esbuild/win32-x64@0.18.20", "", { "os": "win32", "cpu": "x64" }, "sha512-kTdfRcSiDfQca/y9QIkng02avJ+NCaQvrMejlsB3RRv5sE9rRoeBPISaZpKxHELzRxZyLvNts1P27W3wV+8geQ=="],
-
-    "@intx/storage-isogit/@isomorphic-git/lightning-fs/just-debounce-it": ["just-debounce-it@1.1.0", "", {}, "sha512-87Nnc0qZKgBZuhFZjYVjSraic0x7zwjhaTMrCKlj0QYKH6lh0KbFzVnfu6LHan03NO7J8ygjeBeD0epejn5Zcg=="],
-
-    "@intx/storage-isogit/@isomorphic-git/lightning-fs/just-once": ["just-once@1.1.0", "", {}, "sha512-+rZVpl+6VyTilK7vB/svlMPil4pxqIJZkbnN7DKZTOzyXfun6ZiFeq2Pk4EtCEHZ0VU4EkdFzG8ZK5F3PErcDw=="],
 
     "@types/ssri/@types/node/undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
 
