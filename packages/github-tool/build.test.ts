@@ -5,7 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as tar from "tar";
 
-import { buildEntry, packTarball } from "./build";
+import { buildEntry, packTool } from "./build";
 
 const scratch = await mkdtemp(path.join(tmpdir(), "github-tool-pack-"));
 afterAll(async function cleanup() {
@@ -13,8 +13,8 @@ afterAll(async function cleanup() {
 });
 
 test("packs a byte-identical, self-contained tool tarball that loads under Node", async () => {
-  const first = await packTarball(await buildEntry(path.join(scratch, "a/index.js")), path.join(scratch, "a"));
-  const second = await packTarball(await buildEntry(path.join(scratch, "b/index.js")), path.join(scratch, "b"));
+  const first = await packTool(await buildEntry(path.join(scratch, "a/index.js")), path.join(scratch, "a"));
+  const second = await packTool(await buildEntry(path.join(scratch, "b/index.js")), path.join(scratch, "b"));
   expect(second.integrity).toBe(first.integrity);
 
   const extracted = path.join(scratch, "extracted");
