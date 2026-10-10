@@ -59,7 +59,7 @@ describe("GitHub App credential adapter", () => {
         return Response.json([{ number: 7, title: "PR", user: { login: "octo" }, head: { sha: "abc" } }]);
       }
       if (url.pathname.endsWith("/pulls/7") && request.method === "GET") {
-        return Response.json({ head: { sha: "abc" } });
+        return Response.json({ head: { sha: "abc" }, labels: [] });
       }
       if (url.pathname.endsWith("/issues/7/comments") && request.method === "GET") {
         return Response.json([]);
@@ -67,7 +67,7 @@ describe("GitHub App credential adapter", () => {
       if (url.pathname.endsWith("/issues/7/comments") && request.method === "POST") {
         return Response.json({ id: 99 });
       }
-      if (url.pathname.endsWith("/issues/7/labels") && request.method === "PUT") {
+      if (url.pathname.endsWith("/issues/7/labels") && request.method === "POST") {
         return Response.json([]);
       }
       throw new Error(`unexpected GitHub request ${request.method} ${request.url}`);
@@ -110,6 +110,7 @@ describe("GitHub App credential adapter", () => {
         repo: "octo/repo",
         number: 7,
         labels: ["triaged"],
+        owned: [],
         comment: "Done",
         close: false,
       },

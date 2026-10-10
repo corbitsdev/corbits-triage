@@ -14,6 +14,7 @@ import {
   upsertTriageComment,
   type GithubFetch,
 } from "@corbits/github-tool/github";
+import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 
@@ -75,7 +76,7 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
     case "merge":
       return mergePr(gh, { repo, number });
     case "close":
-      return mirror(gh, { repo, number, labels: body.labels, comment: body.comment, close: true });
+      return mirror(gh, { repo, number, labels: body.labels, owned: TRIAGE_LABELS, comment: body.comment, close: true });
   }
 }
 
