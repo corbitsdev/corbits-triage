@@ -1,6 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { PR_TRIAGE_WORKFLOW_VERSION } from "@corbits/triage-contracts";
 import { evaluateActions } from "../logic/actions.js";
 import { extractChangeCandidates } from "../logic/candidates.js";
 import type { PrFacts } from "../logic/checks.js";
@@ -26,7 +25,7 @@ const Input = type({ items: "object[]", batch: "boolean", "reply?": "unknown" })
 
 /** A facts failure or malformed input reaches this step without facts: the verdict then names no head and is degraded. */
 function stamp(facts: PrFacts | undefined) {
-  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null, workflowVersion: PR_TRIAGE_WORKFLOW_VERSION };
+  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null };
 }
 
 function verdictOf(it: Item): Verdict {

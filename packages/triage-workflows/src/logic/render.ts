@@ -330,7 +330,7 @@ export interface MirrorRequest {
   close: boolean;
 }
 
-export type Verdict = RenderOutput & { repo: string; number: number; headSha: string | null; workflowVersion: number; request: MirrorRequest; cleanupMode?: CleanupMode; actions: SuggestedAction[] };
+export type Verdict = RenderOutput & { repo: string; number: number; headSha: string | null; request: MirrorRequest; cleanupMode?: CleanupMode; actions: SuggestedAction[] };
 
 export function toMirrorRequest(v: RenderOutput & { repo: string; number: number }): MirrorRequest {
   return {
