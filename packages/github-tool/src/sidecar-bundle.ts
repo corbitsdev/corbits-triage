@@ -91,21 +91,22 @@ const MIRROR_INPUT = obj({
   repo,
   number: { type: "integer" },
   labels: { type: "array", items: str },
+  owned: { type: "array", items: str },
   comment: str,
   close: { type: "boolean" },
-});
+}, ["repo", "number", "labels", "comment", "close"]);
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_mirror",
     description:
-      "Post (or update) the triage comment and set labels on a pull request. Closes it only when close is true. Never merges.",
+      "Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. Closes it only when close is true. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_mirror_auto",
     description:
-      "Post (or update) the triage comment and set labels on a pull request without waiting for a human approval. Closes it only when close is true. Never merges.",
+      "Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. Closes it only when close is true. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
@@ -182,6 +183,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
         repo: a.repo,
         number: a.number,
         labels: a.labels,
+        owned: a.owned,
         comment: a.comment,
         close: a.close === true,
       });
