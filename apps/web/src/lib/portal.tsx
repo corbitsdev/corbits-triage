@@ -26,6 +26,8 @@ import {
   startBacklogTriage,
   githubPrAction,
   triagePullRequest as requestPullRequestTriage,
+  untilDeploymentReady,
+  WAITING_FOR_WORKFLOW,
   type HubGrant,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
@@ -265,24 +267,35 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
+  const waitForWorkflow = useCallback(function waitForWorkflow() {
+    notify(WAITING_FOR_WORKFLOW);
+  }, [notify]);
+
   const runBacklog = useCallback(
     async function runBacklog(repo: string, message = "Backlog triage started.") {
       const current = requireSnapshot();
       const transport = createHubTransport();
-      await startBacklogTriage(transport, current.workspace.tenantId, repo);
+      async function start() {
+        return startBacklogTriage(transport, current.workspace.tenantId, repo);
+      }
+      await untilDeploymentReady(start, waitForWorkflow);
       notify(message);
       refresh();
     },
-    [notify, refresh, requireSnapshot],
+    [notify, refresh, requireSnapshot, waitForWorkflow],
   );
 
   const triagePullRequest = useCallback(
     async function triagePullRequest(repo: string, number: number) {
       const current = requireSnapshot();
-      await requestPullRequestTriage(createHubTransport(), current.workspace.tenantId, repo, number);
+      const transport = createHubTransport();
+      async function request() {
+        return requestPullRequestTriage(transport, current.workspace.tenantId, repo, number);
+      }
+      await untilDeploymentReady(request, waitForWorkflow);
       await Promise.all([[RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY], [RUNS_QUERY_KEY]].map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
     },
-    [queryClient, requireSnapshot],
+    [queryClient, requireSnapshot, waitForWorkflow],
   );
 
   const closeDuplicate = useCallback(

@@ -18,6 +18,8 @@ import {
   saveInference,
   saveRepoPolicy,
   startBacklogTriage,
+  triagePullRequest,
+  untilDeploymentReady,
   patchAppConfig,
   type HubApproval,
   type HubRun,
@@ -681,6 +683,69 @@ describe("disabled repository triggers", () => {
       "Triage is disabled for this repository. Enable it first.",
     );
     expect(posted).toEqual([]);
+  });
+});
+
+describe("deployment not ready", () => {
+  function notReady() {
+    return new ApiError(409, "deployment_not_ready", "The workflow deployment is still starting.");
+  }
+
+  function harness(answers: ApiError[]) {
+    const posted: string[] = [];
+    const waits: string[] = [];
+    const slept: number[] = [];
+    function unsubscribe() {}
+    function subscribe() {
+      return unsubscribe;
+    }
+    const transport: Transport = {
+      async fetch(method, path) {
+        posted.push(`${method} ${path}`);
+        const refused = answers.shift();
+        if (refused) throw refused;
+        return { status: "queued", headSha: "sha1" } as never;
+      },
+      subscribe,
+    };
+    async function request() {
+      return triagePullRequest(transport, "tenant", "acme/widgets", 1);
+    }
+    function onWait() {
+      waits.push("waiting");
+    }
+    async function sleep(ms: number) {
+      slept.push(ms);
+    }
+    function run() {
+      return untilDeploymentReady(request, onWait, sleep);
+    }
+    return { posted, waits, slept, run };
+  }
+
+  test("a trigger refused while the deployment is not ready is retried with backoff and announced once", async () => {
+    const { posted, waits, slept, run } = harness([notReady()]);
+    await run();
+    expect(posted).toHaveLength(2);
+    expect(waits).toEqual(["waiting"]);
+    expect(slept).toEqual([1_000]);
+  });
+
+  test("another conflict is thrown without a retry", async () => {
+    const conflict = new ApiError(409, "already_queued", "acme/widgets#1 is already queued for triage.");
+    const { posted, waits, run } = harness([conflict]);
+    await expect(run()).rejects.toBe(conflict);
+    expect(posted).toHaveLength(1);
+    expect(waits).toEqual([]);
+  });
+
+  test("once the budget is spent the last refusal is thrown", async () => {
+    const last = notReady();
+    const { posted, waits, slept, run } = harness([notReady(), notReady(), notReady(), notReady(), last]);
+    await expect(run()).rejects.toBe(last);
+    expect(posted).toHaveLength(5);
+    expect(waits).toEqual(["waiting"]);
+    expect(slept).toEqual([1_000, 2_000, 4_000, 8_000]);
   });
 });
 

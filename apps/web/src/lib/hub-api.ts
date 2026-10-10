@@ -853,6 +853,37 @@ function isTerminalMailFailure(cause: unknown): boolean {
     || message.includes("no longer active");
 }
 
+export const WAITING_FOR_WORKFLOW = "Waiting for the workflow to be ready…";
+
+// A deployment answers 409 `deployment_not_ready` until it records its credential resolution, seconds after it is deployed.
+const NOT_READY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000];
+
+function isDeploymentNotReady(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.status === 409 && cause.code === "deployment_not_ready";
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Retries `attempt` while the deployment is not ready, calling `onWait` once; the last attempt's error is thrown as is. */
+export async function untilDeploymentReady<T>(
+  attempt: () => Promise<T>,
+  onWait: () => void,
+  sleep: (ms: number) => Promise<void> = pause,
+): Promise<T> {
+  for (const [index, ms] of NOT_READY_BACKOFF_MS.entries()) {
+    try {
+      return await attempt();
+    } catch (cause) {
+      if (!isDeploymentNotReady(cause)) throw cause;
+    }
+    if (index === 0) onWait();
+    await sleep(ms);
+  }
+  return attempt();
+}
+
 function byPreferredDeployment(
   a: { createdAt: string; id: string },
   b: { createdAt: string; id: string },
