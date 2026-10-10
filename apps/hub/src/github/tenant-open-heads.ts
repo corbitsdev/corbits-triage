@@ -3,7 +3,7 @@
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
-import { getPr, listOpenPrs } from "@corbits/github-tool/github";
+import { getChecks, getPr, listOpenPrs, type GithubFetch } from "@corbits/github-tool/github";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation } from "./open-pulls.js";
 import { appGithubFetch } from "./portal-credential.js";
@@ -23,20 +23,42 @@ export function createPullHeadReader(deps: { githubApiOrigin: string }): PullHea
   };
 }
 
-export function createTenantOpenHeads(deps: { db: DB["db"]; cipher: CredentialCipher; githubApiOrigin: string }) {
-  const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
+type TenantGithubDeps = { db: DB["db"]; cipher: CredentialCipher; githubApiOrigin: string };
 
-  /** Undefined when the tenant has no active GitHub App credential. */
-  return async function openHeadsFor(tenantId: string): Promise<OpenHeadsReader | undefined> {
+/** GitHub as the tenant's App; undefined when the tenant has no active GitHub App credential. */
+function createTenantGithub(deps: TenantGithubDeps) {
+  const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
+  return async function tenantGithub(tenantId: string): Promise<GithubFetch | undefined> {
     const credential = await deps.db.query.credential.findFirst({
       where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.name, "github"), eq(schema.credential.status, "active")),
     });
     if (!credential) return undefined;
     const appJson = await deps.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
-    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+    return appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+  };
+}
+
+export function createTenantOpenHeads(deps: TenantGithubDeps) {
+  const tenantGithub = createTenantGithub(deps);
+
+  /** Undefined when the tenant has no active GitHub App credential. */
+  return async function openHeadsFor(tenantId: string): Promise<OpenHeadsReader | undefined> {
+    const gh = await tenantGithub(tenantId);
+    if (!gh) return undefined;
     return async function openHeads(record) {
       const prs = await listOpenPrs(forInstallation(gh, record.installationId), record.name);
       return prs.flatMap((pr) => (typeof pr.sha === "string" && pr.sha !== "" ? [{ number: pr.number, headSha: pr.sha, updatedAt: pr.updatedAt, draft: pr.draft }] : []));
     };
+  };
+}
+
+export type HeadChecksReader = (tenantId: string, record: RepoRecord, headSha: string) => Promise<Awaited<ReturnType<typeof getChecks>>>;
+
+export function createTenantHeadChecks(deps: TenantGithubDeps): HeadChecksReader {
+  const tenantGithub = createTenantGithub(deps);
+  return async function headChecks(tenantId, record, headSha) {
+    const gh = await tenantGithub(tenantId);
+    if (!gh) throw new Error("no active github credential");
+    return getChecks(forInstallation(gh, record.installationId), record.name, headSha);
   };
 }

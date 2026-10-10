@@ -44,9 +44,10 @@ import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
-import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
+import { createBridgeHandler, logJson, MAX_BODY_BYTES } from "./github/bridge.js";
+import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls } from "./github/open-pulls.js";
@@ -61,7 +62,7 @@ import { createGithubPrTriage } from "./github/pr-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
-import { createPullHeadReader, createTenantOpenHeads } from "./github/tenant-open-heads.js";
+import { createPullHeadReader, createTenantHeadChecks, createTenantOpenHeads } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { createGithubManifestIntegration, migrateGithubManifest } from "./github/manifest.js";
@@ -119,11 +120,13 @@ const local = createLocalProcessSidecarProvisioner({
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
 let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
+let coalescer: Coalescer | undefined;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   cronTicker?.stop();
   triageLoop?.stop();
+  coalescer?.stop();
   try {
     await local.shutdown();
   } finally {
@@ -259,11 +262,11 @@ const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
   await githubDeliverer.to(address, JSON.stringify(payload), tenantId, undefined);
 }
-const sendBridgeMail: BridgeDeps["sendMail"] = async function sendBridgeMail(tenantId, workflow, payload) {
+async function sendBridgeMail(tenantId: string, workflow: string, payload: unknown): Promise<void> {
   const live = await resolveLiveDeployment(composition.db, tenantId, workflow);
   if (!live) throw new NoLiveDeploymentError(workflow);
   await deliverToDeployment(tenantId, live.address, payload);
-};
+}
 function readCheckPack(tenantId: string, repo: string) {
   return loadCheckPack(composition.db, tenantId, repo);
 }
@@ -349,11 +352,26 @@ const syncInstallations = createInstallationSync({
   authorize: authorizePortal,
   onSynced: triageLoop.kick,
 });
+function setTimer(fire: () => Promise<void>, ms: number): () => void {
+  const handle = setTimeout(fire, ms);
+  return function cancel() {
+    clearTimeout(handle);
+  };
+}
+coalescer = createCoalescer({
+  store: triageStateStore,
+  sendMail: sendBridgeMail,
+  headChecks: createTenantHeadChecks({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  window: triageCoalesceWindow(env, reconcilePolicy),
+  setTimer,
+  now,
+  log: logJson,
+});
 const bridge = createBridgeHandler({
   db: hookDeps.db,
   cipher: hookDeps.cipher,
   cache: new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` }),
-  sendMail: sendBridgeMail,
+  coalescer,
   readCheckPack,
   openHeadsFor: tenantOpenHeads,
 });

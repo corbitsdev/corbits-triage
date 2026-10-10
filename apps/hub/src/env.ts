@@ -1,6 +1,7 @@
 import { type, type ArkError } from "arktype";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
+import type { CoalesceWindow } from "./github/coalescer.js";
 import { DEFAULT_RECONCILE_POLICY, type ReconcilePolicy } from "./github/reconcile-plan.js";
 
 const secret = type("string").narrow((value, ctx) =>
@@ -38,6 +39,7 @@ const HubEnvSchema = type({
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
   "TRIAGE_CAPPED_RETRY_MS?": positiveInteger,
+  "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -138,6 +140,15 @@ export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" |
     maxInFlight: numberOr(env.TRIAGE_MAX_IN_FLIGHT, DEFAULT_RECONCILE_POLICY.maxInFlight),
     cappedRetryAfterMs: numberOr(env.TRIAGE_CAPPED_RETRY_MS, DEFAULT_RECONCILE_POLICY.cappedRetryAfterMs),
   };
+}
+
+/** A pull request's webhook events go out as one mail once none arrived for the quiet period, or at most four quiet periods after the first; the window must close before the reconciler gives up on its queued head. */
+export function triageCoalesceWindow(env: HubEnv, policy: ReconcilePolicy): CoalesceWindow {
+  const quietMs = numberOr(env.TRIAGE_COALESCE_QUIET_MS, 30_000);
+  if (4 * quietMs >= policy.unstartedAfterMs) {
+    throw new Error(`TRIAGE_COALESCE_QUIET_MS must be below ${policy.unstartedAfterMs / 4}: four times it must stay under the ${policy.unstartedAfterMs} ms a queued head may wait to start`);
+  }
+  return { quietMs, maxWaitMs: 4 * quietMs };
 }
 
 export type SignInSettings = {
