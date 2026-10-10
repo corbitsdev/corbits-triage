@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
+import { emptyPack, recommendedPack, type CheckPack } from "@corbits/triage-contracts";
 import { checkPackFromDraft, draftFromCheckPack, emptyDraft } from "./check-catalog.ts";
 
 describe("draft pack conversion", () => {
@@ -42,7 +42,17 @@ describe("draft pack conversion", () => {
       id: "custom-1",
       name: "No silent retries",
       group: "pull-request",
-      instruction: "Fail if the diff retries without a budget.",
+      kind: "model",
+      shape: "is-true",
+      claim: "Fail if the diff retries without a budget.",
     }]);
+  });
+
+  test("a typed rule check survives a draft round trip", () => {
+    const pack: CheckPack = {
+      ...emptyPack("acme/widgets"),
+      custom: [{ id: "custom-1", name: "Ticket title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^[A-Z]+-\\d+" }],
+    };
+    expect(checkPackFromDraft(draftFromCheckPack(pack))).toEqual(pack);
   });
 });
