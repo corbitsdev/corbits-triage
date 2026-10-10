@@ -237,6 +237,24 @@ describe("judge on a blocked pull request", () => {
     ]);
   });
 
+  test("a gapped custom check id matches the action on that check, not its neighbour", async () => {
+    const checkPack = {
+      ...recommendedPack("acme/widgets"),
+      custom: [
+        { id: "custom-2", name: "No secrets", group: "pull-request", instruction: "No secrets are committed." },
+        { id: "custom-3", name: "Changelog", group: "pull-request", instruction: "The changelog is updated." },
+      ],
+      actions: [
+        { id: "on-2", when: "every", checks: ["custom-2"], branches: { no: [{ kind: "comment", automatic: false, target: { body: "secrets" } }] } },
+        { id: "on-3", when: "every", checks: ["custom-3"], branches: { no: [{ kind: "comment", automatic: false, target: { body: "changelog" } }] } },
+      ],
+    };
+    const { verdict } = await judgeAndRender(await facts([], true, false, { checkPack }), undefined, ["custom-3"]);
+    expect(verdict.actions).toEqual([
+      { id: "on-3", branch: "no", kind: "comment", automatic: false, target: { body: "changelog" }, reason: "Changelog failed." },
+    ]);
+  });
+
   test("stale-unknown facts skip the model", async () => {
     const { asked, verdict } = await judgeAndRender(await facts([], null));
     expect(asked).toEqual([]);

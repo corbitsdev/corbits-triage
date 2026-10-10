@@ -554,13 +554,13 @@ export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack |
 /** Custom instructions are handed to the classifier as plain text, never evaluated. */
 export function classificationSources(pack: CheckPack): {
   quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>;
-  custom: Array<{ name: string; group: CheckPackGroup; instruction: string }>;
+  custom: Array<{ id: string; name: string; group: CheckPackGroup; instruction: string }>;
 } {
   return {
     quality: QUALITY_CHECK_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id) => ({
       id,
       group: CHECK_CATALOG[id].group,
     })),
-    custom: pack.custom.map(({ name, group, instruction }) => ({ name, group, instruction })),
+    custom: pack.custom.map(({ id, name, group, instruction }) => ({ id, name, group, instruction })),
   };
 }
