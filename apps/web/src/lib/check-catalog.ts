@@ -2,6 +2,7 @@ import {
   CHECK_PACK_KIND,
   CHECK_PACK_SCHEMA_VERSION,
   parseCheckPack,
+  type Action,
   type CatalogCheck as PackCatalogCheck,
   type CatalogId,
   type CheckPack,
@@ -68,6 +69,8 @@ export type DraftPack = {
   mode: CleanupMode;
   checks: DraftCheck[];
   custom: DraftCheck[];
+  /** Not edited in the panel; carried so saving checks keeps them. */
+  actions: Action[];
 };
 
 const DIRECT_IDS = new Set<CatalogId>(["draft", "duplicate", "focused", "docs", "reviewers", "conflicts", "ci", "tests"]);
@@ -93,7 +96,7 @@ function finiteNumber(value: unknown, fallback: number): number {
 }
 
 export function emptyDraft(repository: string, mode: CleanupMode = "human-approved"): DraftPack {
-  return { repository, mode, checks: [], custom: [] };
+  return { repository, mode, checks: [], custom: [], actions: [] };
 }
 
 export const emptyPack = emptyDraft;
@@ -155,6 +158,7 @@ export function checkPackFromDraft(pack: DraftPack): CheckPack {
     repo: pack.repository,
     checks,
     custom,
+    actions: pack.actions,
   }, pack.repository);
   if (!parsed) throw new Error("Check pack is not valid.");
   return parsed;
@@ -206,6 +210,7 @@ export function draftFromCheckPack(pack: CheckPack, mode: CleanupMode = "human-a
       instruction: row.instruction,
       values: { instruction: row.instruction },
     })),
+    actions: pack.actions,
   };
 }
 
