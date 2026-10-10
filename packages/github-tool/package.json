@@ -1,6 +1,6 @@
 {
   "name": "@corbits/github-tool",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
@@ -10,7 +10,7 @@
     "./github": "./src/github.ts"
   },
   "interchange": {
-    "tools": "./dist/sidecar-bundle.js",
+    "tools": "./dist/index.js",
     "credentials": [
       {
         "handle": "github"
@@ -18,7 +18,8 @@
     ]
   },
   "scripts": {
-    "build": "bun run build.ts"
+    "build": "bun run build.ts",
+    "pack:tool": "bun run build.ts pack"
   },
   "dependencies": {
     "@intx/agent": "workspace:*",
@@ -26,12 +27,13 @@
     "minimatch": "^10.2.6"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "tar": "catalog:"
   },
   "main": "./src/index.ts",
   "files": [
     "dist",
     "package.json"
   ],
-  "description": "Read-only GitHub tools"
+  "description": "GitHub read and write tools for Interchange"
 }
