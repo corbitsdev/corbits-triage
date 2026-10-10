@@ -1,16 +1,17 @@
 import type { ActionKind } from "@corbits/triage-contracts";
-import { strings, type PrGithubWriteInput, type PrItem, type SuggestedAction } from "./hub-api.ts";
+import { strings, type DoRef, type DoRun, type PrItem, type SuggestedAction } from "./hub-api.ts";
 
+/** Keyed by the Do's effect id; `running` while the hub is writing it, and `error` is why its last attempt failed. */
 export type PendingDo = {
   key: string;
   label: string;
   actionId: string;
   kind: ActionKind;
   reason: string;
-  request: PrGithubWriteInput;
+  ref: DoRef;
+  running: boolean;
+  error: string | null;
 };
-
-type Pull = PrItem & { number: number };
 
 /** Resolution keeps only team slugs, and only the repository owner's teams can review. */
 function teamName(slug: string, repo: string): string {
@@ -18,61 +19,62 @@ function teamName(slug: string, repo: string): string {
 }
 
 /** Null when the step has nothing the hub can run: an unresolved target, an empty one, or an agent. */
-function request(action: SuggestedAction, item: Pull): { label: string; request: PrGithubWriteInput } | null {
+function label(action: SuggestedAction, repo: string): string | null {
   const { kind, target } = action;
-  const { repo, number } = item;
   if ("unresolved" in target) return null;
   switch (kind) {
     case "labels": {
       const labels = strings(target.labels);
-      if (!labels.length) return null;
-      return { label: `Add ${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}`, request: { action: "labels", repo, number, labels } };
+      return labels.length ? `Add ${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}` : null;
     }
     case "assign": {
       const assignees = strings(target.users);
-      if (!assignees.length) return null;
-      return { label: `Assign ${assignees.join(", ")}`, request: { action: "assign", repo, number, assignees } };
+      return assignees.length ? `Assign ${assignees.join(", ")}` : null;
     }
     case "request-review": {
-      const reviewers = strings(target.users);
-      const teamReviewers = strings(target.teams);
-      if (!reviewers.length && !teamReviewers.length) return null;
-      return {
-        label: `Request review from ${[...teamReviewers.map((slug) => teamName(slug, repo)), ...reviewers].join(", ")}`,
-        request: { action: "request-review", repo, number, ...(reviewers.length ? { reviewers } : {}), ...(teamReviewers.length ? { teamReviewers } : {}) },
-      };
+      const reviewers = [...strings(target.teams).map((slug) => teamName(slug, repo)), ...strings(target.users)];
+      return reviewers.length ? `Request review from ${reviewers.join(", ")}` : null;
     }
-    case "comment": {
-      const body = typeof target.body === "string" ? target.body : "";
-      if (!body.trim()) return null;
-      return { label: "Comment", request: { action: "comment", repo, number, body } };
-    }
-    // The same close the pane's own Close sends, so a pack's close behaves identically.
+    case "comment":
+      return typeof target.body === "string" && target.body.trim() ? "Comment" : null;
     case "close":
-      return { label: "Close", request: { action: "close", repo, number, labels: item.labels, comment: item.comment ?? "" } };
+      return "Close";
     case "agent":
       return null;
   }
 }
 
-/** The verdict's resolved Dos the hub's action route can run, in the order the pack lists them. */
-export function pendingDos(item: PrItem): PendingDo[] {
-  if (item.number === null) return [];
-  const pull = { ...item, number: item.number };
+/** The verdict's resolved Dos the hub can run, in the order the pack lists them. */
+function offeredDos(item: PrItem): PendingDo[] {
+  const { repo, number, runId } = item;
+  if (number === null || runId === null) return [];
   const out: PendingDo[] = [];
-  for (const [index, action] of item.actions.entries()) {
+  for (const action of item.actions) {
     // A flagged duplicate already offers its own close, with the reply and labels.
     if (action.kind === "close" && item.canClose) continue;
-    const resolved = request(action, pull);
-    if (resolved === null) continue;
-    out.push({ key: `${action.id}/${index}`, actionId: action.id, kind: action.kind, reason: action.reason, ...resolved });
+    const text = label(action, repo);
+    if (text === null) continue;
+    const ref = { runId, repo, number, actionId: action.id, branch: action.branch, index: action.index };
+    out.push({ key: action.effectId, label: text, actionId: action.id, kind: action.kind, reason: action.reason, ref, running: false, error: null });
+  }
+  return out;
+}
+
+/** Dos the hub has not settled and that are not held for Undo, with the hub's state of each. */
+export function pendingDos(item: PrItem, runs: DoRun[], held: ReadonlySet<string>): PendingDo[] {
+  const byEffect = new Map(runs.map((run) => [run.effectId, run]));
+  const out: PendingDo[] = [];
+  for (const pending of offeredDos(item)) {
+    const run = byEffect.get(pending.key);
+    if (held.has(pending.key) || run?.status === "done" || run?.status === "satisfied") continue;
+    out.push({ ...pending, running: run?.status === "running", error: run?.status === "failed" ? run.error : null });
   }
   return out;
 }
 
 /** The pack's close stands in for the plain one, so only one Close is offered. */
 export function offersClose(item: PrItem): boolean {
-  return pendingDos(item).some((pending) => pending.kind === "close");
+  return offeredDos(item).some((pending) => pending.kind === "close");
 }
 
 export type DoGroup = { actionId: string; reason: string; dos: PendingDo[] };
@@ -86,31 +88,4 @@ export function doGroups(dos: PendingDo[]): DoGroup[] {
     else group.dos.push(pending);
   }
   return [...groups.values()];
-}
-
-/** Dos held or sent to GitHub, by pull request key, for the verdict run that suggested them. */
-export type RanDos = Record<string, { runId: string; keys: string[] }>;
-
-function ranKeys(ran: RanDos | undefined, item: PrItem): string[] {
-  const entry = ran?.[item.key];
-  return entry !== undefined && entry.runId === item.runId ? entry.keys : [];
-}
-
-/** A newer verdict replaces the entry, so its Dos are offered afresh. */
-function withKeys(ran: RanDos | undefined, item: PrItem, keys: string[]): RanDos {
-  if (item.runId === null) return ran ?? {};
-  return { ...ran, [item.key]: { runId: item.runId, keys } };
-}
-
-export function withRan(ran: RanDos | undefined, item: PrItem, key: string): RanDos {
-  return withKeys(ran, item, [...ranKeys(ran, item), key]);
-}
-
-export function withoutRan(ran: RanDos | undefined, item: PrItem, key: string): RanDos {
-  return withKeys(ran, item, ranKeys(ran, item).filter((ranKey) => ranKey !== key));
-}
-
-export function unranDos(item: PrItem, ran: RanDos): PendingDo[] {
-  const done = ranKeys(ran, item);
-  return pendingDos(item).filter((pending) => !done.includes(pending.key));
 }

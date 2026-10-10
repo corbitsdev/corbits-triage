@@ -170,9 +170,12 @@ describe("paneWrite", () => {
     function replySent(sent: PrItem) {
       calls.push({ sent: sent.key });
     }
+    async function runDo(): Promise<never> {
+      throw new Error("a pane write sends no pack Do");
+    }
     const pr = item(overrides);
     if (pr.number === null) throw new Error("test item needs a number");
-    const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent });
+    const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent, runDo });
     return { calls, outcome };
   }
 

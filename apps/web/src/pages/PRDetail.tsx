@@ -11,7 +11,7 @@ import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "../lib/error-text.ts";
 import { paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
-import { usePendingDos, useRanDoMarks } from "../lib/ran-dos.ts";
+import { usePendingDos, useRunDo } from "../lib/do-runs.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import {
@@ -317,7 +317,7 @@ function RecommendedComment({ item, posted, onPosted, onDismiss }: {
 
 export default function PRDetail() {
   const params = useParams();
-  const { snapshot, decide, closeDuplicate, writeGithub, readOnly } = usePortal();
+  const { snapshot, decide, closeDuplicate, writeGithub, notify, readOnly } = usePortal();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<SliverTab>("about");
@@ -354,7 +354,7 @@ export default function PRDetail() {
   const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
   const moreRef = useRef<HTMLDetailsElement>(null);
   const dos = usePendingDos(item);
-  const ranDos = useRanDoMarks();
+  const runPackDo = useRunDo();
 
   async function act(decision: "once" | "deny") {
     if (!approval) return;
@@ -412,15 +412,11 @@ export default function PRDetail() {
 
   async function runDo(pending: PendingDo) {
     if (!item || item.number === null || item.running) return;
-    if (pending.kind === "close") {
-      await requestWrite("close");
-      return;
-    }
     setBusy(true);
     try {
       setError("");
-      await writeGithub(pending.request, "now");
-      ranDos.mark(item, pending.key);
+      await runPackDo(pending.ref, false);
+      notify(`${pending.label}: done on ${item.key}.`);
     } catch (cause) {
       setError(errorText(cause));
     } finally {
