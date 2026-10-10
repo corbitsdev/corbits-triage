@@ -67,19 +67,21 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
       return writeGithub(input, "leaving");
     }
     function restore() {
-      if (!write.stay) handledPulls.release(item);
+      if (write.settles !== null) handledPulls.release(item);
       write.restore?.();
       setRestored((current) => ({ ...current, [item.key]: { runId: item.runId, draft } }));
     }
-    if (!write.stay) handledPulls.hold(item);
+    const settles = write.settles;
+    if (settles !== null) handledPulls.hold(item, settles);
     queue.hold({
       pending: write.pending,
       async send(leaving) {
-        if (!write.stay) handledPulls.markHandled(item);
+        if (settles !== null) handledPulls.markHandled(item, settles);
         function runHeldDo(ref: DoRef) {
           return runDo(ref, leaving);
         }
         const outcome = await write.send({ write: leaving ? writeLeaving : writeHeld, replySent, runDo: runHeldDo });
+        if (settles !== null) handledPulls.sent(settles);
         if (!outcome.complete) tellIfAway(outcome.message);
         return outcome;
       },

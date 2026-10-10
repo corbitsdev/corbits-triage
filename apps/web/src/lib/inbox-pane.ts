@@ -2,7 +2,7 @@ import { errorText } from "./error-text.ts";
 import type { Outcome } from "./held-actions.ts";
 import type { DoRef, DoRun, GithubPullDetail, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import { offersClose, type PendingDo } from "./pending-dos.ts";
-import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type PrimaryAction } from "./inbox-view.ts";
+import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
 
 const UNTITLED = "Untitled pull request";
 
@@ -167,14 +167,14 @@ export function needsConfirm(kind: PaneKind, item: PrItem): boolean {
   return kind === "close" && item.canClose;
 }
 
-export type WriteKind = Exclude<PaneKind, "triage">;
+export type WriteKind = HandledKind;
 
 /**
  * A GitHub write as the inbox holds it: what the toast says while it waits for Undo, and how it is sent afterwards.
- * `stay` keeps the pull request in the inbox and selected, for a write that does not settle it; `restore` puts back
- * what the pane hid when it held the write, on Undo or a failed send.
+ * `settles` is recorded on the pull request it takes out of the inbox; null keeps it in the inbox and selected, for a write
+ * that does not settle it. `restore` puts back what the pane hid when it held the write, on Undo or a failed send.
  */
-export type PaneWrite = { pending: string; send: (io: PaneIo) => Promise<Outcome>; stay?: boolean; restore?: () => void };
+export type PaneWrite = { pending: string; send: (io: PaneIo) => Promise<Outcome>; settles: WriteKind | null; restore?: () => void };
 
 function requireBody(body: string, what: string): string {
   if (!body.trim()) throw new Error(`The ${what} must not be empty.`);
@@ -218,6 +218,7 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
     case "reply": {
       const text = requireBody(body, "reply");
       return {
+        settles: kind,
         pending: `Replying on #${number}…`,
         send(io) {
           return sendReply(io, item, text);
@@ -227,6 +228,7 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
     case "comment": {
       const text = requireBody(body, "comment");
       return {
+        settles: kind,
         pending: `Commenting on #${number}…`,
         async send({ write }) {
           await write({ action: "comment", repo, number, body: text });
@@ -237,6 +239,7 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
     case "changes": {
       const text = requireBody(body, "comment");
       return {
+        settles: kind,
         pending: `Requesting changes on #${number}…`,
         async send({ write }) {
           await write({ action: "review", repo, number, event: "REQUEST_CHANGES", body: text });
@@ -246,6 +249,7 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
     }
     case "approve":
       return {
+        settles: kind,
         pending: `Approving #${number}…`,
         async send({ write }) {
           await write({ action: "review", repo, number, event: "APPROVE", body: "" });
@@ -254,6 +258,7 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
       };
     case "merge":
       return {
+        settles: kind,
         pending: `Merging #${number}…`,
         async send({ write }) {
           await write({ action: "merge", repo, number });
@@ -262,6 +267,7 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
       };
     case "close":
       return {
+        settles: kind,
         pending: item.canClose ? `Closing #${number} as a duplicate…` : `Closing #${number}…`,
         async send({ write }) {
           await write({ action: "close", repo, number, labels: item.labels, comment: item.comment ?? "" });
@@ -275,7 +281,7 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
 export function doWrite(item: NumberedItem, pending: PendingDo, restore: () => void): PaneWrite {
   const closes = pending.kind === "close";
   return {
-    stay: !closes,
+    settles: closes ? "close" : null,
     restore,
     pending: closes ? `Closing #${item.number}…` : `${pending.label} on #${item.number}…`,
     async send({ runDo }) {

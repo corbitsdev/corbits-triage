@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { groupInbox, hasDraftComment, inboxAction, inboxStatus, primaryAction } from "./inbox-view.ts";
+import { groupInbox, hasDraftComment, inboxAction, inboxStatus, postedLabel, primaryAction, waitsOn } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -30,6 +30,9 @@ function item(overrides: Partial<PrItem>): PrItem {
     runId: "run-1",
     waitingSince: "2026-10-01T00:00:00.000Z",
     updatedAt: null,
+    ci: null,
+    headSha: null,
+    activityAt: null,
     canClose: false,
     pendingClose: false,
     posted: false,
@@ -115,5 +118,32 @@ describe("primaryAction", () => {
     expect(primaryAction(item({ state: "needs-author-update", comment: "Please rebase", posted: true }), "unblock")).toBeNull();
     expect(primaryAction(item({ state: "blocked", posted: true }), "unblock")).toBe("changes");
     expect(primaryAction(item({ comment: "" }), "decide")).toBe("comment");
+  });
+});
+
+describe("waitsOn", () => {
+  test("the maintainer while in Needs you or while an approval is pending", () => {
+    expect(waitsOn(item({}), null)).toBe("maintainer");
+    expect(waitsOn(item({ state: "ready", pendingApprovalId: "a1" }), { kind: "approve" })).toBe("maintainer");
+  });
+
+  test("the author for a draft, a verdict that needs an update, or requested changes, a reply or a comment", () => {
+    expect(waitsOn(item({ draft: true }), { kind: "approve" })).toBe("author");
+    expect(waitsOn(item({ state: "needs-author-update" }), { kind: null })).toBe("author");
+    for (const kind of ["changes", "reply", "comment"] as const) expect(waitsOn(item({ ci: "pending" }), { kind })).toBe("author");
+  });
+
+  test("CI while it is pending, else nobody", () => {
+    expect(waitsOn(item({ ci: "pending" }), { kind: "approve" })).toBe("ci");
+    expect(waitsOn(item({ ci: "success" }), { kind: "approve" })).toBe("nobody");
+    expect(waitsOn(item({ state: "new", runId: null }), null)).toBe("nobody");
+  });
+});
+
+describe("postedLabel", () => {
+  test("names what the maintainer did, else the verdict's reply", () => {
+    expect(postedLabel(item({ posted: true }), { kind: "changes" })).toBe("Requested changes");
+    expect(postedLabel(item({ posted: true }), { kind: null })).toBe("Posted");
+    expect(postedLabel(item({}), null)).toBeNull();
   });
 });
