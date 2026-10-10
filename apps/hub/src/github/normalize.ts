@@ -16,6 +16,8 @@ export interface PrMail {
   body: string | null;
   /** Null when the payload does not say, as on check_run. */
   draft: boolean | null;
+  /** Null unless the event is a pull request review. */
+  review: { state: string } | null;
   policy?: RepoPolicy;
 }
 
@@ -46,5 +48,6 @@ export function normalize(event: string, deliveryId: string, p: Json): PrMail | 
     title: pr?.title ?? null,
     body: pr?.body ?? null,
     draft: typeof pr?.draft === "boolean" ? pr.draft : null,
+    review: typeof p.review?.state === "string" ? { state: p.review.state } : null,
   };
 }
