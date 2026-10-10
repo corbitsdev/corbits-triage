@@ -111,6 +111,39 @@ async function startHub(): Promise<string> {
   return origin;
 }
 
+/** JSON headers for a freshly signed-up member, sent from the hub's own origin. */
+async function signedIn(origin: string): Promise<Record<string, string>> {
+  const headers = { "content-type": "application/json", origin };
+  const signUp = await fetch(`${origin}/api/auth/sign-up/email`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ email: `member-${crypto.randomUUID()}@example.com`, password: "password-123456", name: "Member" }),
+  });
+  expect(signUp.status).toBe(200);
+  const cookie = signUp.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
+  return { ...headers, cookie };
+}
+
+async function createTenant(origin: string, headers: Record<string, string>): Promise<string> {
+  const tenant = await fetch(`${origin}/api/tenants`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "Acme", slug: `acme-${crypto.randomUUID().slice(0, 8)}` }),
+  });
+  expect(tenant.status).toBe(201);
+  return type({ id: "string" }).assert(await tenant.json()).id;
+}
+
+async function createAsset(origin: string, headers: Record<string, string>, tenantId: string, kind: string): Promise<string> {
+  const asset = await fetch(`${origin}/api/tenants/${tenantId}/assets`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ kind, name: `corbits-${crypto.randomUUID().slice(0, 8)}` }),
+  });
+  expect(asset.status).toBe(201);
+  return type({ id: "string" }).assert(await asset.json()).id;
+}
+
 test("composed hub upgrades the sidecar websocket", async () => {
   const origin = await startHub();
 
@@ -140,29 +173,37 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-triage/{tenantId}": ["post"],
     "/api/integrations/github-open-pulls/{tenantId}": ["get"],
     "/api/integrations/github-pull/{tenantId}": ["get"],
+    "/api/integrations/workflow-deploy/{tenantId}": ["post"],
   });
 
-  const headers = { "content-type": "application/json", origin };
-  const signUp = await fetch(`${origin}/api/auth/sign-up/email`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ email: `member-${crypto.randomUUID()}@example.com`, password: "password-123456", name: "Member" }),
-  });
-  expect(signUp.status).toBe(200);
-  const cookie = signUp.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
-  const tenant = await fetch(`${origin}/api/tenants`, {
-    method: "POST",
-    headers: { ...headers, cookie },
-    body: JSON.stringify({ name: "Acme", slug: `acme-${crypto.randomUUID().slice(0, 8)}` }),
-  });
-  expect(tenant.status).toBe(201);
-  const { id } = type({ id: "string" }).assert(await tenant.json());
+  const headers = await signedIn(origin);
+  const id = await createTenant(origin, headers);
 
   const action = await fetch(`${origin}/api/integrations/github-actions/${id}`, {
     method: "POST",
-    headers: { ...headers, cookie },
+    headers,
     body: JSON.stringify({ repo: "acme/widgets", number: 0, action: "merge" }),
   });
   expect(action.status).toBe(400);
   expect(await action.json()).toMatchObject({ error: { code: "invalid_request" } });
+}, 40_000);
+
+test("workflow deploy refuses a package registry that is not the workspace's own or is not a registry", async () => {
+  const origin = await startHub();
+  const headers = await signedIn(origin);
+  const id = await createTenant(origin, headers);
+  const workflowAsset = await createAsset(origin, headers, id, "workflow");
+  const otherRegistry = await createAsset(origin, headers, await createTenant(origin, headers), "package-registry");
+
+  async function deploy(registryAssetId: string, pin = "@corbits/pr-triage-workflow@0.1.0") {
+    const res = await fetch(`${origin}/api/integrations/workflow-deploy/${id}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ registryAssetId, definitionAssetId: workflowAsset, pin, entry: "./pr-triage.mjs", sourceOfferingIds: ["mof_1"], defaultSourceOfferingId: "mof_1" }),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+  expect(await deploy(otherRegistry)).toMatchObject({ status: 404, body: { error: { code: "not_found", message: "Package registry asset not found" } } });
+  expect(await deploy(workflowAsset)).toMatchObject({ status: 404, body: { error: { code: "not_found", message: "Package registry asset not found" } } });
+  expect(await deploy(otherRegistry, "Not A Pin@")).toMatchObject({ status: 400, body: { error: { code: "invalid_request" } } });
 }, 40_000);
