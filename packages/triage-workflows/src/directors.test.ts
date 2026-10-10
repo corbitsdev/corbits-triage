@@ -520,7 +520,7 @@ describe("mirror director cleanup mode", () => {
   test("automated high-confidence posts with the no-ask tool", async () => {
     expect(await mirrorCalls({ ...verdict, cleanupMode: "automated" })).toEqual([[
       {
-        id: "github_mirror_auto:acme/widgets#8",
+        id: "mirror:acme--widgets:8",
         name: "github_mirror_auto",
         arguments: request,
       },
