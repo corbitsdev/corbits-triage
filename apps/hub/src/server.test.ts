@@ -3,15 +3,18 @@ import { afterEach, expect, test } from "bun:test";
 import { type } from "arktype";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
 import { PreviewResponse } from "./github/pr-preview.js";
 import { findArtifactByTitle } from "@corbits/artifacts";
-import { checkPackName, emptyPack, triageStateName } from "@corbits/triage-contracts";
+import { checkPackName, emptyPack, stockTriggerMail, triageStateName } from "@corbits/triage-contracts";
 import { doEffectId, type Branch, type ResolvedTarget } from "../../../packages/triage-workflows/src/logic/actions.js";
 import { doMarker } from "../../../packages/triage-workflows/src/logic/execute-do.js";
+import { workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
+import { TriageStats } from "./github/triage-stats.js";
+import { verdictRecord } from "./github/verdict-record-store.js";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -190,6 +193,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-open-pulls/{tenantId}": ["get"],
     "/api/integrations/github-pull/{tenantId}": ["get"],
     "/api/integrations/github-preview/{tenantId}": ["post"],
+    "/api/integrations/triage-stats/{tenantId}": ["get"],
     "/api/integrations/workflow-deploy/{tenantId}": ["post"],
     "/api/integrations/workflow-versions/{tenantId}": ["get"],
   });
@@ -310,37 +314,49 @@ function verdictStep(step: SeededDo, headSha: string) {
   return step.index === undefined ? base : { ...base, index: step.index, effectId: step.effectId ?? effectOf(step, step.index, headSha) };
 }
 
-/** A completed run whose committed log holds a verdict for REPO#8, as the workflow writes it. */
-async function seedRun(db: ReturnType<typeof createDB>["db"], dataDir: string, tenantId: string, dos: SeededDo[], headSha = HEAD): Promise<string> {
+type Db = ReturnType<typeof createDB>["db"];
+type SeededEvent = { type: string; seq: number } & Record<string, unknown>;
+
+/** A deployment, its completed runs and their committed logs; one named `workflow` is live. */
+async function seedDeployment(db: Db, dataDir: string, tenantId: string, runs: SeededEvent[][], workflow = "seeded-pr-triage"): Promise<string[]> {
   const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
   const suffix = crypto.randomUUID().replaceAll("-", "");
   const definitionId = `wfd_${suffix}`;
   const anchorRunId = `wfr_anchor${suffix}`;
-  const runId = `wfr_${suffix}`;
-  await db.insert(schema.workflowDefinition).values({ id: definitionId, tenantId, name: "seeded-pr-triage", status: "stopped" });
-  await db.insert(schema.workflowRun).values({ id: anchorRunId, definitionId, anchorRunId, tenantId, status: "completed" });
-  await db.insert(schema.workflowRun).values({ id: runId, definitionId, anchorRunId, tenantId, status: "completed" });
+  const live = workflow !== "seeded-pr-triage";
+  await db.insert(schema.workflowDefinition).values({ id: definitionId, tenantId, name: workflow, status: "stopped" });
+  await db.insert(schema.workflowRun).values({ id: anchorRunId, definitionId, anchorRunId, tenantId, status: live ? "deployed" : "completed" });
+  const repoId = workflowRunRepoIdForAddress(formatRunAddress(anchorRunId, tenant!.domain));
+  const dir = join(dataDir, "workflow-runs", repoId.id);
+  const runIds: string[] = [];
+  for (const [i, events] of runs.entries()) {
+    const runId = `wfr_${suffix}${i}`;
+    await db.insert(schema.workflowRun).values({ id: runId, definitionId, anchorRunId, tenantId, status: "completed" });
+    const eventsDir = join(dir, "runs", runId, "events");
+    mkdirSync(eventsDir, { recursive: true });
+    for (const event of events) writeFileSync(join(eventsDir, `${event.seq}.json`), JSON.stringify(event));
+    runIds.push(runId);
+  }
+  const git = ["git", "-C", dir, "-c", "user.name=test", "-c", "user.email=test@example.com"];
+  await Bun.$`git init -q -b ${WORKFLOW_RUN_REF.replace("refs/heads/", "")} ${dir}`;
+  await Bun.$`${git} add -A`;
+  await Bun.$`${git} commit -q -m seed`;
+  return runIds;
+}
 
+/** A completed run whose committed log holds a verdict for REPO#8, as the workflow writes it. */
+async function seedRun(db: Db, dataDir: string, tenantId: string, dos: SeededDo[], headSha = HEAD): Promise<string> {
   const verdict = {
     repo: REPO, number: 8, headSha,
     request: { repo: REPO, number: 8, labels: [], owned: [], comment: "", close: false },
     actions: dos.map((step) => verdictStep(step, headSha)),
   };
-  const events = [
+  const [runId] = await seedDeployment(db, dataDir, tenantId, [[
     { type: "RunStarted", seq: 0, at: new Date().toISOString(), trigger: {} },
     { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } },
     { type: "RunCompleted", seq: 2 },
-  ];
-  const repoId = workflowRunRepoIdForAddress(formatRunAddress(anchorRunId, tenant!.domain));
-  const dir = join(dataDir, "workflow-runs", repoId.id);
-  const eventsDir = join(dir, "runs", runId, "events");
-  mkdirSync(eventsDir, { recursive: true });
-  for (const event of events) writeFileSync(join(eventsDir, `${event.seq}.json`), JSON.stringify(event));
-  const git = ["git", "-C", dir, "-c", "user.name=test", "-c", "user.email=test@example.com"];
-  await Bun.$`git init -q -b ${WORKFLOW_RUN_REF.replace("refs/heads/", "")} ${dir}`;
-  await Bun.$`${git} add -A`;
-  await Bun.$`${git} commit -q -m seed`;
-  return runId;
+  ]]);
+  return runId!;
 }
 
 test("a pack Do runs once by reference and is recorded", async () => {
@@ -485,6 +501,95 @@ test("a pack preview evaluates an open pull request without writing anything", a
     const { cookie: _cookie, ...signedOut } = headers;
     expect(await preview({ repo: REPO, number: 8 }, signedOut)).toMatchObject({ status: 401, body: { error: { code: "unauthorized" } } });
     expect(await preview({ repo: REPO, number: 8 }, await signedIn(origin))).toMatchObject({ status: 401, body: { error: { code: "unauthorized" } } });
+  } finally {
+    github.stop();
+    await close();
+  }
+}, 60_000);
+
+/** A completed run of the live deployment: its verdict for one head, then the mirror's outcome. */
+function timedRun(started: Date, tookMs: number, verdict: Record<string, unknown>, mirrored = false): SeededEvent[] {
+  const at = (offsetMs: number) => new Date(started.getTime() + offsetMs).toISOString();
+  const number = Number(verdict["number"]);
+  const payload = stockTriggerMail({ kind: "pr", repo: REPO, prNumber: number, headSha: verdict["headSha"] });
+  const mirror = mirrored ? { call: `mirror:${REPO.replace("/", "--")}:${number}`, ok: true } : { skipped: true };
+  return [
+    { type: "RunStarted", seq: 0, at: at(0), trigger: { type: "mail", payload } },
+    { type: "StepCompleted", seq: 1, at: at(tookMs), stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } },
+    { type: "StepCompleted", seq: 2, at: at(tookMs + 1_000), stepId: "mirror", output: { ref: `inline:${JSON.stringify({ reply: JSON.stringify(mirror) })}` } },
+    { type: "RunCompleted", seq: 3, at: at(tookMs + 2_000) },
+  ];
+}
+
+function statsVerdict(number: number, headSha: string, fields: Record<string, unknown>) {
+  return {
+    repo: REPO, number, headSha, state: "ready-monitoring", actor: "author", humanGated: false, degraded: null, checks: [], actions: [],
+    request: { repo: REPO, number, labels: [], owned: [], comment: "", close: false },
+    ...fields,
+  };
+}
+
+test("triage stats count a repository's recorded verdicts and Dos", async () => {
+  const github = fakeGithub();
+  const dataDir = temporaryDirectory();
+  const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  try {
+    const origin = await startHub({ GITHUB_API_ORIGIN: github.origin, TRIAGE_RECONCILE_INTERVAL_MS: "200" }, dataDir);
+    const headers = await signedIn(origin);
+    const tenantId = await createTenant(origin, headers);
+    const otherTenantId = await createTenant(origin, headers);
+    await connectGithub(origin, headers, tenantId, github.origin);
+
+    const label: SeededDo = { id: "label", kind: "labels", target: { labels: ["api"] }, index: 0 };
+    const note: SeededDo = { id: "note", kind: "comment", target: { body: "Thanks" }, index: 0 };
+    const ci = (result: string) => ({ check: "ci", kind: "machine", result, reason: "", evidence: [] });
+    const started = new Date(Date.now() - 3_600_000);
+    const [, unconfirmed] = await seedDeployment(db, dataDir, tenantId, [
+      timedRun(started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good", close: false } }), true),
+      timedRun(new Date(started.getTime() + 600_000), 180_000, statsVerdict(8, HEAD, {
+        state: "awaiting-review", actor: "maintainer", checks: [ci("unconfirmed")], actions: [verdictStep(label, HEAD), verdictStep(note, HEAD)],
+      })),
+      timedRun(new Date(started.getTime() + 1_200_000), 900_000, statsVerdict(8, HEAD, { state: "stale-unknown", actor: "system", degraded: "error", checks: [ci("fail")] })),
+    ], prTriageWorkflow.id);
+
+    const ran = await fetch(`${origin}/api/integrations/github-dos/${tenantId}`, {
+      method: "POST", headers, body: JSON.stringify({ runId: unconfirmed, repo: REPO, number: 8, actionId: "label", branch: "always", index: 0 }),
+    });
+    expect(ran.status).toBe(200);
+
+    // Answers are cached for a minute, so the route is asked only once the reconciler recorded every verdict.
+    const deadline = Date.now() + 20_000;
+    let recorded = 0;
+    while (recorded < 3 && Date.now() < deadline) {
+      await Bun.sleep(200);
+      const [row] = await db.select({ rows: count() }).from(verdictRecord).where(eq(verdictRecord.tenantId, tenantId));
+      recorded = row?.rows ?? 0;
+    }
+    expect(recorded).toBe(3);
+
+    async function stats(tenant: string) {
+      const res = await fetch(`${origin}/api/integrations/triage-stats/${tenant}?repo=${REPO}`, { headers });
+      expect(res.status).toBe(200);
+      return TriageStats.assert(await res.json());
+    }
+    const verdictAt = new Date(started.getTime() + 60_000);
+    const body = await stats(tenantId);
+    expect(body).toMatchObject({
+      repo: REPO,
+      days: 7,
+      since: verdictAt.toISOString(),
+      triaged: 1,
+      verdicts: { "ready-monitoring": 1, "awaiting-review": 1 },
+      neededYou: 1,
+      checks: { ci: { pass: 1, fail: 0, unconfirmed: 1 } },
+      actions: { label: { suggested: 1, executed: 1, failed: 0 }, note: { suggested: 1, executed: 0, failed: 0 } },
+      comments: 1,
+      medianTimeToVerdictMs: 120_000,
+    });
+    expect(body.daily).toHaveLength(7);
+    expect(body.daily.filter((d) => d.triaged > 0)).toEqual([{ date: verdictAt.toISOString().slice(0, 10), triaged: 1 }]);
+
+    expect(await stats(otherTenantId)).toMatchObject({ since: null, triaged: 0, verdicts: {}, checks: {}, actions: {}, comments: 0, medianTimeToVerdictMs: null });
   } finally {
     github.stop();
     await close();
