@@ -32,19 +32,19 @@ export type QualityCheckId = (typeof QUALITY_CHECK_IDS)[number];
 export const ISSUE_TRACKERS = ["github", "linear", "either", "off"] as const;
 export type IssueTracker = (typeof ISSUE_TRACKERS)[number];
 
-export const CHECK_CATALOG: Record<CatalogId, { group: CheckPackGroup; kind: "machine" | "quality" }> = {
-  draft: { group: "pull-request", kind: "machine" },
-  size: { group: "pull-request", kind: "machine" },
-  duplicate: { group: "pull-request", kind: "machine" },
-  focused: { group: "pull-request", kind: "quality" },
-  docs: { group: "pull-request", kind: "quality" },
-  issue: { group: "issue", kind: "machine" },
-  reviewers: { group: "around", kind: "machine" },
-  conflicts: { group: "around", kind: "machine" },
-  drift: { group: "around", kind: "machine" },
-  ci: { group: "code-vs-ci", kind: "machine" },
-  tests: { group: "code-vs-ci", kind: "quality" },
-  paths: { group: "code-vs-ci", kind: "machine" },
+export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGroup; kind: "machine" | "quality" }> = {
+  draft: { name: "Draft", group: "pull-request", kind: "machine" },
+  size: { name: "Size", group: "pull-request", kind: "machine" },
+  duplicate: { name: "Duplicate", group: "pull-request", kind: "machine" },
+  focused: { name: "Focused change", group: "pull-request", kind: "quality" },
+  docs: { name: "Docs", group: "pull-request", kind: "quality" },
+  issue: { name: "Linked issue", group: "issue", kind: "machine" },
+  reviewers: { name: "Reviewers", group: "around", kind: "machine" },
+  conflicts: { name: "Merge conflicts", group: "around", kind: "machine" },
+  drift: { name: "Base drift", group: "around", kind: "machine" },
+  ci: { name: "CI", group: "code-vs-ci", kind: "machine" },
+  tests: { name: "Tests", group: "code-vs-ci", kind: "quality" },
+  paths: { name: "Forbidden paths", group: "code-vs-ci", kind: "machine" },
 };
 
 export const RECOMMENDED_SIZE = { maxFiles: 20, maxLines: 500 } as const;

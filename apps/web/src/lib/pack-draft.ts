@@ -11,6 +11,7 @@ import {
   type CatalogId,
   type CheckPack,
   type CustomCheck,
+  type Do,
   type RepoPolicy,
   type RepoRole,
 } from "@corbits/triage-contracts";
@@ -175,12 +176,14 @@ function whereOf(message: string, pack: CheckPack): DraftWhere {
   return { section: "pack" };
 }
 
+/** Role names the action's Dos assign or request review from. */
+export function rolesUsed(action: Action): string[] {
+  const dos: Do[] = Object.values(action.branches).flat();
+  return dos.flatMap((step) => ((step.kind === "assign" || step.kind === "request-review") && step.target.to === "role" ? [step.target.role] : []));
+}
+
 function missingRole(action: Action, roles: DraftPolicy["roles"]): string | undefined {
-  const dos = Object.values(action.branches).flat();
-  for (const step of dos) {
-    if ((step.kind === "assign" || step.kind === "request-review") && step.target.to === "role" && !Object.hasOwn(roles, step.target.role)) return step.target.role;
-  }
-  return undefined;
+  return rolesUsed(action).find((role) => !Object.hasOwn(roles, role));
 }
 
 /** Why the draft cannot be saved, in the contract's words, and where that belongs; null when it can. */

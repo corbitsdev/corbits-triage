@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
-import RepoPanel, { HealthMark } from "../components/RepoPanel.tsx";
+import HealthMark from "../components/repo-panel/HealthMark.tsx";
+import RepoPanel from "../components/repo-panel/RepoPanel.tsx";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
 import { enabledCheckCount, useCheckPacks, type PackState } from "../lib/check-packs.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
@@ -11,6 +12,7 @@ import { useGithubSync } from "../lib/github-sync.ts";
 import { awaitingText } from "../lib/inbox-view.ts";
 import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { useHubRepoPackStore } from "../lib/repo-pack.ts";
 import { repoRows, type RepoRow } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
@@ -54,6 +56,7 @@ function selectedRepo(params: { owner?: string; repo?: string }): { name: string
 
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
+  const packStore = useHubRepoPackStore();
   const { logs } = useRunLogs();
   const runs = useRuns();
   const navigate = useNavigate();
@@ -184,7 +187,7 @@ export default function Repositories() {
           )}
         </main>
       </section>
-      {selectedConfig && selectedRow ? <RepoPanel key={selectedConfig.name} repo={selectedConfig} row={selectedRow} live={!loading} onClose={closePanel} /> : null}
+      {selectedConfig && selectedRow ? <RepoPanel key={selectedConfig.name} repo={selectedConfig} row={selectedRow} live={!loading} store={packStore} onClose={closePanel} /> : null}
     </div>
   );
 }
