@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REPO_POLICY, repoPolicy } from "./repo-policy.ts";
+import { authorAssociation, DEFAULT_REPO_POLICY, repoPolicy, tierOf } from "./repo-policy.ts";
 
 describe("repoPolicy", () => {
   test("defaults missing fields to all-on human-approved policy", () => {
@@ -22,6 +22,7 @@ describe("repoPolicy", () => {
         drift: true,
       },
       roles: {},
+      approvedAuthors: [],
     });
     expect(repoPolicy({
       name: "acme/widgets",
@@ -49,6 +50,27 @@ describe("repoPolicy", () => {
         drift: false,
       },
       roles: { maintainers: { teams: ["core"] } },
+      approvedAuthors: [],
     });
+  });
+
+  test("approved authors are trimmed, lowercased, de-duplicated and survive a round trip", () => {
+    const policy = repoPolicy({ approvedAuthors: [" Alice ", "bob", "alice", "", 7] });
+    expect(policy.approvedAuthors).toEqual(["alice", "bob"]);
+    expect(repoPolicy(policy)).toEqual(policy);
+  });
+});
+
+describe("tierOf", () => {
+  test.each([
+    ["OWNER", "alice", [], "internal"],
+    ["MEMBER", "alice", [], "internal"],
+    ["COLLABORATOR", "alice", [], "approved"],
+    ["CONTRIBUTOR", "alice", ["alice"], "approved"],
+    ["NONE", "Alice", ["alice"], "approved"],
+    ["FIRST_TIME_CONTRIBUTOR", "alice", ["bob"], "external"],
+    [authorAssociation("SOMETHING_NEW"), "alice", [], "external"],
+  ] as const)("%p %p %p is %p", (association, author, approved, tier) => {
+    expect(tierOf(association, author, approved)).toBe(tier);
   });
 });
