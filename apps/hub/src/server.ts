@@ -32,6 +32,7 @@ import {
   type CronTicker,
 } from "@corbits/cron";
 import { runCronMigrations } from "@corbits/cron/migrations";
+import { checkPackSchema, repoPolicySchema } from "@corbits/triage-contracts";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
@@ -369,12 +370,16 @@ function tenantHintFrom(req: Request, pathTenant: string | undefined): string | 
   return hint ?? req.headers.get("x-tenant-id") ?? url.searchParams.get("tenant") ?? undefined;
 }
 
+const PACK_SCHEMA_PATH = "/api/integrations/pack-schema";
+const packSchemas = { checkPack: checkPackSchema.toJsonSchema(), repoPolicy: repoPolicySchema.toJsonSchema() };
+
 const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
 
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
   if (servePortal && isPortalRequest(req)) return servePortal(req);
   const url = new URL(req.url);
   if (url.pathname === AUTH_METHODS_PATH && req.method === "GET") return Response.json(authMethods(signIn));
+  if (url.pathname === PACK_SCHEMA_PATH && req.method === "GET") return Response.json(packSchemas);
   // Intercept before the stock Hono logger: callback query values include the
   // one-time GitHub code and must never enter request/access logs.
   if (url.pathname === GITHUB_MANIFEST_CALLBACK_PATH && req.method === "GET") {
