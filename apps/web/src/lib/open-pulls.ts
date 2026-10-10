@@ -153,20 +153,29 @@ export function usePullRequestItems(): PrItem[] {
   }, [logs, runs.rows, approvals.rows, data, sent]);
 }
 
+/**
+ * Until GitHub first answers, every pull request with a verdict looks open, closed ones included.
+ * A failed read counts as an answer, so the inbox falls back to the verdicts it has.
+ */
+export function useOpenPullsUnanswered(): boolean {
+  const openPulls = useOpenPulls();
+  return openPulls.isEnabled && !openPulls.isFetched;
+}
+
 /** True until every source the queue is projected from has loaded; the lists are not meaningful before that. */
 export function useQueueLoading(): boolean {
   const { pending } = useRunLogs();
   const approvals = useApprovals();
-  const openPulls = useOpenPulls();
-  return pending || approvals.loading || approvals.unavailable || openPulls.isLoading;
+  const openPullsUnanswered = useOpenPullsUnanswered();
+  return pending || approvals.loading || approvals.unavailable || openPullsUnanswered;
 }
 
 /** The global loading pulse: the queue's sources, without polling approvals on pages that do not show them. */
 export function useQueueLoadingPulse(): boolean {
   const { pending } = useRunLogs();
   const approvalsLoading = useApprovalsFirstLoad();
-  const openPulls = useOpenPulls();
-  return pending || approvalsLoading || openPulls.isLoading;
+  const openPullsUnanswered = useOpenPullsUnanswered();
+  return pending || approvalsLoading || openPullsUnanswered;
 }
 
 /** The inbox: every open pull request, with its verdict when it has one, until it is acted on. */
@@ -174,8 +183,12 @@ export function useQueueItems(): PrItem[] {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   const items = usePullRequestItems();
+  const openPullsUnanswered = useOpenPullsUnanswered();
   const handled = useHandledQuery(handledKey(tenantId));
   const held = useHandledQuery(heldKey(tenantId));
   usePruneHandled(items, handled);
-  return useMemo(() => items.filter((item) => !item.closed && !isHandled(handled, item) && !isHandled(held, item)), [items, handled, held]);
+  return useMemo(function openUnhandled() {
+    if (openPullsUnanswered) return [];
+    return items.filter((item) => !item.closed && !isHandled(handled, item) && !isHandled(held, item));
+  }, [items, openPullsUnanswered, handled, held]);
 }
