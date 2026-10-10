@@ -1,7 +1,5 @@
 export const TRIAGE_STATE_KIND = "corbits.triage.state";
 export const TRIAGE_STATE_SCHEMA_VERSION = 1;
-/** Stamped on every verdict; bump it when verdicts change meaning so open pull requests are triaged again. */
-export const PR_TRIAGE_WORKFLOW_VERSION = 3;
 
 /** A pr-triage run still going after this long lost its sidecar: three agent steps on either gate branch of up to fifteen minutes each, plus their retries. */
 export const PR_TRIAGE_STUCK_RUN_MS = 90 * 60_000;
@@ -19,8 +17,8 @@ export type PrTriageRow = {
   attempts: number;
   /** Times the hub reset `attempts` on a head capped by runs that never started. */
   cappedRetries?: number;
-  /** Workflow version the row was created or reset under; absent on rows from before verdicts were stamped. */
-  workflowVersion?: number;
+  /** Workflow package version of the deployment the row was created, reset or last run under; an integer on rows from before versions were read from deployments, absent on rows older still. */
+  workflowVersion?: string | number;
   firstSeenAt: string;
   queuedAt?: string;
   updatedAt: string;
@@ -52,6 +50,10 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function isWorkflowVersion(value: unknown): value is string | number {
+  return optionalString(value) !== undefined || (typeof value === "number" && Number.isInteger(value));
+}
+
 function parseRow(raw: unknown): PrTriageRow | null {
   const row = asRecord(raw);
   if (!row) return null;
@@ -62,7 +64,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
   if (typeof attempts !== "number" || !Number.isInteger(attempts) || attempts < 0) return null;
   if (typeof firstSeenAt !== "string" || typeof updatedAt !== "string") return null;
   const workflowVersion = row.workflowVersion;
-  if (workflowVersion !== undefined && (typeof workflowVersion !== "number" || !Number.isInteger(workflowVersion))) return null;
+  if (workflowVersion !== undefined && !isWorkflowVersion(workflowVersion)) return null;
   const cappedRetries = row.cappedRetries;
   if (cappedRetries !== undefined && (typeof cappedRetries !== "number" || !Number.isInteger(cappedRetries) || cappedRetries < 0)) return null;
   const runId = optionalString(row.runId);
