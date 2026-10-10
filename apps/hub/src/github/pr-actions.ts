@@ -17,20 +17,10 @@ import {
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
 import { readJson } from "../read-json.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
-
-const VERB = {
-  comment: "comment on",
-  reply: "reply on",
-  labels: "label",
-  assign: "assign",
-  "request-review": "request reviewers on",
-  review: "review",
-  merge: "merge",
-  close: "close",
-} as const;
 
 const handle = type("string.trim").to("string > 0");
 
@@ -102,8 +92,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.log(JSON.stringify({ ts: new Date().toISOString(), level: "warn", msg: "github_pr_action_failed", tenantId, action: body.action, repo: body.repo, number: body.number, error: message }));
-      const status = /-> (\d{3})$/.exec(message)?.[1];
-      return failure(502, "github_failed", `GitHub refused to ${VERB[body.action]} ${body.repo}#${body.number}${status ? ` (HTTP ${status})` : `: ${message}`}.`);
+      return githubFailed(`${GITHUB_VERB[body.action]} ${body.repo}#${body.number}`, err);
     }
   };
 }
