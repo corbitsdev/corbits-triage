@@ -2,10 +2,12 @@ import { skipToken, useIsFetching, useQuery } from "@tanstack/react-query";
 import { ApiError, type Transport } from "@intx/hub-client";
 import {
   listApprovals,
+  listDeployedWorkflows,
   listGrants,
   listPrincipals,
   listRoles,
   listRuns,
+  type DeployedWorkflow,
   type HubApproval,
   type HubGrant,
   type HubPrincipal,
@@ -15,6 +17,7 @@ import {
 import { createHubTransport } from "./hub-transport.ts";
 import {
   APPROVALS_QUERY_KEY,
+  DEPLOYED_WORKFLOWS_QUERY_KEY,
   GRANTS_QUERY_KEY,
   PRINCIPALS_QUERY_KEY,
   ROLES_QUERY_KEY,
@@ -89,4 +92,8 @@ export function usePrincipals(): TenantSection<HubPrincipal> {
 
 export function useRoles(): TenantSection<HubRole> {
   return useTenantSection(ROLES_QUERY_KEY, listRoles, DIRECTORY_REFRESH_MS);
+}
+
+export function useDeployedWorkflows(): TenantSection<DeployedWorkflow> {
+  return useTenantSection(DEPLOYED_WORKFLOWS_QUERY_KEY, listDeployedWorkflows, DIRECTORY_REFRESH_MS);
 }

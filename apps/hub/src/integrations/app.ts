@@ -15,6 +15,7 @@ import { DoBody, DoRunList, DoRunResponse, GITHUB_DOS_PATH } from "../github/pr-
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
+import { DeployedVersions, WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
 export const INTEGRATIONS_PREFIX = "/api/integrations/";
 const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
@@ -32,6 +33,7 @@ export type IntegrationHandlers = {
   openPulls: TenantHandler;
   prDetails: TenantHandler;
   workflowDeploy: TenantHandler;
+  workflowVersions: TenantHandler;
 };
 
 const TAGS = ["integrations"];
@@ -288,6 +290,17 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       },
     }),
     tenantRoute(handlers.workflowDeploy),
+  );
+
+  app.get(
+    `${WORKFLOW_VERSIONS_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Package versions of the workspace's live workflow deployments",
+      description: "Each live deployment, newest first, with the workflow package it pinned and the packages its frozen closure carries. `package` is null for a deployment not pinned from a package registry.",
+      tags: TAGS,
+      responses: { 200: json("Live deployments and their versions", DeployedVersions), 401: failures[401], 403: failures[403] },
+    }),
+    tenantRoute(handlers.workflowVersions),
   );
 
   return app;

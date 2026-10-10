@@ -142,12 +142,12 @@ describe("deployment rotation", () => {
   test("a deployment whose cancellation was requested is listed as cancelling", async () => {
     const createdAt = new Date("2026-10-07T12:00:00.000Z");
     const db = selectReturning([
-      { runId: "run_new", domain: "acme.test", createdAt, cancellationRequestedAt: null },
-      { runId: "run_old", domain: "acme.test", createdAt, cancellationRequestedAt: createdAt },
+      { runId: "run_new", workflow: "pr-triage", domain: "acme.test", createdAt, cancellationRequestedAt: null },
+      { runId: "run_old", workflow: "pr-triage", domain: "acme.test", createdAt, cancellationRequestedAt: createdAt },
     ]);
     expect(await resolveLiveDeployments(db, TENANT_ID, "pr-triage")).toEqual([
-      { runId: "run_new", address: "run_new@acme.test", createdAt, cancelling: false },
-      { runId: "run_old", address: "run_old@acme.test", createdAt, cancelling: true },
+      { runId: "run_new", address: "run_new@acme.test", createdAt, cancelling: false, workflow: "pr-triage" },
+      { runId: "run_old", address: "run_old@acme.test", createdAt, cancelling: true, workflow: "pr-triage" },
     ]);
   });
 });
