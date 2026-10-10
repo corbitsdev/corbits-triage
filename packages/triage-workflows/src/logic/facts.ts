@@ -53,7 +53,7 @@ function latestDecisive(reviews: Review[]): Map<string, string> {
 }
 
 /** Reviewers whose latest review still stands on the current head, when the review names its commit. */
-function reviewedOnHead(reviews: Review[], headSha: string): string[] {
+export function reviewedOnHead(reviews: Review[], headSha: string): string[] {
   const latest = new Map<string, Review>();
   for (const r of reviews) if (r.reviewer && r.state !== "PENDING") latest.set(r.reviewer, r);
   return [...latest].flatMap(([login, r]) => (r.state !== "DISMISSED" && (r.commitId === undefined || r.commitId === headSha) ? [login] : []));

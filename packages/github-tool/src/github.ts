@@ -123,13 +123,7 @@ export async function listOrgMembersForRepo(gh: GithubFetch, repo: string): Prom
 const MERGEABLE_RETRIES = 5;
 const MERGEABLE_BACKOFF_MS = 1500;
 
-/** GitHub computes mergeability lazily; `mergeable: null` means poll again. */
-export async function getPr(gh: GithubFetch, repo: string, number: number) {
-  let p = await json(gh, `/repos/${repo}/pulls/${number}`);
-  for (let i = 0; i < MERGEABLE_RETRIES && p.mergeable === null && p.state === "open"; i++) {
-    await sleep(MERGEABLE_BACKOFF_MS);
-    p = await json(gh, `/repos/${repo}/pulls/${number}`);
-  }
+function prFields(p: any) {
   return {
     number: p.number,
     title: p.title,
@@ -153,6 +147,21 @@ export async function getPr(gh: GithubFetch, repo: string, number: number) {
     labels: p.labels?.map((l: any) => l.name) ?? [],
     updatedAt: p.updated_at,
   };
+}
+
+/** The pull request as GitHub has it now, without waiting for mergeability. */
+export async function readPr(gh: GithubFetch, repo: string, number: number) {
+  return prFields(await json(gh, `/repos/${repo}/pulls/${number}`));
+}
+
+/** GitHub computes mergeability lazily; `mergeable: null` means poll again. */
+export async function getPr(gh: GithubFetch, repo: string, number: number) {
+  let p = await json(gh, `/repos/${repo}/pulls/${number}`);
+  for (let i = 0; i < MERGEABLE_RETRIES && p.mergeable === null && p.state === "open"; i++) {
+    await sleep(MERGEABLE_BACKOFF_MS);
+    p = await json(gh, `/repos/${repo}/pulls/${number}`);
+  }
+  return prFields(p);
 }
 
 export async function getChecks(gh: GithubFetch, repo: string, sha: string) {
@@ -192,6 +201,7 @@ export type PrFile = {
 export type IssueComment = {
   id: number;
   author: string;
+  bot: boolean;
   body: string;
   createdAt: string;
 };
@@ -228,6 +238,7 @@ export async function listIssueComments(gh: GithubFetch, repo: string, number: n
   return rows.map((row) => ({
     id: typeof row.id === "number" ? row.id : 0,
     author: typeof row.user?.login === "string" ? row.user.login : "",
+    bot: row.user?.type === "Bot",
     body: typeof row.body === "string" ? row.body : "",
     createdAt: typeof row.created_at === "string" ? row.created_at : "",
   }));
@@ -463,5 +474,6 @@ export async function codeownersForPr(gh: GithubFetch, repo: string, number: num
   const rules = await readCodeowners(gh, { repo, baseRef: pr.base.ref });
   const files = await listPrFiles(gh, repo, number);
   const owners = codeownersFor(rules, files.map((file) => file.path));
-  return { users: owners.users.filter((user) => user !== pr.user?.login), teams: owners.teams };
+  const author = lowercase(pr.user?.login ?? "");
+  return { users: owners.users.filter((user) => lowercase(user) !== author), teams: owners.teams };
 }
