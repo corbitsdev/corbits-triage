@@ -2,6 +2,7 @@ import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { PR_TRIAGE_WORKFLOW_VERSION } from "@corbits/triage-contracts";
 import { evaluateActions } from "../logic/actions.js";
+import { extractChangeCandidates } from "../logic/candidates.js";
 import type { PrFacts } from "../logic/checks.js";
 import { errorText } from "../logic/extract.js";
 import type { Item } from "../logic/item.js";
@@ -35,7 +36,8 @@ function verdictOf(it: Item): Verdict {
   }
   try {
     const answers = it.judge !== undefined ? parseAnswers(it.judge) : null;
-    const rendered = renderVerdict({ author: it.facts.author, det: it.det, answers, judgeError: it.judgeError, reviewers: it.facts.reviewers });
+    const candidates = extractChangeCandidates(it.facts.files);
+    const rendered = renderVerdict({ author: it.facts.author, det: it.det, answers, candidates, judgeError: it.judgeError, judgeLimitExceeded: it.judgeLimitExceeded, reviewers: it.facts.reviewers });
     // A degraded verdict is incomplete, so nothing is suggested from it.
     const actions = it.pack && rendered.degraded === null ? evaluateActions({ facts: it.facts, checks: rendered.checks, pack: it.pack, roles: it.roles ?? {} }) : [];
     const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions };

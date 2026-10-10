@@ -4,11 +4,14 @@ import {
   codeownersFor,
   codeownersForPr,
   listOpenPrs,
+  listPrFiles,
+  listPrFilesPage,
   mergePr,
   mirror,
   parseCodeowners,
   upsertTriageComment,
   type GithubFetch,
+  type PrFilesPage,
 } from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
@@ -225,5 +228,45 @@ docs/*       @linus
     });
     expect(await codeownersForPr(gh, "acme/widgets", 8)).toEqual({ users: ["grace"], teams: ["core"] });
     expect(requests[1]?.path).toBe("/repos/acme/widgets/contents/.github/CODEOWNERS?ref=main");
+  });
+});
+
+describe("listPrFiles", () => {
+  test("preserves the previous filename for renamed files", async () => {
+    const { gh } = recorder(() => [{
+      filename: "src/current.ts",
+      previous_filename: "src/previous.ts",
+      status: "renamed",
+      additions: 3,
+      deletions: 2,
+      patch: "@@ -1 +1 @@",
+    }]);
+    expect(await listPrFiles(gh, "acme/widgets", 8)).toEqual([{
+      path: "src/current.ts",
+      previousPath: "src/previous.ts",
+      status: "renamed",
+      additions: 3,
+      deletions: 2,
+      patch: "@@ -1 +1 @@",
+    }]);
+  });
+});
+
+describe("listPrFilesPage", () => {
+  test("pages every file under the cap, cutting an oversized patch on a hunk boundary", async () => {
+    function hunk(line: number) {
+      return `@@ -${line} +${line} @@\n+${"x".repeat(3_000)}`;
+    }
+    function row(filename: string, patch: string) {
+      return { filename, status: "modified", additions: 1, deletions: 0, patch };
+    }
+    const big = [1, 2, 3, 4].map(hunk).join("\n");
+    const { gh } = recorder(() => [row("a.ts", hunk(1)), row("big.ts", big), row("c.ts", hunk(1))]);
+    const pages: PrFilesPage[] = [];
+    for (let offset: number | undefined = 0; offset !== undefined; offset = pages.at(-1)!.next) pages.push(await listPrFilesPage(gh, "acme/widgets", 8, { offset }));
+    expect(pages.every((page) => JSON.stringify(page).length <= 10_000)).toBe(true);
+    expect(pages.flatMap((page) => page.files.map((file) => file.path))).toEqual(["a.ts", "big.ts", "c.ts"]);
+    expect(pages[1]!.files[0]).toMatchObject({ patch: [1, 2].map(hunk).join("\n"), patchTruncated: true });
+    expect((await listPrFilesPage(gh, "acme/widgets", 8, { patches: false })).files.map((file) => file.patch)).toEqual([undefined, undefined, undefined]);
   });
 });

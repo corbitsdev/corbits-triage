@@ -10,12 +10,12 @@ import type {
 } from "@intx/types/runtime";
 import { type } from "arktype";
 import { repoPolicy, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
-import { NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "./logic/checks.js";
+import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { qualityQuestions, qualityState } from "./logic/quality.js";
+import { MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES, prepareQualityEvaluation } from "./logic/quality.js";
 import { triageEventOf } from "./logic/events.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
-import type { Item } from "./logic/item.js";
+import { asksJudge, type Item } from "./logic/item.js";
 import type { Verdict } from "./logic/render.js";
 import type { Judgment } from "./actions/evaluate.js";
 import type { RulesItem } from "./actions/rules.js";
@@ -100,11 +100,50 @@ function call(name: string, args: Record<string, unknown>, id = name): ToolCall 
   return { id, name, arguments: args };
 }
 
-type ChangedFile = { filename?: string; path?: string };
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
 
-function pathOf(file: ChangedFile): string[] {
-  const name = file.filename ?? file.path;
-  return typeof name === "string" && name.length > 0 ? [name] : [];
+function optionalCount(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
+}
+
+function fileFacts(value: unknown): PrFileFacts[] {
+  if (!isRecord(value)) return [];
+  const path = optionalString(value.path) ?? optionalString(value.filename);
+  if (path === undefined) return [];
+  const previousPath = optionalString(value.previousPath) ?? optionalString(value.previous_filename);
+  const status = optionalString(value.status);
+  const additions = optionalCount(value.additions);
+  const deletions = optionalCount(value.deletions);
+  const patch = typeof value.patch === "string" ? value.patch : undefined;
+  return [{
+    path,
+    ...(previousPath === undefined ? {} : { previousPath }),
+    ...(status === undefined ? {} : { status }),
+    ...(additions === undefined ? {} : { additions }),
+    ...(deletions === undefined ? {} : { deletions }),
+    ...(patch === undefined ? {} : { patch }),
+    ...(value.patchTruncated === true ? { patchTruncated: true as const } : {}),
+  }];
+}
+
+const TRUNCATED_RESULT = "[Tool output truncated";
+// Patch text past what one System One request can carry is never evaluated, so later pages leave patches out.
+const MAX_PATCH_CHARS = MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+
+type FilesPage = { files: PrFileFacts[]; next?: number };
+type ListedFiles = { files: PrFileFacts[]; patchChars: number };
+
+/** A cut-off or unreadable file list would read as a pull request that changes nothing, so it is an error instead. */
+function filesPage(r: ToolResult | undefined): FilesPage | string {
+  if (!r) return "github_list_pr_files did not answer";
+  if (r.isError) return `github_list_pr_files failed: ${asText(r.content)}`;
+  if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return "github_list_pr_files result was truncated";
+  const content = data<{ files?: unknown; next?: unknown }>(r);
+  if (!content || !Array.isArray(content.files)) return "github_list_pr_files result is unreadable";
+  const next = optionalCount(content.next);
+  return { files: content.files.flatMap(fileFacts), ...(next === undefined ? {} : { next }) };
 }
 
 function firstLine(commit: { message?: string }): string {
@@ -126,8 +165,33 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
         call("github_get_reviews", { repo, number: n }, `reviews:${n}`),
         call("github_list_pr_commits", { repo, number: n }, `commits:${n}`),
-        call("github_list_pr_files", { repo, number: n }, `files:${n}`),
+        filesCall(n, 0),
       ];
+    }
+
+    const listed = new Map<number, ListedFiles>();
+    const filesErrors = new Map<number, string>();
+
+    function filesCall(n: number, offset: number): ToolCall {
+      const patches = (listed.get(n)?.patchChars ?? 0) < MAX_PATCH_CHARS;
+      return call("github_list_pr_files", { repo, number: n, offset, ...(patches ? {} : { patches: false }) }, `files:${n}:${offset}`);
+    }
+
+    /** Adds one page of files and returns the offset of the next page, if any. */
+    function addFiles(n: number, offset: number, result: ToolResult | undefined): number | undefined {
+      const page = filesPage(result);
+      if (typeof page === "string") {
+        filesErrors.set(n, `${page} for #${n}`);
+        return undefined;
+      }
+      const read = listed.get(n) ?? { files: [], patchChars: 0 };
+      read.files.push(...page.files);
+      read.patchChars += page.files.reduce((chars, file) => chars + (file.patch?.length ?? 0), 0);
+      listed.set(n, read);
+      if (page.next === undefined) return undefined;
+      if (page.next > offset) return page.next;
+      filesErrors.set(n, `github_list_pr_files did not advance past offset ${offset} for #${n}`);
+      return undefined;
     }
 
     function onPrs(r1: BatchResults) {
@@ -138,21 +202,36 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         return sha ? [call("github_get_checks", { repo, sha }, `checks:${n}`)] : [];
       }
 
+      function readFiles(r: BatchResults, offsets: Array<[number, number]>): DirectorActions {
+        const next = offsets.flatMap(function nextPage([n, offset]): Array<[number, number]> {
+          const following = addFiles(n, offset, r.get(`files:${n}:${offset}`));
+          return following === undefined ? [] : [[n, following]];
+        });
+        function onNextFiles(r3: BatchResults) {
+          return readFiles(r3, next);
+        }
+        if (next.length) return b.run(next.map(([n, offset]) => filesCall(n, offset)), onNextFiles);
+        return b.run(numbers.flatMap(checkCall), onChecks);
+      }
+
       function onChecks(r2: BatchResults) {
         function itemFor(n: number): RulesItem {
           const pr = prs.get(n);
           if (!pr) return { error: `github_get_pr failed for #${n}` };
           const checks = data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [];
           const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
-          const paths = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files?.flatMap(pathOf) ?? [];
+          const filesError = filesErrors.get(n);
+          if (filesError !== undefined) return { error: filesError };
+          const files = listed.get(n)?.files ?? [];
+          const paths = files.map((file) => file.path);
           const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
-          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, commits, ...(event === null ? {} : { event }) };
+          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, files, commits, ...(event === null ? {} : { event }) };
           return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
         }
         return reply(numbers.map(itemFor), batch);
       }
 
-      return b.run(numbers.flatMap(checkCall), onChecks);
+      return readFiles(r1, numbers.map((n) => [n, 0]));
     }
 
     return b.run(numbers.flatMap(prCalls), onPrs);
@@ -220,12 +299,15 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
   }
 
   function ask() {
-    const next = queue.shift();
-    if (next === undefined) return finish();
-    current = next;
-    const { facts, det } = items[current];
-    const questions = qualityQuestions(det.sources!);
-    return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: qualityState(facts), questions } } });
+    while (true) {
+      const next = queue.shift();
+      if (next === undefined) return finish();
+      current = next;
+      const { facts, det } = items[current];
+      const evaluation = prepareQualityEvaluation(facts, det.sources);
+      if (evaluation.questions.length === 0) continue;
+      return caps.infer({ systemPrompt, tools: [], providerOptions: { systemOne: { state: evaluation.state, questions: evaluation.questions } } });
+    }
   }
 
   return {
@@ -235,7 +317,7 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
           const input = parseInput(event.message.content);
           items = Array.isArray(input?.items) ? (input.items as Item[]) : [];
           answers = items.map(() => ({}));
-          queue = items.flatMap((it, i) => (it.det?.needsJudgment ? [i] : []));
+          queue = items.flatMap((it, i) => (asksJudge(it) ? [i] : []));
           return ask();
         }
         case "inference.done":
