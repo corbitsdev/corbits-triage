@@ -14,7 +14,7 @@ import path from "node:path";
 
 import { generateKeyPair } from "@intx/crypto";
 import type { KeyPair } from "@intx/types/runtime";
-import { defineAgent, createDefaultDirectorRegistry } from "@intx/agent";
+import { defineAgent } from "@intx/agent";
 import {
   builtinCredentialProviders,
   createCredentialProviderRegistry,
@@ -263,7 +263,6 @@ function makeRunChild(
     collectDeclaredCredentialConsumers:
       grantCap.collectDeclaredCredentialConsumers,
     filterGrantsToDeclaredResources: grantCap.filterGrantsToDeclaredResources,
-    directors: createDefaultDirectorRegistry(),
   });
 }
 

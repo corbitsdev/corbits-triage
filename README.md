@@ -9,7 +9,7 @@ PR and backlog triage for GitHub repositories, running as workflows on a stock [
 - `packages/triage-workflows`: `pr-triage` (PR event mail listener) and `pr-triage-historical` (open pull requests of a repository when triage is enabled for it, or on Triage again)
 - `packages/github-tool`, `packages/github-write-tool`: read-only GitHub tools and the triage mirror write
 - `packages/triage-contracts`, `packages/rule-packs`: types and deterministic checks
-- `vendor/interchange`: pin `779b47f5` plus deltas in `vendor/interchange/VENDORED.md`
+- `vendor/interchange`: pin `74c57b39` plus deltas in `vendor/interchange/VENDORED.md`
 - `tooling/`: dev runner, eval scripts
 - `docs/`: [DEV](docs/DEV.md) (local setup), [DEPLOY](docs/DEPLOY.md), [SELF_HOST](docs/SELF_HOST.md)
 

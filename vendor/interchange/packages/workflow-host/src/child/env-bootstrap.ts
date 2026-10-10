@@ -15,8 +15,8 @@
 
 import { type } from "arktype";
 
-import { hexDecode } from "@intx/types";
-import { IPC_CRYPTO } from "../ipc/index";
+import { hexDecode } from "@intx/types/hex";
+import { IPC_CRYPTO } from "../ipc/crypto";
 
 /**
  * The required spawn-time env keys, named once so the supervisor-side

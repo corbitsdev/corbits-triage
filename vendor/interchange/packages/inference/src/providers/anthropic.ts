@@ -1,19 +1,17 @@
 import { type } from "arktype";
 
+import type { InferenceEvent } from "@intx/types/inference-events";
 import type {
   ConversationTurn,
   ContentBlock,
-  InferenceEvent,
   InferenceOptions,
   LastCycleSource,
   MediaSource,
   PartialMessage,
   TokenUsage,
-} from "@intx/types/runtime";
-import {
-  CitationBlock as CitationBlockType,
-  formatSafetyRatingText,
-} from "@intx/types/runtime";
+} from "@intx/types/runtime-core";
+import { CitationBlock as CitationBlockType } from "@intx/types/runtime-core";
+import { formatSafetyRatingText } from "@intx/types/format-safety-rating";
 import type { ProviderAdapter, BuiltRequest } from "../adapter";
 import { CREDENTIAL_SENTINEL } from "../auth";
 import { ProtocolMismatchError } from "../errors";

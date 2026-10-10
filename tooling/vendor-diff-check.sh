@@ -10,15 +10,16 @@
 #   not failures). The gate fails on *vendor drift*: vendored files whose
 #   bytes differ from stock, and files added locally under vendor/.
 # - Local build artifacts (node_modules, tsbuildinfo, .DS_Store, tmp/,
-#   .env*) and our provenance record (VENDORED.md) are excluded.
+#   .env* other than .env*.example) and our provenance record (VENDORED.md)
+#   are excluded.
 #
 # Env overrides:
 #   INTERCHANGE_STOCK_REPO  upstream repo (default https://github.com/faremeter/interchange)
-#   INTERCHANGE_STOCK_REF   pinned stock commit (default 779b47f59c47026b14f02eb54eefa90e15b7fd9a)
+#   INTERCHANGE_STOCK_REF   pinned stock commit (default 74c57b39bc9613ab38ae8eab73af743797d589e2)
 set -eu
 
 STOCK_REPO="${INTERCHANGE_STOCK_REPO:-https://github.com/faremeter/interchange}"
-STOCK_REF="${INTERCHANGE_STOCK_REF:-779b47f59c47026b14f02eb54eefa90e15b7fd9a}"
+STOCK_REF="${INTERCHANGE_STOCK_REF:-74c57b39bc9613ab38ae8eab73af743797d589e2}"
 ALLOWLIST="tooling/vendor-diff-allowlist.txt"
 VENDOR_DIR="vendor/interchange"
 
@@ -42,9 +43,11 @@ grep -v "^Only in $WORK/stock" "$WORK/diff.txt" > "$WORK/vendor-side.txt" || tru
 sed 's|^Only in \(vendor/interchange/.*\): \([^/]*\)$|Only in \1/\2|' \
   "$WORK/vendor-side.txt" > "$WORK/vendor-side-normalized.txt"
 
-# Drop local build artifacts and the provenance record from the verdict.
-grep -vE "node_modules|\.tsbuildinfo|\.DS_Store|/\.claude|tmp(/|$)|: tmp$|\.env($|[.-])|VENDORED\.md" \
-  "$WORK/vendor-side-normalized.txt" > "$WORK/candidates.txt" || true
+# Drop local build artifacts, local env files and the provenance record from
+# the verdict. Tracked `.env*.example` templates stay checked.
+grep -vE "node_modules|\.tsbuildinfo|\.DS_Store|/\.claude|tmp(/|$)|: tmp$|VENDORED\.md" \
+  "$WORK/vendor-side-normalized.txt" |
+  awk '!/\.env($|[.-])/ || /\.env[^ ]*\.example( |$)/' > "$WORK/candidates.txt" || true
 
 grep -v '^#' "$ALLOWLIST" | grep -v '^$' > "$WORK/patterns.txt" || true
 if [ -s "$WORK/patterns.txt" ]; then

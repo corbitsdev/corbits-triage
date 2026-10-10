@@ -33,21 +33,23 @@ import {
   type CryptoProvider,
   type InferenceEvent,
   type InferenceSource,
-  type InboundMailOutcome,
-  type InboundMailPolicy,
   type KeyPair,
 } from "@intx/types/runtime";
+import type {
+  InboundMailOutcome,
+  InboundMailPolicy,
+} from "@intx/types/inbound-mail-policy";
 import {
   WORKFLOW_CONTROL_INITIALIZING_ERROR,
   WorkflowProjectionDefinition,
   type AgentDeployFrame,
   type AgentUndeployFrame,
-  type CredentialDelivery,
   type SourceRefPin,
   type WorkflowControlFrame,
   type WorkflowRunRefTips,
   type WorkflowSourceAssetMount,
 } from "@intx/types/sidecar";
+import type { CredentialDelivery } from "@intx/types/credential-delivery";
 import {
   STEP_ID_PATTERN,
   projectLiveToInert,
