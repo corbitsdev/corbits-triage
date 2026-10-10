@@ -105,8 +105,8 @@ describe("focused candidate rendering", () => {
     }]);
     expect(verdict.reason).toContain("Alpha — src/alpha.ts, Beta — src/beta.ts");
     expect(verdict.feedback.split("\n").slice(1)).toEqual([
-      "- Split out unrelated change: Alpha — src/alpha.ts",
-      "- Split out unrelated change: Beta — src/beta.ts",
+      "- Split out unrelated change: `Alpha — src/alpha.ts`",
+      "- Split out unrelated change: `Beta — src/beta.ts`",
     ]);
   });
 
@@ -150,7 +150,7 @@ describe("focused candidate rendering", () => {
     );
     expect(verdict).toMatchObject({ mirror: false, humanGated: true });
     expect(verdict.checks[0]).toMatchObject({ check: "focused", result: "fail", evidence: ["A — src/a.ts"] });
-    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Split out unrelated change: A — src/a.ts"]);
+    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Split out unrelated change: `A — src/a.ts`"]);
   });
 
   test("dedupes exact unrelated display evidence only after validating every candidate", () => {
@@ -162,8 +162,8 @@ describe("focused candidate rendering", () => {
     const allUnrelated = focusedVerdict(candidates, [0, 1, 2].map((index) => decision(focusedCandidateId(index), "unrelated")).join(""));
     expect(allUnrelated.checks[0]?.evidence).toEqual(["Repeated — src/a.ts", "Distinct — src/a.ts"]);
     expect(allUnrelated.feedback.split("\n").slice(1)).toEqual([
-      "- Split out unrelated change: Repeated — src/a.ts",
-      "- Split out unrelated change: Distinct — src/a.ts",
+      "- Split out unrelated change: `Repeated — src/a.ts`",
+      "- Split out unrelated change: `Distinct — src/a.ts`",
     ]);
     expect(allUnrelated.reason).toContain("Repeated — src/a.ts, Distinct — src/a.ts");
 

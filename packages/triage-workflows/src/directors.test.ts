@@ -420,6 +420,27 @@ describe("focused candidate judge input", () => {
     });
   });
 
+  test("an author's label cannot mention, link or format in the judge prompt or the comment", async () => {
+    const requests: Array<Record<string, any>> = [];
+    let judged = "";
+    const caps = {
+      infer(request: Record<string, any>) { requests.push(request); return { type: "infer" }; },
+      reply(content: string) { judged = content; return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
+    const payload = JSON.stringify({ name: "@acme/security [click](https://evil.example)" });
+    const ruled = rulesOutput([{ path: "src/owner.ts", patch: `@@ -0,0 +1 @@\n+export const owner = ${payload};` }]);
+    await director.decide({ type: "message.received", message: { content: JSON.stringify(ruled) } } as ReactorInboundEvent, {} as ReactorState, caps);
+    const systemOne = requests[0]?.providerOptions.systemOne;
+    expect(systemOne.questions[0].instructions).toEndWith("Candidate label: acme/security click.");
+    expect(systemOne.state.changeCandidates["focused-candidate-001"].label).toBe("acme/security click");
+    const probabilities = { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 };
+    const text = JSON.stringify({ id: "focused-candidate-001", type: "choice", choice: "unrelated", probabilities, confidence: 0.9 });
+    await director.decide({ type: "inference.done", turn: { content: [{ type: "text", text }] } } as ReactorInboundEvent, {} as ReactorState, caps);
+    const verdict = await evaluate({ ...ruled, reply: judged }, ctx, signal) as Verdict;
+    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Split out unrelated change: `acme/security click — src/owner.ts`"]);
+  });
+
   test("replies without inference when focused has no candidates and no other questions", async () => {
     let inferred = 0;
     const replies: string[] = [];

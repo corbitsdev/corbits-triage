@@ -41,6 +41,14 @@ function safeInline(value: string, limit: number): string {
   return safeText(value).replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
+const MARKDOWN_LINK = /!?\[([^\]]*)\]\([^)]*\)/g;
+const MARKUP = /[@`*~[\]<>|\\]/g;
+
+/** Labels come from the author's code and reach the author comment and the judge's instructions, so they carry no markdown, links or mentions. */
+function plainLabel(value: string): string {
+  return safeInline(safeText(value).replace(MARKDOWN_LINK, "$1").replace(MARKUP, " "), MAX_LABEL_CHARS);
+}
+
 function boundedPath(value: string): string {
   return safeInline(value, MAX_PATH_CHARS);
 }
@@ -137,7 +145,7 @@ function labelsFor(path: string, hunk: Hunk): LabelHit[] {
   if (labels.length === 0) labels = declarations(changed);
   const seen = new Set<string>();
   return labels.flatMap(function unique(hit) {
-    const label = safeInline(hit.label, MAX_LABEL_CHARS);
+    const label = plainLabel(hit.label);
     if (!label || seen.has(label)) return [];
     seen.add(label);
     return [{ ...hit, label }];
@@ -183,7 +191,7 @@ function candidate(file: PrFileFacts, path: string, label: string, evidence: str
     path,
     ...(previousPath ? { previousPath } : {}),
     ...(status ? { status } : {}),
-    label: safeInline(label, MAX_LABEL_CHARS),
+    label: plainLabel(label),
     evidence: boundedEvidence(evidence),
   };
 }
