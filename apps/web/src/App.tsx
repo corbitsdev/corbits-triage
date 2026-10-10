@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
-import { QueryClient, type Query } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import { del, get, set } from "idb-keyval";
 import { Toaster } from "sonner";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { isFinishedRunLogQuery, PortalProvider, usePortal } from "./lib/portal.tsx";
+import { PortalProvider, usePortal } from "./lib/portal.tsx";
 import { HeldInboxProvider } from "./lib/held-inbox.tsx";
-import { isHandledPullsQuery } from "./lib/open-pulls.ts";
-import { isDoRunsQuery } from "./lib/do-runs.ts";
+import { isPersistedQuery } from "./lib/persisted-queries.ts";
 import { SessionProvider, useSession } from "./lib/session.tsx";
 import { DeniedNotice } from "./lib/denied.tsx";
 import type { PortalSnapshot } from "./lib/hub-api.ts";
@@ -175,15 +174,10 @@ async function getPersisted(key: string): Promise<string | null> {
   return (await get<string>(key)) ?? null;
 }
 
-/** Finished run logs never change, so they are kept in IndexedDB across reloads, as are the pull requests acted on from the inbox and the hub's records of sent Dos. */
 const persister = createAsyncStoragePersister({
   storage: { getItem: getPersisted, setItem: set, removeItem: del },
   key: PERSISTED_QUERIES_KEY,
 });
-
-function isPersistedQuery(query: Query): boolean {
-  return isFinishedRunLogQuery(query) || isHandledPullsQuery(query) || isDoRunsQuery(query);
-}
 
 const persistOptions = {
   persister,
