@@ -1,3 +1,5 @@
+import { type } from "arktype";
+
 export const CLEANUP_MODES = ["human-approved", "automated"] as const;
 export type CleanupMode = (typeof CLEANUP_MODES)[number];
 
@@ -40,6 +42,23 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
   checks: { ...DEFAULT_REPO_CHECKS },
   roles: {},
 };
+
+/** The policy as clients write it; `repoPolicy` defaults whatever is missing. */
+export const repoPolicySchema = type({
+  "cleanupMode?": type.enumerated(...CLEANUP_MODES),
+  "enabled?": "boolean",
+  "triageDrafts?": "boolean",
+  "checks?": {
+    "draft?": "boolean",
+    "ci?": "boolean",
+    "duplicate?": "boolean",
+    "conflicts?": "boolean",
+    "reviewers?": "boolean",
+    "drift?": "boolean",
+  },
+  "roles?": { "[string]": { "users?": "string[]", "teams?": "string[]" } },
+  "checkPack?": { name: "string" },
+});
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
