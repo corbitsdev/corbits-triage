@@ -1,5 +1,19 @@
+import type { TrustTier } from "./types.js";
+
 export const CLEANUP_MODES = ["human-approved", "automated"] as const;
 export type CleanupMode = (typeof CLEANUP_MODES)[number];
+
+export const AUTHOR_ASSOCIATIONS = [
+  "OWNER",
+  "MEMBER",
+  "COLLABORATOR",
+  "CONTRIBUTOR",
+  "FIRST_TIME_CONTRIBUTOR",
+  "FIRST_TIMER",
+  "NONE",
+  "MANNEQUIN",
+] as const;
+export type AuthorAssociation = (typeof AUTHOR_ASSOCIATIONS)[number];
 
 export type RepoCheckFlags = {
   draft: boolean;
@@ -20,6 +34,8 @@ export type RepoPolicy = {
   checks: RepoCheckFlags;
   /** Named reviewer groups that pack actions target by role. */
   roles: Record<string, RepoRole>;
+  /** GitHub logins trusted as approved authors without org membership. */
+  approvedAuthors: string[];
   /** Pointer at the per-repo check-pack artifact. Not params. */
   checkPack?: { name: string };
 };
@@ -39,6 +55,7 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
   triageDrafts: true,
   checks: { ...DEFAULT_REPO_CHECKS },
   roles: {},
+  approvedAuthors: [],
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -70,6 +87,24 @@ function roles(value: unknown): Record<string, RepoRole> {
   return out;
 }
 
+function logins(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names = value.flatMap((v) => (typeof v === "string" ? [v.trim().toLowerCase()] : []));
+  return [...new Set(names.filter((name) => name.length > 0))];
+}
+
+export function authorAssociation(value: unknown): AuthorAssociation | null {
+  return AUTHOR_ASSOCIATIONS.find((a) => a === value) ?? null;
+}
+
+/** `approvedAuthors` must already be normalised by `repoPolicy`. */
+export function tierOf(association: AuthorAssociation | null, author: string, approvedAuthors: readonly string[]): TrustTier {
+  if (association === "OWNER" || association === "MEMBER") return "internal";
+  // A collaborator is invited per repo, so trusted, but not an org member.
+  if (association === "COLLABORATOR") return "approved";
+  return approvedAuthors.includes(author.toLowerCase()) ? "approved" : "external";
+}
+
 /** Defaults missing fields so pre-policy tenant config keeps all checks on. */
 export function repoPolicy(raw: unknown): RepoPolicy {
   const row = asRecord(raw);
@@ -91,6 +126,7 @@ export function repoPolicy(raw: unknown): RepoPolicy {
       drift: flag(checks.drift, true),
     },
     roles: roles(source.roles),
+    approvedAuthors: logins(source.approvedAuthors),
     ...(pointerName.length > 0 ? { checkPack: { name: pointerName } } : {}),
   };
 }
