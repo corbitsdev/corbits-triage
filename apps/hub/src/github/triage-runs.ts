@@ -71,8 +71,11 @@ function triggersOf(started: Record<string, unknown>): Trigger[] {
   return (Array.isArray(items) ? items : [payload]).flatMap((item) => headOf(item, repo, startedAt));
 }
 
-function isRenderCompleted(event: WorkflowRunEvent): boolean {
-  return event.type === "StepCompleted" && String(event.body["stepId"]).split(/[/.]/).pop() === "render";
+/** The evaluate action on either gate branch outputs the verdict; deployments before it rendered it in a `render` step. */
+const VERDICT_STEPS = new Set(["evaluate", "evaluateRules", "render"]);
+
+function isVerdictCompleted(event: WorkflowRunEvent): boolean {
+  return event.type === "StepCompleted" && VERDICT_STEPS.has(String(event.body["stepId"]).split(/[/.]/).pop()!);
 }
 
 function isUnconfirmedMachineCheck(check: unknown): boolean {
@@ -86,13 +89,14 @@ function modelNotAsked(verdict: Record<string, unknown>, checks: unknown[]): boo
   return verdict["state"] !== "stale-unknown" && model.length > 0 && model.every((check) => check?.["reason"] === "not asked");
 }
 
-/** A batch run renders `{ items }` in the order its mail named the heads; a single run renders the verdict itself. */
+/** A batch run outputs `{ items }` in the order its mail named the heads; a single run outputs the verdict itself. A render step wrapped either in `{ reply }`. */
 function verdictsOf(events: readonly WorkflowRunEvent[]): Array<Record<string, unknown> | undefined> {
-  const ref = asRecord(events.findLast(isRenderCompleted)?.body["output"])?.["ref"];
+  const ref = asRecord(events.findLast(isVerdictCompleted)?.body["output"])?.["ref"];
   if (typeof ref !== "string" || !ref.startsWith(INLINE_PREFIX)) return [];
-  const reply = asRecord(parseJson(asRecord(parseJson(ref.slice(INLINE_PREFIX.length)))?.["reply"]));
-  const items = reply?.["items"];
-  return Array.isArray(items) ? items.map(asRecord) : [reply];
+  const output = asRecord(parseJson(ref.slice(INLINE_PREFIX.length)));
+  const verdict = output && Object.hasOwn(output, "reply") ? asRecord(parseJson(output["reply"])) : output;
+  const items = verdict?.["items"];
+  return Array.isArray(items) ? items.map(asRecord) : [verdict];
 }
 
 /** Why the verdict does not settle the triggered head: degraded, made on another commit, a machine check GitHub had not computed yet, or the decision model never asked. */
@@ -118,7 +122,7 @@ function terminalOf(status: Terminal["status"], verdict: Record<string, unknown>
   return { status, ...unsettledBy(verdict, headSha), ...(typeof version === "number" && { verdictVersion: version }) };
 }
 
-/** The render step's reply is the verdict: one per head in mail order, or one degraded verdict for every head. Any other count pairs nothing, so no head settles on another's verdict. */
+/** The verdict step's output is the verdict: one per head in mail order, or one degraded verdict for every head. Any other count pairs nothing, so no head settles on another's verdict. */
 function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger[]): Head[] {
   const status = TERMINAL_EVENTS[events.at(-1)?.type ?? ""];
   if (status === undefined) return triggers.map((trigger) => ({ trigger }));
