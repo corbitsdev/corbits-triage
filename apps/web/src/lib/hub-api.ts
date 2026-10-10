@@ -432,7 +432,7 @@ async function withPackPointers(repos: RepoRecord[], hasPack: CheckPackLookup): 
   }));
 }
 
-async function loadRepoPolicy(transport: Transport, tenantId: string, repo: string): Promise<RepoPolicy> {
+export async function loadRepoPolicy(transport: Transport, tenantId: string, repo: string): Promise<RepoPolicy> {
   const tid = enc(requireTenantId(tenantId));
   const tenant = await transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`);
   const row = reposFromConfig(tenant.config).find((item) => item.name === repo);
@@ -445,15 +445,18 @@ function assertRepoEnabled(policy: RepoPolicy): void {
   }
 }
 
-export async function saveRepoPolicy(
+/** One config write: the panel's settings, plus the pointer at the repository's pack when it has one. */
+export async function saveRepoSettings(
   transport: Transport,
   tenantId: string,
   repo: string,
-  policy: RepoPolicy,
+  settings: Pick<RepoPolicy, "cleanupMode" | "enabled" | "triageDrafts" | "roles">,
+  linked: boolean,
 ): Promise<void> {
   const clean = validateRepo(repo);
-  const next = repoPolicy(policy);
-  await patchAppConfig(transport, tenantId, function applyPolicy(current) {
+  const { cleanupMode, enabled, triageDrafts, roles } = settings;
+  const next = { cleanupMode, enabled, triageDrafts, roles, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
+  await patchAppConfig(transport, tenantId, function applySettings(current) {
     const repos = current.repos ?? [];
     if (!repos.some((row) => rowName(row) === clean)) throw new Error("Repository not found.");
     return { ...current, repos: repos.map((row) => (rowName(row) === clean ? { ...(row as object), ...next } : row)) };
