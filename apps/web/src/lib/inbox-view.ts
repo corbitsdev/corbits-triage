@@ -116,6 +116,15 @@ export type HandledMark = { kind: HandledKind | null };
 
 export type WaitsOn = "maintainer" | "author" | "ci" | "nobody";
 
+const WAITS_ON_ORDER: WaitsOn[] = ["maintainer", "author", "ci", "nobody"];
+
+export const WAITS_ON_LABEL: Record<WaitsOn, string> = {
+  maintainer: "Waits on you",
+  author: "Waits on author",
+  ci: "Waits on CI",
+  nobody: "Waits on nobody",
+};
+
 const AUTHOR_TURN: ReadonlySet<HandledKind | null> = new Set(["changes", "reply", "comment"]);
 
 /** Who must act next, checked in order; `entry` is the pull request's handled mark, null while it is in Needs you. */
@@ -185,8 +194,28 @@ export function matchesQuery(item: PrItem, query: string): boolean {
   return `${item.title ?? ""} #${item.number ?? ""} ${item.repo} ${item.author ?? ""} ${item.owner ?? ""}`.toLowerCase().includes(normalized);
 }
 
-export function inboxHref(item: Pick<PrItem, "repo" | "number">): string {
-  return `/inbox/${item.repo}/${item.number ?? ""}`;
+/** Needs you is the inbox proper; All open lists every open pull request with who it waits on. */
+export type ListView = "needs-you" | "all-open";
+
+const LIST_ROOT: Record<ListView, string> = { "needs-you": "/inbox", "all-open": "/open" };
+
+export function listRoot(view: ListView): string {
+  return LIST_ROOT[view];
+}
+
+export function listHref(view: ListView, item: Pick<PrItem, "repo" | "number">): string {
+  return `${LIST_ROOT[view]}/${item.repo}/${item.number ?? ""}`;
+}
+
+/** An open pull request with its handled mark, held or sent; null while it is in Needs you. */
+export type OpenItem = { item: PrItem; handled: HandledMark | null };
+
+/** The rail counts: Needs you counts its rows, so not pull requests still awaiting their first verdict; All open counts everything open. */
+export function listCounts(open: OpenItem[]): Record<ListView, number> {
+  return {
+    "needs-you": open.filter((entry) => entry.handled === null && inboxAction(entry.item) !== null).length,
+    "all-open": open.length,
+  };
 }
 
 export function confidenceText(item: Pick<PrItem, "confidence">): string | null {
@@ -196,6 +225,10 @@ export function confidenceText(item: Pick<PrItem, "confidence">): string | null 
 export type InboxGrouping = "action" | "repo" | "owner";
 
 export const INBOX_GROUPINGS: InboxGrouping[] = ["action", "repo", "owner"];
+
+export type OpenGrouping = "repo" | "waits" | "owner";
+
+export const OPEN_GROUPINGS: OpenGrouping[] = ["repo", "waits", "owner"];
 
 export { ageText } from "./duration.ts";
 
@@ -207,15 +240,36 @@ export function initialsOf(name: string): string {
 
 export type InboxPile = { key: string; label: string; action: InboxAction | null; items: PrItem[] };
 
+function pileBy<T>(ordered: T[], keyOf: (entry: T) => string): Array<{ key: string; items: T[] }> {
+  const piles = new Map<string, T[]>();
+  for (const entry of ordered) {
+    const key = keyOf(entry);
+    piles.set(key, [...(piles.get(key) ?? []), entry]);
+  }
+  return [...piles.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, items]) => ({ key, items }));
+}
+
+function ownerOf(item: PrItem): string {
+  return item.owner ?? UNASSIGNED;
+}
+
 /** The actionable pull requests regrouped by repository or owner; the action pile order is kept inside each group. */
 export function regroupInbox(view: InboxView, grouping: InboxGrouping): InboxPile[] {
   if (grouping === "action") return view.groups.map((group) => ({ key: group.action, label: group.label, action: group.action, items: group.items }));
   const ordered = view.groups.flatMap((group) => group.items);
-  const keyOf = grouping === "repo" ? (item: PrItem) => item.repo : (item: PrItem) => item.owner ?? UNASSIGNED;
-  const piles = new Map<string, PrItem[]>();
-  for (const item of ordered) {
-    const key = keyOf(item);
-    piles.set(key, [...(piles.get(key) ?? []), item]);
+  return pileBy(ordered, grouping === "repo" ? (item) => item.repo : ownerOf).map(({ key, items }) => ({ key, label: key, action: null, items }));
+}
+
+export type OpenPile = { key: string; label: string; items: OpenItem[] };
+
+/** Every open pull request by repository, who it waits on, or owner, in inbox order inside each group. */
+export function groupOpen(open: OpenItem[], grouping: OpenGrouping): OpenPile[] {
+  const sorted = [...open].sort((a, b) => compareInboxItems(a.item, b.item));
+  if (grouping === "waits") {
+    return WAITS_ON_ORDER
+      .map((waits) => ({ key: waits, label: WAITS_ON_LABEL[waits], items: sorted.filter((entry) => waitsOn(entry.item, entry.handled) === waits) }))
+      .filter((pile) => pile.items.length > 0);
   }
-  return [...piles.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, items]) => ({ key, label: key, action: null, items }));
+  const keyOf = grouping === "repo" ? (entry: OpenItem) => entry.item.repo : (entry: OpenItem) => ownerOf(entry.item);
+  return pileBy(sorted, keyOf).map(({ key, items }) => ({ key, label: key, items }));
 }
