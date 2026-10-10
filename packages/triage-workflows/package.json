@@ -23,5 +23,8 @@
     "hono": "^4.11.9",
     "@intx/types": "workspace:*",
     "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "@intx/inference": "workspace:*"
   }
 }

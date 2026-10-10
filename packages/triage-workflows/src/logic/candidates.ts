@@ -215,6 +215,8 @@ export function extractChangeCandidates(files: readonly PrFileFacts[] | undefine
         candidates.push(candidate(file, path, hit.label, evidence));
       }
     }
+    // The hunks left out of a cut patch are unseen, so the file stays unresolved for a human.
+    if (file.patchTruncated && candidates.length < MAX_CANDIDATES) candidates.push(candidate(file, path, path, ""));
   }
   return candidates;
 }

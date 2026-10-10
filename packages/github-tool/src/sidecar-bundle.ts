@@ -15,7 +15,7 @@ import {
   listOrgMembersForRepo,
   listOpenPrs,
   listPrCommits,
-  listPrFiles,
+  listPrFilesPage,
   listInstallations,
   listInstallationRepositories,
   mergePr,
@@ -67,8 +67,8 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "github_list_pr_files",
-    description: "List files changed on a pull request, including patches when GitHub returns them.",
-    inputSchema: obj({ repo, number: { type: "integer" } }),
+    description: "List one page of files changed on a pull request from offset, with patches when GitHub returns them and they fit. Call again with next until it is absent; patches false leaves patches out.",
+    inputSchema: obj({ repo, number: { type: "integer" }, offset: { type: "integer" }, patches: { type: "boolean" } }, ["repo", "number"]),
   },
   {
     name: "github_list_issue_comments",
@@ -170,7 +170,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
     case "github_list_pr_commits":
       return { commits: await listPrCommits(gh, a.repo, a.number) };
     case "github_list_pr_files":
-      return { files: await listPrFiles(gh, a.repo, a.number) };
+      return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patches: a.patches !== false });
     case "github_list_issue_comments":
       return { comments: await listIssueComments(gh, a.repo, a.number) };
     case "github_list_org_members":
