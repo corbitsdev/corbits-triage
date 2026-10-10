@@ -3,6 +3,8 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { initialsOf, listCounts } from "../lib/inbox-view.ts";
 import { useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { useOpenItems, useOpenPullsUnanswered } from "../lib/open-pulls.ts";
+import { usePortal } from "../lib/portal.tsx";
+import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { useSession } from "../lib/session.tsx";
 import { GearIcon, InboxIcon, ListIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
@@ -52,8 +54,10 @@ function UserBlock() {
 
 export default function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
+  const { snapshot } = usePortal();
   const open = useOpenItems();
-  const counts = useMemo(() => listCounts(open), [open]);
+  const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
+  const counts = useMemo(() => listCounts(open, enabled), [open, enabled]);
   const openPullsUnanswered = useOpenPullsUnanswered();
   const path = location.pathname;
   const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : "inbox";
