@@ -1,10 +1,10 @@
 // The hub bridge finds deployments by workflow name, so each workflow is
-// redeployed only when a new version of it was published, no live deployment
-// exists, or the decision model changed (a deployment resolves its offering
-// when deployed).
+// redeployed only when its current deployment runs another version than this
+// build's, none exists, or the decision model changed (a deployment resolves
+// its offering when deployed).
 import { ApiError, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { requestOrigin } from "./hub-origin.ts";
-import { DECISION_MODEL_ALIAS, isLiveDeployment } from "./hub-api.ts";
+import { currentDeployment, DECISION_MODEL_ALIAS, isLiveDeployment, listDeployedWorkflows } from "./hub-api.ts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry } from "./workflow-packages.ts";
 
 /** Provider plugin the triage agents infer through (packages/triage-workflows/src/agents.ts). */
@@ -57,7 +57,6 @@ async function putTarball(fetchRaw: typeof fetch, tenantId: string, registryId: 
 /**
  * Publishes each tarball the registry lacks, in index order so the tool lands
  * before the workflows that depend on it. A version is never overwritten.
- * Returns the filenames published now.
  */
 async function publishPackages(
   transport: Transport,
@@ -65,7 +64,7 @@ async function publishPackages(
   tenantId: string,
   registryId: string,
   index: PackageIndexEntry[],
-): Promise<Set<string>> {
+): Promise<void> {
   const listed = await transport.fetch<Array<{ filename: string; integrity: string }>>(
     "GET",
     `/api/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(registryId)}/tarballs`,
@@ -81,7 +80,6 @@ async function publishPackages(
   for (const entry of missing) {
     await putTarball(fetchRaw, tenantId, registryId, entry, await (await portalPackage(fetchRaw, entry.filename)).arrayBuffer());
   }
-  return new Set(missing.map((entry) => entry.filename));
 }
 
 /** The longest lifetime Interchange accepts, so a deployment lives until a newer one replaces it. */
@@ -139,21 +137,19 @@ export async function ensureWorkflows(
   redeploy: boolean,
   fetchRaw: typeof fetch = fetch,
 ): Promise<string[]> {
-  const deployments = await listWorkflowDeployments(transport, tenantId);
+  const deployments = await listDeployedWorkflows(transport, tenantId);
   await ensureKeepDeployedLifetime(transport, tenantId);
   const registry = await ensureAsset(transport, tenantId, "package-registry", REGISTRY_NAME);
   const index = await (await portalPackage(fetchRaw, "index.json")).json() as PackageIndexEntry[];
-  const published = await publishPackages(transport, fetchRaw, tenantId, registry.id, index);
+  await publishPackages(transport, fetchRaw, tenantId, registry.id, index);
   const deployed: string[] = [];
   for (const workflow of WORKFLOW_PACKAGES) {
     const pkg = index.find((entry) => entry.name === workflow.packageName);
     if (!pkg) throw new Error(`The portal build is missing the ${workflow.name} workflow.`);
     // The deploy route needs a workflow asset to name the definition; the code comes from the registry.
     const asset = await ensureAsset(transport, tenantId, "workflow", workflow.name);
-    const live = deployments.some((d) => d.definitionAssetId === asset.id && isLiveDeployment(d.status));
-    // No stock route exposes a deployment's pin, so a version published by a converge whose deploy then
-    // failed stays undeployed while an older deployment is live, until the next model save redeploys.
-    const deploy = published.has(pkg.filename) || redeploy || !live;
+    const current = currentDeployment(deployments, workflow.name)?.package;
+    const deploy = redeploy || current?.name !== pkg.name || current.version !== pkg.version;
     if (deploy) {
       await transport.fetch<WorkflowDeployment>("POST", `/api/integrations/workflow-deploy/${encodeURIComponent(tenantId)}`, {
         registryAssetId: registry.id,

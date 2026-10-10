@@ -187,6 +187,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-open-pulls/{tenantId}": ["get"],
     "/api/integrations/github-pull/{tenantId}": ["get"],
     "/api/integrations/workflow-deploy/{tenantId}": ["post"],
+    "/api/integrations/workflow-versions/{tenantId}": ["get"],
   });
 
   const headers = await signedIn(origin);
