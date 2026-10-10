@@ -271,7 +271,7 @@ export async function prepareCanonicalManifestWrite(
   };
 }
 
-const StartBody = type({ portalOrigin: "string", replace: "boolean", "restart?": "boolean" });
+export const StartBody = type({ portalOrigin: "string", replace: "boolean", "restart?": "boolean" });
 
 export function pendingSetupAction(
   pending: { principalId: string; status: string; expiresAt: Date },

@@ -39,29 +39,25 @@ import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
-import { createInstallationSync, GITHUB_INSTALLATIONS_PATH } from "./github/installation-sync.js";
-import { AUTH_METHODS_PATH, authMethods } from "./auth.js";
+import { createInstallationSync } from "./github/installation-sync.js";
+import { authMethods } from "./auth.js";
+import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { createDeploymentRotation, NoLiveDeploymentError, resolveLiveDeployment, resolveLiveDeployments } from "./github/deployment.js";
-import { createGithubOpenPulls, GITHUB_OPEN_PULLS_PATH } from "./github/open-pulls.js";
-import { createGithubPrActions, GITHUB_PR_ACTIONS_PATH } from "./github/pr-actions.js";
-import { createGithubPrDetails, GITHUB_PR_DETAILS_PATH } from "./github/pr-details.js";
-import { createGithubPrTriage, GITHUB_PR_TRIAGE_PATH } from "./github/pr-triage.js";
+import { createGithubOpenPulls } from "./github/open-pulls.js";
+import { createGithubPrActions } from "./github/pr-actions.js";
+import { createGithubPrDetails } from "./github/pr-details.js";
+import { createGithubPrTriage } from "./github/pr-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
 import { createPullHeadReader, createTenantOpenHeads } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
-import {
-  GITHUB_MANIFEST_CALLBACK_PATH,
-  GITHUB_MANIFEST_PATH,
-  createGithubManifestIntegration,
-  migrateGithubManifest,
-} from "./github/manifest.js";
+import { createGithubManifestIntegration, migrateGithubManifest } from "./github/manifest.js";
 import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch } from "./github/tenant-config.js";
 import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "../../../packages/triage-workflows/src/pr-triage-historical.js";
@@ -369,84 +365,27 @@ function tenantHintFrom(req: Request, pathTenant: string | undefined): string | 
   return hint ?? req.headers.get("x-tenant-id") ?? url.searchParams.get("tenant") ?? undefined;
 }
 
+const integrations = createIntegrationsApp({
+  authMethods: authMethods(signIn),
+  manifest: githubManifest,
+  syncInstallations,
+  prActions: githubPrActions,
+  prTriage: githubPrTriage,
+  openPulls: githubOpenPulls,
+  prDetails: githubPrDetails,
+});
+// Mounted so the stock /openapi.json lists the routes; requests reach them
+// through routeRequest before the stock logger.
+composition.app.route("/", integrations);
+
 const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
 
 async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>[1]): Promise<Response> {
   if (servePortal && isPortalRequest(req)) return servePortal(req);
   const url = new URL(req.url);
-  if (url.pathname === AUTH_METHODS_PATH && req.method === "GET") return Response.json(authMethods(signIn));
   // Intercept before the stock Hono logger: callback query values include the
   // one-time GitHub code and must never enter request/access logs.
-  if (url.pathname === GITHUB_MANIFEST_CALLBACK_PATH && req.method === "GET") {
-    return githubManifest.callback(req);
-  }
-  if (url.pathname.startsWith(`${GITHUB_MANIFEST_PATH}/`) && url.pathname.endsWith("/cancel") && req.method === "POST") {
-    const prefix = `${GITHUB_MANIFEST_PATH}/`;
-    const tenantId = url.pathname.slice(prefix.length, -"/cancel".length);
-    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
-    try {
-      return githubManifest.cancel(req, decodeURIComponent(tenantId));
-    } catch {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-  }
-  if (url.pathname.startsWith(`${GITHUB_MANIFEST_PATH}/`) && url.pathname.endsWith("/start") && req.method === "POST") {
-    const prefix = `${GITHUB_MANIFEST_PATH}/`;
-    const tenantId = url.pathname.slice(prefix.length, -"/start".length);
-    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
-    try {
-      return githubManifest.start(req, decodeURIComponent(tenantId));
-    } catch {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-  }
-  if (url.pathname.startsWith(`${GITHUB_INSTALLATIONS_PATH}/`) && url.pathname.endsWith("/sync") && req.method === "POST") {
-    const tenantId = url.pathname.slice(GITHUB_INSTALLATIONS_PATH.length + 1, -"/sync".length);
-    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(tenantId);
-    } catch {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-    return syncInstallations(req, decoded);
-  }
-  if (url.pathname.startsWith(`${GITHUB_PR_ACTIONS_PATH}/`) && req.method === "POST") {
-    const tenantId = url.pathname.slice(GITHUB_PR_ACTIONS_PATH.length + 1);
-    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
-    try {
-      return githubPrActions(req, decodeURIComponent(tenantId));
-    } catch {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-  }
-  if (url.pathname.startsWith(`${GITHUB_PR_TRIAGE_PATH}/`) && req.method === "POST") {
-    const tenantId = url.pathname.slice(GITHUB_PR_TRIAGE_PATH.length + 1);
-    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
-    try {
-      return githubPrTriage(req, decodeURIComponent(tenantId));
-    } catch {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-  }
-  if (url.pathname.startsWith(`${GITHUB_OPEN_PULLS_PATH}/`) && req.method === "GET") {
-    const tenantId = url.pathname.slice(GITHUB_OPEN_PULLS_PATH.length + 1);
-    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
-    try {
-      return githubOpenPulls(req, decodeURIComponent(tenantId));
-    } catch {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-  }
-  if (url.pathname.startsWith(`${GITHUB_PR_DETAILS_PATH}/`) && req.method === "GET") {
-    const tenantId = url.pathname.slice(GITHUB_PR_DETAILS_PATH.length + 1);
-    if (!tenantId || tenantId.includes("/")) return Response.json({ error: "not_found" }, { status: 404 });
-    try {
-      return githubPrDetails(req, decodeURIComponent(tenantId));
-    } catch {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-  }
+  if (url.pathname.startsWith(INTEGRATIONS_PREFIX)) return integrations.fetch(req);
   if (url.pathname === HOOK_MOUNT_PATH || url.pathname.startsWith(`${HOOK_MOUNT_PATH}/`)) {
     // Fail fast on bodies the stock hook app would reject with 413, before
     // hook lookup, decrypt or HMAC work. The bridge re-checks actual bytes
