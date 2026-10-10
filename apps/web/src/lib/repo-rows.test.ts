@@ -9,7 +9,7 @@ function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
     key: `${repo}#${number}`, repo, number, title: null, author: null, draft: null, mergeable: null, state: "new",
     priority: null, owner: null, nextAction: null, confidence: null, evidence: [], checks: [], labels: [], comment: null,
     sha: null, degraded: null, needsHuman: false, closed: false, pendingApprovalId: null, runId: null, waitingSince: null, updatedAt: null,
-    canClose: false, pendingClose: false, posted: false, running: false, failure: null, actions: [], href: "", ...extra,
+    ci: null, headSha: null, activityAt: null, canClose: false, pendingClose: false, posted: false, running: false, failure: null, actions: [], href: "", ...extra,
   };
 }
 
