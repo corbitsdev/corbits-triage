@@ -11,6 +11,7 @@ import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody } from "../github/manifest.js";
 import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
+import { DoBody, DoRunList, DoRunResponse, GITHUB_DOS_PATH } from "../github/pr-dos.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
@@ -26,6 +27,7 @@ export type IntegrationHandlers = {
   manifest: { start: TenantHandler; cancel: TenantHandler; callback: (req: Request) => Promise<Response> };
   syncInstallations: TenantHandler;
   prActions: TenantHandler;
+  dos: { run: TenantHandler; list: TenantHandler };
   prTriage: TenantHandler;
   openPulls: TenantHandler;
   prDetails: TenantHandler;
@@ -190,6 +192,40 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       responses: { 200: json("GitHub's answer", type("unknown")), ...invalid, ...failures, ...githubFailed },
     }),
     tenantRoute(handlers.prActions),
+  );
+
+  app.post(
+    `${GITHUB_DOS_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Run a pack Do from a triage run's verdict",
+      description: "Writes to GitHub at most once per Do effect and records it; a repeat answers with the recorded row as replayed.",
+      tags: TAGS,
+      requestBody: body(DoBody),
+      responses: {
+        200: json("The recorded Do", DoRunResponse),
+        ...invalid,
+        ...failures,
+        404: json("Run, verdict or Do not found in this workspace", Failure),
+        409: json("GitHub not connected, repository not enabled, verdict outdated, effect id mismatch, head moved, Do running or not runnable", Failure),
+        ...githubFailed,
+      },
+    }),
+    tenantRoute(handlers.dos.run),
+  );
+
+  app.get(
+    `${GITHUB_DOS_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Recorded pack Dos of a repository, newest first",
+      tags: TAGS,
+      parameters: [
+        { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
+        { in: "query", name: "number", required: false, schema: { type: "integer", minimum: 1 } },
+        { in: "query", name: "runId", required: false, schema: { type: "string" } },
+      ],
+      responses: { 200: json("Recorded Dos, at most 200", DoRunList), ...invalid, 401: failures[401], 403: failures[403] },
+    }),
+    tenantRoute(handlers.dos.list),
   );
 
   app.post(
