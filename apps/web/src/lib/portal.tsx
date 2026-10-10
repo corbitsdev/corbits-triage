@@ -77,6 +77,8 @@ const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
   comment: "Commented on",
   reply: "Replied on",
   labels: "Labeled",
+  assign: "Assigned",
+  "request-review": "Requested review on",
   review: "Reviewed",
   merge: "Merged",
   close: "Closed",

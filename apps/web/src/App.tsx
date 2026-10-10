@@ -8,6 +8,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import { isFinishedRunLogQuery, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { HeldInboxProvider } from "./lib/held-inbox.tsx";
 import { isHandledPullsQuery } from "./lib/open-pulls.ts";
+import { isRanDosQuery } from "./lib/ran-dos.ts";
 import { SessionProvider, useSession } from "./lib/session.tsx";
 import { DeniedNotice } from "./lib/denied.tsx";
 import type { PortalSnapshot } from "./lib/hub-api.ts";
@@ -174,14 +175,14 @@ async function getPersisted(key: string): Promise<string | null> {
   return (await get<string>(key)) ?? null;
 }
 
-/** Finished run logs never change, so they are kept in IndexedDB across reloads, as are the pull requests acted on from the inbox. */
+/** Finished run logs never change, so they are kept in IndexedDB across reloads, as are the pull requests acted on from the inbox and the Dos already sent. */
 const persister = createAsyncStoragePersister({
   storage: { getItem: getPersisted, setItem: set, removeItem: del },
   key: PERSISTED_QUERIES_KEY,
 });
 
 function isPersistedQuery(query: Query): boolean {
-  return isFinishedRunLogQuery(query) || isHandledPullsQuery(query);
+  return isFinishedRunLogQuery(query) || isHandledPullsQuery(query) || isRanDosQuery(query);
 }
 
 const persistOptions = {

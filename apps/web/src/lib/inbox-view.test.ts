@@ -35,6 +35,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     posted: false,
     running: false,
     failure: null,
+    actions: [],
     href: "/prs/acme/widgets/1",
     ...overrides,
   };
