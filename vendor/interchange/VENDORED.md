@@ -4,7 +4,7 @@
 
 - Upstream: <https://github.com/faremeter/interchange>
 - Stock ref: `74c57b39bc9613ab38ae8eab73af743797d589e2`
-- Composite pin: stock `74c57b39` plus INTR-583 at `44170ebb` and the local CL-10210 and CL-10211 carries. Do not treat any delta as a new stock pin.
+- Composite pin: stock `74c57b39` plus the step-env director threading from PR #193, INTR-583 at `44170ebb`, and the local CL-10210 and CL-10211 carries. Do not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -12,9 +12,34 @@ The checkout is intentionally pruned, but includes the complete stock package
 dependency closure needed by its declared workspaces. Other paths absent from
 this checkout but present upstream are informational in the drift gate. Local
 build artifacts and environment files are ignored; they are not vendor
-patches.
+patches. Tracked `.env*.example` templates are checked like any other file.
 
 ## Allowed deltas
+
+### Step-env director threading (upstream PR #193)
+
+Required because `@corbits/triage-workflows` ships its director through its
+own `interchange.directors`. Stock `74c57b39` loads that registry into the
+run-child's runtime env, but `createSidecarStepBuildEnv` still hardcodes
+`createDefaultDirectorRegistry()`, so every step naming
+`@corbits/triage-workflows/triage` fails at build with
+`UnknownDirectorIdError`. The carry resolves the step env's registry from
+`closurePackageDir` (memoised, built-ins when absent) and passes the same
+closure registry to spawned-child deps, whose grant cap otherwise drops the
+`director:` grant of every onTrigger body step (kept for consistency with the
+approved snapshot; not re-gated at runtime on this pin). It takes only this threading
+from upstream PR #193 (head `94bbf8c2`, open); not its dependency-package
+director loading or namespace changes. `tooling/vendor-health.test.ts`
+asserts the step env resolves the director.
+
+Allowed files:
+
+- `packages/workflow-host/src/child/substrate-factory.ts`
+
+Upstream reference: <https://github.com/faremeter/interchange/pull/193>.
+
+Kill date: **2026-11-01**. Remove when upstream's step env loads the closure
+registry.
 
 ### Operator-registered model-provider keys (INTR-583)
 
@@ -88,10 +113,11 @@ reconnect-cancelled push as a local write failure.
 
 ## Dropped deltas
 
-- PR #193 / INTR-581 (custom directors): stock `74c57b39` loads the workflow
-  package's own `interchange.directors` in
-  `packages/workflow-host/src/workflow-definition-loader.ts`, which is where
-  `@corbits/triage-workflows` ships its director.
+- The rest of PR #193 / INTR-581 (dependency-package directors, owned-id
+  namespace checks, the definition-scoped loader): stock already loaded the
+  workflow package's own `interchange.directors` into the runtime env, which
+  is all `@corbits/triage-workflows` needs. Only the step-env threading above
+  is still carried.
 - CL-10178 (run-scoped onTrigger body run ids): stock `74c57b39` contains
   `ff4539ed` and `786c5039`, which mint `<runId>__<stepId>__<eventIndex>` and
   resume bodies recorded under the old `<stepId>__<eventIndex>` id.
