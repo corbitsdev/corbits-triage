@@ -2,6 +2,10 @@ export function asText(v: unknown) {
   return typeof v === "string" ? v : JSON.stringify(v ?? "");
 }
 
+export function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 export function errorText(e: unknown) {
   return e instanceof Error ? e.message : String(e);
 }
