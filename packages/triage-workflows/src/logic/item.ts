@@ -1,4 +1,4 @@
-import type { CheckPack, CleanupMode } from "@corbits/triage-contracts";
+import type { CheckPack, CleanupMode, RepoRole } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 
 export interface Item {
@@ -8,6 +8,7 @@ export interface Item {
   judgeError?: string;
   cleanupMode?: CleanupMode;
   pack?: CheckPack;
+  roles?: Record<string, RepoRole>;
   /** Why no facts were gathered; the verdict is then degraded with this reason. */
   error?: string;
 }

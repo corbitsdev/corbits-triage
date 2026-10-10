@@ -7,6 +7,7 @@ import {
   type CatalogId,
   type CheckPack,
   type IssueTracker,
+  type TriageEvent,
   type TrustTier,
 } from "@corbits/triage-contracts";
 
@@ -27,6 +28,10 @@ export interface PrFacts {
   reviewers?: string[];
   approvals: number;
   changesRequested?: string[];
+  /** Logins whose latest review stands on the current head. */
+  reviewedBy?: string[];
+  labels?: string[];
+  assignees?: string[];
   openPrs: Array<{ number: number; title: string }>;
   changedFiles?: number;
   additions?: number;
@@ -35,6 +40,8 @@ export interface PrFacts {
   body?: string;
   commits?: string[];
   branch?: string;
+  /** What woke this run; absent for webhook actions no pack event names. */
+  event?: TriageEvent;
 }
 
 export interface Finding {

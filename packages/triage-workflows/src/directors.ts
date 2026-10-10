@@ -10,7 +10,7 @@ import type {
 } from "@intx/types/runtime";
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { repoPolicy, type CheckPack, type CleanupMode } from "@corbits/triage-contracts";
+import { repoPolicy, type CheckPack, type CleanupMode, type RepoRole } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON, packFromInput, type DeterministicResult, type PrFacts } from "./logic/checks.js";
 import { asText, parseJsonText } from "./logic/extract.js";
 import { qualityQuestions, qualityState } from "./logic/quality.js";
@@ -76,7 +76,7 @@ function cleanupModeOf(v: Record<string, unknown>): CleanupMode | undefined {
 function itemsOf(input: Record<string, unknown>): { items: Item[]; batch: boolean } {
   return Array.isArray(input.items)
     ? { items: input.items as Item[], batch: true }
-    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, judgeError: input.judgeError as string | undefined, cleanupMode: cleanupModeOf(input), error: input.error as string | undefined }], batch: false };
+    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, judgeError: input.judgeError as string | undefined, cleanupMode: cleanupModeOf(input), pack: input.pack as CheckPack | undefined, roles: input.roles as Record<string, RepoRole> | undefined, error: input.error as string | undefined }], batch: false };
 }
 
 function verdictsOf(input: Record<string, unknown>): { verdicts: Verdict[]; batch: boolean } {
@@ -169,7 +169,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           const paths = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files?.flatMap(pathOf) ?? [];
           const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
           const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, commits };
-          return { facts, pack, cleanupMode: policy.cleanupMode };
+          return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
         }
         const { items } = await rules({ items: numbers.map(itemFor) }, NO_EFFECTS, NEVER_ABORTED);
         return caps.reply(JSON.stringify(batch ? { items } : items[0]));
