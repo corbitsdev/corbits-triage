@@ -92,6 +92,7 @@ export const RUNS_QUERY_KEY = "runs";
 export const GRANTS_QUERY_KEY = "grants";
 export const PRINCIPALS_QUERY_KEY = "principals";
 export const ROLES_QUERY_KEY = "roles";
+export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
   PORTAL_QUERY_KEY,
@@ -102,6 +103,7 @@ const REFRESH_QUERY_KEYS = [
   [GRANTS_QUERY_KEY],
   [PRINCIPALS_QUERY_KEY],
   [ROLES_QUERY_KEY],
+  [DEPLOYED_WORKFLOWS_QUERY_KEY],
 ];
 
 function isRunLog(value: unknown): value is RunLog {

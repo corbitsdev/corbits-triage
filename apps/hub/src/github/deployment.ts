@@ -33,21 +33,29 @@ export function readyMaterializer(materialize: RunTriggerMaterialize): RunTrigge
 /** `cancelling` once cancellation was requested: the run stays live until the lifecycle sweep stops it. */
 export type LiveDeployment = { runId: string; address: string; createdAt: Date; cancelling: boolean };
 
-/** Matches how the hub lists deployments: a deployment is its anchor run. Newest first. */
+export type TenantDeployment = LiveDeployment & { workflow: string };
+
+/** Matches how the hub lists deployments: a deployment is its anchor run. Newest first; every workflow's when no name is given. */
 export async function resolveLiveDeployments(
   db: DB["db"],
   tenantId: string,
-  definitionName: string,
-): Promise<LiveDeployment[]> {
+  definitionName?: string,
+): Promise<TenantDeployment[]> {
   const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
   const rows = await db
-    .select({ runId: workflowRun.id, domain: tenant.domain, createdAt: workflowRun.createdAt, cancellationRequestedAt: workflowRun.cancellationRequestedAt })
+    .select({
+      runId: workflowRun.id,
+      workflow: workflowDefinition.name,
+      domain: tenant.domain,
+      createdAt: workflowRun.createdAt,
+      cancellationRequestedAt: workflowRun.cancellationRequestedAt,
+    })
     .from(workflowRun)
     .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
     .innerJoin(tenant, eq(workflowRun.tenantId, tenant.id))
     .where(and(
       eq(workflowRun.tenantId, tenantId),
-      eq(workflowDefinition.name, definitionName),
+      definitionName === undefined ? undefined : eq(workflowDefinition.name, definitionName),
       isNotNull(workflowRun.anchorRunId),
       eq(workflowRun.id, workflowRun.anchorRunId),
       inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
@@ -58,6 +66,7 @@ export async function resolveLiveDeployments(
     address: `${row.runId}@${row.domain}`,
     createdAt: row.createdAt,
     cancelling: row.cancellationRequestedAt !== null,
+    workflow: row.workflow,
   }));
 }
 
@@ -74,11 +83,30 @@ export async function resolveLiveDeployment(
   return newestLive(await resolveLiveDeployments(db, tenantId, definitionName)) ?? null;
 }
 
-/** The launch spec does not store the pin, so it is read back from the frozen closure. */
-export function pinOf(closure: ToolPackageManifest): string {
+export type PackageVersion = { name: string; version: string };
+
+function rootOf(closure: ToolPackageManifest): PackageVersion {
   const [root, ...rest] = closure.topLevel;
   if (!root || rest.length > 0) throw new Error(`frozen closure has ${String(closure.topLevel.length)} top-level packages, expected one`);
-  return `${root.name}@${root.version}`;
+  return { name: root.name, version: root.version };
+}
+
+/** The launch spec does not store the pin, so it is read back from the frozen closure. */
+export function pinOf(closure: ToolPackageManifest): string {
+  const { name, version } = rootOf(closure);
+  return `${name}@${version}`;
+}
+
+export type ClosureVersions = { workflow: PackageVersion; tools: PackageVersion[] };
+
+/** The pinned workflow package and the packages its closure carries; null for a deployment not pinned from a tarball. */
+export function closureVersions(bundle: FrozenApprovalBundle): ClosureVersions | null {
+  if (pinFor(bundle) === undefined) return null;
+  const workflow = rootOf(bundle.closure);
+  const tools = bundle.closure.entries
+    .filter((entry) => entry.name !== workflow.name)
+    .map((entry) => ({ name: entry.name, version: entry.version }));
+  return { workflow, tools };
 }
 
 /** A tarball-format source names its package only through the pin. */
