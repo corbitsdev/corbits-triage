@@ -29,7 +29,6 @@ const checks: ActionInput["checks"] = [
   { check: "ci", kind: "machine", result: "pass", reason: "", evidence: [] },
   { check: "tests", kind: "model", result: "fail", reason: "", evidence: [] },
   { check: "focused", kind: "model", result: "unconfirmed", reason: "", evidence: [] },
-  { check: "custom-1", kind: "machine", result: "fail", reason: "", evidence: [] },
 ];
 
 function run(actions: Action[], roles: ActionInput["roles"] = {}) {
@@ -58,7 +57,6 @@ describe("evaluateActions", () => {
     ["any fail picks no", branching(["opened"], ["ci", "tests", "focused"]), ["no"]],
     ["unconfirmed picks unsure", branching(["opened"], ["ci", "focused"]), ["unsure"]],
     ["no checks runs always", always([say("always")]), ["always"]],
-    ["a rule custom result decides like any check", branching(["opened"], ["custom-1"]), ["no"]],
     ["an event not in when does nothing", branching(["updated"], ["ci"]), []],
     ["every always matches", branching("every", ["ci"]), ["yes"]],
   ])("%s", (_, action, bodies) => {

@@ -341,3 +341,29 @@ describe("quality question compatibility", () => {
     expect(questions[0]?.instructions).toContain("movement_or_superseded");
   });
 });
+
+describe("rule custom check rendering", () => {
+  const rules = [
+    { id: "custom-1", name: "Branch naming", group: "pull-request", kind: "rule", rule: "branch-pattern", pattern: "^cl-" },
+    { id: "custom-2", name: "Two approvals", group: "around", kind: "rule", rule: "min-approvals", count: 2 },
+  ] as const;
+  const det: DeterministicResult = {
+    state: "needs-author-update",
+    reason: "Branch naming: branch does not match the pattern",
+    findings: [{ check: "custom-1", state: "needs-author-update", reason: "Branch naming: branch does not match the pattern" }],
+    checks: [
+      { check: "custom-1", kind: "machine", result: "fail", reason: "Branch naming: branch does not match the pattern", evidence: ["@acme/team"] },
+      { check: "custom-2", kind: "machine", result: "fail", reason: "Two approvals: not enough approvals", evidence: ["1 of 2 approvals"] },
+    ],
+    duplicateOf: null,
+    needsJudgment: false,
+    sources: { quality: [], custom: [], rules: [...rules] },
+  };
+
+  test("names the rule, asks the author in inline code and keeps approvals with the maintainer", () => {
+    const verdict = renderVerdict({ author: "octocat", det, threshold: DEFAULT_MERGE_THRESHOLD });
+    expect(verdict).toMatchObject({ actor: "author", nextAction: "Rename the branch to match `^cl-`; Approve (`1 of 2 approvals`)" });
+    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Branch naming: branch does not match the pattern: `@acme/team`"]);
+    expect(verdict.merge.reasons).toContain("Failed: Two approvals: not enough approvals");
+  });
+});

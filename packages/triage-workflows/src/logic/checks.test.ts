@@ -139,10 +139,13 @@ describe("deriveState rule custom checks", () => {
     draft: false,
     title: "feat(api): add search",
     branch: "feature/search",
-    labels: ["api"],
+    labels: ["API"],
     approvals: 1,
     paths: ["src/api.ts", "docs/api.md"],
-    files: [{ path: "src/api.ts", patch: "@@ -1,2 +1,3 @@\n a\n+const token = 'sk-live-1';\n b" }, { path: "docs/api.md", patch: "@@ -1 +1,2 @@\n x\n+y" }],
+    files: [
+      { path: "src/api.ts", additions: 2, patch: "@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+b\n@@ -10,1 +10,2 @@\n c\n+const token = 'sk-live-1';" },
+      { path: "docs/api.md", additions: 1, patch: "@@ -1 +1,2 @@\n x\n+y" },
+    ],
   };
   const pack = emptyPack("acme/widgets");
   pack.custom = [
@@ -153,30 +156,34 @@ describe("deriveState rule custom checks", () => {
     { id: "custom-5", name: "Needs triage label", group: "issue", kind: "rule", rule: "label-required", label: "triaged" },
     { id: "custom-6", name: "No live keys", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "sk-live-" },
     { id: "custom-7", name: "Two approvals", group: "around", kind: "rule", rule: "min-approvals", count: 2 },
+    { id: "custom-8", name: "API label", group: "issue", kind: "rule", rule: "label-required", label: "api" },
   ];
 
-  test("each rule kind is evaluated from facts with evidence and a finding on failure", () => {
+  test("each rule kind is evaluated from facts, named in its reason, with a finding on failure", () => {
     const result = deriveState(facts, allOff, pack);
     const byId = Object.fromEntries(result.checks.map((check) => [check.check, check]));
     expect(byId["custom-1"]).toMatchObject({ kind: "machine", result: "pass" });
     expect(byId["custom-2"]).toMatchObject({ result: "pass" });
-    expect(byId["custom-3"]).toMatchObject({ result: "pass", evidence: ["feat(api): add search"] });
-    expect(byId["custom-4"]).toMatchObject({ result: "fail", evidence: ["feature/search"] });
-    expect(byId["custom-5"]).toMatchObject({ result: "fail", evidence: ["api"] });
-    expect(byId["custom-6"]).toMatchObject({ result: "fail", evidence: ["src/api.ts:2"] });
-    expect(byId["custom-7"]).toMatchObject({ result: "fail", evidence: ["1 of 2 approvals"] });
+    expect(byId["custom-3"]).toMatchObject({ result: "pass" });
+    expect(byId["custom-4"]).toMatchObject({ result: "fail", reason: "Branch naming: branch does not match the pattern" });
+    expect(byId["custom-5"]).toMatchObject({ result: "fail", reason: "Needs triage label: label triaged is missing" });
+    expect(byId["custom-6"]).toMatchObject({ result: "fail", evidence: ["src/api.ts:11"] });
+    expect(byId["custom-7"]).toMatchObject({ result: "fail", reason: "Two approvals: not enough approvals", evidence: ["1 of 2 approvals"] });
+    expect(byId["custom-8"]).toMatchObject({ result: "pass" });
     expect(result.findings.map((finding) => [finding.check, finding.state])).toEqual([
       ["custom-4", "needs-author-update"],
-      ["custom-5", "needs-decision"],
+      ["custom-5", "awaiting-review"],
       ["custom-6", "needs-author-update"],
       ["custom-7", "awaiting-review"],
     ]);
     expect(result.sources?.rules).toEqual(pack.custom);
   });
 
-  test("a missing branch or patch leaves the rule unconfirmed", () => {
-    const partial: PrFacts = { ...facts, branch: undefined, files: [{ path: "src/api.ts" }] };
-    const result = deriveState(partial, allOff, pack);
+  test("a hit in a truncated patch still fails; only a clean scan with gaps is unconfirmed", () => {
+    const truncated: PrFacts = { ...facts, files: [{ ...facts.files![0]!, patchTruncated: true }] };
+    expect(deriveState(truncated, allOff, pack).checks.find((check) => check.check === "custom-6")).toMatchObject({ result: "fail", evidence: ["src/api.ts:11"] });
+    const gaps: PrFacts = { ...facts, branch: undefined, files: [{ path: "src/api.ts", additions: 2 }, { path: "img.png", additions: 0 }] };
+    const result = deriveState(gaps, allOff, pack);
     expect(result.checks.find((check) => check.check === "custom-4")?.result).toBe("unconfirmed");
     expect(result.checks.find((check) => check.check === "custom-6")?.result).toBe("unconfirmed");
   });
