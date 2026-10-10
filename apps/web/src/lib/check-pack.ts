@@ -5,6 +5,7 @@ import {
   checkPackName,
   emptyPack,
   parseCheckPack,
+  readCheckPack,
   recommendedPack,
   type CheckPack,
   type CleanupMode,
@@ -84,8 +85,7 @@ async function createCheckPack(transport: Transport, tenantId: string, title: st
 /** Writes the draft onto the artifact it was loaded from, or creates one when the form saw none; never over a pack it did not see. */
 export async function writeCheckPack(transport: Transport, tenantId: string, repo: string, pack: CheckPack, loaded: LoadedCheckPack | null): Promise<StoredCheckPack> {
   const clean = validateRepo(repo);
-  const parsed = parseCheckPack(pack, clean);
-  if (!parsed) throw new Error("Check pack is not valid.");
+  const parsed = readCheckPack(pack, clean);
   const title = checkPackName(clean);
   const content = JSON.stringify(parsed);
   const stored = loaded
