@@ -257,12 +257,17 @@ function nextStep(checks: CheckResult[], sources: Sources, reviewers: string[]):
   return { actor: ordered[0]!.actor, nextAction: `${actions.slice(0, MAX_ACTIONS).join("; ")}${more}` };
 }
 
+/** Labels and paths come from the pull request, so they are posted as inline code that cannot mention, link or format. */
+function inlineCode(text: string): string {
+  return `\`${text.replace(/`/g, "'")}\``;
+}
+
 /** Only checks the author can fix are posted; everything else is for maintainers in the portal. */
 function authorComment(author: string, checks: CheckResult[], sources: Sources): string {
   const mine = checks.filter((c) => c.result === "fail" && failedStep(c, sources).actor === "author");
   if (!mine.length) return "";
   const lines = mine.flatMap((c) => c.check === "focused"
-    ? c.evidence.map((evidence) => `- Split out unrelated change: ${evidence}`)
+    ? c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}`)
     : [`- ${c.reason}${c.evidence.length ? `: ${c.evidence.join(", ")}` : ""}`]);
   return [`@${author}, please address the following:`, ...lines].join("\n");
 }
