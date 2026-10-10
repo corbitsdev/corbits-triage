@@ -15,8 +15,8 @@ export type ObservedRun = {
   unsettled?: string;
   /** The verdict only waits on GitHub for a machine check, so the head is retried after `unconfirmedRetryMs` rather than at once. */
   unconfirmed?: true;
-  /** The workflow version the verdict names; the row remembers it so a later deployment can tell the head needs triage again. */
-  verdictVersion?: number;
+  /** Workflow package version of the deployment the run ran on; the row remembers it so a later deployment can tell the head needs triage again. */
+  workflowVersion?: string;
 };
 
 export type ReconcilePolicy = {
@@ -66,8 +66,8 @@ export type TenantPlanInput = {
   runs: ReadonlyMap<string, ReadonlyMap<string, readonly ObservedRun[]>>;
   now: Date;
   policy: ReconcilePolicy;
-  /** The newest workflow version the live deployment has produced a verdict with; none before its first. */
-  workflowVersion: number | undefined;
+  /** Workflow package version of the deployment new mail goes to; none when it was not deployed from the package registry. */
+  workflowVersion: string | undefined;
 };
 
 /** A head to queue, why, and the row to keep instead when its mail cannot be delivered. */
@@ -92,7 +92,7 @@ export function backoffMs(attempts: number, policy: ReconcilePolicy): number {
 type Observation = { status: PrTriageRow["status"]; run?: ObservedRun; runId?: string; error?: string };
 
 function withStatus(row: PrTriageRow, { status, run, runId = run?.runId, error }: Observation, now: string): PrTriageRow {
-  const workflowVersion = run?.verdictVersion ?? row.workflowVersion;
+  const workflowVersion = run?.workflowVersion ?? row.workflowVersion;
   if (row.status === status && row.runId === runId && row.error === error && row.workflowVersion === workflowVersion) return row;
   const { runId: _run, error: _error, workflowVersion: _version, ...rest } = row;
   return {
@@ -173,12 +173,12 @@ function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: 
 
 const STALE_VERDICT = "verdict from workflow version";
 
-/** A head settled or capped under an older workflow version starts over: its verdict may no longer be in the live log and its attempts were spent on old code. A row that names no version is not stale. */
-function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: number | undefined, at: string): PrTriageRow {
+/** A head settled or capped under another workflow version starts over, once: its verdict may no longer be in the live log and its attempts were spent on other code. A row that names no version is not stale; a legacy integer always differs. */
+function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: string | undefined, at: string): PrTriageRow {
   if (prior === undefined) {
     return { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, ...(workflowVersion !== undefined && { workflowVersion }), firstSeenAt: at, updatedAt: at };
   }
-  if (workflowVersion === undefined || prior.workflowVersion === undefined || prior.workflowVersion >= workflowVersion) return prior;
+  if (workflowVersion === undefined || prior.workflowVersion === undefined || prior.workflowVersion === workflowVersion) return prior;
   if (prior.status !== "triaged" && prior.status !== "failed") return prior;
   const { runId: _run, queuedAt: _queued, ...rest } = prior;
   return { ...rest, status: "new", attempts: 0, workflowVersion, error: `${STALE_VERDICT} ${prior.workflowVersion}, current is ${workflowVersion}`, updatedAt: at };
@@ -202,6 +202,11 @@ function runningHeads(runs: TenantPlanInput["runs"], now: Date, policy: Reconcil
     }
   }
   return busy;
+}
+
+/** Once a head is on the live version, a run of any other, such as one on a deployment still being cancelled, neither settles nor fails it; it still holds its slot. A head still on an older version keeps every run, so one in flight settles before it is reset. */
+function counts(run: ObservedRun, row: PrTriageRow, workflowVersion: string | undefined): boolean {
+  return workflowVersion === undefined || row.workflowVersion !== workflowVersion || run.workflowVersion === workflowVersion;
 }
 
 type Due = { repo: string; index: number; row: PrTriageRow };
@@ -230,8 +235,9 @@ export function planTenant({ repos, runs, now, policy, workflowVersion }: Tenant
     const next: PrTriageRow[] = [];
     for (const pr of prs) {
       const key = runKey(pr.number, pr.headSha);
-      const runsOfHead = observed?.get(key) ?? [];
-      const row = uncapped(observe(fresh(pr, byHead.get(key), workflowVersion, at), runsOfHead, now, policy), now, policy);
+      const current = fresh(pr, byHead.get(key), workflowVersion, at);
+      const runsOfHead = (observed?.get(key) ?? []).filter((run) => counts(run, current, workflowVersion));
+      const row = uncapped(observe(current, runsOfHead, now, policy), now, policy);
       if (inFlight(row)) busy.add(`${name} ${key}`);
       if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row });
       next.push(row);
