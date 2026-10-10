@@ -322,7 +322,7 @@ async function seedRun(db: ReturnType<typeof createDB>["db"], dataDir: string, t
   await db.insert(schema.workflowRun).values({ id: runId, definitionId, anchorRunId, tenantId, status: "completed" });
 
   const verdict = {
-    repo: REPO, number: 8, headSha, workflowVersion: 1,
+    repo: REPO, number: 8, headSha,
     request: { repo: REPO, number: 8, labels: [], owned: [], comment: "", close: false },
     actions: dos.map((step) => verdictStep(step, headSha)),
   };

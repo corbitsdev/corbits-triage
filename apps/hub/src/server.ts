@@ -48,7 +48,7 @@ import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migra
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments } from "./github/deployment.js";
+import { createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubPrDos } from "./github/pr-dos.js";
@@ -282,10 +282,10 @@ function now(): Date {
 function reconcileTenants() {
   return composition.db.select({ id: schema.tenant.id, domain: schema.tenant.domain, config: schema.tenant.config }).from(schema.tenant);
 }
-function livePrTriageDeployments(tenantId: string) {
-  return resolveLiveDeployments(composition.db, tenantId, prTriageWorkflow.id);
-}
 const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
+async function livePrTriageDeployments(tenantId: string) {
+  return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, prTriageWorkflow.id));
+}
 const deploymentRotation = createDeploymentRotation({
   db: composition.db,
   launchSpecs,
