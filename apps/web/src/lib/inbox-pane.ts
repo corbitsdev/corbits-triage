@@ -1,6 +1,6 @@
 import { errorText } from "./error-text.ts";
 import type { Outcome } from "./held-actions.ts";
-import type { GithubPullDetail, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
+import type { DoRef, DoRun, GithubPullDetail, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import { offersClose, type PendingDo } from "./pending-dos.ts";
 import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type PrimaryAction } from "./inbox-view.ts";
 
@@ -149,8 +149,8 @@ export function isComposerKind(kind: PaneKind): kind is ComposerKind {
 
 type GithubWrite = (input: PrGithubWriteInput) => Promise<PrGithubWriteResult>;
 
-/** `replySent` records a reply the hub confirmed it wrote, so the row shows it posted until a new verdict. */
-export type PaneIo = { write: GithubWrite; replySent: (item: PrItem) => void };
+/** `replySent` records a reply the hub confirmed it wrote, so the row shows it posted until a new verdict; `runDo` runs a pack Do by reference. */
+export type PaneIo = { write: GithubWrite; replySent: (item: PrItem) => void; runDo: (ref: DoRef) => Promise<DoRun> };
 
 export type NumberedItem = PrItem & { number: number };
 
@@ -271,15 +271,16 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
   }
 }
 
-/** Close never comes here: it settles the pull request through the pane's own close. */
+/** A pack Do is sent by reference, so the hub runs what the verdict recorded. Its close settles the pull request like the pane's own close. */
 export function doWrite(item: NumberedItem, pending: PendingDo, restore: () => void): PaneWrite {
+  const closes = pending.kind === "close";
   return {
-    stay: true,
+    stay: !closes,
     restore,
-    pending: `${pending.label} on #${item.number}…`,
-    async send({ write }) {
-      await write(pending.request);
-      return sent(`${pending.label}: done on #${item.number}.`);
+    pending: closes ? `Closing #${item.number}…` : `${pending.label} on #${item.number}…`,
+    async send({ runDo }) {
+      await runDo(pending.ref);
+      return sent(closes ? `Closed #${item.number}.` : `${pending.label}: done on #${item.number}.`);
     },
   };
 }
