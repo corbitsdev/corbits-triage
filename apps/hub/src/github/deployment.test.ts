@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
-import { createDeploymentRotation, resolveLiveDeployments } from "./deployment.js";
+import { createDeploymentRotation, pinOf, resolveLiveDeployments } from "./deployment.js";
 
 const TENANT_ID = "tnt_acme";
 const SOURCE = { kind: "asset", assetId: "ast_triage", package: { format: "source", commitSha: "c0ffee", packageName: "@corbits/pr-triage-workflow" } };
@@ -13,6 +13,48 @@ const SPEC = {
   deployContent: { systemPrompt: "Triage pull requests." },
   frozenApprovalBundle: { source: SOURCE, entry: "./pr-triage.mjs" },
 };
+
+const TARBALL_SOURCE = { kind: "asset", assetId: "ast_corbits", package: { format: "tarball" } };
+
+function closurePinning(...topLevel: { name: string; version: string }[]) {
+  const entries = topLevel.map(({ name, version }) => ({
+    name,
+    version,
+    source: { ...TARBALL_SOURCE, package: { format: "tarball", path: `tarballs/${name.slice(1).replace("/", "-")}-${version}.tgz`, integrity: "sha512-AAAA" } },
+  }));
+  return { schemaVersion: "1", topLevel, entries } as never;
+}
+
+function tarballRotation(specs: Record<string, unknown>) {
+  const prepared: unknown[] = [];
+  const rotate = createDeploymentRotation({
+    db: {
+      query: { principal: { findFirst: async () => ({ status: "active" }) } },
+      select: () => ({ from: () => ({ innerJoin: () => ({ where: async () => [{ assetId: "ast_pr_triage" }] }) }) }),
+    } as never,
+    launchSpecs: { get: async (anchorRunId) => (specs[anchorRunId] ?? null) as never },
+    allocation: {
+      async prepareProvisionedDeployment(args: { anchorRunId: string }) {
+        prepared.push(args);
+        return { anchorRunId: args.anchorRunId };
+      },
+    } as unknown as WorkflowAllocationService,
+    lifecycle: {} as WorkflowLifecycleService,
+    mayDeploy: async () => true,
+  });
+  return { rotate, prepared };
+}
+
+function tarballSpec(version: string) {
+  return {
+    ...SPEC,
+    frozenApprovalBundle: {
+      source: TARBALL_SOURCE,
+      entry: "./pr-triage.mjs",
+      closure: closurePinning({ name: "@corbits/pr-triage-workflow", version }),
+    },
+  };
+}
 
 function selectReturning(rows: unknown[]) {
   const chain = {
@@ -85,6 +127,18 @@ describe("deployment rotation", () => {
     expect(await rotate.sameSource("run_a", "run_missing")).toBe(false);
   });
 
+  test("a tarball-sourced copy carries the replaced deployment's pin and definition asset", async () => {
+    const { rotate, prepared } = tarballRotation({ run_old: tarballSpec("0.1.0-a") });
+    await rotate.redeploy(TENANT_ID, "run_old");
+    expect(prepared).toEqual([expect.objectContaining({ source: TARBALL_SOURCE, pin: "@corbits/pr-triage-workflow@0.1.0-a", definitionAssetId: "ast_pr_triage" })]);
+  });
+
+  test("tarball-sourced deployments with different pins are not the same source", async () => {
+    const { rotate } = tarballRotation({ run_a: tarballSpec("0.1.0-a"), run_b: tarballSpec("0.1.0-a"), run_bumped: tarballSpec("0.1.0-b") });
+    expect(await rotate.sameSource("run_a", "run_b")).toBe(true);
+    expect(await rotate.sameSource("run_a", "run_bumped")).toBe(false);
+  });
+
   test("a deployment whose cancellation was requested is listed as cancelling", async () => {
     const createdAt = new Date("2026-10-07T12:00:00.000Z");
     const db = selectReturning([
@@ -95,5 +149,12 @@ describe("deployment rotation", () => {
       { runId: "run_new", address: "run_new@acme.test", createdAt, cancelling: false },
       { runId: "run_old", address: "run_old@acme.test", createdAt, cancelling: true },
     ]);
+  });
+});
+
+describe("pinOf", () => {
+  test("pins the frozen closure's one top-level package, and refuses a closure without one", () => {
+    expect(pinOf(closurePinning({ name: "@corbits/pr-triage-workflow", version: "0.1.0-a" }))).toBe("@corbits/pr-triage-workflow@0.1.0-a");
+    expect(() => pinOf(closurePinning())).toThrow("frozen closure has 0 top-level packages, expected one");
   });
 });

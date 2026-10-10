@@ -3,6 +3,8 @@ import { schema, type DB, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
 import type { RunTriggerMaterialize } from "@corbits/webhooks";
+import type { ToolPackageManifest } from "@intx/types/tool-packages";
+import type { FrozenApprovalBundle } from "@intx/types/sidecar";
 import { claimRotation, clearRotation, type RotationRecord } from "./tenant-config.js";
 
 export class NoLiveDeploymentError extends Error {
@@ -72,6 +74,19 @@ export async function resolveLiveDeployment(
   return newestLive(await resolveLiveDeployments(db, tenantId, definitionName)) ?? null;
 }
 
+/** The launch spec does not store the pin, so it is read back from the frozen closure. */
+export function pinOf(closure: ToolPackageManifest): string {
+  const [root, ...rest] = closure.topLevel;
+  if (!root || rest.length > 0) throw new Error(`frozen closure has ${String(closure.topLevel.length)} top-level packages, expected one`);
+  return `${root.name}@${root.version}`;
+}
+
+/** A tarball-format source names its package only through the pin. */
+function pinFor(bundle: FrozenApprovalBundle): string | undefined {
+  if (bundle.source.kind !== "asset" || bundle.source.package.format !== "tarball") return undefined;
+  return pinOf(bundle.closure);
+}
+
 export type DeploymentRotationDeps = {
   db: DB["db"];
   launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">;
@@ -94,11 +109,24 @@ export type Redeployed = { status: "deployed"; runId: string } | { status: "skip
  * route's grant.
  */
 export function createDeploymentRotation(deps: DeploymentRotationDeps) {
+  /** A tarball source is the shared package registry, so the workflow asset is read from the run's definition. */
+  async function definitionAssetId(tenantId: string, anchorRunId: string): Promise<string> {
+    const { workflowRun, workflowDefinition } = schema;
+    const [row] = await deps.db
+      .select({ assetId: workflowDefinition.assetId })
+      .from(workflowRun)
+      .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
+      .where(and(eq(workflowRun.id, anchorRunId), eq(workflowRun.tenantId, tenantId)));
+    if (!row?.assetId) throw new Error(`deployment ${anchorRunId} has no workflow definition asset`);
+    return row.assetId;
+  }
+
   async function redeploy(tenantId: string, anchorRunId: string): Promise<Redeployed> {
     const spec = await deps.launchSpecs.get(anchorRunId);
     if (!spec) throw new Error(`deployment ${anchorRunId} has no launch spec`);
     const { source, entry } = spec.frozenApprovalBundle;
     if (source.kind !== "asset") throw new Error(`deployment ${anchorRunId} is not deployed from a workflow asset`);
+    const pin = pinFor(spec.frozenApprovalBundle);
     const systemPrompt = spec.deployContent["systemPrompt"];
     if (typeof systemPrompt !== "string") throw new Error(`deployment ${anchorRunId} has no system prompt in its deploy content`);
     const deployer = await deps.db.query.principal.findFirst({
@@ -109,13 +137,15 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
     if (!await deps.mayDeploy(spec.sourceAuthorityPrincipalId, tenantId)) {
       return { status: "skipped", reason: "deployer_not_authorized" };
     }
+    const definition = pin === undefined ? source.assetId : await definitionAssetId(tenantId, anchorRunId);
     const prepared = await deps.allocation.prepareProvisionedDeployment({
       tenantId,
       anchorRunId: generateId("workflowRun"),
       deploymentDomain: spec.deploymentDomain,
       source,
       entry,
-      definitionAssetId: source.assetId,
+      ...(pin !== undefined ? { pin } : {}),
+      definitionAssetId: definition,
       sessionId: generateId("session"),
       sourceAuthorityPrincipalId: spec.sourceAuthorityPrincipalId,
       sourceOfferingIds: spec.sourceOfferingIds,
@@ -125,14 +155,16 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
     return { status: "deployed", runId: prepared.anchorRunId };
   }
 
-  /** Whether both deployments run the same workflow asset, commit and entry. */
+  /** Whether both deployments run the same workflow asset, package, pin and entry. */
   async function sameSource(anchorRunId: string, otherAnchorRunId: string): Promise<boolean> {
     const [spec, other] = await Promise.all([deps.launchSpecs.get(anchorRunId), deps.launchSpecs.get(otherAnchorRunId)]);
     if (!spec || !other) return false;
     const a = spec.frozenApprovalBundle;
     const b = other.frozenApprovalBundle;
     if (a.source.kind !== "asset" || b.source.kind !== "asset" || a.entry !== b.entry) return false;
-    return a.source.assetId === b.source.assetId && JSON.stringify(a.source.package) === JSON.stringify(b.source.package);
+    return a.source.assetId === b.source.assetId
+      && JSON.stringify(a.source.package) === JSON.stringify(b.source.package)
+      && pinFor(a) === pinFor(b);
   }
 
   async function release(tenantId: string, anchorRunId: string): Promise<void> {
