@@ -56,7 +56,7 @@ describe("facts director policy", () => {
     await decide({
       type: "tool.done",
       result: {
-        callId: "files:8",
+        callId: "files:8:0",
         content: {
           files: [
             {
@@ -117,7 +117,7 @@ describe("facts director policy", () => {
       await director.decide(done as ReactorInboundEvent, {} as ReactorState, caps);
       return (calls[1] ?? []).map((call) => call.id);
     }
-    expect(await fetched(false)).toEqual(["pr:8", "reviews:8", "commits:8", "files:8"]);
+    expect(await fetched(false)).toEqual(["pr:8", "reviews:8", "commits:8", "files:8:0"]);
     expect((await fetched(true)).filter((id) => id.startsWith("pr:"))).toEqual(["pr:7", "pr:8"]);
   });
 
@@ -174,6 +174,41 @@ describe("facts director policy", () => {
     expect(calls).toEqual([]);
     expect(JSON.parse(replies[0] ?? "{}")).toEqual({ items: [{ error: NEEDS_SETUP_REASON }], batch: false });
   });
+
+  async function factsThrough(filesContent: string) {
+    const pending: ToolCall[] = [];
+    let reply = "";
+    const caps = {
+      executeTools(next: ToolCall[]) { pending.push(...next); return { type: "execute_tools", calls: next }; },
+      reply(content: string) { reply = content; return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
+    const start = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") };
+    await director.decide({ type: "message.received", message: { content: JSON.stringify(start) } } as ReactorInboundEvent, {} as ReactorState, caps);
+    const results: Record<string, unknown> = {
+      github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
+      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
+      "reviews:8": { reviews: [] },
+      "commits:8": { commits: [] },
+      "checks:8": { checks: [] },
+    };
+    while (pending.length) {
+      const next = pending.shift()!;
+      const content = next.name === "github_list_pr_files" ? filesContent : results[next.id];
+      await director.decide({ type: "tool.done", result: { callId: next.id, content } } as ReactorInboundEvent, {} as ReactorState, caps);
+    }
+    return rules({ reply }, ctx, signal);
+  }
+
+  test.each([
+    ["cut off", `{"files":[{"path":"src/a.ts","status":"modified","patch":"@@ -1 +1 @@\\n+a"}\n[Tool output truncated: omitted 5000 chars. Full output available at tool-output:///files:8:0 -- use read_file with that URI to see the rest.]`],
+    ["unparsable", "not json"],
+  ])("a %s file list degrades the item instead of reading as no files", async (_name, content) => {
+    const ruled = await factsThrough(content);
+    expect(ruled.items[0]!.error).toMatch(/^github_list_pr_files result (was truncated|is unreadable) for #8$/);
+    const verdict = await evaluate(ruled, ctx, signal) as Verdict;
+    expect(verdict).toMatchObject({ degraded: "error", mirror: false });
+  });
 });
 
 describe("judge on a blocked pull request", () => {
@@ -194,7 +229,7 @@ describe("judge on a blocked pull request", () => {
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
-      "files:8": { files },
+      "files:8:0": { files },
       "comments:8": { comments: [] },
       "checks:8": { checks: checkRuns },
     };

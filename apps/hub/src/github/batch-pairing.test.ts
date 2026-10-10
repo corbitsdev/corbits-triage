@@ -33,7 +33,7 @@ async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack =
     else await done(`pr:${n}`, { title: `PR ${n}`, author: "octocat", sha: `sha${n}`, state: "open", draft: false, mergeable: true, requestedReviewers: 0, ...pr });
     await done(`reviews:${n}`, { reviews: [] });
     await done(`commits:${n}`, { commits: [] });
-    await done(`files:${n}`, { files: [] });
+    await done(`files:${n}:0`, { files: [] });
   }
   for (const n of numbers) if (!failGetPr.has(n)) await done(`checks:${n}`, { checks: [] });
   const ctx = {} as never;

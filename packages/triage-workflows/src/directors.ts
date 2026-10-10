@@ -12,7 +12,7 @@ import { type } from "arktype";
 import { repoPolicy, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { prepareQualityEvaluation } from "./logic/quality.js";
+import { MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES, prepareQualityEvaluation } from "./logic/quality.js";
 import { triageEventOf } from "./logic/events.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
 import { asksJudge, type Item } from "./logic/item.js";
@@ -124,7 +124,26 @@ function fileFacts(value: unknown): PrFileFacts[] {
     ...(additions === undefined ? {} : { additions }),
     ...(deletions === undefined ? {} : { deletions }),
     ...(patch === undefined ? {} : { patch }),
+    ...(value.patchTruncated === true ? { patchTruncated: true as const } : {}),
   }];
+}
+
+const TRUNCATED_RESULT = "[Tool output truncated";
+// Patch text past what one System One request can carry is never evaluated, so later pages leave patches out.
+const MAX_PATCH_CHARS = MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+
+type FilesPage = { files: PrFileFacts[]; next?: number };
+type ListedFiles = { files: PrFileFacts[]; patchChars: number };
+
+/** A cut-off or unreadable file list would read as a pull request that changes nothing, so it is an error instead. */
+function filesPage(r: ToolResult | undefined): FilesPage | string {
+  if (!r) return "github_list_pr_files did not answer";
+  if (r.isError) return `github_list_pr_files failed: ${asText(r.content)}`;
+  if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return "github_list_pr_files result was truncated";
+  const content = data<{ files?: unknown; next?: unknown }>(r);
+  if (!content || !Array.isArray(content.files)) return "github_list_pr_files result is unreadable";
+  const next = optionalCount(content.next);
+  return { files: content.files.flatMap(fileFacts), ...(next === undefined ? {} : { next }) };
 }
 
 function firstLine(commit: { message?: string }): string {
@@ -146,8 +165,33 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
         call("github_get_reviews", { repo, number: n }, `reviews:${n}`),
         call("github_list_pr_commits", { repo, number: n }, `commits:${n}`),
-        call("github_list_pr_files", { repo, number: n }, `files:${n}`),
+        filesCall(n, 0),
       ];
+    }
+
+    const listed = new Map<number, ListedFiles>();
+    const filesErrors = new Map<number, string>();
+
+    function filesCall(n: number, offset: number): ToolCall {
+      const patches = (listed.get(n)?.patchChars ?? 0) < MAX_PATCH_CHARS;
+      return call("github_list_pr_files", { repo, number: n, offset, ...(patches ? {} : { patches: false }) }, `files:${n}:${offset}`);
+    }
+
+    /** Adds one page of files and returns the offset of the next page, if any. */
+    function addFiles(n: number, offset: number, result: ToolResult | undefined): number | undefined {
+      const page = filesPage(result);
+      if (typeof page === "string") {
+        filesErrors.set(n, `${page} for #${n}`);
+        return undefined;
+      }
+      const read = listed.get(n) ?? { files: [], patchChars: 0 };
+      read.files.push(...page.files);
+      read.patchChars += page.files.reduce((chars, file) => chars + (file.patch?.length ?? 0), 0);
+      listed.set(n, read);
+      if (page.next === undefined) return undefined;
+      if (page.next > offset) return page.next;
+      filesErrors.set(n, `github_list_pr_files did not advance past offset ${offset} for #${n}`);
+      return undefined;
     }
 
     function onPrs(r1: BatchResults) {
@@ -158,14 +202,27 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         return sha ? [call("github_get_checks", { repo, sha }, `checks:${n}`)] : [];
       }
 
+      function readFiles(r: BatchResults, offsets: Array<[number, number]>): DirectorActions {
+        const next = offsets.flatMap(function nextPage([n, offset]): Array<[number, number]> {
+          const following = addFiles(n, offset, r.get(`files:${n}:${offset}`));
+          return following === undefined ? [] : [[n, following]];
+        });
+        function onNextFiles(r3: BatchResults) {
+          return readFiles(r3, next);
+        }
+        if (next.length) return b.run(next.map(([n, offset]) => filesCall(n, offset)), onNextFiles);
+        return b.run(numbers.flatMap(checkCall), onChecks);
+      }
+
       function onChecks(r2: BatchResults) {
         function itemFor(n: number): RulesItem {
           const pr = prs.get(n);
           if (!pr) return { error: `github_get_pr failed for #${n}` };
           const checks = data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [];
           const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
-          const fileRows = data<{ files?: unknown }>(r1.get(`files:${n}`))?.files;
-          const files = Array.isArray(fileRows) ? fileRows.flatMap(fileFacts) : [];
+          const filesError = filesErrors.get(n);
+          if (filesError !== undefined) return { error: filesError };
+          const files = listed.get(n)?.files ?? [];
           const paths = files.map((file) => file.path);
           const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
           const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, files, commits, ...(event === null ? {} : { event }) };
@@ -174,7 +231,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         return reply(numbers.map(itemFor), batch);
       }
 
-      return b.run(numbers.flatMap(checkCall), onChecks);
+      return readFiles(r1, numbers.map((n) => [n, 0]));
     }
 
     return b.run(numbers.flatMap(prCalls), onPrs);

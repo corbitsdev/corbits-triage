@@ -188,6 +188,14 @@ export type PrFile = {
   additions: number;
   deletions: number;
   patch?: string;
+  /** The patch was cut at a hunk boundary to fit the page, so its later hunks are missing. */
+  patchTruncated?: true;
+};
+
+export type PrFilesPage = {
+  files: PrFile[];
+  /** The offset of the first file not on this page. */
+  next?: number;
 };
 
 export type IssueComment = {
@@ -210,19 +218,67 @@ export async function listPrCommits(gh: GithubFetch, repo: string, number: numbe
   });
 }
 
+function prFile(row: any): PrFile {
+  const file: PrFile = {
+    path: typeof row.filename === "string" ? row.filename : "",
+    status: typeof row.status === "string" ? row.status : "",
+    additions: typeof row.additions === "number" ? row.additions : 0,
+    deletions: typeof row.deletions === "number" ? row.deletions : 0,
+  };
+  if (typeof row.previous_filename === "string") file.previousPath = row.previous_filename;
+  if (typeof row.patch === "string") file.patch = row.patch;
+  return file;
+}
+
 export async function listPrFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFile[]> {
   const rows = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/files?per_page=100`);
-  return rows.map((row) => {
-    const file: PrFile = {
-      path: typeof row.filename === "string" ? row.filename : "",
-      status: typeof row.status === "string" ? row.status : "",
-      additions: typeof row.additions === "number" ? row.additions : 0,
-      deletions: typeof row.deletions === "number" ? row.deletions : 0,
-    };
-    if (typeof row.previous_filename === "string") file.previousPath = row.previous_filename;
-    if (typeof row.patch === "string") file.patch = row.patch;
-    return file;
-  });
+  return rows.map(prFile);
+}
+
+const PR_FILES_PER_PAGE = 100;
+// Interchange truncates any tool result over 10 000 characters; a page stays under it with room to spare.
+export const PR_FILES_PAGE_CHARS = 9_000;
+
+function fitsPage(page: PrFilesPage, file: PrFile): boolean {
+  const worst = { files: [...page.files, file], next: Number.MAX_SAFE_INTEGER };
+  return JSON.stringify(worst).length <= PR_FILES_PAGE_CHARS;
+}
+
+function withoutPatch({ patch: _patch, ...meta }: PrFile): PrFile {
+  return meta;
+}
+
+/** Keeps the longest run of whole hunks that fits the page, so no hunk reaches the reader half cut. */
+function cutPatch(page: PrFilesPage, file: PrFile): PrFile {
+  const { patch } = file;
+  if (patch === undefined) return file;
+  const meta = withoutPatch(file);
+  const hunkEnds = [...patch.matchAll(/\n(?=@@ )/g)].map((match) => match.index).reverse();
+  for (const end of hunkEnds) {
+    const cut: PrFile = { ...meta, patch: patch.slice(0, end), patchTruncated: true };
+    if (fitsPage(page, cut)) return cut;
+  }
+  return meta;
+}
+
+/** One page of a pull request's files from `offset`, under the tool-result cap. Metadata is never dropped: a file that does not fit starts the next page; patches are cut or left out only when one file alone cannot fit, or when `patches` is false. */
+export async function listPrFilesPage(gh: GithubFetch, repo: string, number: number, { offset = 0, patches = true }: { offset?: number; patches?: boolean } = {}): Promise<PrFilesPage> {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid file offset ${offset}`);
+  const first = offset - (offset % PR_FILES_PER_PAGE);
+  const rows = await json(gh, `/repos/${repo}/pulls/${number}/files?per_page=${PR_FILES_PER_PAGE}&page=${first / PR_FILES_PER_PAGE + 1}`);
+  if (!Array.isArray(rows)) throw new Error(`github returned an invalid file page for ${repo}#${number}`);
+  const page: PrFilesPage = { files: [] };
+  let index = offset - first;
+  for (; index < rows.length; index++) {
+    const file = prFile(rows[index]);
+    const entry = patches ? file : withoutPatch(file);
+    if (fitsPage(page, entry)) page.files.push(entry);
+    else if (page.files.length === 0) page.files.push(cutPatch(page, entry));
+    else break;
+  }
+  if (index < rows.length) page.next = first + index;
+  else if (rows.length === PR_FILES_PER_PAGE) page.next = first + PR_FILES_PER_PAGE;
+  return page;
 }
 
 export async function listIssueComments(gh: GithubFetch, repo: string, number: number): Promise<IssueComment[]> {
