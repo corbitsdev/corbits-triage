@@ -146,6 +146,7 @@ export async function getPr(gh: GithubFetch, repo: string, number: number) {
     mergeableState: p.mergeable_state,
     requestedReviewers: (p.requested_reviewers?.length ?? 0) + (p.requested_teams?.length ?? 0),
     reviewers: [...(p.requested_reviewers ?? []).map((u: any) => u.login), ...(p.requested_teams ?? []).map((t: any) => t.slug)],
+    assignees: (p.assignees ?? []).map((u: { login: string }) => u.login),
     additions: p.additions,
     deletions: p.deletions,
     changedFiles: p.changed_files,

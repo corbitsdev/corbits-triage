@@ -10,10 +10,11 @@ import type {
 } from "@intx/types/runtime";
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { repoPolicy, type CheckPack, type CleanupMode } from "@corbits/triage-contracts";
+import { repoPolicy, type CheckPack, type CleanupMode, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON, packFromInput, type DeterministicResult, type PrFacts } from "./logic/checks.js";
 import { asText, parseJsonText } from "./logic/extract.js";
 import { qualityQuestions, qualityState } from "./logic/quality.js";
+import { triageEventOf } from "./logic/events.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
 import { degradedItem, type Item } from "./logic/item.js";
 import type { Verdict } from "./logic/render.js";
@@ -76,7 +77,7 @@ function cleanupModeOf(v: Record<string, unknown>): CleanupMode | undefined {
 function itemsOf(input: Record<string, unknown>): { items: Item[]; batch: boolean } {
   return Array.isArray(input.items)
     ? { items: input.items as Item[], batch: true }
-    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, judgeError: input.judgeError as string | undefined, cleanupMode: cleanupModeOf(input), error: input.error as string | undefined }], batch: false };
+    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, judgeError: input.judgeError as string | undefined, cleanupMode: cleanupModeOf(input), pack: input.pack as CheckPack | undefined, roles: input.roles as Record<string, RepoRole> | undefined, error: input.error as string | undefined }], batch: false };
 }
 
 function verdictsOf(input: Record<string, unknown>): { verdicts: Verdict[]; batch: boolean } {
@@ -142,7 +143,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return caps.reply(JSON.stringify(degradedItem(reason)));
   }
 
-  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack) {
+  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, event: TriageEvent | null) {
     function prCalls(n: number): ToolCall[] {
       return [
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
@@ -168,8 +169,8 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
           const paths = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files?.flatMap(pathOf) ?? [];
           const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
-          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, commits };
-          return { facts, pack, cleanupMode: policy.cleanupMode };
+          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, commits, ...(event === null ? {} : { event }) };
+          return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
         }
         const { items } = await rules({ items: numbers.map(itemFor) }, NO_EFFECTS, NEVER_ABORTED);
         return caps.reply(JSON.stringify(batch ? { items } : items[0]));
@@ -182,14 +183,14 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   }
 
   /** Lists the open pull requests, then gathers facts for `targets`, or for all of them when none are named. */
-  function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack) {
+  function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, event: TriageEvent | null) {
     return b.run([call("github_list_open_prs", { repo })], function onPrList(r) {
       const list = data<{ prs: Array<{ number: number; title: string; draft?: boolean }> }>(r.get("github_list_open_prs"));
       if (!list && targets === undefined) return fail("github_list_open_prs failed");
       const listed = list?.prs ?? [];
       const openPrs = listed.map(({ number, title }) => ({ number, title }));
       const triageable = listed.filter((p) => policy.triageDrafts || p.draft !== true).map((p) => p.number);
-      return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack);
+      return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack, event);
     });
   }
 
@@ -201,17 +202,17 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     if (!policy.enabled) return fail("Triage is disabled for this repository.");
     const pack = packFromInput(input?.checkPack);
     if (!pack) return fail(NEEDS_SETUP_REASON);
-    if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack);
+    if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, "catch-up");
     if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
     // A catch-up mail names several heads as `items`; each is triaged like a single mail and rendered in this order.
     if (Array.isArray(input.items)) {
       const numbers = input.items.flatMap((item) => (isRecord(item) && typeof item.prNumber === "number" ? [item.prNumber] : []));
       if (numbers.length === 0) return fail("facts: batch names no pull request");
-      return fetchListed(repo, numbers, true, policy, pack);
+      return fetchListed(repo, numbers, true, policy, pack, "catch-up");
     }
     const number = input.prNumber;
     if (typeof number !== "number") return fail("facts: pr input has no prNumber");
-    return fetchListed(repo, [number], false, policy, pack);
+    return fetchListed(repo, [number], false, policy, pack, triageEventOf({ event: input.event, action: input.action, review: input.review }));
   }
 
   return {

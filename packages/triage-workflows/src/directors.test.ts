@@ -4,7 +4,7 @@ import { triageDirectorFactory } from "./directors.js";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
-import type { RenderOutput } from "./logic/render.js";
+import type { Verdict } from "./logic/render.js";
 
 describe("facts director policy", () => {
   test("skips disabled draft findings from the run payload", async () => {
@@ -149,13 +149,13 @@ describe("judge on a blocked pull request", () => {
     return (event: unknown) => d.decide(event as ReactorInboundEvent, {} as ReactorState, caps as unknown as ReactorCapabilities);
   }
 
-  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false): Promise<string> {
+  async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false, setup: Record<string, unknown> = {}): Promise<string> {
     let reply = "";
     const decide = director("facts", {
       executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
       reply(content: string) { reply = content; return { type: "reply", content }; },
     });
-    await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") }) } });
+    await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets"), ...setup }) } });
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
@@ -169,7 +169,7 @@ describe("judge on a blocked pull request", () => {
     return reply;
   }
 
-  async function judgeAndRender(factsReply: string, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; verdict: RenderOutput }> {
+  async function judgeAndRender(factsReply: string, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; verdict: Verdict }> {
     let judged = "";
     const asked: string[] = [];
     const judge = director("judge", {
@@ -215,7 +215,44 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual(["focused", "docs", "tests"]);
     expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, feedback: "", actor: "maintainer", nextAction: "Review once marked ready" });
     expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [] });
-    expect((verdict as RenderOutput & { request?: unknown }).request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "", close: false });
+    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "", close: false });
+  });
+
+  test("a degraded verdict suggests no actions", async () => {
+    const checkPack = { ...recommendedPack("acme/widgets"), actions: [{ id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", automatic: false, target: { body: "hi" } }] } }] };
+    const { verdict } = await judgeAndRender(await facts([], true, false, { checkPack }), "upstream 503");
+    expect(verdict.degraded).toBe("inference-outage");
+    expect(verdict.actions).toEqual([]);
+  });
+
+  test("suggests a pack action matched on a model check, resolved through the policy's roles", async () => {
+    const checkPack = {
+      ...recommendedPack("acme/widgets"),
+      actions: [{ id: "ask-leads", when: "every", checks: ["focused"], branches: { no: [{ kind: "request-review", automatic: true, target: { to: "role", role: "leads" } }] } }],
+    };
+    const policy = { enabled: true, roles: { leads: { users: ["dave"] } } };
+    const { verdict } = await judgeAndRender(await facts([], true, false, { policy, checkPack }));
+    expect(verdict.actions).toEqual([
+      { id: "ask-leads", branch: "no", kind: "request-review", automatic: true, target: { users: ["dave"], teams: [] }, reason: "Focused change failed." },
+    ]);
+  });
+
+  test("a gapped custom check id matches the action on that check, not its neighbour", async () => {
+    const checkPack = {
+      ...recommendedPack("acme/widgets"),
+      custom: [
+        { id: "custom-2", name: "No secrets", group: "pull-request", instruction: "No secrets are committed." },
+        { id: "custom-3", name: "Changelog", group: "pull-request", instruction: "The changelog is updated." },
+      ],
+      actions: [
+        { id: "on-2", when: "every", checks: ["custom-2"], branches: { no: [{ kind: "comment", automatic: false, target: { body: "secrets" } }] } },
+        { id: "on-3", when: "every", checks: ["custom-3"], branches: { no: [{ kind: "comment", automatic: false, target: { body: "changelog" } }] } },
+      ],
+    };
+    const { verdict } = await judgeAndRender(await facts([], true, false, { checkPack }), undefined, ["custom-3"]);
+    expect(verdict.actions).toEqual([
+      { id: "on-3", branch: "no", kind: "comment", automatic: false, target: { body: "changelog" }, reason: "Changelog failed." },
+    ]);
   });
 
   test("stale-unknown facts skip the model", async () => {
