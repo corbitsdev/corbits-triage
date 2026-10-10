@@ -22,7 +22,6 @@ import {
   revokeCredential,
   saveInference,
   saveSettings,
-  saveRepoPolicy,
   startBacklogTriage,
   githubPrAction,
   triagePullRequest as requestPullRequestTriage,
@@ -40,7 +39,7 @@ import { ensureWorkflows, suggestOfferings } from "./workflow-deploy.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { hasDecisionModelCredential } from "./decision-models.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
-import { checkPackName, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName } from "@corbits/triage-contracts";
 
 /** `now` confirms the write with a toast; `held` writes were announced by the inbox's Undo toast; `leaving` ones are held writes sent as the page goes away, so they must outlive it. */
 type GithubDelivery = "now" | "held" | "leaving";
@@ -69,7 +68,6 @@ interface PortalContextValue {
   addGrant: (input: CreateGrantInput) => Promise<void>;
   removeGrant: (grant: HubGrant) => Promise<void>;
   saveConfig: (patch: Parameters<typeof saveSettings>[2]) => Promise<void>;
-  saveRepoPolicy: (repo: string, policy: RepoPolicy) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
 }
 
@@ -392,15 +390,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const saveRepo = useCallback(
-    async function saveRepo(repo: string, policy: RepoPolicy) {
-      const current = requireSnapshot();
-      await saveRepoPolicy(createHubTransport(), current.workspace.tenantId, repo, policy);
-      refresh();
-    },
-    [refresh, requireSnapshot],
-  );
-
   /** Reads the App's repositories from GitHub, so returning from GitHub never waits on a webhook. */
   const syncFromGithub = useCallback(async function syncFromGithub() {
     const current = requireSnapshot();
@@ -446,7 +435,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         addGrant,
         removeGrant,
         saveConfig,
-        saveRepoPolicy: saveRepo,
         saveInferenceSecret,
       };
     },
@@ -473,7 +461,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       addGrant,
       removeGrant,
       saveConfig,
-      saveRepo,
       saveInferenceSecret,
     ],
   );
