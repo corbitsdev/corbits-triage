@@ -7,6 +7,7 @@ const noisy: PrFacts = {
   number: 8,
   title: "Fix login",
   author: "octocat",
+  tier: "external",
   headSha: "abc",
   state: "open",
   draft: true,
@@ -30,6 +31,7 @@ const allOff: RepoPolicy = {
     reviewers: false,
     drift: false,
   },
+  approvedAuthors: [],
 };
 
 function only(check: keyof RepoPolicy["checks"]): RepoPolicy {
