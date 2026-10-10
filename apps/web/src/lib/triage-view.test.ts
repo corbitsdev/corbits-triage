@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { HubApproval, PrItem } from "./hub-api.ts";
-import { approvalHeadline, findPrItem } from "./triage-view.ts";
+import type { HubApproval, MergeVerdict, PrItem } from "./hub-api.ts";
+import { approvalHeadline, findPrItem, mergeText } from "./triage-view.ts";
 
 function approval(close: boolean): HubApproval {
   return {
@@ -29,6 +29,7 @@ function item(repo: string, number: number): PrItem {
     owner: null,
     nextAction: null,
     confidence: null,
+    merge: null,
     evidence: [],
     checks: [],
     labels: [],
@@ -76,5 +77,34 @@ describe("findPrItem", () => {
 
   test("does not fall back to another repository with the same PR number", () => {
     expect(findPrItem([widgets, gadgets], { owner: "missing", repo: "widgets", number: "8" })).toBeUndefined();
+  });
+});
+
+describe("mergeText", () => {
+  function merge(verdict: MergeVerdict["verdict"], score: number | null, reasons: string[]): { merge: MergeVerdict } {
+    return { merge: { verdict, score, threshold: 0.7, reasons } };
+  }
+
+  test("ready shows the score against the threshold, or rules only", () => {
+    expect(mergeText(merge("ready", 0.82, []))).toBe("Ready to merge · score 82 (threshold 70)");
+    expect(mergeText(merge("ready", null, []))).toBe("Ready to merge · rules only");
+  });
+
+  test("a failing check is named before the score", () => {
+    expect(mergeText(merge("not-recommended", 0.6, ["Failed: tests are not added or updated", "Score 0.6 is below the threshold 0.7"])))
+      .toBe("Merge not recommended · tests are not added or updated");
+  });
+
+  test("a low score alone shows the score against the threshold", () => {
+    expect(mergeText(merge("not-recommended", 0.62, ["Score 0.62 is below the threshold 0.7"]))).toBe("Merge not recommended · score 62 is below the threshold 70");
+  });
+
+  test("a degraded verdict says what could not be evaluated", () => {
+    expect(mergeText(merge("not-recommended", 0.9, ["Could not evaluate 2 checks", "Failed: mixes unrelated changes"]))).toBe("Merge not recommended · could not evaluate 2 checks");
+    expect(mergeText(merge("not-recommended", null, ["Could not evaluate"]))).toBe("Merge not recommended · could not evaluate");
+  });
+
+  test("a verdict from before the merge verdict is not evaluated", () => {
+    expect(mergeText({ merge: null })).toBe("Not evaluated");
   });
 });

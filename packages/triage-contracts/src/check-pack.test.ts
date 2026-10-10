@@ -192,7 +192,7 @@ describe("check pack contract", () => {
     expect(packMergeThreshold(readCheckPack(emptyPack(REPO)))).toBe(0.7);
     expect(packMergeThreshold(readCheckPack({ ...emptyPack(REPO), mergeThreshold: 0.85 }))).toBe(0.85);
     for (const mergeThreshold of [-0.1, 1.1, "0.8"]) {
-      expect(() => readCheckPack({ ...emptyPack(REPO), mergeThreshold })).toThrow("mergeThreshold must be a number from 0 to 1.");
+      expect(() => readCheckPack({ ...emptyPack(REPO), mergeThreshold })).toThrow("Merge score threshold must be between 0 and 1.");
       expect(checkPackSchema({ ...emptyPack(REPO), mergeThreshold })).toBeInstanceOf(type.errors);
     }
   });

@@ -13,12 +13,12 @@ import { paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
 import { usePendingDos, useRunDo } from "../lib/do-runs.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
+import { MergeChip } from "../components/MergeChip.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import {
   approvalHeadline,
   findPrItem,
   relativeTime,
-  scoreText,
 } from "../lib/triage-view.ts";
 
 type SliverTab = "about" | "files" | "commits" | "issue" | "conversation";
@@ -144,7 +144,7 @@ function CheckList({ checks, fallback }: { checks: CheckResult[]; fallback: stri
   );
 }
 
-function About({ item, floor }: { item: PrItem; floor: number }) {
+function About({ item }: { item: PrItem }) {
   const { snapshot } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const pr = pull.data?.pr;
@@ -161,18 +161,12 @@ function About({ item, floor }: { item: PrItem; floor: number }) {
   const pass = checks.filter((row) => /pass|success/i.test(row.status)).length;
   const pending = pull.isPending && pull.fetchStatus !== "idle";
   const repo = snapshot?.repos.find((row) => row.name === item.repo);
-  const low = item.confidence !== null && item.confidence < floor;
   return (
     <article className="pr-overview" aria-label="About">
       <header className="brief brief-lead">
         <h1>{title}</h1>
         <p className="verdict-why">{item.evidence[0] ?? item.nextAction ?? "No evidence recorded."}</p>
         {item.comment ? <pre className="mono small-text">{item.comment}</pre> : null}
-        {low ? (
-          <p role="note" className="badge attention">
-            Needs review. {scoreText(item, floor)}. No GitHub comment was posted.
-          </p>
-        ) : null}
       </header>
       <section className="brief">
         <h2>Pull request</h2>
@@ -338,7 +332,6 @@ export default function PRDetail() {
   const selected = useMemo(() => files.find((file) => file.path === filePath) ?? files[0], [files, filePath]);
   const pending = approval?.status.toLowerCase() === "pending";
   const gated = Boolean(item?.needsHuman && pending);
-  const floor = snapshot?.config?.confidenceFloor ?? 0.7;
   const facts = item === undefined ? null : paneFacts(item, pull.data);
   const mergeable = facts === null ? null : facts.mergeable;
   const closed = pull.data?.pr.state === "closed";
@@ -494,7 +487,7 @@ export default function PRDetail() {
   }
 
   const github = item.number ? `https://github.com/${item.repo}/pull/${item.number}` : null;
-  let pane: ReactNode = <About item={item} floor={floor} />;
+  let pane: ReactNode = <About item={item} />;
   const loadState = pullPending
     ? <p className="muted">Loading from GitHub…</p>
     : pull.error ? <p role="alert" className="error">Could not load from GitHub. {errorText(pull.error)}</p> : null;
@@ -545,7 +538,7 @@ export default function PRDetail() {
               <span className="state-chip">{QUEUE_STATE_LABEL[item.state]}</span>
               {closed ? <span className="state-chip">{pull.data?.pr.merged ? "Merged" : "Closed"}</span>
                 : mergeable === null ? null : <span className="state-chip">{mergeable ? "Mergeable" : "Not mergeable"}</span>}
-              <span className="state-chip">{scoreText(item, floor)}</span>
+              <MergeChip merge={item.merge} />
               {github ? <a className="ghost-link" href={github} target="_blank" rel="noreferrer">View on GitHub</a> : null}
             </div>
           </div>

@@ -639,7 +639,7 @@ function parseActions(raw: unknown, customIds: ReadonlySet<string>): Action[] {
 function parseMergeThreshold(raw: unknown): number | undefined {
   if (raw === undefined) return undefined;
   const value = finiteNumber(raw);
-  if (value === undefined || value < 0 || value > 1) throw new Error("mergeThreshold must be a number from 0 to 1.");
+  if (value === undefined || value < 0 || value > 1) throw new Error("Merge score threshold must be between 0 and 1.");
   return value;
 }
 

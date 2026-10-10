@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { StatusDot } from "@corbits/react-ui";
+import { packMergeThreshold } from "@corbits/triage-contracts";
 import type { RepoRecord } from "../../lib/hub-api.ts";
-import type { DraftProblem } from "../../lib/pack-draft.ts";
+import { setMergeThreshold, type DraftProblem } from "../../lib/pack-draft.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { useRepoPack } from "../../lib/repo-pack.ts";
 import type { RepoPackStore } from "../../lib/repo-pack-store.ts";
@@ -9,6 +10,7 @@ import { useRepoStats } from "../../lib/repo-stats.ts";
 import type { RepoRow } from "../../lib/repo-rows.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import ActionsList from "./ActionsList.tsx";
+import MergeThreshold from "./MergeThreshold.tsx";
 import PostingToggle from "./PostingToggle.tsx";
 import PreviewRow from "./PreviewRow.tsx";
 import RepoFacts from "./RepoFacts.tsx";
@@ -23,6 +25,8 @@ function anchorOf(problem: DraftProblem): string {
       return `rp-action-${problem.where.id}`;
     case "triage":
       return "rp-triage";
+    case "merge":
+      return "rp-merge";
     default:
       return "rp-verdict";
   }
@@ -74,6 +78,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
       <>
         <RepoFacts repo={repo.name} row={row} live={live} policy={draft.policy} stats={stats} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} reason={where?.section === "triage" ? problem?.reason : undefined} />
         <PostingToggle mode={draft.policy.cleanupMode} disabled={disabled} onChange={(cleanupMode) => settings.edit((current) => ({ ...current, policy: { ...current.policy, cleanupMode } }))} />
+        <MergeThreshold value={packMergeThreshold(draft.pack)} disabled={disabled} onChange={(value) => settings.edit((current) => setMergeThreshold(current, settings.saved.pack, value))} invalid={where?.section === "merge"} />
         <RolesEditor roles={draft.policy.roles} actions={draft.pack.actions} disabled={disabled} edit={settings.edit} />
         <ActionsList draft={draft} saved={settings.saved.pack} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />
         <PreviewRow repo={repo.name} draft={draft} />

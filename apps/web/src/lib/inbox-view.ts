@@ -218,10 +218,6 @@ export function listCounts(open: OpenItem[]): Record<ListView, number> {
   };
 }
 
-export function confidenceText(item: Pick<PrItem, "confidence">): string | null {
-  return item.confidence === null ? null : `${Math.round(item.confidence * 100)}% sure`;
-}
-
 export type InboxGrouping = "action" | "repo" | "owner";
 
 export const INBOX_GROUPINGS: InboxGrouping[] = ["action", "repo", "owner"];

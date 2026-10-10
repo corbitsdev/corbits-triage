@@ -198,6 +198,36 @@ describe("projectQueue reply unwrap", () => {
       expect.objectContaining({ key: "acme/gadgets#3", confidence: 0.4, state: "ready" }),
     ]);
   });
+
+  test("maps the merge verdict, and none from a log written before it", () => {
+    const merge = { verdict: "not-recommended", score: 0.62, threshold: 0.7, reasons: ["Score 0.62 is below the threshold 0.7"] };
+    const log: RunLog = {
+      runId: "run-merge",
+      anchorRunId: "run-merge",
+      events: [
+        { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "backlog", repo: "acme/gadgets" }) } } },
+        {
+          seq: 1,
+          type: "StepCompleted",
+          body: {
+            stepId: "renderAll",
+            output: inline({
+              reply: JSON.stringify({
+                items: [
+                  { repo: "acme/gadgets", number: 3, state: "awaiting-review", score: 0.62, confidence: 0.62, merge },
+                  { repo: "acme/gadgets", number: 4, state: "awaiting-review", confidence: 0.8 },
+                ],
+              }),
+            }),
+          },
+        },
+      ],
+    };
+    expect(projectQueue([log], [], [], undefined, NOW)).toEqual([
+      expect.objectContaining({ key: "acme/gadgets#3", merge }),
+      expect.objectContaining({ key: "acme/gadgets#4", merge: null }),
+    ]);
+  });
 });
 
 describe("projectQueue running pull requests", () => {
