@@ -11,6 +11,7 @@ import { createTriageReconciler } from "./triage-reconciler.js";
 import { createTriageRuns } from "./triage-runs.js";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
 import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
+import { evaluate, rules } from "../../../../packages/triage-workflows/src/actions/index.js";
 
 const REPO = "acme/widgets";
 const DOMAIN = "acme.test";
@@ -72,7 +73,7 @@ function mailedNumbers(delivered: Delivered): number[] {
 }
 
 /** Drives one real triage director for one inbound event and returns its reply. */
-async function directorReply(role: "facts" | "render", event: ReactorInboundEvent): Promise<string> {
+async function directorReply(role: "facts", event: ReactorInboundEvent): Promise<string> {
   const replies: string[] = [];
   const caps = {
     executeTools(calls: unknown) {
@@ -301,9 +302,11 @@ describe("triage reconciler", () => {
     expect(rows.find((row) => row.number === 4)).toMatchObject({ status: "triaged", runId: "run_not_asked", workflowVersion: 2 });
   });
 
-  test("a facts failure renders a degraded verdict naming no head, which is queued again with the facts error", async () => {
-    const item = await directorReply("facts", { type: "abort" } as ReactorInboundEvent);
-    const verdict = JSON.parse(await directorReply("render", { type: "message.received", message: { content: item } } as ReactorInboundEvent));
+  test("a facts failure evaluates to a degraded verdict naming no head, which is queued again with the facts error", async () => {
+    const reply = await directorReply("facts", { type: "abort" } as ReactorInboundEvent);
+    const ctx = {} as never;
+    const signal = new AbortController().signal;
+    const verdict = await evaluate(await rules({ reply }, ctx, signal), ctx, signal) as Record<string, unknown>;
     expect(verdict).toMatchObject({ degraded: "error", headSha: null, reason: "facts interrupted: abort" });
     const logs: Logs = { [repoKey(LIVE.runId)]: { run_fail: [started(1), rendered(verdict), completed] } };
     const { reconcile, delivered, logged } = harness(logs, [head(1)]);

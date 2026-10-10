@@ -1,9 +1,9 @@
 export const TRIAGE_STATE_KIND = "corbits.triage.state";
 export const TRIAGE_STATE_SCHEMA_VERSION = 1;
 /** Stamped on every verdict; bump it when verdicts change meaning so open pull requests are triaged again. */
-export const PR_TRIAGE_WORKFLOW_VERSION = 1;
+export const PR_TRIAGE_WORKFLOW_VERSION = 2;
 
-/** A pr-triage run still going after this long lost its sidecar: four steps of up to fifteen minutes each, plus their retries. */
+/** A pr-triage run still going after this long lost its sidecar: three agent steps on either gate branch of up to fifteen minutes each, plus their retries. */
 export const PR_TRIAGE_STUCK_RUN_MS = 90 * 60_000;
 
 export const PR_TRIAGE_STATUSES = ["new", "queued", "running", "triaged", "failed"] as const;

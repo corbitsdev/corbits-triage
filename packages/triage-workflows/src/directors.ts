@@ -8,44 +8,28 @@ import type {
   ToolCall,
   ToolResult,
 } from "@intx/types/runtime";
-import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { repoPolicy, type CheckPack, type CleanupMode, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
-import { NEEDS_SETUP_REASON, packFromInput, type DeterministicResult, type PrFacts } from "./logic/checks.js";
-import { asText, parseJsonText } from "./logic/extract.js";
+import { repoPolicy, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import { NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "./logic/checks.js";
+import { asText, isRecord, parseJsonText } from "./logic/extract.js";
 import { qualityQuestions, qualityState } from "./logic/quality.js";
 import { triageEventOf } from "./logic/events.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
-import { degradedItem, type Item } from "./logic/item.js";
+import type { Item } from "./logic/item.js";
 import type { Verdict } from "./logic/render.js";
-import { evaluate, rules } from "./actions/index.js";
+import type { Judgment } from "./actions/evaluate.js";
+import type { RulesItem } from "./actions/rules.js";
 
-export type Role = "facts" | "judge" | "render" | "mirror";
+export type Role = "facts" | "judge" | "mirror";
 
 export interface TriageDirectorConfig {
   role: Role;
 }
 
-/** Directors call the action handlers in-process, where nothing performs effects or cancels them. */
-const NO_EFFECTS: EffectContext = {
-  perform() {
-    throw new Error("triage directors perform no effects");
-  },
-};
-const NEVER_ABORTED = new AbortController().signal;
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** The step input arrives as the inbound message text; a prior step's output is `{ reply, turn }` with the JSON in `reply`. */
+/** The step input arrives as the inbound message text: the trigger mail, or the output of the action before it. */
 function parseInput(content: string | undefined): Record<string, unknown> | undefined {
   const parsed = parseJsonText(content ?? "");
   if (!isRecord(parsed)) return undefined;
-  if (typeof parsed.reply === "string") {
-    const inner = parseJsonText(parsed.reply);
-    if (isRecord(inner)) return inner;
-  }
   if (typeof parsed.kind === "string" && typeof parsed.repo === "string") return parsed;
   if (typeof parsed.text === "string") {
     const inner = parseInput(parsed.text);
@@ -68,16 +52,6 @@ function parseInput(content: string | undefined): Record<string, unknown> | unde
     if (inner) return inner;
   }
   return parsed;
-}
-
-function cleanupModeOf(v: Record<string, unknown>): CleanupMode | undefined {
-  return v.cleanupMode === "automated" || v.cleanupMode === "human-approved" ? v.cleanupMode : undefined;
-}
-
-function itemsOf(input: Record<string, unknown>): { items: Item[]; batch: boolean } {
-  return Array.isArray(input.items)
-    ? { items: input.items as Item[], batch: true }
-    : { items: [{ facts: input.facts as PrFacts, det: input.det as DeterministicResult, judge: input.judge as string | undefined, judgeError: input.judgeError as string | undefined, cleanupMode: cleanupModeOf(input), pack: input.pack as CheckPack | undefined, roles: input.roles as Record<string, RepoRole> | undefined, error: input.error as string | undefined }], batch: false };
 }
 
 function verdictsOf(input: Record<string, unknown>): { verdicts: Verdict[]; batch: boolean } {
@@ -139,8 +113,11 @@ function firstLine(commit: { message?: string }): string {
 
 function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
+  function reply(items: RulesItem[], batch: boolean) {
+    return caps.reply(JSON.stringify({ items, batch }));
+  }
   function fail(reason: string) {
-    return caps.reply(JSON.stringify(degradedItem(reason)));
+    return reply([{ error: reason }], false);
   }
 
   function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, event: TriageEvent | null) {
@@ -161,8 +138,8 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         return sha ? [call("github_get_checks", { repo, sha }, `checks:${n}`)] : [];
       }
 
-      async function onChecks(r2: BatchResults) {
-        function itemFor(n: number) {
+      function onChecks(r2: BatchResults) {
+        function itemFor(n: number): RulesItem {
           const pr = prs.get(n);
           if (!pr) return { error: `github_get_pr failed for #${n}` };
           const checks = data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [];
@@ -172,8 +149,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, commits, ...(event === null ? {} : { event }) };
           return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
         }
-        const { items } = await rules({ items: numbers.map(itemFor) }, NO_EFFECTS, NEVER_ABORTED);
-        return caps.reply(JSON.stringify(batch ? { items } : items[0]));
+        return reply(numbers.map(itemFor), batch);
       }
 
       return b.run(numbers.flatMap(checkCall), onChecks);
@@ -204,7 +180,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     if (!pack) return fail(NEEDS_SETUP_REASON);
     if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, "catch-up");
     if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
-    // A catch-up mail names several heads as `items`; each is triaged like a single mail and rendered in this order.
+    // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.
     if (Array.isArray(input.items)) {
       const numbers = input.items.flatMap((item) => (isRecord(item) && typeof item.prNumber === "number" ? [item.prNumber] : []));
       if (numbers.length === 0) return fail("facts: batch names no pull request");
@@ -232,17 +208,20 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   };
 }
 
-/** The only inference path: asks Jev about the items that need judgment, one at a time, and passes everything else through. */
+/** The only inference path: asks Jev about the rules output's items that need judgment, one at a time, and replies the answers in item order. */
 function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): ReactorDirector {
-  let input: Record<string, unknown> | undefined;
   let items: Item[] = [];
-  let batch = false;
+  let answers: Judgment[] = [];
   let queue: number[] = [];
   let current = -1;
 
+  function finish() {
+    return caps.reply(JSON.stringify({ answers }));
+  }
+
   function ask() {
     const next = queue.shift();
-    if (next === undefined) return caps.reply(JSON.stringify(batch ? { items } : items[0]));
+    if (next === undefined) return finish();
     current = next;
     const { facts, det } = items[current];
     const questions = qualityQuestions(det.sources!);
@@ -253,43 +232,20 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
     async decide(event: ReactorInboundEvent) {
       switch (event.type) {
         case "message.received": {
-          input = parseInput(event.message.content);
-          if (!input) return caps.reply(JSON.stringify(degradedItem("judge: input is not JSON")));
-          ({ items, batch } = itemsOf(input));
+          const input = parseInput(event.message.content);
+          items = Array.isArray(input?.items) ? (input.items as Item[]) : [];
+          answers = items.map(() => ({}));
           queue = items.flatMap((it, i) => (it.det?.needsJudgment ? [i] : []));
           return ask();
         }
         case "inference.done":
-          items[current] = { ...items[current], judge: turnText(event.turn) };
+          answers[current] = { judge: turnText(event.turn) };
           return ask();
         case "inference.error":
-          items[current] = { ...items[current], judgeError: event.error.message };
+          answers[current] = { judgeError: event.error.message };
           return ask();
         case "abort":
-          return caps.reply(JSON.stringify(batch ? { items } : (items[0] ?? degradedItem("judge aborted"))));
-        default:
-          return [];
-      }
-    },
-  };
-}
-
-function renderDirector(caps: ReactorCapabilities): ReactorDirector {
-  async function degraded(reason: string) {
-    return caps.reply(JSON.stringify(await evaluate({ items: [degradedItem(reason)], batch: false }, NO_EFFECTS, NEVER_ABORTED)));
-  }
-
-  return {
-    async decide(event: ReactorInboundEvent) {
-      switch (event.type) {
-        case "message.received": {
-          const input = parseInput(event.message.content);
-          if (!input) return degraded("render: input is not JSON");
-          return caps.reply(JSON.stringify(await evaluate(itemsOf(input), NO_EFFECTS, NEVER_ABORTED)));
-        }
-        case "abort":
-        case "inference.error":
-          return degraded(`render interrupted: ${event.type}`);
+          return finish();
         default:
           return [];
       }
@@ -350,7 +306,7 @@ const workflowPackageName = process.env.TRIAGE_WORKFLOW_PACKAGE_NAME ?? "@corbit
 
 export const triageDirector = defineDirector<TriageDirectorConfig>({
   id: `${workflowPackageName}/triage`,
-  configSchema: type({ role: "'facts' | 'judge' | 'render' | 'mirror'" }),
+  configSchema: type({ role: "'facts' | 'judge' | 'mirror'" }),
   factory: function buildTriageDirector({ role }, _env, agent) {
     return lazy(function buildRoleDirector(caps) {
       switch (role) {
@@ -358,8 +314,6 @@ export const triageDirector = defineDirector<TriageDirectorConfig>({
           return factsDirector(caps);
         case "judge":
           return judgeDirector(caps, agent.systemPrompt);
-        case "render":
-          return renderDirector(caps);
         case "mirror":
           return mirrorDirector(caps);
       }

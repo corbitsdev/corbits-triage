@@ -7,6 +7,7 @@
   "interchange": {
     "workflow": "./src/pr-triage.ts",
     "directors": "./src/directors.ts",
+    "actions": "./src/actions/index.ts",
     "workflows": {
       "pr-triage": "./src/pr-triage.ts",
       "pr-triage-historical": "./src/pr-triage-historical.ts"

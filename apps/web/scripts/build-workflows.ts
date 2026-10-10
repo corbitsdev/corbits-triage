@@ -24,11 +24,12 @@ for (const workflow of WORKFLOW_PACKAGES) {
   }
   await bundle(workflow.src, workflow.entry.slice(2));
   await bundle("src/directors.ts", "directors.mjs");
+  await bundle("src/actions/index.ts", "actions.mjs");
   await Bun.write(join(dir, "package.json"), `${JSON.stringify({
     name: workflow.packageName,
     version: "0.1.0",
     type: "module",
-    interchange: { workflow: workflow.entry, directors: "./directors.mjs" },
+    interchange: { workflow: workflow.entry, directors: "./directors.mjs", actions: "./actions.mjs" },
   }, null, 2)}\n`);
 }
 console.log(`built ${WORKFLOW_PACKAGES.length} workflow packages into ${OUT}`);

@@ -6,18 +6,24 @@ import type { PrFacts } from "../logic/checks.js";
 import { errorText } from "../logic/extract.js";
 import type { Item } from "../logic/item.js";
 import { degradedVerdict, parseAnswers, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type Verdict } from "../logic/render.js";
+import { stepJson } from "../logic/step-json.js";
 
+/** The rules output, merged with the judge step's `reply` when the judge ran. */
 interface EvaluateInput {
   items: Item[];
   batch: boolean;
+  reply?: unknown;
 }
+
+/** The judge's answer for one item, in item order; empty for an item it did not ask about. */
+export type Judgment = Pick<Item, "judge" | "judgeError">;
 
 export type EvaluateOutput = Verdict | { items: Verdict[]; summary: BacklogSummary };
 
 // Items are unchecked so a malformed one degrades its own verdict instead of failing the batch.
-const Input = type({ items: "object[]", batch: "boolean" });
+const Input = type({ items: "object[]", batch: "boolean", "reply?": "unknown" });
 
-/** A facts failure or malformed input reaches the render step without facts: the verdict then names no head and is degraded. */
+/** A facts failure or malformed input reaches this step without facts: the verdict then names no head and is degraded. */
 function stamp(facts: PrFacts | undefined) {
   return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null, workflowVersion: PR_TRIAGE_WORKFLOW_VERSION };
 }
@@ -40,10 +46,16 @@ function verdictOf(it: Item): Verdict {
   }
 }
 
+function judgmentsOf(input: unknown): Judgment[] {
+  const answers = stepJson(input)?.answers;
+  return Array.isArray(answers) ? (answers as Judgment[]) : [];
+}
+
 export async function evaluate(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<EvaluateOutput> {
   const parsed = Input(input);
   if (parsed instanceof type.errors) throw new Error(`evaluate: invalid input: ${parsed.summary}`);
   const { items, batch } = parsed as EvaluateInput;
-  const verdicts = items.map(verdictOf);
+  const judgments = judgmentsOf(parsed);
+  const verdicts = items.map((it, i) => verdictOf({ ...it, ...judgments[i] }));
   return batch ? { items: verdicts, summary: summarize(verdicts) } : verdicts[0]!;
 }
