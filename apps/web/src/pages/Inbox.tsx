@@ -6,10 +6,14 @@ import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "../lib/error-text.ts";
 import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
+import type { PendingDo } from "../lib/pending-dos.ts";
+import { usePendingDos, useRanDoMarks } from "../lib/ran-dos.ts";
+import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import {
   COMPOSER_COPY,
   canRun,
   ciStatus,
+  doWrite,
   draftText,
   hasNumber,
   isComposerKind,
@@ -23,6 +27,7 @@ import {
   titleText,
   triageStartedText,
   verdictHeadline,
+  writeBlocker,
   type Composer,
   type NumberedItem,
   type PaneDraft,
@@ -289,6 +294,9 @@ function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
   const { primary, more } = paneActions(gate);
   const draft = replyDraft(item, reply);
   const canPost = draft !== null && canRun("reply", gate);
+  const dos = usePendingDos(item);
+  const ranDos = useRanDoMarks();
+  const doBlocked = writeBlocker(gate) !== null;
   const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
   const floor = snapshot?.config?.confidenceFloor;
   const detailFiles = pull.data === undefined ? "" : ` · ${filesText(pull.data.pr.changedFiles)}`;
@@ -338,6 +346,16 @@ function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function runDo(pending: PendingDo) {
+    if (!hasNumber(item) || doBlocked) return;
+    if (pending.kind === "close") {
+      run("close");
+      return;
+    }
+    ranDos.mark(item, pending.key);
+    onHold(item, doWrite(item, pending, () => ranDos.unmark(item, pending.key)), { reply, composer });
   }
 
   function run(kind: PaneKind) {
@@ -446,6 +464,7 @@ function Pane({ item, restored, sectionRef, onHold, onBack }: PaneProps) {
               onCancel={() => setEditing(false)}
             />
           )}
+          <SuggestedActions dos={dos} disabled={doBlocked} onRun={runDo} />
           {composer === null ? null : (
             <ComposerForm composer={composer} busy={busy} readOnly={readOnly} onChange={setComposer} onCancel={() => setComposer(null)} onSubmit={onComposerSubmit} />
           )}
@@ -581,9 +600,11 @@ export default function Inbox() {
   }
 
   function holdAction(item: NumberedItem, write: PaneWrite, draft: PaneDraft) {
-    const index = flat.findIndex((row) => row.key === item.key);
-    const next = flat[index + 1] ?? flat[index - 1];
-    moveTo(next);
+    if (!write.stay) {
+      const index = flat.findIndex((row) => row.key === item.key);
+      const next = flat[index + 1] ?? flat[index - 1];
+      moveTo(next);
+    }
     held.hold(item, write, draft, function backToItem() {
       moveTo(item);
     });

@@ -197,6 +197,8 @@
 .inbox .suggest { border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--fill); padding: 12px 14px; }
 .inbox .suggest-text { margin: 0 0 10px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
 .inbox .suggest-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.inbox .dos { display: grid; gap: 8px; margin-top: 16px; }
+.inbox .dos .lbl-h { margin: 0; }
 .inbox .lbl { font: 400 11px var(--mono); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); padding: 0 6px; background: var(--white); }
 .inbox .composer { margin-top: 16px; }
 .inbox .composer .foot { gap: 8px; }

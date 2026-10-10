@@ -1312,6 +1312,8 @@ body[data-rail="collapsed"] .nav-count {
 }
 .pr-composer .comment-form { margin-top: 0; }
 .pr-composer textarea { min-height: 72px; background: var(--sheet); }
+.pr-composer .suggest-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pr-composer .suggest-text { margin: 0 0 8px; }
 
 .check-groups {
   display: grid;

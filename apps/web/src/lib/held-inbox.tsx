@@ -65,14 +65,15 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
       return writeGithub(input, "leaving");
     }
     function restore() {
-      handledPulls.release(item);
+      if (!write.stay) handledPulls.release(item);
+      write.restore?.();
       setRestored((current) => ({ ...current, [item.key]: { runId: item.runId, draft } }));
     }
-    handledPulls.hold(item);
+    if (!write.stay) handledPulls.hold(item);
     queue.hold({
       pending: write.pending,
       async send(leaving) {
-        handledPulls.markHandled(item);
+        if (!write.stay) handledPulls.markHandled(item);
         const outcome = await write.send({ write: leaving ? writeLeaving : writeHeld, replySent });
         if (!outcome.complete) tellIfAway(outcome.message);
         return outcome;

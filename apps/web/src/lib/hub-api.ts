@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, parseCheckPack, checkPackName, triggerRequestOf, PR_TRIAGE_STUCK_RUN_MS, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, parseCheckPack, checkPackName, triggerRequestOf, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type CheckPack, type RepoCheckFlags, type RepoPolicy } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -949,6 +949,8 @@ export type PrGithubWriteInput =
   | { action: "comment"; repo: string; number: number; body: string }
   | { action: "reply"; repo: string; number: number; body: string }
   | { action: "labels"; repo: string; number: number; labels: string[] }
+  | { action: "assign"; repo: string; number: number; assignees: string[] }
+  | { action: "request-review"; repo: string; number: number; reviewers?: string[]; teamReviewers?: string[] }
   | { action: "review"; repo: string; number: number; event: "APPROVE" | "REQUEST_CHANGES"; body: string }
   | { action: "merge"; repo: string; number: number }
   | { action: "close"; repo: string; number: number; labels: string[]; comment: string };
@@ -1290,8 +1292,27 @@ export type PrItem = {
   running: boolean;
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
   failure: RunFailure | null;
+  actions: SuggestedAction[];
   href: string;
 };
+
+// The portal reads verdict JSON and does not import the workflow package, so this keeps only the fields it uses.
+export type SuggestedAction = { id: string; kind: ActionKind; reason: string; target: Record<string, unknown> };
+
+function isActionKind(value: unknown): value is ActionKind {
+  return (ACTION_KINDS as readonly unknown[]).includes(value);
+}
+
+function suggestedActions(value: unknown): SuggestedAction[] {
+  if (!Array.isArray(value)) return [];
+  const out: SuggestedAction[] = [];
+  for (const entry of value) {
+    const a = obj(entry);
+    if (a.skipped === true || typeof a.id !== "string" || typeof a.reason !== "string" || !isActionKind(a.kind) || !a.target || typeof a.target !== "object") continue;
+    out.push({ id: a.id, kind: a.kind, reason: a.reason, target: obj(a.target) });
+  }
+  return out;
+}
 
 export type RunFailure = "failed" | "cancelled" | "stuck";
 
@@ -1325,7 +1346,7 @@ function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
-function strings(value: unknown): string[] {
+export function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [];
 }
 
@@ -1588,6 +1609,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         posted: posted.has(key) && typeof r.feedback === "string" && r.feedback.trim() !== "",
         running: running.has(key),
         failure: failed.get(key) ?? null,
+        actions: suggestedActions(r.actions),
         href: canonicalPrHref(v.repo, v.number),
       });
     }
@@ -1655,6 +1677,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         posted: false,
         running: running.has(key),
         failure: failed.get(key) ?? null,
+        actions: [],
         href: canonicalPrHref(repo, pr.number),
       });
     }
