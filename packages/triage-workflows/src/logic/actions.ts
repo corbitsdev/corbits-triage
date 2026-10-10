@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Action, ActionKind, CatalogId, CheckPack, Do, LabelsTarget, RepoRole } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { errorText } from "./extract.js";
@@ -14,10 +15,34 @@ export type ResolvedTarget =
 
 export type Branch = "yes" | "no" | "unsure" | "always";
 
-type Step = { id: string; branch: Branch; kind: ActionKind; automatic: boolean; reason: string };
+/**
+ * Names one resolved Do on one head: `index` is its place in the branch's Do list as the pack defines it, so skipped or satisfied steps before it do not shift it.
+ * `kind` and `target` keep a Do inserted earlier by a pack edit from taking a later Do's id on the same head.
+ */
+export type DoRef = { repo: string; number: number; headSha: string; actionId: string; branch: Branch; index: number; kind: ActionKind; target: ResolvedTarget };
+
+/** JSON with object keys sorted, so equal targets hash equally whatever order their keys were written in. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** The idempotency key for one Do on one head; GitHub writes and their audit share it. */
+export function doEffectId(ref: DoRef): string {
+  const parts = [ref.repo, ref.number, ref.headSha, ref.actionId, ref.branch, ref.index, ref.kind, canonical(ref.target)];
+  return createHash("sha256").update(parts.join("\x1f")).digest("hex");
+}
+
+type Step = { id: string; branch: Branch; index: number; kind: ActionKind; automatic: boolean; reason: string };
+
+export type SuggestedDo = Step & { effectId: string; target: ResolvedTarget };
 
 /** A step resolves to a target or is skipped; an action whose checks are off in the pack is skipped whole. */
-export type SuggestedAction = (Step & { target: ResolvedTarget }) | (Step & { skipped: true }) | { id: string; skipped: true; reason: string };
+export type SuggestedAction = SuggestedDo | (Step & { skipped: true }) | { id: string; skipped: true; reason: string };
 
 export interface ActionInput {
   facts: PrFacts;
@@ -170,11 +195,13 @@ export function evaluateActions(input: ActionInput): SuggestedAction[] {
       continue;
     }
     const { branch, dos, reason } = picked;
-    for (const task of dos) {
-      const base = { id: action.id, branch, kind: task.kind, automatic: task.automatic };
+    for (const [index, task] of dos.entries()) {
+      const base = { id: action.id, branch, index, kind: task.kind, automatic: task.automatic };
       try {
         const target = resolve(task, input);
-        if (!satisfied(task.kind, target, input.facts)) out.push({ ...base, target, reason });
+        const { repo, number, headSha } = input.facts;
+        const effectId = doEffectId({ repo, number, headSha, actionId: action.id, branch, index, kind: task.kind, target });
+        if (!satisfied(task.kind, target, input.facts)) out.push({ ...base, effectId, target, reason });
       } catch (e) {
         out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
       }
