@@ -58,7 +58,7 @@ import {
   type InboxPile,
 } from "../lib/inbox-view.ts";
 import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesFilters, type InboxFilters } from "../lib/inbox-filter.ts";
-import { useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
+import { useOpenPullsUnanswered, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageReadyRepos } from "../lib/repo-rows.ts";
@@ -531,6 +531,7 @@ export default function Inbox() {
   const sectionRef = useRef<HTMLElement>(null);
   const items = useQueueItems();
   const loading = useQueueLoading();
+  const openPullsUnanswered = useOpenPullsUnanswered();
   const { denied } = useRunLogs();
   const [query, setQuery] = useState("");
   const [grouping, setGrouping] = useState<InboxGrouping>("action");
@@ -632,7 +633,7 @@ export default function Inbox() {
     <div className={`inbox${selected ? " has-selection" : ""}`} ref={paneRef} tabIndex={-1}>
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
-          <div className="lh-top"><h1>Inbox</h1><span className="n">{flat.length}</span>{view.awaiting > 0 ? <span className="awaiting">{awaitingText(view.awaiting)}</span> : null}</div>
+          <div className="lh-top"><h1>Inbox</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view.awaiting > 0 ? <span className="awaiting">{awaitingText(view.awaiting)}</span> : null}</div>
           <div className="tools">
             <label className="search">
               <SearchIcon />
