@@ -237,8 +237,9 @@
   .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }
 }
 
-/* On a phone search gets its own line, the filter popover is a bottom sheet with the facets as tabs across the top, and toasts span the width above the mobile nav. */
+/* On a phone the mobile nav replaces the rail, search gets its own line, the filter popover is a bottom sheet with the facets as tabs across the top, and toasts span the width above the mobile nav. */
 @media (max-width: 720px) {
+  .shell .rail { display: none; }
   .inbox .tools { flex-wrap: wrap; }
   .inbox .search { flex-basis: 100%; }
   .inbox .filter-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.24); }
