@@ -5,6 +5,7 @@ import {
   catalogCheckEnabled,
   checkPackSchema,
   emptyPack,
+  packMergeThreshold,
   parseCheckPack,
   readCheckPack,
   recommendedPack,
@@ -185,6 +186,15 @@ describe("check pack contract", () => {
     expect(() => readCheckPack({ ...emptyPack(REPO), actions: [{ ...BASE, checks: ["custom-9"] }] })).toThrow(
       "Action a checks custom-9 must be a catalog check or a custom check in this pack.",
     );
+  });
+
+  test("an absent merge threshold reads 0.7; one out of range rejects the pack", () => {
+    expect(packMergeThreshold(readCheckPack(emptyPack(REPO)))).toBe(0.7);
+    expect(packMergeThreshold(readCheckPack({ ...emptyPack(REPO), mergeThreshold: 0.85 }))).toBe(0.85);
+    for (const mergeThreshold of [-0.1, 1.1, "0.8"]) {
+      expect(() => readCheckPack({ ...emptyPack(REPO), mergeThreshold })).toThrow("mergeThreshold must be a number from 0 to 1.");
+      expect(checkPackSchema({ ...emptyPack(REPO), mergeThreshold })).toBeInstanceOf(type.errors);
+    }
   });
 
   test("Use recommended keeps existing custom", () => {

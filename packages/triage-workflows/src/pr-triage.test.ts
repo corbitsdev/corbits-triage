@@ -18,8 +18,8 @@ type FileRow = { filename: string; status: string; additions: number; deletions:
 
 const FLAG: FileRow = { filename: "src/flag.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+export const flag = true;" };
 
-/** GitHub serving open pull request 8 changing `files`, failing every read of it when `missing`. */
-function fakeGithub(missing: boolean, files: FileRow[]) {
+/** GitHub serving open pull request 8 changing `files`, failing every read of it when `missing`, with `prior` as its Triage comment. */
+function fakeGithub(missing: boolean, files: FileRow[], prior?: string) {
   const requests: Recorded[] = [];
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
@@ -34,6 +34,7 @@ function fakeGithub(missing: boolean, files: FileRow[]) {
       const page = Number(new URL(path, "https://api.github.invalid").searchParams.get("page"));
       return Response.json(files.slice((page - 1) * 100, page * 100));
     }
+    if (prior !== undefined && path.startsWith(`/repos/${REPO}/issues/8/comments?`)) return Response.json([{ id: 5, user: { type: "Bot" }, body: prior }]);
     if (method === "GET") return Response.json([]);
     return Response.json({});
   }
@@ -55,8 +56,8 @@ function judgeText({ questions, state }: SystemOne) {
   return questions.map((q) => JSON.stringify(answer(q))).join("");
 }
 
-/** Runs each agent step's real director against the fake GitHub and a canned decision model, as the reactor would, under Interchange's tool-result cap. */
-function stepInvoker(gh: GithubFetch, invoked: string[]): StepInvoker {
+/** Runs each agent step's real director against the fake GitHub and a canned decision model, failing when `judgeFails`, as the reactor would, under Interchange's tool-result cap. */
+function stepInvoker(gh: GithubFetch, invoked: string[], judgeFails: boolean): StepInvoker {
   const env = { capabilities: { resolve: () => ({ resolve: async () => ({ kind: "http", fetch: gh }) }) } };
   const sizeCap = createSizeCapTransform({ maxChars: 10_000, contextStore: { writeBlob: async () => {} } });
   return async function invokeStep({ agent, input }) {
@@ -79,7 +80,11 @@ function stepInvoker(gh: GithubFetch, invoked: string[]): StepInvoker {
             queue.push({ type: "tool.done", result: output } as ReactorInboundEvent);
           }
         }
-        if (action.type === "infer") queue.push({ type: "inference.done", turn: { content: [{ type: "text", text: judgeText(action.request!.providerOptions.systemOne) }] } } as ReactorInboundEvent);
+        if (action.type === "infer") {
+          queue.push((judgeFails
+            ? { type: "inference.error", error: { message: "upstream 503" } }
+            : { type: "inference.done", turn: { content: [{ type: "text", text: judgeText(action.request!.providerOptions.systemOne) }] } }) as ReactorInboundEvent);
+        }
       }
     }
     if (reply === undefined) throw new Error(`${agent.id} never replied`);
@@ -87,21 +92,21 @@ function stepInvoker(gh: GithubFetch, invoked: string[]): StepInvoker {
   };
 }
 
-const POLICY = { enabled: true, cleanupMode: "automated" };
 const RULES_PATH = { invoked: ["triage-facts", "triage-mirror"], mirrors: ["mirrorRules"] };
 const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-mirror"], mirrors: ["mirror"] };
 
-async function triage(checkPack: CheckPack, { missing = false, backlog = false, files = [FLAG] } = {}) {
-  const { gh, requests } = fakeGithub(missing, files);
+async function triage(checkPack: CheckPack, { missing = false, backlog = false, files = [FLAG], judgeFails = false, cleanupMode = "automated", prior = undefined as string | undefined } = {}) {
+  const { gh, requests } = fakeGithub(missing, files, prior);
+  const policy = { enabled: true, cleanupMode };
   const invoked: string[] = [];
   const body = ((backlog ? historical : workflow).steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("triage body is not inline");
   const { terminalStatus, outputs } = await runLocal(body.inline, {
     authorize: allow,
     hasUpstreamSignalResolver: true,
-    invokeStep: stepInvoker(gh, invoked),
+    invokeStep: stepInvoker(gh, invoked, judgeFails),
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
-    triggerPayload: backlog ? { kind: "backlog", repo: REPO, policy: POLICY, checkPack } : { kind: "pr", repo: REPO, prNumber: 8, policy: POLICY, checkPack },
+    triggerPayload: backlog ? { kind: "backlog", repo: REPO, policy, checkPack } : { kind: "pr", repo: REPO, prNumber: 8, policy, checkPack },
   }).complete;
   expect(terminalStatus).toBe("completed");
   const mirrors = Object.keys(outputs).filter((id) => id.startsWith("mirror"));
@@ -144,6 +149,23 @@ describe("pr-triage body", () => {
     expect(path.invoked.filter((agent) => agent === "triage-judge").length).toBeGreaterThanOrEqual(2);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"], ["tests", "pass"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toHaveLength(files.length);
+  });
+
+  test("an automated repository whose judge fails still posts a comment; a human-approved one does not", async () => {
+    const comment = { method: "POST", path: `/repos/${REPO}/issues/8/comments` };
+    const automated = await triage(recommendedPack(REPO), { judgeFails: true });
+    expect(automated.verdict).toMatchObject({ degraded: "inference-outage", mirror: true, merge: { verdict: "not-recommended" } });
+    expect((automated.verdict as Verdict).request.comment).toContain("Triage will re-check this pull request.");
+    expect(automated.requests).toContainEqual(comment);
+    const approved = await triage(recommendedPack(REPO), { judgeFails: true, cleanupMode: "human-approved" });
+    expect(approved.verdict).toMatchObject({ degraded: "inference-outage", mirror: true });
+    expect(approved.requests).not.toContainEqual(comment);
+  });
+
+  test("a re-triage with nothing left to fix replaces the earlier needs list with the approval note", async () => {
+    const { requests, verdict } = await triage(emptyPack(REPO), { prior: "<!-- corbits-triage -->\n@octocat, please address the following:\n- Link an issue" });
+    expect((verdict as Verdict).request.comment).toBe("No changes needed from you. A maintainer will review this pull request.");
+    expect(requests).toContainEqual({ method: "PATCH", path: `/repos/${REPO}/issues/comments/5` });
   });
 
   test("facts that fail degrade the verdict and suggest no actions", async () => {
