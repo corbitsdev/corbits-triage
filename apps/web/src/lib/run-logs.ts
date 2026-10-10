@@ -1,4 +1,4 @@
-import { queryOptions, skipToken, useQueries, useQuery, useQueryClient, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { queryOptions, skipToken, useQueries, useQuery, useQueryClient, type Query, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { ApiError, isTerminalRunEvents, listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents, type Transport } from "@intx/hub-client";
 import { isEndedDeployment, isSettledRunStatus, type HubRun, type RunLog } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
@@ -8,6 +8,11 @@ const RUN_LIST_REFRESH_MS = 10_000;
 const LIVE_LOG_REFRESH_MS = 10_000;
 
 type RunRef = { anchorRunId: string; runId: string };
+
+/** The run lists, per tenant and per ended deployment. */
+export function isRunListQuery(query: Query): boolean {
+  return query.queryKey[0] === RUN_IDS_QUERY_KEY;
+}
 
 /**
  * A deployment the caller cannot read, or one removed since it was listed, contributes no runs.
