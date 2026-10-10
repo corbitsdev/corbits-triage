@@ -76,7 +76,7 @@ function fold(name: string): string {
   return name.toLowerCase();
 }
 
-function missingFrom(have: string[] | undefined, wanted: string[]): string[] {
+export function missingFrom(have: string[] | undefined, wanted: string[]): string[] {
   const held = new Set((have ?? []).map(fold));
   return wanted.filter((name) => !held.has(fold(name)));
 }
