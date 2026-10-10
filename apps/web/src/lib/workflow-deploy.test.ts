@@ -58,7 +58,7 @@ function fakeHub(tarballSeed: Record<string, string> = {}) {
   }
 
   async function raw(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-    const path = String(input);
+    const path = String(input).replace(/^https?:\/\/[^/]+/, "");
     const method = init?.method ?? "GET";
     requests.push(`${method} ${path}`);
     if (path === "/packages/index.json") return Response.json(INDEX);
