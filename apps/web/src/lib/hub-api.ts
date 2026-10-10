@@ -1363,6 +1363,14 @@ export const QUEUE_STATE_LABEL: Record<QueueState, string> = {
   new: "Not triaged yet",
 };
 
+export type CiState = "success" | "failure" | "pending" | "none";
+
+const CI_STATES: readonly unknown[] = ["success", "failure", "pending", "none"] satisfies CiState[];
+
+function isCiState(value: unknown): value is CiState {
+  return CI_STATES.includes(value);
+}
+
 export type PrItem = {
   key: string;
   repo: string;
@@ -1389,6 +1397,12 @@ export type PrItem = {
   waitingSince: string | null;
   /** GitHub's last update to the pull request, known once the open pull requests have loaded. */
   updatedAt: string | null;
+  /** The CI state the verdict saw. */
+  ci: CiState | null;
+  /** The current head, known once the open pull requests have loaded. */
+  headSha: string | null;
+  /** When the newest run triggered by author activity started; see `AUTHOR_ACTIVITY`. */
+  activityAt: string | null;
   canClose: boolean;
   pendingClose: boolean;
   /** The verdict's reply is on GitHub: the run's mirror step wrote non-empty feedback, or this portal sent it (see `useQueueItems`). */
@@ -1598,6 +1612,35 @@ function triggeredPulls(log: RunLog): string[] {
   return items.flatMap((item) => (typeof obj(item).prNumber === "number" ? [`${payload.repo}#${obj(item).prNumber}`] : []));
 }
 
+/**
+ * Webhook events, as `event:action`, that mean someone other than the App moved the pull request: a push, reopen, ready for review,
+ * review request, comment or review. CI results, catch-up and backlog runs, labels, assignment and edits do not; the App's own writes start no run.
+ */
+const AUTHOR_ACTIVITY = new Set([
+  "pull_request:synchronize",
+  "pull_request:reopened",
+  "pull_request:ready_for_review",
+  "pull_request:review_requested",
+  "issue_comment:created",
+  "pull_request_review:submitted",
+]);
+
+/** When the newest run triggered by author activity started, per pull request. */
+function authorActivity(logs: RunLog[]): Map<string, string> {
+  const activity = new Map<string, string>();
+  for (const log of logs) {
+    const started = log.events.find((e) => e.type === "RunStarted");
+    const at = started ? (obj(started).at ?? obj(started.body).at) : null;
+    const payload = obj(triggerRequestOf(obj(obj(started?.body).trigger).payload));
+    if (typeof at !== "string" || !AUTHOR_ACTIVITY.has(`${payload.event}:${payload.action}`)) continue;
+    for (const pull of triggeredPulls(log)) {
+      const newest = activity.get(pull);
+      if (newest === undefined || at > newest) activity.set(pull, at);
+    }
+  }
+  return activity;
+}
+
 // Hub run statuses, in both the lifecycle and the run-view vocabulary, after which a run makes no progress.
 const SETTLED_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "error", "stopped"]);
 
@@ -1683,6 +1726,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
   const settled = settledRuns(runs);
   const running = runningPulls(logs, settled, now);
   const failed = failedPulls(logs, settled, now);
+  const activity = authorActivity(runLogs);
   for (const { log, verdicts } of logs) {
     const started = log.events.find((e) => e.type === "RunStarted");
     const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
@@ -1720,6 +1764,9 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         runId: log.runId,
         waitingSince: at,
         updatedAt: null,
+        ci: isCiState(v.facts.checks) ? v.facts.checks : null,
+        headSha: null,
+        activityAt: activity.get(key) ?? null,
         canClose: r.duplicate === true,
         pendingClose: false,
         posted: posted.has(key) && typeof r.feedback === "string" && r.feedback.trim() !== "",
@@ -1745,11 +1792,11 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
       waitingSince: approval.createdAt ?? item.waitingSince,
     });
   }
-  if (openPulls) joinOpenPulls(items, openPulls, running, failed);
+  if (openPulls) joinOpenPulls(items, openPulls, running, failed, activity);
   return [...items.values()];
 }
 
-function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running: Set<string>, failed: Map<string, RunFailure>): void {
+function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running: Set<string>, failed: Map<string, RunFailure>, activity: Map<string, string>): void {
   for (const { repo, prs, error } of openPulls.repos) {
     if (error) continue;
     const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
@@ -1760,7 +1807,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
       const key = `${repo}#${pr.number}`;
       const known = items.get(key);
       if (known) {
-        items.set(key, { ...known, updatedAt: pr.updatedAt });
+        items.set(key, { ...known, updatedAt: pr.updatedAt, headSha: pr.sha });
         continue;
       }
       items.set(key, {
@@ -1788,6 +1835,9 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         runId: null,
         waitingSince: pr.updatedAt,
         updatedAt: pr.updatedAt,
+        ci: null,
+        headSha: pr.sha,
+        activityAt: activity.get(key) ?? null,
         canClose: false,
         pendingClose: false,
         posted: false,

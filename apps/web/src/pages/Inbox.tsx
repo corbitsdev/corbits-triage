@@ -606,7 +606,7 @@ export default function Inbox() {
   }
 
   function holdAction(item: NumberedItem, write: PaneWrite, draft: PaneDraft) {
-    if (!write.stay) {
+    if (write.settles !== null) {
       const index = flat.findIndex((row) => row.key === item.key);
       const next = flat[index + 1] ?? flat[index - 1];
       moveTo(next);

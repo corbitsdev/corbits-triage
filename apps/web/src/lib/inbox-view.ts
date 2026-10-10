@@ -108,6 +108,39 @@ export function primaryAction(item: PrItem, action: InboxAction | null): Primary
   }
 }
 
+/** A write that settles a pull request for now; merge and close settle it for good. */
+export type HandledKind = Exclude<PrimaryAction, "triage">;
+
+/** What the maintainer did to a pull request that is still handled; `kind` is null for an entry stored before kinds were recorded. */
+export type HandledMark = { kind: HandledKind | null };
+
+export type WaitsOn = "maintainer" | "author" | "ci" | "nobody";
+
+const AUTHOR_TURN: ReadonlySet<HandledKind | null> = new Set(["changes", "reply", "comment"]);
+
+/** Who must act next, checked in order; `entry` is the pull request's handled mark, null while it is in Needs you. */
+export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
+  if ((entry === null && inboxAction(item) !== null) || item.pendingApprovalId !== null) return "maintainer";
+  if (item.draft === true || item.state === "needs-author-update" || (entry !== null && AUTHOR_TURN.has(entry.kind))) return "author";
+  if (item.ci === "pending") return "ci";
+  return "nobody";
+}
+
+const POSTED_LABEL: Record<HandledKind, string> = {
+  approve: "Approved",
+  reply: "Replied",
+  changes: "Requested changes",
+  comment: "Commented",
+  merge: "Merged",
+  close: "Closed",
+};
+
+/** What is on GitHub for the pull request: what the maintainer did, else the verdict's reply. */
+export function postedLabel(item: Pick<PrItem, "posted">, entry: HandledMark | null): string | null {
+  if (entry?.kind) return POSTED_LABEL[entry.kind];
+  return item.posted ? "Posted" : null;
+}
+
 export function primaryLabel(action: PrimaryAction): string {
   return PRIMARY_LABEL[action];
 }
