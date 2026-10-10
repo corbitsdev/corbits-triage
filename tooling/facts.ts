@@ -11,6 +11,7 @@ export function toFacts(pr: PRRecord): PrFacts {
     number: pr.id,
     title: pr.title,
     author: pr.author,
+    tier: pr.tier,
     headSha: pr.revision,
     state: pr.state,
     draft: pr.draft,

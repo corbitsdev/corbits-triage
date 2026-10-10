@@ -13,7 +13,7 @@ export interface Item {
 }
 
 const NO_FACTS: PrFacts = {
-  repo: "", number: 0, title: "", author: "", headSha: "", state: "open", draft: false, mergeable: null,
+  repo: "", number: 0, title: "", author: "", tier: "external", headSha: "", state: "open", draft: false, mergeable: null,
   baseBehindBy: 0, checks: "none", requestedReviewers: 0, approvals: 0, openPrs: [],
 };
 

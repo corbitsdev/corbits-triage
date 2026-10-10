@@ -6,7 +6,7 @@
 //
 //   bun tooling/preview.ts [owner/repo]
 import { evaluate } from "@corbits/system-one";
-import { recommendedPack } from "../packages/triage-contracts/src/index.js";
+import { DEFAULT_REPO_POLICY, recommendedPack } from "../packages/triage-contracts/src/index.js";
 import { deriveState, type PrFacts } from "../packages/triage-workflows/src/logic/checks.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "../packages/triage-workflows/src/logic/facts.js";
 import { qualityQuestions, qualityState } from "../packages/triage-workflows/src/logic/quality.js";
@@ -32,7 +32,7 @@ type Pull = { number: number; title: string };
 function factsFor(n: number, openPrs: Pull[]): PrFacts {
   const p = ghOne<any>(`repos/${repo}/pulls/${n}`);
   const pr: PrData = {
-    title: p.title, body: p.body, author: p.user?.login, sha: p.head?.sha, branch: p.head.ref, state: p.state, draft: p.draft,
+    title: p.title, body: p.body, author: p.user?.login, authorAssociation: p.author_association, sha: p.head?.sha, branch: p.head.ref, state: p.state, draft: p.draft,
     mergeable: p.mergeable, requestedReviewers: (p.requested_reviewers?.length ?? 0) + (p.requested_teams?.length ?? 0),
     reviewers: [...(p.requested_reviewers ?? []).map((u: any) => u.login), ...(p.requested_teams ?? []).map((t: any) => t.slug)],
     additions: p.additions, deletions: p.deletions, changedFiles: p.changed_files,
@@ -41,7 +41,7 @@ function factsFor(n: number, openPrs: Pull[]): PrFacts {
   const reviews = gh<any[]>(`repos/${repo}/pulls/${n}/reviews`).map((r): Review => ({ reviewer: r.user?.login, state: r.state }));
   const paths = gh<any[]>(`repos/${repo}/pulls/${n}/files`).map((f) => String(f.filename));
   const commits = gh<any[]>(`repos/${repo}/pulls/${n}/commits`).map((c) => String(c.commit.message).split("\n", 1)[0]!);
-  return { ...buildFacts(repo, n, pr, checks, reviews, openPrs), paths, commits };
+  return { ...buildFacts(repo, n, pr, checks, reviews, openPrs, DEFAULT_REPO_POLICY), paths, commits };
 }
 
 const endpoint = process.env.AI_GATEWAY_API_KEY ? { kind: "gateway" as const } : { kind: "official" as const };

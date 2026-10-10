@@ -7,6 +7,7 @@ import {
   type CatalogId,
   type CheckPack,
   type IssueTracker,
+  type TrustTier,
 } from "@corbits/triage-contracts";
 
 export interface PrFacts {
@@ -14,6 +15,7 @@ export interface PrFacts {
   number: number;
   title: string;
   author: string;
+  tier: TrustTier;
   headSha: string;
   state: "open" | "closed";
   draft: boolean;

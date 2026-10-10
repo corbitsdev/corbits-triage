@@ -168,7 +168,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
           const paths = data<{ files: ChangedFile[] }>(r1.get(`files:${n}`))?.files?.flatMap(pathOf) ?? [];
           const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
-          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs), paths, commits };
+          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, commits };
           return { facts, pack, cleanupMode: policy.cleanupMode };
         }
         const { items } = await rules({ items: numbers.map(itemFor) }, NO_EFFECTS, NEVER_ABORTED);
