@@ -176,6 +176,12 @@ describe("paneWrite", () => {
     return { calls, outcome };
   }
 
+  test("only merge and close take the pull request out of the inbox", () => {
+    const pr = { ...item({ comment: "Thanks" }), number: 1 };
+    const stays = (["reply", "approve", "changes", "comment", "merge", "close"] as const).map((kind) => paneWrite(kind, pr, "text").stay === true);
+    expect(stays).toEqual([true, true, true, true, false, false]);
+  });
+
   test("the reply and its labels start together, and the verdict is marked sent once the hub names the comment", async () => {
     expect(await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks, edited")).toEqual({
       calls: [

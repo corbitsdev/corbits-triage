@@ -193,8 +193,8 @@ function replyFailure(replied: PromiseSettledResult<PrGithubWriteResult>): strin
 
 /**
  * The reply and its labels start together, so both are on their way when the page is being left.
- * Each half that reached GitHub is reported as such: a posted reply keeps the pull request out of the inbox,
- * while labels alone bring it back with the reply to post again.
+ * Each half that reached GitHub is reported as such: a posted reply shows as posted on the row,
+ * while labels alone leave the reply to post again.
  */
 async function sendReply({ write, replySent }: PaneIo, item: NumberedItem, body: string): Promise<Outcome> {
   const { repo, number } = item;
@@ -213,6 +213,16 @@ async function sendReply({ write, replySent }: PaneIo, item: NumberedItem, body:
 
 /** `body` is the reply draft for a reply and the composer text for a comment or requested changes. Throws before anything is held when there is nothing to send. */
 export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): PaneWrite {
+  const write = writeFor(kind, item, body);
+  return settles(kind) ? write : { ...write, stay: true };
+}
+
+/** Only merge and close settle a pull request; every other write leaves it open and still the maintainer's. */
+function settles(kind: WriteKind): boolean {
+  return kind === "merge" || kind === "close";
+}
+
+function writeFor(kind: WriteKind, item: NumberedItem, body: string): PaneWrite {
   const { repo, number } = item;
   switch (kind) {
     case "reply": {
