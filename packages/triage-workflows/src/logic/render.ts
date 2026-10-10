@@ -262,7 +262,11 @@ function failedStep(c: CheckResult, sources: Sources): Step {
     case "reviewers": return { actor: "maintainer", action: "Assign a reviewer" };
     case "drift": return { actor: "maintainer", action: `Decide on base drift (${withoutLimit(c.evidence)})` };
     case "focused": return { actor: "author", action: `Split out unrelated change: ${c.evidence.join("; ")}` };
-    default: return { actor: "author", action: c.kind === "model" && sources ? actionText(c.check, sources) : `Fix ${c.check}` };
+    default: {
+      const rule = sources?.rules.find((r) => r.id === c.check);
+      if (rule) return { actor: rule.rule === "min-approvals" || rule.rule === "label-required" ? "maintainer" : "author", action: `Fix ${rule.name}: ${c.reason}` };
+      return { actor: "author", action: c.kind === "model" && sources ? actionText(c.check, sources) : `Fix ${c.check}` };
+    }
   }
 }
 
