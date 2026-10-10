@@ -37,7 +37,7 @@ function namesReviewers(body: { codeowners?: true; reviewers?: string[]; teamRev
   return (body.codeowners ? named === 0 : named > 0) || ctx.reject("either codeowners or at least one reviewer or team");
 }
 
-const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" }).and(
+export const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" }).and(
   type({ action: "'comment'", body: "string > 0" })
     .or({ action: "'reply'", body: "string > 0" })
     .or({ action: "'labels'", labels: "string[] > 0" })

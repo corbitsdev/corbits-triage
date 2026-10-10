@@ -30,7 +30,8 @@
     "arktype": "catalog:",
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:",
-    "hono": "catalog:"
+    "hono": "catalog:",
+    "hono-openapi": "^1.2.0"
   },
   "devDependencies": {
     "@intx/harness": "workspace:*"
