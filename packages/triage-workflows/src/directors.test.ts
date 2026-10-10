@@ -234,7 +234,7 @@ describe("judge on a blocked pull request", () => {
     const policy = { enabled: true, roles: { leads: { users: ["dave"] } } };
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }));
     expect(verdict.actions).toEqual([
-      { id: "ask-leads", branch: "no", kind: "request-review", automatic: true, target: { users: ["dave"], teams: [] }, reason: "Focused change failed." },
+      { id: "ask-leads", branch: "no", index: 0, effectId: expect.any(String), kind: "request-review", automatic: true, target: { users: ["dave"], teams: [] }, reason: "Focused change failed." },
     ]);
   });
 
@@ -252,7 +252,7 @@ describe("judge on a blocked pull request", () => {
     };
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }), undefined, ["custom-3"]);
     expect(verdict.actions).toEqual([
-      { id: "on-3", branch: "no", kind: "comment", automatic: false, target: { body: "changelog" }, reason: "Changelog failed." },
+      { id: "on-3", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "changelog" }, reason: "Changelog failed." },
     ]);
   });
 
