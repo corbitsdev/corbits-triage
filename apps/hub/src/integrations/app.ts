@@ -13,6 +13,7 @@ import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { DoBody, DoRunList, DoRunResponse, GITHUB_DOS_PATH } from "../github/pr-dos.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
+import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { DeployedVersions, WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
@@ -32,6 +33,7 @@ export type IntegrationHandlers = {
   prTriage: TenantHandler;
   openPulls: TenantHandler;
   prDetails: TenantHandler;
+  prPreview: TenantHandler;
   workflowDeploy: TenantHandler;
   workflowVersions: TenantHandler;
 };
@@ -269,6 +271,25 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       responses: { 200: json("Files, commits, conversation, issues, checks and reviews", PrDetails), ...invalid, ...failures, ...githubFailed },
     }),
     tenantRoute(handlers.prDetails),
+  );
+
+  app.post(
+    `${GITHUB_PR_PREVIEW_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Preview a pack on an open pull request",
+      description: "Evaluates the saved pack, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the checks it answers need it and actions on them list each branch they could take.",
+      tags: TAGS,
+      requestBody: body(PreviewBody),
+      responses: {
+        200: json("Checks, verdict and each action's branch and Dos", PreviewResponse),
+        400: json("Invalid request or candidate pack", Failure),
+        ...failures,
+        404: json("Pull request not found", Failure),
+        409: json("GitHub, the workspace or the repository is not ready, the pack is unreadable or the pull request is not open", Failure),
+        ...githubFailed,
+      },
+    }),
+    tenantRoute(handlers.prPreview),
   );
 
   app.post(
