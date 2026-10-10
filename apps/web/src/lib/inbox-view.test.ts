@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { groupInbox, groupOpen, hasDraftComment, inboxAction, inboxStatus, listCounts, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, groupInbox, groupOpen, hasDraftComment, inboxAction, inboxStatus, listCounts, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -175,13 +175,22 @@ describe("groupOpen", () => {
   });
 });
 
-describe("listCounts", () => {
-  test("Needs you counts its rows; All open counts every open pull request", () => {
-    expect(listCounts([
-      { item: item({}), handled: null },
-      { item: item({ state: "new", runId: null }), handled: null },
-      { item: item({ state: "ready" }), handled: { kind: "approve" } },
-    ])).toEqual({ "needs-you": 1, "all-open": 3 });
-    expect(listCounts([])).toEqual({ "needs-you": 0, "all-open": 0 });
+describe("All open", () => {
+  const open: OpenItem[] = [
+    { item: item({}), handled: null },
+    { item: item({ key: "acme/widgets#2", state: "new", runId: null }), handled: null },
+    { item: item({ key: "acme/widgets#3", state: "ready" }), handled: { kind: "approve" } },
+    { item: item({ key: "acme/off#4", repo: "acme/off" }), handled: null },
+  ];
+
+  test("lists only the open pull requests of repositories with triage enabled", () => {
+    expect(allOpen(open, READY).map((entry) => entry.item.key)).toEqual(["acme/widgets#1", "acme/widgets#2", "acme/widgets#3"]);
+    expect(allOpen(open, new Set())).toEqual([]);
+  });
+
+  test("Needs you counts its rows in every repository; All open counts its list", () => {
+    expect(listCounts(open, READY)).toEqual({ "needs-you": 2, "all-open": 3 });
+    expect(listCounts(open, new Set())).toEqual({ "needs-you": 2, "all-open": 0 });
+    expect(listCounts([], READY)).toEqual({ "needs-you": 0, "all-open": 0 });
   });
 });

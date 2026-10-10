@@ -18,6 +18,10 @@ function triageReady(repo: RepoRecord): boolean {
   return !repoNeedsCheckSetup(repo) && repoPolicy(repo).enabled;
 }
 
+export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
+  return new Set(repos.filter((repo) => repoPolicy(repo).enabled).map((repo) => repo.name));
+}
+
 /** The repositories whose pull requests can be triaged. */
 export function triageReadyRepos(repos: RepoRecord[]): Set<string> {
   return new Set(repos.filter(triageReady).map((repo) => repo.name));
