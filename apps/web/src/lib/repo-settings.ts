@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { repoPolicy, type CheckPack } from "@corbits/triage-contracts";
-import { checkPackFromDraft, draftFromCheckPack, emptyDraft, type DraftPack } from "./check-catalog.ts";
+import { emptyPack, repoPolicy, type CheckPack, type CleanupMode } from "@corbits/triage-contracts";
 import { alreadyWritten, linkCheckPack, StaleCheckPackError, writeCheckPack, type LoadedCheckPack } from "./check-pack.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import type { RepoRecord, StoredCheckPack } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
-import { checkChanges, hasAnyCheck, hasBlankCustomCheck, unsavedChanges, type RepoDraft } from "./repo-draft.ts";
+import { changeCount, fromPack, packChanges, policyChanges, toPack, validate, type RepoDraft } from "./pack-draft.ts";
 import { usePortal, useSignOutWhenRejected } from "./portal.tsx";
 
 function messageOf(cause: unknown): string {
@@ -14,8 +13,7 @@ function messageOf(cause: unknown): string {
 }
 
 function startingDraft(repo: RepoRecord): RepoDraft {
-  const policy = repoPolicy(repo);
-  return { pack: emptyDraft(repo.name, policy.cleanupMode), enabled: policy.enabled, triageDrafts: policy.triageDrafts };
+  return fromPack(emptyPack(repo.name), repoPolicy(repo));
 }
 
 export type RepoSettings = {
@@ -29,8 +27,8 @@ export type RepoSettings = {
   blocked: string | null;
   /** No readable check pack yet; saving checks sets the repository up. */
   needsSetup: boolean;
-  /** The newest artifact for the repository is not a check pack; saving replaces it in place. */
-  corrupt: boolean;
+  /** Why the newest artifact for the repository is not a check pack; saving replaces it in place. */
+  corrupt: string | null;
   /** The pack changed on the hub since it was loaded; only a reload can save again. */
   stale: boolean;
   saving: boolean;
@@ -51,7 +49,7 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
   const [draft, setDraft] = useState<RepoDraft>(saved);
   const [status, setStatus] = useState<RepoSettings["status"]>("loading");
   const [loaded, setLoaded] = useState<LoadedCheckPack | null>(null);
-  const [corrupt, setCorrupt] = useState(false);
+  const [corrupt, setCorrupt] = useState<string | null>(null);
   /** A pack written to the hub whose config link failed; saving it again only redoes the link. */
   const [unlinked, setUnlinked] = useState<StoredCheckPack | null>(null);
   const [stale, setStale] = useState(false);
@@ -66,7 +64,7 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
     setError("");
     setStale(false);
     setUnlinked(null);
-    setCorrupt(false);
+    setCorrupt(null);
     setLoaded(null);
     if (!tenantId) return;
     async function load(id: string) {
@@ -79,11 +77,11 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
         }
         const found = await queryClient.fetchQuery(query);
         if (cancelled) return;
-        const next = found?.kind === "pack" ? { ...start, pack: draftFromCheckPack(found.pack, start.pack.mode) } : start;
+        const next = found?.kind === "pack" ? { ...start, pack: found.pack } : start;
         setSaved(next);
         setDraft(next);
         if (found) setLoaded({ id: found.id, version: found.version });
-        setCorrupt(found !== null && found.kind !== "pack");
+        setCorrupt(found?.kind === "corrupt" ? found.reason : null);
         setStatus("ready");
       } catch (cause) {
         if (cancelled) return;
@@ -99,7 +97,7 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
   }, [repo.name, tenantId, attempt]);
 
   /** Writes the pack unless an earlier save already did, then links it; throws with what the user should do next. */
-  async function savePack(tenant: string, pack: CheckPack, mode: DraftPack["mode"]) {
+  async function savePack(tenant: string, pack: CheckPack, mode: CleanupMode) {
     const transport = createHubTransport();
     let written = alreadyWritten(unlinked, pack);
     try {
@@ -107,10 +105,10 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
         written = await writeCheckPack(transport, tenant, repo.name, pack, loaded);
         queryClient.setQueryData(checkPackQuery(queryClient, tenant, repo.name).queryKey, written);
         setLoaded({ id: written.id, version: written.version });
-        setCorrupt(false);
+        setCorrupt(null);
         setUnlinked(written);
         // The pack is in effect from here, so a later failure must not leave it counted as unsaved.
-        const writtenPack = draftFromCheckPack(pack, mode);
+        const writtenPack = written.pack;
         setSaved((current) => ({ ...current, pack: writtenPack }));
         setDraft((current) => ({ ...current, pack: writtenPack }));
       }
@@ -127,9 +125,9 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
     }
   }
 
-  function builtPack(pack: DraftPack): CheckPack {
+  function builtPack(current: RepoDraft): CheckPack {
     try {
-      return checkPackFromDraft(pack);
+      return toPack(current);
     } catch (cause) {
       throw new Error(`Could not save the checks. ${messageOf(cause)} Check the values, then try again.`);
     }
@@ -145,7 +143,7 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
 
   async function savePolicy() {
     try {
-      await saveRepoPolicy(repo.name, { ...repoPolicy(repo), cleanupMode: draft.pack.mode, enabled: draft.enabled, triageDrafts: draft.triageDrafts });
+      await saveRepoPolicy(repo.name, { ...repoPolicy(repo), ...draft.policy });
     } catch (cause) {
       signOutWhenRejected(cause);
       throw new Error(`Could not save the posting and triage settings. ${messageOf(cause)}`);
@@ -157,13 +155,11 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
     setSaving(true);
     setError("");
     setStale(false);
-    const policyChanged = saved.pack.mode !== draft.pack.mode || saved.enabled !== draft.enabled || saved.triageDrafts !== draft.triageDrafts;
     try {
-      const pack = builtPack(draft.pack);
-      if (checkChanges(saved.pack, draft.pack) > 0 || unlinked !== null) await savePack(tenantId, pack, draft.pack.mode);
-      if (policyChanged) await savePolicy();
-      setSaved((current) => ({ ...current, enabled: draft.enabled, triageDrafts: draft.triageDrafts, pack: { ...current.pack, mode: draft.pack.mode } }));
-      setDraft((current) => ({ ...current, pack: { ...current.pack, mode: draft.pack.mode } }));
+      const pack = builtPack(draft);
+      if (packChanges(saved.pack, draft.pack) > 0 || unlinked !== null) await savePack(tenantId, pack, draft.policy.cleanupMode);
+      if (policyChanges(saved.policy, draft.policy) > 0) await savePolicy();
+      setSaved((current) => ({ ...current, policy: draft.policy }));
     } catch (cause) {
       setError(messageOf(cause));
       setSaving(false);
@@ -171,7 +167,7 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
     }
     setSaving(false);
     notify("Saved. Applies to the next pull request.");
-    if (!saved.enabled && draft.enabled) await startTriage();
+    if (!saved.policy.enabled && draft.policy.enabled) await startTriage();
     try {
       await refreshNow();
     } catch (cause) {
@@ -188,18 +184,16 @@ export function useRepoSettings(repo: RepoRecord): RepoSettings {
     setAttempt((count) => count + 1);
   }
 
-  const blocked = draft.enabled && !hasAnyCheck(draft.pack)
-    ? "Switch on a check before turning triage on."
-    : hasBlankCustomCheck(draft.pack) ? "Every own check needs something to check." : null;
+  const blocked = validate(draft)?.reason ?? null;
 
   return {
     status,
     draft,
     saved,
-    changes: unsavedChanges(saved, draft),
+    changes: changeCount(saved, draft),
     unlinked: unlinked !== null,
     blocked,
-    needsSetup: loaded === null || corrupt,
+    needsSetup: loaded === null || corrupt !== null,
     corrupt,
     stale,
     saving,
