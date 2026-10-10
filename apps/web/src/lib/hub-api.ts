@@ -841,6 +841,30 @@ export function isLiveDeployment(status: string): boolean {
   return LIVE_DEPLOYMENT_STATUSES.has(status);
 }
 
+export type PackageVersion = { name: string; version: string };
+
+/** A live deployment with the versions its frozen closure pins; `package` is null when it was not deployed from the package registry. */
+export type DeployedWorkflow = {
+  id: string;
+  workflow: string;
+  createdAt: string;
+  cancelling: boolean;
+  package: PackageVersion | null;
+  tools: PackageVersion[];
+};
+
+/** Live deployments of every workflow, newest first. */
+export async function listDeployedWorkflows(transport: Transport, tenantId: string): Promise<DeployedWorkflow[]> {
+  const tid = enc(requireTenantId(tenantId));
+  const { deployments } = await transport.fetch<{ deployments: DeployedWorkflow[] }>("GET", `/api/integrations/workflow-versions/${tid}`);
+  return deployments;
+}
+
+/** The deployment a workflow's mail goes to: its newest one not being cancelled. */
+export function currentDeployment(deployments: readonly DeployedWorkflow[], workflow: string): DeployedWorkflow | undefined {
+  return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling);
+}
+
 // Interchange's `WorkflowDeploymentStatus` values after which the anchor starts no more runs.
 const ENDED_DEPLOYMENT_STATUSES = new Set(["released", "failed", "destroy_failed"]);
 

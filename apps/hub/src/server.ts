@@ -43,6 +43,7 @@ import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
+import { createWorkflowVersions } from "./workflow-versions.js";
 import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
@@ -283,9 +284,10 @@ function reconcileTenants() {
 function livePrTriageDeployments(tenantId: string) {
   return resolveLiveDeployments(composition.db, tenantId, prTriageWorkflow.id);
 }
+const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
 const deploymentRotation = createDeploymentRotation({
   db: composition.db,
-  launchSpecs: createWorkflowRunLaunchSpecStore(composition.db),
+  launchSpecs,
   allocation: composition.workflowAllocationService,
   lifecycle: composition.workflowLifecycleService,
   mayDeploy: function mayDeploy(principalId, tenantId) {
@@ -397,6 +399,14 @@ const integrations = createIntegrationsApp({
     trustedPortalOrigins,
     authorize: authorizePortal,
     allocation: composition.workflowAllocationService,
+  }),
+  workflowVersions: createWorkflowVersions({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    getSession: composition.getSession,
+    trustedPortalOrigins,
+    authorize: authorizePortal,
+    launchSpecs,
   }),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them

@@ -14,10 +14,11 @@ import {
 import { githubWebhookUrl } from "../lib/github-manifest.ts";
 import { useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../lib/github-manifest.ts";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, type HubCredential, type HubGrant, type HubPrincipal, type HubRole } from "../lib/hub-api.ts";
+import { currentDeployment, githubAppSlugFromCredentials, hasActiveGithubCredential, type DeployedWorkflow, type HubCredential, type HubGrant, type HubPrincipal, type HubRole } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
-import { useGrants, usePrincipals, useRoles } from "../lib/tenant-entities.ts";
+import { useDeployedWorkflows, useGrants, usePrincipals, useRoles, type TenantSection } from "../lib/tenant-entities.ts";
+import { WORKFLOW_PACKAGES } from "../lib/workflow-packages.ts";
 import { useSession } from "../lib/session.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
@@ -219,6 +220,38 @@ function AccessRules({
   );
 }
 
+type VersionRow = { name: string; version: string };
+
+/** Each workflow's current version, then the tools those deployments carry, each once. */
+function versionRows(deployments: readonly DeployedWorkflow[]): VersionRow[] {
+  const current = WORKFLOW_PACKAGES.map((workflow) => ({ name: workflow.name, deployment: currentDeployment(deployments, workflow.name) }));
+  const tools = new Map<string, VersionRow>();
+  for (const { deployment } of current) {
+    for (const tool of deployment?.tools ?? []) tools.set(`${tool.name}@${tool.version}`, tool);
+  }
+  const workflows = current.map(({ name, deployment }) => ({
+    name,
+    version: deployment ? deployment.package?.version ?? "Not from the package registry" : "Not deployed",
+  }));
+  return [...workflows, ...tools.values()];
+}
+
+function DeployedVersions({ section }: { section: TenantSection<DeployedWorkflow> }) {
+  return (
+    <section className="panel settings-panel" aria-label="Deployed versions">
+      <h2>Deployed versions</h2>
+      {section.denied && <DeniedNotice section="workflow deployments" />}
+      {!section.denied && !section.loading && !section.unavailable && (
+        <dl className="facts">
+          {versionRows(section.rows).map((row) => (
+            <div key={`${row.name}@${row.version}`}><dt className="mono">{row.name}</dt><dd className="mono">{row.version}</dd></div>
+          ))}
+        </dl>
+      )}
+    </section>
+  );
+}
+
 function CredentialRow({
   credential,
   displayName,
@@ -310,6 +343,7 @@ export default function Settings() {
   const grants = useGrants();
   const principals = usePrincipals();
   const roles = useRoles();
+  const deployed = useDeployedWorkflows();
   const credentials = snapshot?.credentials ?? [];
   const secretNames = uniqueSecretDisplayNames(credentials);
   const deniedRepos = snapshot?.denied.repos ?? false;
@@ -416,6 +450,7 @@ export default function Settings() {
                   <input value={floor} inputMode="decimal" onChange={(event) => setFloor(event.target.value)} disabled={readOnly} />
                 </label>
               </form>
+              <DeployedVersions section={deployed} />
             </div>
             <div role="tabpanel" id={panelId("GitHub")} aria-labelledby={tabId("GitHub")} hidden={tab !== "GitHub"}>
               <div className="panel settings-panel" aria-label="GitHub">

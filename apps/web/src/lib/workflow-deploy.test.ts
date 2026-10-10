@@ -12,11 +12,17 @@ const INDEX: PackageIndexEntry[] = [
 
 type Asset = { id: string; kind: string; name: string };
 
-/** The stock asset, tarball and deployment routes plus the hub's workflow-deploy route, as the portal calls them. */
+function packageOf(pin: string) {
+  const at = pin.lastIndexOf("@");
+  return { name: pin.slice(0, at), version: pin.slice(at + 1) };
+}
+
+/** The stock asset, tarball and deployment routes plus the hub's workflow-deploy and workflow-versions routes, as the portal calls them. */
 function fakeHub(tarballSeed: Record<string, string> = {}) {
   const assets: Asset[] = [];
   const tarballs = new Map(Object.entries(tarballSeed));
   const deployments: WorkflowDeployment[] = [];
+  const pins = new Map<string, string>();
   const requests: string[] = [];
   const deployed: unknown[] = [];
 
@@ -25,6 +31,19 @@ function fakeHub(tarballSeed: Record<string, string> = {}) {
     const url = new URL(path, "http://hub");
     if (path === "/api/tenants/t") return (method === "GET" ? { config: {} } : undefined) as T;
     if (path === "/api/tenants/t/workflows/deployments") return deployments as T;
+    if (path === "/api/integrations/workflow-versions/t") {
+      const live = deployments.filter((row) => row.status === "deployed").reverse();
+      return {
+        deployments: live.map((row) => ({
+          id: row.id,
+          workflow: assets.find((asset) => asset.id === row.definitionAssetId)?.name,
+          createdAt: row.createdAt,
+          cancelling: false,
+          package: packageOf(pins.get(row.id)!),
+          tools: [{ name: INDEX[0]!.name, version: INDEX[0]!.version }],
+        })),
+      } as T;
+    }
     if (method === "GET" && url.pathname === "/api/tenants/t/assets") {
       return assets.filter((asset) => asset.kind === url.searchParams.get("kind")) as T;
     }
@@ -38,7 +57,7 @@ function fakeHub(tarballSeed: Record<string, string> = {}) {
     }
     if (method === "POST" && path === "/api/integrations/workflow-deploy/t") {
       deployed.push(body);
-      const { definitionAssetId } = body as { definitionAssetId: string };
+      const { definitionAssetId, pin } = body as { definitionAssetId: string; pin: string };
       const deployment: WorkflowDeployment = {
         id: `run_${deployments.length + 1}`,
         tenantId: "t",
@@ -47,6 +66,7 @@ function fakeHub(tarballSeed: Record<string, string> = {}) {
         createdAt: `2026-10-09T00:00:0${deployments.length}.000Z`,
       };
       deployments.push(deployment);
+      pins.set(deployment.id, pin);
       return deployment as T;
     }
     if (method === "DELETE") {
@@ -73,7 +93,7 @@ function fakeHub(tarballSeed: Record<string, string> = {}) {
   }
 
   const transport: Transport = { fetch: json, subscribe: () => () => {} };
-  return { transport, fetchRaw: raw as typeof fetch, assets, tarballs, deployments, requests, deployed };
+  return { transport, fetchRaw: raw as typeof fetch, assets, tarballs, deployments, pins, requests, deployed };
 }
 
 function puts(requests: string[]): string[] {
@@ -113,16 +133,17 @@ describe("ensureWorkflows", () => {
     ]);
   });
 
-  test("an unchanged build publishes and deploys nothing; an unpublished workflow version redeploys only that workflow and cancels its previous deployment", async () => {
+  test("an unchanged build publishes and deploys nothing; a deployment of another version is redeployed though its tarball is already published", async () => {
     const hub = fakeHub();
     await ensureWorkflows(hub.transport, "t", OFFERINGS, false, hub.fetchRaw);
     hub.requests.length = 0;
     expect(await ensureWorkflows(hub.transport, "t", OFFERINGS, false, hub.fetchRaw)).toEqual([]);
     expect(puts(hub.requests)).toEqual([]);
 
-    hub.tarballs.delete(INDEX[1]!.filename);
+    // A converge published this build, then its deploy failed: the live deployment still runs the older version.
+    hub.pins.set("run_1", "@corbits/pr-triage-workflow@0.1.0-sha-00000000");
     expect(await ensureWorkflows(hub.transport, "t", OFFERINGS, false, hub.fetchRaw)).toEqual(["pr-triage"]);
-    expect(puts(hub.requests)).toEqual([INDEX[1]!.filename]);
+    expect(puts(hub.requests)).toEqual([]);
     expect(hub.deployments.map((row) => [row.id, row.status])).toEqual([
       ["run_1", "released"],
       ["run_2", "deployed"],
