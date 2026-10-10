@@ -5,6 +5,7 @@ import { triggerRequestOf } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
+import type { LiveDeployment } from "./deployment.js";
 import { MODEL_NOT_ASKED, runKey, type ObservedRun } from "./reconcile-plan.js";
 
 const TERMINAL_EVENTS: Record<string, Terminal["status"]> = {
@@ -17,7 +18,7 @@ const NO_VERDICT = "run completed without a verdict";
 
 type Trigger = { repo: string; number: number; headSha: string; startedAt: string };
 type Unsettled = Pick<ObservedRun, "unsettled" | "unconfirmed">;
-type Terminal = Unsettled & Pick<ObservedRun, "verdictVersion"> & { status: Exclude<ObservedRun["status"], "running"> };
+type Terminal = Unsettled & { status: Exclude<ObservedRun["status"], "running"> };
 type Head = { trigger: Trigger; terminal?: Terminal };
 /** No heads when the trigger names no pull request head, such as a portal run typed without a sha; a catch-up mail names several. */
 type KnownRun = { anchorRunId: string; heads: Head[] };
@@ -25,8 +26,6 @@ type KnownRun = { anchorRunId: string; heads: Head[] };
 export type ObservedRuns = {
   /** Runs by repository, then by `runKey`. */
   byRepo: Map<string, Map<string, ObservedRun[]>>;
-  /** Every verdict in one deployment's log names the same version; none until its first verdict lands. */
-  workflowVersion?: number;
   /** Runs in the log, one per mail it received, including those that name no pull request head. */
   runCount: number;
 };
@@ -123,8 +122,7 @@ function unsettledBy(verdict: Record<string, unknown>, headSha: string): Unsettl
 
 function terminalOf(status: Terminal["status"], verdict: Record<string, unknown> | undefined, headSha: string): Terminal {
   if (!verdict) return { status, unsettled: NO_VERDICT };
-  const version = verdict["workflowVersion"];
-  return { status, ...unsettledBy(verdict, headSha), ...(typeof version === "number" && { verdictVersion: version }) };
+  return { status, ...unsettledBy(verdict, headSha) };
 }
 
 /** The verdict step's output is the verdict: one per head in mail order, or one degraded verdict for every head. Any other count pairs nothing, so no head settles on another's verdict. */
@@ -141,14 +139,25 @@ function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger
 
 export type ObserveRuns = (anchorRunId: string, domain: string) => Promise<ObservedRuns>;
 
-/** Each deployment's runs, in the order given. */
-export async function observeDeployments(observe: ObserveRuns, deployments: readonly { runId: string }[], domain: string): Promise<ObservedRuns[]> {
+function withVersion(runs: ObservedRuns, workflowVersion: string): ObservedRuns {
+  const byRepo: ObservedRuns["byRepo"] = new Map();
+  for (const [repo, byHead] of runs.byRepo) {
+    byRepo.set(repo, new Map([...byHead].map(([key, list]) => [key, list.map((run) => ({ ...run, workflowVersion }))])));
+  }
+  return { ...runs, byRepo };
+}
+
+/** Each deployment's runs, in the order given, stamped with the workflow version the deployment runs. */
+export async function observeDeployments(observe: ObserveRuns, deployments: readonly Pick<LiveDeployment, "runId" | "workflowVersion">[], domain: string): Promise<ObservedRuns[]> {
   const observed: ObservedRuns[] = [];
-  for (const deployment of deployments) observed.push(await observe(deployment.runId, domain));
+  for (const { runId, workflowVersion } of deployments) {
+    const runs = await observe(runId, domain);
+    observed.push(workflowVersion === undefined ? runs : withVersion(runs, workflowVersion));
+  }
   return observed;
 }
 
-/** Runs of several deployments of the same workflow, as if from one log; the first that has a verdict names the version. */
+/** Runs of several deployments of the same workflow, as if from one log. */
 export function mergeObservedRuns(observed: readonly ObservedRuns[]): ObservedRuns {
   const byRepo: ObservedRuns["byRepo"] = new Map();
   for (const runs of observed) {
@@ -158,9 +167,8 @@ export function mergeObservedRuns(observed: readonly ObservedRuns[]): ObservedRu
       for (const [key, list] of byHead) merged.set(key, [...(merged.get(key) ?? []), ...list]);
     }
   }
-  const workflowVersion = observed.find((runs) => runs.workflowVersion !== undefined)?.workflowVersion;
   const runCount = observed.reduce((sum, runs) => sum + runs.runCount, 0);
-  return { byRepo, runCount, ...(workflowVersion !== undefined && { workflowVersion }) };
+  return { byRepo, runCount };
 }
 
 export function createSettledStatusReader(db: DB["db"]): ReadSettled {
@@ -224,26 +232,22 @@ export function createTriageRuns(deps: TriageRunsDeps) {
     }
 
     const byRepo: ObservedRuns["byRepo"] = new Map();
-    let workflowVersion: number | undefined;
     for (const runId of [...settledIds, ...latest.keys()]) {
       for (const { trigger, terminal } of known.get(runId)?.heads ?? []) {
         const { repo, number, headSha, startedAt } = trigger;
         const byHead = byRepo.get(repo) ?? new Map<string, ObservedRun[]>();
         byRepo.set(repo, byHead);
         const key = runKey(number, headSha);
-        const verdictVersion = terminal?.verdictVersion;
-        workflowVersion ??= verdictVersion;
         const seen: ObservedRun = {
           runId,
           status: terminal?.status ?? "running",
           startedAt,
           ...(terminal?.unsettled !== undefined && { unsettled: terminal.unsettled }),
           ...(terminal?.unconfirmed && { unconfirmed: true }),
-          ...(verdictVersion !== undefined && { verdictVersion }),
         };
         byHead.set(key, [...(byHead.get(key) ?? []), seen]);
       }
     }
-    return { byRepo, runCount: settledIds.size + latest.size, ...(workflowVersion !== undefined && { workflowVersion }) };
+    return { byRepo, runCount: settledIds.size + latest.size };
   };
 }

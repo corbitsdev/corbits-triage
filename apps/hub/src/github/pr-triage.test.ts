@@ -240,8 +240,8 @@ describe("createGithubPrTriage", () => {
 
   test("a second click before the run starts is refused once the hub has passed over the queued head", async () => {
     const at = (agoMs: number) => new Date(NOW.getTime() - agoMs).toISOString();
-    const oldVerdict: ObservedRun = { runId: "run-old", status: "completed", startedAt: at(3_600_000), verdictVersion: 1 };
-    let rows: PrTriageRow[] = [{ number: 8, headSha: "abc123", status: "triaged", attempts: 1, runId: "run-old", workflowVersion: 1, firstSeenAt: at(7_200_000), queuedAt: at(3_600_000), updatedAt: at(3_600_000) }];
+    const oldVerdict: ObservedRun = { runId: "run-old", status: "completed", startedAt: at(3_600_000), workflowVersion: "0.1.0-sha-1" };
+    let rows: PrTriageRow[] = [{ number: 8, headSha: "abc123", status: "triaged", attempts: 1, runId: "run-old", workflowVersion: "0.1.0-sha-1", firstSeenAt: at(7_200_000), queuedAt: at(3_600_000), updatedAt: at(3_600_000) }];
     const s = stub();
     const store: GithubPrTriageDeps["store"] = { async load() { return { rows, version: VERSION }; }, async save(_t, _r, next) { rows = next; return VERSION; } };
     const deps = { store, observeRuns: observed([oldVerdict]) };
@@ -249,7 +249,7 @@ describe("createGithubPrTriage", () => {
     rows = planTenant({
       repos: [{ name: REPO, prs: [{ number: 8, headSha: "abc123", updatedAt: at(3_600_000), draft: false }], rows }],
       runs: new Map([[REPO, new Map([["8@abc123", [oldVerdict]]])]]),
-      now: NOW, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: 1,
+      now: NOW, policy: DEFAULT_RECONCILE_POLICY, workflowVersion: "0.1.0-sha-1",
     }).get(REPO)!.rows;
     const second = await handler(ENABLED, s, deps)(request(), TENANT_ID);
     expect({ status: second.status, delivered: s.delivered.length, row: rows[0]!.status }).toEqual({ status: 409, delivered: 1, row: "queued" });

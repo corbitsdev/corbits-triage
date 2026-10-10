@@ -284,7 +284,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_github_credential" });
       return false;
     }
-    // Only live deployments' logs are read; heads triaged under a released one stay settled in the stored state until a live one reports a newer workflow version.
+    // Only live deployments' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
     const observed = await observeDeployments(deps.observeRuns, deployments, tenant.domain);
     let deployment = newestLive(deployments);
     try {
@@ -311,7 +311,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       runs: pass.runs.byRepo,
       now: deps.now(),
       policy: deps.policy,
-      workflowVersion: pass.runs.workflowVersion,
+      workflowVersion: pass.deployment.workflowVersion,
     });
     let failure: Failure | undefined;
     for (const repo of loaded) {
