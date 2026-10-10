@@ -2,12 +2,30 @@ import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { schema, type DB, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
+import type { RunTriggerMaterialize } from "@corbits/webhooks";
 import { claimRotation, clearRotation, type RotationRecord } from "./tenant-config.js";
 
 export class NoLiveDeploymentError extends Error {
   constructor(readonly workflow: string) {
     super(`no live ${workflow} deployment`);
   }
+}
+
+/** The materializer's `notReady` outcome: the deployment has not recorded its credential resolution yet. */
+export class DeploymentNotReadyError extends Error {
+  readonly code = "deployment_not_ready";
+  constructor() {
+    super("The workflow deployment is still starting.");
+  }
+}
+
+/** @corbits/webhooks 0.3.0 ignores `notReady` and routes the mail without grants; this fails it so the caller retries. Drop once the package handles it. */
+export function readyMaterializer(materialize: RunTriggerMaterialize): RunTriggerMaterialize {
+  return async function materializeReady(args) {
+    const grants = await materialize(args);
+    if (grants.outcome === "notReady") throw new DeploymentNotReadyError();
+    return grants;
+  };
 }
 
 /** `cancelling` once cancellation was requested: the run stays live until the lifecycle sweep stops it. */
