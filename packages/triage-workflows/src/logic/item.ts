@@ -29,8 +29,3 @@ export function degradedItem(reason: string): Item {
     error: reason,
   };
 }
-
-/** Whether the judge asks about this item; an item over the evaluation budget is left to a human instead. */
-export function asksJudge(it: Item): boolean {
-  return it.det?.needsJudgment === true && it.judgeLimitExceeded !== true;
-}

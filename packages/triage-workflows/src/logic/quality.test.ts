@@ -52,41 +52,65 @@ const MIXED_SOURCES = {
   custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }],
 };
 
+function withinBudget({ questions, measurements }: { questions: unknown[]; measurements: { contextBytes: number; requestContentBytes: number } }): boolean {
+  return questions.length <= MAX_SYSTEM_ONE_QUESTIONS &&
+    measurements.contextBytes <= MAX_SYSTEM_ONE_CONTEXT_BYTES &&
+    measurements.requestContentBytes <= MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+}
+
+function askedIds(requests: Array<{ questions: Array<{ id: string }> }>): string[] {
+  return requests.flatMap((request) => request.questions.map((question) => question.id));
+}
+
 test("quality preflight measures exact UTF-8 context and request bytes under budget", () => {
-  const evaluation = prepareQualityEvaluation(facts('@@ -0,0 +1 @@\n+const config = { name: "Visible 設定" };'), SOURCES);
+  const { requests, judgeError } = prepareQualityEvaluation(facts('@@ -0,0 +1 @@\n+const config = { name: "Visible 設定" };'), SOURCES);
+  expect(requests).toHaveLength(1);
+  const [{ state, questions, measurements }] = requests as [typeof requests[number]];
   const encoder = new TextEncoder();
-  const stateBytes = encoder.encode(JSON.stringify(evaluation.state)).byteLength;
-  const longestQuestionBytes = Math.max(...evaluation.questions.map((question) => encoder.encode(JSON.stringify(question)).byteLength));
-  expect(evaluation.measurements).toEqual({
+  const stateBytes = encoder.encode(JSON.stringify(state)).byteLength;
+  const longestQuestionBytes = Math.max(...questions.map((question) => encoder.encode(JSON.stringify(question)).byteLength));
+  expect(measurements).toEqual({
     contextBytes: stateBytes + longestQuestionBytes,
-    requestContentBytes: encoder.encode(JSON.stringify({ state: evaluation.state, questions: evaluation.questions })).byteLength,
+    requestContentBytes: encoder.encode(JSON.stringify({ state, questions })).byteLength,
   });
-  expect(evaluation.measurements.contextBytes).toBeLessThanOrEqual(MAX_SYSTEM_ONE_CONTEXT_BYTES);
-  expect(evaluation.measurements.requestContentBytes).toBeLessThanOrEqual(MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES);
-  expect(evaluation.judgeError).toBeUndefined();
+  expect(withinBudget(requests[0]!)).toBe(true);
+  expect(judgeError).toBeUndefined();
 });
 
-test("quality preflight rejects the complete max-candidate evaluation without sending a fitting prefix", () => {
+test("quality preflight splits the max-candidate evaluation into requests under budget that ask every candidate once, in order", () => {
   const evaluation = prepareQualityEvaluation(facts(maxCandidatePatch()), SOURCES);
+  expect(evaluation.judgeError).toBeUndefined();
   expect(evaluation.candidates).toHaveLength(200);
-  expect(evaluation.questions).toHaveLength(200);
-  expect(evaluation.questions.at(-1)?.id).toBe("focused-candidate-200");
-  expect(evaluation.measurements.contextBytes > MAX_SYSTEM_ONE_CONTEXT_BYTES ||
-    evaluation.measurements.requestContentBytes > MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES).toBe(true);
-  expect(evaluation.judgeError).toBe("quality evaluation exceeds the safe System One byte budget");
+  expect(evaluation.requests.length).toBeGreaterThan(1);
+  expect(evaluation.requests.every(withinBudget)).toBe(true);
+  expect(askedIds(evaluation.requests)).toEqual(evaluation.candidates.map((_, index) => `focused-candidate-${String(index + 1).padStart(3, "0")}`));
+  expect(prepareQualityEvaluation(facts(maxCandidatePatch()), SOURCES)).toEqual(evaluation);
 });
 
-test("quality preflight accepts exactly 32 mixed questions and rejects all 33 without taking a prefix", () => {
-  const accepted = prepareQualityEvaluation(facts(compactCandidatePatch(29)), MIXED_SOURCES);
-  expect(accepted.questions).toHaveLength(MAX_SYSTEM_ONE_QUESTIONS);
-  expect(accepted.questions.at(-1)?.id).toBe("custom-1");
-  expect(accepted.judgeError).toBeUndefined();
+test("quality preflight asks every non-candidate question in the first request and the remaining candidates after it", () => {
+  const evaluation = prepareQualityEvaluation(facts(compactCandidatePatch(30)), MIXED_SOURCES);
+  expect(evaluation.judgeError).toBeUndefined();
+  const [first, second, ...rest] = evaluation.requests.map((request) => request.questions.map((question) => question.id));
+  expect(first).toHaveLength(MAX_SYSTEM_ONE_QUESTIONS);
+  expect(first!.slice(0, 4)).toEqual(["docs", "tests", "custom-1", "focused-candidate-001"]);
+  expect(second).toEqual(["focused-candidate-030"]);
+  expect(rest).toEqual([]);
+});
 
-  const rejected = prepareQualityEvaluation(facts(compactCandidatePatch(30)), MIXED_SOURCES);
-  expect(rejected.candidates).toHaveLength(30);
-  expect(rejected.questions).toHaveLength(33);
-  expect(rejected.questions.at(-1)?.id).toBe("custom-1");
-  expect(rejected.measurements.contextBytes).toBeLessThanOrEqual(MAX_SYSTEM_ONE_CONTEXT_BYTES);
-  expect(rejected.measurements.requestContentBytes).toBeLessThanOrEqual(MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES);
-  expect(rejected.judgeError).toBe("quality evaluation exceeds the safe System One byte budget");
+test("quality preflight cuts a candidate too large to ask alone on line boundaries and marks it trimmed", () => {
+  const paths = Array.from({ length: 200 }, (_, index) => `src/${"deep/".repeat(23)}${index}.ts`);
+  const patch = ["@@ -0,0 +1,80 @@", '+const config = { name: "Large" };', ...Array.from({ length: 80 }, (_, line) => `+// ${"evidence".repeat(6)} ${line}`)].join("\n");
+  const evaluation = prepareQualityEvaluation({ ...facts(patch), paths }, SOURCES);
+  const [candidate] = evaluation.candidates;
+  expect(candidate?.trimmed).toBe(true);
+  expect(patch.startsWith(candidate!.evidence)).toBe(true);
+  expect(patch[candidate!.evidence.length]).toBe("\n");
+  expect(evaluation.requests).toHaveLength(1);
+  expect(withinBudget(evaluation.requests[0]!)).toBe(true);
+});
+
+test("quality preflight refuses only when the metadata and non-candidate questions do not fit alone", () => {
+  const paths = Array.from({ length: 100 }, (_, index) => `src/${"nested/".repeat(60)}${index}.ts`);
+  const evaluation = prepareQualityEvaluation({ ...facts(""), paths }, SOURCES);
+  expect(evaluation).toMatchObject({ requests: [], judgeError: "pull request too large for the decision model" });
 });
