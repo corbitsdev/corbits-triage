@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
-import { emptyPack, stockTriggerMail, type PrTriageRow } from "@corbits/triage-contracts";
+import { emptyPack, PR_TRIAGE_WORKFLOW_VERSION, stockTriggerMail, type PrTriageRow } from "@corbits/triage-contracts";
 import { DEFAULT_RECONCILE_POLICY, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError } from "./triage-state-store.js";
@@ -51,7 +51,7 @@ function startedBatch(numbers: number[], at = "2026-10-07T01:00:00.000Z"): Workf
   return startedBy(stockTriggerMail({ kind: "pr", repo: REPO, items: numbers.map((number) => ({ prNumber: number, headSha: `sha${number}` })) }), at);
 }
 
-function current(number: number, workflowVersion = 2): Record<string, unknown> {
+function current(number: number, workflowVersion = PR_TRIAGE_WORKFLOW_VERSION): Record<string, unknown> {
   return { degraded: null, reason: "", headSha: `sha${number}`, workflowVersion, checks: [] };
 }
 
@@ -302,8 +302,8 @@ describe("triage reconciler", () => {
     const reasons = logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"]);
     expect(reasons).toEqual(["verdict made on head sha2-pushed", "unconfirmed checks: conflicts"]);
     const rows = saved.get(REPO) ?? [];
-    expect(rows.filter((row) => row.number !== 4).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === 2)).toBe(true);
-    expect(rows.find((row) => row.number === 4)).toMatchObject({ status: "triaged", runId: "run_not_asked", workflowVersion: 2 });
+    expect(rows.filter((row) => row.number !== 4).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === PR_TRIAGE_WORKFLOW_VERSION)).toBe(true);
+    expect(rows.find((row) => row.number === 4)).toMatchObject({ status: "triaged", runId: "run_not_asked", workflowVersion: PR_TRIAGE_WORKFLOW_VERSION });
   });
 
   test("a facts failure evaluates to a degraded verdict naming no head, which is queued again with the facts error", async () => {
@@ -320,16 +320,16 @@ describe("triage reconciler", () => {
   });
 
   test("one verdict from a newer workflow version re-queues heads settled under the older one", async () => {
-    const logs: Logs = { [repoKey(LIVE.runId)]: { run_v2: [started(9), rendered(current(9, 2)), completed] } };
+    const logs: Logs = { [repoKey(LIVE.runId)]: { run_current: [started(9), rendered(current(9)), completed] } };
     const { reconcile, delivered, saved, logged } = harness(logs, [head(1), head(2), head(9)]);
-    const settled = (number: number): PrTriageRow => ({ number, headSha: `sha${number}`, status: "triaged", attempts: 0, runId: `old_${number}`, workflowVersion: 1, firstSeenAt: LONG_AGO, updatedAt: LONG_AGO });
+    const settled = (number: number): PrTriageRow => ({ number, headSha: `sha${number}`, status: "triaged", attempts: 0, runId: `old_${number}`, workflowVersion: PR_TRIAGE_WORKFLOW_VERSION - 1, firstSeenAt: LONG_AGO, updatedAt: LONG_AGO });
     saved.set(REPO, [settled(1), settled(2)]);
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([1, 2]);
-    expect(logged.filter((entry) => entry["msg"] === "triage_requeued").every((entry) => entry["reason"] === "verdict from workflow version 1, current is 2")).toBe(true);
+    expect(logged.filter((entry) => entry["msg"] === "triage_requeued").every((entry) => entry["reason"] === `verdict from workflow version ${PR_TRIAGE_WORKFLOW_VERSION - 1}, current is ${PR_TRIAGE_WORKFLOW_VERSION}`)).toBe(true);
     const rows = saved.get(REPO) ?? [];
-    expect(rows.filter((row) => row.number !== 9).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === 2)).toBe(true);
-    expect(rows.find((row) => row.number === 9)).toMatchObject({ status: "triaged", runId: "run_v2", workflowVersion: 2 });
+    expect(rows.filter((row) => row.number !== 9).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === PR_TRIAGE_WORKFLOW_VERSION)).toBe(true);
+    expect(rows.find((row) => row.number === 9)).toMatchObject({ status: "triaged", runId: "run_current", workflowVersion: PR_TRIAGE_WORKFLOW_VERSION });
   });
 
   test("a finished run's log is read once and then left out of later passes", async () => {
