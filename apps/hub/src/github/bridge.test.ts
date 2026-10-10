@@ -298,12 +298,35 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
+  test("only deliveries that map to a triage event mail", async () => {
+    const sent: Sent[] = [];
+    const handle = bridge({ sent });
+    const pr = JSON.parse(prPayload);
+    function checkRun(action: string) {
+      return JSON.stringify({
+        action,
+        repository: { full_name: "octocat/hello" },
+        check_run: { head_sha: "sha7", pull_requests: [{ number: 7, head: { sha: "sha7" } }] },
+      });
+    }
+    const deliveries: Array<[string, string, string]> = [
+      ["pull_request", JSON.stringify({ ...pr, action: "labeled" }), "ignored"],
+      ["check_run", checkRun("created"), "ignored"],
+      ["check_run", checkRun("completed"), "forwarded"],
+      ["pull_request", JSON.stringify({ ...pr, action: "synchronize" }), "forwarded"],
+    ];
+    for (const [index, [event, body, status]] of deliveries.entries()) {
+      expect(await (await handle(githubRequest(body, { delivery: `e${index}`, event }), TARGET)).json()).toEqual({ status });
+    }
+    expect(sent.map((item) => (item.payload as { action: string }).action)).toEqual(["completed", "synchronize"]);
+  });
+
   test("events sent by the workspace's own app bot are ignored", async () => {
     const sent: Sent[] = [];
-    const own = JSON.stringify({ ...JSON.parse(prPayload), action: "labeled", sender: { type: "Bot", login: "corbits-triage[bot]" } });
+    const own = JSON.stringify({ ...JSON.parse(prPayload), action: "synchronize", sender: { type: "Bot", login: "corbits-triage[bot]" } });
     const res = await bridge({ sent })(githubRequest(own), TARGET);
     expect(await res.json()).toEqual({ status: "ignored" });
-    const other = JSON.stringify({ ...JSON.parse(prPayload), action: "labeled", sender: { type: "Bot", login: "dependabot[bot]" } });
+    const other = JSON.stringify({ ...JSON.parse(prPayload), action: "synchronize", sender: { type: "Bot", login: "dependabot[bot]" } });
     expect(await (await bridge({ sent })(githubRequest(other, { delivery: "del-2" }), TARGET)).json()).toEqual({ status: "forwarded" });
     expect(sent).toHaveLength(1);
   });

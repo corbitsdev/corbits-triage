@@ -52,8 +52,8 @@ export interface PrFacts {
   body?: string;
   commits?: string[];
   branch?: string;
-  /** What woke this run; absent for webhook actions no pack event names. */
-  event?: TriageEvent;
+  /** What woke this run; empty for webhook actions no pack event names. */
+  events?: TriageEvent[];
 }
 
 export interface Finding {

@@ -9,10 +9,9 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { repoPolicy, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import { repoPolicy, triageEventOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { triageEventOf } from "./logic/events.js";
 import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, type CheckRun, type PrData, type Review } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
 import type { Judgment } from "./actions/evaluate.js";
@@ -123,7 +122,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return reply([{ error: reason }], false);
   }
 
-  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, event: TriageEvent | null) {
+  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[]) {
     function prCalls(n: number): ToolCall[] {
       return [
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
@@ -186,7 +185,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
             reviews: data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [],
             commits: data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits ?? [],
             files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
-          }, { repo, openPrs, policy, pack, event });
+          }, { repo, openPrs, policy, pack, events });
         }
         return reply(numbers.map(itemFor), batch);
       }
@@ -198,14 +197,14 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   }
 
   /** Lists the open pull requests, then gathers facts for `targets`, or for all of them when none are named. */
-  function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, event: TriageEvent | null) {
+  function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[]) {
     return b.run([call("github_list_open_prs", { repo })], function onPrList(r) {
       const list = data<{ prs: Array<{ number: number; title: string; draft?: boolean }> }>(r.get("github_list_open_prs"));
       if (!list && targets === undefined) return fail("github_list_open_prs failed");
       const listed = list?.prs ?? [];
       const openPrs = listed.map(({ number, title }) => ({ number, title }));
       const triageable = listed.filter((p) => policy.triageDrafts || p.draft !== true).map((p) => p.number);
-      return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack, event);
+      return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack, events);
     });
   }
 
@@ -217,17 +216,18 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     if (!policy.enabled) return fail("Triage is disabled for this repository.");
     const pack = packFromInput(input?.checkPack);
     if (!pack) return fail(NEEDS_SETUP_REASON);
-    if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, "catch-up");
+    if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, ["catch-up"]);
     if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
     // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.
     if (Array.isArray(input.items)) {
       const numbers = input.items.flatMap((item) => (isRecord(item) && typeof item.prNumber === "number" ? [item.prNumber] : []));
       if (numbers.length === 0) return fail("facts: batch names no pull request");
-      return fetchListed(repo, numbers, true, policy, pack, "catch-up");
+      return fetchListed(repo, numbers, true, policy, pack, ["catch-up"]);
     }
     const number = input.prNumber;
     if (typeof number !== "number") return fail("facts: pr input has no prNumber");
-    return fetchListed(repo, [number], false, policy, pack, triageEventOf({ event: input.event, action: input.action, review: input.review }));
+    const event = triageEventOf({ event: input.event, action: input.action, review: input.review });
+    return fetchListed(repo, [number], false, policy, pack, event === null ? [] : [event]);
   }
 
   return {

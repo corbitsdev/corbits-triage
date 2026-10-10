@@ -22,7 +22,7 @@ const facts: PrFacts = {
   openPrs: [],
   labels: ["api"],
   assignees: ["Bob"],
-  event: "opened",
+  events: ["opened"],
 };
 
 const checks: ActionInput["checks"] = [
@@ -61,6 +61,11 @@ describe("evaluateActions", () => {
     ["every always matches", branching("every", ["ci"]), ["yes"]],
   ])("%s", (_, action, bodies) => {
     expect(targets(run([action])).map((t) => (t && "body" in t ? t.body : null))).toEqual(bodies);
+  });
+
+  test("wakes when its When names any of the run's events", () => {
+    const woken = evaluateActions({ facts: { ...facts, events: ["updated", "checks"] }, checks, pack: { ...emptyPack("acme/widgets"), actions: [branching(["checks"], ["ci"])] }, roles: {} });
+    expect(woken.map((a) => a.branch)).toEqual(["yes"]);
   });
 
   test("names the checks behind the branch", () => {

@@ -7,7 +7,7 @@ import { NEEDS_JUDGE_REASON } from "./render.js";
 
 const facts: PrFacts = {
   repo: "acme/widgets", number: 8, title: "Add search", author: "octocat", tier: "external", headSha: "abc", state: "open", draft: false,
-  mergeable: true, baseBehindBy: 0, checks: "success", requestedReviewers: 0, approvals: 0, openPrs: [], event: "opened",
+  mergeable: true, baseBehindBy: 0, checks: "success", requestedReviewers: 0, approvals: 0, openPrs: [], events: ["opened"],
 };
 
 const checks: ActionInput["checks"] = [

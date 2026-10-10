@@ -156,16 +156,16 @@ export interface ItemContext {
   openPrs: PrFacts["openPrs"];
   policy: RepoPolicy;
   pack: CheckPack;
-  event: TriageEvent | null;
+  events: TriageEvent[];
 }
 
 /** The rules step's item for one pull request, or the error that degrades it. */
-export function assembleItem(number: number, data: PullData, { repo, openPrs, policy, pack, event }: ItemContext): RulesItem {
+export function assembleItem(number: number, data: PullData, { repo, openPrs, policy, pack, events }: ItemContext): RulesItem {
   const { pr, files } = data;
   if (!pr) return { error: `github_get_pr failed for #${number}` };
   if (typeof files === "string") return { error: files };
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, openPrs, policy), paths, files, commits, ...(event === null ? {} : { event }) };
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, openPrs, policy), paths, files, commits, events };
   return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
 }
