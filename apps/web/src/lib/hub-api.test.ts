@@ -230,6 +230,13 @@ describe("projectQueue running pull requests", () => {
     })).toEqual([[8, false], [9, true]]);
   });
 
+  test("a verdict from the gate's rules branch is posted by its own mirror step", () => {
+    const evaluated = { seq: 1, type: "StepCompleted", body: { stepId: "evaluateRules", output: inline({ repo: "acme/widgets", number: 8, state: "needs-author-update", feedback: "Please rebase" }) } };
+    const mirrored = { seq: 2, type: "StepCompleted", body: { stepId: "mirrorRules", output: inline({ reply: JSON.stringify({ call: "github_mirror_auto:acme/widgets#8", ok: true }) }) } };
+    const items = projectQueue([{ runId: "run-rules", anchorRunId: "run-rules", events: [evaluated, mirrored] }], [], [], undefined, NOW);
+    expect(items.map((item) => [item.number, item.posted])).toEqual([[8, true]]);
+  });
+
   test("a pull request whose latest run ended without a verdict carries that failure until a newer run starts", () => {
     const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
     const cancelled: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
