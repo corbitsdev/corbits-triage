@@ -1,15 +1,15 @@
 // Requires PostgreSQL at TEST_DATABASE_URL.
 import { afterEach, expect, test } from "bun:test";
 import { type } from "arktype";
-import { generateKeyPairSync } from "node:crypto";
+import { createHmac, generateKeyPairSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { count, eq } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
 import { PreviewResponse } from "./github/pr-preview.js";
-import { findArtifactByTitle } from "@corbits/artifacts";
-import { checkPackName, emptyPack, stockTriggerMail, triageStateName } from "@corbits/triage-contracts";
+import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
+import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName } from "@corbits/triage-contracts";
 import { doEffectId, type Branch, type ResolvedTarget } from "../../../packages/triage-workflows/src/logic/actions.js";
 import { doMarker } from "../../../packages/triage-workflows/src/logic/execute-do.js";
 import { workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
@@ -94,7 +94,22 @@ function temporaryDirectory(): string {
   return directory;
 }
 
-async function startHub(extraEnv: Record<string, string> = {}, dataDir = temporaryDirectory()): Promise<string> {
+/** Appends each line of `stream` to `lines` as it arrives; resolves with the whole text once the stream ends. */
+async function collectLines(stream: ReadableStream<Uint8Array>, lines: string[]): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  let partial = "";
+  for await (const chunk of stream) {
+    const decoded = decoder.decode(chunk, { stream: true });
+    text += decoded;
+    const parts = (partial + decoded).split("\n");
+    partial = parts.pop() ?? "";
+    lines.push(...parts);
+  }
+  return text;
+}
+
+async function startHub(extraEnv: Record<string, string> = {}, dataDir = temporaryDirectory(), output: string[] = []): Promise<string> {
   const port = reservePort();
 
   const child = Bun.spawn(
@@ -117,7 +132,7 @@ async function startHub(extraEnv: Record<string, string> = {}, dataDir = tempora
     },
   );
   processes.push(child);
-  const stdout = new Response(child.stdout).text();
+  const stdout = collectLines(child.stdout, output);
   const stderr = new Response(child.stderr).text();
   const origin = `http://127.0.0.1:${port}`;
 
@@ -281,23 +296,25 @@ function fakeGithub() {
   return { origin: `http://127.0.0.1:${server.port}`, comments, writes, repoRequests, stop: () => server.stop(true) };
 }
 
-/** Connects the tenant's GitHub App to `githubOrigin` with REPO connected and triage enabled. */
-async function connectGithub(origin: string, headers: Record<string, string>, tenantId: string, githubOrigin: string): Promise<void> {
+/** Connects the tenant's GitHub App to `githubOrigin` with REPO connected and triage enabled; returns the provider's id. */
+async function connectGithub(origin: string, headers: Record<string, string>, tenantId: string, githubOrigin: string): Promise<string> {
   const provider = await fetch(`${origin}/api/tenants/${tenantId}/providers`, {
     method: "POST", headers, body: JSON.stringify({ name: "github", plugin: "http", apiBaseUrl: githubOrigin }),
   });
   expect(provider.status).toBe(201);
+  const providerId = type({ id: "string" }).assert(await provider.json()).id;
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
   const credential = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ providerId: type({ id: "string" }).assert(await provider.json()).id, name: "github", type: "api_key", secret: JSON.stringify({ appId: "1", privateKey }) }),
+    body: JSON.stringify({ providerId, name: "github", type: "api_key", secret: JSON.stringify({ appId: "1", privateKey }), metadata: { appSlug: "corbits" } }),
   });
   expect(credential.status).toBe(201);
   const enable = await fetch(`${origin}/api/tenants/${tenantId}`, {
     method: "PATCH", headers, body: JSON.stringify({ config: { corbitsTriage: { rev: 0, repos: [{ name: REPO, connected: true, enabled: true }] } } }),
   });
   expect(enable.status).toBe(200);
+  return providerId;
 }
 
 type SeededDo = { id: string; kind: "labels" | "comment" | "agent"; target: ResolvedTarget; index?: number; effectId?: string };
@@ -591,6 +608,80 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
     expect(body.daily.filter((d) => d.triaged > 0)).toEqual([{ date: verdictAt.toISOString().slice(0, 10), triaged: 1 }]);
 
     expect(await stats(otherTenantId)).toMatchObject({ since: null, triaged: 0, verdicts: {}, checks: {}, actions: {}, comments: 0, medianTimeToVerdictMs: null });
+  } finally {
+    github.stop();
+    await close();
+  }
+}, 60_000);
+
+const HOOK_SECRET = "hook-secret";
+
+test("a burst of webhook deliveries for one pull request queues its head once and mails it once", async () => {
+  const github = fakeGithub();
+  const output: string[] = [];
+  const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
+  try {
+    const origin = await startHub({ GITHUB_API_ORIGIN: github.origin, TRIAGE_COALESCE_QUIET_MS: "1000" }, temporaryDirectory(), output);
+    const headers = await signedIn(origin);
+    const tenantId = await createTenant(origin, headers);
+    const providerId = await connectGithub(origin, headers, tenantId, github.origin);
+    const title = checkPackName(REPO);
+    const saved = await fetch(`${origin}/api/tenants/${tenantId}/artifacts`, {
+      method: "POST", headers, body: JSON.stringify({ mode: "text", title, content: JSON.stringify(SAVED_PACK), metadata: { checkPack: title } }),
+    });
+    expect(saved.status).toBe(201);
+    const hook = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ providerId, name: "github-hook", type: "api_key", secret: HOOK_SECRET, metadata: { webhook: { verify: "standard-webhooks", workflow: prTriageWorkflow.id } } }),
+    });
+    expect(hook.status).toBe(201);
+    const hookId = type({ id: "string" }).assert(await hook.json()).id;
+
+    const repository = { full_name: REPO };
+    const pull = { number: 8, state: "open", draft: false, head: { sha: HEAD }, user: { login: "octocat" }, title: "Fix the widget", body: "" };
+    const checkRun = { action: "completed", repository, check_run: { head_sha: HEAD, pull_requests: [{ number: 8, head: { sha: HEAD } }] } };
+    const deliveries: Array<[string, unknown]> = [
+      ["pull_request", { action: "opened", repository, pull_request: pull }],
+      ["pull_request", { action: "edited", repository, pull_request: pull }],
+      ["check_run", checkRun],
+      ["check_run", checkRun],
+      ["pull_request_review", { action: "submitted", repository, pull_request: pull, review: { state: "approved" } }],
+      ["issue_comment", { action: "created", repository, issue: { number: 8, state: "open", pull_request: {}, user: { login: "octocat" } }, comment: { body: "Looks good" } }],
+    ];
+    const statuses = [];
+    for (const [event, payload] of deliveries) {
+      const body = JSON.stringify(payload);
+      const res = await fetch(`${origin}/api/hooks/${hookId}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-github-event": event,
+          "x-github-delivery": crypto.randomUUID(),
+          "x-hub-signature-256": `sha256=${createHmac("sha256", HOOK_SECRET).update(body).digest("hex")}`,
+        },
+        body,
+      });
+      expect(res.status).toBe(202);
+      statuses.push(type({ status: "string" }).assert(await res.json()).status);
+    }
+    expect(statuses).toEqual(["queued", "coalesced", "coalesced", "coalesced", "coalesced", "coalesced"]);
+
+    const state = await findArtifactByTitle(db, tenantId, triageStateName(REPO));
+    const stored = parseTriageState((await getArtifact(db, state!.artifactId))!.content, REPO);
+    expect(stored?.prs).toEqual([expect.objectContaining({ number: 8, headSha: HEAD, status: "queued" })]);
+
+    function flushes() {
+      return output.flatMap((line) => {
+        const entry = line.startsWith("{\"ts\":") ? JSON.parse(line) : undefined;
+        return entry?.pr === 8 && ["forwarded", "forward_failed"].includes(entry.msg) ? [entry] : [];
+      });
+    }
+    // The window holds at most four quiet periods; wait past it so a second mail would show.
+    await Bun.sleep(5_000);
+    expect(flushes().length).toBeGreaterThanOrEqual(1);
+    expect(flushes().length).toBeLessThanOrEqual(2);
+    expect(flushes()[0]).toMatchObject({ headSha: HEAD, events: ["opened", "updated", "checks", "approved", "commented"] });
   } finally {
     github.stop();
     await close();

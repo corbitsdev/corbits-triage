@@ -5,7 +5,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { repoPolicy, type PrTriageRow } from "@corbits/triage-contracts";
+import { repoPolicy } from "@corbits/triage-contracts";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead } from "./check-pack-store.js";
@@ -16,7 +16,8 @@ import { repoRecords, triageNs } from "./tenant-config.js";
 import type { PullHeadReader } from "./tenant-open-heads.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
 import { mergeObservedRuns, observeDeployments, type ObserveRuns } from "./triage-runs.js";
-import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
+import { isQueuedSince, isRunningSince, queueHead, restoreHead } from "./triage-queue.js";
+import type { TriageStateStore } from "./triage-state-store.js";
 
 export const GITHUB_PR_TRIAGE_PATH = "/api/integrations/github-triage";
 
@@ -34,47 +35,6 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
-
-/** A head the hub queued and has not yet given up waiting on; later the reconciler marks it failed and queues it again itself. */
-function isQueuedSince(row: PrTriageRow | undefined, now: Date, policy: ReconcilePolicy): boolean {
-  return row?.status === "queued" && row.queuedAt !== undefined && now.getTime() - new Date(row.queuedAt).getTime() < policy.unstartedAfterMs;
-}
-
-/** A head the hub saw running and has not yet given up on as stuck. */
-function isRunningSince(row: PrTriageRow | undefined, now: Date, policy: ReconcilePolicy): boolean {
-  return row?.status === "running" && now.getTime() - new Date(row.updatedAt).getTime() <= policy.stuckAfterMs;
-}
-
-function queuedAgain(prior: PrTriageRow | undefined, number: number, headSha: string, at: string): PrTriageRow {
-  if (prior === undefined) return { number, headSha, status: "queued", attempts: 0, firstSeenAt: at, queuedAt: at, updatedAt: at };
-  // The last run and version stay named so the plan can tell this head from one it has never seen.
-  const { error: _error, ...rest } = prior;
-  return { ...rest, status: "queued", queuedAt: at, updatedAt: at };
-}
-
-function rowOf(rows: readonly PrTriageRow[], number: number, headSha: string): PrTriageRow | undefined {
-  return rows.find((row) => row.number === number && row.headSha === headSha);
-}
-
-/** The rows with this head's row replaced, added, or removed when `next` is undefined. */
-function withRow(rows: readonly PrTriageRow[], number: number, headSha: string, next: PrTriageRow | undefined): PrTriageRow[] {
-  const others = rows.filter((row) => !(row.number === number && row.headSha === headSha));
-  return next === undefined ? others : [...others, next];
-}
-
-type Remembered = { prior: PrTriageRow | undefined; rows: PrTriageRow[]; version: TriageStateVersion };
-
-/** Puts the head's prior row back after a mail that did not go out; refused as stale, it is retried once on a fresh load. */
-async function restore(store: TriageStateStore, tenantId: string, repo: string, number: number, headSha: string, remembered: Remembered): Promise<void> {
-  try {
-    await store.save(tenantId, repo, withRow(remembered.rows, number, headSha, remembered.prior), remembered.version);
-    return;
-  } catch (err) {
-    if (!(err instanceof TriageStateConflictError)) throw err;
-  }
-  const fresh = await store.load(tenantId, repo);
-  await store.save(tenantId, repo, withRow(fresh.rows, number, headSha, remembered.prior), fresh.version);
-}
 
 export function createGithubPrTriage(deps: GithubPrTriageDeps) {
   return async function handle(req: Request, tenantId: string): Promise<Response> {
@@ -114,29 +74,21 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     if (runs.some((run) => run.status === "running" && !isStuck(run, now, deps.policy))) {
       return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
     }
-    /** Marks the head queued on top of what is stored now; a write refused as stale is retried once on a fresh load, gate included. */
-    async function remember(state: LoadedTriageState, retry: boolean): Promise<Remembered | Response> {
-      const prior = rowOf(state.rows, number, headSha);
-      if (isQueuedSince(prior, now, deps.policy)) return failure(409, "already_queued", `${repo}#${number} is already queued for triage.`);
-      if (isRunningSince(prior, now, deps.policy)) return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
-      const rows = withRow(state.rows, number, headSha, queuedAgain(prior, number, headSha, now.toISOString()));
-      try {
-        return { prior, rows, version: await deps.store.save(tenantId, repo, rows, state.version) };
-      } catch (err) {
-        if (!(err instanceof TriageStateConflictError)) throw err;
-        if (retry) return remember(await deps.store.load(tenantId, repo), false);
-        return failure(409, "conflict", `${repo}#${number} was just updated by the hub. Try again.`);
-      }
+    const head = { tenantId, repo, number, headSha };
+    const queued = await queueHead(deps.store, head, now, function busy(prior) {
+      return isQueuedSince(prior, now, deps.policy) || isRunningSince(prior, now, deps.policy);
+    });
+    if (queued.status === "kept") {
+      if (isQueuedSince(queued.prior, now, deps.policy)) return failure(409, "already_queued", `${repo}#${number} is already queued for triage.`);
+      return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
     }
-
-    const remembered = await remember(await deps.store.load(tenantId, repo), true);
-    if (remembered instanceof Response) return remembered;
+    if (queued.status === "conflict") return failure(409, "conflict", `${repo}#${number} was just updated by the hub. Try again.`);
     try {
       await deps.deliver(tenantId, deployment.address, mailPayload(repo, policy, pack.pack, { prNumber: number, headSha }));
     } catch (err) {
       deps.log({ level: "error", msg: "triage_request_failed", tenantId, repo, pr: number, headSha, error: String(err) });
       try {
-        await restore(deps.store, tenantId, repo, number, headSha, remembered);
+        await restoreHead(deps.store, head, queued.remembered);
       } catch (restoreErr) {
         deps.log({ level: "error", msg: "triage_state_restore_failed", tenantId, repo, pr: number, headSha, error: String(restoreErr) });
       }
