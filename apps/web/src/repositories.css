@@ -41,37 +41,20 @@
 .repos .byline { display: flex; flex-wrap: wrap; align-items: center; margin-left: -17px; clip-path: inset(0 0 0 17px); font-size: 13px; }
 .repos .byline > * { display: inline-flex; align-items: center; white-space: nowrap; }
 .repos .byline > *::before { content: "·"; width: 17px; text-align: center; flex: none; }
-.repos .route { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; align-items: start; margin-top: 16px; padding: 10px 12px; background: var(--paper); border-radius: var(--r-md); font-size: 13px; }
-.repos .route .mk { margin-top: 2px; }
-.repos .route .btn { align-self: center; }
-.repos .route-t { min-width: 0; display: grid; gap: 1px; }
 .repos .rs { margin-top: 28px; }
 .repos .rs h3 { font-size: 15px; font-weight: 700; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
 .repos .rs h3 .n { font: 700 12px var(--mono); }
 .repos .rs > p { font-size: 13px; margin: 0 0 8px; }
-.repos .radio-cards { display: grid; gap: 6px; margin-top: 8px; }
-.repos .radio-cards label { display: grid; grid-template-columns: 18px 1fr; gap: 10px; padding: 10px 12px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); font-size: 13px; cursor: pointer; }
-.repos .radio-cards label b { display: inline; font-size: 14px; margin-right: 4px; }
-.repos .radio-cards label.on { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
-.repos .radio-cards label:has(input:focus-visible) { box-shadow: var(--focus); border-color: var(--ink); }
-.repos .radio-cards label:has(input:disabled) { cursor: not-allowed; }
-.repos .rdot { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--rule-strong); margin-top: 1px; }
-.repos .on .rdot { border: 5px solid var(--ink); }
 .repos .sentences { display: grid; }
 .repos .sentence { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
 .repos .sentence .txt { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .repos .sentence .txt small { flex-basis: 100%; font-size: 12px; }
-.repos .sentence .vu { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.repos .sentence.own .txt b { font-weight: 600; }
-.repos .sentence.own .val.w { flex: 1 1 220px; }
 .repos .val { font: 700 13px var(--mono); width: 64px; height: 30px; min-height: 0; padding: 0 8px; text-align: center; color: inherit; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); }
 .repos .val.w { width: auto; min-width: 140px; text-align: left; font-family: var(--font); font-weight: 600; }
 .repos .val.mono-val { font-family: var(--mono); font-weight: 400; font-size: 12px; }
 .repos select.val { text-align: left; width: auto; font-family: var(--font); font-weight: 600; }
 .repos .val:focus { outline: 0; border-color: var(--ink); box-shadow: var(--focus); }
 .repos .val:disabled { opacity: 0.6; }
-.repos .model { font: 500 11px var(--font); white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
-.repos .model::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
 .repos .sw { width: 36px; height: 22px; padding: 2px; background: var(--rule-strong); }
 .repos .sw[aria-checked="true"] { background: var(--green); }
 .repos .sw > span { background: var(--white); }
@@ -79,13 +62,54 @@
 .repos .glob { font: 400 12px var(--mono); padding: 2px 2px 2px 8px; border: 1px solid var(--rule-strong); border-radius: var(--r-sm); display: inline-flex; gap: 2px; align-items: center; }
 .repos .glob button { border: 0; background: none; font: 700 12px var(--font); color: inherit; padding: 0 5px; border-radius: 4px; cursor: pointer; }
 .repos .glob button:hover { background: var(--fill-hover); }
+.repos .rp .pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: min(380px, 80vw); display: grid; gap: 8px; padding: 12px; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12); font-size: 13px; font-weight: 400; }
+.repos .rp .pop .sentence { padding: 4px 0; border: 0; font-size: 13px; }
+.repos .rp .pop-h { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.repos .rp .pfoot { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.repos .rp .pfoot .sp { flex: 1; }
+.repos .rp .txt { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; }
+.repos .tokens { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.repos .check-name { display: inline; }
+.repos .chk { border: 0; padding: 0; background: none; font: inherit; font-weight: 600; color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.repos .chk small { font-weight: 400; }
+.repos .chk.flagged { text-decoration: underline solid var(--orange); }
+.repos .act { border-bottom: 1px solid var(--rule); }
+.repos .act > .sentence { border-bottom: 0; align-items: flex-start; }
+.repos .prose { flex: 1; min-width: 0; margin: 0; line-height: 1.6; }
+.repos .act .btn { flex: none; }
+.repos .rp .reason { margin: 4px 0 8px; font-size: 13px; font-weight: 600; }
+.repos .rp .hint { margin: 0; font-size: 12px; }
+.repos .act.invalid, .repos .sentence.invalid { box-shadow: inset 3px 0 0 var(--orange); padding-left: 10px; }
+.repos .act.invalid > .reason { margin: 0 0 12px; }
+.repos .bar.save .linkish.blocked { font-size: 13px; text-align: left; white-space: normal; }
+.repos .more { margin-top: 16px; }
+.repos .rp .pills { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.repos .rp .pill { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 10px; border-radius: 13px; background: var(--fill-hover); font-size: 13px; }
+.repos .rp .pill:not(:has(button)) { padding-right: 10px; }
+.repos .rp .pill > button { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }
+.repos .rp .pill > button:hover { background: var(--white); }
+.repos .builder { display: grid; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.repos .blk { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.repos .bl { width: 64px; font-size: 13px; font-weight: 700; }
+.repos .branch { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--r-md); }
+.repos .branch-h { font-size: 13px; }
+.repos .branch-h span { font-size: 12px; }
+.repos .branch > .linkish { justify-self: start; }
+.repos .do { display: flex; gap: 10px; align-items: center; }
+.repos .do .txt { flex: 1; min-width: 0; }
+.repos .do .auto { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.repos .val.body { flex: 1 1 100%; height: auto; padding: 6px 8px; font-weight: 400; resize: vertical; }
+.repos .bfoot { display: flex; gap: 12px; align-items: center; }
+.repos .bfoot .end { margin-left: auto; }
+.repos .gallery { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
+.repos .gallery-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; font-size: 13px; }
+.repos .check-fields { display: grid; gap: 8px; font-size: 13px; }
+.repos .check-fields > label { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.repos .check-fields .pick { display: inline-flex; gap: 4px; align-items: center; }
+.repos .sentence.role .txt b { min-width: 96px; }
+.repos .rs .sentence .mk { margin: 0; }
 .repos .linkish { background: none; border: 0; padding: 0; font: 600 12px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .repos .linkish:disabled { opacity: 0.45; cursor: not-allowed; }
-.repos .own-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; padding: 12px 0; border-bottom: 1px solid var(--rule); font-size: 13px; font-weight: 600; }
-.repos .own-form label { display: grid; gap: 4px; }
-.repos .own-form .wide, .repos .own-form .own-acts { grid-column: 1 / -1; }
-.repos .own-form .val.w { width: 100%; min-width: 0; }
-.repos .own-acts { display: flex; justify-content: flex-end; gap: 8px; }
 .repos .rp .note { font-size: 12px; margin: 12px 0 0; }
 .repos .rp .error { font-size: 13px; margin: 12px 0 0; }
 .repos .bar.save { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); font-size: 14px; }

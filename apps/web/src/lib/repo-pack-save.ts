@@ -38,7 +38,7 @@ function checksFailed(cause: unknown): SaveFailure {
   return { message: `Could not save the checks. ${messageOf(cause)} Check the values, then try again.`, cause, stale: false };
 }
 
-/** Writes the pack when it changed, then one config write when anything is left to point at or change. */
+/** Writes the pack when it changed or the stored one is corrupt, then one config write when anything is left to point at or change. */
 export async function saveDraft(store: RepoPackStore, repo: string, session: PackSession, draft: RepoDraft): Promise<SaveOutcome> {
   let pack: CheckPack;
   try {
@@ -48,7 +48,7 @@ export async function saveDraft(store: RepoPackStore, repo: string, session: Pac
   }
   let current = session;
   let shown = draft;
-  if (packChanges(session.saved.pack, draft.pack) > 0) {
+  if (packChanges(session.saved.pack, draft.pack) > 0 || session.corrupt !== null) {
     try {
       const loaded = await store.writePack(pack, session.loaded);
       current = { loaded, corrupt: null, saved: { ...session.saved, pack }, unlinked: true };
