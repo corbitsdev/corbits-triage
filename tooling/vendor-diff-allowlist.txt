@@ -11,6 +11,11 @@
 # Composite pin: stock 74c57b39bc9613ab38ae8eab73af743797d589e2 plus the
 # allowlisted deltas below. Full rationale is in vendor/interchange/VENDORED.md.
 #
+# Upstream PR #193 step-env director threading: the step env and spawned-child
+# deps resolve the closure's own directors. Remove by 2026-11-01 or when
+# upstream's step env loads the closure registry.
+packages/workflow-host/src/child/substrate-factory.ts
+
 # INTR-583 operator-plugin grammar from upstream commit
 # 44170ebbcf819e1f48e0ec4c7a0d9f682635d10d (branch tip 2d815607).
 # Remove by 2026-11-01 after re-pinning to a stock commit containing that

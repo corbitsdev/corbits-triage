@@ -130,6 +130,7 @@ import {
 } from "../supervisor/credentials";
 import {
   loadWorkflowActionHandlersFromClosure,
+  loadWorkflowDirectorRegistryFromClosure,
   loadWorkflowLoopFnsFromClosure,
   loadWorkflowPluginFactoriesFromClosure,
   loadWorkflowPluginToolDefinitionsFromClosure,
@@ -918,6 +919,19 @@ export function createSidecarStepBuildEnv(
   sourcesRef: SourcesSnapshotRef,
   credentialContext?: SidecarStepCredentialContext,
 ) => Promise<StepEnvBase> {
+  // Local delta (upstream PR #193): the run-child already resolves the
+  // workflow package's own `interchange.directors`, so the step env must use
+  // the same registry or a step naming that director fails at its first build.
+  let closureDirectors: Promise<DirectorRegistry> | undefined;
+  function directors(): Promise<DirectorRegistry> {
+    closureDirectors ??=
+      deps.closurePackageDir === undefined
+        ? Promise.resolve(createDefaultDirectorRegistry())
+        : loadWorkflowDirectorRegistryFromClosure({
+            packageDir: deps.closurePackageDir,
+          });
+    return closureDirectors;
+  }
   return async (
     req: StepInvokeRequest,
     sourcesRef: SourcesSnapshotRef,
@@ -1171,7 +1185,7 @@ export function createSidecarStepBuildEnv(
       // scratch dir, so the two coincide.
       toolCwd: workdir,
       audit: storage,
-      directors: createDefaultDirectorRegistry(),
+      directors: await directors(),
       // Resolve inference adapters through the child's boot-built
       // registry (built-ins + operator custom adapters), so a
       // custom-provider step source resolves in the child the same way
@@ -2680,6 +2694,12 @@ export function createSidecarSubstrateFactory(
       collectDeclaredCredentialConsumers:
         deps.collectDeclaredCredentialConsumers,
       filterGrantsToDeclaredResources: deps.filterGrantsToDeclaredResources,
+      // Local delta (upstream PR #193): an onTrigger body's grant cap walks
+      // its steps against this registry, so it must know the closure's own
+      // directors or the cap drops their `director:` grants.
+      directors: await loadWorkflowDirectorRegistryFromClosure({
+        packageDir: env.spawn.closurePackageDir,
+      }),
     };
     // Terminal childWorkflow executor. `run-child` builds the in-memory
     // resolver from this plus the lifted-body map it extracts after loading

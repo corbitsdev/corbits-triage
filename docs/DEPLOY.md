@@ -82,4 +82,6 @@ Sidecars start through Interchange's `SidecarProvisioner` interface. The local-p
 ## Known limitations
 
 - A hub restart stops its local sidecars, but their deployments still read as live, so events are not processed until the workflows are redeployed. There is no recovery step yet.
-- The hub carries Interchange patches (INTR-583, CL-10210, CL-10211); see `vendor/interchange/VENDORED.md`.
+- The hub carries Interchange patches (PR #193 step-env directors, INTR-583, CL-10210, CL-10211); see `vendor/interchange/VENDORED.md`.
+- Boot applies Interchange migration 0101: deleting a principal that still owns a credential is now refused (`credential.principal_id` FK is `ON DELETE RESTRICT`).
+- A trigger right after a deploy or restart can return `409 deployment_not_ready` until the deployment records its credential resolution; retry it.
