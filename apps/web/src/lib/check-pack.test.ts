@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { linkCheckPack, listCheckPacks, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
+import { listCheckPacks, repoNeedsCheckSetup, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
 import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
 import { loadRepoCheckPack } from "./hub-api.ts";
 
@@ -29,15 +29,12 @@ describe("check-pack client", () => {
     expect(await loadRepoCheckPack(hub.transport, "t", "acme/gadgets")).toBeNull();
   });
 
-  test("a first save creates the pack and links it; later saves version the artifact that was loaded", async () => {
+  test("a first save creates the pack; later saves version the artifact that was loaded", async () => {
     const hub = fakeHub([], config);
     const pack = emptyPack("acme/widgets");
     const created = await writeCheckPack(hub.transport, "t", "acme/widgets", pack, null);
-    await linkCheckPack(hub.transport, "t", "acme/widgets", "human-approved");
     expect(created).toEqual({ kind: "pack", id: "art_1", version: 1, pack });
     expect(hub.artifacts[0]).toMatchObject({ title: "check-pack/acme/widgets", content: JSON.stringify(pack), version: 1 });
-    const repos = (hub.config.corbitsTriage as { repos: Array<Record<string, unknown>> }).repos;
-    expect(repos[0]).toMatchObject({ name: "acme/widgets", checkPack: { name: "check-pack/acme/widgets" }, cleanupMode: "human-approved" });
     const revised = await writeCheckPack(hub.transport, "t", "acme/widgets", widgets, created);
     expect(revised).toEqual({ kind: "pack", id: "art_1", version: 2, pack: widgets });
     expect(hub.requests).toContain("POST /api/tenants/t/artifacts/art_1/versions");

@@ -15,7 +15,7 @@ import {
 import type { RepoRecord } from "../lib/hub-api.ts";
 import { CATALOG_DEFAULTS, removeCustom, setCatalogCheck, upsertCustom } from "../lib/pack-draft.ts";
 import { usePortal } from "../lib/portal.tsx";
-import { useRepoSettings } from "../lib/repo-settings.ts";
+import { useHubRepoPackStore, useRepoPack } from "../lib/repo-pack.ts";
 import type { RepoHealth, RepoRow } from "../lib/repo-rows.ts";
 import { relativeTime } from "../lib/triage-view.ts";
 import { CloseIcon, ExternalIcon } from "./inbox-icons.tsx";
@@ -180,7 +180,7 @@ type RepoPanelProps = { repo: RepoRecord; row: RepoRow; live: boolean; onClose: 
 
 export default function RepoPanel({ repo, row, live, onClose }: RepoPanelProps) {
   const { readOnly, snapshot, runBacklog } = usePortal();
-  const settings = useRepoSettings(repo);
+  const settings = useRepoPack(useHubRepoPackStore(), repo.name);
   const { draft } = settings;
   const pack = draft.pack;
   const [adding, setAdding] = useState(false);

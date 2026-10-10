@@ -4,13 +4,11 @@ import {
   applyRecommended,
   checkPackName,
   emptyPack,
-  parseCheckPack,
   readCheckPack,
   recommendedPack,
   type CheckPack,
-  type CleanupMode,
 } from "@corbits/triage-contracts";
-import { CONFIG_KEY, findArtifactByTitle, listArtifacts, newestByTitle, patchAppConfig, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
+import { CONFIG_KEY, findArtifactByTitle, listArtifacts, newestByTitle, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
 
 export {
   applyRecommended,
@@ -92,30 +90,6 @@ export async function writeCheckPack(transport: Transport, tenantId: string, rep
     ? { id: loaded.id, version: await versionCheckPack(transport, tenantId, title, content, loaded) }
     : await createCheckPack(transport, tenantId, title, content);
   return { kind: "pack", ...stored, pack: parsed };
-}
-
-/** A write that reached the hub but whose config link failed is reused when the same pack is saved again; only the link is redone. */
-export function alreadyWritten(unlinked: StoredCheckPack | null, pack: CheckPack): StoredCheckPack | null {
-  if (!unlinked) return null;
-  const parsed = parseCheckPack(pack, unlinked.pack.repo);
-  return parsed && JSON.stringify(parsed) === JSON.stringify(unlinked.pack) ? unlinked : null;
-}
-
-/** Points the repository's config row at its pack, and records how it posts. */
-export async function linkCheckPack(transport: Transport, tenantId: string, repo: string, cleanupMode?: CleanupMode): Promise<void> {
-  const clean = validateRepo(repo);
-  const title = checkPackName(clean);
-  function linkPack(row: unknown): unknown {
-    if (!row || typeof row !== "object" || (row as { name?: unknown }).name !== clean) return row;
-    return {
-      ...row,
-      checkPack: { name: title },
-      ...(cleanupMode ? { cleanupMode } : {}),
-    };
-  }
-  await patchAppConfig(transport, tenantId, function linkRepoPack(current) {
-    return { ...current, repos: (current.repos ?? []).map(linkPack) };
-  });
 }
 
 export function customizeDraft(repo: string): CheckPack {
