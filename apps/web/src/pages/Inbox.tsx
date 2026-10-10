@@ -148,12 +148,18 @@ const CHECK_MARK: Record<CheckResult["result"], { className: string; glyph: stri
   unconfirmed: { className: "mk judge", glyph: "?" },
 };
 
-function CheckRow({ check }: { check: CheckResult }) {
+export function CheckRow({ check }: { check: CheckResult }) {
   const mark = CHECK_MARK[check.result];
   return (
     <li>
-      <span className={mark.className}>{mark.glyph}</span>
-      <span>{check.reason || check.check}<small>{check.kind === "model" ? "Decision model" : check.check}</small></span>
+      <span className={mark.className} aria-hidden="true">{mark.glyph}</span>
+      <span>
+        {check.reason || check.check}
+        <small>{check.kind === "model" ? "Decision model" : check.check}</small>
+        {check.evidence.map((evidence, index) => (
+          <small key={`${index}:${evidence}`}><span className="sr-only">Evidence:</span> {evidence}</small>
+        ))}
+      </span>
     </li>
   );
 }
