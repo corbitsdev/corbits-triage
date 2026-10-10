@@ -1,11 +1,12 @@
-import type { RuleCustomCheck } from "@corbits/triage-contracts";
+import type { RepoRole, RuleCustomCheck } from "@corbits/triage-contracts";
 import { missingFrom } from "./actions.js";
 import type { CheckResult, Finding, PrFacts, PrFileFacts } from "./checks.js";
 import { globMatch } from "./glob.js";
 
 const MAX_DIFF_HITS = 5;
 
-type Outcome = { failed: boolean | null; reason: string; evidence?: string[]; state?: Finding["state"] };
+/** A gate decides an action's branch without being a defect, so it adds no finding. */
+type Outcome = { failed: boolean | null; reason: string; evidence?: string[]; state?: Finding["state"]; gate?: true };
 
 function matching(paths: string[], globs: string[]): string[] {
   return paths.filter((path) => globs.some((glob) => globMatch(path, glob)));
@@ -39,7 +40,29 @@ function unscanned(file: PrFileFacts): boolean {
   return (file.additions ?? 0) > 0 && (file.patch === undefined || file.patchTruncated === true);
 }
 
-function outcome(check: RuleCustomCheck, facts: PrFacts): Outcome {
+function people(check: Extract<RuleCustomCheck, { rule: "author" }>, roles: Record<string, RepoRole>): string[] | { unconfirmed: string } {
+  if (check.who === "users") return check.users;
+  if (check.who === "kinds") return [];
+  const role = roles[check.role];
+  if (!role) return { unconfirmed: `role ${check.role} is not defined` };
+  return role.users?.length ? role.users : { unconfirmed: `role ${check.role} names no people` };
+}
+
+function author(check: Extract<RuleCustomCheck, { rule: "author" }>, facts: PrFacts, roles: Record<string, RepoRole>): Outcome {
+  const kind = facts.authorKind;
+  const evidence = [`@${facts.author}${kind ? ` (${kind})` : ""}`];
+  if (check.who === "kinds") {
+    if (!kind) return { failed: null, reason: "the author's kind is not known", gate: true };
+    const failed = !check.kinds.includes(kind);
+    return { failed, reason: failed ? `author is ${kind}, not ${check.kinds.join(" or ")}` : `author is ${kind}`, evidence, gate: true };
+  }
+  const named = people(check, roles);
+  if ("unconfirmed" in named) return { failed: null, reason: named.unconfirmed, gate: true };
+  const failed = missingFrom(named, [facts.author]).length > 0;
+  return { failed, reason: failed ? "author is not one of the people named" : "author is one of the people named", evidence, gate: true };
+}
+
+function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, RepoRole>): Outcome {
   const paths = facts.paths ?? [];
   switch (check.rule) {
     case "paths-unchanged": {
@@ -76,17 +99,19 @@ function outcome(check: RuleCustomCheck, facts: PrFacts): Outcome {
       const failed = facts.approvals < check.count;
       return { failed, reason: failed ? "not enough approvals" : "enough approvals", evidence: [`${facts.approvals} of ${check.count} approvals`], state: "awaiting-review" };
     }
+    case "author":
+      return author(check, facts, roles);
   }
 }
 
 /** Evaluates the pack's rule custom checks from facts alone. Patterns were validated when the pack was read. */
-export function evaluateRuleChecks(facts: PrFacts, rules: RuleCustomCheck[]): { findings: Finding[]; checks: CheckResult[] } {
+export function evaluateRuleChecks(facts: PrFacts, rules: RuleCustomCheck[], roles: Record<string, RepoRole>): { findings: Finding[]; checks: CheckResult[] } {
   const findings: Finding[] = [];
   const checks: CheckResult[] = [];
   for (const check of rules) {
-    const { failed, reason: detail, evidence = [], state = "needs-author-update" } = outcome(check, facts);
+    const { failed, reason: detail, evidence = [], state = "needs-author-update", gate } = outcome(check, facts, roles);
     const reason = `${check.name}: ${detail}`;
-    if (failed) findings.push({ check: check.id, state, reason });
+    if (failed && !gate) findings.push({ check: check.id, state, reason });
     checks.push({ check: check.id, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence });
   }
   return { findings, checks };

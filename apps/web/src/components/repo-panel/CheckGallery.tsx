@@ -11,7 +11,7 @@ type CheckGalleryProps = { draft: RepoDraft; disabled: boolean; onAdd: (check: C
 function formOf(kind: (typeof CHECK_KINDS)[number]): CheckForm {
   const name = kind.title.replace(/…$/, "");
   return kind.evaluation === "rule"
-    ? { name, group: "pull-request", kind: "rule", rule: kind.rule }
+    ? { name, group: "pull-request", kind: "rule", rule: kind.rule, ...(kind.rule === "author" ? { who: "kinds" as const } : {}) }
     : { name, group: "pull-request", kind: "model", shape: kind.shape };
 }
 
@@ -53,7 +53,7 @@ export default function CheckGallery({ draft, disabled, onAdd, onCancel }: Check
 
   return (
     <div className="gallery" role="group" aria-label="New check">
-      <CheckFields form={form} disabled={disabled} onChange={change} />
+      <CheckFields form={form} roles={Object.keys(draft.policy.roles)} disabled={disabled} onChange={change} />
       {touched && "reason" in built ? <p className="reason">{shownReason(built.reason, draft.pack)}</p> : null}
       <div className="pfoot">
         <button type="button" className="linkish" onClick={() => setForm(null)}>Back</button>

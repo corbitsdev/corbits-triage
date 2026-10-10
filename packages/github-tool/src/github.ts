@@ -133,6 +133,7 @@ function prFields(p: any) {
     draft: p.draft,
     author: p.user?.login ?? null,
     authorAssociation: p.author_association ?? null,
+    authorBot: p.user?.type === "Bot",
     sha: p.head?.sha,
     branch: p.head?.ref,
     base: p.base?.ref,
