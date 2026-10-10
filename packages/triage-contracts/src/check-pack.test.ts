@@ -180,6 +180,7 @@ describe("check pack contract", () => {
       { ...emptyPack(REPO), custom: CUSTOM, actions: ACTIONS },
       { ...emptyPack(REPO), custom: RULES },
       { ...emptyPack(REPO), custom: MODELS },
+      { ...emptyPack(REPO), custom: AUTHORS },
       { ...emptyPack(REPO), actions: [BASE] },
       recommendedPack(REPO),
     ];

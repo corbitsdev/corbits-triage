@@ -81,9 +81,11 @@ export type ModelShape = (typeof MODEL_SHAPES)[number];
 
 export const AUTHOR_KINDS = ["owner", "member", "collaborator", "contributor", "first-timer", "outside", "bot"] as const;
 export type AuthorKind = (typeof AUTHOR_KINDS)[number];
+export const AUTHOR_WHO = ["users", "role", "kinds"] as const;
+export type AuthorWho = (typeof AUTHOR_WHO)[number];
 
-/** GitHub's author association folded to the kinds a pack names; a bot is a bot whatever its association. */
-export function authorKindOf(association: AuthorAssociation | null, bot: boolean): AuthorKind {
+/** GitHub's author association folded to the kinds a pack names; a bot is a bot whatever its association, and no association is unknown. */
+export function authorKindOf(association: AuthorAssociation | null, bot: boolean): AuthorKind | undefined {
   if (bot) return "bot";
   switch (association) {
     case "OWNER": return "owner";
@@ -92,7 +94,9 @@ export function authorKindOf(association: AuthorAssociation | null, bot: boolean
     case "CONTRIBUTOR": return "contributor";
     case "FIRST_TIME_CONTRIBUTOR":
     case "FIRST_TIMER": return "first-timer";
-    default: return "outside";
+    case "NONE":
+    case "MANNEQUIN": return "outside";
+    case null: return undefined;
   }
 }
 
@@ -466,10 +470,10 @@ function parseRule(row: Record<string, unknown>, where: string): RuleCheck {
     case "min-approvals":
       return { rule, count: integer(row.count, 1, Number.MAX_SAFE_INTEGER, `${where} count`) };
     case "author": {
-      const who = oneOf(row.who, ["users", "role", "kinds"] as const, `${where} who`);
-      if (who === "users") return { rule, who, users: texts(row.users, `${where} users`) };
+      const who = oneOf(row.who, AUTHOR_WHO, `${where} who`);
+      if (who === "users") return { rule, who, users: texts(row.users, `${where} users`).map((login) => login.replace(/^@/, "")) };
       if (who === "role") return { rule, who, role: text(row.role, `${where} role`) };
-      return { rule, who, kinds: distinctTexts(row.kinds, `${where} kinds`).map((kind) => oneOf(kind, AUTHOR_KINDS, `${where} kinds`)) };
+      return { rule, who, kinds: [...new Set(texts(row.kinds, `${where} kinds`).map((kind) => oneOf(kind, AUTHOR_KINDS, `${where} kinds`)))] };
     }
   }
 }

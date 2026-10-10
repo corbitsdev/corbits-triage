@@ -93,7 +93,7 @@ function inlineOutput(event: WorkflowRunEvent | undefined): Record<string, unkno
 
 function isUnconfirmedMachineCheck(check: unknown): boolean {
   const result = asRecord(check);
-  return result?.["kind"] === "machine" && result["result"] === "unconfirmed";
+  return result?.["kind"] === "machine" && result["result"] === "unconfirmed" && result["gate"] !== true;
 }
 
 /** Every model check of the verdict was skipped, outside a stale-unknown verdict that skips them by design. */
@@ -127,7 +127,7 @@ const SummaryFields = type({
   actor: "string",
   humanGated: "boolean",
   "degraded?": "string | null",
-  "checks?": type({ check: "string", result: "string" }).array(),
+  "checks?": type({ check: "string", result: "string", "gate?": "boolean" }).array(),
   "actions?": "unknown[]",
   "request?": { comment: "string" },
 });
@@ -150,7 +150,7 @@ function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigg
     actor: fields.actor,
     humanGated: fields.humanGated,
     degraded: fields.degraded ?? null,
-    checks: (fields.checks ?? []).map(({ check, result }) => ({ check, result })),
+    checks: (fields.checks ?? []).filter((c) => c.gate !== true).map(({ check, result }) => ({ check, result })),
     dos: suggestedDos(fields.actions ?? []),
     commented: (fields.request?.comment ?? "") !== "" && mirrored.has(mirrorCallId(trigger.repo, trigger.number)),
   };

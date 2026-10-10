@@ -79,12 +79,13 @@ export function buildFacts(
   const latest = latestDecisive(reviews);
   const author = pr.author ?? "";
   const association = authorAssociation(pr.authorAssociation);
+  const authorKind = authorKindOf(association, pr.authorBot === true);
   return {
     repo,
     number,
     title: pr.title ?? "",
     author,
-    authorKind: authorKindOf(association, pr.authorBot === true),
+    ...(authorKind ? { authorKind } : {}),
     tier: tierOf(association, author, policy.approvedAuthors),
     headSha: pr.sha ?? "",
     state: pr.state === "closed" ? "closed" : "open",

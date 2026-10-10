@@ -74,6 +74,8 @@ export interface CheckResult {
   result: "pass" | "fail" | "unconfirmed";
   reason: string;
   evidence: string[];
+  /** Decides an action's branch without being a defect: never a step, a comment line, a merge reason or a retry. */
+  gate?: true;
 }
 
 export interface DeterministicResult {
