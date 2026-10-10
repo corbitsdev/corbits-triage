@@ -50,6 +50,8 @@ import { DeliveryCache } from "./github/dedupe.js";
 import { createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments } from "./github/deployment.js";
 import { createGithubOpenPulls } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
+import { createGithubPrDos } from "./github/pr-dos.js";
+import { createDoRunStore, migrateDoRuns } from "./github/do-run-store.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
@@ -185,6 +187,7 @@ cronTicker = createCronTicker({
 cronTicker.start();
 await migrateGithubManifest(composition.db);
 await migrateRepoEnabledFlag(composition.db);
+await migrateDoRuns(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
 async function authorizePortal(principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
@@ -207,6 +210,17 @@ const githubPrActions = createGithubPrActions({
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
+});
+const githubPrDos = createGithubPrDos({
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  getSession: composition.getSession,
+  trustedPortalOrigins,
+  githubApiOrigin: githubOrigin,
+  authorize: authorizePortal,
+  runReader: composition.runReader,
+  store: createDoRunStore(composition.db),
+  log: logJson,
 });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,
@@ -372,6 +386,7 @@ const integrations = createIntegrationsApp({
   manifest: githubManifest,
   syncInstallations,
   prActions: githubPrActions,
+  dos: githubPrDos,
   prTriage: githubPrTriage,
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,

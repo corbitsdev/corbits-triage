@@ -26,6 +26,16 @@ export function doMarker(effectId: string): string {
   return `<!-- corbits-do:${effectId} -->`;
 }
 
+const AGENT = "agent Dos cannot run yet";
+const DERIVED_LABELS = "labels derived from the pull request cannot run yet";
+
+/** Why a Do can never run as the verdict recorded it, known without asking GitHub. */
+export function unrunnable(step: SuggestedDo): string | undefined {
+  if (step.kind === "agent") return AGENT;
+  if (step.kind === "labels" && !("labels" in step.target)) return DERIVED_LABELS;
+  return undefined;
+}
+
 type People = { users: string[]; teams: string[] };
 
 async function people(gh: GithubFetch, repo: string, number: number, target: ResolvedTarget): Promise<People> {
@@ -42,7 +52,7 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput): Pr
   const { target } = step;
   switch (step.kind) {
     case "labels": {
-      if (!("labels" in target)) throw new DoNotRunnableError("labels derived from the pull request cannot run yet");
+      if (!("labels" in target)) throw new DoNotRunnableError(DERIVED_LABELS);
       const labels = missingFrom((await readPr(gh, repo, number)).labels, target.labels);
       if (!labels.length) return { status: "satisfied", result: { labels } };
       return { status: "done", result: await addLabels(gh, { repo, number, labels }) };
@@ -75,6 +85,6 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput): Pr
       return { status: "done", result: await createIssueComment(gh, { repo, number, body: `${marker}\n${target.body}` }) };
     }
     case "agent":
-      throw new DoNotRunnableError("agent Dos cannot run yet");
+      throw new DoNotRunnableError(AGENT);
   }
 }
