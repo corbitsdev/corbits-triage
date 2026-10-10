@@ -11,6 +11,17 @@ import {
   type TrustTier,
 } from "@corbits/triage-contracts";
 
+export interface PrFileFacts {
+  path: string;
+  previousPath?: string;
+  status?: string;
+  additions?: number;
+  deletions?: number;
+  patch?: string;
+  /** The patch was cut at a hunk boundary to fit the tool-result cap, so its later hunks are missing. */
+  patchTruncated?: true;
+}
+
 export interface PrFacts {
   repo: string;
   number: number;
@@ -37,6 +48,7 @@ export interface PrFacts {
   additions?: number;
   deletions?: number;
   paths?: string[];
+  files?: PrFileFacts[];
   body?: string;
   commits?: string[];
   branch?: string;

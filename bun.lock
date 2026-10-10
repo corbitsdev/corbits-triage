@@ -141,6 +141,9 @@
         "arktype": "catalog:",
         "hono": "^4.11.9",
       },
+      "devDependencies": {
+        "@intx/inference": "workspace:*",
+      },
     },
     "vendor/interchange/apps/hub": {
       "name": "@intx/hub-app",
