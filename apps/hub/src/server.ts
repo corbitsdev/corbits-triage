@@ -42,6 +42,7 @@ import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.j
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
+import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES, type BridgeDeps } from "./github/bridge.js";
@@ -374,6 +375,14 @@ const integrations = createIntegrationsApp({
   prTriage: githubPrTriage,
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,
+  workflowDeploy: createWorkflowDeploy({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    getSession: composition.getSession,
+    trustedPortalOrigins,
+    authorize: authorizePortal,
+    allocation: composition.workflowAllocationService,
+  }),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them
 // through routeRequest before the stock logger.
