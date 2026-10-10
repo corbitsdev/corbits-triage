@@ -13,5 +13,5 @@ export const WORKFLOW_PACKAGES = [
 
 /** Files of a built workflow package, served by the portal under `/workflows/<name>/`. */
 export function workflowPackageFiles(workflow: WorkflowPackage): string[] {
-  return ["package.json", workflow.entry.slice(2), "directors.mjs"];
+  return ["package.json", workflow.entry.slice(2), "directors.mjs", "actions.mjs"];
 }
