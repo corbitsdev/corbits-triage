@@ -10,6 +10,7 @@ import { repoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRe
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { mergeObservedRuns, observeDeployments, type ObserveRuns, type ObservedRuns } from "./triage-runs.js";
+import type { RecordedVerdict, VerdictRecordStore } from "./verdict-record-store.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
 export type ReconcileTenant = { id: string; domain: string; config: unknown };
@@ -33,6 +34,7 @@ export type TriageReconcilerDeps = {
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
   observeRuns: ObserveRuns;
   store: TriageStateStore;
+  verdicts: Pick<VerdictRecordStore, "record">;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   policy: ReconcilePolicy;
@@ -55,6 +57,10 @@ function enabledRepos(config: unknown): EnabledRepo[] {
     const policy = repoPolicy(record);
     return record.connected && policy.enabled ? [{ record, policy }] : [];
   });
+}
+
+function verdictKey(verdict: RecordedVerdict): string {
+  return `${verdict.runId}\n${verdict.repo}\n${verdict.number}`;
 }
 
 function isRunning(runs: ObservedRuns): boolean {
@@ -85,6 +91,19 @@ function mergeRows(theirs: readonly PrTriageRow[], ours: readonly PrTriageRow[])
 }
 
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
+  /** Verdicts recorded per tenant that its live logs still hold; a restart records them again, which changes nothing. */
+  const recorded = new Map<string, Set<string>>();
+
+  async function recordVerdicts(tenantId: string, runs: ObservedRuns): Promise<void> {
+    const seen = recorded.get(tenantId) ?? new Set<string>();
+    try {
+      await deps.verdicts.record(tenantId, runs.verdicts.filter((verdict) => !seen.has(verdictKey(verdict))));
+      recorded.set(tenantId, new Set(runs.verdicts.map(verdictKey)));
+    } catch (err) {
+      deps.log({ level: "error", msg: "triage_verdicts_unrecorded", tenantId, error: String(err) });
+    }
+  }
+
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
     if (read.status !== "ok") return undefined;
@@ -286,6 +305,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     // Only live deployments' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
     const observed = await observeDeployments(deps.observeRuns, deployments, tenant.domain);
+    const runs = mergeObservedRuns(observed);
+    await recordVerdicts(tenant.id, runs);
     let deployment = newestLive(deployments);
     try {
       deployment = await route(tenant, deployments, observed);
@@ -296,7 +317,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
       return false;
     }
-    const pass: TenantPass = { tenantId: tenant.id, deployment, openHeads, runs: mergeObservedRuns(observed) };
+    const pass: TenantPass = { tenantId: tenant.id, deployment, openHeads, runs };
     const loaded: LoadedRepo[] = [];
     for (const repo of repos) {
       try {

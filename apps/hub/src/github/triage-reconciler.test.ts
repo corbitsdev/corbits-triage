@@ -204,6 +204,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       };
     },
     observeRuns: createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 }),
+    verdicts: { record: async () => {} },
     store: {
       async load(_tenantId, repo) {
         return { rows: saved.get(repo) ?? [], version: { artifactId: `art_${repo}`, version: 1 } };

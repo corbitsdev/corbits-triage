@@ -53,6 +53,8 @@ import { createGithubOpenPulls } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubPrDos } from "./github/pr-dos.js";
 import { createDoRunStore, migrateDoRuns } from "./github/do-run-store.js";
+import { createVerdictRecordStore, migrateVerdictRecords } from "./github/verdict-record-store.js";
+import { createTriageStats } from "./github/triage-stats.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
@@ -190,6 +192,9 @@ cronTicker.start();
 await migrateGithubManifest(composition.db);
 await migrateRepoEnabledFlag(composition.db);
 await migrateDoRuns(composition.db);
+await migrateVerdictRecords(composition.db);
+const doRunStore = createDoRunStore(composition.db);
+const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
 async function authorizePortal(principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
@@ -221,7 +226,7 @@ const githubPrDos = createGithubPrDos({
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   runReader: composition.runReader,
-  store: createDoRunStore(composition.db),
+  store: doRunStore,
   log: logJson,
 });
 const githubPrDetails = createGithubPrDetails({
@@ -310,6 +315,7 @@ const reconcileTriage = createTriageReconciler({
   openHeadsFor: tenantOpenHeads,
   observeRuns: observeTriageRuns,
   store: triageStateStore,
+  verdicts: verdictRecordStore,
   readCheckPack,
   deliver: deliverToDeployment,
   policy: reconcilePolicy,
@@ -401,6 +407,16 @@ const integrations = createIntegrationsApp({
     githubApiOrigin: githubOrigin,
     authorize: authorizePortal,
     readCheckPack,
+  }),
+  triageStats: createTriageStats({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    getSession: composition.getSession,
+    trustedPortalOrigins,
+    authorize: authorizePortal,
+    verdicts: verdictRecordStore,
+    dos: doRunStore,
+    now,
   }),
   workflowDeploy: createWorkflowDeploy({
     db: composition.db,
