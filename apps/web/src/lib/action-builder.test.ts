@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CUSTOM_CHECK_CAP, recommendedPack, type CustomCheck, type Do } from "@corbits/triage-contracts";
-import { buildAction, buildCustomCheck, type ActionEvent, type ActionForm, type CheckForm, type DoForm } from "./action-builder.ts";
+import { actionFormOf, buildAction, buildCustomCheck, checkFormOf, type ActionEvent, type ActionForm, type CheckForm, type DoForm } from "./action-builder.ts";
 
 const pack = recommendedPack("acme/widgets");
 const comment: DoForm = { kind: "comment", automatic: true, body: "Thanks!", labels: ["stale"], prompt: "unused" };
@@ -47,6 +47,14 @@ describe("buildAction", () => {
     });
   });
 
+  test("an edited action is rebuilt under its own id", () => {
+    const first = { id: "action-1", when: ["opened" as const], checks: ["ci" as const], branches: { yes: [commented], unsure: [{ kind: "close" as const, automatic: false, target: {} }] } };
+    const second = { id: "action-2", when: "every" as const, checks: [], branches: { always: [commented] } };
+    const existing = { ...pack, actions: [first, second] };
+    expect(buildAction(actionFormOf(first), existing, "action-1")).toEqual(first);
+    expect(buildAction({ ...actionFormOf(first), checks: [], always: [comment] }, existing, "action-1")).toEqual({ id: "action-1", when: ["opened"], checks: [], branches: { always: [commented] } });
+  });
+
   test("refusals carry the readCheckPack reason", () => {
     const agent: DoForm = { kind: "agent", automatic: true, prompt: "Fix CI" };
     expect(buildAction(form({ always: [close] }), pack)).toEqual({ reason: "Action action-1 branches always 1 cannot close automatically." });
@@ -76,6 +84,12 @@ const checkForms: Array<[CheckForm, CustomCheck]> = [
 describe("buildCustomCheck", () => {
   test("every rule and shape keeps only its parameters", () => {
     for (const [check, expected] of checkForms) expect(buildCustomCheck(check, pack)).toEqual(expected);
+  });
+
+  test("an edited check keeps its id and place", () => {
+    const existing = { ...pack, custom: checkForms.slice(0, 2).map(([, check], i) => ({ ...check, id: `custom-${i + 1}` }) as CustomCheck) };
+    const [, edited] = checkForms[2]!;
+    expect(buildCustomCheck(checkFormOf({ ...edited, id: "custom-1" }), existing, "custom-1")).toEqual({ ...edited, id: "custom-1" });
   });
 
   test("the ninth check is refused with the readCheckPack reason", () => {
