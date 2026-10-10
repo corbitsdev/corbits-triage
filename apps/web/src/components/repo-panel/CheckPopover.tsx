@@ -88,7 +88,7 @@ function CustomParams({ check, draft, disabled, edit, onClose }: CustomProps) {
 
   return (
     <>
-      <CheckFields form={form} disabled={disabled} onChange={setForm} />
+      <CheckFields form={form} roles={Object.keys(draft.policy.roles)} disabled={disabled} onChange={setForm} />
       {"reason" in built ? <p className="reason">{shownReason(built.reason, draft.pack)}</p> : null}
       {refused ? <p role="alert" className="reason">{refused}</p> : null}
       <div className="pfoot">

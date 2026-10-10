@@ -1,4 +1,4 @@
-import type { CheckPackGroup } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, type CheckPackGroup } from "@corbits/triage-contracts";
 import type { CheckForm } from "../../lib/action-builder.ts";
 import TokenList from "./TokenList.tsx";
 
@@ -9,10 +9,12 @@ const GROUPS: Array<{ id: CheckPackGroup; label: string }> = [
   { id: "code-vs-ci", label: "Code vs CI" },
 ];
 
-type CheckFieldsProps = { form: CheckForm; disabled: boolean; onChange: (form: CheckForm) => void };
+type CheckFieldsProps = { form: CheckForm; roles: string[]; disabled: boolean; onChange: (form: CheckForm) => void };
+
+const WHO = [["kinds", "a kind of contributor"], ["users", "one of these people"], ["role", "in a role"]] as const;
 
 /** The name, group and the parameters of one rule kind or model shape. */
-export default function CheckFields({ form, disabled, onChange }: CheckFieldsProps) {
+export default function CheckFields({ form, roles, disabled, onChange }: CheckFieldsProps) {
   function set(patch: Partial<CheckForm>) {
     onChange({ ...form, ...patch } as CheckForm);
   }
@@ -67,6 +69,28 @@ export default function CheckFields({ form, disabled, onChange }: CheckFieldsPro
         return <>Require the label {text("label", "Required label")}</>;
       case "min-approvals":
         return <>Require at least {count("count", "Approvals", 1)} approvals</>;
+      case "author":
+        return (
+          <>
+            Author is
+            <select className="val" aria-label="Author is" disabled={disabled} value={form.who ?? "kinds"} onChange={(event) => set({ who: event.target.value as CheckForm["who"] })}>
+              {WHO.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            {form.who === "users" ? <TokenList values={form.users ?? []} noun="person" placeholder="login" disabled={disabled} onChange={(users) => set({ users })} /> : null}
+            {form.who === "role" ? (
+              <select className="val" aria-label="Role" disabled={disabled} value={form.role ?? ""} onChange={(event) => set({ role: event.target.value })}>
+                <option value="" disabled>Pick a role</option>
+                {[...new Set([...roles, ...(form.role ? [form.role] : [])])].map((role) => <option key={role} value={role}>{role}</option>)}
+              </select>
+            ) : null}
+            {(form.who ?? "kinds") === "kinds" ? AUTHOR_KINDS.map((kind) => (
+              <label key={kind} className="pick">
+                <input type="checkbox" disabled={disabled} checked={(form.kinds ?? []).includes(kind)} onChange={(event) => set({ kinds: event.target.checked ? [...(form.kinds ?? []), kind] : (form.kinds ?? []).filter((item) => item !== kind) })} />
+                {kind}
+              </label>
+            )) : null}
+          </>
+        );
     }
   }
 
