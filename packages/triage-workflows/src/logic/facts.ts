@@ -1,5 +1,8 @@
-import { authorAssociation, tierOf, type RepoPolicy } from "@corbits/triage-contracts";
-import type { PrFacts } from "./checks.js";
+import { authorAssociation, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
+import type { RulesItem } from "../actions/rules.js";
+import type { PrFacts, PrFileFacts } from "./checks.js";
+import { isRecord } from "./extract.js";
+import { MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES } from "./quality.js";
 
 export interface PrData {
   title?: string;
@@ -102,4 +105,67 @@ export function buildFacts(
     body: pr.body ?? "",
     branch: pr.branch,
   };
+}
+
+// Patch text past what one System One request can carry is never evaluated, so later pages leave patches out.
+export const MAX_PATCH_CHARS = MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function optionalCount(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
+}
+
+export function fileFacts(value: unknown): PrFileFacts[] {
+  if (!isRecord(value)) return [];
+  const path = optionalString(value.path) ?? optionalString(value.filename);
+  if (path === undefined) return [];
+  const previousPath = optionalString(value.previousPath) ?? optionalString(value.previous_filename);
+  const status = optionalString(value.status);
+  const additions = optionalCount(value.additions);
+  const deletions = optionalCount(value.deletions);
+  const patch = typeof value.patch === "string" ? value.patch : undefined;
+  return [{
+    path,
+    ...(previousPath === undefined ? {} : { previousPath }),
+    ...(status === undefined ? {} : { status }),
+    ...(additions === undefined ? {} : { additions }),
+    ...(deletions === undefined ? {} : { deletions }),
+    ...(patch === undefined ? {} : { patch }),
+    ...(value.patchTruncated === true ? { patchTruncated: true as const } : {}),
+  }];
+}
+
+function firstLine(commit: { message?: string }): string {
+  return (commit.message ?? "").split("\n", 1)[0]!;
+}
+
+/** What GitHub returned for one pull request; `files` is why the file list could not be read, when it could not. */
+export interface PullData {
+  pr: PrData | null;
+  checks: CheckRun[];
+  reviews: Review[];
+  commits: Array<{ message?: string }>;
+  files: PrFileFacts[] | string;
+}
+
+export interface ItemContext {
+  repo: string;
+  openPrs: PrFacts["openPrs"];
+  policy: RepoPolicy;
+  pack: CheckPack;
+  event: TriageEvent | null;
+}
+
+/** The rules step's item for one pull request, or the error that degrades it. */
+export function assembleItem(number: number, data: PullData, { repo, openPrs, policy, pack, event }: ItemContext): RulesItem {
+  const { pr, files } = data;
+  if (!pr) return { error: `github_get_pr failed for #${number}` };
+  if (typeof files === "string") return { error: files };
+  const paths = files.map((file) => file.path);
+  const commits = data.commits.map(firstLine);
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, openPrs, policy), paths, files, commits, ...(event === null ? {} : { event }) };
+  return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
 }

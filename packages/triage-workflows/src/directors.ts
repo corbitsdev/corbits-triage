@@ -12,9 +12,9 @@ import { type } from "arktype";
 import { repoPolicy, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES, prepareQualityEvaluation } from "./logic/quality.js";
+import { prepareQualityEvaluation } from "./logic/quality.js";
 import { triageEventOf } from "./logic/events.js";
-import { buildFacts, type CheckRun, type PrData, type Review } from "./logic/facts.js";
+import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, type CheckRun, type PrData, type Review } from "./logic/facts.js";
 import { asksJudge, type Item } from "./logic/item.js";
 import type { Verdict } from "./logic/render.js";
 import type { Judgment } from "./actions/evaluate.js";
@@ -100,37 +100,7 @@ function call(name: string, args: Record<string, unknown>, id = name): ToolCall 
   return { id, name, arguments: args };
 }
 
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function optionalCount(value: unknown): number | undefined {
-  return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : undefined;
-}
-
-function fileFacts(value: unknown): PrFileFacts[] {
-  if (!isRecord(value)) return [];
-  const path = optionalString(value.path) ?? optionalString(value.filename);
-  if (path === undefined) return [];
-  const previousPath = optionalString(value.previousPath) ?? optionalString(value.previous_filename);
-  const status = optionalString(value.status);
-  const additions = optionalCount(value.additions);
-  const deletions = optionalCount(value.deletions);
-  const patch = typeof value.patch === "string" ? value.patch : undefined;
-  return [{
-    path,
-    ...(previousPath === undefined ? {} : { previousPath }),
-    ...(status === undefined ? {} : { status }),
-    ...(additions === undefined ? {} : { additions }),
-    ...(deletions === undefined ? {} : { deletions }),
-    ...(patch === undefined ? {} : { patch }),
-    ...(value.patchTruncated === true ? { patchTruncated: true as const } : {}),
-  }];
-}
-
 const TRUNCATED_RESULT = "[Tool output truncated";
-// Patch text past what one System One request can carry is never evaluated, so later pages leave patches out.
-const MAX_PATCH_CHARS = MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
 
 type FilesPage = { files: PrFileFacts[]; next?: number };
 type ListedFiles = { files: PrFileFacts[]; patchChars: number };
@@ -144,10 +114,6 @@ function filesPage(r: ToolResult | undefined): FilesPage | string {
   if (!content || !Array.isArray(content.files)) return "github_list_pr_files result is unreadable";
   const next = optionalCount(content.next);
   return { files: content.files.flatMap(fileFacts), ...(next === undefined ? {} : { next }) };
-}
-
-function firstLine(commit: { message?: string }): string {
-  return (commit.message ?? "").split("\n", 1)[0]!;
 }
 
 function factsDirector(caps: ReactorCapabilities): ReactorDirector {
@@ -216,17 +182,13 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
 
       function onChecks(r2: BatchResults) {
         function itemFor(n: number): RulesItem {
-          const pr = prs.get(n);
-          if (!pr) return { error: `github_get_pr failed for #${n}` };
-          const checks = data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [];
-          const reviews = data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [];
-          const filesError = filesErrors.get(n);
-          if (filesError !== undefined) return { error: filesError };
-          const files = listed.get(n)?.files ?? [];
-          const paths = files.map((file) => file.path);
-          const commits = data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits?.map(firstLine) ?? [];
-          const facts = { ...buildFacts(repo, n, pr, checks, reviews, openPrs, policy), paths, files, commits, ...(event === null ? {} : { event }) };
-          return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
+          return assembleItem(n, {
+            pr: prs.get(n) ?? null,
+            checks: data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [],
+            reviews: data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [],
+            commits: data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits ?? [],
+            files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
+          }, { repo, openPrs, policy, pack, event });
         }
         return reply(numbers.map(itemFor), batch);
       }
