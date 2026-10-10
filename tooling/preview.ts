@@ -9,7 +9,7 @@ import { evaluate } from "@corbits/system-one";
 import { DEFAULT_REPO_POLICY, recommendedPack } from "../packages/triage-contracts/src/index.js";
 import { deriveState, type DeterministicResult, type PrFacts, type PrFileFacts } from "../packages/triage-workflows/src/logic/checks.js";
 import { buildFacts, type CheckRun, type PrData, type Review } from "../packages/triage-workflows/src/logic/facts.js";
-import { prepareQualityEvaluation } from "../packages/triage-workflows/src/logic/quality.js";
+import { prepareQualityEvaluation, type QualityEvaluation } from "../packages/triage-workflows/src/logic/quality.js";
 import { parseAnswers, renderVerdict, type RenderInput } from "../packages/triage-workflows/src/logic/render.js";
 
 const repo = process.argv[2] ?? "corbitsdev/corbits-triage-sandbox";
@@ -61,21 +61,22 @@ export function previewEvaluation(facts: PrFacts, det: DeterministicResult) {
 
 export async function previewJudge(
   det: RenderInput["det"],
-  evaluation: ReturnType<typeof prepareQualityEvaluation>,
+  evaluation: QualityEvaluation,
   evaluateQuality: typeof evaluate = evaluate,
   credentialAvailable = hasKey,
 ): Promise<Pick<RenderInput, "answers" | "judgeError" | "judgeLimitExceeded">> {
   if (!det.needsJudgment || !det.sources) return {};
-  if (evaluation.questions.length === 0) return {};
   if (evaluation.judgeError) return { judgeError: evaluation.judgeError, judgeLimitExceeded: true };
+  if (evaluation.requests.length === 0) return {};
   if (!credentialAvailable) return { judgeError: "no key exported" };
-  const result = await evaluateQuality({
-    state: evaluation.state,
-    questions: evaluation.questions,
-    config: { endpoint, timeoutMs: 30_000 },
-  });
-  if (result.fallback) return { judgeError: `${result.reason}${result.detail ? `: ${result.detail}` : ""}` };
-  return { answers: parseAnswers(result.decisions.map((decision) => JSON.stringify(decision)).join("")) };
+  const decisions: string[] = [];
+  const errors: string[] = [];
+  for (const { state, questions } of evaluation.requests) {
+    const result = await evaluateQuality({ state, questions, config: { endpoint, timeoutMs: 30_000 } });
+    if (result.fallback) errors.push(`${result.reason}${result.detail ? `: ${result.detail}` : ""}`);
+    else decisions.push(...result.decisions.map((decision) => JSON.stringify(decision)));
+  }
+  return { answers: parseAnswers(decisions.join("")), ...(errors.length > 0 ? { judgeError: errors.join("; ") } : {}) };
 }
 
 if (import.meta.main) {

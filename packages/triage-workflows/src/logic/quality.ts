@@ -55,10 +55,11 @@ const PASSES: Record<QualityCheckId, string> = {
 const MAX_BODY = 4000;
 const MAX_PATHS = 200;
 const MAX_COMMITS = 50;
+// Neither @corbits/system-one 0.3.1 (adapter.js, client.js) nor @intx/inference bounds a request, so these are our own conservative bounds on one Jev evaluation.
 export const MAX_SYSTEM_ONE_CONTEXT_BYTES = 30_000;
 export const MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES = 60_000;
 export const MAX_SYSTEM_ONE_QUESTIONS = 32;
-export const QUALITY_EVALUATION_LIMIT_ERROR = "quality evaluation exceeds the safe System One byte budget";
+export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the decision model";
 
 /** The judge answers yes or no, so every shape is asked as a pass question. */
 function customInstructions(row: ModelCustomCheck): string {
@@ -89,7 +90,8 @@ function focusedQuestion(candidate: ChangeCandidate, index: number): ChoiceQuali
 export function qualityQuestions(sources: NonNullable<DeterministicResult["sources"]>, candidates: readonly ChangeCandidate[] = []): QualityQuestion[] {
   const quality: QualityQuestion[] = [];
   for (const { id } of sources.quality) {
-    if (id === "focused") quality.push(...candidates.map(focusedQuestion));
+    // A candidate without evidence resolves unconfirmed whatever the answer, so it is not asked.
+    if (id === "focused") quality.push(...candidates.flatMap((candidate, index) => (candidate.evidence ? [focusedQuestion(candidate, index)] : [])));
     else quality.push({ id, type: "boolean", instructions: INSTRUCTIONS[id] });
   }
   return [
@@ -98,7 +100,9 @@ export function qualityQuestions(sources: NonNullable<DeterministicResult["sourc
   ];
 }
 
-export function qualityState(facts: PrFacts, candidates?: readonly ChangeCandidate[]) {
+type Entry = readonly [index: number, candidate: ChangeCandidate];
+
+export function qualityState(facts: PrFacts, candidates?: readonly Entry[]) {
   const state = {
     title: facts.title,
     body: (facts.body ?? "").slice(0, MAX_BODY),
@@ -111,7 +115,7 @@ export function qualityState(facts: PrFacts, candidates?: readonly ChangeCandida
   if (candidates === undefined) return state;
   return {
     ...state,
-    changeCandidates: Object.fromEntries(candidates.map((candidate, index) => [focusedCandidateId(index), candidate])),
+    changeCandidates: Object.fromEntries(candidates.map(([index, candidate]) => [focusedCandidateId(index), candidate])),
   };
 }
 
@@ -123,22 +127,78 @@ function jsonBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
-export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicResult["sources"]) {
-  const candidates = extractChangeCandidates(facts.files);
-  const focused = sources?.quality.some((source) => source.id === "focused") ?? false;
-  const state = qualityState(facts, focused ? candidates : undefined);
-  const questions = sources ? qualityQuestions(sources, candidates) : [];
+/** One System One call: the same pull request metadata with a share of the questions. */
+export interface JudgeRequest {
+  state: ReturnType<typeof qualityState>;
+  questions: QualityQuestion[];
+  measurements: { contextBytes: number; requestContentBytes: number };
+}
+
+export interface QualityEvaluation {
+  /** Every candidate in file order; one too large to ask alone carries trimmed evidence. */
+  candidates: ChangeCandidate[];
+  requests: JudgeRequest[];
+  judgeError?: string;
+}
+
+function judgeRequest(facts: PrFacts, focused: boolean, base: QualityQuestion[], entries: readonly Entry[]): JudgeRequest {
+  const state = qualityState(facts, focused ? entries : undefined);
+  const questions = [...base, ...entries.map(([index, candidate]) => focusedQuestion(candidate, index))];
   const contextBytes = jsonBytes(state) + questions.reduce((longest, question) => Math.max(longest, jsonBytes(question)), 0);
-  const requestContentBytes = jsonBytes({ state, questions });
-  const oversized = questions.length > MAX_SYSTEM_ONE_QUESTIONS ||
-    contextBytes > MAX_SYSTEM_ONE_CONTEXT_BYTES || requestContentBytes > MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
-  return {
-    candidates,
-    state,
-    questions,
-    measurements: { contextBytes, requestContentBytes },
-    ...(oversized ? { judgeError: QUALITY_EVALUATION_LIMIT_ERROR } : {}),
-  };
+  return { state, questions, measurements: { contextBytes, requestContentBytes: jsonBytes({ state, questions }) } };
+}
+
+function fits({ questions, measurements }: JudgeRequest): boolean {
+  return questions.length <= MAX_SYSTEM_ONE_QUESTIONS &&
+    measurements.contextBytes <= MAX_SYSTEM_ONE_CONTEXT_BYTES &&
+    measurements.requestContentBytes <= MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+}
+
+/** Keeps the most leading evidence lines that fit one request alone; with none, the candidate is not asked. */
+function trimToFit(candidate: ChangeCandidate, fitsAlone: (candidate: ChangeCandidate) => boolean): ChangeCandidate {
+  const lines = candidate.evidence.split("\n");
+  const withLines = (count: number): ChangeCandidate => ({ ...candidate, evidence: lines.slice(0, count).join("\n"), trimmed: true });
+  let low = 0;
+  let high = lines.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fitsAlone(withLines(middle))) low = middle;
+    else high = middle - 1;
+  }
+  return withLines(low);
+}
+
+/**
+ * Splits one evaluation into System One requests under the budget, a pure function of the facts: the first carries every
+ * non-candidate question and as many candidates as fit in file order, later ones the rest. Only an evaluation whose
+ * non-candidate questions and metadata do not fit alone is refused.
+ */
+export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicResult["sources"]): QualityEvaluation {
+  const candidates = extractChangeCandidates(facts.files);
+  if (!sources) return { candidates, requests: [] };
+  const focused = sources.quality.some((source) => source.id === "focused");
+  const base = qualityQuestions(sources);
+  if (!fits(judgeRequest(facts, focused, base, []))) return { candidates, requests: [], judgeError: QUALITY_EVALUATION_LIMIT_ERROR };
+
+  const requests: JudgeRequest[] = [];
+  let pending = base;
+  let entries: Entry[] = [];
+  for (const [index, extracted] of (focused ? candidates : []).entries()) {
+    if (!extracted.evidence) continue;
+    if (fits(judgeRequest(facts, focused, pending, [...entries, [index, extracted]]))) {
+      entries.push([index, extracted]);
+      continue;
+    }
+    if (pending.length > 0 || entries.length > 0) requests.push(judgeRequest(facts, focused, pending, entries));
+    pending = [];
+    entries = [];
+    const alone = (candidate: ChangeCandidate) => fits(judgeRequest(facts, focused, [], [[index, candidate]]));
+    const candidate = alone(extracted) ? extracted : trimToFit(extracted, alone);
+    candidates[index] = candidate;
+    if (candidate.evidence) entries.push([index, candidate]);
+  }
+  if (pending.length > 0 || entries.length > 0) requests.push(judgeRequest(facts, focused, pending, entries));
+  return { candidates, requests };
 }
 
 export function failureText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {

@@ -113,6 +113,9 @@ export const MAX_MIRROR_COMMENT_BYTES = 60_000;
 
 export const NEEDS_JUDGE_REASON = "needs the judge";
 
+/** The decision model answered, but the evidence it had did not settle every candidate. */
+const UNDECIDED_REASON = "not enough evidence to decide";
+
 export interface RenderOutput extends Rendered {
   mirror: boolean;
   duplicate: boolean;
@@ -158,12 +161,13 @@ function answerSet(answers: RenderInput["answers"]): ParsedAnswers {
   return { decisions, malformed: false };
 }
 
-function evaluateModel({ det, answers, candidates = [], judgeError, judgeSkipped }: RenderInput): ModelEvaluation {
+function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
   if (!det.sources) return { checks: [], scores: [], focusedUnresolved: false, noulUnresolved: false };
-  const parsed = answerSet(det.needsJudgment && judgeError === undefined ? answers : null);
+  // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
+  const parsed = answerSet(det.needsJudgment ? answers : null);
   const expectedIds = new Set(qualityQuestions(det.sources, candidates).map((question) => question.id));
-  const unavailable = !det.needsJudgment ? "not asked" : judgeSkipped ? NEEDS_JUDGE_REASON : "decision model unavailable";
-  const invalid = parsed.malformed || judgeError !== undefined || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
+  const unavailable = !det.needsJudgment ? "not asked" : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : "decision model unavailable";
+  const invalid = parsed.malformed || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
   const checks: CheckResult[] = [];
   const scores: number[] = [];
   let focusedUnresolved = false;
@@ -173,14 +177,20 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeSkipped
     if (source.id === "focused") {
       const unrelated: string[] = [];
       let candidateUnresolved = candidates.length === 0;
+      let unanswered = judgeLimitExceeded === true;
       for (const [index, candidate] of candidates.entries()) {
-        const answer = invalid ? undefined : parsed.decisions[focusedCandidateId(index)];
-        if (answer?.type !== "choice") {
+        if (!candidate.evidence) {
           candidateUnresolved = true;
           continue;
         }
+        const answer = invalid ? undefined : parsed.decisions[focusedCandidateId(index)];
+        if (answer?.type !== "choice") {
+          candidateUnresolved = true;
+          unanswered = true;
+          continue;
+        }
         scores.push(answer.confidence);
-        if (!candidate.evidence || answer.confidence < 0.5 || answer.choice === "ambiguous") {
+        if (answer.confidence < 0.5 || answer.choice === "ambiguous") {
           candidateUnresolved = true;
         } else if (answer.choice === "unrelated") {
           const evidence = `${candidate.label} — ${candidate.path}`;
@@ -191,7 +201,7 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeSkipped
       checks.push(unrelated.length > 0
         ? { check: "focused", kind: "model", result: "fail", reason: failureText("focused", det.sources), evidence: unrelated }
         : candidateUnresolved
-          ? { check: "focused", kind: "model", result: "unconfirmed", reason: !det.needsJudgment ? "not asked" : candidates.length === 0 ? "no change candidates" : unavailable, evidence: [] }
+          ? { check: "focused", kind: "model", result: "unconfirmed", reason: !det.needsJudgment ? "not asked" : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON, evidence: [] }
           : { check: "focused", kind: "model", result: "pass", reason: passText("focused", det.sources), evidence: [] });
       continue;
     }
@@ -299,8 +309,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     return enforceMirrorCommentBound({ ...verdict, checks });
   }
   if (judgeLimitExceeded === true) {
-    const reason = `decision model unavailable: ${judgeError}`;
-    return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: null, reason }, checks, ctx));
+    return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: null, reason: judgeError! }, checks, ctx));
   }
   if (judgeSkipped === true) {
     return enforceMirrorCommentBound(withChecks({ ...render(det.state, { humanGated: true }), mirror: false, duplicate: false, close: false, confidence: "unknown" as const, degraded: null, reason: NEEDS_JUDGE_REASON }, checks, ctx));
