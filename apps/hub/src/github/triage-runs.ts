@@ -99,6 +99,11 @@ function verdictsOf(events: readonly WorkflowRunEvent[]): Array<Record<string, u
   return Array.isArray(items) ? items.map(asRecord) : [verdict];
 }
 
+/** The verdict a run made for one pull request; a batch run holds one per head. */
+export function verdictFor(events: readonly WorkflowRunEvent[], repo: string, number: number): Record<string, unknown> | undefined {
+  return verdictsOf(events).find((verdict) => verdict?.["repo"] === repo && verdict["number"] === number);
+}
+
 /** Why the verdict does not settle the triggered head: degraded, made on another commit, a machine check GitHub had not computed yet, or the decision model never asked. */
 function unsettledBy(verdict: Record<string, unknown>, headSha: string): Unsettled {
   const degraded = verdict["degraded"];
