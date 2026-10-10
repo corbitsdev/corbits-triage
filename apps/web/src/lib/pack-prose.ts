@@ -84,7 +84,12 @@ export function whenText(when: Action["when"]): string {
   return `When ${listed(when.filter((event): event is ActionEvent => event !== "catch-up").map((event) => EVENT_NAMES[event]), "or")}`;
 }
 
-function quoted(text: string): string {
+/** Ends with a full stop unless a quoted comment already ends the sentence. */
+export function sentence(text: string): string {
+  return /[.!?]”$/.test(text) ? text : `${text}.`;
+}
+
+export function quoted(text: string): string {
   return `“${text}”`;
 }
 
@@ -127,14 +132,19 @@ function doAction(step: Do): string {
   }
 }
 
+/** An action by its place in the list; an id the pack does not hold yet is the action being built. */
+export function actionLabel(pack: CheckPack, id: string): string {
+  const index = pack.actions.findIndex((row) => row.id === id);
+  return index < 0 ? "This action" : `Action ${index + 1}`;
+}
+
 /**
  * A contract or draft message as the panel shows it: actions by their place in the list, custom checks by name.
  * An id the pack does not hold yet is the action or check being built.
  */
 export function shownReason(reason: string, pack: CheckPack): string {
   function action(_: string, id: string): string {
-    const index = pack.actions.findIndex((row) => row.id === id);
-    return index < 0 ? "This action" : `Action ${index + 1}`;
+    return actionLabel(pack, id);
   }
   function namedCheck(_: string, id: string): string {
     const check = pack.custom.find((row) => row.id === id);

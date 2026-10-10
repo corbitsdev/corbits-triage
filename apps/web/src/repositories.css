@@ -110,6 +110,8 @@
 .repos .rs .sentence .mk { margin: 0; }
 .repos .linkish { background: none; border: 0; padding: 0; font: 600 12px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .repos .linkish:disabled { opacity: 0.45; cursor: not-allowed; }
+.repos .rp .preview { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+.repos .rp .feedback { margin: 0; padding: 8px 12px; border-left: 3px solid var(--rule-strong); white-space: pre-wrap; font-size: 13px; }
 .repos .rp .note { font-size: 12px; margin: 12px 0 0; }
 .repos .rp .error { font-size: 13px; margin: 12px 0 0; }
 .repos .bar.save { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); font-size: 14px; }

@@ -9,6 +9,7 @@ import type { RepoRow } from "../../lib/repo-rows.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import ActionsList from "./ActionsList.tsx";
 import PostingToggle from "./PostingToggle.tsx";
+import PreviewRow from "./PreviewRow.tsx";
 import RepoFacts from "./RepoFacts.tsx";
 import RolesEditor from "./RolesEditor.tsx";
 import SaveBar from "./SaveBar.tsx";
@@ -73,6 +74,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
         <PostingToggle mode={draft.policy.cleanupMode} disabled={disabled} onChange={(cleanupMode) => settings.edit((current) => ({ ...current, policy: { ...current.policy, cleanupMode } }))} />
         <RolesEditor roles={draft.policy.roles} actions={draft.pack.actions} disabled={disabled} edit={settings.edit} />
         <ActionsList draft={draft} saved={settings.saved.pack} disabled={disabled} edit={settings.edit} problem={problem} />
+        <PreviewRow repo={repo.name} draft={draft} />
       </>
     );
   }
