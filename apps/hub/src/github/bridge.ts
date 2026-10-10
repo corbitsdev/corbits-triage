@@ -12,7 +12,7 @@
 // through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, repoPolicy, type CheckPack, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, repoPolicy, triageEventOf, type CheckPack, type RepoPolicy } from "@corbits/triage-contracts";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
@@ -424,6 +424,10 @@ export function createBridgeHandler(d: BridgeDeps) {
     const mail = normalize(event, delivery, payload as Record<string, unknown>);
     if (!mail || mail.prNumber === null) {
       log({ level: "info", msg: "ignored", delivery, event, hook: loaded.credentialId });
+      return json(202, { status: "ignored" });
+    }
+    if (triageEventOf(mail) === null) {
+      log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "no_triage_event" });
       return json(202, { status: "ignored" });
     }
     let botLogin: string;
