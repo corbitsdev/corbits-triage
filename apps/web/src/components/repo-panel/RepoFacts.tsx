@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { Switch } from "@corbits/react-ui";
 import { errorText } from "../../lib/error-text.ts";
+import type { TriageStats } from "../../lib/hub-api.ts";
 import type { DraftPolicy } from "../../lib/pack-draft.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import type { RepoPack } from "../../lib/repo-pack.ts";
 import type { RepoRow } from "../../lib/repo-rows.ts";
 import { relativeTime } from "../../lib/triage-view.ts";
 import HealthMark from "./HealthMark.tsx";
+import TriageStrip from "./TriageStrip.tsx";
 
 type RepoFactsProps = {
   repo: string;
@@ -14,6 +16,7 @@ type RepoFactsProps = {
   /** The pull request counts are current. */
   live: boolean;
   policy: DraftPolicy;
+  stats: TriageStats | undefined;
   /** Triage is on as saved, so open pull requests can be triaged again. */
   triaging: boolean;
   disabled: boolean;
@@ -36,7 +39,7 @@ function Byline({ row }: { row: RepoRow }) {
 }
 
 /** What the repository looks like now, and whether triage runs on it. */
-export default function RepoFacts({ repo, row, live, policy, triaging, disabled, edit, reason }: RepoFactsProps) {
+export default function RepoFacts({ repo, row, live, policy, stats, triaging, disabled, edit, reason }: RepoFactsProps) {
   const { runBacklog } = usePortal();
   const [rerunError, setRerunError] = useState("");
 
@@ -56,6 +59,7 @@ export default function RepoFacts({ repo, row, live, policy, triaging, disabled,
   return (
     <>
       {live ? <Byline row={row} /> : null}
+      <TriageStrip stats={stats} />
       <section className="rs" aria-labelledby="rs-triage">
         <div className={reason ? "sentence invalid" : "sentence"} id="rp-triage">
           <span className="txt">Triage pull requests in this repository

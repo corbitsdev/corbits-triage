@@ -1,5 +1,6 @@
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import type { Action, CheckPack, Do } from "@corbits/triage-contracts";
+import type { TriageStats } from "../../lib/hub-api.ts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
 import { BRANCH_NAMES, doText, sentence, whenText, type Branch } from "../../lib/pack-prose.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
@@ -12,6 +13,7 @@ type ActionRowProps = {
   count: number;
   draft: RepoDraft;
   saved: CheckPack;
+  stats: TriageStats | undefined;
   disabled: boolean;
   edit: RepoPack["edit"];
   /** Why the draft cannot be saved, when this action is the reason. */
@@ -22,9 +24,10 @@ type ActionRowProps = {
 };
 
 /** One action as a sentence: When, Checks, then the Dos of each outcome. */
-export default function ActionRow({ action, index, count, draft, saved, disabled, edit, reason, onEdit, onRemove, onMove }: ActionRowProps) {
+export default function ActionRow({ action, index, count, draft, saved, stats, disabled, edit, reason, onEdit, onRemove, onMove }: ActionRowProps) {
   const branches = Object.entries(action.branches) as Array<[Branch, Do[]]>;
-  const checks = action.checks.map((id) => ({ key: id, node: <CheckName id={id} draft={draft} saved={saved} disabled={disabled} edit={edit} /> }));
+  const fired = stats?.actions[action.id];
+  const checks = action.checks.map((id) => ({ key: id, node: <CheckName id={id} draft={draft} saved={saved} stats={stats} disabled={disabled} edit={edit} /> }));
   return (
     <div className={reason ? "act invalid" : "act"} id={`rp-action-${action.id}`}>
       <div className="sentence">
@@ -46,6 +49,7 @@ export default function ActionRow({ action, index, count, draft, saved, disabled
           </MenuContent>
         </Menu>
       </div>
+      {fired && fired.suggested > 0 ? <p className="hint">Fired {fired.suggested === 1 ? "once" : `${fired.suggested} times`}, {fired.executed} done</p> : null}
       {reason ? <p className="reason">{reason}</p> : null}
     </div>
   );

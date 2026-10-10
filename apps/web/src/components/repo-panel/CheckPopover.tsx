@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Switch } from "@corbits/react-ui";
 import { catalogCheckEnabled, type CatalogCheck, type CatalogId, type CheckPack, type CheckRef, type CustomCheck, type IssueTracker } from "@corbits/triage-contracts";
 import { buildCustomCheck, checkFormOf } from "../../lib/action-builder.ts";
+import type { TriageStats } from "../../lib/hub-api.ts";
 import { CATALOG_DEFAULTS, removeCustom, setCatalogCheck, upsertCustom, type RepoDraft } from "../../lib/pack-draft.ts";
 import { checkName, evaluationOf, isCatalogId, shownReason } from "../../lib/pack-prose.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
@@ -18,7 +19,7 @@ const TRACKERS: Array<{ value: IssueTracker; label: string }> = [
 
 const METHOD = { rule: "Computed from GitHub.", model: "Answered from the diff, citing files and lines." };
 
-export type CheckPopoverProps = { id: CheckRef; draft: RepoDraft; saved: CheckPack; disabled: boolean; edit: RepoPack["edit"]; onClose: () => void };
+export type CheckPopoverProps = { id: CheckRef; draft: RepoDraft; saved: CheckPack; stats: TriageStats | undefined; disabled: boolean; edit: RepoPack["edit"]; onClose: () => void };
 
 function catalogValue<K extends keyof CatalogCheck>(pack: CheckPack, id: CatalogId, key: K): CatalogCheck[K] {
   return pack.checks[id]?.[key] ?? CATALOG_DEFAULTS[id]?.[key] as CatalogCheck[K];
@@ -99,7 +100,7 @@ function CustomParams({ check, draft, disabled, edit, onClose }: CustomProps) {
 }
 
 /** How a check is evaluated and its parameters; catalog edits apply as they are made, custom ones on Save. */
-export default function CheckPopover({ id, draft, saved, disabled, edit, onClose }: CheckPopoverProps) {
+export default function CheckPopover({ id, draft, saved, stats, disabled, edit, onClose }: CheckPopoverProps) {
   const pack = draft.pack;
   const ref = useRef<HTMLDivElement>(null);
 
@@ -115,10 +116,13 @@ export default function CheckPopover({ id, draft, saved, disabled, edit, onClose
 
   const custom = isCatalogId(id) ? undefined : pack.custom.find((row) => row.id === id);
   const evaluation = evaluationOf(pack, id);
+  const ran = stats?.checks[id];
+  const runs = ran ? ran.pass + ran.fail + ran.unconfirmed : 0;
   return (
     <div className="pop check-pop" ref={ref} role="dialog" aria-label={checkName(pack, id)}>
       <div className="pop-h"><b>{checkName(pack, id)}</b><EvalBadge evaluation={evaluation} /></div>
       <p className="hint">{METHOD[evaluation]}</p>
+      {ran && runs > 0 ? <p className="hint">Passed {ran.pass} of {runs} this week</p> : null}
       {isCatalogId(id) ? <CatalogParams id={id} pack={pack} saved={saved} disabled={disabled} edit={edit} /> : null}
       {custom ? <CustomParams check={custom} draft={draft} disabled={disabled} edit={edit} onClose={onClose} /> : null}
     </div>
