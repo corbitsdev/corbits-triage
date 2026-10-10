@@ -16,7 +16,7 @@ import { checkPackName, repoPolicy, type CheckPack, type RepoPolicy } from "@cor
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
-import { NoLiveDeploymentError } from "./deployment.js";
+import { DeploymentNotReadyError, NoLiveDeploymentError } from "./deployment.js";
 import { normalize } from "./normalize.js";
 import { verifySignature } from "./signature.js";
 import {
@@ -318,6 +318,7 @@ function applyInstallAction(
 }
 
 function mailFailure(err: unknown): Response {
+  if (err instanceof DeploymentNotReadyError) return json(503, { error: err.code });
   const stale = err instanceof NoLiveDeploymentError || isRunTriggerUnroutable(err);
   return json(stale ? 503 : 502, { error: stale ? "stale_deployment" : "hub_unavailable" });
 }
