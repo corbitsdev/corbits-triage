@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Action, CheckPack, CheckRef, CustomCheck } from "@corbits/triage-contracts";
 import { actionFormOf, buildAction, type ActionForm } from "../../lib/action-builder.ts";
+import type { TriageStats } from "../../lib/hub-api.ts";
 import { removeCustom, upsertCustom, type RepoDraft } from "../../lib/pack-draft.ts";
 import { shownReason } from "../../lib/pack-prose.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
@@ -21,6 +22,7 @@ type ActionBuilderProps = {
   action?: Action;
   draft: RepoDraft;
   saved: CheckPack;
+  stats: TriageStats | undefined;
   disabled: boolean;
   edit: RepoPack["edit"];
   onDone: (action: Action) => void;
@@ -29,7 +31,7 @@ type ActionBuilderProps = {
 };
 
 /** When, Checks, then the Dos per outcome; Add goes through only once the action would be accepted as written. */
-export default function ActionBuilder({ action, draft, saved, disabled, edit, onDone, onCancel, onRemove }: ActionBuilderProps) {
+export default function ActionBuilder({ action, draft, saved, stats, disabled, edit, onDone, onCancel, onRemove }: ActionBuilderProps) {
   const [form, setForm] = useState<ActionForm>(() => (action ? actionFormOf(action) : BLANK));
   const [creating, setCreating] = useState(false);
   /** A blank form is not yet wrong, so its reason waits for the first edit or an attempt to add. */
@@ -81,7 +83,7 @@ export default function ActionBuilder({ action, draft, saved, disabled, edit, on
       <div className="blk"><span className="bl">When</span><WhenPicker when={form.when} disabled={disabled} onChange={(when) => set({ when })} /></div>
       <div className="blk">
         <span className="bl">Checks</span>
-        <CheckPicker checks={form.checks} draft={draft} saved={saved} disabled={disabled} edit={edit} onChange={(checks) => set({ checks })} onNewCheck={() => setCreating(true)} />
+        <CheckPicker checks={form.checks} draft={draft} saved={saved} stats={stats} disabled={disabled} edit={edit} onChange={(checks) => set({ checks })} onNewCheck={() => setCreating(true)} />
       </div>
       {creating ? <CheckGallery draft={draft} disabled={disabled} onAdd={addCheck} onCancel={() => setCreating(false)} /> : null}
       {branches.map((branch) => (

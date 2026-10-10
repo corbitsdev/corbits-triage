@@ -1074,6 +1074,26 @@ export async function listDoRuns(transport: Transport, tenantId: string, repo: s
   return Array.isArray(listed.dos) ? listed.dos.map(doRun) : [];
 }
 
+/** A repository's triage over the last `days` days, as the hub's triage-stats route answers. */
+export type TriageStats = {
+  repo: string;
+  days: number;
+  /** The earliest verdict ever recorded for the repository; later than the window's start, the window is only partly covered. */
+  since: string | null;
+  triaged: number;
+  verdicts: Record<string, number>;
+  neededYou: number;
+  checks: Record<string, { pass: number; fail: number; unconfirmed: number }>;
+  actions: Record<string, { suggested: number; executed: number; failed: number }>;
+  comments: number;
+  medianTimeToVerdictMs: number | null;
+  daily: Array<{ date: string; triaged: number }>;
+};
+
+export async function loadTriageStats(transport: Transport, tenantId: string, repo: string, days: number): Promise<TriageStats> {
+  return transport.fetch<TriageStats>("GET", `/api/integrations/triage-stats/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&days=${days}`);
+}
+
 export type GithubPullDetail = {
   pr: {
     number: number;
