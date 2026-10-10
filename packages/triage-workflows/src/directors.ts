@@ -347,7 +347,7 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
 
   function mirrorCall(v: Verdict): ToolCall {
     const r = v.request;
-    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, close: false }, `github_mirror_auto:${r.repo}#${r.number}`);
+    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, close: false }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
   return {
