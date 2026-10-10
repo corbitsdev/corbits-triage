@@ -44,7 +44,7 @@ function request(): Request {
 }
 
 async function noRuns(): Promise<ObservedRuns> {
-  return { byRepo: new Map(), runCount: 0 };
+  return { byRepo: new Map(), runCount: 0, verdicts: [] };
 }
 
 function route(store: TriageStateStore, deliver: Deliver) {
@@ -74,6 +74,7 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver) 
     openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt: LONG_AGO, draft: false })),
     observeRuns: noRuns,
     store,
+    verdicts: { record: async () => {} },
     readCheckPack: async () => ({ status: "ok", pack: PACK }),
     deliver: async (_tenant, _address, payload) => deliver(payload),
     policy: DEFAULT_RECONCILE_POLICY,

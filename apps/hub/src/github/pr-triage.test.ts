@@ -29,7 +29,7 @@ function stubDb(repo: Record<string, unknown>) {
 
 function observed(runs: ObservedRun[]): GithubPrTriageDeps["observeRuns"] {
   return async function observeRuns() {
-    return { byRepo: new Map([[REPO, new Map([["8@abc123", runs]])]]), runCount: runs.length };
+    return { byRepo: new Map([[REPO, new Map([["8@abc123", runs]])]]), runCount: runs.length, verdicts: [] };
   };
 }
 

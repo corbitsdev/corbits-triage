@@ -1,12 +1,14 @@
 // The live pr-triage deployment's runs, read from its committed run event log
 // and keyed by the pull request head their trigger named.
 import { and, eq, inArray } from "drizzle-orm";
+import { type } from "arktype";
 import { triggerRequestOf } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import type { LiveDeployment } from "./deployment.js";
 import { MODEL_NOT_ASKED, runKey, type ObservedRun } from "./reconcile-plan.js";
+import type { RecordedDo, RecordedVerdict } from "./verdict-record-store.js";
 
 const TERMINAL_EVENTS: Record<string, Terminal["status"]> = {
   RunCompleted: "completed",
@@ -19,7 +21,8 @@ const NO_VERDICT = "run completed without a verdict";
 type Trigger = { repo: string; number: number; headSha: string; startedAt: string };
 type Unsettled = Pick<ObservedRun, "unsettled" | "unconfirmed">;
 type Terminal = Unsettled & { status: Exclude<ObservedRun["status"], "running"> };
-type Head = { trigger: Trigger; terminal?: Terminal };
+type Summary = Omit<RecordedVerdict, "runId" | "repo" | "number" | "headSha" | "startedAt" | "settled">;
+type Head = { trigger: Trigger; terminal?: Terminal; summary?: Summary };
 /** No heads when the trigger names no pull request head, such as a portal run typed without a sha; a catch-up mail names several. */
 type KnownRun = { anchorRunId: string; heads: Head[] };
 
@@ -28,6 +31,8 @@ export type ObservedRuns = {
   byRepo: Map<string, Map<string, ObservedRun[]>>;
   /** Runs in the log, one per mail it received, including those that name no pull request head. */
   runCount: number;
+  /** One per head a completed run made a verdict for. */
+  verdicts: RecordedVerdict[];
 };
 
 /** Statuses the stock lifecycle settled for these runs, which it can do without a terminal event in the log. */
@@ -72,9 +77,18 @@ function triggersOf(started: Record<string, unknown>): Trigger[] {
 
 /** The evaluate action on either gate branch outputs the verdict; deployments before it rendered it in a `render` step. */
 const VERDICT_STEPS = new Set(["evaluate", "evaluateRules", "render"]);
+const MIRROR_STEPS = new Set(["mirror", "mirrorRules"]);
 
-function isVerdictCompleted(event: WorkflowRunEvent): boolean {
-  return event.type === "StepCompleted" && VERDICT_STEPS.has(String(event.body["stepId"]).split(/[/.]/).pop()!);
+function lastCompleted(events: readonly WorkflowRunEvent[], steps: ReadonlySet<string>): WorkflowRunEvent | undefined {
+  return events.findLast((event) => event.type === "StepCompleted" && steps.has(String(event.body["stepId"]).split(/[/.]/).pop()!));
+}
+
+/** A step's inline output; an agent step wraps it in `{ reply }`. */
+function inlineOutput(event: WorkflowRunEvent | undefined): Record<string, unknown> | undefined {
+  const ref = asRecord(event?.body["output"])?.["ref"];
+  if (typeof ref !== "string" || !ref.startsWith(INLINE_PREFIX)) return undefined;
+  const output = asRecord(parseJson(ref.slice(INLINE_PREFIX.length)));
+  return output && Object.hasOwn(output, "reply") ? asRecord(parseJson(output["reply"])) : output;
 }
 
 function isUnconfirmedMachineCheck(check: unknown): boolean {
@@ -88,14 +102,58 @@ function modelNotAsked(verdict: Record<string, unknown>, checks: unknown[]): boo
   return verdict["state"] !== "stale-unknown" && model.length > 0 && model.every((check) => check?.["reason"] === "not asked");
 }
 
-/** A batch run outputs `{ items }` in the order its mail named the heads; a single run outputs the verdict itself. A render step wrapped either in `{ reply }`. */
+/** A batch run outputs `{ items }` in the order its mail named the heads; a single run outputs the verdict itself. */
 function verdictsOf(events: readonly WorkflowRunEvent[]): Array<Record<string, unknown> | undefined> {
-  const ref = asRecord(events.findLast(isVerdictCompleted)?.body["output"])?.["ref"];
-  if (typeof ref !== "string" || !ref.startsWith(INLINE_PREFIX)) return [];
-  const output = asRecord(parseJson(ref.slice(INLINE_PREFIX.length)));
-  const verdict = output && Object.hasOwn(output, "reply") ? asRecord(parseJson(output["reply"])) : output;
-  const items = verdict?.["items"];
+  const verdict = inlineOutput(lastCompleted(events, VERDICT_STEPS));
+  if (!verdict) return [];
+  const items = verdict["items"];
   return Array.isArray(items) ? items.map(asRecord) : [verdict];
+}
+
+/** Mirror calls that succeeded: a batch run outputs `{ results }`, a single run the one outcome. */
+function mirroredCalls(events: readonly WorkflowRunEvent[]): Set<string> {
+  const output = inlineOutput(lastCompleted(events, MIRROR_STEPS));
+  const outcomes = Array.isArray(output?.["results"]) ? output["results"] : [output];
+  return new Set(outcomes.map(asRecord).flatMap((outcome) => outcome?.["ok"] === true && typeof outcome["call"] === "string" ? [outcome["call"]] : []));
+}
+
+/** The mirror director's call id for one pull request. */
+function mirrorCallId(repo: string, number: number): string {
+  return `mirror:${repo.replace("/", "--")}:${number}`;
+}
+
+const SummaryFields = type({
+  state: "string",
+  actor: "string",
+  humanGated: "boolean",
+  "degraded?": "string | null",
+  "checks?": type({ check: "string", result: "string" }).array(),
+  "actions?": "unknown[]",
+  "request?": { comment: "string" },
+});
+
+function suggestedDos(actions: readonly unknown[]): RecordedDo[] {
+  return actions.map(asRecord).flatMap(function suggested(action) {
+    const actionId = action?.["id"];
+    const effectId = action?.["effectId"];
+    return typeof actionId === "string" && typeof effectId === "string" && action?.["skipped"] !== true ? [{ actionId, effectId }] : [];
+  });
+}
+
+/** What the stats read of a verdict; none for one written before it carried these fields or made for another head. */
+function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigger, mirrored: ReadonlySet<string>): Summary | undefined {
+  const fields = SummaryFields(verdict);
+  if (fields instanceof type.errors || typeof at !== "string" || verdict["repo"] !== trigger.repo || verdict["number"] !== trigger.number) return undefined;
+  return {
+    verdictAt: new Date(at),
+    state: fields.state,
+    actor: fields.actor,
+    humanGated: fields.humanGated,
+    degraded: fields.degraded ?? null,
+    checks: (fields.checks ?? []).map(({ check, result }) => ({ check, result })),
+    dos: suggestedDos(fields.actions ?? []),
+    commented: (fields.request?.comment ?? "") !== "" && mirrored.has(mirrorCallId(trigger.repo, trigger.number)),
+  };
 }
 
 /** The verdict a run made for one pull request; a batch run holds one per head. */
@@ -131,9 +189,12 @@ function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger
   if (status === undefined) return triggers.map((trigger) => ({ trigger }));
   if (status !== "completed") return triggers.map((trigger) => ({ trigger, terminal: { status } }));
   const verdicts = verdictsOf(events);
+  const verdictAt = lastCompleted(events, VERDICT_STEPS)?.body["at"];
+  const mirrored = mirroredCalls(events);
   return triggers.map(function headVerdict(trigger, i) {
     const verdict = verdicts.length === triggers.length ? verdicts[i] : verdicts.length === 1 ? verdicts[0] : undefined;
-    return { trigger, terminal: terminalOf(status, verdict, trigger.headSha) };
+    const summary = verdict && summaryOf(verdict, verdictAt, trigger, mirrored);
+    return { trigger, terminal: terminalOf(status, verdict, trigger.headSha), ...(summary && { summary }) };
   });
 }
 
@@ -168,7 +229,7 @@ export function mergeObservedRuns(observed: readonly ObservedRuns[]): ObservedRu
     }
   }
   const runCount = observed.reduce((sum, runs) => sum + runs.runCount, 0);
-  return { byRepo, runCount };
+  return { byRepo, runCount, verdicts: observed.flatMap((runs) => runs.verdicts) };
 }
 
 export function createSettledStatusReader(db: DB["db"]): ReadSettled {
@@ -232,9 +293,11 @@ export function createTriageRuns(deps: TriageRunsDeps) {
     }
 
     const byRepo: ObservedRuns["byRepo"] = new Map();
+    const verdicts: RecordedVerdict[] = [];
     for (const runId of [...settledIds, ...latest.keys()]) {
-      for (const { trigger, terminal } of known.get(runId)?.heads ?? []) {
+      for (const { trigger, terminal, summary } of known.get(runId)?.heads ?? []) {
         const { repo, number, headSha, startedAt } = trigger;
+        if (summary) verdicts.push({ runId, repo, number, headSha, startedAt: new Date(startedAt), settled: terminal?.unsettled === undefined, ...summary });
         const byHead = byRepo.get(repo) ?? new Map<string, ObservedRun[]>();
         byRepo.set(repo, byHead);
         const key = runKey(number, headSha);
@@ -248,6 +311,6 @@ export function createTriageRuns(deps: TriageRunsDeps) {
         byHead.set(key, [...(byHead.get(key) ?? []), seen]);
       }
     }
-    return { byRepo, runCount: settledIds.size + latest.size };
+    return { byRepo, runCount: settledIds.size + latest.size, verdicts };
   };
 }
