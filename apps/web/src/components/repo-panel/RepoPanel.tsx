@@ -5,6 +5,7 @@ import type { DraftProblem } from "../../lib/pack-draft.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { useRepoPack } from "../../lib/repo-pack.ts";
 import type { RepoPackStore } from "../../lib/repo-pack-store.ts";
+import { useRepoStats } from "../../lib/repo-stats.ts";
 import type { RepoRow } from "../../lib/repo-rows.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import ActionsList from "./ActionsList.tsx";
@@ -31,6 +32,7 @@ function anchorOf(problem: DraftProblem): string {
 export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanelProps) {
   const { readOnly, snapshot } = usePortal();
   const settings = useRepoPack(store, repo.name);
+  const stats = useRepoStats(store, repo.name);
   const { draft, problem } = settings;
   const headingRef = useRef<HTMLHeadingElement>(null);
   const disabled = readOnly || (snapshot?.denied.repos ?? false) || settings.status !== "ready" || settings.saving;
@@ -70,10 +72,10 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     const where = problem?.where;
     return (
       <>
-        <RepoFacts repo={repo.name} row={row} live={live} policy={draft.policy} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} reason={where?.section === "triage" ? problem?.reason : undefined} />
+        <RepoFacts repo={repo.name} row={row} live={live} policy={draft.policy} stats={stats} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} reason={where?.section === "triage" ? problem?.reason : undefined} />
         <PostingToggle mode={draft.policy.cleanupMode} disabled={disabled} onChange={(cleanupMode) => settings.edit((current) => ({ ...current, policy: { ...current.policy, cleanupMode } }))} />
         <RolesEditor roles={draft.policy.roles} actions={draft.pack.actions} disabled={disabled} edit={settings.edit} />
-        <ActionsList draft={draft} saved={settings.saved.pack} disabled={disabled} edit={settings.edit} problem={problem} />
+        <ActionsList draft={draft} saved={settings.saved.pack} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />
         <PreviewRow repo={repo.name} draft={draft} />
       </>
     );

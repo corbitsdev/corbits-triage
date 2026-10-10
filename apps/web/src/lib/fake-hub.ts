@@ -1,4 +1,5 @@
 import { ApiError, type Transport } from "@intx/hub-client";
+import type { TriageStats } from "./hub-api.ts";
 
 export type FakeArtifact = { id: string; title: string; content: string; version: number; updatedAt: number };
 
@@ -6,6 +7,8 @@ export type FakeHub = {
   transport: Transport;
   artifacts: FakeArtifact[];
   config: Record<string, unknown>;
+  /** What the triage-stats route answers, for any repository and window. */
+  stats: TriageStats | null;
   /** Every request, as `METHOD path`. */
   requests: string[];
 };
@@ -16,7 +19,7 @@ export type FakeHub = {
  * create never refuses a duplicate title, and `expectedVersion` answers 409.
  */
 export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, unknown> = {}): FakeHub {
-  const hub: FakeHub = { artifacts, config, requests: [], transport: { fetch, subscribe: () => () => {} } };
+  const hub: FakeHub = { artifacts, config, stats: null, requests: [], transport: { fetch, subscribe: () => () => {} } };
   let clock = Math.max(0, ...artifacts.map((row) => row.updatedAt));
   let created = 0;
   function freshId(): string {
@@ -31,6 +34,7 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
       hub.config = (body as { config: Record<string, unknown> }).config;
       return undefined as T;
     }
+    if (method === "GET" && path.startsWith("/api/integrations/triage-stats/t?") && hub.stats) return hub.stats as T;
     if (method === "GET" && path.startsWith("/api/tenants/t/artifacts?")) {
       const url = new URL(path, "http://hub");
       const query = (url.searchParams.get("query") ?? "").toLowerCase();

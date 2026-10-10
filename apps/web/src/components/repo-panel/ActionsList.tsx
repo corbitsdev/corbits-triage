@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { EmptyState } from "@corbits/react-ui";
 import { applyRecommended, type Action, type CheckPack } from "@corbits/triage-contracts";
+import type { TriageStats } from "../../lib/hub-api.ts";
 import { moveAction, removeAction, upsertAction, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
 import ActionBuilder from "./ActionBuilder.tsx";
@@ -10,6 +11,7 @@ import VerdictRow from "./VerdictRow.tsx";
 type ActionsListProps = {
   draft: RepoDraft;
   saved: CheckPack;
+  stats: TriageStats | undefined;
   disabled: boolean;
   edit: RepoPack["edit"];
   problem: DraftProblem | null;
@@ -18,7 +20,7 @@ type ActionsListProps = {
 const NEW = "new";
 
 /** The built-in verdict first, then the pack's actions in order, each editable in place. */
-export default function ActionsList({ draft, saved, disabled, edit, problem }: ActionsListProps) {
+export default function ActionsList({ draft, saved, stats, disabled, edit, problem }: ActionsListProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const actions = draft.pack.actions;
   const where = problem?.where;
@@ -48,13 +50,14 @@ export default function ActionsList({ draft, saved, disabled, edit, problem }: A
     <section className="rs" aria-labelledby="rs-actions">
       <h3 id="rs-actions">Actions</h3>
       <p>What Triage does with each pull request. Automatic Dos run without asking; the rest wait for you.</p>
-      <VerdictRow draft={draft} saved={saved} disabled={disabled} edit={edit} reason={customReason} flaggedCheck={where?.section === "custom" ? where.id : undefined} />
+      <VerdictRow draft={draft} saved={saved} stats={stats} disabled={disabled} edit={edit} reason={customReason} flaggedCheck={where?.section === "custom" ? where.id : undefined} />
       {actions.map((action, index) => editing === action.id ? (
         <ActionBuilder
           key={action.id}
           action={action}
           draft={draft}
           saved={saved}
+          stats={stats}
           disabled={disabled}
           edit={edit}
           onDone={save}
@@ -69,6 +72,7 @@ export default function ActionsList({ draft, saved, disabled, edit, problem }: A
           count={actions.length}
           draft={draft}
           saved={saved}
+          stats={stats}
           disabled={disabled || editing !== null}
           edit={edit}
           reason={where?.section === "actions" && where.id === action.id ? problem?.reason : undefined}
@@ -77,7 +81,7 @@ export default function ActionsList({ draft, saved, disabled, edit, problem }: A
           onMove={(to) => edit((current) => moveAction(current, action.id, to))}
         />
       ))}
-      {editing === NEW ? <ActionBuilder draft={draft} saved={saved} disabled={disabled} edit={edit} onDone={save} onCancel={close} /> : null}
+      {editing === NEW ? <ActionBuilder draft={draft} saved={saved} stats={stats} disabled={disabled} edit={edit} onDone={save} onCancel={close} /> : null}
       {actions.length === 0 && editing !== NEW ? (
         <EmptyState
           title="No actions yet"

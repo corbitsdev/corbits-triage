@@ -79,6 +79,7 @@
 .repos .act .btn { flex: none; }
 .repos .rp .reason { margin: 4px 0 8px; font-size: 13px; font-weight: 600; }
 .repos .rp .hint { margin: 0; font-size: 12px; }
+.repos .rp .strip { margin-top: 16px; }
 .repos .act.invalid, .repos .sentence.invalid { box-shadow: inset 3px 0 0 var(--orange); padding-left: 10px; }
 .repos .act.invalid > .reason { margin: 0 0 12px; }
 .repos .bar.save .linkish.blocked { font-size: 13px; text-align: left; white-space: normal; }
