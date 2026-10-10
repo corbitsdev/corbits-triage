@@ -5,6 +5,7 @@ import { Hono, type Context } from "hono";
 import { routePath } from "hono/route";
 import { describeRoute, resolver } from "hono-openapi";
 import { checkPackSchema, repoPolicySchema } from "@corbits/triage-contracts";
+import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody } from "../github/manifest.js";
@@ -12,6 +13,7 @@ import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
+import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 
 export const INTEGRATIONS_PREFIX = "/api/integrations/";
 const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
@@ -27,6 +29,7 @@ export type IntegrationHandlers = {
   prTriage: TenantHandler;
   openPulls: TenantHandler;
   prDetails: TenantHandler;
+  workflowDeploy: TenantHandler;
 };
 
 const TAGS = ["integrations"];
@@ -228,6 +231,27 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       responses: { 200: json("Files, commits, conversation, issues, checks and reviews", PrDetails), ...invalid, ...failures, ...githubFailed },
     }),
     tenantRoute(handlers.prDetails),
+  );
+
+  app.post(
+    `${WORKFLOW_DEPLOY_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Deploy a workflow published as a tarball in the workspace's package registry",
+      description: "The stock deploy route with the package-registry asset as the source and a separate workflow asset as the definition.",
+      tags: TAGS,
+      requestBody: body(DeployBody),
+      responses: {
+        201: json("Workflow deployment accepted for provisioning", WorkflowDeploymentResponse),
+        ...invalid,
+        401: failures[401],
+        403: failures[403],
+        404: json("Workspace, workflow asset or package registry asset not found", Failure),
+        409: json("Workflow definition, source offering chain or tenant config invalid, or provisioning unavailable", Failure),
+        500: json("Deployment missing after preparation", Failure),
+        502: json("Sidecar unavailable", Failure),
+      },
+    }),
+    tenantRoute(handlers.workflowDeploy),
   );
 
   return app;

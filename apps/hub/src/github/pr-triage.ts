@@ -11,6 +11,7 @@ import { mailPayload } from "./bridge.js";
 import type { CheckPackRead } from "./check-pack-store.js";
 import { failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
+import { readJson } from "../read-json.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 import type { PullHeadReader } from "./tenant-open-heads.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
@@ -33,14 +34,6 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
-
-async function readJson(req: Request): Promise<unknown> {
-  try {
-    return await req.json();
-  } catch {
-    return null;
-  }
-}
 
 /** A head the hub queued and has not yet given up waiting on; later the reconciler marks it failed and queues it again itself. */
 function isQueuedSince(row: PrTriageRow | undefined, now: Date, policy: ReconcilePolicy): boolean {
