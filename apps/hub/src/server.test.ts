@@ -368,6 +368,7 @@ test("a pack Do runs once by reference and is recorded", async () => {
     const otherRunId = await seedRun(db, dataDir, otherTenantId, [{ id: "label", kind: "labels", target: { labels: ["api"] }, index: 0 }]);
     github.comments.push({ id: 99, user: APP_BOT, body: `${doMarker(effectOf({ id: "posted", kind: "comment", target: { body: "Already said" } }, 0))}\nAlready said` });
 
+    const refusal = `GitHub refused to label ${REPO}#8 (HTTP 422).`;
     async function runDo(actionId: string, run = runId) {
       const res = await fetch(`${origin}/api/integrations/github-dos/${tenantId}`, {
         method: "POST", headers, body: JSON.stringify({ runId: run, repo: REPO, number: 8, actionId, branch: "always", index: 0 }),
@@ -386,14 +387,15 @@ test("a pack Do runs once by reference and is recorded", async () => {
     expect(await runDo("label", otherRunId)).toMatchObject({ status: 404, body: { error: { code: "run_not_found" } } });
     expect(await runDo("agent")).toMatchObject({ status: 409, body: { error: { code: "do_not_runnable" } } });
     expect(await runDo("old")).toMatchObject({ status: 409, body: { error: { code: "verdict_outdated" } } });
-    expect(await runDo("refused")).toMatchObject({ status: 502, body: { error: { code: "github_failed" } } });
+    expect(await runDo("refused")).toMatchObject({ status: 502, body: { error: { code: "github_failed", message: refusal } } });
     expect(await runDo("forged")).toMatchObject({ status: 409, body: { error: { code: "effect_mismatch" } } });
     expect(await runDo("note", movedRunId)).toMatchObject({ status: 409, body: { error: { code: "head_moved" } } });
 
     const listed = await fetch(`${origin}/api/integrations/github-dos/${tenantId}?repo=${REPO}&number=8`, { headers });
     expect(listed.status).toBe(200);
-    const { dos } = type({ dos: type({ actionId: "string", status: "string" }).array() }).assert(await listed.json());
+    const { dos } = type({ dos: type({ actionId: "string", status: "string", error: "string | null" }).array() }).assert(await listed.json());
     expect(Object.fromEntries(dos.map((row) => [row.actionId, row.status]))).toEqual({ label: "done", note: "done", posted: "satisfied", refused: "failed" });
+    expect(dos.find((row) => row.actionId === "refused")?.error).toBe(refusal);
   } finally {
     github.stop();
     await close();

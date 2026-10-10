@@ -15,6 +15,7 @@ import { appGithubFetch, failure, githubAppCredential, portalMember, type Portal
 import type { DoRun, DoRunStore } from "./do-run-store.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
+import { GITHUB_VERB, githubFailed, githubRefusal } from "./github-refusal.js";
 import { readJson } from "../read-json.js";
 
 export const GITHUB_DOS_PATH = "/api/integrations/github-dos";
@@ -93,16 +94,6 @@ function settled(row: DoRun | undefined): row is DoRun {
 
 function replay(row: DoRun): Response {
   return Response.json({ ...view(row), replayed: true });
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function githubFailed(what: string, err: unknown): Response {
-  const message = errorText(err);
-  const status = /-> (\d{3})$/.exec(message)?.[1];
-  return failure(502, "github_failed", `GitHub refused to ${what}${status ? ` (HTTP ${status})` : `: ${message}`}.`);
 }
 
 type Body = typeof DoBody.infer;
@@ -197,11 +188,15 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {
       if (!row) return failure(409, "do_in_progress", "Another request took this Do over.");
       return Response.json({ ...view(row), replayed: false });
     } catch (err) {
-      const message = errorText(err);
+      const cause = err instanceof Error ? err.message : String(err);
+      deps.log({ level: "warn", msg: "github_do_failed", ...logged, error: cause });
+      if (err instanceof DoNotRunnableError || step.kind === "agent") {
+        await deps.store.fail(claimed, cause);
+        return failure(409, "do_not_runnable", cause);
+      }
+      const message = githubRefusal(`${GITHUB_VERB[step.kind]} ${repo}#${number}`, err);
       await deps.store.fail(claimed, message);
-      deps.log({ level: "warn", msg: "github_do_failed", ...logged, error: message });
-      if (err instanceof DoNotRunnableError) return failure(409, "do_not_runnable", message);
-      return githubFailed(`run ${step.kind} on ${repo}#${number}`, err);
+      return failure(502, "github_failed", message);
     }
   }
 
