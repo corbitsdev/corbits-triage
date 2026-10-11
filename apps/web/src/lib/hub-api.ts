@@ -1112,7 +1112,7 @@ export type GithubPullDetail = {
     labels: string[];
     updatedAt: string;
   };
-  files: Array<{ path: string; status: string; additions: number; deletions: number; patch?: string }>;
+  files: Array<{ path: string; previousPath?: string; status: string; additions: number; deletions: number; patch?: string }>;
   commits: Array<{ sha: string; message: string; author: string; committedAt: string }>;
   comments: Array<{ id: number | string; author: string; body: string; createdAt: string }>;
   issues: Array<{ number: number; title: string; state: string; body: string | null; url: string }>;
