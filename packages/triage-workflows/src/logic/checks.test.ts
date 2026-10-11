@@ -92,7 +92,7 @@ describe("deriveState check pack", () => {
     const result = deriveState(noisy, DEFAULT_REPO_POLICY, emptyPack("acme/widgets"));
     expect(result.findings).toEqual([]);
     expect(result.duplicateOf).toBeNull();
-    expect(result.sources).toEqual({ quality: [], custom: [] });
+    expect(result.sources).toEqual({ quality: [], custom: [], rules: [] });
   });
 
   test("machine checks use pack params; quality and custom are source not code", () => {
@@ -130,5 +130,61 @@ describe("deriveState check pack", () => {
     expect(result.checks.find((check) => check.check === "paths")?.result).toBe("pass");
     expect(result.sources?.custom).toEqual(pack.custom);
     expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused", "tests"]);
+  });
+});
+
+describe("deriveState rule custom checks", () => {
+  const facts: PrFacts = {
+    ...noisy,
+    draft: false,
+    title: "feat(api): add search",
+    branch: "feature/search",
+    labels: ["API"],
+    approvals: 1,
+    paths: ["src/api.ts", "docs/api.md"],
+    files: [
+      { path: "src/api.ts", additions: 2, patch: "@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+b\n@@ -10,1 +10,2 @@\n c\n+const token = 'sk-live-1';" },
+      { path: "docs/api.md", additions: 1, patch: "@@ -1 +1,2 @@\n x\n+y" },
+    ],
+  };
+  const pack = emptyPack("acme/widgets");
+  pack.custom = [
+    { id: "custom-1", name: "Lockfile frozen", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["bun.lock"] },
+    { id: "custom-2", name: "Docs with API", group: "pull-request", kind: "rule", rule: "paths-together", changed: ["src/api.ts"], requires: ["docs/**"] },
+    { id: "custom-3", name: "Conventional title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^(feat|fix)\\(" },
+    { id: "custom-4", name: "Branch naming", group: "pull-request", kind: "rule", rule: "branch-pattern", pattern: "^cl-" },
+    { id: "custom-5", name: "Needs triage label", group: "issue", kind: "rule", rule: "label-required", label: "triaged" },
+    { id: "custom-6", name: "No live keys", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "sk-live-" },
+    { id: "custom-7", name: "Two approvals", group: "around", kind: "rule", rule: "min-approvals", count: 2 },
+    { id: "custom-8", name: "API label", group: "issue", kind: "rule", rule: "label-required", label: "api" },
+  ];
+
+  test("each rule kind is evaluated from facts, named in its reason, with a finding on failure", () => {
+    const result = deriveState(facts, allOff, pack);
+    const byId = Object.fromEntries(result.checks.map((check) => [check.check, check]));
+    expect(byId["custom-1"]).toMatchObject({ kind: "machine", result: "pass" });
+    expect(byId["custom-2"]).toMatchObject({ result: "pass" });
+    expect(byId["custom-3"]).toMatchObject({ result: "pass" });
+    expect(byId["custom-4"]).toMatchObject({ result: "fail", reason: "Branch naming: branch does not match the pattern" });
+    expect(byId["custom-5"]).toMatchObject({ result: "fail", reason: "Needs triage label: label triaged is missing" });
+    expect(byId["custom-6"]).toMatchObject({ result: "fail", evidence: ["src/api.ts:11"] });
+    expect(byId["custom-7"]).toMatchObject({ result: "fail", reason: "Two approvals: not enough approvals", evidence: ["1 of 2 approvals"] });
+    expect(byId["custom-8"]).toMatchObject({ result: "pass" });
+    expect(result.findings.map((finding) => [finding.check, finding.state])).toEqual([
+      ["custom-4", "needs-author-update"],
+      ["custom-5", "awaiting-review"],
+      ["custom-6", "needs-author-update"],
+      ["custom-7", "awaiting-review"],
+    ]);
+    expect(result.sources?.rules).toEqual(pack.custom);
+  });
+
+  test("a hit in a truncated patch still fails; only a clean scan with gaps is unconfirmed", () => {
+    const truncated: PrFacts = { ...facts, files: [{ ...facts.files![0]!, patchTruncated: true }] };
+    expect(deriveState(truncated, allOff, pack).checks.find((check) => check.check === "custom-6")).toMatchObject({ result: "fail", evidence: ["src/api.ts:11"] });
+    const gaps: PrFacts = { ...facts, branch: undefined, files: [{ path: "src/api.ts", additions: 2 }, { path: "img.png", additions: 0 }] };
+    const result = deriveState(gaps, allOff, pack);
+    expect(result.checks.find((check) => check.check === "custom-4")?.result).toBe("unconfirmed");
+    expect(result.checks.find((check) => check.check === "custom-6")?.result).toBe("unconfirmed");
   });
 });

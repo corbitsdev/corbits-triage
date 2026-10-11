@@ -1,5 +1,5 @@
 import { render, TRIAGE_LABELS, type Rendered, type TriageState } from "@corbits/rule-packs";
-import type { CleanupMode } from "@corbits/triage-contracts";
+import type { CleanupMode, RuleCustomCheck } from "@corbits/triage-contracts";
 import type { SuggestedAction } from "./actions.js";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import type { ChangeCandidate } from "./candidates.js";
@@ -262,7 +262,25 @@ function failedStep(c: CheckResult, sources: Sources): Step {
     case "reviewers": return { actor: "maintainer", action: "Assign a reviewer" };
     case "drift": return { actor: "maintainer", action: `Decide on base drift (${withoutLimit(c.evidence)})` };
     case "focused": return { actor: "author", action: `Split out unrelated change: ${c.evidence.join("; ")}` };
-    default: return { actor: "author", action: c.kind === "model" && sources ? actionText(c.check, sources) : `Fix ${c.check}` };
+    default: {
+      const rule = sources?.rules.find((r) => r.id === c.check);
+      if (rule) return ruleStep(rule, c);
+      return { actor: "author", action: c.kind === "model" && sources ? actionText(c.check, sources) : `Fix ${c.check}` };
+    }
+  }
+}
+
+/** Labels and approvals are the maintainer's; everything else names what the author changes. */
+function ruleStep(rule: RuleCustomCheck, c: CheckResult): Step {
+  const where = c.evidence.map(inlineCode).join(", ");
+  switch (rule.rule) {
+    case "paths-unchanged": return { actor: "author", action: `Revert changes under ${where}` };
+    case "paths-together": return { actor: "author", action: `Also change ${rule.requires.map(inlineCode).join(", ")}` };
+    case "title-pattern": return { actor: "author", action: `Retitle to match ${inlineCode(rule.pattern)}` };
+    case "branch-pattern": return { actor: "author", action: `Rename the branch to match ${inlineCode(rule.pattern)}` };
+    case "diff-excludes": return { actor: "author", action: `Remove the excluded content at ${where}` };
+    case "label-required": return { actor: "maintainer", action: `Add label ${inlineCode(rule.label)}` };
+    case "min-approvals": return { actor: "maintainer", action: `Approve (${where})` };
   }
 }
 
@@ -323,7 +341,7 @@ function authorComment(author: string, checks: CheckResult[], sources: Sources):
   if (mine.length) {
     lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
       ? c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}`)
-      : [`- ${c.reason}${c.evidence.length ? `: ${c.evidence.join(", ")}` : ""}`]));
+      : [`- ${c.reason}${c.evidence.length ? `: ${c.evidence.map(inlineCode).join(", ")}` : ""}`]));
   }
   if (unconfirmed.length) {
     if (lines.length) lines.push("");

@@ -102,6 +102,7 @@ export type CustomCheck = { id: string; name: string; group: CheckPackGroup } & 
   | ({ kind: "model" } & ModelCheck)
 );
 export type ModelCustomCheck = Extract<CustomCheck, { kind: "model" }>;
+export type RuleCustomCheck = Extract<CustomCheck, { kind: "rule" }>;
 
 const SCORE_MAX = 10;
 const PATTERN_MAX = 200;
@@ -695,10 +696,15 @@ function isModelCheck(row: CustomCheck): row is ModelCustomCheck {
   return row.kind === "model";
 }
 
-/** Model rows are handed to the classifier as plain text, never evaluated; rule rows are not questions. */
+export function isRuleCheck(row: CustomCheck): row is RuleCustomCheck {
+  return row.kind === "rule";
+}
+
+/** Model rows are handed to the classifier as plain text; rule rows are evaluated from facts and listed here for naming. */
 export function classificationSources(pack: CheckPack): {
   quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>;
   custom: ModelCustomCheck[];
+  rules: RuleCustomCheck[];
 } {
   return {
     quality: QUALITY_CHECK_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id) => ({
@@ -706,5 +712,6 @@ export function classificationSources(pack: CheckPack): {
       group: CHECK_CATALOG[id].group,
     })),
     custom: pack.custom.filter(isModelCheck),
+    rules: pack.custom.filter(isRuleCheck),
   };
 }
