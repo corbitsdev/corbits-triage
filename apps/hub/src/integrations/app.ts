@@ -4,7 +4,7 @@ import { type } from "arktype";
 import { Hono, type Context } from "hono";
 import { routePath } from "hono/route";
 import { describeRoute, resolver } from "hono-openapi";
-import { checkPackSchema, repoPolicySchema } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, checkPackSchema, repoPolicySchema } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
@@ -50,7 +50,17 @@ const ManifestStart = type({ manifest: "Record<string, unknown>", state: "string
 const ManifestCancel = type({ cancelled: "boolean" });
 const InstallationsSynced = type({ installations: "number", repos: "string[]" });
 const TriageQueued = type({ status: "'queued'", headSha: "string" });
-const OpenPulls = type({ repos: type({ repo: "string", prs: "Record<string, unknown>[]", "error?": "string" }).array() });
+const OpenPull = type({
+  number: "number",
+  title: "string",
+  author: "string | null",
+  "authorKind?": type.enumerated(...AUTHOR_KINDS),
+  draft: "boolean",
+  "sha?": "string",
+  updatedAt: "string",
+  labels: "string[]",
+});
+const OpenPulls = type({ repos: type({ repo: "string", prs: OpenPull.array(), "error?": "string" }).array() });
 const PrDetails = type({
   pr: "Record<string, unknown>",
   files: "Record<string, unknown>[]",

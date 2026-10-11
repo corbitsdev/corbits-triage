@@ -2,6 +2,7 @@
 // the tenant's vaulted GitHub App credential so the portal never calls GitHub.
 import { eq } from "drizzle-orm";
 import { schema } from "@intx/db";
+import { authorAssociation, authorKindOf, type AuthorKind } from "@corbits/triage-contracts";
 import { listOpenPrs, type GithubFetch } from "@corbits/github-tool/github";
 import { createGithubAppCredentialFetch, INSTALLATION_SELECTOR_HEADER } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
@@ -9,8 +10,14 @@ import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
 
 export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
 
-type OpenPrs = Awaited<ReturnType<typeof listOpenPrs>>;
-type RepoPulls = { repo: string; prs: OpenPrs; error?: string };
+type GithubOpenPr = Awaited<ReturnType<typeof listOpenPrs>>[number];
+type OpenPr = Omit<GithubOpenPr, "authorAssociation" | "authorBot"> & { authorKind?: AuthorKind };
+type RepoPulls = { repo: string; prs: OpenPr[]; error?: string };
+
+function withAuthorKind({ authorAssociation: association, authorBot, ...pr }: GithubOpenPr): OpenPr {
+  const authorKind = authorKindOf(authorAssociation(association), authorBot);
+  return authorKind === undefined ? pr : { ...pr, authorKind };
+}
 
 export function forInstallation(gh: GithubFetch, installationId: number | undefined): GithubFetch {
   if (installationId === undefined) return gh;
@@ -26,7 +33,8 @@ export function createGithubOpenPulls(deps: PortalCredentialDeps & { githubApiOr
 
   async function pullsFor(gh: GithubFetch, record: RepoRecord): Promise<RepoPulls> {
     try {
-      return { repo: record.name, prs: await listOpenPrs(forInstallation(gh, record.installationId), record.name) };
+      const prs = await listOpenPrs(forInstallation(gh, record.installationId), record.name);
+      return { repo: record.name, prs: prs.map(withAuthorKind) };
     } catch (err) {
       return { repo: record.name, prs: [], error: err instanceof Error ? err.message : String(err) };
     }
