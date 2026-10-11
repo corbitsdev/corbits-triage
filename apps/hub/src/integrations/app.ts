@@ -16,6 +16,7 @@ import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 import { TRIAGE_STATS_PATH, TriageStats } from "../github/triage-stats.js";
+import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { DeployedVersions, WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
@@ -36,6 +37,7 @@ export type IntegrationHandlers = {
   prDetails: TenantHandler;
   prPreview: TenantHandler;
   triageStats: TenantHandler;
+  triageTimeline: TenantHandler;
   workflowDeploy: TenantHandler;
   workflowVersions: TenantHandler;
 };
@@ -317,6 +319,21 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       responses: { 200: json("Counts, rates and daily triaged pull requests", TriageStats), ...invalid, 401: failures[401], 403: failures[403] },
     }),
     tenantRoute(handlers.triageStats),
+  );
+
+  app.get(
+    `${TRIAGE_TIMELINE_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Readiness history of a pull request",
+      description: "From the recorded verdicts only, oldest first; the pull request's Do runs are read from github-dos. A verdict with the same head, settled and degraded state and check results as the one before it is left out. Each scores its checks (pass 1, unconfirmed half, fail 0, out of 100) and lists the checks whose result changed since the previous judged verdict; degraded verdicts score nothing.",
+      tags: TAGS,
+      parameters: [
+        { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
+        { in: "query", name: "number", required: true, schema: { type: "integer", minimum: 1, maximum: 2147483647 } },
+      ],
+      responses: { 200: json("Verdicts in time order", TriageTimeline), ...invalid, 401: failures[401], 403: failures[403] },
+    }),
+    tenantRoute(handlers.triageTimeline),
   );
 
   app.post(
