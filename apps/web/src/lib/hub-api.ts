@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, readCheckPack, checkPackName, triggerRequestOf, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
+import { repoPolicy, readCheckPack, checkPackName, triggerRequestOf, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type AuthorKind, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -1001,7 +1001,7 @@ export async function triagePullRequest(transport: Transport, tenantId: string, 
 export type OpenPulls = {
   repos: Array<{
     repo: string;
-    prs: Array<{ number: number; title: string; author: string | null; draft: boolean; sha: string; updatedAt: string; labels: string[] }>;
+    prs: Array<{ number: number; title: string; author: string | null; authorKind?: AuthorKind; draft: boolean; sha: string; updatedAt: string; labels: string[] }>;
     error?: string;
   }>;
 };
@@ -1458,6 +1458,8 @@ export type PrItem = {
   number: number | null;
   title: string | null;
   author: string | null;
+  /** Who the author is to the repository, known once the open pull requests have loaded; null when GitHub does not say. */
+  authorKind: AuthorKind | null;
   draft: boolean | null;
   mergeable: boolean | null;
   state: QueueState;
@@ -1829,6 +1831,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         number: v.number,
         title: typeof v.facts.title === "string" && v.facts.title ? v.facts.title : null,
         author: typeof v.facts.author === "string" && v.facts.author ? v.facts.author : null,
+        authorKind: null,
         draft: typeof v.facts.draft === "boolean" ? v.facts.draft : null,
         mergeable: typeof v.facts.mergeable === "boolean" ? v.facts.mergeable : null,
         state: TRIAGE_TO_QUEUE[String(r.state)] ?? "stale",
@@ -1892,7 +1895,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
       const key = `${repo}#${pr.number}`;
       const known = items.get(key);
       if (known) {
-        items.set(key, { ...known, updatedAt: pr.updatedAt, headSha: pr.sha });
+        items.set(key, { ...known, authorKind: pr.authorKind ?? null, updatedAt: pr.updatedAt, headSha: pr.sha });
         continue;
       }
       items.set(key, {
@@ -1901,6 +1904,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         number: pr.number,
         title: pr.title,
         author: pr.author,
+        authorKind: pr.authorKind ?? null,
         draft: pr.draft,
         mergeable: null,
         state: "new",
