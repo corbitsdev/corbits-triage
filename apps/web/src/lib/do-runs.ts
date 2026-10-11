@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import { listDoRuns, runPackDo, type DoRef, type DoRun, type PrItem } from "./hub-api.ts";
 import { createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
 import { pendingDos, type PendingDo } from "./pending-dos.ts";
@@ -42,16 +42,21 @@ export function useHeldDos(): HeldDos {
   }, [queryClient]);
 }
 
-/** Until the hub's records arrive, every Do the verdict suggests is offered; a sent one is replayed rather than written twice. */
-export function usePendingDos(item: PrItem | undefined): PendingDo[] {
+/** The hub's records of a pull request's Dos, newest first. */
+export function useDoRuns(repo: string, number: number | null) {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
+  const queryFn = tenantId === undefined || number === null ? skipToken : async function fetchDoRuns() {
+    return listDoRuns(createHubTransport(), tenantId, repo, number);
+  };
+  return useQuery({ queryKey: doRunsKey(tenantId, repo, number), queryFn });
+}
+
+/** Until the hub's records arrive, every Do the verdict suggests is offered; a sent one is replayed rather than written twice. */
+export function usePendingDos(item: PrItem | undefined): PendingDo[] {
   const repo = item?.repo ?? "";
   const number = item?.number ?? null;
-  async function fetchDoRuns() {
-    return listDoRuns(createHubTransport(), tenantId as string, repo, number as number);
-  }
-  const { data } = useQuery({ queryKey: doRunsKey(tenantId, repo, number), queryFn: fetchDoRuns, enabled: tenantId !== undefined && number !== null });
+  const { data } = useDoRuns(repo, number);
   const held = useHeldDoKeys();
   return useMemo(() => (item === undefined ? [] : pendingDos(item, data ?? [], new Set(held))), [item, data, held]);
 }

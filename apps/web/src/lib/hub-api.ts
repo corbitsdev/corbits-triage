@@ -1033,15 +1033,19 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
 /** Names one pack Do by the run whose verdict suggested it; the hub looks the Do up and decides what to write. */
 export type DoRef = { runId: string; repo: string; number: number; actionId: string; branch: DoBranch; index: number };
 
-/** The hub's record of one Do, by its effect id; only `failed` leaves it to run again. */
-export type DoRun = { effectId: string; status: "running" | "done" | "satisfied" | "failed"; error: string | null };
+/** The hub's record of one Do, by its effect id; only `failed` leaves it to run again. `updatedAt` is when its status last changed. */
+export type DoRun = { effectId: string; actionId: string; kind: ActionKind; headSha: string; status: "running" | "done" | "satisfied" | "failed"; error: string | null; updatedAt: string };
 
 const DO_STATUSES: ReadonlyArray<DoRun["status"]> = ["running", "done", "satisfied", "failed"];
 
 function doRun(value: unknown): DoRun {
   const row = obj(value);
-  if (typeof row.effectId !== "string" || !DO_STATUSES.includes(row.status as DoRun["status"])) throw new Error("The hub returned a malformed Do record.");
-  return { effectId: row.effectId, status: row.status as DoRun["status"], error: typeof row.error === "string" ? row.error : null };
+  const { effectId, actionId, kind, headSha, status, updatedAt } = row;
+  if (
+    typeof effectId !== "string" || typeof actionId !== "string" || !isActionKind(kind) || typeof headSha !== "string"
+    || !DO_STATUSES.includes(status as DoRun["status"]) || typeof updatedAt !== "string"
+  ) throw new Error("The hub returned a malformed Do record.");
+  return { effectId, actionId, kind, headSha, status: status as DoRun["status"], error: typeof row.error === "string" ? row.error : null, updatedAt };
 }
 
 const OUTDATED = "This verdict is out of date. Run triage again.";
@@ -1091,6 +1095,29 @@ export type TriageStats = {
 
 export async function loadTriageStats(transport: Transport, tenantId: string, repo: string, days: number): Promise<TriageStats> {
   return transport.fetch<TriageStats>("GET", `/api/integrations/triage-stats/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&days=${days}`);
+}
+
+export type CheckChange = { check: string; from: string | null; to: string | null };
+
+/** One recorded verdict of a pull request, as the hub's triage-timeline route answers; repeats of the same outcome are left out. */
+export type TimelineEntry = {
+  at: string;
+  runId: string;
+  headSha: string;
+  state: string;
+  actor: string;
+  /** False while the verdict waits on something, such as a check GitHub had not computed yet. */
+  settled: boolean;
+  degraded: string | null;
+  /** 0–100; null when the verdict has no checks or is degraded. */
+  readiness: number | null;
+  changed: CheckChange[];
+};
+
+export type TriageTimeline = { repo: string; number: number; entries: TimelineEntry[] };
+
+export async function loadTriageTimeline(transport: Transport, tenantId: string, repo: string, number: number): Promise<TriageTimeline> {
+  return transport.fetch<TriageTimeline>("GET", `/api/integrations/triage-timeline/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`);
 }
 
 export type GithubPullDetail = {
