@@ -99,6 +99,8 @@ export async function listOpenPrs(gh: GithubFetch, repo: string) {
     number: p.number,
     title: p.title,
     author: p.user?.login ?? null,
+    authorAssociation: p.author_association ?? null,
+    authorBot: p.user?.type === "Bot",
     draft: p.draft,
     sha: p.head?.sha,
     updatedAt: p.updated_at,

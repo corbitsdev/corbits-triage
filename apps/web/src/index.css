@@ -2092,7 +2092,7 @@ details.setup-help[open] { display: grid; gap: 12px; }
   .segmented button { flex: 1; }
   .mobile-nav {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     position: fixed;
     left: 0;
     right: 0;

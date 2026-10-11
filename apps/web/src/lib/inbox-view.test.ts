@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { allOpen, groupInbox, groupOpen, hasDraftComment, inboxAction, inboxStatus, listCounts, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, firstTimers, groupInbox, groupOpen, hasDraftComment, inboxAction, inboxStatus, listCounts, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -11,6 +11,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     number: 1,
     title: "Fix",
     author: "ada",
+    authorKind: null,
     draft: false,
     mergeable: null,
     state: "needs-decision",
@@ -179,8 +180,8 @@ describe("All open", () => {
   const open: OpenItem[] = [
     { item: item({}), handled: null },
     { item: item({ key: "acme/widgets#2", state: "new", runId: null }), handled: null },
-    { item: item({ key: "acme/widgets#3", state: "ready" }), handled: { kind: "approve" } },
-    { item: item({ key: "acme/off#4", repo: "acme/off" }), handled: null },
+    { item: item({ key: "acme/widgets#3", state: "ready", authorKind: "first-timer" }), handled: { kind: "approve" } },
+    { item: item({ key: "acme/off#4", repo: "acme/off", authorKind: "first-timer" }), handled: null },
   ];
 
   test("lists only the open pull requests of repositories with triage enabled", () => {
@@ -188,9 +189,14 @@ describe("All open", () => {
     expect(allOpen(open, new Set())).toEqual([]);
   });
 
-  test("Needs you counts its rows in every repository; All open counts its list", () => {
-    expect(listCounts(open, READY)).toEqual({ "needs-you": 2, "all-open": 3 });
-    expect(listCounts(open, new Set())).toEqual({ "needs-you": 2, "all-open": 0 });
-    expect(listCounts([], READY)).toEqual({ "needs-you": 0, "all-open": 0 });
+  test("First-timers lists only first-timers' open pull requests of repositories with triage enabled", () => {
+    expect(firstTimers(open, READY).map((entry) => entry.item.key)).toEqual(["acme/widgets#3"]);
+    expect(firstTimers(open, new Set())).toEqual([]);
+  });
+
+  test("Needs you counts its rows in every repository; All open and First-timers count their lists", () => {
+    expect(listCounts(open, READY)).toEqual({ "needs-you": 2, "all-open": 3, "first-timers": 1 });
+    expect(listCounts(open, new Set())).toEqual({ "needs-you": 2, "all-open": 0, "first-timers": 0 });
+    expect(listCounts([], READY)).toEqual({ "needs-you": 0, "all-open": 0, "first-timers": 0 });
   });
 });

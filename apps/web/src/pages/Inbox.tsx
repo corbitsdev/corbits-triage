@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { Badge, EmptyState, type BadgeTone } from "@corbits/react-ui";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import type { AuthorKind } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
@@ -39,6 +40,7 @@ import {
   type WriteKind,
 } from "../lib/inbox-pane.ts";
 import {
+  AUTHOR_KIND_LABEL,
   INBOX_GROUPINGS,
   OPEN_GROUPINGS,
   UNASSIGNED,
@@ -46,12 +48,14 @@ import {
   ageText,
   allOpen,
   awaitingText,
+  firstTimers,
   groupInbox,
   groupOpen,
   hasDraftComment,
   inboxAction,
   inboxStatus,
   initialsOf,
+  isLoudAuthorKind,
   isPostedToAuthor,
   listHref,
   listRoot,
@@ -85,7 +89,7 @@ const POSTED = "Posted";
 
 const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "Action", repo: "Repo", waits: "Waits on", owner: "Owner" };
 
-const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", "all-open": "All open" };
+const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", "all-open": "All open", "first-timers": "First-timers" };
 
 const WAITS_ON_TONE: Record<WaitsOn, BadgeTone> = { maintainer: "accent", author: "info", ci: "neutral", nobody: "neutral" };
 
@@ -103,6 +107,28 @@ function filesText(count: number): string {
   return `${count} ${count === 1 ? "file" : "files"}`;
 }
 
+function AuthorTag({ kind }: { kind: AuthorKind | null }) {
+  if (kind === null) return null;
+  const label = AUTHOR_KIND_LABEL[kind];
+  return <span className={isLoudAuthorKind(kind) ? "tag" : "tag quiet"} title={`Author: ${label}`}><span className="sr-only">Author: </span>{label}</span>;
+}
+
+/** Needs you lists what needs the maintainer; the other views list open pull requests with who each waits on. */
+function listsOpen(view: ListView): boolean {
+  return view !== "needs-you";
+}
+
+function viewEntries(view: ListView, open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
+  switch (view) {
+    case "needs-you":
+      return open.filter((entry) => entry.handled === null);
+    case "all-open":
+      return allOpen(open, enabled);
+    case "first-timers":
+      return firstTimers(open, enabled);
+  }
+}
+
 type RowProps = { item: PrItem; selected: boolean; search: string };
 
 function Row({ item, selected, search }: RowProps) {
@@ -112,7 +138,7 @@ function Row({ item, selected, search }: RowProps) {
   return (
     <Link className="row" role="option" aria-selected={selected} to={{ pathname: listHref("needs-you", item), search }} data-inbox-row={item.key}>
       <span className={dotClass(item, action)} />
-      <span className="tw"><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
+      <span className="tw"><AuthorTag kind={item.authorKind} /><b>{titleText(item.title)}</b>{why === null ? null : <span className="why">{why}</span>}</span>
       <span className="age">{ageText(item.waitingSince)}</span>
       {primary === null ? null : <span className="act">{rowActionLabel(primary)}</span>}
       {isPostedToAuthor(item) ? <span className="act done">{POSTED}</span> : null}
@@ -120,14 +146,14 @@ function Row({ item, selected, search }: RowProps) {
   );
 }
 
-function OpenRow({ entry, selected, search }: Omit<RowProps, "item"> & { entry: OpenItem }) {
+function OpenRow({ view, entry, selected, search }: Omit<RowProps, "item"> & { view: ListView; entry: OpenItem }) {
   const { item, handled } = entry;
   const waits = waitsOn(item, handled);
   const posted = postedLabel(item, handled);
   return (
-    <Link className="row open-row" role="option" aria-selected={selected} to={{ pathname: listHref("all-open", item), search }} data-inbox-row={item.key}>
+    <Link className="row open-row" role="option" aria-selected={selected} to={{ pathname: listHref(view, item), search }} data-inbox-row={item.key}>
       <span className={dotClass(item, inboxAction(item))} />
-      <span className="tw"><b>{titleText(item.title)}</b><span className="why">{rowWhy(item) ?? inboxStatus(item)}</span></span>
+      <span className="tw"><AuthorTag kind={item.authorKind} /><b>{titleText(item.title)}</b><span className="why">{rowWhy(item) ?? inboxStatus(item)}</span></span>
       <span className="age">{ageText(item.waitingSince)}</span>
       <MergeChip merge={item.merge} compact className="merge-chip" />
       <Badge tone={WAITS_ON_TONE[waits]}>{WAITS_ON_LABEL[waits]}</Badge>
@@ -137,7 +163,7 @@ function OpenRow({ entry, selected, search }: Omit<RowProps, "item"> & { entry: 
 }
 
 function PileRow({ view, entry, selected, search }: Omit<RowProps, "item"> & { view: ListView; entry: OpenItem }) {
-  if (view === "all-open") return <OpenRow entry={entry} selected={selected} search={search} />;
+  if (listsOpen(view)) return <OpenRow view={view} entry={entry} selected={selected} search={search} />;
   return <Row item={entry.item} selected={selected} search={search} />;
 }
 
@@ -155,6 +181,7 @@ function Byline({ item, author, detail }: { item: PrItem; author: string | null;
   return (
     <div className="byline">
       {author === null ? null : <span className="who"><span className="av">{initialsOf(author)}</span><span className="nm">{author}</span></span>}
+      <AuthorTag kind={item.authorKind} />
       <span>opened {ageText(item.waitingSince)} ago</span>
       {detail === undefined ? null : <span><span className="mono">+{detail.pr.additions} −{detail.pr.deletions}</span></span>}
       {detail === undefined ? null : <span>{filesText(detail.pr.changedFiles)}</span>}
@@ -527,11 +554,11 @@ function repositoriesText(count: number): string {
 }
 
 /** None open is only true when GitHub answered for every repository; a failed read says nothing about its pull requests. */
-function NoneOpen() {
+function NoneOpen({ title }: { title: string }) {
   const openPulls = useOpenPulls();
   const repos = openPulls.data?.repos;
   if (repos === undefined || openPulls.isError || repos.some((repo) => repo.error !== undefined)) return null;
-  return <EmptyState title="No open pull requests" description={`${repositoriesText(repos.length)} checked.`} />;
+  return <EmptyState title={title} description={`${repositoriesText(repos.length)} checked.`} />;
 }
 
 type EmptyListProps = { view: ListView; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
@@ -545,7 +572,8 @@ function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyL
   if (filtered) {
     return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><button type="button" className="btn btn-sm" onClick={onClear}>Clear filters</button></div>;
   }
-  if (view === "all-open") return <NoneOpen />;
+  if (view === "all-open") return <NoneOpen title="No open pull requests" />;
+  if (view === "first-timers") return <NoneOpen title="No first-timers" />;
   return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
 }
 
@@ -592,30 +620,30 @@ export default function Inbox({ view }: { view: ListView }) {
   const { denied } = useRunLogs();
   const [query, setQuery] = useState("");
   const [needsYouGrouping, setNeedsYouGrouping] = useState<InboxGrouping>("action");
-  const [allOpenGrouping, setAllOpenGrouping] = useState<OpenGrouping>("repo");
+  const [openGrouping, setOpenGrouping] = useState<OpenGrouping>("repo");
   const searchRef = useRef<HTMLInputElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? []), [snapshot]);
   const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
-  const entries = useMemo(() => (view === "needs-you" ? open.filter((entry) => entry.handled === null) : allOpen(open, enabled)), [open, view, enabled]);
+  const entries = useMemo(() => viewEntries(view, open, enabled), [open, view, enabled]);
   const items = useMemo(() => entries.map((entry) => entry.item), [entries]);
   const searched = useMemo(() => entries.filter((entry) => matchesQuery(entry.item, query)), [entries, query]);
-  const rows = useMemo(() => searched.map((entry) => entry.item).filter((item) => view === "all-open" || inboxAction(item) !== null), [searched, view]);
+  const rows = useMemo(() => searched.map((entry) => entry.item).filter((item) => listsOpen(view) || inboxAction(item) !== null), [searched, view]);
   const now = useMemo(() => Date.now(), [searched, filters]);
   const shown = useMemo(() => searched.filter((entry) => matchesFilters(entry.item, filters, now)), [searched, filters, now]);
   const needsYou = useMemo(() => groupInbox(shown.map((entry) => entry.item), ready), [shown, ready]);
   const piles = useMemo(function pilesOfView() {
-    return view === "all-open" ? groupOpen(shown, allOpenGrouping) : needsYouPiles(regroupInbox(needsYou, needsYouGrouping));
-  }, [view, shown, allOpenGrouping, needsYou, needsYouGrouping]);
+    return listsOpen(view) ? groupOpen(shown, openGrouping) : needsYouPiles(regroupInbox(needsYou, needsYouGrouping));
+  }, [view, shown, openGrouping, needsYou, needsYouGrouping]);
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
   const selected = params.number === undefined ? flat[0]?.item : findPrItem(items, params);
   const selectedMark = entries.find((entry) => entry.item.key === selected?.key)?.handled ?? null;
   // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
   const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
-  const groupings: Array<InboxGrouping | OpenGrouping> = view === "all-open" ? OPEN_GROUPINGS : INBOX_GROUPINGS;
-  const grouping = view === "all-open" ? allOpenGrouping : needsYouGrouping;
+  const groupings: Array<InboxGrouping | OpenGrouping> = listsOpen(view) ? OPEN_GROUPINGS : INBOX_GROUPINGS;
+  const grouping = listsOpen(view) ? openGrouping : needsYouGrouping;
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
 
   function setFilters(next: InboxFilters) {
@@ -628,9 +656,9 @@ export default function Inbox({ view }: { view: ListView }) {
   }
 
   function groupBy(index: number) {
-    if (view === "all-open") {
+    if (listsOpen(view)) {
       const mode = OPEN_GROUPINGS[index];
-      if (mode !== undefined) setAllOpenGrouping(mode);
+      if (mode !== undefined) setOpenGrouping(mode);
       return;
     }
     const mode = INBOX_GROUPINGS[index];
@@ -684,7 +712,7 @@ export default function Inbox({ view }: { view: ListView }) {
     navigate({ pathname: item === undefined ? listRoot(view) : listHref(view, item), search });
   }
 
-  /** Needs you moves on to the next row; All open keeps the pull request selected unless it left the list. */
+  /** Needs you moves on to the next row; the other views keep the pull request selected unless it left the list. */
   function holdAction(item: NumberedItem, write: PaneWrite, draft: PaneDraft) {
     if (write.settles !== null && (view === "needs-you" || leavesOpen(write.settles))) {
       const index = flat.findIndex((row) => row.item.key === item.key);
@@ -745,7 +773,7 @@ export default function Inbox({ view }: { view: ListView }) {
         <Pane
           key={paneKey}
           item={selected}
-          posted={view === "all-open" ? postedLabel(selected, selectedMark) : isPostedToAuthor(selected) ? POSTED : null}
+          posted={listsOpen(view) ? postedLabel(selected, selectedMark) : isPostedToAuthor(selected) ? POSTED : null}
           listTitle={LIST_TITLE[view]}
           restored={paneDraft}
           sectionRef={sectionRef}

@@ -10,6 +10,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     number: 1,
     title: "Fix",
     author: "ada",
+    authorKind: null,
     draft: false,
     mergeable: null,
     state: "needs-decision",
