@@ -19,6 +19,7 @@ import { useGithubSync } from "./lib/github-sync.ts";
 import { Welcome } from "./pages/Welcome.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
+import Pulse from "./pages/Pulse.tsx";
 import Repositories from "./pages/Repositories.tsx";
 import Settings from "./pages/Settings.tsx";
 
@@ -121,6 +122,7 @@ function Gate() {
   return (
     <Layout>
       <Routes>
+        <Route path="/pulse" element={<Pulse />} />
         <Route path="/inbox" element={<Inbox view="needs-you" />} />
         <Route path="/inbox/:owner/:repo/:number" element={<Inbox view="needs-you" />} />
         <Route path="/open" element={<Inbox view="all-open" />} />

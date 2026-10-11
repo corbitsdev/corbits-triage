@@ -94,6 +94,29 @@
 :is(.inbox, .repos) .mk.judge { background: var(--blue-light); }
 :is(.inbox, .repos) .mk.match { background: var(--paper); }
 
+/* Pulse: a briefing page inside the stage card */
+.pulse { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 960px; margin: 0 auto; padding: 40px 40px 80px; display: grid; gap: 36px; align-content: start; }
+.pulse h1 { font-size: 34px; margin: 0; letter-spacing: -0.02em; }
+.pulse h2 { font-size: 17px; margin: 0 0 10px; display: flex; gap: 8px; align-items: baseline; }
+.pulse h3 { font-size: 14px; margin: 20px 0 6px; display: flex; gap: 8px; align-items: baseline; }
+.pulse .n { font: 700 12px var(--mono); }
+.pulse .lede { margin: 0 0 16px; font-size: 14px; }
+.pulse .empty-line { margin: 16px 0 0; font-size: 14px; }
+.pulse .plist { list-style: none; margin: 0; padding: 0; }
+.pulse .plist a { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--rule); color: inherit; text-decoration: none; font-size: 13px; }
+.pulse .plist a:hover b { text-decoration: underline; }
+.pulse .plist a > span:first-child { display: grid; min-width: 0; flex: 1; }
+.pulse .plist b { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pulse .plist .mono { font-size: 11px; }
+.pulse .note { font: 700 12px var(--mono); white-space: nowrap; }
+.pulse .table-scroll { overflow-x: auto; }
+.pulse table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pulse th, .pulse td { padding: 9px 12px 9px 0; border-top: 1px solid var(--rule); text-align: right; white-space: nowrap; }
+.pulse th:first-child { text-align: left; font-weight: 600; }
+.pulse thead th { border-top: 0; font-size: 12px; font-weight: 700; }
+.pulse td { font-family: var(--mono); }
+.pulse td.note { text-align: left; font-family: var(--font); font-weight: 400; }
+
 /* Inbox: list and pane as two inset panels */
 .inbox { min-width: 0; min-height: 0; padding: 12px 12px 12px 0; display: grid; grid-template-columns: clamp(420px, 36vw, 500px) minmax(0, 1fr); gap: 12px; outline: none; }
 
@@ -246,6 +269,8 @@
 /* On a phone the mobile nav replaces the rail, search gets its own line, the filter popover is a bottom sheet with the facets as tabs across the top, and toasts span the width above the mobile nav. */
 @media (max-width: 720px) {
   .shell .rail { display: none; }
+  .pulse { padding: 24px 16px 100px; gap: 28px; }
+  .pulse h1 { font-size: 28px; }
   .inbox .tools { flex-wrap: wrap; }
   .inbox .search { flex-basis: 100%; }
   .inbox .row.open-row .merge-chip { display: none; }
