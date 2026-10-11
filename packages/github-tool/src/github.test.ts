@@ -132,10 +132,11 @@ describe("github mirror", () => {
 });
 
 describe("github write tool approval", () => {
-  test("every write except github_mirror_auto asks", () => {
+  test("every write except the automatic ones asks", () => {
     expect(githubWrite.definitions).toEqual([
       { name: "github_mirror", approval: "ask" },
       { name: "github_mirror_auto" },
+      { name: "github_execute_do_auto" },
       { name: "github_create_review", approval: "ask" },
       { name: "github_create_issue_comment", approval: "ask" },
       { name: "github_add_assignees", approval: "ask" },

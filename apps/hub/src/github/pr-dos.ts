@@ -3,8 +3,7 @@
 // verdict and written to GitHub at most once under its effect id.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
-import { DoNotRunnableError, executeDo, type ResolvedTarget } from "@corbits/github-tool/do";
-import { readPr } from "@corbits/github-tool/github";
+import { DoNotRunnableError, executeDo, HeadMovedError, type ResolvedTarget } from "@corbits/github-tool/do";
 import { ACTION_KINDS, repoPolicy } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
@@ -16,7 +15,7 @@ import { appGithubFetch, failure, githubAppCredential, portalMember, type Portal
 import type { DoRun, DoRunStore } from "./do-run-store.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
-import { GITHUB_VERB, githubFailed, githubRefusal } from "./github-refusal.js";
+import { GITHUB_VERB, githubRefusal } from "./github-refusal.js";
 import { readJson } from "../read-json.js";
 
 export const GITHUB_DOS_PATH = "/api/integrations/github-dos";
@@ -73,9 +72,6 @@ export const DoRunView = type({
 });
 export const DoRunResponse = DoRunView.and({ replayed: "boolean" });
 export const DoRunList = type({ dos: DoRunView.array() });
-
-/** Writes that read as the verdict's judgement of one head; the others still hold on a later head. */
-const HEAD_BOUND = new Set<SuggestedDo["kind"]>(["close", "comment"]);
 
 export type GithubPrDosDeps = PortalCredentialDeps & {
   githubApiOrigin: string;
@@ -160,16 +156,6 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {
     if (settled(prior)) return replay(prior);
 
     const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
-    if (HEAD_BOUND.has(step.kind)) {
-      let head: string;
-      try {
-        head = (await readPr(gh, repo, number)).sha;
-      } catch (err) {
-        return githubFailed(`read ${repo}#${number}`, err);
-      }
-      if (head !== headSha) return failure(409, "head_moved", `${repo}#${number} has new commits since this verdict. Run triage again.`);
-    }
-
     const claimed = await deps.store.claim({
       tenantId, effectId: step.effectId, runId: body.runId, repo, number, headSha,
       actionId: body.actionId, branch: body.branch, index: body.index, kind: step.kind,
@@ -183,7 +169,7 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {
 
     const logged = { tenantId, principalId, effectId: step.effectId, runId: body.runId, repo, number, actionId: body.actionId, branch: body.branch, index: body.index, kind: step.kind, attempt: claimed.attempts };
     try {
-      const outcome = await executeDo(gh, { request, step });
+      const outcome = await executeDo(gh, { request, step: { ...step, headSha } });
       const row = await deps.store.settle(claimed, outcome);
       deps.log({ level: "info", msg: "github_do", ...logged, status: outcome.status, settled: row !== undefined });
       if (!row) return failure(409, "do_in_progress", "Another request took this Do over.");
@@ -191,6 +177,10 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err);
       deps.log({ level: "warn", msg: "github_do_failed", ...logged, error: cause });
+      if (err instanceof HeadMovedError) {
+        await deps.store.fail(claimed, cause);
+        return failure(409, "head_moved", cause);
+      }
       if (err instanceof DoNotRunnableError || step.kind === "agent") {
         await deps.store.fail(claimed, cause);
         return failure(409, "do_not_runnable", cause);

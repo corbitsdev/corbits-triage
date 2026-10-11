@@ -83,11 +83,12 @@
     },
     "packages/github-tool": {
       "name": "@corbits/github-tool",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "dependencies": {
         "@corbits/triage-contracts": "workspace:*",
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
+        "arktype": "catalog:",
         "minimatch": "^10.2.6",
       },
       "devDependencies": {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { GithubFetch } from "./github";
-import { DoNotRunnableError, doMarker, executeDo, type DoStep, type ResolvedTarget } from "./do";
+import { DoNotRunnableError, doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from "./do";
 
 type FakeComment = { id: number; user: { login: string; type: string }; body: string };
 
@@ -39,7 +39,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
 }
 
 function step(kind: DoStep["kind"], target: ResolvedTarget): DoStep {
-  return { effectId: "e1", kind, target };
+  return { effectId: "e1", headSha: "abc", kind, target };
 }
 
 const REQUEST = { repo: "acme/widgets", number: 8, labels: ["triage:blocked"], owned: ["triage:blocked"], comment: "Blocked", close: false };
@@ -94,6 +94,15 @@ describe("executeDo", () => {
       { method: "POST", path: "/repos/acme/widgets/issues/8/labels", body: { labels: ["triage:blocked"] } },
       { method: "PATCH", path: "/repos/acme/widgets/pulls/8", body: { state: "closed" } },
     ]);
+  });
+
+  test.each<[string, DoStep]>([
+    ["a comment", step("comment", { body: "Thanks" })],
+    ["a close", step("close", {})],
+  ])("%s is not written once the pull request has moved on", async (_, task) => {
+    const { gh, writes } = fakeGithub();
+    await expect(run(gh, { ...task, headSha: "older" })).rejects.toBeInstanceOf(HeadMovedError);
+    expect(writes).toEqual([]);
   });
 
   test.each<[string, DoStep]>([

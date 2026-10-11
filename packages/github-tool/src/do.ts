@@ -1,4 +1,5 @@
-import type { ActionKind, LabelsTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, type ActionKind, type LabelsTarget } from "@corbits/triage-contracts";
+import { type } from "arktype";
 import {
   addAssignees,
   addLabels,
@@ -26,9 +27,10 @@ export type ResolvedTarget =
   | { unresolved: "derive"; from: Exclude<LabelsTarget["from"], "list"> };
 
 export class DoNotRunnableError extends Error {}
+export class HeadMovedError extends DoNotRunnableError {}
 
-/** One resolved Do; `effectId` names it on its head. */
-export type DoStep = { effectId: string; kind: ActionKind; target: ResolvedTarget };
+/** One resolved Do; `effectId` names it on `headSha`, the head its verdict was made on. */
+export type DoStep = { effectId: string; headSha: string; kind: ActionKind; target: ResolvedTarget };
 
 /** `request` is the verdict's own mirror request: it names the pull request, and a close sends its labels and comment as the pane's Close does. */
 export type DoInput = { request: MirrorInput; step: DoStep };
@@ -40,10 +42,36 @@ export function doMarker(effectId: string): string {
   return `<!-- corbits-do:${effectId} -->`;
 }
 
+const Target = type({ labels: "string[]" })
+  .or({ users: "string[]", "teams?": "string[]" })
+  .or({ body: "string" })
+  .or({ prompt: "string", tools: "string[]" })
+  .or({ unresolved: "'codeowners'" })
+  .or({ unresolved: "'derive'", from: "'type' | 'paths'" })
+  .or({ "+": "reject" });
+
+/** A Do as a caller hands it over the wire. */
+export const DoArgs = type({
+  request: { repo: "string", number: "number.integer > 0", labels: "string[]", "owned?": "string[]", comment: "string", close: "boolean" },
+  step: { effectId: "string > 0", headSha: "string > 0", kind: type.enumerated(...ACTION_KINDS), target: Target },
+});
+
+/** Throws when `args` is not a Do. */
+export function parseDoInput(args: unknown): DoInput {
+  const parsed = DoArgs(args);
+  if (parsed instanceof type.errors) throw new Error(`invalid Do: ${parsed.summary}`);
+  return { request: parsed.request, step: { ...parsed.step, target: parsed.step.target as ResolvedTarget } };
+}
+
 export const AGENT_DO = "agent Dos cannot run yet";
 export const DERIVED_LABELS_DO = "labels derived from the pull request cannot run yet";
 
 type People = { users: string[]; teams: string[] };
+
+/** A close or a comment reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
+function onHead(sha: string, { repo, number }: MirrorInput, step: DoStep): void {
+  if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);
+}
 
 async function people(gh: GithubFetch, repo: string, number: number, target: ResolvedTarget): Promise<People> {
   if ("users" in target) return { users: target.users, teams: "teams" in target ? target.teams : [] };
@@ -81,11 +109,14 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput): Pr
       return { status: "done", result: await requestReviewers(gh, { repo, number, reviewers, teamReviewers }) };
     }
     case "close": {
-      if ((await readPr(gh, repo, number)).state === "closed") return { status: "satisfied", result: { closed: true } };
+      const pr = await readPr(gh, repo, number);
+      onHead(pr.sha, request, step);
+      if (pr.state === "closed") return { status: "satisfied", result: { closed: true } };
       return { status: "done", result: await mirror(gh, { ...request, close: true }) };
     }
     case "comment": {
       if (!("body" in target)) throw new Error("this comment Do has no body");
+      onHead((await readPr(gh, repo, number)).sha, request, step);
       const marker = doMarker(step.effectId);
       const posted = (await listIssueComments(gh, repo, number)).find((c) => c.bot && c.body.includes(marker));
       if (posted) return { status: "satisfied", result: { commentId: posted.id } };
@@ -93,5 +124,7 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput): Pr
     }
     case "agent":
       throw new DoNotRunnableError(AGENT_DO);
+    default:
+      throw new DoNotRunnableError(`unknown Do kind ${(step as { kind: unknown }).kind}`);
   }
 }
