@@ -6,6 +6,7 @@ import { triggerRequestOf } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
+import { NOT_ASKED_REASON } from "../../../../packages/triage-workflows/src/logic/render.js";
 import type { LiveDeployment } from "./deployment.js";
 import { MODEL_NOT_ASKED, runKey, type ObservedRun } from "./reconcile-plan.js";
 import type { RecordedDo, RecordedVerdict } from "./verdict-record-store.js";
@@ -99,7 +100,7 @@ function isUnconfirmedMachineCheck(check: unknown): boolean {
 /** Every model check of the verdict was skipped, outside a stale-unknown verdict that skips them by design. */
 function modelNotAsked(verdict: Record<string, unknown>, checks: unknown[]): boolean {
   const model = checks.map(asRecord).filter((check) => check?.["kind"] === "model");
-  return verdict["state"] !== "stale-unknown" && model.length > 0 && model.every((check) => check?.["reason"] === "not asked");
+  return verdict["state"] !== "stale-unknown" && model.length > 0 && model.every((check) => check?.["reason"] === NOT_ASKED_REASON);
 }
 
 /** A batch run outputs `{ items }` in the order its mail named the heads; a single run outputs the verdict itself. */
@@ -108,6 +109,11 @@ function verdictsOf(events: readonly WorkflowRunEvent[]): Array<Record<string, u
   if (!verdict) return [];
   const items = verdict["items"];
   return Array.isArray(items) ? items.map(asRecord) : [verdict];
+}
+
+/** Gates decide actions, not the verdict; a model check the verdict never asked about says nothing about the pull request. */
+function recorded(c: { kind?: string; reason?: string; gate?: boolean }): boolean {
+  return c.gate !== true && !(c.kind === "model" && c.reason === NOT_ASKED_REASON);
 }
 
 /** Mirror calls that succeeded: a batch run outputs `{ results }`, a single run the one outcome. */
@@ -127,7 +133,7 @@ const SummaryFields = type({
   actor: "string",
   humanGated: "boolean",
   "degraded?": "string | null",
-  "checks?": type({ check: "string", result: "string", "gate?": "boolean" }).array(),
+  "checks?": type({ check: "string", result: "string", "kind?": "string", "reason?": "string", "gate?": "boolean" }).array(),
   "actions?": "unknown[]",
   "request?": { comment: "string" },
 });
@@ -150,7 +156,7 @@ function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigg
     actor: fields.actor,
     humanGated: fields.humanGated,
     degraded: fields.degraded ?? null,
-    checks: (fields.checks ?? []).filter((c) => c.gate !== true).map(({ check, result }) => ({ check, result })),
+    checks: (fields.checks ?? []).filter(recorded).map(({ check, result }) => ({ check, result })),
     dos: suggestedDos(fields.actions ?? []),
     commented: (fields.request?.comment ?? "") !== "" && mirrored.has(mirrorCallId(trigger.repo, trigger.number)),
   };

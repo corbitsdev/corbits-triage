@@ -52,6 +52,7 @@ export async function migrateVerdictRecords(db: DB["db"]): Promise<void> {
     )
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS corbits_triage_verdict_repo_idx ON corbits_triage_verdict (tenant_id, repo, verdict_at)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS corbits_triage_verdict_pull_idx ON corbits_triage_verdict (tenant_id, repo, number, verdict_at)`);
 }
 
 export function createVerdictRecordStore(db: DB["db"]) {
@@ -65,6 +66,12 @@ export function createVerdictRecordStore(db: DB["db"]) {
     /** Oldest first. */
     since(tenantId: string, repo: string, from: Date): Promise<VerdictRecord[]> {
       const where = and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, repo), gte(verdictRecord.verdictAt, from));
+      return db.select().from(verdictRecord).where(where).orderBy(asc(verdictRecord.verdictAt));
+    },
+
+    /** Oldest first. */
+    forPull(tenantId: string, repo: string, number: number): Promise<VerdictRecord[]> {
+      const where = and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, repo), eq(verdictRecord.number, number));
       return db.select().from(verdictRecord).where(where).orderBy(asc(verdictRecord.verdictAt));
     },
 

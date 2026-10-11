@@ -41,6 +41,16 @@ export const DO_NAMES: Record<ActionKind, string> = {
   agent: "Run an agent",
 };
 
+/** What a Do that ran did, for the readiness history. */
+export const DONE_DO_NAMES: Record<ActionKind, string> = {
+  labels: "Added labels",
+  assign: "Assigned",
+  "request-review": "Requested review",
+  comment: "Posted comment",
+  close: "Closed the pull request",
+  agent: "Ran an agent",
+};
+
 export type Branch = "yes" | "no" | "unsure" | "always";
 
 export const BRANCH_NAMES: Record<Branch, string> = { yes: "Yes", no: "No", unsure: "Unsure", always: "Always" };
@@ -66,7 +76,7 @@ export function isCatalogId(id: string): id is CatalogId {
   return (CATALOG_IDS as readonly string[]).includes(id);
 }
 
-export function checkName(pack: CheckPack, id: CheckRef): string {
+export function checkName(pack: CheckPack, id: string): string {
   return isCatalogId(id) ? CHECK_CATALOG[id].name : pack.custom.find((row) => row.id === id)?.name ?? id;
 }
 

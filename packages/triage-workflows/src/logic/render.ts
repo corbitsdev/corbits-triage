@@ -115,6 +115,9 @@ export const MAX_MIRROR_COMMENT_BYTES = 60_000;
 
 export const NEEDS_JUDGE_REASON = "needs the judge";
 
+/** A model check the verdict did not need the decision model for. */
+export const NOT_ASKED_REASON = "not asked";
+
 const UNAVAILABLE_REASON = "decision model unavailable";
 
 /** The decision model answered, but the evidence it had did not settle every candidate. */
@@ -182,7 +185,7 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitEx
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
   const expectedIds = new Set(qualityQuestions(det.sources, candidates).map((question) => question.id));
-  const unavailable = !det.needsJudgment ? "not asked" : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
+  const unavailable = !det.needsJudgment ? NOT_ASKED_REASON : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
   const invalid = parsed.malformed || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
   const checks: CheckResult[] = [];
   const scores: number[] = [];
@@ -216,7 +219,7 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitEx
       checks.push(unrelated.length > 0
         ? { check: "focused", kind: "model", result: "fail", reason: failureText("focused", det.sources), evidence: unrelated }
         : candidateUnresolved
-          ? { check: "focused", kind: "model", result: "unconfirmed", reason: !det.needsJudgment ? "not asked" : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON, evidence: [] }
+          ? { check: "focused", kind: "model", result: "unconfirmed", reason: !det.needsJudgment ? NOT_ASKED_REASON : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON, evidence: [] }
           : { check: "focused", kind: "model", result: "pass", reason: passText("focused", det.sources), evidence: [] });
       continue;
     }
@@ -292,7 +295,7 @@ function judged(checks: CheckResult[]): CheckResult[] {
 
 function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
   if (c.check === "conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
-  if (c.kind === "model" && sources && c.reason !== "not asked") return [{ actor: "maintainer", action: `Confirm ${passText(c.check, sources)}` }];
+  if (c.kind === "model" && sources && c.reason !== NOT_ASKED_REASON) return [{ actor: "maintainer", action: `Confirm ${passText(c.check, sources)}` }];
   return [];
 }
 
@@ -317,7 +320,7 @@ function inlineCode(text: string): string {
 
 /** A model check the judge was asked about but did not settle; a decision model outage is counted on its own. */
 function unsure(c: CheckResult): boolean {
-  return c.kind === "model" && c.result === "unconfirmed" && c.reason !== "not asked" && c.reason !== UNAVAILABLE_REASON;
+  return c.kind === "model" && c.result === "unconfirmed" && c.reason !== NOT_ASKED_REASON && c.reason !== UNAVAILABLE_REASON;
 }
 
 function outageCount(checks: CheckResult[]): number {
@@ -375,7 +378,7 @@ function mergeVerdict(all: CheckResult[], sources: Sources, score: number | null
     ...(outage > 0 ? [`Could not evaluate ${outage} ${outage === 1 ? "check" : "checks"}`] : []),
     ...checks.flatMap((c) => {
       if (c.result === "fail") return [`Failed: ${c.reason}`];
-      if (c.result !== "unconfirmed" || c.reason === "not asked" || c.reason === UNAVAILABLE_REASON) return [];
+      if (c.result !== "unconfirmed" || c.reason === NOT_ASKED_REASON || c.reason === UNAVAILABLE_REASON) return [];
       return [`Not confirmed: ${c.kind === "model" && sources ? passText(c.check, sources) : c.reason}`];
     }),
     ...(score !== null && score < threshold ? [`Score ${score} is below the threshold ${threshold}`] : []),
@@ -418,7 +421,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     return det.findings.some((f) => f.check === "state") ? { ...verdict, feedback: "" } : verdict;
   }
   const failing = evaluated.checks.filter((check) => check.result === "fail");
-  const unconfirmed = evaluated.checks.some((check) => check.result === "unconfirmed" && check.reason !== "not asked");
+  const unconfirmed = evaluated.checks.some((check) => check.result === "unconfirmed" && check.reason !== NOT_ASKED_REASON);
   const state = failing.length ? "needs-author-update" : unconfirmed ? "awaiting-review" : det.state;
   const outage = judgeLimitExceeded !== true && judgeSkipped !== true && (judgeError !== undefined || evaluated.unanswered);
   const focused = failing.find((check) => check.check === "focused");

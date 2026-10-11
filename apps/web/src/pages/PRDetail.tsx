@@ -14,6 +14,7 @@ import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
 import { usePendingDos, useRunDo } from "../lib/do-runs.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import { MergeChip } from "../components/MergeChip.tsx";
+import { PrTimeline } from "../components/PrTimeline.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import { DiffView } from "../components/DiffView.tsx";
 import { useDiffLayout } from "../lib/diff-layout.ts";
@@ -166,6 +167,7 @@ function About({ item }: { item: PrItem }) {
           </div>
         )}
       </section>
+      <PrTimeline item={item} />
     </article>
   );
 }

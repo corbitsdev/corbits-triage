@@ -56,6 +56,7 @@ import { createGithubPrDos } from "./github/pr-dos.js";
 import { createDoRunStore, migrateDoRuns } from "./github/do-run-store.js";
 import { createVerdictRecordStore, migrateVerdictRecords } from "./github/verdict-record-store.js";
 import { createTriageStats } from "./github/triage-stats.js";
+import { createTriageTimeline } from "./github/triage-timeline.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
@@ -435,6 +436,14 @@ const integrations = createIntegrationsApp({
     verdicts: verdictRecordStore,
     dos: doRunStore,
     now,
+  }),
+  triageTimeline: createTriageTimeline({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    getSession: composition.getSession,
+    trustedPortalOrigins,
+    authorize: authorizePortal,
+    verdicts: verdictRecordStore,
   }),
   workflowDeploy: createWorkflowDeploy({
     db: composition.db,
