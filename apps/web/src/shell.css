@@ -121,7 +121,12 @@
 .inbox { min-width: 0; min-height: 0; padding: 12px 12px 12px 0; display: grid; grid-template-columns: clamp(420px, 36vw, 500px) minmax(0, 1fr); gap: 12px; outline: none; }
 
 /* List head */
+.inbox .lh-top { flex-wrap: wrap; }
 .inbox .lh-top .awaiting { margin-left: auto; font-size: 12px; }
+.inbox .pulse-line { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 12px; white-space: nowrap; color: inherit; text-decoration: none; }
+.inbox .awaiting + .pulse-line { margin-left: 0; }
+.inbox .pulse-line:hover { text-decoration: underline; }
+.inbox .pulse-line i { width: 3px; height: 3px; border-radius: 50%; background: var(--ink); }
 .inbox .tools { position: relative; display: flex; gap: 8px; align-items: center; }
 .inbox .search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
 .inbox .search input { border: 0; outline: 0; font: 400 13px var(--font); flex: 1; min-width: 0; background: none; color: inherit; }
