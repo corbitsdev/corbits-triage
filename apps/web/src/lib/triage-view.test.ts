@@ -22,6 +22,7 @@ function item(repo: string, number: number): PrItem {
     number,
     title: null,
     author: null,
+    authorKind: null,
     draft: null,
     mergeable: null,
     state: "needs-decision",
