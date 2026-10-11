@@ -1,4 +1,5 @@
 import type { RepoRole, RuleCustomCheck } from "@corbits/triage-contracts";
+import { RE2JS } from "re2js";
 import { missingFrom } from "./actions.js";
 import type { CheckResult, Finding, PrFacts, PrFileFacts } from "./checks.js";
 import { globMatch } from "./glob.js";
@@ -26,7 +27,7 @@ function addedLines(patch: string): Array<{ line: number; text: string }> {
 }
 
 /** Locations only: the matched text may be a secret. */
-function diffHits(files: PrFileFacts[], re: RegExp): string[] {
+function diffHits(files: PrFileFacts[], re: RE2JS): string[] {
   const hits: string[] = [];
   for (const file of files) {
     if (file.patch === undefined) continue;
@@ -86,12 +87,12 @@ function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, R
       return { failed, reason: failed ? `changes ${changed.join(", ")} without ${check.requires.join(", ")}` : "changes paths together" };
     }
     case "title-pattern": {
-      const failed = !new RegExp(check.pattern).test(facts.title);
+      const failed = !RE2JS.compile(check.pattern).test(facts.title);
       return { failed, reason: failed ? "title does not match the pattern" : "title matches the pattern" };
     }
     case "branch-pattern": {
       if (!facts.branch) return { failed: null, reason: "branch name is not known" };
-      const failed = !new RegExp(check.pattern).test(facts.branch);
+      const failed = !RE2JS.compile(check.pattern).test(facts.branch);
       return { failed, reason: failed ? "branch does not match the pattern" : "branch matches the pattern" };
     }
     case "label-required": {
@@ -100,7 +101,7 @@ function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, R
     }
     case "diff-excludes": {
       const files = facts.files ?? [];
-      const hits = diffHits(files, new RegExp(check.pattern));
+      const hits = diffHits(files, RE2JS.compile(check.pattern));
       if (hits.length) return { failed: true, reason: "an added line matches the excluded pattern", evidence: hits.slice(0, MAX_DIFF_HITS) };
       if (files.some(unscanned)) return { failed: null, reason: "some added lines could not be scanned" };
       return { failed: false, reason: "no added line matches the excluded pattern" };

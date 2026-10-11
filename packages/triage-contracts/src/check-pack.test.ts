@@ -29,7 +29,7 @@ const CUSTOM: CustomCheck[] = [{ id: "custom-1", name: "Ticket", group: "pull-re
 const RULES: CustomCheck[] = [
   { id: "custom-1", name: "Vendor", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["vendor/**"] },
   { id: "custom-2", name: "Schema", group: "code-vs-ci", kind: "rule", rule: "paths-together", changed: ["db/schema.ts"], requires: ["db/migrations/**"] },
-  { id: "custom-3", name: "Title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^(feat|fix): " },
+  { id: "custom-3", name: "Title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^(feat|fix)(\\(.+\\))?: .+" },
   { id: "custom-4", name: "Branch", group: "pull-request", kind: "rule", rule: "branch-pattern", pattern: "^cl-\\d+" },
   { id: "custom-5", name: "Labelled", group: "issue", kind: "rule", rule: "label-required", label: "triaged" },
   { id: "custom-6", name: "No debug", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "console\\.log" },
@@ -124,8 +124,10 @@ describe("check pack contract", () => {
 
   test("an invalid typed custom check rejects the pack with its reason", () => {
     const rejected: Array<[unknown, string]> = [
-      [{ ...RULES[2], pattern: "(" }, "Custom check custom-3 pattern must be a valid regular expression."],
+      [{ ...RULES[2], pattern: "(" }, "Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
       [{ ...RULES[2], pattern: "a".repeat(201) }, "Custom check custom-3 pattern must be at most 200 characters."],
+      [{ ...RULES[2], pattern: "(?<=a)b" }, "Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
+      [{ ...RULES[2], pattern: "(a)\\1" }, "Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
       [{ ...RULES[2], rule: "title-matches" }, "Custom check custom-3 rule must be one of"],
       [{ ...MODELS[2], options: ["small", "small "] }, "Custom check custom-3 options must not repeat a value."],
       [{ ...MODELS[2], failOn: ["medium"] }, "Custom check custom-3 failOn must be among options."],
@@ -133,6 +135,11 @@ describe("check pack contract", () => {
     for (const [row, reason] of rejected) {
       expect(() => readCheckPack({ ...emptyPack(REPO), custom: [row] })).toThrow(reason);
     }
+  });
+
+  test("a pattern with nested quantifiers is accepted, since rule checks match in linear time", () => {
+    const pack = { ...emptyPack(REPO), custom: [{ ...RULES[2], pattern: "^(a+)+$" }] };
+    expect(readCheckPack(pack)).toEqual(pack);
   });
 
   test("more custom checks than the cap reject the pack", () => {
