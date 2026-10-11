@@ -54,7 +54,8 @@ describe("pendingDos", () => {
     const transport: Transport = {
       fetch: async (method, path, body) => {
         calls.push({ method, path, body });
-        return { effectId: (body as { index: number }).index.toString(), status: "done", error: null } as never;
+        const effectId = (body as { index: number }).index.toString();
+        return { effectId, actionId: "route", kind: "labels", headSha: "abc", status: "done", error: null, updatedAt: "2026-10-01T12:00:00.000Z" } as never;
       },
       subscribe: () => () => {},
     };

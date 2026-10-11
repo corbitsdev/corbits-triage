@@ -173,6 +173,8 @@ function createPortalQueryClient() {
 
 const PERSISTED_QUERIES_KEY = "corbits.queries";
 const PERSISTED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+/** Changed whenever a persisted query's shape changes, so older caches are dropped rather than read as the new shape. */
+const PERSISTED_SHAPE = "do-run-kind";
 
 async function getPersisted(key: string): Promise<string | null> {
   return (await get<string>(key)) ?? null;
@@ -186,6 +188,7 @@ const persister = createAsyncStoragePersister({
 const persistOptions = {
   persister,
   maxAge: PERSISTED_MAX_AGE_MS,
+  buster: PERSISTED_SHAPE,
   dehydrateOptions: { shouldDehydrateQuery: isPersistedQuery },
 };
 
