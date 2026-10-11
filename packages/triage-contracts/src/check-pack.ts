@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { RE2JS, RE2JSSyntaxException } from "re2js";
 import type { AuthorAssociation } from "./repo-policy.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
@@ -434,9 +435,10 @@ function pattern(value: unknown, where: string): string {
   const source = verbatim(value, where);
   if (source.length > PATTERN_MAX) throw new Error(`${where} must be at most ${PATTERN_MAX} characters.`);
   try {
-    new RegExp(source);
-  } catch {
-    throw new Error(`${where} must be a valid regular expression.`);
+    RE2JS.compile(source);
+  } catch (error) {
+    if (!(error instanceof RE2JSSyntaxException)) throw error;
+    throw new Error(`${where} must be a valid regular expression without lookaround or backreferences: ${error.message}.`);
   }
   return source;
 }
