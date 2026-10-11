@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { createSizeCapTransform } from "@intx/inference";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker, type WorkflowAuthorizeFn } from "@intx/workflow";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
+import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, type GithubFetch } from "@corbits/github-tool/github";
 import { emptyPack, recommendedPack, type Action, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
-import { triageDirectorFactory } from "./directors.js";
+import { triageDirectorFactory, type DoResult } from "./directors.js";
+import type { SuggestedDo } from "./logic/actions.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import type { Verdict } from "./logic/render.js";
 import { workflow } from "./pr-triage.js";
@@ -13,6 +15,7 @@ import { workflow as historical } from "./pr-triage-historical.js";
 
 const REPO = "acme/widgets";
 const HELLO: Action = { id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", automatic: false, target: { body: "hi" } }] } };
+const AUTO_HELLO: Action = { ...HELLO, id: "auto-hello", branches: { always: [{ kind: "comment", automatic: true, target: { body: "hi" } }] } };
 
 type Recorded = { method: string; path: string };
 type FileRow = { filename: string; status: string; additions: number; deletions: number; patch?: string; previous_filename?: string };
@@ -28,9 +31,13 @@ function bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
-/** GitHub serving open pull request 8 changing `files` and carrying `labels`, failing every read of it when `missing`, with `prior` as its Triage comment. */
-function fakeGithub(missing: boolean, files: FileRow[], labels: string[], prior?: string) {
+type Comment = { id: number; user: { type: string }; body: string };
+type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean };
+
+/** GitHub serving open pull request 8 changing `files` and carrying `labels`, failing every read of it when `missing`, keeping the comments posted on it, `prior` first, and refusing new ones when `failComments`. */
+function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false }: GithubSeed = {}) {
   const requests: Recorded[] = [];
+  const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: { type: "Bot" }, body: prior }];
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
@@ -47,11 +54,16 @@ function fakeGithub(missing: boolean, files: FileRow[], labels: string[], prior?
       const page = Number(new URL(path, "https://api.github.invalid").searchParams.get("page"));
       return Response.json(files.slice((page - 1) * 100, page * 100));
     }
-    if (prior !== undefined && path.startsWith(`/repos/${REPO}/issues/8/comments?`)) return Response.json([{ id: 5, user: { type: "Bot" }, body: prior }]);
+    if (path.startsWith(`/repos/${REPO}/issues/8/comments?`)) return Response.json(comments);
+    if (method === "POST" && path === `/repos/${REPO}/issues/8/comments`) {
+      if (failComments) return Response.json({ message: "Server Error" }, { status: 500 });
+      comments.push({ id: comments.length + 10, user: { type: "Bot" }, body: JSON.parse(String(init?.body)).body });
+      return Response.json(comments.at(-1));
+    }
     if (method === "GET") return Response.json([]);
     return Response.json({});
   }
-  return { gh: gh satisfies GithubFetch, requests };
+  return { gh: gh satisfies GithubFetch, requests, comments };
 }
 
 const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrants: [], resolvedBy: null });
@@ -105,11 +117,13 @@ function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], ju
   };
 }
 
-const RULES_PATH = { invoked: ["triage-facts", "triage-mirror"], mirrors: ["mirrorRules"] };
-const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-mirror"], mirrors: ["mirror"] };
+const RULES_PATH = { invoked: ["triage-facts", "triage-execute", "triage-mirror"], mirrors: ["mirrorRules"] };
+const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
 
-async function triage(checkPack: CheckPack, { missing = false, backlog = false, files = [FLAG], judgeFails = false, cleanupMode = "automated", labels = [] as string[], prior = undefined as string | undefined } = {}) {
-  const { gh, requests } = fakeGithub(missing, files, labels, prior);
+type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; cleanupMode?: string; github?: ReturnType<typeof fakeGithub> };
+
+async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, cleanupMode = "automated", github, ...seed }: TriageOptions = {}) {
+  const { gh, requests } = github ?? fakeGithub(seed);
   const policy = { enabled: true, cleanupMode };
   const invoked: string[] = [];
   const judged: SystemOne[] = [];
@@ -124,7 +138,8 @@ async function triage(checkPack: CheckPack, { missing = false, backlog = false, 
   }).complete;
   expect(terminalStatus).toBe("completed");
   const mirrors = Object.keys(outputs).filter((id) => id.startsWith("mirror"));
-  return { path: { invoked, mirrors }, requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"] };
+  const executed = (outputs["execute"] ?? outputs["executeRules"]) as { reply: string };
+  return { path: { invoked, mirrors }, requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
 }
 
 describe("pr-triage body", () => {
@@ -218,6 +233,31 @@ describe("pr-triage body", () => {
     const { requests, verdict } = await triage(emptyPack(REPO), { prior: "<!-- corbits-triage -->\n@octocat, please address the following:\n- Link an issue" });
     expect((verdict as Verdict).request.comment).toBe("No changes needed from you. A maintainer will review this pull request.");
     expect(requests).toContainEqual({ method: "PATCH", path: `/repos/${REPO}/issues/comments/5` });
+  });
+
+  test("an automated repository runs an automatic Do once per head", async () => {
+    const github = fakeGithub();
+    const pack = { ...emptyPack(REPO), actions: [HELLO, AUTO_HELLO] };
+    const first = await triage(pack, { github });
+    const effectId = ((first.verdict as Verdict).actions.find((a) => a.id === "auto-hello") as SuggestedDo).effectId;
+    expect(first.dos).toEqual([{ effectId, status: "done" }]);
+    const again = await triage(pack, { github });
+    expect(again.dos).toEqual([{ effectId, status: "satisfied" }]);
+    expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([expect.objectContaining({ body: `${doMarker(effectId)}\nhi` })]);
+  });
+
+  test("a human-approved repository runs no Do", async () => {
+    const github = fakeGithub();
+    const { dos } = await triage({ ...emptyPack(REPO), actions: [AUTO_HELLO] }, { github, cleanupMode: "human-approved" });
+    expect(dos).toEqual([]);
+    expect(github.comments).toEqual([]);
+  });
+
+  test("a Do GitHub refuses is reported failed with its error and stays suggested on the verdict", async () => {
+    const { dos, verdict } = await triage({ ...emptyPack(REPO), actions: [AUTO_HELLO] }, { failComments: true });
+    const effectId = ((verdict as Verdict).actions[0] as SuggestedDo).effectId;
+    expect((verdict as Verdict).actions).toEqual([expect.objectContaining({ id: "auto-hello", effectId, automatic: true })]);
+    expect(dos).toEqual([{ effectId, status: "failed", error: `github POST /repos/${REPO}/issues/8/comments -> 500` }]);
   });
 
   test("facts that fail degrade the verdict and suggest no actions", async () => {

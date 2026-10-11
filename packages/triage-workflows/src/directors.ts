@@ -10,15 +10,19 @@ import type {
 } from "@intx/types/runtime";
 import { type } from "arktype";
 import { classificationSources, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
-import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
-import { asText, isRecord, parseJsonText } from "./logic/extract.js";
+import type { DoOutcome } from "@corbits/github-tool/do";
 import type { Review } from "@corbits/github-tool/github";
+import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
+import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
+import { unrunnable } from "./logic/execute-do.js";
+import { asText, isRecord, parseJsonText } from "./logic/extract.js";
 import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, roleTeams, type CheckRun, type PrData, type PullData } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
+import { decidesDos } from "./logic/settled.js";
 import type { Judgment } from "./actions/evaluate.js";
 import type { RulesItem } from "./actions/rules.js";
 
-export type Role = "facts" | "judge" | "mirror";
+export type Role = "facts" | "judge" | "execute" | "mirror";
 
 export interface TriageDirectorConfig {
   role: Role;
@@ -357,6 +361,96 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   };
 }
 
+/** One automatic Do's outcome; a failed or skipped one stays pending for the portal. */
+export type DoResult = { effectId: string; status: DoOutcome["status"] | "failed" | "skipped"; error?: string };
+
+/** Dos one run writes at most; the rest stay pending for the next run or the portal. */
+export const MAX_DOS_PER_RUN = 10;
+const NOT_SETTLED = "verdict not settled";
+const OVER_CAP = `more than ${MAX_DOS_PER_RUN} automatic Dos in one run`;
+
+type AutomaticDo = { verdict: Verdict; step: SuggestedDo };
+
+function isDo(action: SuggestedAction): action is SuggestedDo {
+  return "effectId" in action;
+}
+
+/** Only automated repos run Dos unattended, and only those the pack marks automatic. */
+function automaticDos(v: Verdict): AutomaticDo[] {
+  if (v.cleanupMode !== "automated" || !v.request || !Array.isArray(v.actions)) return [];
+  return v.actions.filter(isDo).filter((step) => step.automatic).map((step) => ({ verdict: v, step }));
+}
+
+/** Why the Do is not run in this run, if it is not. */
+function refusal({ verdict, step }: AutomaticDo): string | undefined {
+  return verdict.headSha !== null && decidesDos(verdict) ? unrunnable(step) : NOT_SETTLED;
+}
+
+/** The call id is the effect id, so each result names its Do. */
+function doCall({ verdict, step }: AutomaticDo): ToolCall {
+  const args = { request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha, kind: step.kind, target: step.target } };
+  return call("github_execute_do_auto", args, step.effectId);
+}
+
+function outcome(r: ToolResult): DoResult {
+  if (r.isError) return { effectId: r.callId, status: "failed", error: asText(r.content) };
+  const result = data<{ status?: DoResult["status"]; reason?: string }>(r);
+  if (result?.status === "skipped" && typeof result.reason === "string") return { effectId: r.callId, status: "skipped", error: result.reason };
+  if (result?.status === "done" || result?.status === "satisfied") return { effectId: r.callId, status: result.status };
+  return { effectId: r.callId, status: "failed", error: "github_execute_do_auto result is unreadable" };
+}
+
+/** Writes one Do at a time, so a run never floods a pull request, and replies what it has so far when interrupted. */
+function executeDirector(caps: ReactorCapabilities): ReactorDirector {
+  const b = batcher(caps);
+  const results: DoResult[] = [];
+  let queue: AutomaticDo[] = [];
+
+  function reply(reason?: string) {
+    return caps.reply(JSON.stringify({ dos: results, ...(reason === undefined ? {} : { reason }) }));
+  }
+
+  function next(): DirectorActions {
+    const head = queue.shift();
+    return head === undefined ? reply() : b.run([doCall(head)], onResult);
+  }
+
+  function onResult(r: BatchResults): DirectorActions {
+    results.push(...[...r.values()].map(outcome));
+    return next();
+  }
+
+  function plan(dos: AutomaticDo[]): void {
+    for (const d of dos) {
+      const refused = refusal(d);
+      if (refused !== undefined) results.push({ effectId: d.step.effectId, status: "skipped", error: refused });
+      else if (queue.length < MAX_DOS_PER_RUN) queue.push(d);
+      else results.push({ effectId: d.step.effectId, status: "skipped", error: OVER_CAP });
+    }
+  }
+
+  return {
+    async decide(event: ReactorInboundEvent) {
+      switch (event.type) {
+        case "message.received": {
+          const input = parseInput(event.message.content);
+          if (!input) return reply("execute: input is not JSON");
+          queue = [];
+          plan(verdictsOf(input).verdicts.flatMap(automaticDos));
+          return next();
+        }
+        case "tool.done":
+          return b.settle(event.result);
+        case "abort":
+        case "inference.error":
+          return reply(`execute interrupted: ${event.type}`);
+        default:
+          return [];
+      }
+    },
+  };
+}
+
 /** The reactor hands one stable capabilities object to `decide`; roles are built from it on first use. */
 function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDirector {
   let inner: ReactorDirector | undefined;
@@ -371,7 +465,7 @@ const workflowPackageName = process.env.TRIAGE_WORKFLOW_PACKAGE_NAME ?? "@corbit
 
 export const triageDirector = defineDirector<TriageDirectorConfig>({
   id: `${workflowPackageName}/triage`,
-  configSchema: type({ role: "'facts' | 'judge' | 'mirror'" }),
+  configSchema: type({ role: "'facts' | 'judge' | 'execute' | 'mirror'" }),
   factory: function buildTriageDirector({ role }, _env, agent) {
     return lazy(function buildRoleDirector(caps) {
       switch (role) {
@@ -379,6 +473,8 @@ export const triageDirector = defineDirector<TriageDirectorConfig>({
           return factsDirector(caps);
         case "judge":
           return judgeDirector(caps, agent.systemPrompt);
+        case "execute":
+          return executeDirector(caps);
         case "mirror":
           return mirrorDirector(caps);
       }
