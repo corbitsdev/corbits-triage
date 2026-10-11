@@ -31,10 +31,12 @@
     "holdback": "bun --conditions=intx-src tooling/holdback-replay.ts",
     "injection": "bun --conditions=intx-src tooling/injection-run.ts",
     "report": "bun --conditions=intx-src tooling/cost-latency-report.ts",
+    "eval:judge": "bun --conditions=intx-src evals/judge/judge.eval.ts",
     "hub": "bun --conditions=intx-src apps/hub/src/server.ts",
     "vendor:health": "sh tooling/vendor-health-check.sh"
   },
   "devDependencies": {
+    "@corbits/evals": "0.1.1",
     "@types/bun": "1.3.9",
     "oxlint": "^1.87.0",
     "tar": "catalog:",

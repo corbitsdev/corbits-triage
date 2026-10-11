@@ -1,0 +1,31 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 98,
+ "title": "docs: state how triage is built on stock Interchange",
+ "body": "Adds a \"How triage is built\" section to AGENTS.md so every change follows the same model:\n\n- the pack artifact drives checks, roles and actions; nothing repository-specific in workflow code\n- the workflow is deterministic stock primitives; an agent exists only where inference happens\n- every external effect is an action effect under a declared capability, idempotent by effect id\n- downstream agent work is another workflow started by mail or a signal\n- API first: stock routes for stock things, hono-openapi for every custom route, the portal is a wrapper\n- credentials, grants and tenants are Interchange's; gaps go upstream, vendored carries need owner approval\n- checks say how they are evaluated; actions are When \u2192 Checks \u2192 Yes / No / Unsure \u2192 Dos\n\nDocumentation only. Verified by reading against upstream Interchange's workflow primitives and credentials docs.\n\nRefs CL-XXXX",
+ "author": "TheGreatAxios",
+ "commits": [
+  "docs: state how triage is built on stock Interchange"
+ ],
+ "files": [
+  {
+   "filename": "AGENTS.md",
+   "status": "modified",
+   "additions": 10,
+   "deletions": 0,
+   "patch": "@@ -14,6 +14,16 @@\n - `vendor/interchange` changes only with owner approval, each listed in `vendor/interchange/VENDORED.md` and `tooling/vendor-diff-allowlist.txt`.\n - Hub env is read only in `apps/hub/src/env.ts` and passed down as config.\n \n+## How triage is built\n+\n+- The pack artifact drives everything. A repository's checks, roles and actions live in its pack, stored through the stock tenant artifact route. The workflow reads the pack and derives what to check and what to do; nothing repository-specific is written into workflow code.\n+- The workflow is deterministic. pr-triage is stock primitives: `onTrigger` for mail, `action` for every deterministic step (facts, rule checks, evaluation, execution, dispatch), `loop` or `childWorkflow` for repetition. An agent exists only where inference happens, which is the judge step for decision-model checks. Never wrap a deterministic step in `defineAgent`.\n+- Every external effect is an `action` effect: through `ctx.perform`, under a declared capability that becomes an `effect:<cap>` grant, idempotent under its effect id. GitHub writes included.\n+- Downstream work is another workflow. Reviewing, fixing or de-slopping a pull request is a workflow of its own, started by mail or a signal from a Do. It is never a step inside pr-triage.\n+- API first. Everything stock goes through stock routes. Every custom hub route is a Hono route described with hono-openapi and arktype, merged into `/openapi.json`. The portal and the browser extension are wrappers over those routes and must not be the only way to do anything.\n+- Credentials, grants and tenants are Interchange's. Secrets live in the hub vault and are delivered to sidecars at launch and rotation; never read them anywhere else, never persist them. Where stock lacks a path (an action reaching a bound credential), raise it upstream; a vendored carry needs owner approval and the allowlist.\n+- Checks say how they are evaluated: rule (GitHub data, no inference), decision model (a fixed question shape that cites evidence), or agent. Actions are When \u2192 Checks \u2192 Yes / No / Unsure \u2192 Dos, each Do with its own automatic flag.\n+\n ## Interchange reference\n \n Before writing anything that touches the hub, sidecars or workflows, check these for a stock route or primitive first. Links follow upstream main; the commit we actually run is the stock ref in `vendor/interchange/VENDORED.md`."
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "b1f8eee84f0d44d4",
+  "ARCHITECTURE.md": "333969c8ae5b643e",
+  "BUILD_PLAN.md": "65a667f3bbd10128",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "IMPLEMENTATION.md": "defc559c6786e8c8",
+  "README.md": "65a3d72f44c34d2e",
+  "docs/DEPLOY.md": "5042475f214ea8f1",
+  "docs/DEV.md": "11d689902ba74717",
+  "docs/SELF_HOST.md": "596c16f9919dbfac"
+ }
+}

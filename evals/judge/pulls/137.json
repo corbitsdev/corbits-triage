@@ -1,0 +1,53 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 137,
+ "title": "fix(hub): record a readable error on a failed Do",
+ "body": "A failed Do stored the raw transport line (method, path, status), which the pane then showed under the action group. The row and the 502 response now carry the same sentence the per-kind action route returns, through one shared helper used by both routes; the raw line stays in the structured log.\n\nVerified: `bun run check`; hub tests, with the spawned-hub Do case where GitHub answers 422 asserting the plain sentence on both the response and the listed row.\n\nRefs CL-XXXX",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(hub): record a readable error on a failed Do"
+ ],
+ "files": [
+  {
+   "filename": "apps/hub/src/github/github-refusal.ts",
+   "status": "added",
+   "additions": 24,
+   "deletions": 0,
+   "patch": "@@ -0,0 +1,24 @@\n+import { failure } from \"./portal-credential.js\";\n+\n+/** What each write does to a pull request, as it reads after \"GitHub refused to\". */\n+export const GITHUB_VERB = {\n+  comment: \"comment on\",\n+  reply: \"reply on\",\n+  labels: \"label\",\n+  assign: \"assign\",\n+  \"request-review\": \"request reviewers on\",\n+  review: \"review\",\n+  merge: \"merge\",\n+  close: \"close\",\n+} as const;\n+\n+/** A GitHub failure as a sentence; the transport line (method, path, status) is for logs only. */\n+export function githubRefusal(what: string, err: unknown): string {\n+  const message = err instanceof Error ? err.message : String(err);\n+  const status = /-> (\\d{3})$/.exec(message)?.[1];\n+  return `GitHub refused to ${what}${status ? ` (HTTP ${status})` : `: ${message}`}.`;\n+}\n+\n+export function githubFailed(what: string, err: unknown): Response {\n+  return failure(502, \"github_failed\", githubRefusal(what, err));\n+}"
+  },
+  {
+   "filename": "apps/hub/src/github/pr-actions.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 13,
+   "patch": "@@ -17,21 +17,11 @@ import {\n import { TRIAGE_LABELS } from \"@corbits/rule-packs\";\n import { createGithubAppCredentialFetch } from \"./github-app-credential-adapter.js\";\n import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from \"./portal-credential.js\";\n+import { GITHUB_VERB, githubFailed } from \"./github-refusal.js\";\n import { readJson } from \"../read-json.js\";\n \n export const GITHUB_PR_ACTIONS_PATH = \"/api/integrations/github-actions\";\n \n-const VERB = {\n-  comment: \"comment on\",\n-  reply: \"reply on\",\n-  labels: \"label\",\n-  assign: \"assign\",\n-  \"request-review\": \"request reviewers on\",\n-  review: \"review\",\n-  merge: \"merge\",\n-  close: \"close\",\n-} as const;\n-\n const handle = type(\"string.trim\").to(\"string > 0\");\n \n function namesReviewers(body: { codeowners?: true; reviewers?: string[]; teamReviewers?: string[] }, ctx: Traversal) {\n@@ -102,8 +92,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr\n     } catch (err) {\n       const message = err instanceof Error ? err.message : String(err);\n       console.log(JSON.stringify({ ts: new Date().toISOString(), level: \"warn\", msg: \"github_pr_action_failed\", tenantId, action: body.action, repo: body.repo, number: body.number, error: message }));\n-      const status = /-> (\\d{3})$/.exec(message)?.[1];\n-      return failure(502, \"github_failed\", `GitHub refused to ${VERB[body.action]} ${body.repo}#${body.number}${status ? ` (HTTP ${status})` : `: ${message}`}.`);\n+      return githubFailed(`${GITHUB_VERB[body.action]} ${body.repo}#${body.number}`, err);\n     }\n   };\n }"
+  },
+  {
+   "filename": "apps/hub/src/github/pr-dos.ts",
+   "status": "modified",
+   "additions": 9,
+   "deletions": 14,
+   "patch": "@@ -15,6 +15,7 @@ import { appGithubFetch, failure, githubAppCredential, portalMember, type Portal\n import type { DoRun, DoRunStore } from \"./do-run-store.js\";\n import { repoRecords, triageNs } from \"./tenant-config.js\";\n import { verdictFor } from \"./triage-runs.js\";\n+import { GITHUB_VERB, githubFailed, githubRefusal } from \"./github-refusal.js\";\n import { readJson } from \"../read-json.js\";\n \n export const GITHUB_DOS_PATH = \"/api/integrations/github-dos\";\n@@ -95,16 +96,6 @@ function replay(row: DoRun): Response {\n   return Response.json({ ...view(row), replayed: true });\n }\n \n-function errorText(err: unknown): string {\n-  return err instanceof Error ? err.message : String(err);\n-}\n-\n-function githubFailed(what: string, err: unknown): Response {\n-  const message = errorText(err);\n-  const status = /-> (\\d{3})$/.exec(message)?.[1];\n-  return failure(502, \"github_failed\", `GitHub refused to ${what}${status ? ` (HTTP ${status})` : `: ${message}`}.`);\n-}\n-\n type Body = typeof DoBody.infer;\n type Found = { step: SuggestedDo; headSha: string; request: typeof MirrorRequest.infer };\n \n@@ -197,11 +188,15 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {\n       if (!row) return failure(409, \"do_in_progress\", \"Another request took this Do over.\");\n       return Response.json({ ...view(row), replayed: false });\n     } catch (err) {\n-      const message = errorText(err);\n+      const cause = err instanceof Error ? err.message : String(err);\n+      deps.log({ level: \"warn\", msg: \"github_do_failed\", ...logged, error: cause });\n+      if (err instanceof DoNotRunnableError || step.kind === \"agent\") {\n+        await deps.store.fail(claimed, cause);\n+        return failure(409, \"do_not_runnable\", cause);\n+      }\n+      const message = githubRefusal(`${GITHUB_VERB[step.kind]} ${repo}#${number}`, err);\n       await deps.store.fail(claimed, message);\n-      deps.log({ level: \"warn\", msg: \"github_do_failed\", ...logged, error: message });\n-      if (err instanceof DoNotRunnableError) return failure(409, \"do_not_runnable\", message);\n-      return githubFailed(`run ${step.kind} on ${repo}#${number}`, err);\n+      return failure(502, \"github_failed\", message);\n     }\n   }\n "
+  },
+  {
+   "filename": "apps/hub/src/server.test.ts",
+   "status": "modified",
+   "additions": 4,
+   "deletions": 2,
+   "patch": "@@ -368,6 +368,7 @@ test(\"a pack Do runs once by reference and is recorded\", async () => {\n     const otherRunId = await seedRun(db, dataDir, otherTenantId, [{ id: \"label\", kind: \"labels\", target: { labels: [\"api\"] }, index: 0 }]);\n     github.comments.push({ id: 99, user: APP_BOT, body: `${doMarker(effectOf({ id: \"posted\", kind: \"comment\", target: { body: \"Already said\" } }, 0))}\\nAlready said` });\n \n+    const refusal = `GitHub refused to label ${REPO}#8 (HTTP 422).`;\n     async function runDo(actionId: string, run = runId) {\n       const res = await fetch(`${origin}/api/integrations/github-dos/${tenantId}`, {\n         method: \"POST\", headers, body: JSON.stringify({ runId: run, repo: REPO, number: 8, actionId, branch: \"always\", index: 0 }),\n@@ -386,14 +387,15 @@ test(\"a pack Do runs once by reference and is recorded\", async () => {\n     expect(await runDo(\"label\", otherRunId)).toMatchObject({ status: 404, body: { error: { code: \"run_not_found\" } } });\n     expect(await runDo(\"agent\")).toMatchObject({ status: 409, body: { error: { code: \"do_not_runnable\" } } });\n     expect(await runDo(\"old\")).toMatchObject({ status: 409, body: { error: { code: \"verdict_outdated\" } } });\n-    expect(await runDo(\"refused\")).toMatchObject({ status: 502, body: { error: { code: \"github_failed\" } } });\n+    expect(await runDo(\"refused\")).toMatchObject({ status: 502, body: { error: { code: \"github_failed\", message: refusal } } });\n     expect(await runDo(\"forged\")).toMatchObject({ status: 409, body: { error: { code: \"effect_mismatch\" } } });\n     expect(await runDo(\"note\", movedRunId)).toMatchObject({ status: 409, body: { error: { code: \"head_moved\" } } });\n \n     const listed = await fetch(`${origin}/api/integrations/github-dos/${tenantId}?repo=${REPO}&number=8`, { headers });\n     expect(listed.status).toBe(200);\n-    const { dos } = type({ dos: type({ actionId: \"string\", status: \"string\" }).array() }).assert(await listed.json());\n+    const { dos } = type({ dos: type({ actionId: \"string\", status: \"string\", error: \"string | null\" }).array() }).assert(await listed.json());\n     expect(Object.fromEntries(dos.map((row) => [row.actionId, row.status]))).toEqual({ label: \"done\", note: \"done\", posted: \"satisfied\", refused: \"failed\" });\n+    expect(dos.find((row) => row.actionId === \"refused\")?.error).toBe(refusal);\n   } finally {\n     github.stop();\n     await close();"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "ARCHITECTURE.md": "333969c8ae5b643e",
+  "BUILD_PLAN.md": "65a667f3bbd10128",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "IMPLEMENTATION.md": "731298e55211ea3f",
+  "README.md": "e5e18fade19f3d3f",
+  "docs/DEPLOY.md": "f28451d963dd011b",
+  "docs/DEV.md": "11d689902ba74717",
+  "docs/SELF_HOST.md": "596c16f9919dbfac",
+  "packages/triage-contracts/README.md": "16b70c8e9a0c7ad2"
+ }
+}
