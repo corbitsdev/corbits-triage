@@ -208,6 +208,11 @@ export function listHref(view: ListView, item: Pick<PrItem, "repo" | "number">):
   return `${LIST_ROOT[view]}/${item.repo}/${item.number ?? ""}`;
 }
 
+/** The `owner/repo` of a pull request key. */
+export function repoOf(key: string): string {
+  return key.slice(0, key.lastIndexOf("#"));
+}
+
 /** An open pull request with its handled mark, held or sent; null while it is in Needs you. */
 export type OpenItem = { item: PrItem; handled: HandledMark | null };
 

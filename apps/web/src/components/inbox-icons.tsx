@@ -30,6 +30,9 @@ export function ExternalIcon() {
 export function CheckIcon() {
   return <Icon><path d="m3 8.5 3 3 7-7" /></Icon>;
 }
+export function PulseIcon() {
+  return <Icon><path d="M1.5 8.5h3l1.5-4 3 8 1.5-4h4" /></Icon>;
+}
 export function InboxIcon() {
   return <Icon><path d="M2 9.5 4 3h8l2 6.5V13H2zM2 9.5h3.5l1 1.5h3l1-1.5H14" /></Icon>;
 }
