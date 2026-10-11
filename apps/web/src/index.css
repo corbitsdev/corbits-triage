@@ -1148,6 +1148,27 @@ body[data-rail="collapsed"] .nav-count {
 .check-counts .fail { color: var(--bad); }
 .check-counts .wait { color: var(--heat); }
 .check-counts .pass { color: var(--ok); }
+.pr-timeline { grid-column: 1 / -1; border-right: 0; }
+.timeline-trend { font-size: 14px; font-weight: 700; color: var(--ink-soft); }
+.timeline {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.timeline-entry {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.timeline-entry .soft { color: var(--ink-soft); }
+.timeline-score { font-weight: 700; text-align: right; }
+.timeline-do { color: var(--ink-soft); }
+.timeline-do.failed { color: var(--bad); }
 .pr-pane {
   flex: 1;
   min-height: 0;
