@@ -15,6 +15,8 @@ import { usePendingDos, useRunDo } from "../lib/do-runs.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import { MergeChip } from "../components/MergeChip.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
+import { DiffView } from "../components/DiffView.tsx";
+import { useDiffLayout } from "../lib/diff-layout.ts";
 import {
   approvalHeadline,
   findPrItem,
@@ -22,80 +24,6 @@ import {
 } from "../lib/triage-view.ts";
 
 type SliverTab = "about" | "files" | "commits" | "issue" | "conversation";
-
-function parseDiff(hunk: string): Array<{ header: string; rows: Array<{ type: string; oldNo: string | number; newNo: string | number; mark: string; text: string }> }> {
-  if (!hunk) return [];
-  const hunks: Array<{ header: string; rows: Array<{ type: string; oldNo: string | number; newNo: string | number; mark: string; text: string }> }> = [];
-  let cur: (typeof hunks)[number] | null = null;
-  let oldLine = 1;
-  let newLine = 1;
-  const lines = hunk.replace(/\n$/, "").split("\n");
-  if (!lines.some((line) => line.startsWith("@@"))) {
-    cur = { header: "", rows: [] };
-    hunks.push(cur);
-  }
-  for (const line of lines) {
-    const meta = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (meta) {
-      cur = { header: line, rows: [] };
-      hunks.push(cur);
-      oldLine = Number(meta[1]);
-      newLine = Number(meta[2]);
-      continue;
-    }
-    if (!cur) continue;
-    const active = cur;
-    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ") || line.startsWith("\\")) continue;
-    if (line.startsWith("+")) {
-      active.rows.push({ type: "add", oldNo: "", newNo: newLine, mark: "+", text: line.slice(1) });
-      newLine += 1;
-    } else if (line.startsWith("-")) {
-      active.rows.push({ type: "del", oldNo: oldLine, newNo: "", mark: "−", text: line.slice(1) });
-      oldLine += 1;
-    } else {
-      const text = line.startsWith(" ") ? line.slice(1) : line;
-      active.rows.push({ type: "ctx", oldNo: oldLine, newNo: newLine, mark: "", text });
-      oldLine += 1;
-      newLine += 1;
-    }
-  }
-  return hunks.filter((hk) => hk.rows.length || hk.header);
-}
-
-type PullFile = GithubPullDetail["files"][number];
-
-function DiffViewer({ file }: { file: PullFile | undefined }) {
-  if (!file) return <div className="diff-empty"><p>Select a file</p></div>;
-  const hunks = parseDiff(file.patch ?? "");
-  return (
-    <article className="diff-viewer">
-      <header className="diff-chrome">
-        <h2 className="diff-path">{file.path}</h2>
-        <p className="diff-stat">
-          <span className="add">+{file.additions ?? 0}</span>{" "}
-          <span className="del">−{file.deletions ?? 0}</span>
-        </p>
-      </header>
-      <div className="diff-body" aria-label="Diff">
-        {hunks.length === 0 ? (
-          <div className="diff-empty"><p>No files loaded.</p></div>
-        ) : hunks.map((hk, index) => (
-          <div key={`${hk.header}-${index}`}>
-            {hk.header ? <div className="diff-hunk-head"><span className="diff-hunk-meta">{hk.header}</span></div> : null}
-            {hk.rows.map((row, rowIndex) => (
-              <div className={`diff-line ${row.type}`} key={`${index}-${rowIndex}`}>
-                <span className="ln old">{row.oldNo}</span>
-                <span className="ln new">{row.newNo}</span>
-                <span className="gutter" aria-hidden="true">{row.mark}</span>
-                <span className="code">{row.text}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    </article>
-  );
-}
 
 function IssueList({ issues, pending, error }: { issues: GithubPullDetail["issues"]; pending: boolean; error: unknown }) {
   if (pending) return <p className="muted">Loading issues…</p>;
@@ -348,6 +276,7 @@ export default function PRDetail() {
   const moreRef = useRef<HTMLDetailsElement>(null);
   const dos = usePendingDos(item);
   const runPackDo = useRunDo();
+  const diffLayout = useDiffLayout();
 
   async function act(decision: "once" | "deny") {
     if (!approval) return;
@@ -493,7 +422,8 @@ export default function PRDetail() {
     : pull.error ? <p role="alert" className="error">Could not load from GitHub. {errorText(pull.error)}</p> : null;
   if (tab === "files") {
     pane = loadState ? <div className="diff-empty">{loadState}</div>
-      : files.length ? <DiffViewer file={selected} /> : <div className="diff-empty"><p>No files changed.</p></div>;
+      : selected ? <DiffView file={selected} layout={diffLayout.layout} canSplit={diffLayout.splitFits} onLayout={diffLayout.choose} />
+      : <div className="diff-empty"><p>No files changed.</p></div>;
   }
   if (tab === "commits") {
     pane = (
@@ -622,6 +552,7 @@ export default function PRDetail() {
                     {files.map((file) => (
                       <button type="button" className={`sliver-file${selected?.path === file.path ? " is-on" : ""}`} key={file.path} onClick={() => selectFile(file.path)}>
                         <span className="sliver-file-name">{file.path}</span>
+                        <span className="sliver-file-stat"><span className="add">+{file.additions}</span> <span className="del">−{file.deletions}</span></span>
                       </button>
                     ))}
                   </div>
