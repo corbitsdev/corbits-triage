@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { minimatch } from "minimatch";
+import { isDocPath } from "@corbits/triage-contracts/paths";
 
 /** Authenticated fetch pinned to the GitHub API origin; takes a path. */
 export type GithubFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -291,6 +292,115 @@ export async function listPrFilesPage(gh: GithubFetch, repo: string, number: num
   }
   if (index < rows.length) page.next = first + index;
   else if (rows.length === PR_FILES_PER_PAGE) page.next = first + PR_FILES_PER_PAGE;
+  return page;
+}
+
+type RepoDoc = {
+  path: string;
+  text: string;
+};
+
+export type RepoDocsPage = {
+  docs: RepoDoc[];
+  /** The tree this page was read from; pass it back with `next` so every page reads the same docs. */
+  ref: string;
+  /** The byte offset into the ordered docs where the next page starts. */
+  next?: number;
+};
+
+/** The most of a repository's docs any reader is given, in UTF-8 bytes. */
+export const REPO_DOCS_MAX_BYTES = 24_000;
+
+type DocBlob = { path: string; sha: string; size: number };
+
+/** The root README first, then `docs/`, then the other root docs, then the rest, each in path order. */
+function docRank(path: string): number {
+  if (/^README\.mdx?$/i.test(path)) return 0;
+  if (path.startsWith("docs/")) return 1;
+  return path.includes("/") ? 3 : 2;
+}
+
+function byDocOrder(a: DocBlob, b: DocBlob): number {
+  return docRank(a.path) - docRank(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+}
+
+async function docTree(gh: GithubFetch, repo: string, ref: string): Promise<{ sha: string; blobs: DocBlob[] }> {
+  const tree = await json(gh, `/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+  if (typeof tree?.sha !== "string" || !Array.isArray(tree.tree)) throw new Error(`github returned an invalid tree for ${repo}@${ref}`);
+  const blobs = (tree.tree as any[]).flatMap((row) => (row?.type === "blob" && typeof row.path === "string" && typeof row.sha === "string" && typeof row.size === "number" && isDocPath(row.path)
+    ? [{ path: row.path as string, sha: row.sha as string, size: row.size as number }]
+    : []));
+  return { sha: tree.sha, blobs: blobs.sort(byDocOrder) };
+}
+
+async function blobBytes(gh: GithubFetch, repo: string, sha: string): Promise<Uint8Array> {
+  const res = await request(gh, `/repos/${repo}/git/blobs/${sha}`, { headers: { accept: "application/vnd.github.raw+json" } });
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+function isContinuation(bytes: Uint8Array, at: number): boolean {
+  return at > 0 && at < bytes.length && (bytes[at]! & 0xc0) === 0x80;
+}
+
+/** `at` moved back to the start of the UTF-8 character it falls inside, so no slice splits a character. */
+function charStart(bytes: Uint8Array, at: number): number {
+  while (isContinuation(bytes, at)) at--;
+  return at;
+}
+
+function nextChar(bytes: Uint8Array, at: number): number {
+  do at++;
+  while (isContinuation(bytes, at));
+  return at;
+}
+
+const utf8 = new TextDecoder();
+
+function fitsDocsPage(page: RepoDocsPage, doc: RepoDoc): boolean {
+  return JSON.stringify({ ...page, docs: [...page.docs, doc], next: Number.MAX_SAFE_INTEGER }).length <= PR_FILES_PAGE_CHARS;
+}
+
+/** The end of the longest slice of `bytes` from `from` that still fits the page. */
+function fittingEnd(page: RepoDocsPage, path: string, bytes: Uint8Array, from: number): number {
+  let low = from;
+  let high = bytes.length;
+  while (low < high) {
+    let middle = charStart(bytes, Math.ceil((low + high) / 2));
+    if (middle <= low) middle = nextChar(bytes, low);
+    if (middle > high) break;
+    if (fitsDocsPage(page, { path, text: utf8.decode(bytes.subarray(from, middle)) })) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
+/**
+ * One page of the repository's docs at `ref` (the default branch when absent), read in order and capped at
+ * REPO_DOCS_MAX_BYTES in all. `offset` counts bytes across the ordered docs, so earlier docs are sized from the tree
+ * rather than fetched; a doc longer than a page continues on the next one under the same path.
+ */
+export async function readRepoDocsPage(gh: GithubFetch, repo: string, { ref, offset = 0 }: { ref?: string; offset?: number } = {}): Promise<RepoDocsPage> {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid docs offset ${offset}`);
+  ref ??= String((await json(gh, `/repos/${repo}`)).default_branch);
+  const { sha, blobs } = await docTree(gh, repo, ref);
+  const page: RepoDocsPage = { docs: [], ref: sha };
+  let start = 0;
+  for (const blob of blobs) {
+    if (start >= REPO_DOCS_MAX_BYTES) break;
+    const size = Math.min(blob.size, REPO_DOCS_MAX_BYTES - start);
+    if (offset < start + size) {
+      const all = await blobBytes(gh, repo, blob.sha);
+      const bytes = all.subarray(0, charStart(all, size));
+      const from = Math.max(offset - start, 0);
+      const end = fittingEnd(page, blob.path, bytes, from);
+      if (end > from) page.docs.push({ path: blob.path, text: utf8.decode(bytes.subarray(from, end)) });
+      if (end < bytes.length) {
+        page.next = start + end;
+        return page;
+      }
+    }
+    start += size;
+  }
   return page;
 }
 

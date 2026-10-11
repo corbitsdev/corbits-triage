@@ -4,7 +4,7 @@ import { triageDirectorFactory } from "./directors.js";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
-import { MAX_SYSTEM_ONE_CONTEXT_BYTES, MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES } from "./logic/quality.js";
+import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import type { Verdict } from "./logic/render.js";
 import { evaluate, rules } from "./actions/index.js";
 import type { RulesOutput } from "./actions/rules.js";
@@ -213,6 +213,7 @@ describe("facts director policy", () => {
     await director.decide({ type: "message.received", message: { content: JSON.stringify(start) } } as ReactorInboundEvent, {} as ReactorState, caps);
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
+      "docs:0": { docs: [], ref: "tree" },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
@@ -245,13 +246,15 @@ describe("judge on a blocked pull request", () => {
 
   async function facts(checkRuns: unknown[], mergeable: boolean | null, draft = false, setup: Record<string, unknown> = {}, files: unknown[] = []): Promise<string> {
     let reply = "";
+    const called = new Set<string>();
     const decide = director("facts", {
-      executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
+      executeTools(calls: ToolCall[]) { for (const { id } of calls) called.add(id); return { type: "execute_tools", calls }; },
       reply(content: string) { reply = content; return { type: "reply", content }; },
     });
     await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets"), ...setup }) } });
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
+      "docs:0": { docs: [], ref: "tree" },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
@@ -259,7 +262,7 @@ describe("judge on a blocked pull request", () => {
       "comments:8": { comments: [] },
       "checks:8": { checks: checkRuns },
     };
-    for (const [callId, content] of Object.entries(results)) await decide({ type: "tool.done", result: { callId, content } });
+    for (const [callId, content] of Object.entries(results)) if (called.has(callId)) await decide({ type: "tool.done", result: { callId, content } });
     return reply;
   }
 
@@ -404,13 +407,9 @@ describe("focused candidate judge input", () => {
     return questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: "primary_or_supporting", probabilities, confidence: 0.9 })).join("");
   }
 
-  test("sends one typed choice per candidate with matching ID-keyed state", async () => {
-    const ruled = await ruledFor([{
-      path: "src/a.ts",
-      previousPath: "src/old-a.ts",
-      status: "renamed",
-      patch: "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };",
-    }]);
+  test("sends one typed choice per hunk, pointing at that hunk in the pull request state", async () => {
+    const patch = "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };";
+    const ruled = await ruledFor([{ path: "src/a.ts", previousPath: "src/old-a.ts", status: "renamed", patch }]);
     const { requests } = await judgeChunks(ruled, primary);
     expect(requests).toHaveLength(1);
     const systemOne = requests[0]!.providerOptions.systemOne;
@@ -424,28 +423,9 @@ describe("focused candidate judge input", () => {
         type: "choice",
         choices: ["primary_or_supporting", "unrelated", "movement_or_superseded", "ambiguous"],
       },
-      {
-        id: "focused-candidate-002",
-        type: "choice",
-        choices: ["primary_or_supporting", "unrelated", "movement_or_superseded", "ambiguous"],
-      },
     ]);
-    expect(systemOne.state.changeCandidates).toEqual({
-      "focused-candidate-001": {
-        path: "src/a.ts",
-        previousPath: "src/old-a.ts",
-        status: "renamed",
-        label: "Old",
-        evidence: "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };",
-      },
-      "focused-candidate-002": {
-        path: "src/a.ts",
-        previousPath: "src/old-a.ts",
-        status: "renamed",
-        label: "New",
-        evidence: "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };",
-      },
-    });
+    expect(systemOne.questions[0]!.instructions).toContain("`pullRequest.files[0].hunks[0]` (Old, New)");
+    expect(systemOne.state.pullRequest.files).toEqual([{ path: "src/a.ts", status: "renamed", hunks: [patch] }]);
   });
 
   test("an author's label cannot mention, link or format in the judge prompt or the comment", async () => {
@@ -454,8 +434,8 @@ describe("focused candidate judge input", () => {
     const unrelated = { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 };
     const { requests, judged } = await judgeChunks(ruled, () => JSON.stringify({ id: "focused-candidate-001", type: "choice", choice: "unrelated", probabilities: unrelated, confidence: 0.9 }));
     const systemOne = requests[0]!.providerOptions.systemOne;
-    expect(systemOne.questions[0]!.instructions).toEndWith("Candidate label: acme/security click.");
-    expect(systemOne.state.changeCandidates["focused-candidate-001"].label).toBe("acme/security click");
+    expect(systemOne.questions[0]!.instructions).toContain("(acme/security click)");
+    expect(systemOne.questions[0]!.instructions).not.toContain("@acme");
     const verdict = await evaluate(judged, ctx, signal) as Verdict;
     expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Split out unrelated change: `acme/security click — src/owner.ts`"]);
   });
@@ -468,20 +448,19 @@ describe("focused candidate judge input", () => {
   function largeFiles(prefix: string, count: number) {
     return Array.from({ length: count }, (_, index) => ({
       path: `src/${prefix}${index}.ts`,
-      patch: [`@@ -1 +1,40 @@`, `+export const ${prefix}${index} = 1;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(6)}${line}`)].join("\n"),
+      patch: [`@@ -1 +1,40 @@`, `+export const ${prefix}${index} = 1;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(12)}${line}`)].join("\n"),
     }));
   }
 
   function withinBudget(request: SystemOneRequest): boolean {
     const { state, questions } = request.providerOptions.systemOne;
     const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-    const context = bytes(state) + Math.max(...questions.map(bytes));
-    return context <= MAX_SYSTEM_ONE_CONTEXT_BYTES && bytes({ state, questions }) <= MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+    return bytes(state) <= MAX_SYSTEM_ONE_STATE_BYTES && questions.length <= MAX_SYSTEM_ONE_QUESTIONS;
   }
 
   test("a pull request over the request budget is asked in several calls that together cover every candidate", async () => {
     const files = largeFiles("large", 24);
-    expect(files.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(45_000);
+    expect(files.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(MAX_SYSTEM_ONE_STATE_BYTES);
     const ruled = await ruledFor(files);
     const { requests, judged } = await judgeChunks(ruled, primary);
     expect(requests.length).toBeGreaterThanOrEqual(2);
@@ -511,7 +490,7 @@ describe("focused candidate judge input", () => {
   });
 
   test("an evaluation whose metadata alone is over the budget skips the judge and leaves focused to a maintainer without accusation", async () => {
-    const files = Array.from({ length: 100 }, (_, index) => ({ path: `src/${"nested/".repeat(60)}${index}.ts` }));
+    const files = Array.from({ length: 200 }, (_, index) => ({ path: `src/${"nested/".repeat(80)}${index}.ts` }));
     const ruled = await rules({ items: [{ facts: { ...prFacts(files), paths: files.map((file) => file.path) }, pack }], batch: false }, ctx, signal);
     expect(ruled.needsJudgment).toBe(false);
     expect(ruled.items[0]).toMatchObject({ judgeError: "pull request too large for the decision model", judgeLimitExceeded: true });

@@ -57,6 +57,8 @@ export interface PrFacts {
   files?: PrFileFacts[];
   body?: string;
   commits?: string[];
+  /** The repository's docs on the default branch, by path. */
+  docs?: Record<string, string>;
   branch?: string;
   /** What woke this run; empty for webhook actions no pack event names. */
   events?: TriageEvent[];
@@ -149,7 +151,7 @@ function finish(findings: Finding[], checks: CheckResult[], duplicateOf: number 
   };
 }
 
-function hasModelChecks(sources: DeterministicResult["sources"]): boolean {
+export function hasModelChecks(sources: DeterministicResult["sources"]): boolean {
   return sources !== undefined && (sources.quality.length > 0 || sources.custom.length > 0);
 }
 

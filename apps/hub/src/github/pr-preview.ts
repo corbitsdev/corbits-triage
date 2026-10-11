@@ -176,7 +176,8 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     const policy = repoPolicy(body.roles === undefined ? record : { ...record, roles: body.roles });
     const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId);
 
-    const item = await readItem(gh, number, { repo, policy, pack, events: [event] });
+    // The preview never asks the judge, so it reads no docs.
+    const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: {} });
     if (item instanceof Response) return item;
 
     const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, req.signal);

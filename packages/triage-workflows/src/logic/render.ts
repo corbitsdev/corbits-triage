@@ -4,7 +4,7 @@ import type { SuggestedAction } from "./actions.js";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import type { ChangeCandidate } from "./candidates.js";
 import { asText } from "./extract.js";
-import { actionText, failureText, FOCUSED_CHOICES, focusedCandidateId, passText, qualityQuestions, type FocusedChoice } from "./quality.js";
+import { actionText, failureText, FOCUSED_CHOICES, focusedCandidateId, passText, qualityQuestionIds, type FocusedChoice } from "./quality.js";
 
 type NoulAnswer = { type: "noul"; noul: number };
 type ChoiceAnswer = { type: "choice"; choice: FocusedChoice; probabilities: Record<FocusedChoice, number>; confidence: number };
@@ -184,7 +184,7 @@ function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitEx
   if (!det.sources) return { checks: [], scores: [], unanswered: false };
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
-  const expectedIds = new Set(qualityQuestions(det.sources, candidates).map((question) => question.id));
+  const expectedIds = qualityQuestionIds(det.sources, candidates);
   const unavailable = !det.needsJudgment ? NOT_ASKED_REASON : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
   const invalid = parsed.malformed || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
   const checks: CheckResult[] = [];

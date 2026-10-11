@@ -17,8 +17,9 @@ type VerdictOptions = { pack?: CheckPack; pr?: Record<string, unknown>; skipJudg
 /** Drives the real facts director and the rules and evaluate actions for one batch mail and returns the verdict output; `skipJudge` evaluates as the build that never asked the decision model did. */
 async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack = emptyPack(REPO), pr = {}, skipJudge = false }: VerdictOptions = {}): Promise<string> {
   const replies: string[] = [];
+  const called = new Set<string>();
   const caps = {
-    executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
+    executeTools(calls: ToolCall[]) { for (const { id } of calls) called.add(id); return { type: "execute_tools", calls }; },
     reply(content: string) { replies.push(content); return { type: "reply", content }; },
   } as unknown as ReactorCapabilities;
   const facts = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
@@ -28,6 +29,7 @@ async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack =
   const mail = { kind: "pr", repo: REPO, items: numbers.map((n) => ({ prNumber: n, headSha: `sha${n}` })), policy: { enabled: true }, checkPack: pack };
   await facts.decide({ type: "message.received", message: { content: JSON.stringify(mail) } } as ReactorInboundEvent, {} as ReactorState, caps);
   await done("github_list_open_prs", { prs: numbers.map((n) => ({ number: n, title: `PR ${n}` })) });
+  if (called.has("docs:0")) await done("docs:0", { docs: [], ref: "tree" });
   for (const n of numbers) {
     if (failGetPr.has(n)) await done(`pr:${n}`, { error: "404" }, true);
     else await done(`pr:${n}`, { title: `PR ${n}`, author: "octocat", sha: `sha${n}`, state: "open", draft: false, mergeable: true, requestedReviewers: 0, ...pr });
@@ -159,7 +161,7 @@ describe("verdicts the decision model was never asked about", () => {
     }
 
     const compact = [{ path: "src/config.ts", patch: '@@ -0,0 +1 @@\n+const value = { name: "Candidate" };' }];
-    const oversized = Array.from({ length: 100 }, (_, index) => ({ path: `src/${"nested/".repeat(60)}${index}.ts` }));
+    const oversized = Array.from({ length: 200 }, (_, index) => ({ path: `src/${"nested/".repeat(80)}${index}.ts` }));
     const local = await triage(oversized);
     const provider = await triage(compact, { type: "inference.error", error: { message: QUALITY_EVALUATION_LIMIT_ERROR } } as ReactorInboundEvent);
     const ambiguousDecision = JSON.stringify({
