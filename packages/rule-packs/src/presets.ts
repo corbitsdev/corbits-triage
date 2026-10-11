@@ -9,17 +9,31 @@ export interface Preset {
   owner: string;
 }
 
+const NEEDS_CHANGES = "Triage: Needs changes";
+const NEEDS_REVIEW = "Triage: Needs review";
+const READY_TO_MERGE = "Triage: Ready to merge";
+
 export const PRESETS: Record<TriageState, Preset> = {
-  "needs-decision": { labels: ["triage:needs-decision"], owner: "Maintainer" },
-  "awaiting-review": { labels: ["triage:awaiting-review"], owner: "Reviewer / Maintainer" },
-  "needs-author-update": { labels: ["triage:needs-author-update"], owner: "Author" },
-  blocked: { labels: ["triage:blocked"], owner: "Author" },
-  "ready-monitoring": { labels: ["triage:ready"], owner: "Maintainer" },
-  "stale-unknown": { labels: ["triage:stale-unknown"], owner: "system" },
+  "needs-decision": { labels: [NEEDS_REVIEW], owner: "Maintainer" },
+  "awaiting-review": { labels: [NEEDS_REVIEW], owner: "Reviewer / Maintainer" },
+  "needs-author-update": { labels: [NEEDS_CHANGES], owner: "Author" },
+  blocked: { labels: [NEEDS_CHANGES], owner: "Author" },
+  "ready-monitoring": { labels: [READY_TO_MERGE], owner: "Maintainer" },
+  "stale-unknown": { labels: [NEEDS_REVIEW], owner: "system" },
 };
 
-/** Every label a verdict state can set; the mirror removes only these. */
-export const TRIAGE_LABELS: readonly string[] = Object.values(PRESETS).flatMap((preset) => preset.labels);
+// Labels earlier versions set; owning them clears them from a pull request the next time it is triaged.
+const RETIRED_LABELS = [
+  "triage:needs-decision",
+  "triage:awaiting-review",
+  "triage:needs-author-update",
+  "triage:blocked",
+  "triage:ready",
+  "triage:stale-unknown",
+];
+
+/** Every label a verdict state can set, and every label it once set; the mirror removes only these. */
+export const TRIAGE_LABELS: readonly string[] = [...new Set([...Object.values(PRESETS).flatMap((preset) => preset.labels), ...RETIRED_LABELS])];
 
 export interface Rendered {
   state: TriageState;

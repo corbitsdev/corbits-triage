@@ -28,8 +28,8 @@ function bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
-/** GitHub serving open pull request 8 changing `files`, failing every read of it when `missing`, with `prior` as its Triage comment. */
-function fakeGithub(missing: boolean, files: FileRow[], prior?: string) {
+/** GitHub serving open pull request 8 changing `files` and carrying `labels`, failing every read of it when `missing`, with `prior` as its Triage comment. */
+function fakeGithub(missing: boolean, files: FileRow[], labels: string[], prior?: string) {
   const requests: Recorded[] = [];
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
@@ -37,7 +37,7 @@ function fakeGithub(missing: boolean, files: FileRow[], prior?: string) {
     if (missing && path.includes("/pulls/8")) return Response.json({ message: "Not Found" }, { status: 404 });
     if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title: "Fix #3", user: { login: "octocat" }, draft: false, head: { sha: "abc" } }]);
     if (path === `/repos/${REPO}/pulls/8`) {
-      return Response.json({ number: 8, title: "Fix #3", state: "open", draft: false, user: { login: "octocat" }, head: { sha: "abc", ref: "fix" }, base: { ref: "main" }, mergeable: true, labels: [], requested_reviewers: [{ login: "rev" }] });
+      return Response.json({ number: 8, title: "Fix #3", state: "open", draft: false, user: { login: "octocat" }, head: { sha: "abc", ref: "fix" }, base: { ref: "main" }, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
     }
     if (path.includes("/check-runs")) return Response.json({ check_runs: [] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
@@ -107,8 +107,8 @@ function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], ju
 const RULES_PATH = { invoked: ["triage-facts", "triage-mirror"], mirrors: ["mirrorRules"] };
 const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-mirror"], mirrors: ["mirror"] };
 
-async function triage(checkPack: CheckPack, { missing = false, backlog = false, files = [FLAG], judgeFails = false, cleanupMode = "automated", prior = undefined as string | undefined } = {}) {
-  const { gh, requests } = fakeGithub(missing, files, prior);
+async function triage(checkPack: CheckPack, { missing = false, backlog = false, files = [FLAG], judgeFails = false, cleanupMode = "automated", labels = [] as string[], prior = undefined as string | undefined } = {}) {
+  const { gh, requests } = fakeGithub(missing, files, labels, prior);
   const policy = { enabled: true, cleanupMode };
   const invoked: string[] = [];
   const judged: SystemOne[] = [];
@@ -128,10 +128,12 @@ async function triage(checkPack: CheckPack, { missing = false, backlog = false, 
 
 describe("pr-triage body", () => {
   test("without model checks the judge is skipped and the verdict carries the pack's actions", async () => {
-    const { path, requests, verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] });
+    const { path, requests, verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { labels: ["bug", "triage:awaiting-review"] });
     expect(path).toEqual(RULES_PATH);
     expect(verdict).toMatchObject({ repo: REPO, number: 8, headSha: "abc", degraded: null, actions: [{ id: "hello", kind: "comment", target: { body: "hi" } }] });
+    expect((verdict as Verdict).request.labels).toEqual(["Triage: Ready to merge"]);
     expect(requests).toContainEqual({ method: "POST", path: `/repos/${REPO}/issues/8/labels` });
+    expect(requests.filter((r) => r.method === "DELETE")).toEqual([{ method: "DELETE", path: `/repos/${REPO}/issues/8/labels/triage%3Aawaiting-review` }]);
   });
 
   test("model checks run the judge on the repository's own docs and the verdict records its answers", async () => {
