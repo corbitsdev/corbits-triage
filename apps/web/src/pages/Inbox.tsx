@@ -78,6 +78,7 @@ import {
 import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesFilters, type InboxFilters } from "../lib/inbox-filter.ts";
 import { leavesOpen, useOpenItems, useOpenPulls, useOpenPullsUnanswered, useQueueLoading } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
@@ -600,6 +601,22 @@ function Toasts({ notices, onUndo }: { notices: Notices; onUndo: () => void }) {
   );
 }
 
+/** New, resolved and stuck since the last visit, and what the user acted on; it opens Pulse. */
+function PulseLine() {
+  const { pulse } = usePulse();
+  if (pulse === null) return null;
+  const counts = [`${pulse.since.fresh.length} new`, `${pulse.since.resolved.length} resolved`, `${pulse.stuck.length} stuck`];
+  if (pulse.acted > 0) counts.push(`${pulse.acted} acted on by you`);
+  return (
+    <Link className="pulse-line" to="/pulse" aria-label={`Pulse: ${counts.join(", ")}`}>
+      <span>{pulse.since.fresh.length} new</span><i aria-hidden="true" />
+      <span>{pulse.since.resolved.length} resolved</span><i aria-hidden="true" />
+      <span>{pulse.stuck.length} stuck</span>
+      {pulse.acted > 0 ? <><i aria-hidden="true" /><b>You {pulse.acted}</b></> : null}
+    </Link>
+  );
+}
+
 /** Needs you rows are never handled; their piles keep the action order inside repository and owner groups. */
 function needsYouPiles(piles: InboxPile[]): OpenPile[] {
   return piles.map((pile) => ({ key: pile.key, label: pile.label, items: pile.items.map((item) => ({ item, handled: null })) }));
@@ -742,7 +759,7 @@ export default function Inbox({ view }: { view: ListView }) {
     <div className={`inbox${selected ? " has-selection" : ""}`} ref={paneRef} tabIndex={-1}>
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
-          <div className="lh-top"><h1>{LIST_TITLE[view]}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}</div>
+          <div className="lh-top"><h1>{LIST_TITLE[view]}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}<PulseLine /></div>
           <div className="tools">
             <label className="search">
               <SearchIcon />
