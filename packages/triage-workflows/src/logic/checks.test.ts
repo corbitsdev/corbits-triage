@@ -124,8 +124,8 @@ describe("deriveState check pack", () => {
       check: "size",
       kind: "machine",
       result: "fail",
-      reason: "pull request is too large",
-      evidence: ["80 files (max 20)"],
+      reason: "pull request is over the size limits",
+      evidence: ["80 files (max 30)"],
     });
     expect(result.checks.find((check) => check.check === "paths")?.result).toBe("pass");
     expect(result.sources?.custom).toEqual(pack.custom);

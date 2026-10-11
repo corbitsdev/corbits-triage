@@ -236,12 +236,12 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
       const changedFiles = facts.changedFiles ?? 0;
       const lines = (facts.additions ?? 0) + (facts.deletions ?? 0);
       const files = { over: rules.maxFiles !== undefined && changedFiles > rules.maxFiles, text: `${changedFiles} files (max ${rules.maxFiles})` };
-      const size = { over: rules.maxLines !== undefined && lines > rules.maxLines, text: `${lines} lines (max ${rules.maxLines})` };
+      const size = { over: rules.maxLines !== undefined && lines > rules.maxLines, text: `${lines} lines changed (max ${rules.maxLines})` };
       if (files.over) add("size", "needs-author-update", `pull request touches ${changedFiles} files (max ${rules.maxFiles})`);
       if (size.over) add("size", "needs-author-update", `pull request changes ${lines} lines (max ${rules.maxLines})`);
       const measured = [...(rules.maxFiles !== undefined ? [files] : []), ...(rules.maxLines !== undefined ? [size] : [])];
       const over = measured.filter((m) => m.over);
-      result("size", over.length > 0, over.length ? "pull request is too large" : "pull request is within size limits", (over.length ? over : measured).map((m) => m.text));
+      result("size", over.length > 0, over.length ? "pull request is over the size limits" : "pull request is within the size limits", (over.length ? over : measured).map((m) => m.text));
     }
     if (on("paths") && rules.forbiddenGlobs.length > 0) {
       const matched = (facts.paths ?? []).filter((path) => rules.forbiddenGlobs.some((glob) => globMatch(path, glob)));

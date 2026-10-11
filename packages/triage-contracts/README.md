@@ -13,7 +13,7 @@ A check pack sets which checks run on a repository's pull requests and what happ
   "repo": "acme/widgets",
   "checks": {
     "ci": { "enabled": true },
-    "size": { "enabled": true, "maxFiles": 20, "maxLines": 500 }
+    "size": { "enabled": true, "maxFiles": 30, "maxLines": 3000 }
   },
   "custom": [
     { "id": "custom-1", "name": "Ticket", "group": "pull-request", "kind": "model", "shape": "is-true", "claim": "The title mentions a ticket id." }

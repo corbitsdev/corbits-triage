@@ -48,7 +48,7 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   paths: { name: "Forbidden paths", group: "code-vs-ci", kind: "machine" },
 };
 
-export const RECOMMENDED_SIZE = { maxFiles: 20, maxLines: 500 } as const;
+export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
 export const RECOMMENDED_DRIFT = { maxBehindBy: 50 } as const;
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either", requireLabel: false, label: "" } as const;
