@@ -1,0 +1,74 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 155,
+ "title": "fix(contracts): match rule check patterns with a linear-time engine",
+ "body": "Title, branch and diff-excludes rule checks ran a repo admin's regular expression with the JavaScript engine against text the pull request author controls. Patterns like `\\d+\\d+\\d+x` or `(a+)+` take minutes on a long line, and under JavaScriptCore's backtrack limit can silently report no match.\n\n## What changed\n\n- Rule patterns compile and match with `re2js` (RE2 port, linear time), in the contract's `pattern()` validator and in the workflow's rule evaluation. Lookaround and backreferences are rejected when a pack is saved, with a message naming the check; everything RE2 accepts runs in time proportional to the input.\n- The validator compiles each pattern once per check per pull request; no scan cap is needed.\n\n## Verification\n\n- `bun run check`; contract and workflow logic tests, including `(?<=a)b` and `(a)\\1` rejected, `^(a+)+$`, `^[a-z]+(-[a-z0-9]+)*$`, `(\\d{3}-)+`, `^(feat|fix)(\\(.+\\))?: .+` and the recommended pack accepted, and `\\d+\\d+\\d+x` against 2,000 digits finishing in under 250 ms.\n- Portal build and hub OpenAPI test pass.\n\nCloses CL-XXXX",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(contracts): match rule check patterns with a linear-time engine"
+ ],
+ "files": [
+  {
+   "filename": "bun.lock",
+   "status": "modified",
+   "additions": 4,
+   "deletions": 0,
+   "patch": "@@ -124,6 +124,7 @@\n       \"version\": \"0.1.0\",\n       \"dependencies\": {\n         \"arktype\": \"catalog:\",\n+        \"re2js\": \"2.8.6\",\n       },\n       \"devDependencies\": {\n         \"@intx/mime\": \"workspace:*\",\n@@ -141,6 +142,7 @@\n         \"@intx/workflow\": \"workspace:*\",\n         \"arktype\": \"catalog:\",\n         \"hono\": \"^4.11.9\",\n+        \"re2js\": \"2.8.6\",\n       },\n       \"devDependencies\": {\n         \"@intx/inference\": \"workspace:*\",\n@@ -1336,6 +1338,8 @@\n \n     \"quansync\": [\"quansync@0.2.11\", \"\", {}, \"sha512-AifT7QEbW9Nri4tAwR5M/uzpBuqfZf+zwaEM/QkzEjj7NBuFD2rBuy0K3dE+8wltbezDV7JMA0WfnCPYRSYbXA==\"],\n \n+    \"re2js\": [\"re2js@2.8.6\", \"\", {}, \"sha512-xLgQil4kIUCrAzVk9fRSkxkFNwmygLFjVxXrLc65aE1F0+Zsb8rxumFBy4XKyvgMCTL6kilDq3EZ0piE2dP/Dg==\"],\n+\n     \"react\": [\"react@19.3.0\", \"\", {}, \"sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==\"],\n \n     \"react-dom\": [\"react-dom@19.3.0\", \"\", { \"dependencies\": { \"scheduler\": \"^0.28.0\" }, \"peerDependencies\": { \"react\": \"^19.3.0\" } }, \"sha512-JDk8dgif51OjFoDE70+OT9ICyYr+69HlmihNwp1+Nsfbna3t5sIiCa9ZJktDmQ4/1b/rn26hIAR2uYXDMr5r0Q==\"],"
+  },
+  {
+   "filename": "packages/triage-contracts/package.json",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 1,
+   "patch": "@@ -6,7 +6,8 @@\n   \"main\": \"./src/index.ts\",\n   \"types\": \"./src/index.ts\",\n   \"dependencies\": {\n-    \"arktype\": \"catalog:\"\n+    \"arktype\": \"catalog:\",\n+    \"re2js\": \"2.8.6\"\n   },\n   \"devDependencies\": {\n     \"@intx/mime\": \"workspace:*\""
+  },
+  {
+   "filename": "packages/triage-contracts/src/check-pack.test.ts",
+   "status": "modified",
+   "additions": 9,
+   "deletions": 2,
+   "patch": "@@ -29,7 +29,7 @@ const CUSTOM: CustomCheck[] = [{ id: \"custom-1\", name: \"Ticket\", group: \"pull-re\n const RULES: CustomCheck[] = [\n   { id: \"custom-1\", name: \"Vendor\", group: \"code-vs-ci\", kind: \"rule\", rule: \"paths-unchanged\", globs: [\"vendor/**\"] },\n   { id: \"custom-2\", name: \"Schema\", group: \"code-vs-ci\", kind: \"rule\", rule: \"paths-together\", changed: [\"db/schema.ts\"], requires: [\"db/migrations/**\"] },\n-  { id: \"custom-3\", name: \"Title\", group: \"pull-request\", kind: \"rule\", rule: \"title-pattern\", pattern: \"^(feat|fix): \" },\n+  { id: \"custom-3\", name: \"Title\", group: \"pull-request\", kind: \"rule\", rule: \"title-pattern\", pattern: \"^(feat|fix)(\\\\(.+\\\\))?: .+\" },\n   { id: \"custom-4\", name: \"Branch\", group: \"pull-request\", kind: \"rule\", rule: \"branch-pattern\", pattern: \"^cl-\\\\d+\" },\n   { id: \"custom-5\", name: \"Labelled\", group: \"issue\", kind: \"rule\", rule: \"label-required\", label: \"triaged\" },\n   { id: \"custom-6\", name: \"No debug\", group: \"code-vs-ci\", kind: \"rule\", rule: \"diff-excludes\", pattern: \"console\\\\.log\" },\n@@ -124,8 +124,10 @@ describe(\"check pack contract\", () => {\n \n   test(\"an invalid typed custom check rejects the pack with its reason\", () => {\n     const rejected: Array<[unknown, string]> = [\n-      [{ ...RULES[2], pattern: \"(\" }, \"Custom check custom-3 pattern must be a valid regular expression.\"],\n+      [{ ...RULES[2], pattern: \"(\" }, \"Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences\"],\n       [{ ...RULES[2], pattern: \"a\".repeat(201) }, \"Custom check custom-3 pattern must be at most 200 characters.\"],\n+      [{ ...RULES[2], pattern: \"(?<=a)b\" }, \"Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences\"],\n+      [{ ...RULES[2], pattern: \"(a)\\\\1\" }, \"Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences\"],\n       [{ ...RULES[2], rule: \"title-matches\" }, \"Custom check custom-3 rule must be one of\"],\n       [{ ...MODELS[2], options: [\"small\", \"small \"] }, \"Custom check custom-3 options must not repeat a value.\"],\n       [{ ...MODELS[2], failOn: [\"medium\"] }, \"Custom check custom-3 failOn must be among options.\"],\n@@ -135,6 +137,11 @@ describe(\"check pack contract\", () => {\n     }\n   });\n \n+  test(\"a pattern with nested quantifiers is accepted, since rule checks match in linear time\", () => {\n+    const pack = { ...emptyPack(REPO), custom: [{ ...RULES[2], pattern: \"^(a+)+$\" }] };\n+    expect(readCheckPack(pack)).toEqual(pack);\n+  });\n+\n   test(\"more custom checks than the cap reject the pack\", () => {\n     const custom = [...RULES, ...MODELS].map((row, i) => ({ ...row, id: `custom-${i + 1}` }));\n     expect(() => readCheckPack({ ...emptyPack(REPO), custom })).toThrow(\"Check pack must have at most 8 custom checks.\");"
+  },
+  {
+   "filename": "packages/triage-contracts/src/check-pack.ts",
+   "status": "modified",
+   "additions": 5,
+   "deletions": 3,
+   "patch": "@@ -1,4 +1,5 @@\n import { type } from \"arktype\";\n+import { RE2JS, RE2JSSyntaxException } from \"re2js\";\n import type { AuthorAssociation } from \"./repo-policy.js\";\n \n export const CHECK_PACK_KIND = \"corbits.triage.check-pack\";\n@@ -434,9 +435,10 @@ function pattern(value: unknown, where: string): string {\n   const source = verbatim(value, where);\n   if (source.length > PATTERN_MAX) throw new Error(`${where} must be at most ${PATTERN_MAX} characters.`);\n   try {\n-    new RegExp(source);\n-  } catch {\n-    throw new Error(`${where} must be a valid regular expression.`);\n+    RE2JS.compile(source);\n+  } catch (error) {\n+    if (!(error instanceof RE2JSSyntaxException)) throw error;\n+    throw new Error(`${where} must be a valid regular expression without lookaround or backreferences: ${error.message}.`);\n   }\n   return source;\n }"
+  },
+  {
+   "filename": "packages/triage-workflows/package.json",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 1,
+   "patch": "@@ -22,7 +22,8 @@\n     \"@intx/workflow\": \"workspace:*\",\n     \"hono\": \"^4.11.9\",\n     \"@intx/types\": \"workspace:*\",\n-    \"arktype\": \"catalog:\"\n+    \"arktype\": \"catalog:\",\n+    \"re2js\": \"2.8.6\"\n   },\n   \"devDependencies\": {\n     \"@intx/inference\": \"workspace:*\""
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/checks.test.ts",
+   "status": "modified",
+   "additions": 9,
+   "deletions": 0,
+   "patch": "@@ -188,6 +188,15 @@ describe(\"deriveState rule custom checks\", () => {\n     expect(result.checks.find((check) => check.check === \"custom-6\")?.result).toBe(\"unconfirmed\");\n   });\n \n+  test(\"a pattern that backtracks under RegExp matches a long added line in linear time\", () => {\n+    const slow = emptyPack(\"acme/widgets\");\n+    slow.custom = [{ id: \"custom-1\", name: \"Digits\", group: \"code-vs-ci\", kind: \"rule\", rule: \"diff-excludes\", pattern: \"\\\\d+\\\\d+\\\\d+x\" }];\n+    const started = performance.now();\n+    const result = deriveState({ ...facts, files: [{ path: \"src/api.ts\", additions: 1, patch: `@@ -1 +1 @@\\n+${\"1\".repeat(2_000)}` }] }, allOff, slow);\n+    expect(performance.now() - started).toBeLessThan(250);\n+    expect(result.checks[0]?.result).toBe(\"pass\");\n+  });\n+\n   test(\"author rules gate on people, roles or kinds and never add a finding\", () => {\n     const gated = emptyPack(\"acme/widgets\");\n     gated.custom = ["
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/rule-checks.ts",
+   "status": "modified",
+   "additions": 5,
+   "deletions": 4,
+   "patch": "@@ -1,4 +1,5 @@\n import type { RepoRole, RuleCustomCheck } from \"@corbits/triage-contracts\";\n+import { RE2JS } from \"re2js\";\n import { missingFrom } from \"./actions.js\";\n import type { CheckResult, Finding, PrFacts, PrFileFacts } from \"./checks.js\";\n import { globMatch } from \"./glob.js\";\n@@ -26,7 +27,7 @@ function addedLines(patch: string): Array<{ line: number; text: string }> {\n }\n \n /** Locations only: the matched text may be a secret. */\n-function diffHits(files: PrFileFacts[], re: RegExp): string[] {\n+function diffHits(files: PrFileFacts[], re: RE2JS): string[] {\n   const hits: string[] = [];\n   for (const file of files) {\n     if (file.patch === undefined) continue;\n@@ -86,12 +87,12 @@ function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, R\n       return { failed, reason: failed ? `changes ${changed.join(\", \")} without ${check.requires.join(\", \")}` : \"changes paths together\" };\n     }\n     case \"title-pattern\": {\n-      const failed = !new RegExp(check.pattern).test(facts.title);\n+      const failed = !RE2JS.compile(check.pattern).test(facts.title);\n       return { failed, reason: failed ? \"title does not match the pattern\" : \"title matches the pattern\" };\n     }\n     case \"branch-pattern\": {\n       if (!facts.branch) return { failed: null, reason: \"branch name is not known\" };\n-      const failed = !new RegExp(check.pattern).test(facts.branch);\n+      const failed = !RE2JS.compile(check.pattern).test(facts.branch);\n       return { failed, reason: failed ? \"branch does not match the pattern\" : \"branch matches the pattern\" };\n     }\n     case \"label-required\": {\n@@ -100,7 +101,7 @@ function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, R\n     }\n     case \"diff-excludes\": {\n       const files = facts.files ?? [];\n-      const hits = diffHits(files, new RegExp(check.pattern));\n+      const hits = diffHits(files, RE2JS.compile(check.pattern));\n       if (hits.length) return { failed: true, reason: \"an added line matches the excluded pattern\", evidence: hits.slice(0, MAX_DIFF_HITS) };\n       if (files.some(unscanned)) return { failed: null, reason: \"some added lines could not be scanned\" };\n       return { failed: false, reason: \"no added line matches the excluded pattern\" };"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "ARCHITECTURE.md": "333969c8ae5b643e",
+  "BUILD_PLAN.md": "65a667f3bbd10128",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "IMPLEMENTATION.md": "731298e55211ea3f",
+  "README.md": "e5e18fade19f3d3f",
+  "docs/DEPLOY.md": "f28451d963dd011b",
+  "docs/DEV.md": "11d689902ba74717",
+  "docs/SELF_HOST.md": "596c16f9919dbfac",
+  "packages/triage-contracts/README.md": "16b70c8e9a0c7ad2"
+ }
+}

@@ -1,0 +1,172 @@
+{
+  "repo": "corbitsdev/corbits-triage",
+  "pulls": {
+    "45": {
+      "needsTests": false,
+      "needsDocs": false,
+      "note": "docs only"
+    },
+    "46": {
+      "needsTests": true,
+      "needsDocs": true,
+      "note": "setup change documented"
+    },
+    "71": {
+      "needsTests": false,
+      "needsDocs": false,
+      "note": "docs only"
+    },
+    "96": {
+      "needsTests": false,
+      "needsDocs": false,
+      "note": ""
+    },
+    "98": {
+      "needsTests": false,
+      "needsDocs": false,
+      "note": "docs only"
+    },
+    "101": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "103": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "106": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "108": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "112": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "113": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "119": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "122": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "125": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": "runtime change merged without tests"
+    },
+    "135": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "137": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "139": {
+      "needsTests": false,
+      "needsDocs": false,
+      "note": "CSS only"
+    },
+    "141": {
+      "needsTests": false,
+      "needsDocs": false,
+      "note": "version bump only"
+    },
+    "144": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "145": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "148": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "149": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "151": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "153": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "154": {
+      "needsTests": true,
+      "needsDocs": true,
+      "note": "new App permission must be in the README"
+    },
+    "155": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "156": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "157": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "158": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    }
+  },
+  "mixes": [
+    [
+      155,
+      139
+    ],
+    [
+      137,
+      151
+    ],
+    [
+      113,
+      125
+    ],
+    [
+      149,
+      156
+    ],
+    [
+      148,
+      45
+    ]
+  ]
+}
