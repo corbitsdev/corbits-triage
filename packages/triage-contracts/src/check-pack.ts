@@ -129,7 +129,8 @@ type ModelParams = {
 };
 export type ModelCheck = { [K in ModelShape]: { shape: K } & ModelParams[K] }[ModelShape];
 
-export type CustomCheck = { id: string; name: string; group: CheckPackGroup } & (
+/** `enabled` is stored only as false; an absent flag means the check runs. */
+export type CustomCheck = { id: string; name: string; group: CheckPackGroup; enabled?: boolean } & (
   | ({ kind: "rule" } & RuleCheck)
   | ({ kind: "model" } & ModelCheck)
 );
@@ -255,7 +256,7 @@ const CatalogCheckSchema = type({
   "forbiddenGlobs?": "string[]",
 });
 
-const CUSTOM_BASE = { id: CUSTOM_ID, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS) } as const;
+const CUSTOM_BASE = { id: CUSTOM_ID, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
 const RULE = { ...CUSTOM_BASE, kind: "'rule'" } as const;
 const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
@@ -515,7 +516,8 @@ function parseModel(row: Record<string, unknown>, where: string): ModelCheck {
 function parseTypedCustom(row: Record<string, unknown>, index: number): CustomCheck {
   const where = `Custom check ${typeof row.id === "string" ? row.id : index + 1}`;
   if (typeof row.id !== "string" || !CUSTOM_ID.test(row.id)) throw new Error(`${where} id must be custom- and a number.`);
-  const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`) };
+  if (row.enabled !== undefined && typeof row.enabled !== "boolean") throw new Error(`${where} enabled must be true or false.`);
+  const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }) };
   const kind = oneOf(row.kind, ["rule", "model"] as const, `${where} kind`);
   return kind === "rule" ? { ...base, kind, ...parseRule(row, where) } : { ...base, kind, ...parseModel(row, where) };
 }
@@ -742,15 +744,19 @@ export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack |
   }
 }
 
+export function customCheckEnabled(row: CustomCheck): boolean {
+  return row.enabled !== false;
+}
+
 function isModelCheck(row: CustomCheck): row is ModelCustomCheck {
   return row.kind === "model";
 }
 
-export function isRuleCheck(row: CustomCheck): row is RuleCustomCheck {
+function isRuleCheck(row: CustomCheck): row is RuleCustomCheck {
   return row.kind === "rule";
 }
 
-/** Model rows are handed to the classifier as plain text; rule rows are evaluated from facts and listed here for naming. */
+/** Switched-off custom rows are left out. Model rows are handed to the classifier as plain text; rule rows are evaluated from facts and listed here for naming. */
 export function classificationSources(pack: CheckPack): {
   quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>;
   custom: ModelCustomCheck[];
@@ -761,7 +767,7 @@ export function classificationSources(pack: CheckPack): {
       id,
       group: CHECK_CATALOG[id].group,
     })),
-    custom: pack.custom.filter(isModelCheck),
-    rules: pack.custom.filter(isRuleCheck),
+    custom: pack.custom.filter(customCheckEnabled).filter(isModelCheck),
+    rules: pack.custom.filter(customCheckEnabled).filter(isRuleCheck),
   };
 }

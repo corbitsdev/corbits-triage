@@ -58,7 +58,9 @@ export const BRANCH_NAMES: Record<Branch, string> = { yes: "Yes", no: "No", unsu
 /** The Do kinds the contract refuses to run automatically on a branch. */
 export const MANUAL_ONLY: Record<Branch, readonly ActionKind[]> = { yes: [], no: [], unsure: ["close"], always: ["close", "agent"] };
 
-export const CHECK_KINDS: Array<{ evaluation: "rule"; rule: RuleKind; title: string; line: string } | { evaluation: "model"; shape: ModelShape; title: string; line: string }> = [
+export type CheckKind = { evaluation: "rule"; rule: RuleKind; title: string; line: string } | { evaluation: "model"; shape: ModelShape; title: string; line: string };
+
+export const CHECK_KINDS: CheckKind[] = [
   { evaluation: "rule", rule: "paths-unchanged", title: "Paths must not change", line: "Fails when any listed path is touched." },
   { evaluation: "rule", rule: "paths-together", title: "Paths must change together", line: "When one set of paths changes, another must too." },
   { evaluation: "rule", rule: "title-pattern", title: "Title matches a pattern", line: "The title must match a regular expression." },

@@ -29,8 +29,7 @@ export default function MergeThreshold({ value, disabled, onChange, invalid }: M
     <section className="rs" aria-labelledby="rs-merge">
       <h3 id="rs-merge">Merge verdict</h3>
       <div className={invalid ? "sentence invalid" : "sentence"} id="rp-merge">
-        <span className="txt">Merge score threshold<small>Ready to merge when every check passes and the weakest model answer scores at least this, from 0 to 100.</small></span>
-        <input className="val" type="number" aria-label="Merge score threshold" min={0} max={100} step={1} disabled={disabled} value={text} onChange={(event) => change(event.target.value)} />
+        <span className="txt">Ready to merge when every check passes and the weakest model answer scores <span className="nw">at least <input className="val" type="number" aria-label="Merge score threshold, from 0 to 100" min={0} max={100} step={1} disabled={disabled} value={text} onChange={(event) => change(event.target.value)} /></span></span>
       </div>
       {invalid ? <p className="reason">Enter a score from 0 to 100.</p> : null}
     </section>
