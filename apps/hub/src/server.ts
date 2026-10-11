@@ -320,6 +320,7 @@ const reconcileTriage = createTriageReconciler({
   observeRuns: observeTriageRuns,
   store: triageStateStore,
   verdicts: verdictRecordStore,
+  dos: doRunStore,
   readCheckPack,
   deliver: deliverToDeployment,
   policy: reconcilePolicy,
