@@ -20,6 +20,7 @@ import {
   listInstallationRepositories,
   mergePr,
   mirror,
+  readRepoDocsPage,
   requestReviewers,
   type GithubFetch,
 } from "./github";
@@ -69,6 +70,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_list_pr_files",
     description: "List one page of files changed on a pull request from offset, with patches when GitHub returns them and they fit. Call again with next until it is absent; patches false leaves patches out.",
     inputSchema: obj({ repo, number: { type: "integer" }, offset: { type: "integer" }, patches: { type: "boolean" } }, ["repo", "number"]),
+  },
+  {
+    name: "github_read_repo_docs",
+    description: "Read one page of a repository's docs (its own markdown, README first) from offset, on ref or the default branch. Call again with next and the returned ref until next is absent.",
+    inputSchema: obj({ repo, ref: str, offset: { type: "integer" } }, ["repo"]),
   },
   {
     name: "github_list_issue_comments",
@@ -171,6 +177,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
       return { commits: await listPrCommits(gh, a.repo, a.number) };
     case "github_list_pr_files":
       return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patches: a.patches !== false });
+    case "github_read_repo_docs":
+      return readRepoDocsPage(gh, a.repo, { ref: a.ref, offset: a.offset });
     case "github_list_issue_comments":
       return { comments: await listIssueComments(gh, a.repo, a.number) };
     case "github_list_org_members":

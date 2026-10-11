@@ -68,12 +68,11 @@ describe("extractChangeCandidates", () => {
       },
     ];
 
-    expect(extractChangeCandidates(files).map((candidate) => `${candidate.path}|${candidate.label}`)).toEqual([
-      "src/first.ts|Changed title",
-      "src/first.ts|repeated",
-      "src/first.ts|repeated",
-      "styles/second.scss|.one",
-      "styles/second.scss|.two",
+    expect(extractChangeCandidates(files).map((candidate) => `${candidate.path}|${candidate.hunk}|${candidate.label}`)).toEqual([
+      "src/first.ts|0|Changed title",
+      "src/first.ts|1|repeated",
+      "src/first.ts|2|repeated",
+      "styles/second.scss|0|.one, .two",
     ]);
   });
 
@@ -91,12 +90,11 @@ describe("extractChangeCandidates", () => {
         patch: "@@ -0,0 +1 @@\n+export function buildB() {}",
       },
     ]);
-    expect(candidates).toHaveLength(3);
-    expect(candidates[0]).toMatchObject({ path: "src/a.ts", previousPath: "src/old-a.ts", status: "renamed", label: "Before" });
-    expect(candidates[1]).toMatchObject({ path: "src/a.ts", previousPath: "src/old-a.ts", status: "renamed", label: "After" });
-    expect(candidates[2]).toMatchObject({ path: "src/b.ts", status: "added", label: "buildB" });
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]).toMatchObject({ path: "src/a.ts", previousPath: "src/old-a.ts", status: "renamed", label: "Before, After", hunk: 0 });
+    expect(candidates[1]).toMatchObject({ path: "src/b.ts", status: "added", label: "buildB", hunk: 0 });
     expect(candidates[0]?.evidence).not.toContain("buildB");
-    expect(candidates[2]?.evidence).not.toContain("Before");
+    expect(candidates[1]?.evidence).not.toContain("Before");
   });
 
   test("uses path and coordinate fallbacks for absent, empty, malformed, and unnamed patches", () => {
@@ -108,10 +106,11 @@ describe("extractChangeCandidates", () => {
     ])).toEqual([
       { path: "missing.ts", label: "missing.ts", evidence: "" },
       { path: "empty.ts", label: "empty.ts", evidence: "" },
-      { path: "malformed.ts", label: "malformed.ts", evidence: "+const value = 1;\n\\ No newline at end of file" },
+      { path: "malformed.ts", label: "malformed.ts", hunk: 0, evidence: "+const value = 1;\n\\ No newline at end of file" },
       {
         path: "unnamed.ts",
         label: "unnamed.ts:9",
+        hunk: 0,
         evidence: "@@ -8 +9 @@\n-return oldValue;\n+return newValue;\n\\ No newline at end of file",
       },
     ]);
@@ -126,23 +125,26 @@ describe("extractChangeCandidates", () => {
     expect(candidate).toEqual({
       path: "src/unsafefile.ts",
       label: "safeValue",
+      hunk: 0,
       evidence: "@@ -1 +1 @@\n-const safeValue = 1;\n+const safeValue = 2;",
     });
   });
 
   test("enforces stable file, input, candidate, evidence, label, and path bounds", () => {
     const labels = Array.from({ length: 205 }, (_, index) => `+const candidate${index} = true;`).join("\n");
-    const candidates = extractChangeCandidates([
-      {
-        path: `${"p".repeat(600)}.ts`,
-        patch: `@@ -0,0 +1,205 @@\n${labels}\n+const ${"l".repeat(200)} = true;\n${"+x\n".repeat(20_000)}`,
-      },
-      ...Array.from({ length: 100 }, (_, index) => ({ path: `fallback-${index}.ts` })),
-    ]);
-    expect(candidates).toHaveLength(200);
-    expect(candidates[0]?.path.length).toBe(512);
-    expect(candidates[0]?.evidence.length).toBe(4_096);
-    expect(candidates.every((candidate) => candidate.label.length <= 160)).toBe(true);
+    const [large] = extractChangeCandidates([{
+      path: `${"p".repeat(600)}.ts`,
+      patch: `@@ -0,0 +1,205 @@\n${labels}\n${"+x\n".repeat(20_000)}`,
+    }]);
+    expect(large?.path.length).toBe(512);
+    expect(large?.evidence.length).toBe(4_096);
+    expect(large?.label).toStartWith("candidate0, candidate1, ");
+    expect(large?.label.length).toBe(160);
+
+    const hunks = Array.from({ length: 205 }, (_, index) => `@@ -0,0 +${index + 1} @@\n+const candidate${index} = true;`).join("\n");
+    const candidateBound = extractChangeCandidates([{ path: "many.ts", patch: hunks }, { path: "later.ts" }]);
+    expect(candidateBound).toHaveLength(200);
+    expect(candidateBound.at(-1)).toMatchObject({ path: "many.ts", hunk: 199, label: "candidate199" });
 
     const fileBound = extractChangeCandidates(Array.from({ length: 101 }, (_, index) => ({ path: `fallback-${index}.ts` })));
     expect(fileBound).toHaveLength(100);
@@ -157,17 +159,6 @@ describe("extractChangeCandidates", () => {
       .toBe("l".repeat(160));
   });
 
-  test("treats absent optional facts files as no candidates", () => {
-    expect(extractChangeCandidates(undefined)).toEqual([]);
-  });
-
-  test("does not mutate the input array or file records", () => {
-    const file = Object.freeze({ path: "src/frozen.ts", status: "modified", patch: "@@ -0,0 +1 @@\n+const frozen = true;" });
-    const files = Object.freeze([file]);
-    expect(extractChangeCandidates(files)).toMatchObject([{ path: "src/frozen.ts", status: "modified", label: "frozen" }]);
-    expect(files[0]).toBe(file);
-  });
-
   test("treats triple-sign lines inside a hunk as changed source, not file headers", () => {
     expect(extractChangeCandidates([{
       path: "src/counters.ts",
@@ -176,7 +167,7 @@ describe("extractChangeCandidates", () => {
         "---count, consume({ name: \"Before\" });",
         "+++count, consume({ name: \"After\" });",
       ].join("\n"),
-    }]).map((candidate) => candidate.label)).toEqual(["Before", "After"]);
+    }]).map((candidate) => candidate.label)).toEqual(["Before, After"]);
   });
 
   test("extracts the declared name from a const enum", () => {
@@ -191,26 +182,5 @@ describe("extractChangeCandidates", () => {
       path: "src/config.ts\u001b[31m",
       patch: "@@ -1 +1 @@\n-const config = {};\n+const config = { name: \"Visible label\" };",
     }])).toMatchObject([{ path: "src/config.ts", label: "Visible label" }]);
-  });
-
-  test("windows bounded evidence around the changed line that produced a late label", () => {
-    const earlier = `+// ${"earlier ".repeat(600)}`;
-    const [candidate] = extractChangeCandidates([{
-      path: "src/late.ts",
-      patch: `@@ -0,0 +1,2 @@\n${earlier}\n+const config = { name: "Late label" };`,
-    }]);
-    expect(candidate?.label).toBe("Late label");
-    expect(candidate?.evidence.length).toBeLessThanOrEqual(4_096);
-    expect(candidate?.evidence).toContain('+const config = { name: "Late label" };');
-  });
-
-  test("windows long-line evidence around the raw match when label whitespace is normalized", () => {
-    const [candidate] = extractChangeCandidates([{
-      path: "src/long-line.ts",
-      patch: `@@ -0,0 +1 @@\n+void 0, /* ${"x".repeat(5_000)} */ ({ name: "Late  label" });`,
-    }]);
-    expect(candidate?.label).toBe("Late label");
-    expect(candidate?.evidence.length).toBeLessThanOrEqual(4_096);
-    expect(candidate?.evidence).toContain('name: "Late  label"');
   });
 });

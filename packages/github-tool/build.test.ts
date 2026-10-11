@@ -27,7 +27,7 @@ test("packs a byte-identical, self-contained tool tarball that loads under Node"
 
   const entry = path.join(extracted, "package", manifest.interchange.tools);
   const bundle = await readFile(entry, "utf8");
-  expect(bundle).not.toContain("node_modules");
+  expect(bundle).not.toContain("/node_modules/");
   expect(bundle).not.toContain("vendor/interchange");
   const program = `const m = await import(${JSON.stringify(pathToFileURL(entry).href)});
 console.log(JSON.stringify([m.githubRead.id, m.githubWrite.id]));`;

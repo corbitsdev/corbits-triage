@@ -1,4 +1,5 @@
 import type { Case } from "@corbits/evals";
+import { isDocPath, isTestPath } from "../../packages/triage-contracts/src/paths.js";
 
 type Outcome = "pass" | "fail";
 
@@ -53,18 +54,6 @@ export interface CaseInput {
 }
 
 export type JudgeCase = Case<CaseInput, Expected> & { name: string };
-
-export function isTestPath(path: string): boolean {
-  return /(^|\/)(__tests__|tests?)\/|\.(test|spec)\.[cm]?[jt]sx?$/.test(path);
-}
-
-const FOREIGN_PATH = /(^|\/)(vendor|node_modules|dist|build)\//;
-const LEGAL_DOC = /(^|\/)(LICENSE|COPYING|CLA|SECURITY|CODE_OF_CONDUCT)[^/]*$|exception[^/]*$/i;
-
-/** The repository's own prose: every markdown file outside vendored or built trees, except legal notices. */
-export function isDocPath(path: string): boolean {
-  return /\.mdx?$/i.test(path) && !FOREIGN_PATH.test(path) && !LEGAL_DOC.test(path);
-}
 
 /** Commit subjects that mention what a variant removed, which a real pull request without it would not have. */
 const MENTIONS: Record<NonNullable<CaseInput["drop"]>, RegExp> = { tests: /\btest/i, docs: /\b(docs?|readme|documentation)\b/i };
