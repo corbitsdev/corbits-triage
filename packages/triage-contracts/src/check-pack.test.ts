@@ -44,6 +44,7 @@ const MODELS: CustomCheck[] = [
   ...CUSTOM,
   { id: "custom-2", name: "Risk", group: "pull-request", kind: "model", shape: "score", subject: "safety", min: 6 },
   { id: "custom-3", name: "Size", group: "pull-request", kind: "model", shape: "choose", options: ["small", "large"], failOn: ["large"] },
+  { id: "custom-4", name: "Reversible", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "The migration can be rolled back.", scope: "file", when: ["migrations/**"] },
 ];
 const ACTIONS: Action[] = [
   {
@@ -129,6 +130,9 @@ describe("check pack contract", () => {
       [{ ...RULES[2], rule: "title-matches" }, "Custom check custom-3 rule must be one of"],
       [{ ...MODELS[2], options: ["small", "small "] }, "Custom check custom-3 options must not repeat a value."],
       [{ ...MODELS[2], failOn: ["medium"] }, "Custom check custom-3 failOn must be among options."],
+      [{ ...CUSTOM[0], when: ["migrations/**"] }, "Custom check custom-1 when needs a file or hunk scope."],
+      [{ ...MODELS[3], scope: "repo" }, "Custom check custom-4 scope must be one of"],
+      [{ ...MODELS[1], scope: "file" }, "Custom check custom-2 scope and when apply only to is-true checks."],
     ];
     for (const [row, reason] of rejected) {
       expect(() => readCheckPack({ ...emptyPack(REPO), custom: [row] })).toThrow(reason);

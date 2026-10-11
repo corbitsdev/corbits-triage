@@ -4,7 +4,7 @@ import type { SuggestedAction } from "./actions.js";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import type { ChangeCandidate } from "./candidates.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, focusedCandidateId, passText, type FilePlan, type FocusedChoice, type QualityPlan } from "./quality.js";
+import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, focusedCandidateId, isScoped, itemParts, passText, type FilePlan, type FocusedChoice, type QualityPlan } from "./quality.js";
 
 type NoulAnswer = { type: "noul"; noul: number };
 type ChoiceAnswer = { type: "choice"; choice: FocusedChoice; probabilities: Record<FocusedChoice, number>; confidence: number };
@@ -125,6 +125,9 @@ const UNAVAILABLE_REASON = "decision model unavailable";
 /** The decision model answered, but not decisively, or could not read every file it needed. */
 const UNDECIDED_REASON = "not enough evidence to decide";
 
+/** A file or hunk scoped check with no changed lines in scope to ask about. */
+const NOT_APPLICABLE_REASON = "does not apply";
+
 /** Whether this pull request should merge now; shown in the portal, never posted to GitHub. */
 export interface MergeVerdict {
   verdict: "ready" | "not-recommended";
@@ -214,34 +217,40 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     return answer?.type === "noul" ? answer.noul : undefined;
   }
 
-  function push(check: string, decided: Decided, evidence: string[] = []) {
+  function push(check: string, decided: Decided, evidence: string[] = [], reason?: string) {
     checks.push(decided.result === "unconfirmed"
       ? { check, kind: "model", result: "unconfirmed", reason: decided.reason, evidence: [] }
-      : { check, kind: "model", result: decided.result, reason: decided.result === "fail" ? failureText(check, sources) : passText(check, sources), evidence });
+      : { check, kind: "model", result: decided.result, reason: reason ?? (decided.result === "fail" ? failureText(check, sources) : passText(check, sources)), evidence });
   }
 
-  /** Passes on a changed doc or test file; otherwise fails naming the files that need one, which any answered file can show. */
-  function fileCheck(check: "docs" | "tests", filePlan: FilePlan | undefined) {
+  /**
+   * Docs and tests pass on a changed doc or test file and their questions are answered yes when a file needs one; a
+   * scoped custom check's are answered yes when the item meets its rule. Either fails naming the items that fall short,
+   * which any answered item can show, and passes only when every item in scope was read and clears the bar.
+   */
+  function fileCheck(check: string, filePlan: FilePlan | undefined, yesPasses: boolean) {
     if (!filePlan) return push(check, { result: "unconfirmed", reason: unavailable });
     if (filePlan.changed.length > 0) return push(check, { result: "pass" }, filePlan.changed.slice(0, MAX_FILE_EVIDENCE));
     if (!det.needsJudgment || judgeLimitExceeded) return push(check, { result: "unconfirmed", reason: unavailable });
+    if (yesPasses && Object.keys(filePlan.asked).length === 0 && filePlan.unread.length === 0) return push(check, { result: "pass" }, [], NOT_APPLICABLE_REASON);
     const answered: Array<[string, number]> = [];
-    for (const [id, path] of Object.entries(filePlan.asked)) {
+    for (const [id, item] of Object.entries(filePlan.asked)) {
       const noul = noulOf(id);
-      if (noul !== undefined) answered.push([path, noul]);
+      // Read as how likely the item falls short, whichever way its question is put.
+      if (noul !== undefined) answered.push([item, yesPasses ? 1 - noul : noul]);
     }
     const unanswered = answered.length < Object.keys(filePlan.asked).length;
     anyUnanswered ||= unanswered;
-    const needing = answered.filter(([, noul]) => noul >= YES).sort((a, b) => b[1] - a[1]);
+    const needing = answered.filter(([, short]) => short >= YES).sort((a, b) => b[1] - a[1]);
     if (needing.length > 0) {
       scores.push(needing[0]![1]);
-      return push(check, { result: "fail" }, needing.slice(0, MAX_FILE_EVIDENCE).map(([path]) => path));
+      return push(check, { result: "fail" }, needing.slice(0, MAX_FILE_EVIDENCE).map(([item]) => item));
     }
     if (unanswered) return push(check, { result: "unconfirmed", reason: unavailable });
     // A file the judge could not read may need one, so only a fully read pull request passes.
     if (filePlan.unread.length > 0) return push(check, { result: "unconfirmed", reason: UNDECIDED_REASON });
     if (answered.length === 0) return push(check, { result: "pass" });
-    const top = Math.max(...answered.map(([, noul]) => noul));
+    const top = Math.max(...answered.map(([, short]) => short));
     const decided = band(top, false);
     if (decided.result === "pass") scores.push(1 - top);
     return push(check, decided);
@@ -249,7 +258,7 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
 
   for (const source of sources.quality) {
     if (source.id !== "focused") {
-      fileCheck(source.id, plan[source.id]);
+      fileCheck(source.id, plan[source.id], false);
       continue;
     }
     const unrelated: string[] = [];
@@ -280,7 +289,12 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     const reason = !det.needsJudgment ? NOT_ASKED_REASON : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON;
     push("focused", unrelated.length > 0 ? { result: "fail" } : candidateUnresolved ? { result: "unconfirmed", reason } : { result: "pass" }, unrelated);
   }
-  for (const { id } of sources.custom) {
+  for (const row of sources.custom) {
+    const { id } = row;
+    if (isScoped(row)) {
+      fileCheck(id, plan[id], true);
+      continue;
+    }
     const noul = noulOf(id);
     if (noul === undefined) {
       anyUnanswered = true;
@@ -365,6 +379,11 @@ function inlineCode(text: string): string {
   return `\`${text.replace(/`/g, "'")}\``;
 }
 
+function evidenceCode(item: string): string {
+  const [path, suffix] = itemParts(item);
+  return `${inlineCode(path)}${suffix}`;
+}
+
 /** A model check the judge was asked about but did not settle; a decision model outage is counted on its own. */
 function unsure(c: CheckResult): boolean {
   return c.kind === "model" && c.result === "unconfirmed" && c.reason !== NOT_ASKED_REASON && c.reason !== UNAVAILABLE_REASON;
@@ -390,10 +409,10 @@ function bounded(lines: string[]): string {
   return `- and ${lines.filter((line) => line.startsWith("- ")).length} more`;
 }
 
-/** Docs and tests name the files that need them; other checks name what they found. */
+/** Docs and tests name the files that need them; other checks, scoped custom ones included, name what they found. */
 function failureEvidence(c: CheckResult): string {
   if (!c.evidence.length) return "";
-  const listed = c.evidence.map(inlineCode).join(", ");
+  const listed = c.evidence.map(evidenceCode).join(", ");
   return c.kind === "model" && (c.check === "docs" || c.check === "tests") ? ` for ${listed}` : `: ${listed}`;
 }
 
