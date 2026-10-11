@@ -60,6 +60,10 @@ export interface PrFacts {
   /** The repository's docs on the default branch, by path. */
   docs?: Record<string, string>;
   branch?: string;
+  /** Teams the pack's roles name that the author is an active member of, as the roles write them. */
+  authorTeams?: string[];
+  /** Teams the pack's roles name whose membership GitHub would not confirm either way. */
+  authorTeamsUnknown?: string[];
   /** What woke this run; empty for webhook actions no pack event names. */
   events?: TriageEvent[];
 }

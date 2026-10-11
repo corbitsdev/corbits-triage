@@ -42,17 +42,21 @@ function unscanned(file: PrFileFacts): boolean {
 
 type AuthorRule = Extract<RuleCustomCheck, { rule: "author" }>;
 
-/** Team membership is not in the facts, so a role that also names teams cannot say no. */
-function named(check: Exclude<AuthorRule, { who: "kinds" }>, author: string, roles: Record<string, RepoRole>): Omit<Outcome, "gate"> {
-  if (check.who === "users") return oneOf(check.users, author);
+/** Facts gathered before team membership was read know no team, so every team is unknown. */
+function named(check: Exclude<AuthorRule, { who: "kinds" }>, facts: PrFacts, roles: Record<string, RepoRole>): Omit<Outcome, "gate"> {
+  if (check.who === "users") return oneOf(check.users, facts.author);
   const role = roles[check.role];
   if (!role) return { failed: null, reason: `role ${check.role} is not defined` };
   const users = role.users ?? [];
   const teams = role.teams ?? [];
   if (!users.length && !teams.length) return { failed: null, reason: `role ${check.role} names no people` };
-  const outcome = oneOf(users, author);
-  if (outcome.failed && teams.length) return { failed: null, reason: `role ${check.role} names teams, and team membership is not known` };
-  return outcome;
+  const outcome = oneOf(users, facts.author);
+  if (!outcome.failed || !teams.length) return outcome;
+  const member = teams.find((team) => facts.authorTeams?.includes(team));
+  if (member) return { failed: false, reason: `author is in team ${member}` };
+  const unknown = teams.filter((team) => !facts.authorTeams || facts.authorTeamsUnknown?.includes(team));
+  if (unknown.length) return { failed: null, reason: `team membership of ${unknown.join(", ")} is not known` };
+  return { failed: true, reason: "author is not one of the people or teams named" };
 }
 
 function oneOf(users: string[], author: string): Omit<Outcome, "gate"> {
@@ -69,7 +73,7 @@ function author(check: AuthorRule, facts: PrFacts, roles: Record<string, RepoRol
     const failed = !check.kinds.includes(kind);
     return { failed, reason: failed ? `author is ${kind}, not ${check.kinds.join(" or ")}` : `author is ${kind}`, evidence, gate: true };
   }
-  return { ...named(check, facts.author, roles), evidence, gate: true };
+  return { ...named(check, facts, roles), evidence, gate: true };
 }
 
 function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, RepoRole>): Outcome {

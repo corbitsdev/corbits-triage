@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type LabelsTarget, type RepoRole } from "@corbits/triage-contracts";
+import { CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type LabelsTarget, type RepoRole, teamSlug } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { errorText } from "./extract.js";
 
@@ -91,12 +91,10 @@ function pick(action: Action, { checks, pack }: ActionInput): Picked {
   return { branch: "yes", dos: action.branches.yes ?? [], reason: `${joined(results.map((r) => r.name))} passed.` };
 }
 
-/** GitHub takes team slugs; a team may name `@org/slug`, and only the repository owner's teams can review. */
-function teamSlug(team: string, repo: string): string {
-  const [org, slug] = team.replace(/^@/, "").split("/", 2);
-  if (slug === undefined) return org!;
-  const owner = repo.split("/", 1)[0]!;
-  if (fold(org!) !== fold(owner)) throw new Error(`team ${team} is not in ${owner}`);
+/** GitHub takes team slugs, and only the repository owner's teams can review. */
+function ownTeam(team: string, repo: string): string {
+  const slug = teamSlug(team, repo);
+  if (slug === null) throw new Error(`team ${team} is not in ${repo.split("/", 1)[0]}`);
   return slug;
 }
 
@@ -108,7 +106,7 @@ function people(task: Extract<Do, { kind: "assign" | "request-review" }>, { fact
     case "users":
       return { users: t.users, teams: [] };
     case "teams":
-      return { users: [], teams: t.teams.map((team) => teamSlug(team, facts.repo)) };
+      return { users: [], teams: t.teams.map((team) => ownTeam(team, facts.repo)) };
     case "author":
       return { users: [facts.author], teams: [] };
     case "codeowners":
@@ -116,7 +114,7 @@ function people(task: Extract<Do, { kind: "assign" | "request-review" }>, { fact
     case "role": {
       const role = roles[t.role];
       if (!role) throw new Error(`role ${t.role} is not defined in the repository policy`);
-      return { users: role.users ?? [], teams: (role.teams ?? []).map((team) => teamSlug(team, facts.repo)) };
+      return { users: role.users ?? [], teams: (role.teams ?? []).map((team) => ownTeam(team, facts.repo)) };
     }
   }
 }
