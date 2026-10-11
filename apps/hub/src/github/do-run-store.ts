@@ -5,7 +5,7 @@ import { integer, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-or
 import type { DB } from "@intx/db";
 import type { ActionKind } from "@corbits/triage-contracts";
 import type { Branch } from "../../../../packages/triage-workflows/src/logic/actions.js";
-import type { DoOutcome } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
+import type { DoOutcome } from "@corbits/github-tool/do";
 
 /** A running claim older than this is taken to have died and may be claimed again. */
 const LEASE = sql`interval '2 minutes'`;

@@ -8,7 +8,8 @@
 import { evaluate } from "@corbits/system-one";
 import { DEFAULT_REPO_POLICY, packMergeThreshold, recommendedPack } from "../packages/triage-contracts/src/index.js";
 import { deriveState, type DeterministicResult, type PrFacts, type PrFileFacts } from "../packages/triage-workflows/src/logic/checks.js";
-import { buildFacts, type CheckRun, type PrData, type Review } from "../packages/triage-workflows/src/logic/facts.js";
+import type { Review } from "../packages/github-tool/src/github.js";
+import { buildFacts, type CheckRun, type PrData } from "../packages/triage-workflows/src/logic/facts.js";
 import { prepareQualityEvaluation, type QualityEvaluation } from "../packages/triage-workflows/src/logic/quality.js";
 import { parseAnswers, renderVerdict, type RenderInput } from "../packages/triage-workflows/src/logic/render.js";
 
