@@ -35,6 +35,11 @@ const RULES: CustomCheck[] = [
   { id: "custom-6", name: "No debug", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "console\\.log" },
   { id: "custom-7", name: "Approved", group: "around", kind: "rule", rule: "min-approvals", count: 2 },
 ];
+const AUTHORS: CustomCheck[] = [
+  { id: "custom-1", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] },
+  { id: "custom-2", name: "Core", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "maintainers" },
+  { id: "custom-3", name: "Agents", group: "pull-request", kind: "rule", rule: "author", who: "kinds", kinds: ["bot", "first-timer"] },
+];
 const MODELS: CustomCheck[] = [
   ...CUSTOM,
   { id: "custom-2", name: "Risk", group: "pull-request", kind: "model", shape: "score", subject: "safety", min: 6 },
@@ -111,7 +116,7 @@ describe("check pack contract", () => {
   });
 
   test("typed custom checks round-trip as written", () => {
-    for (const custom of [RULES, MODELS]) {
+    for (const custom of [RULES, MODELS, AUTHORS]) {
       const pack = { ...emptyPack(REPO), custom };
       expect(parseCheckPack(JSON.stringify(pack))).toEqual(pack);
     }
@@ -175,6 +180,7 @@ describe("check pack contract", () => {
       { ...emptyPack(REPO), custom: CUSTOM, actions: ACTIONS },
       { ...emptyPack(REPO), custom: RULES },
       { ...emptyPack(REPO), custom: MODELS },
+      { ...emptyPack(REPO), custom: AUTHORS },
       { ...emptyPack(REPO), actions: [BASE] },
       recommendedPack(REPO),
     ];

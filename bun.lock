@@ -82,7 +82,7 @@
     },
     "packages/github-tool": {
       "name": "@corbits/github-tool",
-      "version": "0.2.0",
+      "version": "0.3.1",
       "dependencies": {
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",

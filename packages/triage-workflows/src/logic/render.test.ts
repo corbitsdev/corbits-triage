@@ -366,4 +366,19 @@ describe("rule custom check rendering", () => {
     expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Branch naming: branch does not match the pattern: `@acme/team`"]);
     expect(verdict.merge.reasons).toContain("Failed: Two approvals: not enough approvals");
   });
+
+  test("a failed author gate stays out of the next step, the comment and the merge verdict", () => {
+    const gate = { id: "custom-9", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] } as const;
+    const gated: DeterministicResult = {
+      ...det,
+      state: "ready-monitoring",
+      reason: "all deterministic checks passed",
+      findings: [],
+      checks: [{ check: "custom-9", kind: "machine", result: "fail", reason: "Mine: author is not one of the people named", evidence: ["@octocat (outside)"], gate: true }],
+      sources: { quality: [], custom: [], rules: [gate] },
+    };
+    const verdict = renderVerdict({ author: "octocat", det: gated, threshold: DEFAULT_MERGE_THRESHOLD });
+    expect(verdict).toMatchObject({ actor: "maintainer", nextAction: "Review and merge", merge: { verdict: "ready", reasons: [] } });
+    expect(verdict.feedback).toBe("No changes needed from you. A maintainer will review this pull request.");
+  });
 });

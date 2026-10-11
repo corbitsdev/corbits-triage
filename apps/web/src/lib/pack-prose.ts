@@ -56,6 +56,7 @@ export const CHECK_KINDS: Array<{ evaluation: "rule"; rule: RuleKind; title: str
   { evaluation: "rule", rule: "label-required", title: "Label required", line: "A label must be on the pull request." },
   { evaluation: "rule", rule: "diff-excludes", title: "Diff must not contain", line: "Added lines must not match a regular expression." },
   { evaluation: "rule", rule: "min-approvals", title: "Minimum approvals", line: "At least this many approvals." },
+  { evaluation: "rule", rule: "author", title: "Author is", line: "Who opened it: named people, a role, or a kind of contributor. Gates actions; never asks anything of the author." },
   { evaluation: "model", shape: "is-true", title: "Is it true that…", line: "Fails when the answer is no." },
   { evaluation: "model", shape: "score", title: "Score from 0 to 10", line: "Fails below the minimum." },
   { evaluation: "model", shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },

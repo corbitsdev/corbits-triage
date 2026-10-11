@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import type { AuthorAssociation } from "./repo-policy.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
 export const CHECK_PACK_SCHEMA_VERSION = 1;
@@ -71,11 +72,33 @@ export const RULE_KINDS = [
   "label-required",
   "diff-excludes",
   "min-approvals",
+  "author",
 ] as const;
 export type RuleKind = (typeof RULE_KINDS)[number];
 
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
 export type ModelShape = (typeof MODEL_SHAPES)[number];
+
+export const AUTHOR_KINDS = ["owner", "member", "collaborator", "contributor", "first-timer", "outside", "bot"] as const;
+export type AuthorKind = (typeof AUTHOR_KINDS)[number];
+export const AUTHOR_WHO = ["users", "role", "kinds"] as const;
+export type AuthorWho = (typeof AUTHOR_WHO)[number];
+
+/** GitHub's author association folded to the kinds a pack names; a bot is a bot whatever its association, and no association is unknown. */
+export function authorKindOf(association: AuthorAssociation | null, bot: boolean): AuthorKind | undefined {
+  if (bot) return "bot";
+  switch (association) {
+    case "OWNER": return "owner";
+    case "MEMBER": return "member";
+    case "COLLABORATOR": return "collaborator";
+    case "CONTRIBUTOR": return "contributor";
+    case "FIRST_TIME_CONTRIBUTOR":
+    case "FIRST_TIMER": return "first-timer";
+    case "NONE":
+    case "MANNEQUIN": return "outside";
+    case null: return undefined;
+  }
+}
 
 /** Patterns are regular expressions without flags; globs use `*` within a path segment and `**` across segments. */
 type RuleParams = {
@@ -86,6 +109,7 @@ type RuleParams = {
   "label-required": { label: string };
   "diff-excludes": { pattern: string };
   "min-approvals": { count: number };
+  author: { who: "users"; users: string[] } | { who: "role"; role: string } | { who: "kinds"; kinds: AuthorKind[] };
 };
 export type RuleCheck = { [K in RuleKind]: { rule: K } & RuleParams[K] }[RuleKind];
 
@@ -232,6 +256,9 @@ const CustomCheckSchema = type({ ...RULE, rule: "'paths-unchanged'", globs: Text
   .or({ ...RULE, rule: "'title-pattern' | 'branch-pattern' | 'diff-excludes'", pattern: Text.atMostLength(PATTERN_MAX) })
   .or({ ...RULE, rule: "'label-required'", label: Text })
   .or({ ...RULE, rule: "'min-approvals'", count: "number.integer >= 1" })
+  .or({ ...RULE, rule: "'author'", who: "'users'", users: Texts })
+  .or({ ...RULE, rule: "'author'", who: "'role'", role: Text })
+  .or({ ...RULE, rule: "'author'", who: "'kinds'", kinds: type.enumerated(...AUTHOR_KINDS).array().atLeastLength(1) })
   .or({ ...MODEL, shape: "'is-true'", claim: Text })
   .or({ ...MODEL, shape: "'score'", subject: Text, min: `0 <= number.integer <= ${SCORE_MAX}` })
   .or({ ...MODEL, shape: "'choose'", options: Text.array().atLeastLength(2), failOn: Texts });
@@ -442,6 +469,12 @@ function parseRule(row: Record<string, unknown>, where: string): RuleCheck {
       return { rule, label: verbatim(row.label, `${where} label`) };
     case "min-approvals":
       return { rule, count: integer(row.count, 1, Number.MAX_SAFE_INTEGER, `${where} count`) };
+    case "author": {
+      const who = oneOf(row.who, AUTHOR_WHO, `${where} who`);
+      if (who === "users") return { rule, who, users: texts(row.users, `${where} users`).map((login) => login.replace(/^@/, "")) };
+      if (who === "role") return { rule, who, role: text(row.role, `${where} role`) };
+      return { rule, who, kinds: [...new Set(texts(row.kinds, `${where} kinds`).map((kind) => oneOf(kind, AUTHOR_KINDS, `${where} kinds`)))] };
+    }
   }
 }
 
