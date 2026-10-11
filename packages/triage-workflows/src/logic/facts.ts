@@ -1,4 +1,4 @@
-import { authorAssociation, authorKindOf, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
+import { authorAssociation, authorKindOf, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "./extract.js";
@@ -146,6 +146,20 @@ function firstLine(commit: { message?: string }): string {
   return (commit.message ?? "").split("\n", 1)[0]!;
 }
 
+/** Every spelling of a team the repository's roles use. */
+function roleTeamSpellings(policy: RepoPolicy): string[] {
+  return [...new Set(Object.values(policy.roles).flatMap((role) => role.teams ?? []))];
+}
+
+/** The distinct slugs of the repository owner's teams the roles name, which is what the membership read takes. */
+export function roleTeams(policy: RepoPolicy, repo: string): string[] {
+  return [...new Set(roleTeamSpellings(policy).flatMap((team) => teamSlug(team, repo) ?? []))].sort();
+}
+
+function strings(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
+}
+
 /** What GitHub returned for one pull request; `files` is why the file list could not be read, when it could not. */
 export interface PullData {
   pr: PrData | null;
@@ -153,6 +167,22 @@ export interface PullData {
   reviews: Review[];
   commits: Array<{ message?: string }>;
   files: PrFileFacts[] | string;
+  /** The author's membership of the roles' teams; null when it was not read or could not be. */
+  authorTeams: { teams?: unknown; unknown?: unknown } | null;
+}
+
+/** Maps the read's slugs back to every spelling the roles use; a team the read did not answer, or another org's team, is unknown. */
+function membership(read: PullData["authorTeams"], policy: RepoPolicy, repo: string): Pick<PrFacts, "authorTeams" | "authorTeamsUnknown"> {
+  const member = strings(read?.teams);
+  const unknown = strings(read?.unknown);
+  const authorTeams: string[] = [];
+  const authorTeamsUnknown: string[] = [];
+  for (const team of roleTeamSpellings(policy)) {
+    const slug = teamSlug(team, repo);
+    if (slug === null || !member || !unknown || unknown.includes(slug)) authorTeamsUnknown.push(team);
+    else if (member.includes(slug)) authorTeams.push(team);
+  }
+  return { authorTeams, authorTeamsUnknown };
 }
 
 export interface ItemContext {
@@ -173,6 +203,6 @@ export function assembleItem(number: number, data: PullData, { repo, openPrs, po
   if (typeof docs === "string") return { error: docs };
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, openPrs, policy), paths, files, commits, events, docs };
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, openPrs, policy), paths, files, commits, events, docs, ...membership(data.authorTeams, policy, repo) };
   return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
 }

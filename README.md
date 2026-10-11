@@ -25,6 +25,8 @@ Then follow [DEV.md](docs/DEV.md) step 5 in the portal. `.env` holds only Interc
 
 Merge via the GitHub API needs GitHub App `contents: write` in addition to `pull_requests: write`; existing installs must accept the new permission on GitHub.
 
+Author rules on roles that name teams need GitHub App `members: read` to read team membership; existing installs must accept the new permission on GitHub.
+
 Eval scripts: `bun run holdback | injection | report`.
 
 ## License
