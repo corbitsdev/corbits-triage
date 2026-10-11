@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { createSizeCapTransform } from "@intx/inference";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker, type WorkflowAuthorizeFn } from "@intx/workflow";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
-import type { GithubFetch } from "@corbits/github-tool/github";
+import { REPO_DOCS_MAX_BYTES, type GithubFetch } from "@corbits/github-tool/github";
 import { emptyPack, recommendedPack, type Action, type CheckPack } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory } from "./directors.js";
+import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import type { Verdict } from "./logic/render.js";
 import { workflow } from "./pr-triage.js";
 import { workflow as historical } from "./pr-triage-historical.js";
@@ -17,6 +18,15 @@ type Recorded = { method: string; path: string };
 type FileRow = { filename: string; status: string; additions: number; deletions: number; patch: string };
 
 const FLAG: FileRow = { filename: "src/flag.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+export const flag = true;" };
+
+const README = `Run \`bun run dev\` to start.\n${"Read the guide.\n".repeat(500)}`;
+const GUIDE = "設定を確認してください。\n".repeat(600);
+// Together over the docs cap and several tool results long, with a multibyte doc split across pages.
+const DOCS = [["README.md", README], ["docs/guide.md", GUIDE], ["vendor/lib/README.md", "Vendored."]] as const;
+
+function bytes(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
 
 /** GitHub serving open pull request 8 changing `files`, failing every read of it when `missing`, with `prior` as its Triage comment. */
 function fakeGithub(missing: boolean, files: FileRow[], prior?: string) {
@@ -30,6 +40,9 @@ function fakeGithub(missing: boolean, files: FileRow[], prior?: string) {
       return Response.json({ number: 8, title: "Fix #3", state: "open", draft: false, user: { login: "octocat" }, head: { sha: "abc", ref: "fix" }, base: { ref: "main" }, mergeable: true, labels: [], requested_reviewers: [{ login: "rev" }] });
     }
     if (path.includes("/check-runs")) return Response.json({ check_runs: [] });
+    if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
+    if (path.startsWith(`/repos/${REPO}/git/trees/`)) return Response.json({ sha: "tree", tree: DOCS.map(([doc, text], index) => ({ path: doc, type: "blob", sha: `blob${index}`, size: bytes(text) })) });
+    if (path.startsWith(`/repos/${REPO}/git/blobs/blob`)) return new Response(DOCS[Number(path.slice(path.lastIndexOf("blob") + 4))]![1]);
     if (path.startsWith(`/repos/${REPO}/pulls/8/files`)) {
       const page = Number(new URL(path, "https://api.github.invalid").searchParams.get("page"));
       return Response.json(files.slice((page - 1) * 100, page * 100));
@@ -43,13 +56,13 @@ function fakeGithub(missing: boolean, files: FileRow[], prior?: string) {
 
 const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrants: [], resolvedBy: null });
 
-type SystemOne = { questions: Array<{ id: string }>; state: { paths: string[] } };
+type SystemOne = { questions: Array<{ id: string }>; state: { pullRequest: { paths: string[] }; repository: { docs: Record<string, string> } } };
 
 /** Calls every focused candidate unrelated, passes docs and tests only when a changed path is one, and passes every other question. */
-function judgeText({ questions, state }: SystemOne) {
+function judgeText({ questions, state: { pullRequest: { paths } } }: SystemOne) {
   function answer({ id }: { id: string }) {
-    if (id === "docs") return { id, type: "noul", noul: state.paths.some((path) => path.startsWith("docs/")) ? 0.9 : 0.1 };
-    if (id === "tests") return { id, type: "noul", noul: state.paths.some((path) => path.includes(".test.")) ? 0.9 : 0.1 };
+    if (id === "docs") return { id, type: "noul", noul: paths.some((path) => path.startsWith("docs/")) ? 0.9 : 0.1 };
+    if (id === "tests") return { id, type: "noul", noul: paths.some((path) => path.includes(".test.")) ? 0.9 : 0.1 };
     if (!id.startsWith("focused-candidate-")) return { id, type: "noul", noul: 0.9 };
     return { id, type: "choice", choice: "unrelated", probabilities: { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 }, confidence: 0.9 };
   }
@@ -57,7 +70,7 @@ function judgeText({ questions, state }: SystemOne) {
 }
 
 /** Runs each agent step's real director against the fake GitHub and a canned decision model, failing when `judgeFails`, as the reactor would, under Interchange's tool-result cap. */
-function stepInvoker(gh: GithubFetch, invoked: string[], judgeFails: boolean): StepInvoker {
+function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], judgeFails: boolean): StepInvoker {
   const env = { capabilities: { resolve: () => ({ resolve: async () => ({ kind: "http", fetch: gh }) }) } };
   const sizeCap = createSizeCapTransform({ maxChars: 10_000, contextStore: { writeBlob: async () => {} } });
   return async function invokeStep({ agent, input }) {
@@ -81,6 +94,7 @@ function stepInvoker(gh: GithubFetch, invoked: string[], judgeFails: boolean): S
           }
         }
         if (action.type === "infer") {
+          judged.push(action.request!.providerOptions.systemOne);
           queue.push((judgeFails
             ? { type: "inference.error", error: { message: "upstream 503" } }
             : { type: "inference.done", turn: { content: [{ type: "text", text: judgeText(action.request!.providerOptions.systemOne) }] } }) as ReactorInboundEvent);
@@ -99,18 +113,19 @@ async function triage(checkPack: CheckPack, { missing = false, backlog = false, 
   const { gh, requests } = fakeGithub(missing, files, prior);
   const policy = { enabled: true, cleanupMode };
   const invoked: string[] = [];
+  const judged: SystemOne[] = [];
   const body = ((backlog ? historical : workflow).steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("triage body is not inline");
   const { terminalStatus, outputs } = await runLocal(body.inline, {
     authorize: allow,
     hasUpstreamSignalResolver: true,
-    invokeStep: stepInvoker(gh, invoked, judgeFails),
+    invokeStep: stepInvoker(gh, invoked, judged, judgeFails),
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
     triggerPayload: backlog ? { kind: "backlog", repo: REPO, policy, checkPack } : { kind: "pr", repo: REPO, prNumber: 8, policy, checkPack },
   }).complete;
   expect(terminalStatus).toBe("completed");
   const mirrors = Object.keys(outputs).filter((id) => id.startsWith("mirror"));
-  return { path: { invoked, mirrors }, requests, verdict: outputs["evaluate"] ?? outputs["evaluateRules"] };
+  return { path: { invoked, mirrors }, requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"] };
 }
 
 describe("pr-triage body", () => {
@@ -121,9 +136,17 @@ describe("pr-triage body", () => {
     expect(requests).toContainEqual({ method: "POST", path: `/repos/${REPO}/issues/8/labels` });
   });
 
-  test("model checks run the judge and the verdict records its answers", async () => {
-    const { path, verdict } = await triage(recommendedPack(REPO));
+  test("model checks run the judge on the repository's own docs and the verdict records its answers", async () => {
+    const { path, judged, verdict } = await triage(recommendedPack(REPO));
     expect(path).toEqual(JUDGE_PATH);
+    expect(judged).toHaveLength(1);
+    const { "README.md": readme, "docs/guide.md": guide, ...rest } = judged[0]!.state.repository.docs;
+    expect(readme).toBe(README);
+    expect(GUIDE.startsWith(guide!)).toBe(true);
+    const read = bytes(readme!) + bytes(guide!);
+    expect(read).toBeGreaterThan(REPO_DOCS_MAX_BYTES - 3);
+    expect(read).toBeLessThanOrEqual(REPO_DOCS_MAX_BYTES);
+    expect(rest).toEqual({});
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "fail"], ["tests", "fail"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toEqual(["flag — src/flag.ts"]);
   });
@@ -138,12 +161,12 @@ describe("pr-triage body", () => {
   });
 
   test("a pull request past the decision model budget is judged in several calls on every model check", async () => {
-    const sources = Array.from({ length: 20 }, (_, index) => ({
+    const sources = Array.from({ length: 45 }, (_, index) => ({
       ...FLAG,
       filename: `src/feature-${index}.ts`,
       patch: ["@@ -0,0 +1,41 @@", `+export const feature${index} = true;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(6)}${line}`)].join("\n"),
     }));
-    expect(sources.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(45_000);
+    expect(sources.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(MAX_SYSTEM_ONE_STATE_BYTES);
     const files = [...sources, { ...FLAG, filename: "docs/flag.md" }, { ...FLAG, filename: "src/flag.test.ts" }];
     const { path, verdict } = await triage(recommendedPack(REPO), { files });
     expect(path.invoked.filter((agent) => agent === "triage-judge").length).toBeGreaterThanOrEqual(2);
