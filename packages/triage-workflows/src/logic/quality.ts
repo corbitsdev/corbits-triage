@@ -1,6 +1,7 @@
 import { isDocPath, isGeneratedPath, isTestPath, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 import { boundedPath, extractChangeCandidates, patchHunks, type ChangeCandidate } from "./candidates.js";
+import { globMatch } from "./glob.js";
 
 interface BooleanQualityQuestion {
   id: string;
@@ -45,21 +46,67 @@ function isAsked(path: string): boolean {
   return !isTestPath(path) && !isDocPath(path);
 }
 
-function fileQuestionId(check: FileCheck, file: number): string {
-  return `${check}-file-${String(file + 1).padStart(3, "0")}`;
+function ordinal(index: number): string {
+  return String(index + 1).padStart(3, "0");
 }
 
-/** How a docs or tests check is decided for one pull request. */
+function fileQuestionId(check: string, file: number): string {
+  return `${check}-file-${ordinal(file)}`;
+}
+
+function hunkQuestionId(check: string, file: number, hunk: number): string {
+  return `${check}-hunk-${ordinal(file)}-${ordinal(hunk)}`;
+}
+
+export type ScopedCheck = ModelCustomCheck & { shape: "is-true"; scope: "file" | "hunk" };
+
+/** A custom check asked once per changed file or hunk in its scope rather than once for the whole pull request. */
+export function isScoped(row: ModelCustomCheck): row is ScopedCheck {
+  return row.shape === "is-true" && (row.scope === "file" || row.scope === "hunk");
+}
+
+const HUNK_SUFFIX = / \(change \d+\)$/;
+
+/** How a hunk reads as evidence: its file's path and which change in the file it is. */
+function hunkItem(path: string, hunk: number): string {
+  return `${path} (change ${hunk + 1})`;
+}
+
+/** An evidence item's path and any hunk suffix, so a comment can set the path in code. */
+export function itemParts(item: string): [path: string, suffix: string] {
+  const suffix = HUNK_SUFFIX.exec(item)?.[0] ?? "";
+  return [item.slice(0, item.length - suffix.length), suffix];
+}
+
+function inScope(row: ScopedCheck, path: string): boolean {
+  return row.when === undefined || row.when.some((glob) => globMatch(path, glob));
+}
+
+/** A rule is a statement; its closing punctuation would end the question early. */
+function ruleText(row: ScopedCheck): string {
+  return row.claim.replace(/[.!?]+$/, "");
+}
+
+/** How a per-file check is decided for one pull request: docs, tests, or a file or hunk scoped custom check. */
 export interface FilePlan {
   /** Changed files that satisfy the check; any one passes it without asking. */
   changed: string[];
-  /** Question id to the path it asks about. */
+  /** Question id to the file, or the hunk within it, it asks about. */
   asked: Record<string, string>;
-  /** Files the check would ask about but no request could read, such as patches GitHub left out. */
+  /** Files or hunks the check would ask about but no request could read, such as patches GitHub left out. */
   unread: string[];
 }
 
-export type QualityPlan = Partial<Record<FileCheck, FilePlan>>;
+/** Keyed by check id. */
+export type QualityPlan = Record<string, FilePlan>;
+
+/** One question about one changed file or hunk, asked of whichever request holds the file at index `file`. */
+interface FileQuestion {
+  check: string;
+  id: string;
+  item: string;
+  instructions: (file: number) => string;
+}
 
 const FAILURES: Record<QualityCheckId, string> = {
   focused: "mixes unrelated changes",
@@ -128,7 +175,7 @@ function isFocused(sources: NonNullable<DeterministicResult["sources"]>): boolea
 }
 
 function customQuestions(sources: NonNullable<DeterministicResult["sources"]>): QualityQuestion[] {
-  return sources.custom.map((row) => ({ id: row.id, type: "boolean" as const, instructions: customInstructions(row) }));
+  return sources.custom.filter((row) => !isScoped(row)).map((row) => ({ id: row.id, type: "boolean" as const, instructions: customInstructions(row) }));
 }
 
 /** Every question id an evaluation asks; `render` refuses answers to anything else. */
@@ -225,6 +272,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const changed = (facts.files ?? []).filter((file) => file.status !== "removed" && SATISFIES[check](file.path));
     if (enabled.has(check)) plan[check] = { changed: changed.map((file) => file.path), asked: {}, unread: [] };
   }
+  const scoped = sources.custom.filter(isScoped);
+  for (const row of scoped) plan[row.id] = { changed: [], asked: {}, unread: [] };
   const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(judgeState(facts, []));
   if (room < 0) return { candidates, plan, requests: [], judgeError: QUALITY_EVALUATION_LIMIT_ERROR };
 
@@ -269,27 +318,48 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     return (["tests", "docs"] as const).filter((check) => plan[check]?.changed.length === 0);
   }
 
+  /** Every question about the file at `position` whose leading `read` hunks the request holds. */
+  function fileQuestions(path: string, position: number, read: number): FileQuestion[] {
+    const out: FileQuestion[] = fileChecks(path).map((check) => ({ check, id: fileQuestionId(check, position), item: path, instructions: FILE_QUESTIONS[check] }));
+    for (const row of scoped) {
+      if (!inScope(row, path)) continue;
+      if (row.scope === "file") {
+        out.push({ check: row.id, id: fileQuestionId(row.id, position), item: path, instructions: (file) => `Does the change in \`pullRequest.files[${file}]\` meet this rule: ${ruleText(row)}?` });
+        continue;
+      }
+      // Uncapped: every hunk read is one question per hunk-scoped check, so a wide diff spreads over many judge requests.
+      for (let hunk = 0; hunk < read; hunk++) {
+        out.push({ check: row.id, id: hunkQuestionId(row.id, position, hunk), item: hunkItem(path, hunk), instructions: (file) => `Does the change in \`pullRequest.files[${file}].hunks[${hunk}]\` meet this rule: ${ruleText(row)}?` });
+      }
+    }
+    return out;
+  }
+
   for (const [position, file] of files.entries()) {
     const path = boundedPath(file.path);
-    const checks = fileChecks(file.path);
     const hunks = typeof file.patch === "string" ? patchHunks(file.patch) : [];
     const read: StateFile = { path, ...(file.status ? { status: file.status } : {}), hunks, ...(file.patchTruncated ? { truncated: true as const } : {}) };
     const fitted = hunks.length > 0 ? fitFile(room, read) : undefined;
     if (!fitted) {
       // A pure rename or a binary file has no lines to read, so there is nothing to judge.
       const unchanged = file.additions === 0 && file.deletions === 0;
-      if (!unchanged) for (const check of checks) plan[check]!.unread.push(file.path);
+      if (!unchanged) {
+        for (const check of fileChecks(file.path)) plan[check]!.unread.push(file.path);
+        for (const row of scoped) if (inScope(row, file.path)) plan[row.id]!.unread.push(file.path);
+      }
       continue;
     }
+    // Lines left out of a file may break a custom rule, so a scoped check cannot pass on what was read.
+    if (fitted.truncated) for (const row of scoped) if (inScope(row, file.path)) plan[row.id]!.unread.push(file.path);
+    const asking = fileQuestions(file.path, position, fitted.hunks.length);
     const bytes = jsonBytes(fitted);
     const owned = owners.get(path) ?? [];
-    if (chunk.length > 0 && (used + 1 + bytes > room || questions.length + checks.length + owned.length > MAX_SYSTEM_ONE_QUESTIONS)) flush();
+    if (chunk.length > 0 && (used + 1 + bytes > room || questions.length + asking.length + owned.length > MAX_SYSTEM_ONE_QUESTIONS)) flush();
     add(fitted, bytes);
-    for (const check of checks) {
+    for (const question of asking) {
       makeRoom(fitted, bytes);
-      const id = fileQuestionId(check, position);
-      questions.push({ id, type: "boolean", instructions: FILE_QUESTIONS[check](chunk.length - 1) });
-      plan[check]!.asked[id] = file.path;
+      questions.push({ id: question.id, type: "boolean", instructions: question.instructions(chunk.length - 1) });
+      plan[question.check]!.asked[question.id] = question.item;
     }
     for (const [index, candidate] of owned) {
       if ((candidate.hunk ?? 0) >= fitted.hunks.length) continue;
