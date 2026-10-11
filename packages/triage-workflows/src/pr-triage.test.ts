@@ -15,7 +15,7 @@ const REPO = "acme/widgets";
 const HELLO: Action = { id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", automatic: false, target: { body: "hi" } }] } };
 
 type Recorded = { method: string; path: string };
-type FileRow = { filename: string; status: string; additions: number; deletions: number; patch: string };
+type FileRow = { filename: string; status: string; additions: number; deletions: number; patch?: string; previous_filename?: string };
 
 const FLAG: FileRow = { filename: "src/flag.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+export const flag = true;" };
 
@@ -56,13 +56,11 @@ function fakeGithub(missing: boolean, files: FileRow[], prior?: string) {
 
 const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrants: [], resolvedBy: null });
 
-type SystemOne = { questions: Array<{ id: string }>; state: { pullRequest: { paths: string[] }; repository: { docs: Record<string, string> } } };
+type SystemOne = { questions: Array<{ id: string }>; state: { repository: { docs: Record<string, string> } } };
 
-/** Calls every focused candidate unrelated, passes docs and tests only when a changed path is one, and passes every other question. */
-function judgeText({ questions, state: { pullRequest: { paths } } }: SystemOne) {
+/** Calls every focused candidate unrelated and answers every other question yes, so each asked file needs docs and tests. */
+function judgeText({ questions }: SystemOne) {
   function answer({ id }: { id: string }) {
-    if (id === "docs") return { id, type: "noul", noul: paths.some((path) => path.startsWith("docs/")) ? 0.9 : 0.1 };
-    if (id === "tests") return { id, type: "noul", noul: paths.some((path) => path.includes(".test.")) ? 0.9 : 0.1 };
     if (!id.startsWith("focused-candidate-")) return { id, type: "noul", noul: 0.9 };
     return { id, type: "choice", choice: "unrelated", probabilities: { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 }, confidence: 0.9 };
   }
@@ -149,6 +147,7 @@ describe("pr-triage body", () => {
     expect(rest).toEqual({});
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "fail"], ["tests", "fail"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toEqual(["flag — src/flag.ts"]);
+    expect((verdict as Verdict).checks.find((c) => c.check === "tests")?.evidence).toEqual(["src/flag.ts"]);
   });
 
   test("a file list past the tool-result cap still shows the judge its docs and test changes", async () => {
@@ -156,8 +155,17 @@ describe("pr-triage body", () => {
     const files = [...sources, { ...FLAG, filename: "docs/flag.md" }, { ...FLAG, filename: "src/flag.test.ts" }];
     expect(JSON.stringify(files).length).toBeGreaterThan(10_000);
     const pack = emptyPack(REPO);
-    const { verdict } = await triage({ ...pack, checks: { docs: { enabled: true }, tests: { enabled: true } } }, { files });
+    const { judged, verdict } = await triage({ ...pack, checks: { docs: { enabled: true }, tests: { enabled: true } } }, { files });
+    expect(judged.flatMap((call) => call.questions)).toEqual([]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["docs", "pass"], ["tests", "pass"]]);
+  });
+
+  test("a deleted test does not cover the change and a pure rename asks nothing", async () => {
+    const removed = { filename: "src/old.test.ts", status: "removed", additions: 0, deletions: 1, patch: "@@ -1 +0,0 @@\n-test();" };
+    const renamed = { filename: "src/moved.ts", previous_filename: "src/kept.ts", status: "renamed", additions: 0, deletions: 0 };
+    const { judged, verdict } = await triage({ ...emptyPack(REPO), checks: { tests: { enabled: true } } }, { files: [FLAG, removed, renamed] });
+    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["tests-file-001"]);
+    expect((verdict as Verdict).checks.find((c) => c.check === "tests")).toMatchObject({ result: "fail", evidence: ["src/flag.ts"] });
   });
 
   test("a pull request past the decision model budget is judged in several calls on every model check", async () => {
