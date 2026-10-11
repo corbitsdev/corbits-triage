@@ -7,7 +7,7 @@ import {
   prepareQualityEvaluation,
 } from "./quality.js";
 
-const SOURCES = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [] };
+const SOURCES = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
 
 function facts(patch: string): PrFacts {
   return {

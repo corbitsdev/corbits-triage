@@ -2,6 +2,7 @@ import type { TriageState } from "@corbits/rule-packs";
 import {
   catalogCheckEnabled,
   classificationSources,
+  isRuleCheck,
   parseCheckPack,
   repoPolicy,
   type CatalogId,
@@ -10,6 +11,8 @@ import {
   type TriageEvent,
   type TrustTier,
 } from "@corbits/triage-contracts";
+import { globMatch } from "./glob.js";
+import { evaluateRuleChecks } from "./rule-checks.js";
 
 export interface PrFileFacts {
   path: string;
@@ -115,15 +118,6 @@ export function findDuplicate(facts: Pick<PrFacts, "number" | "title" | "openPrs
     if (score >= DUPLICATE_THRESHOLD && (!best || score > best.score)) best = { number: other.number, score };
   }
   return best;
-}
-
-function globMatch(path: string, glob: string): boolean {
-  const escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "\u0000")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\u0000/g, ".*");
-  return new RegExp(`^${escaped}$`).test(path);
 }
 
 function rankTop(findings: Finding[]): Finding | null {
@@ -251,6 +245,11 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       const ref = issueReference(facts, rules.tracker);
       if (!ref) add("issue", "needs-author-update", "pull request does not reference an issue");
       result("issue", ref === null, ref ? "references an issue" : "pull request does not reference an issue", ref ? [ref] : []);
+    }
+    if (pack) {
+      const custom = evaluateRuleChecks(facts, pack.custom.filter(isRuleCheck));
+      findings.push(...custom.findings);
+      checks.push(...custom.checks);
     }
   }
 
