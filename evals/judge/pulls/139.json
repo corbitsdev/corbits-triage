@@ -1,0 +1,32 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 139,
+ "title": "fix(web): hide the desktop rail on phones",
+ "body": "At phone widths the sidebar was hidden but the desktop rail was not, so the menu showed at the top of the page as well as in the bottom bar. One rule in the existing phone block hides the rail; the bottom nav is the only menu below 720px and page content starts at the top.\n\nVerified: `bun run check`; web tests; the real app at 390px on the inbox, All open, Repositories and Settings with no sideways scroll, and the rail still shown at 1024px.\n\nRefs CL-XXXX",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(web): hide the desktop rail on phones"
+ ],
+ "files": [
+  {
+   "filename": "apps/web/src/shell.css",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 1,
+   "patch": "@@ -237,8 +237,9 @@\n   .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }\n }\n \n-/* On a phone search gets its own line, the filter popover is a bottom sheet with the facets as tabs across the top, and toasts span the width above the mobile nav. */\n+/* On a phone the mobile nav replaces the rail, search gets its own line, the filter popover is a bottom sheet with the facets as tabs across the top, and toasts span the width above the mobile nav. */\n @media (max-width: 720px) {\n+  .shell .rail { display: none; }\n   .inbox .tools { flex-wrap: wrap; }\n   .inbox .search { flex-basis: 100%; }\n   .inbox .filter-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.24); }"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "ARCHITECTURE.md": "333969c8ae5b643e",
+  "BUILD_PLAN.md": "65a667f3bbd10128",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "IMPLEMENTATION.md": "731298e55211ea3f",
+  "README.md": "e5e18fade19f3d3f",
+  "docs/DEPLOY.md": "f28451d963dd011b",
+  "docs/DEV.md": "11d689902ba74717",
+  "docs/SELF_HOST.md": "596c16f9919dbfac",
+  "packages/triage-contracts/README.md": "16b70c8e9a0c7ad2"
+ }
+}

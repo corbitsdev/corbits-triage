@@ -1,0 +1,38 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 101,
+ "title": "feat(hub): carry the review state on triage mail",
+ "body": "The webhook bridge forwards the GitHub event and action on triage mail but not the review's state, so a review event could not be told apart as approved or changes requested.\n\n- `PrMail` gains `review: { state } | null`, set from the webhook's review state as GitHub sends it (lower-case), null on every other event.\n- `mailPayload` already copies every mail field, so the workflow receives it unchanged. Readers should compare case-insensitively.\n- Closed pull requests are still dropped; a merged flag is left for the close-and-merge work since it cannot be true until those events are forwarded.\n\nVerified: `bun run check`; hub tests (151) including a bridge test that a submitted review carries its state and a check run carries null.\n\nRefs CL-XXXX",
+ "author": "TheGreatAxios",
+ "commits": [
+  "feat(hub): carry the review state on triage mail"
+ ],
+ "files": [
+  {
+   "filename": "apps/hub/src/github/bridge.test.ts",
+   "status": "modified",
+   "additions": 18,
+   "deletions": 0,
+   "patch": "@@ -215,6 +215,24 @@ describe(\"bridge handler\", () => {\n     }]);\n   });\n \n+  test(\"carries the review state only on a pull request review\", async () => {\n+    const sent: Sent[] = [];\n+    const handle = bridge({ sent });\n+    const pr = JSON.parse(prPayload);\n+    const review = JSON.stringify({ ...pr, action: \"submitted\", review: { state: \"approved\" } });\n+    const checkRun = JSON.stringify({\n+      action: \"completed\",\n+      repository: { full_name: \"octocat/hello\" },\n+      check_run: { head_sha: \"sha7\", pull_requests: [{ number: 7, head: { sha: \"sha7\" } }] },\n+    });\n+    await handle(githubRequest(review, { delivery: \"r1\", event: \"pull_request_review\" }), TARGET);\n+    await handle(githubRequest(checkRun, { delivery: \"r2\", event: \"check_run\" }), TARGET);\n+    expect(sent.map((item) => item.payload)).toEqual([\n+      expect.objectContaining({ event: \"pull_request_review\", review: { state: \"approved\" } }),\n+      expect.objectContaining({ event: \"check_run\", review: null }),\n+    ]);\n+  });\n+\n   test(\"routes to the hook's configured workflow\", async () => {\n     const sent: Sent[] = [];\n     const db = stubDb([hookRow({ metadata: { webhook: { verify: \"standard-webhooks\", workflow: \"pr-triage-historical\" } } })]);"
+  },
+  {
+   "filename": "apps/hub/src/github/normalize.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 0,
+   "patch": "@@ -16,6 +16,8 @@ export interface PrMail {\n   body: string | null;\n   /** Null when the payload does not say, as on check_run. */\n   draft: boolean | null;\n+  /** Null unless the event is a pull request review. */\n+  review: { state: string } | null;\n   policy?: RepoPolicy;\n }\n \n@@ -46,5 +48,6 @@ export function normalize(event: string, deliveryId: string, p: Json): PrMail |\n     title: pr?.title ?? null,\n     body: pr?.body ?? null,\n     draft: typeof pr?.draft === \"boolean\" ? pr.draft : null,\n+    review: typeof p.review?.state === \"string\" ? { state: p.review.state } : null,\n   };\n }"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "b1f8eee84f0d44d4",
+  "ARCHITECTURE.md": "333969c8ae5b643e",
+  "BUILD_PLAN.md": "65a667f3bbd10128",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "IMPLEMENTATION.md": "defc559c6786e8c8",
+  "README.md": "65a3d72f44c34d2e",
+  "docs/DEPLOY.md": "5042475f214ea8f1",
+  "docs/DEV.md": "11d689902ba74717",
+  "docs/SELF_HOST.md": "596c16f9919dbfac"
+ }
+}

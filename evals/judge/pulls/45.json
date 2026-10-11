@@ -1,0 +1,32 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 45,
+ "title": "docs: state the coding preferences",
+ "body": "AGENTS.md names the coding preferences: comments only for a non-obvious why, no dynamic imports outside portal bundle splitting, fallbacks only where a real default exists, and end-to-end tests where possible.\n\nIt also adds an Interchange reference section: links to the upstream layout, conventions, architecture, workflow authoring, lifecycle, routes, mail and auth docs on main, with the rule to check them for a stock route or primitive before touching the hub, sidecars or workflows. VENDORED.md names the commit actually run.",
+ "author": "TheGreatAxios",
+ "commits": [
+  "docs: state the coding preferences",
+  "docs: point at the Interchange reference docs",
+  "docs: link the Interchange reference docs on main"
+ ],
+ "files": [
+  {
+   "filename": "AGENTS.md",
+   "status": "modified",
+   "additions": 17,
+   "deletions": 4,
+   "patch": "@@ -14,11 +14,24 @@\n - `vendor/interchange` changes only with owner approval, each listed in `vendor/interchange/VENDORED.md` and `tooling/vendor-diff-allowlist.txt`.\n - Hub env is read only in `apps/hub/src/env.ts` and passed down as config.\n \n-## Code\n+## Interchange reference\n+\n+Before writing anything that touches the hub, sidecars or workflows, check these for a stock route or primitive first. Links follow upstream main; the commit we actually run is the stock ref in `vendor/interchange/VENDORED.md`.\n+\n+- [LAYOUT.md](https://github.com/faremeter/interchange/blob/main/LAYOUT.md), [CONVENTIONS.md](https://github.com/faremeter/interchange/blob/main/CONVENTIONS.md): where things live and how upstream writes code\n+- [ARCHITECTURE.md](https://github.com/faremeter/interchange/blob/main/docs/ARCHITECTURE.md): hub, sidecar and workflow run model\n+- [WORKFLOW_AUTHORING.md](https://github.com/faremeter/interchange/blob/main/docs/WORKFLOW_AUTHORING.md): how workflows are written\n+- [workflow-lifecycle-policy.md](https://github.com/faremeter/interchange/blob/main/docs/workflow-lifecycle-policy.md), [SIDECAR_PLACEMENT.md](https://github.com/faremeter/interchange/blob/main/docs/SIDECAR_PLACEMENT.md): lifetimes, capacity release and where sidecars run\n+- [API.md](https://github.com/faremeter/interchange/blob/main/docs/API.md), [ROUTES.md](https://github.com/faremeter/interchange/blob/main/docs/ROUTES.md): the stock routes the portal and hub use\n+- [INBOUND_MAIL_POLICY.md](https://github.com/faremeter/interchange/blob/main/docs/INBOUND_MAIL_POLICY.md), [MESSAGE.md](https://github.com/faremeter/interchange/blob/main/docs/MESSAGE.md): mail routing behind the webhook bridge\n+- [AUTH.md](https://github.com/faremeter/interchange/blob/main/docs/AUTH.md), [CREDENTIALS.md](https://github.com/faremeter/interchange/blob/main/docs/CREDENTIALS.md), [GIT_ACCESS.md](https://github.com/faremeter/interchange/blob/main/docs/GIT_ACCESS.md): sessions, the vault and git tokens\n+\n+## Coding Preferences\n \n - Match existing style. No license headers in source files; LICENSE.md is the license.\n-- Comments explain a non-obvious why, never what.\n+- Comments say why something was done when that is not clear from the code, concisely. Otherwise no comment; the code documents itself.\n - async/await with try/catch; no `.then`/`.catch`/`.finally` chains.\n - Named functions; no IIFEs or anonymous callbacks beyond one-line array methods.\n-- No fallbacks for config or required data: fail with a clear error.\n-- Tests: only load-bearing ones. Never read `process.env` in tests.\n+- No dynamic imports, except in the portal for bundle splitting.\n+- Fallbacks only where a real default value exists. Otherwise throw, and handle errors and missing values properly.\n+- Tests: only load-bearing ones, end-to-end where possible. Never read `process.env` in tests."
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "f62c2cf472aac466",
+  "ARCHITECTURE.md": "0b9cfac95c4d9555",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "IMPLEMENTATION.md": "defc559c6786e8c8",
+  "README.md": "3a6d4817fc1a2c77",
+  "docs/DEPLOY.md": "8c882a14db43d2bd",
+  "docs/DEV.md": "11d689902ba74717",
+  "docs/SELF_HOST.md": "c027120322ca660b"
+ }
+}
