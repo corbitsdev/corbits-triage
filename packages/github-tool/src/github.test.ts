@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { githubWrite } from "./sidecar-bundle.js";
 import {
+  authorTeams,
   codeownersFor,
   codeownersForPr,
   listOpenPrs,
@@ -268,5 +269,34 @@ describe("listPrFilesPage", () => {
     expect(pages.flatMap((page) => page.files.map((file) => file.path))).toEqual(["a.ts", "big.ts", "c.ts"]);
     expect(pages[1]!.files[0]).toMatchObject({ patch: [1, 2].map(hunk).join("\n"), patchTruncated: true });
     expect((await listPrFilesPage(gh, "acme/widgets", 8, { patches: false })).files.map((file) => file.patch)).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe("authorTeams", () => {
+  const missing = Response.json({ message: "Not Found" }, { status: 404 });
+
+  test("active membership is a member; 404 on an existing team is not; a hidden team, another status or another org is unknown", async () => {
+    const replies: Record<string, unknown> = {
+      "/orgs/acme/teams/core/memberships/alice": { state: "active" },
+      "/orgs/acme/teams/invited/memberships/alice": { state: "pending" },
+      "/orgs/acme/teams/gone/memberships/alice": missing,
+      "/orgs/acme/teams/gone": { slug: "gone" },
+      "/orgs/acme/teams/hidden/memberships/alice": missing,
+      "/orgs/acme/teams/hidden": missing,
+      "/orgs/acme/teams/secret/memberships/alice": Response.json({ message: "Forbidden" }, { status: 403 }),
+    };
+    const { gh, requests } = recorder(function respond(path) {
+      return replies[path];
+    });
+    const teams = ["@acme/Core", "invited", "@Acme/gone", "hidden", "secret", "@other/core"];
+    expect(await authorTeams(gh, { repo: "acme/widgets", author: "alice", teams })).toEqual({ teams: ["@acme/Core"], unknown: ["hidden", "secret", "@other/core"] });
+    expect(requests.map((request) => request.path)).toEqual(Object.keys(replies));
+  });
+
+  test("every team of a repository no organization owns is unknown", async () => {
+    const { gh } = recorder(function respond() {
+      return missing.clone();
+    });
+    expect(await authorTeams(gh, { repo: "alice/dotfiles", author: "bob", teams: ["core", "ops"] })).toEqual({ teams: [], unknown: ["core", "ops"] });
   });
 });
