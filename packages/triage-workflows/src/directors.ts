@@ -9,8 +9,8 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
-import { NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
+import { classificationSources, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
 import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, type CheckRun, type PrData, type Review } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
@@ -100,7 +100,20 @@ function call(name: string, args: Record<string, unknown>, id = name): ToolCall 
 const TRUNCATED_RESULT = "[Tool output truncated";
 
 type FilesPage = { files: PrFileFacts[]; next?: number };
+type DocsPage = { docs: Array<{ path: string; text: string }>; ref: string; next?: number };
 type ListedFiles = { files: PrFileFacts[]; patchChars: number };
+
+/** A cut-off or unreadable docs page would hide docs the judge needs, so it is an error instead. */
+function docsPage(r: ToolResult | undefined): DocsPage | string {
+  if (!r) return "github_read_repo_docs did not answer";
+  if (r.isError) return `github_read_repo_docs failed: ${asText(r.content)}`;
+  if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return "github_read_repo_docs result was truncated";
+  const content = data<{ docs?: unknown; ref?: unknown; next?: unknown }>(r);
+  if (!content || !Array.isArray(content.docs) || typeof content.ref !== "string") return "github_read_repo_docs result is unreadable";
+  const docs = content.docs.flatMap((doc) => (isRecord(doc) && typeof doc.path === "string" && typeof doc.text === "string" ? [{ path: doc.path, text: doc.text }] : []));
+  const next = optionalCount(content.next);
+  return { docs, ref: content.ref, ...(next === undefined ? {} : { next }) };
+}
 
 /** A cut-off or unreadable file list would read as a pull request that changes nothing, so it is an error instead. */
 function filesPage(r: ToolResult | undefined): FilesPage | string {
@@ -122,7 +135,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return reply([{ error: reason }], false);
   }
 
-  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[]) {
+  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[], docs: Record<string, string> | string) {
     function prCalls(n: number): ToolCall[] {
       return [
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
@@ -185,7 +198,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
             reviews: data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [],
             commits: data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits ?? [],
             files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
-          }, { repo, openPrs, policy, pack, events });
+          }, { repo, openPrs, policy, pack, events, docs });
         }
         return reply(numbers.map(itemFor), batch);
       }
@@ -196,15 +209,37 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return b.run(numbers.flatMap(prCalls), onPrs);
   }
 
-  /** Lists the open pull requests, then gathers facts for `targets`, or for all of them when none are named. */
+  function docsCall(repo: string, offset: number, ref?: string): ToolCall {
+    return call("github_read_repo_docs", { repo, offset, ...(ref === undefined ? {} : { ref }) }, `docs:${offset}`);
+  }
+
+  /** Reads the repository's docs page by page from `offset` into `docs`, then hands them, or why they failed, to `then`. */
+  function readDocs(repo: string, offset: number, result: ToolResult | undefined, docs: Record<string, string>, then: (docs: Record<string, string> | string) => DirectorActions): DirectorActions {
+    const page = docsPage(result);
+    if (typeof page === "string") return then(page);
+    for (const { path, text } of page.docs) docs[path] = (docs[path] ?? "") + text;
+    const { next, ref } = page;
+    if (next === undefined) return then(docs);
+    if (next <= offset) return then(`github_read_repo_docs did not advance past offset ${offset}`);
+    function onNextDocs(r: BatchResults) {
+      return readDocs(repo, next!, r.get(`docs:${next}`), docs, then);
+    }
+    return b.run([docsCall(repo, next, ref)], onNextDocs);
+  }
+
+  /** Lists the open pull requests and reads the docs the judge needs, then gathers facts for `targets`, or for all of them when none are named. */
   function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[]) {
-    return b.run([call("github_list_open_prs", { repo })], function onPrList(r) {
+    const judged = hasModelChecks(classificationSources(pack));
+    return b.run([call("github_list_open_prs", { repo }), ...(judged ? [docsCall(repo, 0)] : [])], function onPrList(r) {
       const list = data<{ prs: Array<{ number: number; title: string; draft?: boolean }> }>(r.get("github_list_open_prs"));
       if (!list && targets === undefined) return fail("github_list_open_prs failed");
       const listed = list?.prs ?? [];
       const openPrs = listed.map(({ number, title }) => ({ number, title }));
       const triageable = listed.filter((p) => policy.triageDrafts || p.draft !== true).map((p) => p.number);
-      return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack, events);
+      function withDocs(docs: Record<string, string> | string) {
+        return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack, events, docs);
+      }
+      return judged ? readDocs(repo, 0, r.get("docs:0"), {}, withDocs) : withDocs({});
     });
   }
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { classificationSources, DEFAULT_MERGE_THRESHOLD, emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict, toMirrorRequest } from "./render.js";
-import { focusedCandidateId, QUALITY_EVALUATION_LIMIT_ERROR, qualityQuestions } from "./quality.js";
+import { focusedCandidateId, QUALITY_EVALUATION_LIMIT_ERROR } from "./quality.js";
 import type { ChangeCandidate } from "./candidates.js";
 import type { DeterministicResult } from "./checks.js";
 
@@ -317,28 +317,6 @@ describe("merge verdict", () => {
     const findings = [{ check: "state", state: "ready-monitoring" as const, reason: "pull request is closed" }];
     const verdict = renderVerdict({ author: "octocat", det: { ...MODEL_DET, findings, checks: [], needsJudgment: false }, threshold: 0.7 });
     expect(verdict).toMatchObject({ mirror: true, feedback: "" });
-  });
-});
-
-describe("quality question compatibility", () => {
-  test("replaces only focused while docs, tests, and custom questions stay boolean", () => {
-    const questions = qualityQuestions({
-      quality: [
-        { id: "focused", group: "pull-request" },
-        { id: "docs", group: "code-vs-ci" },
-        { id: "tests", group: "code-vs-ci" },
-      ],
-      custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "Keeps boundaries" }],
-    }, [candidate("src/a.ts", "A")]);
-    expect(questions.map(({ id, type }) => ({ id, type }))).toEqual([
-      { id: "focused-candidate-001", type: "choice" },
-      { id: "docs", type: "boolean" },
-      { id: "tests", type: "boolean" },
-      { id: "custom-1", type: "boolean" },
-    ]);
-    expect(questions[0]?.instructions).toContain("changeCandidates.focused-candidate-001");
-    expect(questions[0]?.instructions).toContain("supporting");
-    expect(questions[0]?.instructions).toContain("movement_or_superseded");
   });
 });
 

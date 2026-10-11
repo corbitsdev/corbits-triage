@@ -2,7 +2,7 @@ import { authorAssociation, authorKindOf, tierOf, type CheckPack, type RepoPolic
 import type { RulesItem } from "../actions/rules.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "./extract.js";
-import { MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES } from "./quality.js";
+import { MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";
 
 export interface PrData {
   title?: string;
@@ -111,8 +111,8 @@ export function buildFacts(
   };
 }
 
-// Patch text past what one System One request can carry is never evaluated, so later pages leave patches out.
-export const MAX_PATCH_CHARS = MAX_SYSTEM_ONE_REQUEST_CONTENT_BYTES;
+// Patch text past three judge requests' worth is not read, so later pages leave patches out.
+export const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
@@ -161,15 +161,18 @@ export interface ItemContext {
   policy: RepoPolicy;
   pack: CheckPack;
   events: TriageEvent[];
+  /** The repository's docs by path, or why they could not be read. */
+  docs: Record<string, string> | string;
 }
 
 /** The rules step's item for one pull request, or the error that degrades it. */
-export function assembleItem(number: number, data: PullData, { repo, openPrs, policy, pack, events }: ItemContext): RulesItem {
+export function assembleItem(number: number, data: PullData, { repo, openPrs, policy, pack, events, docs }: ItemContext): RulesItem {
   const { pr, files } = data;
   if (!pr) return { error: `github_get_pr failed for #${number}` };
   if (typeof files === "string") return { error: files };
+  if (typeof docs === "string") return { error: docs };
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, openPrs, policy), paths, files, commits, events };
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, openPrs, policy), paths, files, commits, events, docs };
   return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
 }

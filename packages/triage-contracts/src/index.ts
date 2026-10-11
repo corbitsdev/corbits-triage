@@ -5,3 +5,4 @@ export * from "./check-pack.js";
 export * from "./triage-state.js";
 export * from "./trigger-mail.js";
 export * from "./triage-event.js";
+export * from "./paths.js";

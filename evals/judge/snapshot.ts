@@ -5,7 +5,8 @@
 //   bun evals/judge/snapshot.ts
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isDocPath, isTestPath, variant, type CaseInput, type Expected, type FileRow, type JudgeCase, type Labels, type Snapshot, type StoredSnapshot } from "./cases.js";
+import { isDocPath, isTestPath } from "../../packages/triage-contracts/src/paths.js";
+import { variant, type CaseInput, type Expected, type FileRow, type JudgeCase, type Labels, type Snapshot, type StoredSnapshot } from "./cases.js";
 
 const here = new URL(".", import.meta.url).pathname;
 const labels = JSON.parse(readFileSync(`${here}labels.json`, "utf8")) as Labels;

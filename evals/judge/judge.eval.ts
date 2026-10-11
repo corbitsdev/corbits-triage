@@ -6,6 +6,7 @@
 import { EvalFailure, evaluate, type CheckFn, type Report } from "@corbits/evals";
 import { evaluate as systemOne, type FallbackResult } from "@corbits/system-one";
 import { readFileSync } from "node:fs";
+import { readRepoDocsPage } from "../../packages/github-tool/src/github.js";
 import { listFiles } from "../../apps/hub/src/github/pr-preview.js";
 import { DEFAULT_REPO_POLICY, emptyPack, type CheckPack } from "../../packages/triage-contracts/src/index.js";
 import { evaluate as evaluateStep } from "../../packages/triage-workflows/src/actions/evaluate.js";
@@ -35,15 +36,37 @@ function snapshot(number: number): Snapshot {
   return { ...stored, docs };
 }
 
-/** Serves a snapshot's file rows as GitHub's paged pull request files API does. */
+/** Serves a snapshot as GitHub would: its paged file rows, and its docs as the default branch's tree and blobs. */
 function frozenGithub(pr: Snapshot) {
   return async function fetchFrozen(path: string): Promise<Response> {
     const url = new URL(path, "https://api.github.com");
-    if (url.pathname !== `/repos/${pr.repo}/pulls/${pr.number}/files`) return new Response(null, { status: 404 });
-    const perPage = Number(url.searchParams.get("per_page") ?? 30);
-    const page = Number(url.searchParams.get("page") ?? 1);
-    return Response.json(pr.files.slice((page - 1) * perPage, page * perPage));
+    const repo = `/repos/${pr.repo}`;
+    if (url.pathname === `${repo}/pulls/${pr.number}/files`) {
+      const perPage = Number(url.searchParams.get("per_page") ?? 30);
+      const page = Number(url.searchParams.get("page") ?? 1);
+      return Response.json(pr.files.slice((page - 1) * perPage, page * perPage));
+    }
+    const docs = Object.entries(pr.docs);
+    if (url.pathname === repo) return Response.json({ default_branch: "main" });
+    if (url.pathname.startsWith(`${repo}/git/trees/`)) {
+      return Response.json({ sha: "tree", tree: docs.map(([doc, text], index) => ({ path: doc, type: "blob", sha: String(index), size: new TextEncoder().encode(text).byteLength })) });
+    }
+    const blob = url.pathname.startsWith(`${repo}/git/blobs/`) ? docs[Number(url.pathname.slice(`${repo}/git/blobs/`.length))] : undefined;
+    return blob ? new Response(blob[1]) : new Response(null, { status: 404 });
   };
+}
+
+/** The docs as the facts director reads them, page by page. */
+async function readDocs(gh: ReturnType<typeof frozenGithub>, repo: string): Promise<Record<string, string>> {
+  const docs: Record<string, string> = {};
+  let offset: number | undefined = 0;
+  let ref: string | undefined;
+  while (offset !== undefined) {
+    const page = await readRepoDocsPage(gh, repo, { ref, offset });
+    for (const { path, text } of page.docs) docs[path] = (docs[path] ?? "") + text;
+    ({ ref, next: offset } = page);
+  }
+  return docs;
 }
 
 function retryable(result: FallbackResult): boolean {
@@ -66,7 +89,8 @@ function pack(repo: string): CheckPack {
 
 async function judge(input: CaseInput): Promise<Outcomes> {
   const pr = variant(snapshot(input.pull), input, input.mix === undefined ? undefined : snapshot(input.mix));
-  const files = await listFiles(frozenGithub(pr), pr.repo, pr.number);
+  const gh = frozenGithub(pr);
+  const files = await listFiles(gh, pr.repo, pr.number);
   const additions = files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const deletions = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
   const data = {
@@ -76,7 +100,7 @@ async function judge(input: CaseInput): Promise<Outcomes> {
     commits: pr.commits.map((message) => ({ message })),
     files,
   };
-  const item = assembleItem(pr.number, data, { repo: pr.repo, openPrs: [], policy: DEFAULT_REPO_POLICY, pack: pack(pr.repo), events: ["opened"] });
+  const item = assembleItem(pr.number, data, { repo: pr.repo, openPrs: [], policy: DEFAULT_REPO_POLICY, pack: pack(pr.repo), events: ["opened"], docs: await readDocs(gh, pr.repo) });
   const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, AbortSignal.timeout(1_000));
   const output = await Promise.all(ruled.chunks.map(judgeChunk));
   const verdict = await evaluateStep({ items: ruled.items, batch: false, judge: { output } }, NO_EFFECTS, AbortSignal.timeout(1_000)) as Verdict;
