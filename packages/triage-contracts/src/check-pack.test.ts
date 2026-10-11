@@ -123,6 +123,13 @@ describe("check pack contract", () => {
     }
   });
 
+  test("a custom check stores enabled only as false, and refuses anything but a boolean", () => {
+    const read = readCheckPack({ ...emptyPack(REPO), custom: [{ ...RULES[0], enabled: true }, { ...RULES[1], enabled: false }] });
+    expect(read.custom).toEqual([RULES[0], { ...RULES[1], enabled: false }]);
+    expect(checkPackSchema({ ...emptyPack(REPO), custom: [{ ...RULES[1], enabled: false }] })).not.toBeInstanceOf(type.errors);
+    expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...RULES[0], enabled: "no" }] })).toThrow("Custom check custom-1 enabled must be true or false.");
+  });
+
   test("an invalid typed custom check rejects the pack with its reason", () => {
     const rejected: Array<[unknown, string]> = [
       [{ ...RULES[2], pattern: "(" }, "Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences"],

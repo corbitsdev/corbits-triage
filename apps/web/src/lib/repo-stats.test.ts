@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { dehydrate, hydrate, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { emptyPack, repoPolicy, type Action } from "@corbits/triage-contracts";
 import ActionRow from "../components/repo-panel/ActionRow.tsx";
-import CheckPopover from "../components/repo-panel/CheckPopover.tsx";
+import ChecksSection from "../components/repo-panel/ChecksSection.tsx";
 import TriageStrip from "../components/repo-panel/TriageStrip.tsx";
 import { fakeHub } from "./fake-hub.ts";
 import type { TriageStats } from "./hub-api.ts";
@@ -36,8 +36,8 @@ function Panel({ store }: { store: RepoPackStore }) {
   const stats = useRepoStats(store, REPO);
   return createElement(Fragment, null,
     createElement(TriageStrip, { stats }),
-    createElement(CheckPopover, { id: "size", draft: DRAFT, saved: DRAFT.pack, stats, disabled: false, edit: noop, onClose: noop }),
-    createElement(ActionRow, { action: ACTION, index: 0, count: 1, draft: DRAFT, saved: DRAFT.pack, stats, disabled: false, edit: noop, onEdit: noop, onRemove: noop, onMove: noop }),
+    createElement(ChecksSection, { draft: DRAFT, saved: DRAFT.pack, stats, disabled: false, edit: noop, problem: null }),
+    createElement(ActionRow, { action: ACTION, index: 0, count: 1, draft: DRAFT, stats, disabled: false, onEdit: noop, onRemove: noop, onMove: noop }),
   );
 }
 
@@ -49,7 +49,7 @@ function statsRequests(requests: string[]): string[] {
   return requests.filter((request) => request.includes("/triage-stats/"));
 }
 
-test("the strip, the check popover and the action row read one request", async () => {
+test("the strip, the checks and the action row read one request", async () => {
   const hub = fakeHub();
   hub.stats = STATS;
   const store = transportRepoPackStore(hub.transport, "t");

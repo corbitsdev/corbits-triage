@@ -17,6 +17,7 @@ import {
   type TriageEvent,
 } from "@corbits/triage-contracts";
 import { errorText } from "./error-text.ts";
+import type { CheckKind } from "./pack-prose.ts";
 
 export type ActionEvent = Exclude<TriageEvent, "catch-up">;
 
@@ -65,7 +66,7 @@ type CheckParams = {
   kinds?: AuthorKind[];
 };
 
-export type CheckForm = { name: string; group: CheckPackGroup } & (
+export type CheckForm = { name: string; group: CheckPackGroup; enabled?: boolean } & (
   | { kind: "rule"; rule: RuleKind }
   | { kind: "model"; shape: ModelShape }
 ) &
@@ -159,11 +160,31 @@ export function buildAction(form: ActionForm, pack: CheckPack, id = nextId("acti
   return read.actions.find((row) => row.id === id)!;
 }
 
-/** Builds the next custom check of `pack`, or replaces check `id` in place, keeping only its rule's or shape's parameters. */
-export function buildCustomCheck(form: CheckForm, pack: CheckPack, id = nextId("custom", pack.custom.map((row) => row.id))): CustomCheck | Refusal {
+export function nextCustomId(pack: CheckPack): string {
+  return nextId("custom", pack.custom.map((row) => row.id));
+}
+
+/**
+ * The form as a stored row, keeping only its rule's or shape's parameters and not yet validated:
+ * the draft holds it as typed and the save bar says what is wrong.
+ */
+export function customCheckOf(form: CheckForm, id: string): CustomCheck {
   const variant = form.kind === "rule" ? { kind: form.kind, rule: form.rule } : { kind: form.kind, shape: form.shape };
   const params = PARAMS[form.kind === "rule" ? form.rule : form.shape].map((key) => [key, form[key]]);
-  const check = { id, name: form.name, group: form.group, ...variant, ...Object.fromEntries(params) };
+  return { id, name: form.name, group: form.group, ...(form.enabled === false && { enabled: false }), ...variant, ...Object.fromEntries(params) } as CustomCheck;
+}
+
+/** A fresh form for a kind from the gallery, named after it. */
+export function checkFormOfKind(kind: CheckKind): CheckForm {
+  const name = kind.title.replace(/…$/, "");
+  return kind.evaluation === "rule"
+    ? { name, group: "pull-request", kind: "rule", rule: kind.rule, ...(kind.rule === "author" ? { who: "kinds" as const } : {}) }
+    : { name, group: "pull-request", kind: "model", shape: kind.shape };
+}
+
+/** Builds the next custom check of `pack`, or replaces check `id` in place, keeping only its rule's or shape's parameters. */
+export function buildCustomCheck(form: CheckForm, pack: CheckPack, id = nextCustomId(pack)): CustomCheck | Refusal {
+  const check = customCheckOf(form, id);
   const read = validated({ ...pack, custom: placed<{ id: string }>(pack.custom, check) }, pack.repo);
   if ("reason" in read) return read;
   return read.custom.find((row) => row.id === id)!;
