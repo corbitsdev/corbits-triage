@@ -1,4 +1,6 @@
 import {
+  type AuthorKind,
+  type AuthorWho,
   readCheckPack,
   type Action,
   type ActionKind,
@@ -54,6 +56,10 @@ type CheckParams = {
   min?: number;
   options?: string[];
   failOn?: string[];
+  who?: AuthorWho;
+  users?: string[];
+  role?: string;
+  kinds?: AuthorKind[];
 };
 
 export type CheckForm = { name: string; group: CheckPackGroup } & (
@@ -72,6 +78,7 @@ const PARAMS: Record<RuleKind | ModelShape, readonly (keyof CheckParams)[]> = {
   "label-required": ["label"],
   "diff-excludes": ["pattern"],
   "min-approvals": ["count"],
+  author: ["who", "users", "role", "kinds"],
   "is-true": ["claim"],
   score: ["subject", "min"],
   choose: ["options", "failOn"],

@@ -187,4 +187,26 @@ describe("deriveState rule custom checks", () => {
     expect(result.checks.find((check) => check.check === "custom-4")?.result).toBe("unconfirmed");
     expect(result.checks.find((check) => check.check === "custom-6")?.result).toBe("unconfirmed");
   });
+
+  test("author rules gate on people, roles or kinds and never add a finding", () => {
+    const gated = emptyPack("acme/widgets");
+    gated.custom = [
+      { id: "custom-1", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["Octocat"] },
+      { id: "custom-2", name: "Core", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "core" },
+      { id: "custom-3", name: "Agents", group: "pull-request", kind: "rule", rule: "author", who: "kinds", kinds: ["bot"] },
+      { id: "custom-4", name: "Staff", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "staff" },
+      { id: "custom-5", name: "Gone", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "gone" },
+    ];
+    const bot: PrFacts = { ...facts, authorKind: "bot" };
+    const result = deriveState(bot, allOff, gated, { core: { users: ["alice"] }, staff: { users: ["alice"], teams: ["@acme/staff"] } });
+    const byId = Object.fromEntries(result.checks.map((check) => [check.check, check]));
+    expect(byId["custom-1"]).toMatchObject({ result: "pass", evidence: ["@octocat (bot)"], gate: true });
+    expect(byId["custom-2"]).toMatchObject({ result: "fail", reason: "Core: author is not one of the people named" });
+    expect(byId["custom-3"]).toMatchObject({ result: "pass", reason: "Agents: author is bot" });
+    expect(byId["custom-4"]).toMatchObject({ result: "unconfirmed", reason: "Staff: role staff names teams, and team membership is not known" });
+    expect(byId["custom-5"]).toMatchObject({ result: "unconfirmed", reason: "Gone: role gone is not defined" });
+    expect(deriveState({ ...facts, authorKind: undefined }, allOff, gated).checks.find((check) => check.check === "custom-3")?.result).toBe("unconfirmed");
+    expect(result.findings).toEqual([]);
+    expect(result.state).toBe("ready-monitoring");
+  });
 });

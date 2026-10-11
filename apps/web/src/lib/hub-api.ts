@@ -1533,6 +1533,8 @@ export type CheckResult = {
   result: "pass" | "fail" | "unconfirmed";
   reason: string | null;
   evidence: string[];
+  /** Decides an action's branch; shown as matched or not, never as a failure. */
+  gate: boolean;
 };
 
 function checkResults(value: unknown): CheckResult[] {
@@ -1543,7 +1545,7 @@ function checkResults(value: unknown): CheckResult[] {
     if (typeof c.check !== "string") continue;
     if (c.kind !== "machine" && c.kind !== "model") continue;
     if (c.result !== "pass" && c.result !== "fail" && c.result !== "unconfirmed") continue;
-    out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence) });
+    out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence), gate: c.gate === true });
   }
   return out;
 }

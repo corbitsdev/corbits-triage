@@ -34,7 +34,7 @@ const Input = type({
 
 function ruled(it: RulesItem): { item: Item; requests: JudgeRequest[] } {
   if ("error" in it) return { item: degradedItem(it.error), requests: [] };
-  const item = { facts: it.facts, det: deriveState(it.facts, undefined, it.pack), cleanupMode: it.cleanupMode, pack: it.pack, roles: it.roles };
+  const item = { facts: it.facts, det: deriveState(it.facts, undefined, it.pack, it.roles ?? {}), cleanupMode: it.cleanupMode, pack: it.pack, roles: it.roles };
   if (!item.det.needsJudgment) return { item, requests: [] };
   const { requests, judgeError } = prepareQualityEvaluation(item.facts, item.det.sources);
   return judgeError === undefined ? { item, requests } : { item: { ...item, judgeError, judgeLimitExceeded: true }, requests: [] };

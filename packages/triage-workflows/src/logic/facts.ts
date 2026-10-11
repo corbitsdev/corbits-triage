@@ -1,4 +1,4 @@
-import { authorAssociation, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
+import { authorAssociation, authorKindOf, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "./extract.js";
@@ -9,6 +9,7 @@ export interface PrData {
   body?: string | null;
   author?: string;
   authorAssociation?: string | null;
+  authorBot?: boolean;
   sha?: string;
   branch: string;
   state?: string;
@@ -77,12 +78,15 @@ export function buildFacts(
 ): PrFacts {
   const latest = latestDecisive(reviews);
   const author = pr.author ?? "";
+  const association = authorAssociation(pr.authorAssociation);
+  const authorKind = authorKindOf(association, pr.authorBot === true);
   return {
     repo,
     number,
     title: pr.title ?? "",
     author,
-    tier: tierOf(authorAssociation(pr.authorAssociation), author, policy.approvedAuthors),
+    ...(authorKind ? { authorKind } : {}),
+    tier: tierOf(association, author, policy.approvedAuthors),
     headSha: pr.sha ?? "",
     state: pr.state === "closed" ? "closed" : "open",
     draft: pr.draft === true,

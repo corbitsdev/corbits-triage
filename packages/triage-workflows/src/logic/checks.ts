@@ -5,9 +5,11 @@ import {
   isRuleCheck,
   parseCheckPack,
   repoPolicy,
+  type AuthorKind,
   type CatalogId,
   type CheckPack,
   type IssueTracker,
+  type RepoRole,
   type TriageEvent,
   type TrustTier,
 } from "@corbits/triage-contracts";
@@ -30,6 +32,7 @@ export interface PrFacts {
   number: number;
   title: string;
   author: string;
+  authorKind?: AuthorKind;
   tier: TrustTier;
   headSha: string;
   state: "open" | "closed";
@@ -71,6 +74,8 @@ export interface CheckResult {
   result: "pass" | "fail" | "unconfirmed";
   reason: string;
   evidence: string[];
+  /** Decides an action's branch without being a defect: never a step, a comment line, a merge reason or a retry. */
+  gate?: true;
 }
 
 export interface DeterministicResult {
@@ -180,7 +185,7 @@ interface CheckRules {
   tracker: IssueTracker;
 }
 
-function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): DeterministicResult {
+function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Record<string, RepoRole> = {}): DeterministicResult {
   const findings: Finding[] = [];
   const checks: CheckResult[] = [];
   function add(check: string, state: TriageState, reason: string) {
@@ -247,7 +252,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       result("issue", ref === null, ref ? "references an issue" : "pull request does not reference an issue", ref ? [ref] : []);
     }
     if (pack) {
-      const custom = evaluateRuleChecks(facts, pack.custom.filter(isRuleCheck));
+      const custom = evaluateRuleChecks(facts, pack.custom.filter(isRuleCheck), roles);
       findings.push(...custom.findings);
       checks.push(...custom.checks);
     }
@@ -256,7 +261,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
   return finish(findings, checks, dup?.number ?? null, facts, pack);
 }
 
-function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
+function deriveFromPack(facts: PrFacts, pack: CheckPack, roles: Record<string, RepoRole>): DeterministicResult {
   return evaluate(facts, {
     enabled: (id) => catalogCheckEnabled(pack, id),
     maxBehindBy: pack.checks.drift?.maxBehindBy ?? DRIFT_THRESHOLD,
@@ -264,7 +269,7 @@ function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
     maxLines: pack.checks.size?.maxLines,
     forbiddenGlobs: pack.checks.paths?.forbiddenGlobs ?? [],
     tracker: pack.checks.issue?.tracker ?? "either",
-  }, pack);
+  }, pack, roles);
 }
 
 export function packFromInput(raw: unknown): CheckPack | null {
@@ -272,8 +277,8 @@ export function packFromInput(raw: unknown): CheckPack | null {
 }
 
 /** Leftover boolean flags when no pack is supplied. Pack, when present, is the check source. */
-export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack | null): DeterministicResult {
-  if (pack) return deriveFromPack(facts, pack);
+export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack | null, roles: Record<string, RepoRole> = {}): DeterministicResult {
+  if (pack) return deriveFromPack(facts, pack, roles);
   const enabled: Partial<Record<CatalogId, boolean>> = repoPolicy(policy).checks;
   return evaluate(facts, {
     enabled: (id) => enabled[id] === true,

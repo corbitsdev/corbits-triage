@@ -112,13 +112,15 @@ function IssueList({ issues, pending, error }: { issues: GithubPullDetail["issue
   );
 }
 
+const GATE_RESULT: Record<CheckResult["result"], string> = { pass: "matched", fail: "did not match", unconfirmed: "unknown" };
+
 function CheckRow({ check }: { check: CheckResult }) {
-  const tone = check.result === "unconfirmed" ? "wait" : check.result;
+  const tone = check.result === "unconfirmed" ? "wait" : check.gate ? "match" : check.result;
   return (
     <li className={`verdict-check check-item ${tone}`}>
       <strong>{check.check}</strong>
       <span className="muted">{check.kind}</span>
-      <span className="check-result">{check.result}</span>
+      <span className="check-result">{check.gate ? GATE_RESULT[check.result] : check.result}</span>
       {check.reason ? <span className="check-fact">{check.reason}</span> : null}
       {check.evidence.map((line) => <span className="check-fact mono small-text" key={line}>{line}</span>)}
     </li>
