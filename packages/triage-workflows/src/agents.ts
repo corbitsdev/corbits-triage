@@ -45,6 +45,7 @@ export const grantRequirements = [
   ...CONSUMERS.map(credentialGrant),
   { resource: `tool:${githubRead.id}:*`, action: "invoke", source: "creator" },
   { resource: `tool:${githubWrite.id}:github_mirror_auto`, action: "invoke", source: "creator" },
+  { resource: `tool:${githubWrite.id}:github_execute_do_auto`, action: "invoke", source: "creator" },
 ] as const;
 
 export const factsAgent = defineAgent({
@@ -66,6 +67,15 @@ export const judgeAgent = defineAgent({
   capabilities: [],
   inference,
   director: triageDirector.build({ role: "judge" }),
+});
+
+export const executeAgent = defineAgent({
+  id: "triage-execute",
+  systemPrompt: "Deterministic execution of automatic pack Dos. No inference.",
+  tools: [githubWrite],
+  capabilities: [],
+  inference,
+  director: triageDirector.build({ role: "execute" }),
 });
 
 export const mirrorAgent = defineAgent({
