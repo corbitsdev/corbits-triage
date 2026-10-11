@@ -5,7 +5,8 @@
   "module": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./paths": "./src/paths.ts"
+    "./paths": "./src/paths.ts",
+    "./team": "./src/team.ts"
   },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
