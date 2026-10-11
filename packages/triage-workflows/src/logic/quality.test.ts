@@ -84,7 +84,7 @@ test("quality preflight splits files in order across requests under the state bu
   expect(prepareQualityEvaluation(facts(files), SOURCES)).toEqual(evaluation);
 });
 
-test("quality preflight asks every non-candidate question in the first request and splits candidates at the question cap", () => {
+test("quality preflight asks custom questions in the first request and file questions with their file, splitting at the question cap", () => {
   const custom = Array.from({ length: 57 }, (_, index) => ({ id: `custom-${index + 1}`, name: `Check ${index + 1}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
   const sources = {
     quality: [
@@ -97,8 +97,8 @@ test("quality preflight asks every non-candidate question in the first request a
   const evaluation = prepareQualityEvaluation(facts([{ path: "src/a.ts", patch: compactHunks(150) }, { path: "src/b.ts", patch: compactHunks(50, 150) }]), sources);
   expect(evaluation.judgeError).toBeUndefined();
   const [first, second, ...rest] = evaluation.requests.map((request) => request.questions.map((question) => question.id));
-  expect(first).toEqual(["docs", "tests", ...custom.map((row) => row.id), ...Array.from({ length: 150 }, (_, index) => focusedCandidateId(index))]);
-  expect(second).toEqual(Array.from({ length: 50 }, (_, index) => focusedCandidateId(150 + index)));
+  expect(first).toEqual([...custom.map((row) => row.id), "tests-file-001", "docs-file-001", ...Array.from({ length: 150 }, (_, index) => focusedCandidateId(index))]);
+  expect(second).toEqual(["tests-file-002", "docs-file-002", ...Array.from({ length: 50 }, (_, index) => focusedCandidateId(150 + index))]);
   expect(rest).toEqual([]);
   expect(evaluation.requests[1]!.state.pullRequest.files.map((file) => file.path)).toEqual(["src/b.ts"]);
 });

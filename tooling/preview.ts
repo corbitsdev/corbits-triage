@@ -86,7 +86,7 @@ if (import.meta.main) {
     const facts = factsFor(number, open);
     const det = deriveState(facts, undefined, pack);
     const evaluation = previewEvaluation(facts, det);
-    const v = renderVerdict({ author: facts.author, det, candidates: evaluation.candidates, reviewers: facts.reviewers, threshold: packMergeThreshold(pack), ...(await previewJudge(det, evaluation)) });
+    const v = renderVerdict({ author: facts.author, det, candidates: evaluation.candidates, plan: evaluation.plan, reviewers: facts.reviewers, threshold: packMergeThreshold(pack), ...(await previewJudge(det, evaluation)) });
     rows.push({
       pr: `#${number}`,
       title: facts.title.slice(0, 40),
