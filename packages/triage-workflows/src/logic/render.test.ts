@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { classificationSources, DEFAULT_MERGE_THRESHOLD, emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict, toMirrorRequest } from "./render.js";
-import { focusedCandidateId, QUALITY_EVALUATION_LIMIT_ERROR } from "./quality.js";
+import { focusedCandidateId, QUALITY_EVALUATION_LIMIT_ERROR, type QualityPlan } from "./quality.js";
 import type { ChangeCandidate } from "./candidates.js";
 import type { DeterministicResult } from "./checks.js";
 
@@ -72,9 +72,9 @@ const FOCUSED_DET: DeterministicResult = {
 };
 const CHOICES = ["primary_or_supporting", "unrelated", "movement_or_superseded", "ambiguous"] as const;
 
-function decision(id: string, choice: typeof CHOICES[number], confidence = 0.9): string {
+function decision(id: string, choice: typeof CHOICES[number]): string {
   const probabilities = Object.fromEntries(CHOICES.map((option) => [option, option === choice ? 0.7 : 0.1]));
-  return JSON.stringify({ id, type: "choice", choice, probabilities, confidence });
+  return JSON.stringify({ id, type: "choice", choice, probabilities, confidence: 0.9 });
 }
 
 function candidate(path: string, label: string, evidence = `@@ -0,0 +1 @@\n+const value = { name: "${label}" };`): ChangeCandidate {
@@ -102,7 +102,7 @@ describe("focused candidate rendering", () => {
       decision("focused-candidate-001", "unrelated"),
       decision("focused-candidate-002", "unrelated"),
     ].join(""));
-    expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, humanGated: false, score: 0.9, confidence: 0.9 });
+    expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, humanGated: false, score: 0.7, confidence: 0.7 });
     expect(verdict.checks).toEqual([{
       check: "focused",
       kind: "model",
@@ -128,7 +128,10 @@ describe("focused candidate rendering", () => {
 
   test.each([
     ["ambiguous", [candidate("src/a.ts", "A")], decision("focused-candidate-001", "ambiguous")],
-    ["low confidence", [candidate("src/a.ts", "A")], decision("focused-candidate-001", "unrelated", 0.49)],
+    ["split", [candidate("src/a.ts", "A")], JSON.stringify({
+      id: "focused-candidate-001", type: "choice", choice: "unrelated", confidence: 0.9,
+      probabilities: { primary_or_supporting: 0.35, unrelated: 0.5, movement_or_superseded: 0.05, ambiguous: 0.1 },
+    })],
     ["empty evidence", [candidate("src/a.ts", "A", "")], decision("focused-candidate-001", "unrelated")],
     ["no candidates", [], ""],
   ] as const)("names an unsure focused check (%s) in the comment, awaits review and is red", (_name, candidates, reply) => {
@@ -205,30 +208,28 @@ describe("focused candidate rendering", () => {
     expect(focusedVerdict([candidate("a.ts", "A")], illegal)).toMatchObject({ degraded: "inference-outage" });
   });
 
-  test("strictly validates noul decisions and keeps noul certainty semantics", () => {
+  test("strictly validates noul decisions and decides them only outside the unsure band", () => {
     const det: DeterministicResult = {
       ...FOCUSED_DET,
       sources: {
-        quality: [{ id: "docs", group: "code-vs-ci" }],
+        quality: [{ id: "tests", group: "code-vs-ci" }],
         custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "Keeps boundaries" }],
         rules: [],
       },
     };
-    const answers = parseAnswers([
-      JSON.stringify({ id: "docs", type: "noul", noul: 0.2 }),
-      JSON.stringify({ id: "custom-1", type: "noul", noul: 0.9 }),
-    ].join(""));
-    const verdict = renderVerdict({ author: "octocat", det, answers, candidates: [], threshold: DEFAULT_MERGE_THRESHOLD });
-    expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, score: 0.8 });
-    expect(verdict.checks.map(({ check, result }) => ({ check, result }))).toEqual([
-      { check: "docs", result: "fail" },
-      { check: "custom-1", result: "pass" },
-    ]);
+    const plan: QualityPlan = { tests: { changed: [], asked: { "tests-file-001": "src/a.ts" }, unread: [] } };
+    function results(tests: number, custom: number) {
+      const answers = noul({ "tests-file-001": tests, "custom-1": custom });
+      return renderVerdict({ author: "octocat", det, answers, candidates: [], plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ check, result, evidence }) => [check, result, evidence]);
+    }
+    expect(results(0.9, 0.2)).toEqual([["tests", "fail", ["src/a.ts"]], ["custom-1", "fail", []]]);
+    expect(results(0.5, 0.5)).toEqual([["tests", "unconfirmed", []], ["custom-1", "unconfirmed", []]]);
+    expect(results(0.2, 0.9)).toEqual([["tests", "pass", []], ["custom-1", "pass", []]]);
 
-    const duplicate = parseAnswers('{"id":"docs","type":"noul","noul":0.9}{"id":"docs","type":"noul","noul":0.9}');
-    expect(renderVerdict({ author: "octocat", det, answers: duplicate, candidates: [], threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
-    const unknown = parseAnswers('{"id":"other","type":"noul","noul":0.9}');
-    expect(renderVerdict({ author: "octocat", det, answers: unknown, candidates: [], threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
+    const duplicate = parseAnswers('{"id":"custom-1","type":"noul","noul":0.9}{"id":"custom-1","type":"noul","noul":0.9}');
+    expect(renderVerdict({ author: "octocat", det, answers: duplicate, candidates: [], plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
+    const unknown = parseAnswers('{"id":"tests","type":"noul","noul":0.9}');
+    expect(renderVerdict({ author: "octocat", det, answers: unknown, candidates: [], plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
   });
 
   test("an over-long comment is cut at line boundaries and still posts", () => {
@@ -268,6 +269,7 @@ const MODEL_DET: DeterministicResult = {
   ...FOCUSED_DET,
   sources: { quality: [{ id: "docs", group: "code-vs-ci" }, { id: "tests", group: "code-vs-ci" }], custom: [], rules: [] },
 };
+const PLAN: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] }, tests: { changed: [], asked: { "tests-file-001": "src/a.ts" }, unread: [] } };
 
 function noul(answers: Record<string, number>) {
   return parseAnswers(Object.entries(answers).map(([id, value]) => JSON.stringify({ id, type: "noul", noul: value })).join(""));
@@ -275,35 +277,35 @@ function noul(answers: Record<string, number>) {
 
 describe("merge verdict", () => {
   test("every check passing at or above the threshold is ready", () => {
-    const verdict = renderVerdict({ author: "octocat", det: MODEL_DET, answers: noul({ docs: 0.9, tests: 0.8 }), threshold: 0.7 });
+    const verdict = renderVerdict({ author: "octocat", det: MODEL_DET, answers: noul({ "docs-file-001": 0.1, "tests-file-001": 0.2 }), plan: PLAN, threshold: 0.7 });
     expect(verdict.merge).toEqual({ verdict: "ready", score: 0.8, threshold: 0.7, reasons: [] });
     expect(verdict).toMatchObject({ state: "ready-monitoring", mirror: true, feedback: APPROVAL_NOTE });
   });
 
   test("every check passing below the threshold is red with the score reason", () => {
-    const verdict = renderVerdict({ author: "octocat", det: MODEL_DET, answers: noul({ docs: 0.9, tests: 0.6 }), threshold: 0.7 });
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.6, threshold: 0.7, reasons: ["Score 0.6 is below the threshold 0.7"] });
+    const verdict = renderVerdict({ author: "octocat", det: MODEL_DET, answers: noul({ "docs-file-001": 0.1, "tests-file-001": 0.2 }), plan: PLAN, threshold: 0.85 });
+    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.85, reasons: ["Score 0.8 is below the threshold 0.85"] });
     expect(verdict.feedback).toBe(APPROVAL_NOTE);
   });
 
   test("a failing rule is red", () => {
     const checks = [{ check: "paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/a.ts"] }];
-    const verdict = renderVerdict({ author: "octocat", det: { ...MODEL_DET, state: "blocked", checks }, answers: noul({ docs: 0.9, tests: 0.9 }), threshold: 0.7 });
+    const verdict = renderVerdict({ author: "octocat", det: { ...MODEL_DET, state: "blocked", checks }, answers: noul({ "docs-file-001": 0.1, "tests-file-001": 0.1 }), plan: PLAN, threshold: 0.7 });
     expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.9, threshold: 0.7, reasons: ["Failed: touches forbidden paths"] });
   });
 
   test("an unsure focused check is red", () => {
     const verdict = focusedVerdict([candidate("src/a.ts", "A")], decision("focused-candidate-001", "ambiguous"));
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.9, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Not confirmed: makes one focused change"] });
+    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: null, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Not confirmed: makes one focused change"] });
   });
 
   test("a failed chunk is red with the count of checks it could not evaluate and keeps the answered ones", () => {
     const det: DeterministicResult = { ...MODEL_DET, sources: { ...MODEL_DET.sources!, custom: [{ id: "custom-1", name: "Ticket", group: "pull-request", kind: "model", shape: "is-true", claim: "Names a ticket." }] } };
-    const verdict = renderVerdict({ author: "octocat", det, answers: noul({ docs: 0.2 }), judgeError: "upstream 503", threshold: 0.7 });
+    const verdict = renderVerdict({ author: "octocat", det, answers: noul({ "docs-file-001": 0.8 }), plan: PLAN, judgeError: "upstream 503", threshold: 0.7 });
     expect(verdict.checks.map(({ check, result }) => [check, result])).toEqual([["docs", "fail"], ["tests", "unconfirmed"], ["custom-1", "unconfirmed"]]);
     expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, degraded: "inference-outage" });
     expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.7, reasons: ["Could not evaluate 2 checks", "Failed: documentation is not updated"] });
-    expect(verdict.feedback).toBe(`@octocat, please address the following:\n- documentation is not updated\n\n${OUTAGE_NOTE}`);
+    expect(verdict.feedback).toBe(`@octocat, please address the following:\n- documentation is not updated for \`src/a.ts\`\n\n${OUTAGE_NOTE}`);
   });
 
   test("rules only has no score and is green", () => {

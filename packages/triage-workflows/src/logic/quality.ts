@@ -1,4 +1,4 @@
-import { isGeneratedPath, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
+import { isDocPath, isGeneratedPath, isTestPath, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 import { boundedPath, extractChangeCandidates, patchHunks, type ChangeCandidate } from "./candidates.js";
 
@@ -27,12 +27,39 @@ const FOCUSED_CRITERIA: Record<FocusedChoice, string> = {
   ambiguous: "The available evidence is insufficient to classify the candidate safely.",
 };
 
-/** Each question is answered true when the pull request passes the check. */
-const INSTRUCTIONS: Record<QualityCheckId, string> = {
-  focused: "Does this pull request make one focused change rather than mixing unrelated changes?",
-  docs: "If this pull request changes user-facing behavior, configuration, or a public API, does it update the documentation? Answer true when no documentation change is needed.",
-  tests: "If this pull request changes runtime behavior, does it add or update tests? Answer true when no test change is needed.",
+// Docs and tests are decided per file and combined in code: changing a doc or test file passes them, otherwise each file
+// gets one direct question. Jev answers conditional questions ("if X, does it Y?") backwards, so none is asked.
+type FileCheck = "docs" | "tests";
+
+/** Each question is answered yes when the file needs what the check asks for. */
+const FILE_QUESTIONS: Record<FileCheck, (file: number) => string> = {
+  tests: (file) => `Does the change in \`pullRequest.files[${file}]\` change runtime behavior, meaning code that runs, as opposed to tests, docs, comments, formatting, or styling?`,
+  docs: (file) => `Does the change in \`pullRequest.files[${file}]\` make a statement in \`repository.docs\` wrong or incomplete, or add setup, configuration, permissions, or commands that \`repository.docs\` must describe?`,
 };
+
+/** The file kind that satisfies the check by being changed. */
+const SATISFIES: Record<FileCheck, (path: string) => boolean> = { tests: isTestPath, docs: isDocPath };
+
+/** Only a change outside tests and docs can need either. */
+function isAsked(path: string): boolean {
+  return !isTestPath(path) && !isDocPath(path);
+}
+
+function fileQuestionId(check: FileCheck, file: number): string {
+  return `${check}-file-${String(file + 1).padStart(3, "0")}`;
+}
+
+/** How a docs or tests check is decided for one pull request. */
+export interface FilePlan {
+  /** Changed files that satisfy the check; any one passes it without asking. */
+  changed: string[];
+  /** Question id to the path it asks about. */
+  asked: Record<string, string>;
+  /** Files the check would ask about but no request could read, such as patches GitHub left out. */
+  unread: string[];
+}
+
+export type QualityPlan = Partial<Record<FileCheck, FilePlan>>;
 
 const FAILURES: Record<QualityCheckId, string> = {
   focused: "mixes unrelated changes",
@@ -66,15 +93,19 @@ function judgedFiles(facts: PrFacts) {
   return (facts.files ?? []).filter((file) => !isGeneratedPath(file.path));
 }
 
-/** The judge answers yes or no, so every shape is asked as a pass question. */
+/** Every shape is asked as one direct question a yes answer passes. */
 function customInstructions(row: ModelCustomCheck): string {
   switch (row.shape) {
     case "is-true":
-      return `${row.name}: ${row.claim} Answer true when the pull request meets this.`;
+      return `${row.name}: ${row.claim}`;
     case "score":
-      return `${row.name}: On a scale of 0 to 10, does the pull request score at least ${row.min} for ${row.subject}? Answer true when it does.`;
-    case "choose":
-      return `${row.name}: Which of ${row.options.join(", ")} describes the pull request? Answer false when it is ${row.failOn.join(" or ")}, true otherwise.`;
+      return `${row.name}: Does the pull request reach at least ${row.min} out of 10 for ${row.subject}?`;
+    case "choose": {
+      const passing = row.options.filter((option) => !row.failOn.includes(option));
+      const failing = row.failOn.join(" or ");
+      if (passing.length === 0) return `${row.name}: Is the pull request best described as something other than ${failing}?`;
+      return `${row.name}: Is the pull request best described as ${passing.join(" or ")}, rather than ${failing}?`;
+    }
   }
 }
 
@@ -96,18 +127,15 @@ function isFocused(sources: NonNullable<DeterministicResult["sources"]>): boolea
   return sources.quality.some((source) => source.id === "focused");
 }
 
-/** The whole-pull-request questions; focused is asked per candidate instead. */
-function qualityQuestions(sources: NonNullable<DeterministicResult["sources"]>): QualityQuestion[] {
-  return [
-    ...sources.quality.flatMap(({ id }) => (id === "focused" ? [] : [{ id, type: "boolean" as const, instructions: INSTRUCTIONS[id] }])),
-    ...sources.custom.map((row) => ({ id: row.id, type: "boolean" as const, instructions: customInstructions(row) })),
-  ];
+function customQuestions(sources: NonNullable<DeterministicResult["sources"]>): QualityQuestion[] {
+  return sources.custom.map((row) => ({ id: row.id, type: "boolean" as const, instructions: customInstructions(row) }));
 }
 
-/** Every question id an evaluation of `candidates` asks; a candidate without evidence resolves unconfirmed whatever the answer, so it is not asked. */
-export function qualityQuestionIds(sources: NonNullable<DeterministicResult["sources"]>, candidates: readonly ChangeCandidate[]): Set<string> {
-  const asked = isFocused(sources) ? candidates.flatMap((candidate, index) => (candidate.evidence ? [focusedCandidateId(index)] : [])) : [];
-  return new Set([...qualityQuestions(sources).map(({ id }) => id), ...asked]);
+/** Every question id an evaluation asks; `render` refuses answers to anything else. */
+export function askedQuestionIds(sources: NonNullable<DeterministicResult["sources"]>, candidates: readonly ChangeCandidate[], plan: QualityPlan): Set<string> {
+  // A candidate without evidence resolves unconfirmed whatever the answer, so it is not asked.
+  const candidateIds = isFocused(sources) ? candidates.flatMap((candidate, index) => (candidate.evidence ? [focusedCandidateId(index)] : [])) : [];
+  return new Set([...candidateIds, ...customQuestions(sources).map((question) => question.id), ...Object.values(plan).flatMap((filePlan) => Object.keys(filePlan.asked))]);
 }
 
 /** A changed file as the judge reads it: its patch split into the hunks candidates point at. */
@@ -162,6 +190,7 @@ export interface JudgeRequest {
 export interface QualityEvaluation {
   /** Every candidate in file order; one whose hunk no request could carry has no evidence. */
   candidates: ChangeCandidate[];
+  plan: QualityPlan;
   requests: JudgeRequest[];
   judgeError?: string;
 }
@@ -188,9 +217,16 @@ function fitFile(room: number, file: StateFile): StateFile | undefined {
 export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicResult["sources"]): QualityEvaluation {
   const files = judgedFiles(facts);
   const candidates = extractChangeCandidates(files);
-  if (!sources) return { candidates, requests: [] };
+  if (!sources) return { candidates, plan: {}, requests: [] };
+  const enabled = new Set(sources.quality.map((source) => source.id));
+  const plan: QualityPlan = {};
+  for (const check of ["tests", "docs"] as const) {
+    // Deleting a test or doc does not cover a change.
+    const changed = (facts.files ?? []).filter((file) => file.status !== "removed" && SATISFIES[check](file.path));
+    if (enabled.has(check)) plan[check] = { changed: changed.map((file) => file.path), asked: {}, unread: [] };
+  }
   const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(judgeState(facts, []));
-  if (room < 0) return { candidates, requests: [], judgeError: QUALITY_EVALUATION_LIMIT_ERROR };
+  if (room < 0) return { candidates, plan, requests: [], judgeError: QUALITY_EVALUATION_LIMIT_ERROR };
 
   const owners = new Map<string, Array<[number, ChangeCandidate]>>();
   if (isFocused(sources)) {
@@ -205,7 +241,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
   const requests: JudgeRequest[] = [];
   let chunk: StateFile[] = [];
   let used = 0;
-  let questions = qualityQuestions(sources);
+  let questions: QualityQuestion[] = customQuestions(sources);
 
   // State without questions tells the judge nothing, so only requests that ask something are made.
   function flush() {
@@ -220,32 +256,51 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     chunk.push(file);
   }
 
-  for (const file of files) {
-    if (typeof file.patch !== "string") continue;
+  /** Starts a new request that reads `file` again when this one holds as many questions as one request may ask. */
+  function makeRoom(file: StateFile, bytes: number) {
+    if (questions.length < MAX_SYSTEM_ONE_QUESTIONS) return;
+    flush();
+    add(file, bytes);
+  }
+
+  /** The checks a rule has not already passed that ask about this file. */
+  function fileChecks(path: string): FileCheck[] {
+    if (!isAsked(path)) return [];
+    return (["tests", "docs"] as const).filter((check) => plan[check]?.changed.length === 0);
+  }
+
+  for (const [position, file] of files.entries()) {
     const path = boundedPath(file.path);
-    const hunks = patchHunks(file.patch);
-    if (hunks.length === 0) continue;
+    const checks = fileChecks(file.path);
+    const hunks = typeof file.patch === "string" ? patchHunks(file.patch) : [];
     const read: StateFile = { path, ...(file.status ? { status: file.status } : {}), hunks, ...(file.patchTruncated ? { truncated: true as const } : {}) };
-    const fitted = fitFile(room, read);
-    if (!fitted) continue;
+    const fitted = hunks.length > 0 ? fitFile(room, read) : undefined;
+    if (!fitted) {
+      // A pure rename or a binary file has no lines to read, so there is nothing to judge.
+      const unchanged = file.additions === 0 && file.deletions === 0;
+      if (!unchanged) for (const check of checks) plan[check]!.unread.push(file.path);
+      continue;
+    }
     const bytes = jsonBytes(fitted);
     const owned = owners.get(path) ?? [];
-    if (chunk.length > 0 && (used + 1 + bytes > room || questions.length + owned.length > MAX_SYSTEM_ONE_QUESTIONS)) flush();
+    if (chunk.length > 0 && (used + 1 + bytes > room || questions.length + checks.length + owned.length > MAX_SYSTEM_ONE_QUESTIONS)) flush();
     add(fitted, bytes);
+    for (const check of checks) {
+      makeRoom(fitted, bytes);
+      const id = fileQuestionId(check, position);
+      questions.push({ id, type: "boolean", instructions: FILE_QUESTIONS[check](chunk.length - 1) });
+      plan[check]!.asked[id] = file.path;
+    }
     for (const [index, candidate] of owned) {
       if ((candidate.hunk ?? 0) >= fitted.hunks.length) continue;
-      // A file with more candidates than one request may ask continues in the next request, which reads it again.
-      if (questions.length >= MAX_SYSTEM_ONE_QUESTIONS) {
-        flush();
-        add(fitted, bytes);
-      }
+      makeRoom(fitted, bytes);
       questions.push(focusedQuestion(candidate, index, chunk.length - 1));
       asked.add(index);
     }
   }
   flush();
   // A candidate no request could hold reads as one without evidence, which leaves focused for a human.
-  return { candidates: candidates.map((candidate, index) => (asked.has(index) || !candidate.evidence ? candidate : { ...candidate, evidence: "" })), requests };
+  return { candidates: candidates.map((candidate, index) => (asked.has(index) || !candidate.evidence ? candidate : { ...candidate, evidence: "" })), plan, requests };
 }
 
 export function failureText(id: string, sources: NonNullable<DeterministicResult["sources"]>): string {
