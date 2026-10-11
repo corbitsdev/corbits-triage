@@ -1,0 +1,87 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 106,
+ "title": "fix(github-tool): mirror adds and removes only the labels triage owns",
+ "body": "The mirror replaced a pull request's whole label set with the verdict's labels, so any label added by a person or by an action was wiped on the next triage run.\n\n- `mirror` takes an optional `owned` list, the labels triage may remove. It adds missing labels first, then removes only owned labels that are no longer wanted, one request each. Nothing it does not own is touched, and it makes no label requests when nothing changes. Label names are compared case-insensitively, as GitHub treats them. Without `owned` it removes nothing, so a verdict built before a deploy cannot break the step.\n- `TRIAGE_LABELS` in rule-packs is every label a preset can set; the workflow's mirror request and the hub close action pass it. The GitHub tool gains no dependency.\n\nVerified: `bun run check`; github-tool, triage-workflows and hub tests (187) including a swap that leaves a foreign label intact, a call without `owned` that removes nothing, and a no-op when labels already match.\n\nRefs CL-XXXX",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(github-tool): mirror adds and removes only the labels triage owns"
+ ],
+ "files": [
+  {
+   "filename": "apps/hub/src/github/github-app-credential-adapter.test.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 2,
+   "patch": "@@ -59,15 +59,15 @@ describe(\"GitHub App credential adapter\", () => {\n         return Response.json([{ number: 7, title: \"PR\", user: { login: \"octo\" }, head: { sha: \"abc\" } }]);\n       }\n       if (url.pathname.endsWith(\"/pulls/7\") && request.method === \"GET\") {\n-        return Response.json({ head: { sha: \"abc\" } });\n+        return Response.json({ head: { sha: \"abc\" }, labels: [] });\n       }\n       if (url.pathname.endsWith(\"/issues/7/comments\") && request.method === \"GET\") {\n         return Response.json([]);\n       }\n       if (url.pathname.endsWith(\"/issues/7/comments\") && request.method === \"POST\") {\n         return Response.json({ id: 99 });\n       }\n-      if (url.pathname.endsWith(\"/issues/7/labels\") && request.method === \"PUT\") {\n+      if (url.pathname.endsWith(\"/issues/7/labels\") && request.method === \"POST\") {\n         return Response.json([]);\n       }\n       throw new Error(`unexpected GitHub request ${request.method} ${request.url}`);\n@@ -110,6 +110,7 @@ describe(\"GitHub App credential adapter\", () => {\n         repo: \"octo/repo\",\n         number: 7,\n         labels: [\"triaged\"],\n+        owned: [],\n         comment: \"Done\",\n         close: false,\n       },"
+  },
+  {
+   "filename": "apps/hub/src/github/pr-actions.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 1,
+   "patch": "@@ -14,6 +14,7 @@ import {\n   upsertTriageComment,\n   type GithubFetch,\n } from \"@corbits/github-tool/github\";\n+import { TRIAGE_LABELS } from \"@corbits/rule-packs\";\n import { createGithubAppCredentialFetch } from \"./github-app-credential-adapter.js\";\n import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from \"./portal-credential.js\";\n \n@@ -75,7 +76,7 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {\n     case \"merge\":\n       return mergePr(gh, { repo, number });\n     case \"close\":\n-      return mirror(gh, { repo, number, labels: body.labels, comment: body.comment, close: true });\n+      return mirror(gh, { repo, number, labels: body.labels, owned: TRIAGE_LABELS, comment: body.comment, close: true });\n   }\n }\n "
+  },
+  {
+   "filename": "packages/github-tool/src/github.test.ts",
+   "status": "modified",
+   "additions": 27,
+   "deletions": 4,
+   "patch": "@@ -32,11 +32,11 @@ type FakeComment = { id: number; user: { login: string; type: string }; body: st\n const APP = { login: \"corbits-triage[bot]\", type: \"Bot\" };\n \n /** GitHub that keeps pull request 8's issue comments, so repeated runs see each other's writes. */\n-function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = []) {\n+function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [], labels: string[] = []) {\n   let nextId = 100;\n   const { gh, requests } = recorder(function respond(path, init) {\n     const body = typeof init?.body === \"string\" ? JSON.parse(init.body).body : undefined;\n-    if (path.endsWith(\"/pulls/8\") && !init?.method) return { head: { sha: \"abc123\" } };\n+    if (path.endsWith(\"/pulls/8\") && !init?.method) return { head: { sha: \"abc123\" }, labels: labels.map((name) => ({ name })) };\n     if (path.includes(\"/comments?per_page\")) return comments;\n     if (path.endsWith(\"/issues/8/comments\") && init?.method === \"POST\") {\n       const created = { id: nextId++, user: APP, body };\n@@ -56,7 +56,7 @@ function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [\n   return { gh, requests, comments };\n }\n \n-const MIRROR = { repo: \"acme/widgets\", number: 8, labels: [\"needs-decision\"], comment: \"Duplicate\" };\n+const MIRROR = { repo: \"acme/widgets\", number: 8, labels: [\"triage:needs-decision\"], owned: [\"triage:needs-decision\", \"triage:blocked\"], comment: \"Duplicate\" };\n \n describe(\"triage comment\", () => {\n   test(\"first run creates it, later runs edit the same one\", async () => {\n@@ -75,7 +75,7 @@ describe(\"triage comment\", () => {\n       { id: 42, user: APP, body: \"<!-- corbits-triage:acme/widgets#8@old -->\\nOld\" },\n     ]);\n     await mirror(gh, { ...MIRROR, close: false });\n-    expect(requests.some((request) => request.method === \"POST\")).toBe(false);\n+    expect(requests.some((request) => request.method === \"POST\" && request.path.endsWith(\"/comments\"))).toBe(false);\n     expect(comments).toEqual([{ id: 42, user: APP, body: \"<!-- corbits-triage -->\\nDuplicate\" }]);\n   });\n \n@@ -102,6 +102,29 @@ describe(\"github mirror\", () => {\n     expect(requests).toContainEqual({ path: \"/repos/acme/widgets/pulls/8\", method: \"PATCH\", body: { state: \"closed\" } });\n     expect(requests.some((request) => request.path.includes(\"/merge\"))).toBe(false);\n   });\n+\n+  test(\"swaps a stale triage label and leaves a foreign label alone\", async () => {\n+    const { gh, requests } = fakeGithub([], [], [\"bug\", \"triage:blocked\"]);\n+    await mirror(gh, { ...MIRROR, comment: \"\", close: false });\n+    expect(requests.filter((request) => request.path.includes(\"/labels\"))).toEqual([\n+      { path: \"/repos/acme/widgets/issues/8/labels\", method: \"POST\", body: { labels: [\"triage:needs-decision\"] } },\n+      { path: \"/repos/acme/widgets/issues/8/labels/triage%3Ablocked\", method: \"DELETE\", body: null },\n+    ]);\n+  });\n+\n+  test(\"without owned adds the missing label and removes nothing\", async () => {\n+    const { gh, requests } = fakeGithub([], [], [\"triage:blocked\"]);\n+    await mirror(gh, { ...MIRROR, owned: undefined, comment: \"\", close: false });\n+    expect(requests.filter((request) => request.path.includes(\"/labels\"))).toEqual([\n+      { path: \"/repos/acme/widgets/issues/8/labels\", method: \"POST\", body: { labels: [\"triage:needs-decision\"] } },\n+    ]);\n+  });\n+\n+  test(\"makes no label requests when the labels already match\", async () => {\n+    const { gh, requests } = fakeGithub([], [], [\"bug\", \"triage:needs-decision\"]);\n+    await mirror(gh, { ...MIRROR, comment: \"\", close: false });\n+    expect(requests.some((request) => request.path.includes(\"/labels\"))).toBe(false);\n+  });\n });\n \n describe(\"github write tool approval\", () => {"
+  },
+  {
+   "filename": "packages/github-tool/src/github.ts",
+   "status": "modified",
+   "additions": 16,
+   "deletions": 1,
+   "patch": "@@ -267,15 +267,30 @@ export interface MirrorInput {\n   repo: string;\n   number: number;\n   labels: string[];\n+  /** Labels the caller owns; the mirror removes only these. Optional so requests built before it existed remove nothing. */\n+  owned?: readonly string[];\n   comment: string;\n   close: boolean;\n }\n \n+function lowercase(name: string): string {\n+  return name.toLowerCase();\n+}\n+\n export async function mirror(gh: GithubFetch, i: MirrorInput) {\n   const { repo, number } = i;\n   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);\n   const posted = i.comment ? await upsertTriageComment(gh, { repo, number, body: i.comment }) : null;\n-  await json(gh, `/repos/${repo}/issues/${number}/labels`, send(\"PUT\", { labels: i.labels }));\n+  const current: string[] = pr.labels.map((label: { name: string }) => label.name);\n+  // GitHub label names are case-insensitive.\n+  const present = new Set(current.map(lowercase));\n+  const removable = new Set((i.owned ?? []).map(lowercase));\n+  for (const name of i.labels) removable.delete(lowercase(name));\n+  const missing = i.labels.filter((name) => !present.has(lowercase(name)));\n+  const stale = current.filter((name) => removable.has(lowercase(name)));\n+  // Adding first means a failure part-way leaves an extra triage label rather than none.\n+  if (missing.length) await json(gh, `/repos/${repo}/issues/${number}/labels`, send(\"POST\", { labels: missing }));\n+  for (const name of stale) await json(gh, `/repos/${repo}/issues/${number}/labels/${encodeURIComponent(name)}`, { method: \"DELETE\" });\n   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send(\"PATCH\", { state: \"closed\" }));\n   return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha };\n }"
+  },
+  {
+   "filename": "packages/github-tool/src/sidecar-bundle.ts",
+   "status": "modified",
+   "additions": 5,
+   "deletions": 3,
+   "patch": "@@ -91,21 +91,22 @@ const MIRROR_INPUT = obj({\n   repo,\n   number: { type: \"integer\" },\n   labels: { type: \"array\", items: str },\n+  owned: { type: \"array\", items: str },\n   comment: str,\n   close: { type: \"boolean\" },\n-});\n+}, [\"repo\", \"number\", \"labels\", \"comment\", \"close\"]);\n \n const WRITE_DEFINITIONS: ToolDefinition[] = [\n   {\n     name: \"github_mirror\",\n     description:\n-      \"Post (or update) the triage comment and set labels on a pull request. Closes it only when close is true. Never merges.\",\n+      \"Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. Closes it only when close is true. Never merges.\",\n     inputSchema: MIRROR_INPUT,\n   },\n   {\n     name: \"github_mirror_auto\",\n     description:\n-      \"Post (or update) the triage comment and set labels on a pull request without waiting for a human approval. Closes it only when close is true. Never merges.\",\n+      \"Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. Closes it only when close is true. Never merges.\",\n     inputSchema: MIRROR_INPUT,\n   },\n   {\n@@ -182,6 +183,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown>\n         repo: a.repo,\n         number: a.number,\n         labels: a.labels,\n+        owned: a.owned,\n         comment: a.comment,\n         close: a.close === true,\n       });"
+  },
+  {
+   "filename": "packages/rule-packs/src/presets.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 0,
+   "patch": "@@ -18,6 +18,9 @@ export const PRESETS: Record<TriageState, Preset> = {\n   \"stale-unknown\": { labels: [\"triage:stale-unknown\"], owner: \"system\" },\n };\n \n+/** Every label a verdict state can set; the mirror removes only these. */\n+export const TRIAGE_LABELS: readonly string[] = Object.values(PRESETS).flatMap((preset) => preset.labels);\n+\n export interface Rendered {\n   state: TriageState;\n   priority: Priority;"
+  },
+  {
+   "filename": "packages/triage-workflows/src/directors.test.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 2,
+   "patch": "@@ -2,6 +2,7 @@ import { describe, expect, test } from \"bun:test\";\n import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from \"@intx/types/runtime\";\n import { triageDirectorFactory } from \"./directors.js\";\n import { emptyPack, recommendedPack } from \"@corbits/triage-contracts\";\n+import { TRIAGE_LABELS } from \"@corbits/rule-packs\";\n import { NEEDS_SETUP_REASON } from \"./logic/checks.js\";\n import type { RenderOutput } from \"./logic/render.js\";\n \n@@ -214,7 +215,7 @@ describe(\"judge on a blocked pull request\", () => {\n     expect(asked).toEqual([\"focused\", \"docs\", \"tests\"]);\n     expect(verdict).toMatchObject({ state: \"awaiting-review\", degraded: null, mirror: true, feedback: \"\", actor: \"maintainer\", nextAction: \"Review once marked ready\" });\n     expect(verdict.checks.find((c) => c.check === \"draft\")).toEqual({ check: \"draft\", kind: \"machine\", result: \"fail\", reason: \"pull request is a draft\", evidence: [] });\n-    expect((verdict as RenderOutput & { request?: unknown }).request).toEqual({ repo: \"acme/widgets\", number: 8, labels: verdict.labels, comment: \"\", close: false });\n+    expect((verdict as RenderOutput & { request?: unknown }).request).toEqual({ repo: \"acme/widgets\", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: \"\", close: false });\n   });\n \n   test(\"stale-unknown facts skip the model\", async () => {\n@@ -226,7 +227,7 @@ describe(\"judge on a blocked pull request\", () => {\n });\n \n describe(\"mirror director cleanup mode\", () => {\n-  const request = { repo: \"acme/widgets\", number: 8, labels: [\"ready-monitoring\"], comment: \"Looks good\", close: false };\n+  const request = { repo: \"acme/widgets\", number: 8, labels: [\"ready-monitoring\"], owned: TRIAGE_LABELS, comment: \"Looks good\", close: false };\n   const verdict = {\n     repo: \"acme/widgets\",\n     number: 8,"
+  },
+  {
+   "filename": "packages/triage-workflows/src/directors.ts",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 1,
+   "patch": "@@ -308,7 +308,7 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {\n \n   function mirrorCall(v: Verdict): ToolCall {\n     const r = v.request;\n-    return call(\"github_mirror_auto\", { repo: r.repo, number: r.number, labels: r.labels, comment: r.comment, close: false }, `github_mirror_auto:${r.repo}#${r.number}`);\n+    return call(\"github_mirror_auto\", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, close: false }, `github_mirror_auto:${r.repo}#${r.number}`);\n   }\n \n   return {"
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/render.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 1,
+   "patch": "@@ -1,4 +1,4 @@\n-import { render, type Rendered, type TriageState } from \"@corbits/rule-packs\";\n+import { render, TRIAGE_LABELS, type Rendered, type TriageState } from \"@corbits/rule-packs\";\n import type { CleanupMode } from \"@corbits/triage-contracts\";\n import type { CheckResult, DeterministicResult } from \"./checks.js\";\n import { asText } from \"./extract.js\";\n@@ -181,6 +181,7 @@ export interface MirrorRequest {\n   repo: string;\n   number: number;\n   labels: string[];\n+  owned: readonly string[];\n   comment: string;\n   close: boolean;\n }\n@@ -192,6 +193,7 @@ export function toMirrorRequest(v: RenderOutput & { repo: string; number: number\n     repo: v.repo,\n     number: v.number,\n     labels: v.labels,\n+    owned: TRIAGE_LABELS,\n     comment: v.feedback,\n     close: v.close,\n   };"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "ARCHITECTURE.md": "333969c8ae5b643e",
+  "BUILD_PLAN.md": "65a667f3bbd10128",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "IMPLEMENTATION.md": "0e6fca0bdde3f8c4",
+  "README.md": "e5e18fade19f3d3f",
+  "docs/DEPLOY.md": "f28451d963dd011b",
+  "docs/DEV.md": "11d689902ba74717",
+  "docs/SELF_HOST.md": "596c16f9919dbfac"
+ }
+}

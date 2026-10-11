@@ -101,7 +101,7 @@ const NO_EFFECTS: EffectContext = {
 };
 
 /** Every file of the pull request, with patches until the evaluation budget is spent, as the facts director reads them. */
-async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
+export async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
   const files: PrFileFacts[] = [];
   let patchChars = 0;
   let offset: number | undefined = 0;
