@@ -9,7 +9,7 @@ import { createRunTriggerDeliverer, type RunTriggerMaterialize } from "@corbits/
 import { readyMaterializer, type LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
-import { createTriageRuns } from "./triage-runs.js";
+import { createTriageRuns, verdictFor } from "./triage-runs.js";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
 import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
 import { evaluate, rules } from "../../../../packages/triage-workflows/src/actions/index.js";
@@ -56,9 +56,13 @@ function current(number: number): Record<string, unknown> {
   return { degraded: null, reason: "", headSha: `sha${number}`, checks: [] };
 }
 
+function replied(stepId: string, reply: Record<string, unknown>): WorkflowRunEvent {
+  const output = { ref: `inline:${JSON.stringify({ reply: JSON.stringify(reply), turn: 1 })}` };
+  return { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, at: "2026-10-07T01:30:00.000Z", stepId, output } };
+}
+
 function rendered(verdict: Record<string, unknown>): WorkflowRunEvent {
-  const output = { ref: `inline:${JSON.stringify({ reply: JSON.stringify(verdict), turn: 1 })}` };
-  return { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "render", output } };
+  return replied("render", verdict);
 }
 
 const completed: WorkflowRunEvent = { seq: 2, type: "RunCompleted", body: { type: "RunCompleted", seq: 2 } };
@@ -161,6 +165,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
   const now = options.now ?? (() => NOW);
   const deployments = (options.deployments ?? [LIVE]).map((live) => ({ ...live }));
   const released: string[] = [];
+  const dos: Array<{ effectId: string; source: string; status: string; error?: string; result?: unknown }> = [];
   const reconcile = createTriageReconciler({
     tenants: async function tenants() {
       return [tenant()];
@@ -205,6 +210,11 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     },
     observeRuns: createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 }),
     verdicts: { record: async () => {} },
+    dos: {
+      async record(claim, outcome) {
+        dos.push({ effectId: claim.effectId, source: claim.source, ...outcome });
+      },
+    },
     store: {
       async load(_tenantId, repo) {
         return { rows: saved.get(repo) ?? [], version: { artifactId: `art_${repo}`, version: 1 } };
@@ -237,7 +247,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     const stopped = deployments.filter((live) => live.cancelling);
     for (const live of stopped) deployments.splice(deployments.indexOf(live), 1);
   }
-  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records };
+  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, dos };
 }
 
 function settled(from: number, count: number): Record<string, WorkflowRunEvent[]> {
@@ -262,6 +272,31 @@ describe("triage reconciler", () => {
     expect(reads.every((read) => read.repo === repoKey(LIVE.runId))).toBe(true);
     expect(delivered).toHaveLength(1);
     expect(delivered[0]).toMatchObject({ address: LIVE.address, payload: { kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] } });
+  });
+
+  test("the Dos a run executed are recorded once as the workflow's", async () => {
+    const comment = { id: "hello", branch: "always", index: 0, kind: "comment", automatic: true, reason: "", effectId: "e-comment", target: { body: "hi" } };
+    const label = { ...comment, index: 1, kind: "labels", effectId: "e-label", target: { labels: ["x"] } };
+    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [comment, label] };
+    const executed = replied("execute", { dos: [{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }] });
+    const log = [started(1), rendered(verdict), executed, completed];
+    const { reconcile, dos } = harness({ [repoKey(LIVE.runId)]: { run_1: log } }, [head(1)]);
+    await reconcile();
+    await reconcile();
+    expect(dos).toEqual([
+      { effectId: "e-comment", source: "workflow", status: "done", result: null },
+      { effectId: "e-label", source: "workflow", status: "failed", error: "github POST -> 500" },
+    ]);
+    expect(verdictFor(log, REPO, 1)?.["actions"]).toMatchObject([{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }]);
+  });
+
+  test("the Dos of a run that failed after executing them are recorded", async () => {
+    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [{ id: "hello", branch: "always", index: 0, kind: "comment", effectId: "e-comment" }] };
+    const failed: WorkflowRunEvent = { seq: 3, type: "RunFailed", body: { type: "RunFailed", seq: 3 } };
+    const log = [started(1), rendered(verdict), replied("execute", { dos: [{ effectId: "e-comment", status: "done" }] }), failed];
+    const { reconcile, dos } = harness({ [repoKey(LIVE.runId)]: { run_1: log } }, [head(1)]);
+    await reconcile();
+    expect(dos).toEqual([{ effectId: "e-comment", source: "workflow", status: "done", result: null }]);
   });
 
   test("draft heads are queued only while the repository triages drafts", async () => {
