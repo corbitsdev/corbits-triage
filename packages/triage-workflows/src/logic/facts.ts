@@ -1,3 +1,4 @@
+import { reviewedOnHead, type Review } from "@corbits/github-tool";
 import { authorAssociation, authorKindOf, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
@@ -28,11 +29,6 @@ export interface CheckRun {
   status?: string;
   conclusion?: string | null;
 }
-export interface Review {
-  reviewer?: string;
-  state?: string;
-  commitId?: string;
-}
 
 const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required"]);
 
@@ -54,13 +50,6 @@ function latestDecisive(reviews: Review[]): Map<string, string> {
     if (r.reviewer && r.state && r.state !== "COMMENTED" && r.state !== "PENDING") latest.set(r.reviewer, r.state);
   }
   return latest;
-}
-
-/** Reviewers whose latest review still stands on the current head, when the review names its commit. */
-export function reviewedOnHead(reviews: Review[], headSha: string): string[] {
-  const latest = new Map<string, Review>();
-  for (const r of reviews) if (r.reviewer && r.state !== "PENDING") latest.set(r.reviewer, r);
-  return [...latest].flatMap(([login, r]) => (r.state !== "DISMISSED" && (r.commitId === undefined || r.commitId === headSha) ? [login] : []));
 }
 
 function reviewersWith(latest: Map<string, string>, state: string): string[] {

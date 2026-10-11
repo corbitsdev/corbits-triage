@@ -3,13 +3,14 @@
 // verdict and written to GitHub at most once under its effect id.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
+import { DoNotRunnableError, executeDo, type ResolvedTarget } from "@corbits/github-tool/do";
 import { readPr } from "@corbits/github-tool/github";
 import { ACTION_KINDS, repoPolicy } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
-import { doEffectId, type ResolvedTarget, type SuggestedDo } from "../../../../packages/triage-workflows/src/logic/actions.js";
-import { DoNotRunnableError, executeDo, unrunnable } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
+import { doEffectId, type SuggestedDo } from "../../../../packages/triage-workflows/src/logic/actions.js";
+import { unrunnable } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 import type { DoRun, DoRunStore } from "./do-run-store.js";
