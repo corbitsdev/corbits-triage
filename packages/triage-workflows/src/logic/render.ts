@@ -4,7 +4,7 @@ import type { SuggestedAction } from "./actions.js";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import type { ChangeCandidate } from "./candidates.js";
 import { asText } from "./extract.js";
-import { actionText, failureText, FOCUSED_CHOICES, focusedCandidateId, passText, qualityQuestionIds, type FocusedChoice } from "./quality.js";
+import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, focusedCandidateId, passText, type FilePlan, type FocusedChoice, type QualityPlan } from "./quality.js";
 
 type NoulAnswer = { type: "noul"; noul: number };
 type ChoiceAnswer = { type: "choice"; choice: FocusedChoice; probabilities: Record<FocusedChoice, number>; confidence: number };
@@ -100,6 +100,8 @@ export interface RenderInput {
   det: DeterministicResult;
   answers?: ParsedAnswers | Record<string, number> | null;
   candidates?: ChangeCandidate[];
+  /** How docs and tests are decided, from the same evaluation as `candidates`. */
+  plan?: QualityPlan;
   judgeError?: string;
   judgeLimitExceeded?: true;
   judgeSkipped?: true;
@@ -120,7 +122,7 @@ export const NOT_ASKED_REASON = "not asked";
 
 const UNAVAILABLE_REASON = "decision model unavailable";
 
-/** The decision model answered, but the evidence it had did not settle every candidate. */
+/** The decision model answered, but not decisively, or could not read every file it needed. */
 const UNDECIDED_REASON = "not enough evidence to decide";
 
 /** Whether this pull request should merge now; shown in the portal, never posted to GitHub. */
@@ -162,6 +164,12 @@ interface Step {
 const JUDGED_STATES = new Set<TriageState>(["ready-monitoring", "awaiting-review"]);
 const ACTOR_ORDER: Actor[] = ["author", "maintainer", "system"];
 const MAX_ACTIONS = 2;
+// Jev's yes/no answers are calibrated probabilities: decide only well clear of a coin flip, otherwise leave it unsure.
+const YES = 0.7;
+const NO = 0.3;
+// A focused candidate counts as unrelated, or as part of the change, only when that side holds this much probability.
+const FOCUSED_DECIDES = 0.6;
+const MAX_FILE_EVIDENCE = 3;
 
 type ModelEvaluation = {
   checks: CheckResult[];
@@ -180,69 +188,108 @@ function answerSet(answers: RenderInput["answers"]): ParsedAnswers {
   return { decisions, malformed: false };
 }
 
-function evaluateModel({ det, answers, candidates = [], judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
+type Decided = { result: "pass" | "fail" } | { result: "unconfirmed"; reason: string };
+
+/** A yes/no answer on the unsure band: yes passes, no fails, anything between is not decided. */
+function band(noul: number, yesPasses: boolean): Decided {
+  if (noul >= YES) return { result: yesPasses ? "pass" : "fail" };
+  if (noul <= NO) return { result: yesPasses ? "fail" : "pass" };
+  return { result: "unconfirmed", reason: UNDECIDED_REASON };
+}
+
+function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
   if (!det.sources) return { checks: [], scores: [], unanswered: false };
+  const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
-  const expectedIds = qualityQuestionIds(det.sources, candidates);
+  const expectedIds = askedQuestionIds(sources, candidates, plan);
   const unavailable = !det.needsJudgment ? NOT_ASKED_REASON : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
   const invalid = parsed.malformed || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
   const checks: CheckResult[] = [];
   const scores: number[] = [];
   let anyUnanswered = false;
 
-  for (const source of det.sources.quality) {
-    if (source.id === "focused") {
-      const unrelated: string[] = [];
-      let candidateUnresolved = candidates.length === 0;
-      let unanswered = judgeLimitExceeded === true;
-      for (const [index, candidate] of candidates.entries()) {
-        if (!candidate.evidence) {
-          candidateUnresolved = true;
-          continue;
-        }
-        const answer = invalid ? undefined : parsed.decisions[focusedCandidateId(index)];
-        if (answer?.type !== "choice") {
-          candidateUnresolved = true;
-          unanswered = true;
-          continue;
-        }
-        scores.push(answer.confidence);
-        if (answer.confidence < 0.5 || answer.choice === "ambiguous") {
-          candidateUnresolved = true;
-        } else if (answer.choice === "unrelated") {
-          const evidence = `${candidate.label} — ${candidate.path}`;
-          if (!unrelated.includes(evidence)) unrelated.push(evidence);
-        }
-      }
-      anyUnanswered ||= unanswered;
-      checks.push(unrelated.length > 0
-        ? { check: "focused", kind: "model", result: "fail", reason: failureText("focused", det.sources), evidence: unrelated }
-        : candidateUnresolved
-          ? { check: "focused", kind: "model", result: "unconfirmed", reason: !det.needsJudgment ? NOT_ASKED_REASON : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON, evidence: [] }
-          : { check: "focused", kind: "model", result: "pass", reason: passText("focused", det.sources), evidence: [] });
-      continue;
-    }
-    const answer = invalid ? undefined : parsed.decisions[source.id];
-    if (answer?.type !== "noul") {
-      anyUnanswered = true;
-      checks.push({ check: source.id, kind: "model", result: "unconfirmed", reason: unavailable, evidence: [] });
-      continue;
-    }
-    scores.push(Math.max(answer.noul, 1 - answer.noul));
-    const failed = answer.noul < 0.5;
-    checks.push({ check: source.id, kind: "model", result: failed ? "fail" : "pass", reason: failed ? failureText(source.id, det.sources) : passText(source.id, det.sources), evidence: [] });
-  }
-  for (const { id } of det.sources.custom) {
+  function noulOf(id: string): number | undefined {
     const answer = invalid ? undefined : parsed.decisions[id];
-    if (answer?.type !== "noul") {
-      anyUnanswered = true;
-      checks.push({ check: id, kind: "model", result: "unconfirmed", reason: unavailable, evidence: [] });
+    return answer?.type === "noul" ? answer.noul : undefined;
+  }
+
+  function push(check: string, decided: Decided, evidence: string[] = []) {
+    checks.push(decided.result === "unconfirmed"
+      ? { check, kind: "model", result: "unconfirmed", reason: decided.reason, evidence: [] }
+      : { check, kind: "model", result: decided.result, reason: decided.result === "fail" ? failureText(check, sources) : passText(check, sources), evidence });
+  }
+
+  /** Passes on a changed doc or test file; otherwise fails naming the files that need one, which any answered file can show. */
+  function fileCheck(check: "docs" | "tests", filePlan: FilePlan | undefined) {
+    if (!filePlan) return push(check, { result: "unconfirmed", reason: unavailable });
+    if (filePlan.changed.length > 0) return push(check, { result: "pass" }, filePlan.changed.slice(0, MAX_FILE_EVIDENCE));
+    if (!det.needsJudgment || judgeLimitExceeded) return push(check, { result: "unconfirmed", reason: unavailable });
+    const answered: Array<[string, number]> = [];
+    for (const [id, path] of Object.entries(filePlan.asked)) {
+      const noul = noulOf(id);
+      if (noul !== undefined) answered.push([path, noul]);
+    }
+    const unanswered = answered.length < Object.keys(filePlan.asked).length;
+    anyUnanswered ||= unanswered;
+    const needing = answered.filter(([, noul]) => noul >= YES).sort((a, b) => b[1] - a[1]);
+    if (needing.length > 0) {
+      scores.push(needing[0]![1]);
+      return push(check, { result: "fail" }, needing.slice(0, MAX_FILE_EVIDENCE).map(([path]) => path));
+    }
+    if (unanswered) return push(check, { result: "unconfirmed", reason: unavailable });
+    // A file the judge could not read may need one, so only a fully read pull request passes.
+    if (filePlan.unread.length > 0) return push(check, { result: "unconfirmed", reason: UNDECIDED_REASON });
+    if (answered.length === 0) return push(check, { result: "pass" });
+    const top = Math.max(...answered.map(([, noul]) => noul));
+    const decided = band(top, false);
+    if (decided.result === "pass") scores.push(1 - top);
+    return push(check, decided);
+  }
+
+  for (const source of sources.quality) {
+    if (source.id !== "focused") {
+      fileCheck(source.id, plan[source.id]);
       continue;
     }
-    scores.push(Math.max(answer.noul, 1 - answer.noul));
-    const failed = answer.noul < 0.5;
-    checks.push({ check: id, kind: "model", result: failed ? "fail" : "pass", reason: failed ? failureText(id, det.sources) : passText(id, det.sources), evidence: [] });
+    const unrelated: string[] = [];
+    let candidateUnresolved = candidates.length === 0;
+    let unanswered = judgeLimitExceeded === true;
+    for (const [index, candidate] of candidates.entries()) {
+      if (!candidate.evidence) {
+        candidateUnresolved = true;
+        continue;
+      }
+      const answer = invalid ? undefined : parsed.decisions[focusedCandidateId(index)];
+      if (answer?.type !== "choice") {
+        candidateUnresolved = true;
+        unanswered = true;
+        continue;
+      }
+      const { probabilities } = answer;
+      const related = probabilities.primary_or_supporting + probabilities.movement_or_superseded;
+      if (probabilities.unrelated >= FOCUSED_DECIDES || related >= FOCUSED_DECIDES) scores.push(Math.max(probabilities.unrelated, related));
+      if (probabilities.unrelated >= FOCUSED_DECIDES) {
+        const evidence = `${candidate.label} — ${candidate.path}`;
+        if (!unrelated.includes(evidence)) unrelated.push(evidence);
+      } else if (related < FOCUSED_DECIDES) {
+        candidateUnresolved = true;
+      }
+    }
+    anyUnanswered ||= unanswered;
+    const reason = !det.needsJudgment ? NOT_ASKED_REASON : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON;
+    push("focused", unrelated.length > 0 ? { result: "fail" } : candidateUnresolved ? { result: "unconfirmed", reason } : { result: "pass" }, unrelated);
+  }
+  for (const { id } of sources.custom) {
+    const noul = noulOf(id);
+    if (noul === undefined) {
+      anyUnanswered = true;
+      push(id, { result: "unconfirmed", reason: unavailable });
+      continue;
+    }
+    const decided = band(noul, true);
+    if (decided.result !== "unconfirmed") scores.push(Math.max(noul, 1 - noul));
+    push(id, decided);
   }
   return { checks, scores, unanswered: anyUnanswered };
 }
@@ -343,6 +390,13 @@ function bounded(lines: string[]): string {
   return `- and ${lines.filter((line) => line.startsWith("- ")).length} more`;
 }
 
+/** Docs and tests name the files that need them; other checks name what they found. */
+function failureEvidence(c: CheckResult): string {
+  if (!c.evidence.length) return "";
+  const listed = c.evidence.map(inlineCode).join(", ");
+  return c.kind === "model" && (c.check === "docs" || c.check === "tests") ? ` for ${listed}` : `: ${listed}`;
+}
+
 /** Public: only what the author must fix and what is not yet confirmed; never a score or model reasoning. */
 function authorComment(author: string, all: CheckResult[], sources: Sources): string {
   const checks = judged(all);
@@ -352,7 +406,7 @@ function authorComment(author: string, all: CheckResult[], sources: Sources): st
   if (mine.length) {
     lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
       ? c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}`)
-      : [`- ${c.reason}${c.evidence.length ? `: ${c.evidence.map(inlineCode).join(", ")}` : ""}`]));
+      : [`- ${c.reason}${failureEvidence(c)}`]));
   }
   if (unconfirmed.length) {
     if (lines.length) lines.push("");
