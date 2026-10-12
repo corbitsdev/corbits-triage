@@ -222,7 +222,6 @@ export function packMergeThreshold(pack: CheckPack | undefined): number {
 
 const Text = type(/\S/);
 const Texts = Text.array().atLeastLength(1);
-const Globs = Text.atMostLength(GLOB_MAX).array().atLeastLength(1).atMostLength(GLOBS_MAX);
 const RepoName = type(/^\s*(?!.*\.\.)(?!\.\/)[^\s\\/]+\/(?!\.\s*$)[^\s\\/]+\s*$/);
 
 const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
@@ -261,22 +260,22 @@ const CatalogCheckSchema = type({
   "requireLabel?": "boolean",
   "label?": "string",
   "maxBehindBy?": "number",
-  "forbiddenGlobs?": type("string").atMostLength(GLOB_MAX).array().atMostLength(GLOBS_MAX),
+  "forbiddenGlobs?": "string[]",
 });
 
 const CUSTOM_BASE = { id: CUSTOM_ID, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
 const RULE = { ...CUSTOM_BASE, kind: "'rule'" } as const;
 const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
-const CustomCheckSchema = type({ ...RULE, rule: "'paths-unchanged'", globs: Globs })
-  .or({ ...RULE, rule: "'paths-together'", changed: Globs, requires: Globs })
+const CustomCheckSchema = type({ ...RULE, rule: "'paths-unchanged'", globs: Texts })
+  .or({ ...RULE, rule: "'paths-together'", changed: Texts, requires: Texts })
   .or({ ...RULE, rule: "'title-pattern' | 'branch-pattern' | 'diff-excludes'", pattern: Text.atMostLength(PATTERN_MAX) })
   .or({ ...RULE, rule: "'label-required'", label: Text })
   .or({ ...RULE, rule: "'min-approvals'", count: "number.integer >= 1" })
   .or({ ...RULE, rule: "'author'", who: "'users'", users: Texts })
   .or({ ...RULE, rule: "'author'", who: "'role'", role: Text })
   .or({ ...RULE, rule: "'author'", who: "'kinds'", kinds: type.enumerated(...AUTHOR_KINDS).array().atLeastLength(1) })
-  .or({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Globs })
+  .or({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Texts })
   .or({ ...MODEL, shape: "'score'", subject: Text, min: `0 <= number.integer <= ${SCORE_MAX}` })
   .or({ ...MODEL, shape: "'choose'", options: Text.array().atLeastLength(2), failOn: Texts });
 

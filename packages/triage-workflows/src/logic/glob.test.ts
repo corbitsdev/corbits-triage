@@ -19,3 +19,11 @@ test("a glob that backtracks exponentially still matches in linear time", () => 
   expect(globMatch("a".repeat(40), `${"**a".repeat(12)}**b`)).toBe(false);
   expect(performance.now() - started).toBeLessThan(100);
 });
+
+test("a full pack of globs over a large pull request matches quickly", () => {
+  const paths = Array.from({ length: 3000 }, (_, i) => `src/module${i}/file${i}.ts`);
+  const globs = Array.from({ length: 50 }, (_, i) => `vendor${i}/**/*.ts`);
+  const started = performance.now();
+  expect(paths.some((path) => globs.some((glob) => globMatch(path, glob)))).toBe(false);
+  expect(performance.now() - started).toBeLessThan(200);
+});
