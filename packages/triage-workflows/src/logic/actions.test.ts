@@ -115,6 +115,12 @@ describe("evaluateActions", () => {
     ]);
   });
 
+  test("an effect id is stable across hash implementations", () => {
+    // Effect ids are stored idempotency keys; this value was produced with node:crypto.
+    const ref = { repo: "o/r", number: 8, headSha: "abc123", actionId: "tag", branch: "yes", index: 0, kind: "comment", target: { body: "x\ud800y é🚀" } } as const;
+    expect(doEffectId(ref)).toBe("302edf20edd3234b199762b3151e0c1e20b67aecea23e6b8264abe7ebc35f791");
+  });
+
   test("a step keeps its index when steps before it are satisfied or skipped", () => {
     const behind = run([always([
       { kind: "labels", automatic: false, target: { from: "list", labels: ["api"] } },

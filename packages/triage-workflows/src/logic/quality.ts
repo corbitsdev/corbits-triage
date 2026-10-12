@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts, PrFileFacts } from "./checks.js";
 import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
@@ -286,7 +287,7 @@ export const JUDGE_SYSTEM_PROMPT = "The state is JSON: the deterministic PR fact
  * between runs of the same workflow version on the same offering.
  */
 export function judgeKey({ state, questions }: JudgeRequest): string {
-  return createHash("sha256").update(JSON.stringify({ systemPrompt: JUDGE_SYSTEM_PROMPT, state, questions })).digest("hex");
+  return bytesToHex(sha256(utf8ToBytes(JSON.stringify({ systemPrompt: JUDGE_SYSTEM_PROMPT, state, questions }))));
 }
 
 /** How focused is asked: one choice per request-sized slice of the diff. */
