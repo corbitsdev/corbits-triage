@@ -1,6 +1,6 @@
 import { toast } from "sonner";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
-import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type Query, type QueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
@@ -134,9 +134,16 @@ export function isFinishedRunLogQuery(query: Query): boolean {
   return query.queryKey[0] === RUN_LOG_QUERY_KEY && isRunLog(query.state.data) && isTerminalRunEvents(query.state.data.events);
 }
 
-/** A refresh rereads everything except finished run logs, which never change. */
+/** Marks a query whose data never changes once read, so a refresh keeps it. */
+export const UNCHANGING_QUERY_META = { unchanging: true };
+
+/** A refresh rereads everything except finished run logs and queries marked unchanging. */
 function canChange(query: Query): boolean {
-  return !isFinishedRunLogQuery(query);
+  return !isFinishedRunLogQuery(query) && query.meta?.unchanging !== true;
+}
+
+export async function invalidateChangeable(queryClient: QueryClient, queryKeys: ReadonlyArray<readonly unknown[]>): Promise<void> {
+  await Promise.all(queryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
 }
 
 /** A 401 means the hub ended the session, so the local session is cleared too. */
@@ -198,10 +205,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [queryClient, signOutWhenRejected, userId]);
 
   const refresh = useCallback(function refresh() {
-    for (const queryKey of REFRESH_QUERY_KEYS) void queryClient.invalidateQueries({ queryKey, predicate: canChange });
+    void invalidateChangeable(queryClient, REFRESH_QUERY_KEYS);
   }, [queryClient]);
   const refreshNow = useCallback(async function refreshNow() {
-    await Promise.all(REFRESH_QUERY_KEYS.map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
+    await invalidateChangeable(queryClient, REFRESH_QUERY_KEYS);
     return snapshotOf(await queryClient.fetchQuery({
       queryKey: PORTAL_QUERY_KEY,
       queryFn: loadSnapshot,
@@ -341,7 +348,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         return requestPullRequestTriage(transport, current.workspace.tenantId, repo, number);
       }
       await untilDeploymentReady(request, waitForWorkflow);
-      await Promise.all([[RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY], [RUNS_QUERY_KEY]].map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
+      await invalidateChangeable(queryClient, [[RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY], [RUNS_QUERY_KEY]]);
     },
     [queryClient, requireSnapshot, waitForWorkflow],
   );

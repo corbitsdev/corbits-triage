@@ -1,16 +1,17 @@
 import { afterEach, expect, jest, test } from "bun:test";
 import { environmentManager, isServer, QueriesObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
-import type { Transport } from "@intx/hub-client";
-import { RUNS_QUERY_KEY } from "./portal.tsx";
+import { ApiError, type Transport } from "@intx/hub-client";
+import { invalidateChangeable, RUN_IDS_QUERY_KEY, RUNS_QUERY_KEY } from "./portal.tsx";
 import { runLogQuery, runRefsQuery } from "./run-logs.ts";
 
 const TENANT = "t1";
+const WORKSPACE = { tenantId: TENANT, principalId: "p1", userId: "u1" };
 const BASE = `/api/tenants/${TENANT}/workflows`;
 const started = { seq: 0, type: "RunStarted", body: { at: new Date().toISOString() } };
 const ended = [started, { seq: 1, type: "RunCompleted", body: {} }];
 const deployment = (id: string, status: string) => ({ id, tenantId: TENANT, definitionAssetId: "asset", status, createdAt: "2026-10-01T00:00:00.000Z" });
 
-const DEPLOYMENTS = [deployment("live", "running"), deployment("old", "released")];
+const DEPLOYMENTS = [deployment("live", "deployed"), deployment("old", "released")];
 const RUNS: Record<string, string[]> = { live: ["live", "done-1", "done-2", "done-3", "busy", "stuck", "settled", "unstarted"], old: ["old", "done-old"] };
 const EVENTS: Record<string, unknown[]> = {
   "live": [started, { seq: 1, type: "ChildSpawned", body: {} }],
@@ -26,11 +27,12 @@ const EVENTS: Record<string, unknown[]> = {
 };
 const RUN_STATUSES = [{ id: "settled", definitionId: "def", definitionName: "pr-triage", status: "failed", createdAt: "2026-10-01T00:00:00.000Z" }];
 
-function countingTransport(calls: string[]): Transport {
+function countingTransport(calls: string[], denied = new Set<string>()): Transport {
   return {
     async fetch<T>(_method: string, path: string): Promise<T> {
       calls.push(path);
       const rel = path.slice(BASE.length + 1).split("/");
+      if (denied.has(rel[0] ?? "")) throw new ApiError(403, "forbidden", "forbidden");
       if (rel[0] === "deployments") return DEPLOYMENTS as T;
       if (rel[1] === "runs" && rel.length === 2) return { runIds: RUNS[rel[0] ?? ""] } as T;
       return { runId: rel[2], events: EVENTS[rel[2] ?? ""] } as T;
@@ -58,7 +60,7 @@ test("one tab reads only what can still change over two minutes", async () => {
   const transport = countingTransport(calls);
   const queryClient = new QueryClient();
   queryClient.setQueryData([RUNS_QUERY_KEY, TENANT], RUN_STATUSES);
-  const refs = new QueryObserver(queryClient, runRefsQuery(queryClient, transport, TENANT));
+  const refs = new QueryObserver(queryClient, runRefsQuery(queryClient, transport, WORKSPACE));
   const logs = new QueriesObserver(queryClient, []);
   refs.subscribe((result) => logs.setQueries((result.data ?? []).map((ref) => runLogQuery(queryClient, transport, TENANT, ref))));
   logs.subscribe(() => {});
@@ -80,4 +82,29 @@ test("one tab reads only what can still change over two minutes", async () => {
   expect(count("/runs/settled/events")).toBe(13);
   expect(count("/runs/unstarted/events")).toBe(13);
   expect(calls.length).toBe(187);
+});
+
+test("a refresh rereads live deployments' run lists and keeps ended ones", async () => {
+  const calls: string[] = [];
+  const transport = countingTransport(calls);
+  const queryClient = new QueryClient();
+  await queryClient.fetchQuery(runRefsQuery(queryClient, transport, WORKSPACE));
+  await invalidateChangeable(queryClient, [[RUN_IDS_QUERY_KEY]]);
+  await queryClient.fetchQuery(runRefsQuery(queryClient, transport, WORKSPACE));
+  const count = (suffix: string) => calls.filter((path) => path.endsWith(suffix)).length;
+
+  expect(count("/live/runs")).toBe(2);
+  expect(count("/old/runs")).toBe(1);
+});
+
+test("an ended deployment read while denied is read again once granted", async () => {
+  const denied = new Set(["old"]);
+  const queryClient = new QueryClient();
+  const transport = countingTransport([], denied);
+  const runIds = async () => (await queryClient.fetchQuery(runRefsQuery(queryClient, transport, WORKSPACE))).map((ref) => ref.runId);
+
+  expect(await runIds()).not.toContain("done-old");
+  denied.clear();
+  await invalidateChangeable(queryClient, [[RUN_IDS_QUERY_KEY]]);
+  expect(await runIds()).toContain("done-old");
 });
