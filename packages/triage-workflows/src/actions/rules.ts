@@ -2,11 +2,11 @@ import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { CLEANUP_MODES, type CheckPack, type CleanupMode, type RepoRole } from "@corbits/triage-contracts";
 import { deriveState, type PrFacts } from "../logic/checks.js";
-import { degradedItem, type Item } from "../logic/item.js";
-import { prepareQualityEvaluation, type JudgeRequest } from "../logic/quality.js";
+import { degradedItem, type Item, type Judged } from "../logic/item.js";
+import { judgeKey, prepareQualityEvaluation, type JudgeRequest } from "../logic/quality.js";
 import { stepJson } from "../logic/step-json.js";
 
-export type RulesItem = { error: string } | { facts: PrFacts; pack: CheckPack; roles?: Record<string, RepoRole>; cleanupMode?: CleanupMode };
+export type RulesItem = { error: string } | { facts: PrFacts; pack: CheckPack; roles?: Record<string, RepoRole>; cleanupMode?: CleanupMode; judged?: Judged };
 
 interface RulesInput {
   items: RulesItem[];
@@ -27,17 +27,18 @@ export interface RulesOutput {
 
 const Input = type({
   items: type({ error: "string" })
-    .or({ facts: "object", pack: "object", "roles?": "object", "cleanupMode?": type.enumerated(...CLEANUP_MODES) })
+    .or({ facts: "object", pack: "object", "roles?": "object", "cleanupMode?": type.enumerated(...CLEANUP_MODES), "judged?": "Record<string, string>" })
     .array(),
   batch: "boolean",
 });
 
 function ruled(it: RulesItem): { item: Item; requests: JudgeRequest[] } {
   if ("error" in it) return { item: degradedItem(it.error), requests: [] };
-  const item = { facts: it.facts, det: deriveState(it.facts, undefined, it.pack, it.roles ?? {}), cleanupMode: it.cleanupMode, pack: it.pack, roles: it.roles };
+  const item = { facts: it.facts, det: deriveState(it.facts, undefined, it.pack, it.roles ?? {}), cleanupMode: it.cleanupMode, pack: it.pack, roles: it.roles, judged: it.judged };
   if (!item.det.needsJudgment) return { item, requests: [] };
   const { requests, judgeError } = prepareQualityEvaluation(item.facts, item.det.sources);
-  return judgeError === undefined ? { item, requests } : { item: { ...item, judgeError, judgeLimitExceeded: true }, requests: [] };
+  if (judgeError !== undefined) return { item: { ...item, judgeError, judgeLimitExceeded: true }, requests: [] };
+  return { item, requests: requests.filter((request) => it.judged?.[judgeKey(request)] === undefined) };
 }
 
 export async function rules(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<RulesOutput> {
