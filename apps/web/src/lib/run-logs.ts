@@ -1,11 +1,13 @@
 import { queryOptions, skipToken, useQueries, useQuery, useQueryClient, type Query, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { ApiError, isTerminalRunEvents, listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents, type Transport } from "@intx/hub-client";
-import { isEndedDeployment, isSettledRunStatus, type HubRun, type RunLog } from "./hub-api.ts";
+import { isEndedDeployment, isLiveRun, isSettledRunStatus, type HubRun, type RunLog } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { RUN_IDS_QUERY_KEY, RUN_LOG_QUERY_KEY, RUNS_QUERY_KEY, usePortal } from "./portal.tsx";
 
-const RUN_LIST_REFRESH_MS = 10_000;
-const LIVE_LOG_REFRESH_MS = 10_000;
+const RUN_LIST_REFRESH_MS = 3_000;
+/** Stock hub-client's run session rereads a live run's log at this cadence, so a verdict shows within seconds of landing. */
+const LIVE_LOG_REFRESH_MS = 2_000;
+const IDLE_LOG_REFRESH_MS = 10_000;
 
 type RunRef = { anchorRunId: string; runId: string };
 
@@ -70,13 +72,19 @@ function isEnded(log: RunLog | undefined): boolean {
   return log !== undefined && isTerminalRunEvents(log.events);
 }
 
-export function runLogQuery(transport: Transport, tenantId: string, ref: RunRef) {
+export function runLogQuery(queryClient: QueryClient, transport: Transport, tenantId: string, ref: RunRef) {
+  function refreshMs(log: RunLog | undefined): number | false {
+    if (log === undefined) return IDLE_LOG_REFRESH_MS;
+    if (isEnded(log)) return false;
+    const runs = queryClient.getQueryData<HubRun[]>([RUNS_QUERY_KEY, tenantId]) ?? [];
+    return isLiveRun(log, runs, new Date()) ? LIVE_LOG_REFRESH_MS : IDLE_LOG_REFRESH_MS;
+  }
   return queryOptions({
     queryKey: [RUN_LOG_QUERY_KEY, tenantId, ref.anchorRunId, ref.runId],
     queryFn: () => readLog(transport, tenantId, ref),
     // A finished run's log never changes again, so it is read once and kept.
-    staleTime: (query) => (isEnded(query.state.data) ? Infinity : LIVE_LOG_REFRESH_MS),
-    refetchInterval: (query) => (isEnded(query.state.data) ? false : LIVE_LOG_REFRESH_MS),
+    staleTime: (query) => refreshMs(query.state.data) || Infinity,
+    refetchInterval: (query) => refreshMs(query.state.data),
     gcTime: Infinity,
   });
 }
@@ -97,7 +105,7 @@ export function useRunLogs(): { logs: RunLog[]; pending: boolean; denied: boolea
   const transport = createHubTransport();
   const refs = useQuery(runRefsQuery(queryClient, transport, tenantId));
   const logs = useQueries({
-    queries: tenantId === undefined || refs.data === undefined ? [] : refs.data.map((ref) => runLogQuery(transport, tenantId, ref)),
+    queries: tenantId === undefined || refs.data === undefined ? [] : refs.data.map((ref) => runLogQuery(queryClient, transport, tenantId, ref)),
     combine: loadedLogs,
   });
   return {

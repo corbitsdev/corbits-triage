@@ -7,7 +7,7 @@ import type { TriageStateStore } from "./triage-state-store.js";
 const TENANT_ID = "tnt_1";
 const REPO = "acme/widgets";
 const START = new Date("2026-10-09T12:00:00Z").getTime();
-const WINDOW = { quietMs: 30_000, maxWaitMs: 120_000 };
+const WINDOW = { quietMs: 30_000, maxWaitMs: 120_000, burstMs: 3_000 };
 
 type Timer = { at: number; fire: () => Promise<void> };
 
@@ -72,6 +72,11 @@ function delivery(event: TriageEvent, headSha: string): CoalescedEvent {
   };
 }
 
+function withAction(event: TriageEvent, headSha: string, action: string): CoalescedEvent {
+  const input = delivery(event, headSha);
+  return { ...input, mail: { ...input.mail, action } };
+}
+
 function harness(rows: PrTriageRow[] = [], overrides: Partial<CoalescerDeps> = {}) {
   const clock = fakeClock();
   const state = memoryStore(rows);
@@ -93,28 +98,87 @@ function harness(rows: PrTriageRow[] = [], overrides: Partial<CoalescerDeps> = {
   return { clock, state, mails, coalescer };
 }
 
-test("a burst of six events gives one mail with the latest head and every event seen", async () => {
-  const { clock, state, mails, coalescer } = harness();
-  const burst: Array<[TriageEvent, string]> = [["opened", "sha1"], ["checks", "sha1"], ["commented", "sha1"], ["updated", "sha2"], ["approved", "sha2"], ["checks", "sha2"]];
+test("a burst of chatter gives one mail with every event seen once none arrived for the quiet period", async () => {
+  const { clock, mails, coalescer } = harness();
+  const burst: TriageEvent[] = ["commented", "checks", "approved", "commented", "checks"];
   const accepted = [];
-  for (const [event, head] of burst) {
-    accepted.push(await coalescer.accept(delivery(event, head)));
+  for (const event of burst) {
+    accepted.push(await coalescer.accept(delivery(event, "sha1")));
     await clock.advance(5_000);
   }
-  expect(accepted).toEqual(["queued", "coalesced", "coalesced", "coalesced", "coalesced", "coalesced"]);
+  expect(accepted).toEqual(["queued", "coalesced", "coalesced", "coalesced", "coalesced"]);
+  await clock.advance(WINDOW.quietMs - 5_001);
   expect(mails).toHaveLength(0);
-  expect(state.rows().find((row) => row.headSha === "sha2")).toMatchObject({ status: "queued", queuedAt: new Date(START + 15_000).toISOString() });
+  await clock.advance(1);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", event: "check_run", events: ["commented", "checks", "approved"] })]);
+});
 
+for (const start of ["opened", "updated"] as const) {
+  test(`a ${start} pull request is triaged after the burst, and chatter during its run becomes one follow-up`, async () => {
+    const { clock, mails, coalescer } = harness();
+    await coalescer.accept(delivery(start, "sha2"));
+    await clock.advance(1_000);
+    await coalescer.accept(delivery("commented", "sha2"));
+    await clock.advance(1_999);
+    await coalescer.accept(delivery("checks", "sha2"));
+    expect(mails).toHaveLength(0);
+    await clock.advance(1);
+    expect(mails).toEqual([expect.objectContaining({ headSha: "sha2", events: [start, "commented", "checks"] })]);
+
+    await coalescer.accept(delivery("checks", "sha2"));
+    await clock.advance(5_000);
+    await coalescer.accept(delivery("approved", "sha2"));
+    await clock.advance(WINDOW.quietMs);
+    expect(mails.slice(1)).toEqual([expect.objectContaining({ headSha: "sha2", events: ["checks", "approved"] })]);
+  });
+}
+
+test("pushes inside the burst give one mail on the latest head, closing at the first burst", async () => {
+  const { clock, mails, coalescer } = harness();
+  await coalescer.accept(delivery("opened", "sha1"));
+  await clock.advance(1_000);
+  await coalescer.accept(delivery("updated", "sha2"));
+  await clock.advance(1_500);
+  await coalescer.accept(delivery("updated", "sha3"));
+  await clock.advance(499);
+  expect(mails).toHaveLength(0);
+  await clock.advance(1);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha3", events: ["opened", "updated"] })]);
+  await clock.advance(200_000);
+  expect(mails).toHaveLength(1);
+});
+
+test("a push during the previous head's run gives exactly one follow-up on the new head", async () => {
+  const { clock, mails, coalescer } = harness();
+  await coalescer.accept(delivery("updated", "sha1"));
+  await clock.advance(3_000);
+  await coalescer.accept(delivery("updated", "sha2"));
+  await clock.advance(200_000);
+  expect(mails.map((mail) => mail.headSha)).toEqual(["sha1", "sha2"]);
+});
+
+test("a late pull_request event naming an older head never moves the head back, in its window or after it", async () => {
+  const { clock, mails, coalescer } = harness();
+  await coalescer.accept(delivery("updated", "sha2"));
+  await coalescer.accept(withAction("updated", "sha1", "edited"));
+  await clock.advance(WINDOW.burstMs);
+  await coalescer.accept(withAction("updated", "sha1", "review_requested"));
   await clock.advance(WINDOW.quietMs);
-  expect(mails).toEqual([expect.objectContaining({
-    repo: REPO, prNumber: 8, headSha: "sha2", event: "check_run", action: "completed",
-    events: ["opened", "checks", "commented", "updated", "approved"],
-  })]);
+  expect(mails.map((mail) => mail.headSha)).toEqual(["sha2", "sha2"]);
+});
+
+test("a new commit closes a window of chatter on the burst and moves its head", async () => {
+  const { clock, mails, coalescer } = harness();
+  await coalescer.accept(delivery("commented", "sha1"));
+  await clock.advance(10_000);
+  await coalescer.accept(delivery("updated", "sha2"));
+  await clock.advance(WINDOW.burstMs);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha2", events: ["commented", "updated"] })]);
 });
 
 test("each event restarts the quiet period, but the window still closes at the maximum wait", async () => {
   const { clock, mails, coalescer } = harness();
-  await coalescer.accept(delivery("opened", "sha1"));
+  await coalescer.accept(delivery("commented", "sha1"));
   for (let i = 0; i < 5; i++) {
     await clock.advance(20_000);
     await coalescer.accept(delivery("commented", "sha1"));
