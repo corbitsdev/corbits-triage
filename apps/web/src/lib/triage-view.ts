@@ -79,13 +79,21 @@ function scoreText(score: number, passAt: number): string {
   return `${shown} / ${passAt}`;
 }
 
-/** What the check found, as `59 / 70`, `33 files, 2,104 lines` or `couldn't check: file could not be read`; the row shows the check's name, reason and evidence. Null for a verdict from before checks carried output. */
+const MAX_LISTED = 3;
+
+function listed(items: readonly string[]): string {
+  const unique = [...new Set(items)];
+  const more = unique.length > MAX_LISTED ? ` +${unique.length - MAX_LISTED} more` : "";
+  return `${unique.slice(0, MAX_LISTED).join(", ")}${more}`;
+}
+
+/** What the check found, as `59 / 70`, `33 files, 2,104 lines`, `20 / 60; couldn't read: src/big.ts` or `couldn't check: file could not be read`; the row shows the check's name, reason and evidence. Null for a verdict from before checks carried output. */
 export function checkValueText({ output, reason, evidence }: { output: CheckOutput | null; reason: string | null; evidence: readonly string[] }): string | null {
   if (output === null) return null;
-  const behind = output.kind !== "values" && output.kind !== "not-applicable" && output.items?.length && evidence.length === 0 ? ` (${output.items.join(", ")})` : "";
+  const behind = output.kind !== "values" && output.kind !== "not-applicable" && output.items?.length && evidence.length === 0 ? ` (${listed(output.items)})` : "";
   switch (output.kind) {
     case "values": return factsText(output.values);
-    case "score": return `${scoreText(output.score, output.passAt)}${behind}`;
+    case "score": return `${scoreText(output.score, output.passAt)}${behind}${output.unread?.length ? `; couldn't read: ${listed(output.unread)}` : ""}`;
     case "met": return `met${behind}`;
     case "not-applicable": return "not applicable";
     case "could-not-check": return `${output.reason === reason ? "couldn't check" : `couldn't check: ${output.reason}`}${behind}`;

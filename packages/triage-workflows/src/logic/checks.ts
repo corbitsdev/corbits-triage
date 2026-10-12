@@ -23,7 +23,7 @@ export interface PrFileFacts {
   additions?: number;
   deletions?: number;
   patch?: string;
-  /** The patch was cut at a hunk boundary to fit the tool-result cap, so its later hunks are missing. */
+  /** The patch was read only in part, past the patch budget, so its later hunks are missing. */
   patchTruncated?: true;
 }
 

@@ -241,14 +241,14 @@ export type PrFile = {
   additions: number;
   deletions: number;
   patch?: string;
-  /** The patch was cut at a hunk boundary to fit the page, so its later hunks are missing. */
-  patchTruncated?: true;
 };
 
 export type PrFilesPage = {
   files: PrFile[];
-  /** The offset of the first file not on this page. */
+  /** The offset of the first file not on this page, or of the file whose patch continues on the next page. */
   next?: number;
+  /** Where the patch of the file at `next` continues; pass it back as `patchOffset` to read the rest. */
+  patchNext?: number;
 };
 
 export type IssueComment = {
@@ -294,7 +294,7 @@ const PR_FILES_PER_PAGE = 100;
 export const PR_FILES_PAGE_CHARS = 9_000;
 
 function fitsPage(page: PrFilesPage, file: PrFile): boolean {
-  const worst = { files: [...page.files, file], next: Number.MAX_SAFE_INTEGER };
+  const worst = { files: [...page.files, file], next: Number.MAX_SAFE_INTEGER, patchNext: Number.MAX_SAFE_INTEGER };
   return JSON.stringify(worst).length <= PR_FILES_PAGE_CHARS;
 }
 
@@ -302,22 +302,27 @@ function withoutPatch({ patch: _patch, ...meta }: PrFile): PrFile {
   return meta;
 }
 
-/** Keeps the longest run of whole hunks that fits the page, so no hunk reaches the reader half cut. */
-function cutPatch(page: PrFilesPage, file: PrFile): PrFile {
-  const { patch } = file;
-  if (patch === undefined) return file;
-  const meta = withoutPatch(file);
-  const hunkEnds = [...patch.matchAll(/\n(?=@@ )/g)].map((match) => match.index).reverse();
-  for (const end of hunkEnds) {
-    const cut: PrFile = { ...meta, patch: patch.slice(0, end), patchTruncated: true };
-    if (fitsPage(page, cut)) return cut;
+/** The end of the longest slice of `patch` from `from` that fits an empty page, never splitting a surrogate pair. */
+function patchEnd(meta: PrFile, patch: string, from: number): number {
+  let low = from;
+  let high = patch.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fitsPage({ files: [] }, { ...meta, patch: patch.slice(from, middle) })) low = middle;
+    else high = middle - 1;
   }
-  return meta;
+  const code = patch.charCodeAt(low - 1);
+  return low > from + 1 && code >= 0xd800 && code <= 0xdbff ? low - 1 : low;
 }
 
-/** One page of a pull request's files from `offset`, under the tool-result cap. Metadata is never dropped: a file that does not fit starts the next page; patches are cut or left out only when one file alone cannot fit, or when `patches` is false. */
-export async function listPrFilesPage(gh: GithubFetch, repo: string, number: number, { offset = 0, patches = true }: { offset?: number; patches?: boolean } = {}): Promise<PrFilesPage> {
+/**
+ * One page of a pull request's files from `offset`, under the tool-result cap. Metadata is never dropped: a file that
+ * does not fit starts the next page. A patch too long for a page alone is read across pages from `patchOffset`, its
+ * pieces joined in order; `patches` false leaves patches out.
+ */
+export async function listPrFilesPage(gh: GithubFetch, repo: string, number: number, { offset = 0, patchOffset = 0, patches = true }: { offset?: number; patchOffset?: number; patches?: boolean } = {}): Promise<PrFilesPage> {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid file offset ${offset}`);
+  if (!Number.isSafeInteger(patchOffset) || patchOffset < 0) throw new Error(`invalid patch offset ${patchOffset}`);
   const first = offset - (offset % PR_FILES_PER_PAGE);
   const rows = await json(gh, `/repos/${repo}/pulls/${number}/files?per_page=${PR_FILES_PER_PAGE}&page=${first / PR_FILES_PER_PAGE + 1}`);
   if (!Array.isArray(rows)) throw new Error(`github returned an invalid file page for ${repo}#${number}`);
@@ -326,9 +331,20 @@ export async function listPrFilesPage(gh: GithubFetch, repo: string, number: num
   for (; index < rows.length; index++) {
     const file = prFile(rows[index]);
     const entry = patches ? file : withoutPatch(file);
-    if (fitsPage(page, entry)) page.files.push(entry);
-    else if (page.files.length === 0) page.files.push(cutPatch(page, entry));
-    else break;
+    const from = page.files.length === 0 ? patchOffset : 0;
+    if (from > 0 && from >= (entry.patch?.length ?? 0)) throw new Error(`invalid patch offset ${patchOffset} for ${entry.path}`);
+    const rest = from > 0 ? { ...entry, patch: entry.patch!.slice(from) } : entry;
+    if (fitsPage(page, rest)) {
+      page.files.push(rest);
+      continue;
+    }
+    if (page.files.length > 0) break;
+    const meta = withoutPatch(entry);
+    const end = patchEnd(meta, entry.patch ?? "", from);
+    page.files.push({ ...meta, patch: entry.patch!.slice(from, end) });
+    page.next = first + index;
+    page.patchNext = end;
+    return page;
   }
   if (index < rows.length) page.next = first + index;
   else if (rows.length === PR_FILES_PER_PAGE) page.next = first + PR_FILES_PER_PAGE;
