@@ -10,12 +10,15 @@ import { useRepoStats } from "../../lib/repo-stats.ts";
 import type { RepoRow } from "../../lib/repo-rows.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import ActionsList from "./ActionsList.tsx";
+import ChecksSection from "./ChecksSection.tsx";
 import MergeThreshold from "./MergeThreshold.tsx";
-import PostingToggle from "./PostingToggle.tsx";
+import PostingChoice from "./PostingChoice.tsx";
 import PreviewRow from "./PreviewRow.tsx";
-import RepoFacts from "./RepoFacts.tsx";
+import RepoByline from "./RepoByline.tsx";
 import RolesEditor from "./RolesEditor.tsx";
 import SaveBar from "./SaveBar.tsx";
+import TriageStrip from "./TriageStrip.tsx";
+import TriageSwitches from "./TriageSwitches.tsx";
 
 type RepoPanelProps = { repo: RepoRecord; row: RepoRow; live: boolean; store: RepoPackStore | null; onClose: () => void };
 
@@ -23,16 +26,18 @@ function anchorOf(problem: DraftProblem): string {
   switch (problem.where.section) {
     case "actions":
       return `rp-action-${problem.where.id}`;
+    case "custom":
+      return problem.where.id === undefined ? "rp-checks" : `rp-custom-${problem.where.id}`;
     case "triage":
       return "rp-triage";
     case "merge":
       return "rp-merge";
-    default:
-      return "rp-verdict";
+    case "pack":
+      return "rp-checks";
   }
 }
 
-/** A repository's facts, posting, roles and actions, edited as one draft and saved through the store. */
+/** A repository's posting, triage, checks, actions and roles, edited as one draft and saved through the store. */
 export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanelProps) {
   const { readOnly, snapshot } = usePortal();
   const settings = useRepoPack(store, repo.name);
@@ -76,12 +81,14 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     const where = problem?.where;
     return (
       <>
-        <RepoFacts repo={repo.name} row={row} live={live} policy={draft.policy} stats={stats} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} reason={where?.section === "triage" ? problem?.reason : undefined} />
-        <PostingToggle mode={draft.policy.cleanupMode} disabled={disabled} onChange={(cleanupMode) => settings.edit((current) => ({ ...current, policy: { ...current.policy, cleanupMode } }))} />
-        <MergeThreshold value={packMergeThreshold(draft.pack)} disabled={disabled} onChange={(value) => settings.edit((current) => setMergeThreshold(current, settings.saved.pack, value))} invalid={where?.section === "merge"} />
+        <PostingChoice mode={draft.policy.cleanupMode} disabled={disabled} onChange={(cleanupMode) => settings.edit((current) => ({ ...current, policy: { ...current.policy, cleanupMode } }))} />
+        <TriageSwitches repo={repo.name} policy={draft.policy} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} reason={where?.section === "triage" ? problem?.reason : undefined} />
+        <ChecksSection draft={draft} saved={settings.saved.pack} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />
+        <ActionsList draft={draft} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />
         <RolesEditor roles={draft.policy.roles} actions={draft.pack.actions} disabled={disabled} edit={settings.edit} />
-        <ActionsList draft={draft} saved={settings.saved.pack} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />
+        <MergeThreshold value={packMergeThreshold(draft.pack)} disabled={disabled} onChange={(value) => settings.edit((current) => setMergeThreshold(current, settings.saved.pack, value))} invalid={where?.section === "merge"} />
         <PreviewRow repo={repo.name} draft={draft} />
+        <TriageStrip stats={stats} />
       </>
     );
   }
@@ -97,6 +104,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
               <a className="btn btn-quiet btn-sm" href={`https://github.com/${repo.name}`} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a>
               <button type="button" className="btn btn-quiet btn-sm icon" aria-label="Close repository settings" onClick={onClose}><CloseIcon /></button>
             </div>
+            {live ? <RepoByline row={row} /> : null}
           </header>
           {settings.error ? <p role="alert" className="error">{settings.error}</p> : null}
           {settings.stale ? <p className="note"><button type="button" className="linkish" onClick={settings.reload}>Reload</button> Reloading discards your edits.</p> : null}

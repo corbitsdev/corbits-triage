@@ -1,9 +1,8 @@
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
-import type { Action, CheckPack, Do } from "@corbits/triage-contracts";
+import type { Action, Do } from "@corbits/triage-contracts";
 import type { TriageStats } from "../../lib/hub-api.ts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
 import { BRANCH_NAMES, doText, sentence, whenText, type Branch } from "../../lib/pack-prose.ts";
-import type { RepoPack } from "../../lib/repo-pack.ts";
 import CheckName from "./CheckName.tsx";
 import Joined from "./Joined.tsx";
 
@@ -12,10 +11,8 @@ type ActionRowProps = {
   index: number;
   count: number;
   draft: RepoDraft;
-  saved: CheckPack;
   stats: TriageStats | undefined;
   disabled: boolean;
-  edit: RepoPack["edit"];
   /** Why the draft cannot be saved, when this action is the reason. */
   reason?: string;
   onEdit: () => void;
@@ -24,10 +21,10 @@ type ActionRowProps = {
 };
 
 /** One action as a sentence: When, Checks, then the Dos of each outcome. */
-export default function ActionRow({ action, index, count, draft, saved, stats, disabled, edit, reason, onEdit, onRemove, onMove }: ActionRowProps) {
+export default function ActionRow({ action, index, count, draft, stats, disabled, reason, onEdit, onRemove, onMove }: ActionRowProps) {
   const branches = Object.entries(action.branches) as Array<[Branch, Do[]]>;
   const fired = stats?.actions[action.id];
-  const checks = action.checks.map((id) => ({ key: id, node: <CheckName id={id} draft={draft} saved={saved} stats={stats} disabled={disabled} edit={edit} /> }));
+  const checks = action.checks.map((id) => ({ key: id, node: <CheckName id={id} draft={draft} stats={stats} /> }));
   return (
     <div className={reason ? "act invalid" : "act"} id={`rp-action-${action.id}`}>
       <div className="sentence">

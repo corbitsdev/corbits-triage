@@ -2,7 +2,6 @@ import type { TriageState } from "@corbits/rule-packs";
 import {
   catalogCheckEnabled,
   classificationSources,
-  isRuleCheck,
   parseCheckPack,
   repoPolicy,
   type AuthorKind,
@@ -258,7 +257,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
       result("issue", ref === null, ref ? "references an issue" : "pull request does not reference an issue", ref ? [ref] : []);
     }
     if (pack) {
-      const custom = evaluateRuleChecks(facts, pack.custom.filter(isRuleCheck), roles);
+      const custom = evaluateRuleChecks(facts, classificationSources(pack).rules, roles);
       findings.push(...custom.findings);
       checks.push(...custom.checks);
     }

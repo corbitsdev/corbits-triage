@@ -1,6 +1,7 @@
 import {
   CATALOG_IDS,
   catalogCheckEnabled,
+  customCheckEnabled,
   packMergeThreshold,
   readCheckPack,
   RECOMMENDED_DRIFT,
@@ -11,11 +12,13 @@ import {
   type CatalogCheck,
   type CatalogId,
   type CheckPack,
+  type CheckRef,
   type CustomCheck,
   type Do,
   type RepoPolicy,
   type RepoRole,
 } from "@corbits/triage-contracts";
+import { isCatalogId } from "./pack-prose.ts";
 
 export type DraftPolicy = Pick<RepoPolicy, "cleanupMode" | "enabled" | "triageDrafts" | "roles">;
 
@@ -66,6 +69,11 @@ export const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>>
   paths: { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
 };
 
+/** A catalog check's value as stored, or the default it reads as. */
+export function catalogValue<K extends keyof CatalogCheck>(pack: CheckPack, id: CatalogId, key: K): CatalogCheck[K] {
+  return pack.checks[id]?.[key] ?? CATALOG_DEFAULTS[id]?.[key] as CatalogCheck[K];
+}
+
 /**
  * Writes only the keys that differ, so a stored row never gains values the user did not set.
  * A check the saved pack lacks goes back to absent once it reads as absent again.
@@ -89,6 +97,22 @@ function upsert<T extends { id: string }>(rows: T[], row: T): T[] {
 
 export function upsertCustom(draft: RepoDraft, check: CustomCheck): RepoDraft {
   return withPack(draft, { custom: upsert(draft.pack.custom, check) });
+}
+
+/** Whether a check is in the verdict; a saved tracker of "off" leaves the issue check doing nothing, so it reads as off. */
+export function checkOn(pack: CheckPack, id: CheckRef): boolean {
+  if (!isCatalogId(id)) return pack.custom.some((row) => row.id === id && customCheckEnabled(row));
+  return catalogCheckEnabled(pack, id) && !(id === "issue" && pack.checks.issue?.tracker === "off");
+}
+
+/** Off is stored as `enabled: false`; back on drops the flag, which the contract reads as on. */
+export function setCustomEnabled(draft: RepoDraft, id: string, enabled: boolean): RepoDraft {
+  function toggled(row: CustomCheck): CustomCheck {
+    if (row.id !== id) return row;
+    const { enabled: _was, ...rest } = row;
+    return (enabled ? rest : { ...rest, enabled: false }) as CustomCheck;
+  }
+  return withPack(draft, { custom: draft.pack.custom.map(toggled) });
 }
 
 /** Also drops the check from every action; refused when an action would be left with branches but no checks. */
@@ -212,7 +236,7 @@ export function validate(draft: RepoDraft): DraftProblem | null {
     const role = missingRole(action, draft.policy.roles);
     if (role !== undefined) return { reason: `Action ${action.id} targets role ${role}, which this repository does not define.`, where: { section: "actions", id: action.id } };
   }
-  const anyCheck = CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.length > 0;
+  const anyCheck = CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
   if (draft.policy.enabled && !anyCheck) return { reason: "Switch on a check before turning triage on.", where: { section: "triage" } };
   return null;
 }
