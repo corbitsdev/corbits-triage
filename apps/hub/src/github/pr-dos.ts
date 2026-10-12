@@ -4,6 +4,7 @@
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { DoNotRunnableError, executeDo, HeadMovedError, type ResolvedTarget } from "@corbits/github-tool/do";
+import { appLogin } from "@corbits/github-tool/github";
 import { ACTION_KINDS, repoPolicy } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
@@ -11,8 +12,9 @@ import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader }
 import { doEffectId, type SuggestedDo } from "../../../../packages/triage-workflows/src/logic/actions.js";
 import { unrunnable } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, approvalRefused, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 import type { DoRun, DoRunStore } from "./do-run-store.js";
+import type { VerdictRecordStore } from "./verdict-record-store.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
 import { GITHUB_VERB, githubRefusal } from "./github-refusal.js";
@@ -77,6 +79,7 @@ export type GithubPrDosDeps = PortalCredentialDeps & {
   githubApiOrigin: string;
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
   store: DoRunStore;
+  verdicts: Pick<VerdictRecordStore, "forPull">;
   log: (entry: Record<string, unknown>) => void;
 };
 
@@ -130,6 +133,13 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {
     return deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId);
   }
 
+  /** An approval stands only on the newest verdict; a run not recorded yet has none newer that is known. */
+  async function superseded(tenantId: string, repo: string, number: number, runId: string): Promise<boolean> {
+    const verdicts = await deps.verdicts.forPull(tenantId, repo, number);
+    const at = verdicts.findIndex((verdict) => verdict.runId === runId);
+    return at >= 0 && at < verdicts.length - 1;
+  }
+
   async function run(req: Request, tenantId: string): Promise<Response> {
     const principalId = await portalMember(deps, req, tenantId);
     if (principalId instanceof Response) return principalId;
@@ -151,6 +161,11 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {
     const found = findDo(verdict, body);
     if (found instanceof Response) return found;
     const { step, headSha, request } = found;
+    if (step.kind === "approve") {
+      const refused = await approvalRefused(deps, principalId, tenantId, repo);
+      if (refused) return refused;
+      if (await superseded(tenantId, repo, number, body.runId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
+    }
 
     const prior = await deps.store.read(tenantId, step.effectId);
     if (settled(prior)) return replay(prior);
@@ -169,7 +184,9 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {
 
     const logged = { tenantId, principalId, effectId: step.effectId, runId: body.runId, repo, number, actionId: body.actionId, branch: body.branch, index: body.index, kind: step.kind, attempt: claimed.attempts };
     try {
-      const outcome = await executeDo(gh, { request, step: { ...step, headSha } });
+      const outcome = await executeDo(gh, { request, step: { ...step, headSha } }, function login() {
+        return appLogin(gh);
+      });
       const row = await deps.store.settle(claimed, outcome);
       deps.log({ level: "info", msg: "github_do", ...logged, status: outcome.status, settled: row !== undefined });
       if (!row) return failure(409, "do_in_progress", "Another request took this Do over.");

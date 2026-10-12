@@ -643,11 +643,13 @@ export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentI
 export const REVIEW_EVENTS = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const;
 export type ReviewEvent = (typeof REVIEW_EVENTS)[number];
 
+/** `commitId` pins the review to that head, so it never lands on commits pushed since. */
 export type CreateReviewInput = {
   repo: string;
   number: number;
   body: string;
   event: ReviewEvent;
+  commitId?: string;
 };
 
 export async function createReview(gh: GithubFetch, input: CreateReviewInput) {
@@ -655,8 +657,54 @@ export async function createReview(gh: GithubFetch, input: CreateReviewInput) {
   const posted = await json(gh, `/repos/${input.repo}/pulls/${input.number}/reviews`, send("POST", {
     body: input.body,
     event: input.event,
+    ...(input.commitId === undefined ? {} : { commit_id: input.commitId }),
   }));
   return { reviewId: posted.id, state: posted.state, event: input.event };
+}
+
+/** The login GitHub shows on the App's own reviews and comments. */
+export async function appLogin(gh: GithubFetch): Promise<string> {
+  return `${(await getApp(gh)).slug}[bot]`;
+}
+
+/** The App's login, asked of GitHub once however often it is needed. */
+export type AppLogin = () => Promise<string>;
+
+/** Marks an approval the approve Do made, so only those are taken back; a person's approval through the App is theirs. */
+export const APPROVE_DO_MARKER = "<!-- corbits-approve -->";
+
+type ReviewRow = { id: number; user?: { login?: string }; state?: string; commit_id?: string; body?: string };
+
+async function reviewsBy(gh: GithubFetch, repo: string, number: number, login: string): Promise<ReviewRow[]> {
+  const reviews = await jsonAll<ReviewRow>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+  return reviews.filter((review) => review.user?.login === login);
+}
+
+/**
+ * `login`'s approval of `sha`, still standing or since dismissed, which is not made again: a person who dismissed it does not want it.
+ * The App's own dismissal of a stale approval reads the same, so a force-push back to that head is not approved again either,
+ * as GitHub itself never restores a dismissed review.
+ */
+export async function approvalOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<number | undefined> {
+  const reviews = await reviewsBy(gh, input.repo, input.number, input.login);
+  return reviews.find((review) => review.commit_id === input.sha && (review.state === "APPROVED" || review.state === "DISMISSED"))?.id;
+}
+
+const DISMISSAL_MESSAGE = "This pull request is no longer ready to approve, so this approval no longer stands.";
+
+/**
+ * Dismisses the approve Do's standing approvals, of earlier heads and of this one alike, once the head may not be approved; a dismissed
+ * one is no longer APPROVED, so a repeat changes nothing. One on this head stays dismissed when a later run finds it green again, as
+ * GitHub never restores a dismissed review either.
+ */
+export async function dismissDoApprovals(gh: GithubFetch, input: { repo: string; number: number; login: string }): Promise<number[]> {
+  const { repo, number } = input;
+  const reviews = await reviewsBy(gh, repo, number, input.login);
+  const stale = reviews.filter((review) => review.state === "APPROVED" && review.body?.includes(APPROVE_DO_MARKER));
+  for (const review of stale) {
+    await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}/dismissals`, send("PUT", { message: DISMISSAL_MESSAGE, event: "DISMISS" }));
+  }
+  return stale.map((review) => review.id);
 }
 
 export type CreateIssueCommentInput = {

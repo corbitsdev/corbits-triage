@@ -3,8 +3,11 @@ import { type } from "arktype";
 import {
   addAssignees,
   addLabels,
+  APPROVE_DO_MARKER,
+  approvalOnHead,
   codeownersForPr,
   createIssueComment,
+  createReview,
   getReviews,
   listIssueComments,
   missingFrom,
@@ -12,6 +15,7 @@ import {
   readPr,
   requestReviewers,
   reviewedOnHead,
+  type AppLogin,
   type GithubFetch,
   type MirrorInput,
 } from "./github";
@@ -68,7 +72,7 @@ export const DERIVED_LABELS_DO = "labels derived from the pull request cannot ru
 
 type People = { users: string[]; teams: string[] };
 
-/** A close or a comment reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
+/** A close, comment or approval reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
 function onHead(sha: string, { repo, number }: MirrorInput, step: DoStep): void {
   if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);
 }
@@ -81,8 +85,8 @@ async function people(gh: GithubFetch, repo: string, number: number, target: Res
   return owners;
 }
 
-/** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. */
-export async function executeDo(gh: GithubFetch, { request, step }: DoInput): Promise<DoOutcome> {
+/** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's own reviews. */
+export async function executeDo(gh: GithubFetch, { request, step }: DoInput, login: AppLogin): Promise<DoOutcome> {
   const { repo, number } = request;
   const { target } = step;
   switch (step.kind) {
@@ -107,6 +111,12 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput): Pr
       const teamReviewers = missingFrom(pr.reviewers, wanted.teams);
       if (!reviewers.length && !teamReviewers.length) return { status: "satisfied", result: { reviewers, teamReviewers } };
       return { status: "done", result: await requestReviewers(gh, { repo, number, reviewers, teamReviewers }) };
+    }
+    case "approve": {
+      onHead((await readPr(gh, repo, number)).sha, request, step);
+      const reviewId = await approvalOnHead(gh, { repo, number, sha: step.headSha, login: await login() });
+      if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
+      return { status: "done", result: await createReview(gh, { repo, number, body: APPROVE_DO_MARKER, event: "APPROVE", commitId: step.headSha }) };
     }
     case "close": {
       const pr = await readPr(gh, repo, number);

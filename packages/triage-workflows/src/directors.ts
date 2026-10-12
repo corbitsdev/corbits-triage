@@ -352,9 +352,11 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
     return caps.reply(JSON.stringify(batch ? { results: outcomes } : (outcomes[0] ?? { skipped: true })));
   }
 
+  /** A settled head that may not be approved takes back the approve Do's approvals, of it or earlier heads, in a pack that approves. */
   function mirrorCall(v: Verdict): ToolCall {
     const r = v.request;
-    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, close: false }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
+    const stale = v.approvable === false && v.headSha !== null && decidesDos(v) ? { notReadyHead: v.headSha } : {};
+    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, close: false, ...stale }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
   return {

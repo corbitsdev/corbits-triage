@@ -16,7 +16,7 @@ import {
 } from "@corbits/github-tool/github";
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, approvalRefused, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
 import { readJson } from "../read-json.js";
 
@@ -40,7 +40,8 @@ export const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.int
       "reviewers?": handle.array(),
       "teamReviewers?": handle.array(),
     }).narrow(namesReviewers))
-    .or({ action: "'review'", event: "'APPROVE' | 'REQUEST_CHANGES'", body: "string" })
+    .or({ action: "'review'", event: "'REQUEST_CHANGES'", body: "string" })
+    .or({ action: "'review'", event: "'APPROVE'", body: "string", headSha: "string > 0" })
     .or({ action: "'merge'" })
     .or({ action: "'close'", labels: "string[]", comment: "string" }),
 );
@@ -63,7 +64,7 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
       return requestReviewers(gh, { repo, number, reviewers: owners.users, teamReviewers: owners.teams });
     }
     case "review":
-      return createReview(gh, { repo, number, body: body.body, event: body.event });
+      return createReview(gh, { repo, number, body: body.body, event: body.event, ...("headSha" in body ? { commitId: body.headSha } : {}) });
     case "merge":
       return mergePr(gh, { repo, number });
     case "close":
@@ -81,6 +82,10 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
     if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
     const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
     if (appJson instanceof Response) return appJson;
+    if (body.action === "review" && body.event === "APPROVE") {
+      const refused = await approvalRefused(deps, principalId, tenantId, body.repo);
+      if (refused) return refused;
+    }
     const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
 
     try {

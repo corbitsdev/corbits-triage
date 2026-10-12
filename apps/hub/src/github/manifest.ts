@@ -6,7 +6,7 @@ import type { DB } from "@intx/db";
 import { schema } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import { generateId } from "@intx/hub-common";
-import { grantAdminGithubUse } from "./admin-github-grant.js";
+import { grantAdminGithub } from "./admin-github-grant.js";
 
 const { credential, principal, provider } = schema;
 
@@ -355,7 +355,7 @@ export function createGithubManifestIntegration({
             });
           }
         }
-        await grantAdminGithubUse(tx, pending.tenantId, state.appCredentialId, stamp);
+        await grantAdminGithub(tx, pending.tenantId, state.appCredentialId, stamp);
         await tx.update(githubManifestState).set({ status: "completed", appSlug: conversion.slug, updatedAt: stamp })
           .where(eq(githubManifestState.stateHash, pending.stateHash));
       });

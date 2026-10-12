@@ -1084,7 +1084,8 @@ export type PrGithubWriteInput =
   | { action: "labels"; repo: string; number: number; labels: string[] }
   | { action: "assign"; repo: string; number: number; assignees: string[] }
   | { action: "request-review"; repo: string; number: number; reviewers?: string[]; teamReviewers?: string[] }
-  | { action: "review"; repo: string; number: number; event: "APPROVE" | "REQUEST_CHANGES"; body: string }
+  | { action: "review"; repo: string; number: number; event: "REQUEST_CHANGES"; body: string }
+  | { action: "review"; repo: string; number: number; event: "APPROVE"; body: string; headSha: string }
   | { action: "merge"; repo: string; number: number }
   | { action: "close"; repo: string; number: number; labels: string[]; comment: string };
 

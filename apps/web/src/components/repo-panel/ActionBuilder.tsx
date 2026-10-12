@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Action, CheckRef, CustomCheck } from "@corbits/triage-contracts";
+import type { Action, ActionCheckRef, CheckRef, CustomCheck } from "@corbits/triage-contracts";
 import { actionFormOf, buildAction, type ActionForm } from "../../lib/action-builder.ts";
 import type { TriageStats } from "../../lib/hub-api.ts";
 import { removeCustom, upsertCustom, type RepoDraft } from "../../lib/pack-draft.ts";
@@ -52,7 +52,7 @@ export default function ActionBuilder({ action, draft, stats, disabled, edit, on
   }
 
   /** Checks made here but not kept on the action come back out of the draft, so they never join the verdict unasked. */
-  function dropCreated(kept: CheckRef[]) {
+  function dropCreated(kept: ActionCheckRef[]) {
     const unused = created.filter((id) => !kept.includes(id));
     if (unused.length > 0) edit((current) => unused.reduce(withoutCheck, current));
   }

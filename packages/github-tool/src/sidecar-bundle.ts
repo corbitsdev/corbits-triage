@@ -4,10 +4,12 @@ import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 
 import {
   addAssignees,
+  appLogin,
   authorTeams,
   codeownersForPr,
   createIssueComment,
   createReview,
+  dismissDoApprovals,
   getChecks,
   getApp,
   getPr,
@@ -23,6 +25,7 @@ import {
   mirror,
   readRepoDocsPage,
   requestReviewers,
+  type AppLogin,
   type GithubFetch,
 } from "./github";
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
@@ -107,25 +110,26 @@ const MIRROR_INPUT = obj({
   owned: { type: "array", items: str },
   comment: str,
   close: { type: "boolean" },
+  notReadyHead: str,
 }, ["repo", "number", "labels", "comment", "close"]);
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_mirror",
     description:
-      "Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. Closes it only when close is true. Never merges.",
+      "Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. Closes it only when close is true. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_mirror_auto",
     description:
-      "Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. Closes it only when close is true. Never merges.",
+      "Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. Closes it only when close is true. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_execute_do_auto",
     description:
-      "Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close or comment is refused once the pull request has moved past headSha. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.",
+      "Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, approve, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close, comment or approval is refused once the pull request has moved past headSha; an approval is pinned to headSha and satisfied when this App already approved it. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.",
     inputSchema: obj({ request: MIRROR_INPUT, step: obj({ effectId: str, headSha: str, kind: str, target: { type: "object" } }) }),
   },
   {
@@ -170,9 +174,9 @@ interface Env extends BaseEnv {
 type ToolCallInput = { id: string; name: string; arguments: Record<string, any> };
 
 /** A Do that cannot run is reported, not failed, so it stays pending for a person. */
-async function runDo(gh: GithubFetch, args: unknown) {
+async function runDo(gh: GithubFetch, args: unknown, login: AppLogin) {
   try {
-    const { status } = await executeDo(gh, parseDoInput(args));
+    const { status } = await executeDo(gh, parseDoInput(args), login);
     return { status };
   } catch (err) {
     if (err instanceof DoNotRunnableError) return { status: "skipped", reason: err.message };
@@ -180,7 +184,7 @@ async function runDo(gh: GithubFetch, args: unknown) {
   }
 }
 
-async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> {
+async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): Promise<unknown> {
   const a = call.arguments;
   switch (call.name) {
     case "github_get_app":
@@ -212,8 +216,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
     case "github_author_teams":
       return authorTeams(gh, { repo: a.repo, author: a.author, teams: a.teams });
     case "github_mirror":
-    case "github_mirror_auto":
-      return mirror(gh, {
+    case "github_mirror_auto": {
+      const mirrored = await mirror(gh, {
         repo: a.repo,
         number: a.number,
         labels: a.labels,
@@ -221,8 +225,11 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
         comment: a.comment,
         close: a.close === true,
       });
+      if (a.notReadyHead !== mirrored.sha) return mirrored;
+      return { ...mirrored, dismissed: await dismissDoApprovals(gh, { repo: a.repo, number: a.number, login: await login() }) };
+    }
     case "github_execute_do_auto":
-      return runDo(gh, a);
+      return runDo(gh, a, login);
     case "github_create_review":
       return createReview(gh, { repo: a.repo, number: a.number, body: a.body ?? "", event: a.event });
     case "github_create_issue_comment":
@@ -238,10 +245,17 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
   }
 }
 
+/** The App's login is asked of GitHub once per tool instance, so once per step of a run. */
 function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>) {
+  let known: string | undefined;
   async function run(call: ToolCallInput) {
     try {
-      const content = await dispatch(await getFetch(), call);
+      const gh = await getFetch();
+      async function login() {
+        known ??= await appLogin(gh);
+        return known;
+      }
+      const content = await dispatch(gh, call, login);
       return { callId: call.id, content: content as Record<string, unknown> };
     } catch (err) {
       return {

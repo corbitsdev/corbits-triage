@@ -45,6 +45,7 @@ import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { migrateInvitations } from "./invitations/invitation-store.js";
+import { migrateAdminGithubGrants } from "./github/admin-github-grant.js";
 import { createSmtpInviteEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
@@ -216,6 +217,7 @@ await migrateDoRuns(composition.db);
 await migrateVerdictRecords(composition.db);
 await migrateVerdictBackfill(composition.db);
 await migrateInvitations(composition.db);
+await migrateAdminGithubGrants(composition.db);
 const doRunStore = createDoRunStore(composition.db);
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
@@ -250,6 +252,7 @@ const githubPrDos = createGithubPrDos({
   authorize: authorizePortal,
   runReader: composition.runReader,
   store: doRunStore,
+  verdicts: verdictRecordStore,
   log: logJson,
 });
 const githubPrDetails = createGithubPrDetails({

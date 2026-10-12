@@ -96,10 +96,6 @@ export function customizeDraft(repo: string): CheckPack {
   return emptyPack(repo);
 }
 
-export function recommendedDraft(repo: string): CheckPack {
-  return recommendedPack(repo);
-}
-
 export function repoNeedsCheckSetup(repo: { checkPack?: { name?: string } } | null | undefined): boolean {
   return !(repo?.checkPack?.name?.trim());
 }

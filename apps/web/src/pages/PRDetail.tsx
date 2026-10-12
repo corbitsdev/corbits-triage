@@ -9,7 +9,7 @@ import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "../lib/error-text.ts";
-import { paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { approvedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
 import { usePendingDos, useRunDo } from "../lib/do-runs.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
@@ -371,13 +371,11 @@ export default function PRDetail() {
       if (composer.kind === "comment") {
         await writeGithub({ action: "comment", repo: item.repo, number: item.number, body }, "now");
       } else {
-        await writeGithub({
-          action: "review",
-          repo: item.repo,
-          number: item.number,
-          event: composer.kind === "approve" ? "APPROVE" : "REQUEST_CHANGES",
-          body,
-        }, "now");
+        const { repo, number } = item;
+        const review = composer.kind === "approve"
+          ? { action: "review", repo, number, event: "APPROVE", body, headSha: approvedHead(item) } as const
+          : { action: "review", repo, number, event: "REQUEST_CHANGES", body } as const;
+        await writeGithub(review, "now");
       }
       setComposer(null);
     } catch (cause) {

@@ -56,6 +56,8 @@ function resolvedAction(step: PreviewDo, target: Record<string, unknown>, repo: 
       return `request review from ${people(target, repo)}`;
     case "comment":
       return `comment ${quoted(String(target.body))}`;
+    case "approve":
+      return "approve the pull request";
     case "close":
       return "close it";
     case "agent":
