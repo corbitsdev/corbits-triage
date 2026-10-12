@@ -8,6 +8,7 @@ import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { NOT_ASKED_REASON } from "../../../../packages/triage-workflows/src/logic/render.js";
 import { unsettledBy } from "../../../../packages/triage-workflows/src/logic/settled.js";
+import type { Judged } from "../../../../packages/triage-workflows/src/logic/item.js";
 import type { LiveDeployment } from "./deployment.js";
 import { runKey, type ObservedRun } from "./reconcile-plan.js";
 import type { DoClaim, RecordedOutcome } from "./do-run-store.js";
@@ -28,7 +29,7 @@ type Summary = Omit<RecordedVerdict, "runId" | "repo" | "number" | "headSha" | "
 /** A Do the run's execute step wrote, found already written, or failed to write. */
 export type ExecutedDo = Omit<DoClaim, "tenantId" | "source" | "principalId"> & { outcome: RecordedOutcome };
 type HeadDo = Omit<ExecutedDo, "runId">;
-type Head = { trigger: Trigger; terminal?: Terminal; summary?: Summary; executed?: HeadDo[] };
+type Head = { trigger: Trigger; terminal?: Terminal; summary?: Summary; executed?: HeadDo[]; judged?: Judged };
 /** No heads when the trigger names no pull request head, such as a portal run typed without a sha; a catch-up mail names several. */
 type KnownRun = { anchorRunId: string; heads: Head[]; /** The newest event read; a running run is read again once its log moves past it. */ seq: number };
 
@@ -246,6 +247,14 @@ export function verdictFor(events: readonly WorkflowRunEvent[], repo: string, nu
   return verdictsOf(events).find((verdict) => verdict?.["repo"] === repo && verdict["number"] === number);
 }
 
+/** The judge answers a verdict made on the trigger's head says a later run of it can reuse. */
+function judgedOf(verdict: Record<string, unknown>, trigger: Trigger): Judged | undefined {
+  const judged = asRecord(verdict["judged"]);
+  if (!judged || verdict["headSha"] !== trigger.headSha) return undefined;
+  const answers = Object.entries(judged).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+  return answers.length > 0 ? Object.fromEntries(answers) : undefined;
+}
+
 function terminalOf(status: Terminal["status"], verdict: Record<string, unknown> | undefined, headSha: string): Terminal {
   if (!verdict) return { status, unsettled: NO_VERDICT };
   return { status, ...unsettledBy(verdict, headSha) };
@@ -267,7 +276,8 @@ function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger
     if (status === undefined) return kept;
     const executed = verdict ? executedOf(verdict, trigger) : [];
     if (status !== "completed") return { ...kept, terminal: { status }, executed };
-    return { ...kept, terminal: terminalOf(status, verdict, trigger.headSha), executed };
+    const judged = verdict && judgedOf(verdict, trigger);
+    return { ...kept, terminal: terminalOf(status, verdict, trigger.headSha), executed, ...(judged && { judged }) };
   });
 }
 
@@ -284,20 +294,23 @@ export function recordedVerdicts(runId: string, events: readonly WorkflowRunEven
 
 export type ObserveRuns = (anchorRunId: string, domain: string) => Promise<ObservedRuns>;
 
-function withVersion(runs: ObservedRuns, workflowVersion: string): ObservedRuns {
+type Stamp = Pick<ObservedRun, "workflowVersion" | "offeringId">;
+
+function stamped(runs: ObservedRuns, stamp: Stamp): ObservedRuns {
   const byRepo: ObservedRuns["byRepo"] = new Map();
   for (const [repo, byHead] of runs.byRepo) {
-    byRepo.set(repo, new Map([...byHead].map(([key, list]) => [key, list.map((run) => ({ ...run, workflowVersion }))])));
+    byRepo.set(repo, new Map([...byHead].map(([key, list]) => [key, list.map((run) => ({ ...run, ...stamp }))])));
   }
   return { ...runs, byRepo };
 }
 
-/** Each deployment's runs, in the order given, stamped with the workflow version the deployment runs. */
-export async function observeDeployments(observe: ObserveRuns, deployments: readonly Pick<LiveDeployment, "runId" | "workflowVersion">[], domain: string): Promise<ObservedRuns[]> {
+/** Each deployment's runs, in the order given, stamped with the workflow version the deployment runs and the decision-model offering it resolved. */
+export async function observeDeployments(observe: ObserveRuns, deployments: readonly Pick<LiveDeployment, "runId" | "workflowVersion" | "offeringId">[], domain: string): Promise<ObservedRuns[]> {
   const observed: ObservedRuns[] = [];
-  for (const { runId, workflowVersion } of deployments) {
+  for (const { runId, workflowVersion, offeringId } of deployments) {
     const runs = await observe(runId, domain);
-    observed.push(workflowVersion === undefined ? runs : withVersion(runs, workflowVersion));
+    const stamp = { ...(workflowVersion !== undefined && { workflowVersion }), ...(offeringId !== undefined && { offeringId }) };
+    observed.push(Object.keys(stamp).length === 0 ? runs : stamped(runs, stamp));
   }
   return observed;
 }
@@ -380,7 +393,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
     const verdicts: RecordedVerdict[] = [];
     const executed: ExecutedDo[] = [];
     for (const runId of [...settledIds, ...latest.keys()]) {
-      for (const { trigger, terminal, summary, executed: dos = [] } of known.get(runId)?.heads ?? []) {
+      for (const { trigger, terminal, summary, executed: dos = [], judged } of known.get(runId)?.heads ?? []) {
         const { repo, number, headSha, startedAt } = trigger;
         if (summary) verdicts.push({ runId, repo, number, headSha, startedAt: new Date(startedAt), ...summary, runStatus: terminal?.status ?? "running" });
         executed.push(...dos.map((done) => ({ ...done, runId })));
@@ -394,6 +407,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
           ...(terminal?.unsettled !== undefined && { unsettled: terminal.unsettled }),
           ...(terminal?.unconfirmed && { unconfirmed: true }),
           ...(trigger.event !== undefined && { trigger: trigger.event }),
+          ...(judged && { judged }),
         };
         byHead.set(key, [...(byHead.get(key) ?? []), seen]);
       }

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { createEd25519Crypto, generateKeyPair } from "@intx/crypto";
+import { decodeMail, extractAddrSpec } from "@intx/mime";
 import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
-import { emptyPack, stockTriggerMail, type PrTriageRow } from "@corbits/triage-contracts";
+import { emptyPack, stockTriggerMail, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
@@ -14,9 +16,10 @@ import type { RecordedVerdict } from "./verdict-record-store.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
 import { markBaseMoved } from "./triage-queue.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
-import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
+import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
 import { evaluate, rules } from "../../../../packages/triage-workflows/src/actions/index.js";
+import type { Verdict } from "../../../../packages/triage-workflows/src/logic/render.js";
 
 const REPO = "acme/widgets";
 const DOMAIN = "acme.test";
@@ -24,6 +27,7 @@ const TENANT_ID = "tnt_acme";
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const LONG_AGO = "2026-10-07T00:00:00.000Z";
 const VERSION = "0.1.0-sha-11111111";
+const OFFERING = "off_decision";
 const LIVE = deployment("run_live", new Date(LONG_AGO));
 const MINUTE = 60_000;
 const BASE_MOVE_WINDOW = DEFAULT_RECONCILE_POLICY.baseMoveWindowMs / MINUTE;
@@ -34,7 +38,7 @@ function at(minutes: number): Date {
 let failNextList = false;
 
 function deployment(runId: string, createdAt: Date): LiveDeployment {
-  return { runId, address: formatRunAddress(runId, DOMAIN), createdAt, cancelling: false, workflowVersion: VERSION };
+  return { runId, address: formatRunAddress(runId, DOMAIN), createdAt, cancelling: false, workflowVersion: VERSION, offeringId: OFFERING };
 }
 
 function repoKey(anchorRunId: string): string {
@@ -104,6 +108,68 @@ async function directorReply(role: "facts", event: ReactorInboundEvent): Promise
   return replies[0]!;
 }
 
+/** What GitHub answers the facts director about pull request `n` of REPO, with `pr` over the pull request itself. */
+function githubAnswer({ id, name }: ToolCall, pr: Record<string, unknown>): Record<string, unknown> {
+  const n = Number(id.split(":")[1]);
+  switch (name) {
+    case "github_list_open_prs":
+      return { prs: [1, 2, 3].map((number) => ({ number, title: `PR ${number}` })) };
+    case "github_read_repo_docs":
+      return { docs: [], rules: [], ref: "tree" };
+    case "github_get_pr":
+      return { title: `PR ${n}`, author: "octocat", sha: `sha${n}`, state: "open", draft: false, requestedReviewers: 0, ...pr };
+    case "github_list_pr_files":
+      return { files: [{ path: `src/pr${n}.ts`, status: "modified", patch: `@@ -0,0 +1 @@\n+export const pr${n} = ${n};` }] };
+    case "github_get_reviews":
+      return { reviews: [] };
+    case "github_list_pr_commits":
+      return { commits: [] };
+    case "github_list_issue_comments":
+      return { comments: [] };
+    case "github_get_checks":
+      return { checks: [] };
+  }
+  throw new Error(`unexpected call ${name}`);
+}
+
+/** Every question answered as the change being focused, with `related` the probability it belongs to the change. */
+function focusedAnswers(questions: Array<{ id: string }>, related: number): string {
+  const probabilities = { primary_or_supporting: related, unrelated: (1 - related) / 2, movement_or_superseded: 0, ambiguous: (1 - related) / 2 };
+  return questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: "primary_or_supporting", probabilities, confidence: 0.9 })).join("");
+}
+
+/** Runs a trigger mail through the real facts director, rules, a judge answering every chunk, and evaluate, as the workflow does. */
+async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 0.8) {
+  const pending: ToolCall[] = [];
+  let reply: string | undefined;
+  const caps = {
+    executeTools(calls: ToolCall[]) {
+      pending.push(...calls);
+      return { type: "execute_tools", calls };
+    },
+    reply(content: string) {
+      reply = content;
+      return { type: "reply", content };
+    },
+  } as unknown as ReactorCapabilities;
+  const facts = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
+  await facts.decide({ type: "message.received", message: { content: JSON.stringify(mail) } } as ReactorInboundEvent, {} as ReactorState, caps);
+  while (reply === undefined) {
+    const call = pending.shift()!;
+    await facts.decide({ type: "tool.done", result: { callId: call.id, content: githubAnswer(call, pr), isError: false } } as ReactorInboundEvent, {} as ReactorState, caps);
+  }
+  const ctx = {} as never;
+  const signal = new AbortController().signal;
+  const ruled = await rules({ reply }, ctx, signal);
+  const output = ruled.chunks.map((chunk) => ({ reply: JSON.stringify({ judge: focusedAnswers(chunk.questions, related) }) }));
+  const verdicts = await evaluate(ruled.needsJudgment ? { ...ruled, judge: { output } } : ruled, ctx, signal) as { items: Verdict[] };
+  return { asked: ruled.chunks.length, verdicts: verdicts.items };
+}
+
+function evaluated(output: unknown): WorkflowRunEvent {
+  return { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, at: "2026-10-07T01:30:00.000Z", stepId: "evaluate", output: { ref: `inline:${JSON.stringify(output)}` } } };
+}
+
 function fakeReader(logs: Logs) {
   const reads: Array<{ repo: string; runId: string }> = [];
   const latestOf: string[][] = [];
@@ -157,6 +223,8 @@ type HarnessOptions = {
   sameSource?: boolean;
   /** The repositories' triage-drafts setting; unset keeps the default. */
   triageDrafts?: boolean;
+  /** Every repository's check pack; an empty pack by default. */
+  pack?: CheckPack;
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
@@ -242,7 +310,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     observeTenant: observer.observe,
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
-      return { status: "ok", pack: emptyPack(repo) };
+      return { status: "ok", pack: options.pack ?? emptyPack(repo) };
     },
     deliver: async function deliver(tenantId, address, payload) {
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
@@ -534,6 +602,78 @@ describe("triage reconciler", () => {
     const pr = { number: 7, headSha: "abc", updatedAt: LONG_AGO, draft: false };
     const plans = planTenant({ repos: [{ name: REPO, prs: [pr], rows: [row] }], runs: new Map([[REPO, new Map([["7@abc", [run]]])]]), now: at(1), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined });
     expect(plans.get(REPO)!.rows[0]!.status).toBe("triaged");
+  });
+
+  describe("judge answers", () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { conflicts: { enabled: true }, focused: { enabled: true } } };
+    const policy = { enabled: true, checkPack: { name: REPO } };
+
+    /** Heads 1 and 3 triaged once with `related` as every focused answer, then #2 merged and the others mailed again. */
+    async function remailed(related: number, deployments?: LiveDeployment[]) {
+      const first = await triageMail(stockTriggerMail({ kind: "pr", repo: REPO, items: [1, 3].map((n) => ({ prNumber: n, headSha: `sha${n}` })), policy, checkPack: pack }), { mergeable: true }, related);
+      const runs = { run_first: [startedBatch([1, 3]), evaluated({ items: first.verdicts }), completed] };
+      const { reconcile, delivered, store } = harness({ [repoKey(LIVE.runId)]: runs }, [head(1), head(3)], { pack, ...(deployments && { deployments }) });
+      await reconcile();
+      await markBaseMoved(store, TENANT_ID, REPO, 2, NOW, DEFAULT_RECONCILE_POLICY);
+      await reconcile();
+      return { first, payload: delivered[0]!.payload };
+    }
+
+    test("a head re-checked after a merge reuses its decisive answers, while its conflicts are read afresh", async () => {
+      const { first, payload } = await remailed(0.8);
+      expect(first.asked).toBe(2);
+      expect((payload["items"] as Array<{ judged?: object }>).map((item) => Object.keys(item.judged ?? {}).length)).toEqual([1, 1]);
+      const recheck = await triageMail(stockTriggerMail(payload), { mergeable: false });
+      expect(recheck.asked).toBe(0);
+      for (const { checks } of recheck.verdicts) {
+        expect(checks.find((check) => check.check === "conflicts")?.result).toBe("fail");
+        expect(checks.find((check) => check.check === "focused")?.result).toBe("pass");
+      }
+    });
+
+    test("answers ride only on mail whose From is the hub's bare address on the deployment's domain", async () => {
+      const { payload } = await remailed(0.8);
+      const hub = createEd25519Crypto(await generateKeyPair());
+      const hubSender = `github@${DOMAIN}`;
+      let raw: Uint8Array | undefined;
+      const trigger = createRunTriggerDeliverer({
+        materialize: async () => ({ outcome: "materialized" as const, stepGrants: [] }),
+        router: {
+          async routeMail(_address: string, base64: string) {
+            raw = Buffer.from(base64, "base64");
+            return true;
+          },
+        },
+        tenantDomain: async () => DOMAIN,
+        senderLocalPart: "github",
+        systemSender: { resolve: async () => ({ address: hubSender, publicKey: Buffer.from(hub.getPublicKey()).toString("hex"), sign: (input: Uint8Array) => hub.sign(input) }) },
+      });
+      await trigger.to(LIVE.address, JSON.stringify(payload), TENANT_ID, undefined);
+      const { headers, rawHeaders, parts } = decodeMail(raw!);
+      const fromHub = { headers, rawHeaders, parts: parts.map((part, i) => ({ contentType: part.contentType, ref: `mail-part:///run_x/m1/${i}`, text: new TextDecoder().decode(part.content) })) };
+      expect((await triageMail(fromHub, { mergeable: false })).asked).toBe(0);
+
+      // Stock binds a mail to its authenticated sender by the address `extractAddrSpec` reads, so this From passes its gate for another run.
+      const memberRun = formatRunAddress("run_member", DOMAIN);
+      const named = `"<${hubSender}>" <${memberRun}>`;
+      expect(extractAddrSpec(named)).toBe(memberRun);
+      for (const from of [named, "github@other.test"]) {
+        const mail = stockTriggerMail(payload);
+        const forged = { ...mail, headers: { ...mail.headers, from }, rawHeaders: { ...mail.rawHeaders, from: [from] } };
+        expect((await triageMail(forged, { mergeable: false })).asked).toBe(2);
+      }
+    });
+
+    test("unsure answers are not carried", async () => {
+      const { first, payload } = await remailed(0.5);
+      expect(first.verdicts.every((verdict) => verdict.judged === undefined)).toBe(true);
+      expect((payload["items"] as Array<{ judged?: object }>).every((item) => item.judged === undefined)).toBe(true);
+    });
+
+    test("answers are not carried to a deployment on another decision-model offering", async () => {
+      const { payload } = await remailed(0.8, [{ ...deployment("run_new", NOW), offeringId: "off_other" }, LIVE]);
+      expect((payload["items"] as Array<{ judged?: object }>).every((item) => item.judged === undefined)).toBe(true);
+    });
   });
 
   test("heads settled under another workflow version than the live deployment's, a legacy integer included, are queued again", async () => {

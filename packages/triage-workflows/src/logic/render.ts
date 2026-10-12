@@ -3,6 +3,7 @@ import { citationOf, citationUrl, itemText, type CheckItem, type CheckOutput, ty
 import type { SuggestedAction } from "./actions.js";
 import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { ChangeCandidate } from "./candidates.js";
+import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, focusedCandidateId, isScoped, passText, type FilePlan, type FocusedChoice, type QualityPlan } from "./quality.js";
 
@@ -181,6 +182,19 @@ const NO = 0.3;
 // A focused candidate counts as unrelated, or as part of the change, only when that side holds this much probability.
 const FOCUSED_DECIDES = 0.6;
 const MAX_FILE_EVIDENCE = 3;
+/** An answer clear of the unsure band: the verdict it drives would not change were it asked again. */
+function isDecisive(answer: ModelAnswer): boolean {
+  if (answer.type === "noul") return answer.noul >= YES || answer.noul <= NO;
+  const { probabilities } = answer;
+  return probabilities.unrelated >= FOCUSED_DECIDES || probabilities.primary_or_supporting + probabilities.movement_or_superseded >= FOCUSED_DECIDES;
+}
+
+/** A judge reply a later run may reuse: well formed, with every answer decisive. */
+export function isReusableReply(reply: string): boolean {
+  const { decisions, malformed } = parseAnswers(reply);
+  return !malformed && Object.values(decisions).every(isDecisive);
+}
+
 // The score, out of 100, at which a model check's answer passes: the band's yes edge, or focused's deciding share.
 const PASS_AT = Math.round(YES * 100);
 const FOCUSED_PASS_AT = Math.round(FOCUSED_DECIDES * 100);
@@ -591,7 +605,16 @@ export interface MirrorRequest {
   close: boolean;
 }
 
-export type Verdict = RenderOutput & { repo: string; number: number; headSha: string | null; request: MirrorRequest; cleanupMode?: CleanupMode; actions: SuggestedAction[] };
+export type Verdict = RenderOutput & {
+  repo: string;
+  number: number;
+  headSha: string | null;
+  request: MirrorRequest;
+  cleanupMode?: CleanupMode;
+  actions: SuggestedAction[];
+  /** The judge answers a later run of this head reuses instead of asking again. */
+  judged?: Judged;
+};
 
 export function toMirrorRequest(v: RenderOutput & { repo: string; number: number }): MirrorRequest {
   return {

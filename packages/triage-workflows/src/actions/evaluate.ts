@@ -4,9 +4,9 @@ import { type } from "arktype";
 import { evaluateActions } from "../logic/actions.js";
 import type { PrFacts } from "../logic/checks.js";
 import { errorText } from "../logic/extract.js";
-import type { Item } from "../logic/item.js";
-import { prepareQualityEvaluation } from "../logic/quality.js";
-import { degradedVerdict, parseAnswers, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type Verdict } from "../logic/render.js";
+import type { Item, Judged } from "../logic/item.js";
+import { judgeKey, prepareQualityEvaluation, type JudgeRequest } from "../logic/quality.js";
+import { degradedVerdict, isReusableReply, parseAnswers, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 
 /** The rules items, merged with the judge map's per-chunk outputs, in chunk order, when the judge ran. */
@@ -41,21 +41,51 @@ function judgmentOf(replies: unknown[]): Judgment {
   return { ...(answers.length > 0 ? { judge: answers.join("\n") } : {}), ...(errors.size > 0 ? { judgeError: [...errors].join("; ") } : {}) };
 }
 
-/** Takes the item's own chunk replies off the front of `replies`. */
+/** The item's reply to each of its requests by `judgeKey`: an earlier run's answer where it has one, else the next of `replies`. */
+function repliesTo(it: Item, requests: JudgeRequest[], replies: unknown[]): Array<[string, unknown]> {
+  return requests.map(function replyTo(request): [string, unknown] {
+    const key = judgeKey(request);
+    const carried = it.judged?.[key];
+    return [key, carried !== undefined ? { judge: carried } : replies.shift()];
+  });
+}
+
+// The run log carries the verdict inline and the hub mails the answers back; on the judge eval the answers a verdict
+// keeps are a few hundred bytes at the median and about 20 KB on the largest pull request, so the rare outlier is
+// re-asked in part rather than carried whole.
+const MAX_JUDGED_BYTES = 16 * 1024;
+
+/** The answers a later run of the same head can reuse: each that came back whole and decisive, up to `MAX_JUDGED_BYTES`. */
+function reusable(answered: Array<[string, unknown]>): Judged {
+  const judged: Judged = {};
+  let bytes = 0;
+  for (const [key, reply] of answered) {
+    const { judge, judgeError } = (stepJson(reply) ?? {}) as Judgment;
+    if (typeof judge !== "string" || judgeError !== undefined || !isReusableReply(judge)) continue;
+    bytes += key.length + judge.length;
+    if (bytes > MAX_JUDGED_BYTES) break;
+    judged[key] = judge;
+  }
+  return judged;
+}
+
+/** Takes the item's own chunk replies off the front of `replies`; requests an earlier run answered took none. */
 function verdictOf(it: Item, replies: unknown[]): Verdict {
   if (it.error !== undefined) {
     const verdict = { ...stamp(undefined), ...degradedVerdict(it.error, packMergeThreshold(it.pack)), cleanupMode: it.cleanupMode, actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
   }
   try {
-    // Rules recorded this same pure split as the judge's chunks, so the item's replies are the next `requests.length`.
+    // Rules recorded this same pure split as the judge's chunks, less the requests an earlier run answered.
     const { candidates, plan, requests } = prepareQualityEvaluation(it.facts, it.det.sources);
-    const { judge, judgeError } = it.det.needsJudgment ? { ...it, ...judgmentOf(replies.splice(0, requests.length)) } : it;
+    const answered = it.det.needsJudgment ? repliesTo(it, requests, replies) : [];
+    const { judge, judgeError } = it.det.needsJudgment ? { ...it, ...judgmentOf(answered.map(([, reply]) => reply)) } : it;
     const answers = judge !== undefined ? parseAnswers(judge) : null;
     const rendered = renderVerdict({ author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, candidates, plan, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, threshold: packMergeThreshold(it.pack) });
     // A degraded verdict is incomplete, so nothing is suggested from it.
     const actions = it.pack && rendered.degraded === null ? evaluateActions({ facts: it.facts, checks: rendered.checks, pack: it.pack, roles: it.roles ?? {} }) : [];
-    const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions };
+    const judged = reusable(answered);
+    const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions, ...(Object.keys(judged).length > 0 && { judged }) };
     return { ...verdict, request: toMirrorRequest(verdict) };
   } catch (e) {
     const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`, packMergeThreshold(it.pack)), cleanupMode: it.cleanupMode, actions: [] };
