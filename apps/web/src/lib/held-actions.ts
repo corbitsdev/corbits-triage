@@ -40,6 +40,8 @@ export type HoldQueue = {
   hold: (action: HeldAction) => void;
   undo: () => boolean;
   flush: () => Promise<void>;
+  /** Discards what is held without sending it and clears the notices, for a session that ended without a chance to send. */
+  drop: () => void;
   notices: () => Notices;
   subscribe: (listener: () => void) => () => void;
 };
@@ -126,6 +128,15 @@ export function createHoldQueue(timers: Timers, holdMs: number): HoldQueue {
     await Promise.all([...entries].map((entry) => entry.delivery));
   }
 
+  function drop() {
+    const held = heldEntry();
+    if (held !== null) {
+      if (held.timer !== null) timers.clear(held.timer);
+      entries.delete(held);
+    }
+    publish(null);
+  }
+
   function subscribe(listener: () => void) {
     listeners.add(listener);
     return function unsubscribe() {
@@ -133,7 +144,7 @@ export function createHoldQueue(timers: Timers, holdMs: number): HoldQueue {
     };
   }
 
-  return { hold, undo, flush, notices: () => notices, subscribe };
+  return { hold, undo, flush, drop, notices: () => notices, subscribe };
 }
 
 export const browserTimers: Timers = {

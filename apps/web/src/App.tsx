@@ -1,14 +1,11 @@
 import { useEffect, useState } from "react";
-import { QueryClient } from "@tanstack/react-query";
-import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
-import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
-import { del, get, set } from "idb-keyval";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { INVITE_PATH, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { HeldInboxProvider, useSignOutAfterSending } from "./lib/held-inbox.tsx";
-import { isPersistedQuery } from "./lib/persisted-queries.ts";
 import { SessionProvider, useSession } from "./lib/session.tsx";
+import { UserQueryCache } from "./lib/user-cache.tsx";
 import { DeniedNotice } from "./lib/denied.tsx";
 import type { PortalSnapshot, WorkspaceOption } from "./lib/hub-api.ts";
 import Layout from "./components/Layout.tsx";
@@ -173,13 +170,15 @@ function Gate() {
 export function AppShell() {
   return (
     <SessionProvider>
-      <PortalProvider>
-        <HeldInboxProvider>
-          <Gate />
-        </HeldInboxProvider>
-        <LoadingIndicator />
-        <Toaster position="bottom-right" />
-      </PortalProvider>
+      <UserQueryCache>
+        <PortalProvider>
+          <HeldInboxProvider>
+            <Gate />
+          </HeldInboxProvider>
+          <LoadingIndicator />
+          <Toaster position="bottom-right" />
+        </PortalProvider>
+      </UserQueryCache>
     </SessionProvider>
   );
 }
@@ -195,34 +194,13 @@ function createPortalQueryClient() {
   });
 }
 
-const PERSISTED_QUERIES_KEY = "corbits.queries";
-const PERSISTED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-/** Changed whenever a persisted query's shape changes, so older caches are dropped rather than read as the new shape. */
-const PERSISTED_SHAPE = "principal-run-lists";
-
-async function getPersisted(key: string): Promise<string | null> {
-  return (await get<string>(key)) ?? null;
-}
-
-const persister = createAsyncStoragePersister({
-  storage: { getItem: getPersisted, setItem: set, removeItem: del },
-  key: PERSISTED_QUERIES_KEY,
-});
-
-const persistOptions = {
-  persister,
-  maxAge: PERSISTED_MAX_AGE_MS,
-  buster: PERSISTED_SHAPE,
-  dehydrateOptions: { shouldDehydrateQuery: isPersistedQuery },
-};
-
 export default function App() {
   const [queryClient] = useState(createPortalQueryClient);
   return (
-    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+    <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AppShell />
       </BrowserRouter>
-    </PersistQueryClientProvider>
+    </QueryClientProvider>
   );
 }
