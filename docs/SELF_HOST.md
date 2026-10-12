@@ -14,4 +14,4 @@ Existing installs must accept Contents: write on GitHub for merges to work.
 
 ## How GitHub credentials are used
 
-The vault holds the App as `{"appId","privateKey"}` under provider `github`. A trusted sidecar adapter mints short-lived installation tokens at the fetch boundary, so workflow and tool code never see the private key. Pull request actions from the portal (`POST /api/integrations/github-actions/:tenantId`) use the same adapter in the hub after checking the caller's `use` grant on the credential.
+The vault holds the App as `{"appId","privateKey"}` under provider `github`. A trusted sidecar adapter mints short-lived installation tokens at the fetch boundary, so workflow and tool code never see the private key. Hub routes that reach GitHub for the portal use the same adapter. Reads (open pull requests, pull request details, previews) check the caller's `read` or `use` grant on the credential and use the secret on the caller's behalf without returning it; writes (pull request actions, triage, Dos) check `use`.

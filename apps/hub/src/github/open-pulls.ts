@@ -43,7 +43,7 @@ export function createGithubOpenPulls(deps: PortalCredentialDeps & { githubApiOr
   return async function openPulls(req: Request, tenantId: string): Promise<Response> {
     const principalId = await portalMember(deps, req, tenantId);
     if (principalId instanceof Response) return principalId;
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
+    const appJson = await githubAppCredential(deps, principalId, tenantId, "read");
     if (appJson instanceof Response) return appJson;
     const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
 
