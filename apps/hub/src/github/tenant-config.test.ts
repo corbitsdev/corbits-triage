@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { patchCorbitsTriage, prepareCorbitsTriagePatch, type CorbitsTriageNs } from "./tenant-config.js";
+import { MAX_BODY_BYTES } from "../read-json.js";
+import { patchCorbitsTriage, prepareCorbitsTriagePatch, tenantManagerRefusal, type CorbitsTriageNs } from "./tenant-config.js";
 
 const TENANT_ID = "tnt_test";
 
@@ -66,5 +67,44 @@ describe("corbitsTriage rev CAS", () => {
       name: "Acme",
       config: { other: true, corbitsTriage: { rev: 4, repos: [] } },
     });
+  });
+});
+
+/** Fails the test when anything reads the database. */
+const untouchable = new Proxy({}, {
+  get() {
+    throw new Error("database touched");
+  },
+}) as never;
+
+function memberDb(principalId: string | undefined) {
+  return { query: { principal: { async findFirst() { return principalId && { id: principalId }; } } } } as never;
+}
+
+async function signedIn(headers: Headers) {
+  const id = headers.get("x-user");
+  return id === null ? null : { user: { id } };
+}
+
+async function managesOnly(principalId: string, tenantId: string, resource: string, action: string) {
+  return principalId === "prn_admin" && resource === `tenant:${tenantId}` && action === "manage";
+}
+
+describe("tenant PATCH guard", () => {
+  test("an anonymous caller is refused 401 before the database is read", async () => {
+    const res = await tenantManagerRefusal({ db: untouchable, getSession: signedIn, authorize: managesOnly }, TENANT_ID, new Headers());
+    expect(res?.status).toBe(401);
+  });
+
+  test("a non-member and a member without manage are refused 403; a manager passes", async () => {
+    const headers = new Headers({ "x-user": "usr" });
+    expect((await tenantManagerRefusal({ db: memberDb(undefined), getSession: signedIn, authorize: managesOnly }, TENANT_ID, headers))?.status).toBe(403);
+    expect((await tenantManagerRefusal({ db: memberDb("prn_member"), getSession: signedIn, authorize: managesOnly }, TENANT_ID, headers))?.status).toBe(403);
+    expect(await tenantManagerRefusal({ db: memberDb("prn_admin"), getSession: signedIn, authorize: managesOnly }, TENANT_ID, headers)).toBeUndefined();
+  });
+
+  test("a body over the cap is refused 413 before the database is read", async () => {
+    const res = await prepareCorbitsTriagePatch(untouchable, TENANT_ID, new Request("https://hub.example/api/tenants/tnt_test", { method: "PATCH", body: "x".repeat(MAX_BODY_BYTES + 1) }));
+    expect(res instanceof Response && res.status).toBe(413);
   });
 });
