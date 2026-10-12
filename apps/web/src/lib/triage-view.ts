@@ -1,4 +1,4 @@
-import type { CheckOutput } from "@corbits/triage-contracts";
+import { itemText, type CheckItem, type CheckOutput } from "@corbits/triage-contracts";
 import { resolveInlineRef, type HubApproval, type MergeVerdict, type PrItem, type RunLog } from "./hub-api.ts";
 
 function obj(value: unknown): Record<string, unknown> {
@@ -81,8 +81,8 @@ function scoreText(score: number, passAt: number): string {
 
 const MAX_LISTED = 3;
 
-function listed(items: readonly string[]): string {
-  const unique = [...new Set(items)];
+function listed(items: readonly CheckItem[]): string {
+  const unique = [...new Set(items.map(itemText))];
   const more = unique.length > MAX_LISTED ? ` +${unique.length - MAX_LISTED} more` : "";
   return `${unique.slice(0, MAX_LISTED).join(", ")}${more}`;
 }

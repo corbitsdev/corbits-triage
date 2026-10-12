@@ -23,6 +23,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     labels: [],
     comment: null,
     sha: null,
+    verdictSha: null,
     degraded: null,
     needsHuman: false,
     closed: false,
