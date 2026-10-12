@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
 import { recommendedPack, stockTriggerMail } from "@corbits/triage-contracts";
-
-const NOW = new Date("2026-10-01T02:00:00.000Z");
 import {
   createGrant,
   deleteGrant,
@@ -24,40 +22,35 @@ import {
   untilDeploymentReady,
   patchAppConfig,
   type HubApproval,
-  type HubRun,
   type Membership,
   type MyInvitation,
   type PortalSnapshot,
+  type PullTriage,
+  type PullVerdict,
   type RunLog,
 } from "./hub-api.ts";
-
-const inline = (value: unknown) => ({ ref: `inline:${JSON.stringify(value)}` });
 
 const duplicateLog: RunLog = {
   runId: "run-triage",
   anchorRunId: "run-triage",
-  events: [
-    { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } },
-    {
-      seq: 1,
-      type: "StepCompleted",
-      body: {
-        stepId: "render",
-        output: inline({
-          repo: "acme/widgets",
-          number: 8,
-          state: "needs-decision",
-          labels: ["needs-decision"],
-          feedback: "Duplicate of #7",
-          nextAction: "Confirm duplicate or withdraw",
-          humanGated: true,
-          duplicate: true,
-          close: false,
-        }),
-      },
-    },
-  ],
+  events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } }],
 };
+
+/** A verdict as the hub's triage-verdicts route answers it. */
+function verdict(runId: string, state: string, detail: Record<string, unknown> | null, fields: Partial<PullVerdict> = {}): PullVerdict {
+  return {
+    runId, at: "2026-10-01T01:00:00.000Z", headSha: "abc", settled: true, state, actor: "maintainer", humanGated: false,
+    degraded: null, commented: false, checks: [], detail, ...fields,
+  };
+}
+
+function pull(number: number, fields: Partial<PullTriage> = {}): PullTriage {
+  return { repo: "acme/widgets", number, activityAt: null, verdict: null, run: null, ...fields };
+}
+
+const duplicate = pull(8, {
+  verdict: verdict("run-triage", "needs-decision", { labels: ["needs-decision"], feedback: "Duplicate of #7", nextAction: "Confirm duplicate or withdraw", duplicate: true }, { humanGated: true }),
+});
 
 const approval = (id: string, close: boolean): HubApproval => ({
   id,
@@ -80,8 +73,8 @@ const snapshot = (): PortalSnapshot => ({
   denied: { repos: false, credentials: false },
 });
 
-const queue = (approvals: HubApproval[], logs: RunLog[] = [duplicateLog], openPulls?: Parameters<typeof projectQueue>[2]) =>
-  projectQueue(logs, [], approvals, openPulls, NOW);
+const queue = (approvals: HubApproval[], pulls: PullTriage[] = [duplicate], openPulls?: Parameters<typeof projectQueue>[2]) =>
+  projectQueue(pulls, approvals, openPulls);
 
 describe("duplicate close projection", () => {
   test("starts open and exposes a human close action even when the ordinary mirror approval has close:false", () => {
@@ -101,7 +94,7 @@ describe("duplicate close projection", () => {
   });
 
   test("a pull request that is no longer open is closed and needs no human", () => {
-    const [item] = queue([approval("mirror", false)], [duplicateLog], { repos: [{ repo: "acme/widgets", prs: [] }] });
+    const [item] = queue([approval("mirror", false)], [duplicate], { repos: [{ repo: "acme/widgets", prs: [] }] });
     expect(item).toMatchObject({ closed: true, needsHuman: false });
   });
 
@@ -121,14 +114,14 @@ describe("needs-human queue sources", () => {
       events: [{ seq: 4, type: "SignalAwaited", body: { signalName: "maintainer" } }],
     };
 
-    expect(projectQueue([duplicateLog, waiting], [], approvals, undefined, NOW).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
+    expect(queue(approvals).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
     expect(queueRows([duplicateLog, waiting], approvals, true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
   });
 });
 
 describe("All-view queue sources", () => {
   test("does not surface listener deployments as pull requests when the project queue is empty", () => {
-    expect(projectQueue([], [], [], undefined, NOW)).toEqual([]);
+    expect(projectQueue([], [], undefined)).toEqual([]);
     expect(queueRows([], [], false)).toEqual([]);
   });
 
@@ -142,185 +135,47 @@ describe("All-view queue sources", () => {
   });
 });
 
-describe("projectQueue reply unwrap", () => {
-  test("unwraps output.reply as a single verdict or items list, keeping the head each verdict judged", () => {
-    const single: RunLog = {
-      runId: "run-reply",
-      anchorRunId: "run-reply",
-      events: [
-        { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } },
-        {
-          seq: 1,
-          type: "StepCompleted",
-          body: {
-            stepId: "renderJudged",
-            output: inline({
-              reply: JSON.stringify({
-                repo: "acme/widgets",
-                number: 8,
-                headSha: "abc123",
-                state: "needs-decision",
-                confidence: 0.9,
-                humanGated: true,
-                checks: [{
-                  check: "focused",
-                  kind: "model",
-                  result: "fail",
-                  reason: "mixes unrelated changes",
-                  evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"],
-                  output: { kind: "score", score: 20, passAt: 60, items: ["Alpha — src/alpha.ts"] },
-                }, {
-                  check: "ci",
-                  kind: "machine",
-                  result: "pass",
-                  reason: "checks are success",
-                  evidence: [],
-                }],
-              }),
-            }),
-          },
-        },
-      ],
-    };
-    const listed: RunLog = {
-      runId: "run-items",
-      anchorRunId: "run-items",
-      events: [
-        { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "backlog", repo: "acme/gadgets" }) } } },
-        {
-          seq: 1,
-          type: "StepCompleted",
-          body: {
-            stepId: "renderAll",
-            output: inline({
-              reply: JSON.stringify({
-                items: [{ repo: "acme/gadgets", number: 3, state: "ready-monitoring", confidence: 0.4 }],
-              }),
-            }),
-          },
-        },
-      ],
-    };
-    expect(projectQueue([single, listed], [], [], undefined, NOW)).toEqual([
-      expect.objectContaining({
-        key: "acme/widgets#8",
-        verdictSha: "abc123",
-        confidence: 0.9,
-        needsHuman: true,
-        checks: [
-          expect.objectContaining({ evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"], output: { kind: "score", score: 20, passAt: 60, items: ["Alpha — src/alpha.ts"] } }),
-          expect.objectContaining({ check: "ci", output: null }),
-        ],
-      }),
-      expect.objectContaining({ key: "acme/gadgets#3", confidence: 0.4, state: "ready", verdictSha: null }),
-    ]);
-  });
-
-  test("maps the merge verdict, and none from a log written before it", () => {
-    const merge = { verdict: "not-recommended", score: 0.62, threshold: 0.7, reasons: ["Score 0.62 is below the threshold 0.7"] };
-    const log: RunLog = {
-      runId: "run-merge",
-      anchorRunId: "run-merge",
-      events: [
-        { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "backlog", repo: "acme/gadgets" }) } } },
-        {
-          seq: 1,
-          type: "StepCompleted",
-          body: {
-            stepId: "renderAll",
-            output: inline({
-              reply: JSON.stringify({
-                items: [
-                  { repo: "acme/gadgets", number: 3, state: "awaiting-review", score: 0.62, confidence: 0.62, merge },
-                  { repo: "acme/gadgets", number: 4, state: "awaiting-review", confidence: 0.8 },
-                ],
-              }),
-            }),
-          },
-        },
-      ],
-    };
-    expect(projectQueue([log], [], [], undefined, NOW)).toEqual([
-      expect.objectContaining({ key: "acme/gadgets#3", merge }),
-      expect.objectContaining({ key: "acme/gadgets#4", merge: null }),
-    ]);
-  });
-});
-
-describe("projectQueue running pull requests", () => {
-  const prStarted = (number: number) => ({
-    seq: 0,
-    type: "RunStarted",
-    body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: number, headSha: "abc" }) } },
-  });
-  const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: "abc", updatedAt: "2026-10-01T00:00:00.000Z", labels: [] });
+describe("projectQueue from the hub's verdicts", () => {
+  const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: "def", updatedAt: "2026-10-01T00:00:00.000Z", labels: [] });
   const openPulls = { repos: [{ repo: "acme/widgets", prs: [pr(8), pr(9), pr(10)] }] };
 
-  test("a started pr-triage run is running until it renders or ends, and a previous verdict is kept", () => {
-    const started: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
-    const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
-    const rerun: RunLog = { runId: "run-8b", anchorRunId: "pr", events: [prStarted(8)] };
-    const items = projectQueue([duplicateLog, rerun, started, failed], [], [], openPulls, NOW);
-    expect(items.map(({ key, state, running }) => ({ key, state, running }))).toEqual([
-      { key: "acme/widgets#8", state: "needs-decision", running: true },
-      { key: "acme/widgets#9", state: "new", running: true },
-      { key: "acme/widgets#10", state: "new", running: false },
+  test("a verdict shows its own fields and the facts it read; one recorded before the hub kept them shows its state, checks and GitHub's title", () => {
+    const merge = { verdict: "not-recommended", score: 0.62, threshold: 0.7, reasons: ["Score 0.62 is below the threshold 0.7"] };
+    const output = { kind: "score", score: 20, passAt: 60, items: ["Alpha — src/alpha.ts"] };
+    const check = { check: "focused", kind: "model", result: "fail", reason: "mixes unrelated changes", evidence: ["Alpha — src/alpha.ts"], output };
+    const detail = {
+      headSha: "abc123", priority: "P1", score: 0.62, merge, reason: "Mixes two changes.", evidence: ["Mixes two changes."], checks: [check], labels: ["triage:split"], feedback: "Please split this.",
+      facts: { title: "Add widgets", author: "ann", draft: false, mergeable: true, checks: "pending" },
+    };
+    const items = projectQueue([pull(8, { verdict: verdict("run-8", "needs-author-update", detail, { commented: true }) }), pull(9, { verdict: verdict("run-9", "needs-decision", null, { humanGated: true, checks: [{ check: "ci", result: "fail" }] }) })], [], openPulls);
+    expect(items).toEqual([
+      expect.objectContaining({
+        key: "acme/widgets#8", state: "needs-author-update", priority: "P1", confidence: 0.62, merge, evidence: ["Mixes two changes."], checks: [{ ...check, gate: false }],
+        labels: ["triage:split"], comment: "Please split this.", verdictSha: "abc123", posted: true, title: "Add widgets", author: "ann", mergeable: true, ci: "pending", sha: "abc", runId: "run-8",
+      }),
+      expect.objectContaining({
+        key: "acme/widgets#9", state: "needs-decision", needsHuman: true, verdictSha: null, merge: null, comment: null, title: "PR 9", author: "ada",
+        checks: [{ check: "ci", kind: null, result: "fail", reason: null, evidence: [], output: null, gate: false }],
+      }),
+      expect.objectContaining({ key: "acme/widgets#10", state: "new" }),
     ]);
-    expect(projectQueue([rerun, duplicateLog], [], [], openPulls, NOW).find((item) => item.key === "acme/widgets#8")?.running).toBe(false);
   });
 
-  test("a batch catch-up run marks each named pull running, and its verdicts carry their head sha", () => {
-    const items = [9, 10].map((n) => ({ prNumber: n, headSha: `sha${n}` }));
-    const started = { seq: 0, type: "RunStarted", body: { at: "2026-10-01T01:59:00.000Z", trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", items }) } } };
-    const running: RunLog = { runId: "run-batch", anchorRunId: "pr", events: [started] };
-    expect(projectQueue([running], [], [], openPulls, NOW).filter((item) => item.running).map((item) => item.number)).toEqual([9, 10]);
-    const render = { seq: 1, type: "StepCompleted", body: { stepId: "render", output: { ref: `inline:${JSON.stringify({ items: [{ repo: "acme/widgets", number: 9, headSha: "sha9", state: "ready-monitoring" }] })}` } } };
-    const rendered: RunLog = { runId: "run-batch", anchorRunId: "pr", events: [started, render] };
-    expect(projectQueue([rendered], [], [], undefined, NOW).find((item) => item.number === 9)?.sha).toBe("sha9");
-  });
-
-  test("a verdict is posted only when its run's mirror step wrote a non-empty reply to GitHub", () => {
-    const mirror = (output: unknown) => ({ seq: 2, type: "StepCompleted", body: { stepId: "mirror", output: inline({ reply: JSON.stringify(output) }) } });
-    const verdict = (number: number, feedback: string) => ({ repo: "acme/widgets", number, state: "needs-author-update", feedback });
-    const render = (items: unknown[]) => ({ seq: 1, type: "StepCompleted", body: { stepId: "renderAll", output: inline({ items }) } });
-    const postedOf = (items: unknown[], output: unknown) =>
-      projectQueue([{ runId: "run-mirror", anchorRunId: "run-mirror", events: [render(items), mirror(output)] }], [], [], undefined, NOW).map((item) => [item.number, item.posted]);
-    expect(postedOf([verdict(8, "Please rebase")], { call: "github_mirror_auto:acme/widgets#8", ok: true })).toEqual([[8, true]]);
-    expect(postedOf([verdict(8, "")], { call: "github_mirror_auto:acme/widgets#8", ok: true })).toEqual([[8, false]]);
-    expect(postedOf([verdict(8, "Please rebase"), verdict(9, "Please add tests")], {
-      results: [{ call: "github_mirror_auto:acme/widgets#8", ok: false, error: "403" }, { call: "github_mirror_auto:acme/widgets#9", ok: true }],
-    })).toEqual([[8, false], [9, true]]);
-  });
-
-  test("a verdict from the gate's rules branch is posted by its own mirror step", () => {
-    const evaluated = { seq: 1, type: "StepCompleted", body: { stepId: "evaluateRules", output: inline({ repo: "acme/widgets", number: 8, state: "needs-author-update", feedback: "Please rebase" }) } };
-    const mirrored = { seq: 2, type: "StepCompleted", body: { stepId: "mirrorRules", output: inline({ reply: JSON.stringify({ call: "github_mirror_auto:acme/widgets#8", ok: true }) }) } };
-    const items = projectQueue([{ runId: "run-rules", anchorRunId: "run-rules", events: [evaluated, mirrored] }], [], [], undefined, NOW);
-    expect(items.map((item) => [item.number, item.posted])).toEqual([[8, true]]);
-  });
-
-  test("a pull request whose latest run ended without a verdict carries that failure until a newer run starts", () => {
-    const failed: RunLog = { runId: "run-10", anchorRunId: "pr", events: [prStarted(10), { seq: 1, type: "RunFailed", body: {} }] };
-    const cancelled: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
-    const stuck: RunLog = { runId: "run-8", anchorRunId: "pr", events: [{ ...prStarted(8), body: { ...prStarted(8).body, at: "2026-10-01T00:00:00.000Z" } }] };
-    const settled = [{ id: "run-9", definitionId: "d", definitionName: "pr-triage", status: "cancelled", createdAt: "2026-10-01T00:00:00.000Z" }];
-    const items = projectQueue([duplicateLog, stuck, cancelled, failed], settled, [], openPulls, NOW);
-    expect(items.map(({ key, running, failure }) => ({ key, running, failure }))).toEqual([
-      { key: "acme/widgets#8", running: false, failure: "stuck" },
-      { key: "acme/widgets#9", running: false, failure: "cancelled" },
-      { key: "acme/widgets#10", running: false, failure: "failed" },
+  test("a pull request's run in flight, ended early or not read yet shows, with or without a previous verdict", () => {
+    const run = (status: "running" | "stuck" | "failed") => ({ runId: `run-${status}`, startedAt: "2026-10-01T01:30:00.000Z", status });
+    const pulls = [
+      pull(8, { verdict: duplicate.verdict, run: run("running"), activityAt: "2026-10-01T01:30:00.000Z" }),
+      pull(9, { run: run("stuck") }),
+      pull(10, { run: run("failed") }),
+      pull(11, { verdict: duplicate.verdict, run: { status: "unknown" } }),
+    ];
+    expect(projectQueue(pulls, [], openPulls).map(({ key, state, running, failure, activityAt }) => ({ key, state, running, failure, activityAt }))).toEqual([
+      { key: "acme/widgets#8", state: "needs-decision", running: true, failure: null, activityAt: "2026-10-01T01:30:00.000Z" },
+      // Until the hub read the live logs since it started, a run may be going, so writes wait as for one that is.
+      { key: "acme/widgets#11", state: "needs-decision", running: true, failure: null, activityAt: null },
+      { key: "acme/widgets#9", state: "new", running: false, failure: "stuck", activityAt: null },
+      { key: "acme/widgets#10", state: "new", running: false, failure: "failed", activityAt: null },
     ]);
-    const retried: RunLog = { runId: "run-10b", anchorRunId: "pr", events: [prStarted(10)] };
-    expect(projectQueue([failed, retried], [], [], openPulls, NOW).find((item) => item.key === "acme/widgets#10")).toMatchObject({ running: true, failure: null });
-  });
-
-  test("a run the hub settled without a terminal event is not running", () => {
-    const started: RunLog = { runId: "run-9", anchorRunId: "pr", events: [prStarted(9)] };
-    const row = (id: string, status: string): HubRun => ({ id, definitionId: "def", definitionName: "pr-triage", status, createdAt: "2026-10-01T00:00:00.000Z" });
-    const runningOf = (runs: HubRun[]) => projectQueue([started], runs, [], openPulls, NOW).find((item) => item.key === "acme/widgets#9")?.running;
-    expect(runningOf([row("pr", "running")])).toBe(true);
-    expect(runningOf([row("run-9", "failed")])).toBe(false);
-    expect(runningOf([row("pr", "stopped")])).toBe(false);
   });
 });
 

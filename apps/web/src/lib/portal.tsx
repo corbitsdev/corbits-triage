@@ -101,6 +101,7 @@ const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
 export const PORTAL_QUERY_KEY = ["portal"] as const;
 export const RUN_IDS_QUERY_KEY = "run-ids";
 export const RUN_LOG_QUERY_KEY = "run-log";
+export const TRIAGE_VERDICTS_QUERY_KEY = "triage-verdicts";
 export const APPROVALS_QUERY_KEY = "approvals";
 export const RUNS_QUERY_KEY = "runs";
 export const GRANTS_QUERY_KEY = "grants";
@@ -116,6 +117,7 @@ const REFRESH_QUERY_KEYS = [
   PORTAL_QUERY_KEY,
   [RUN_IDS_QUERY_KEY],
   [RUN_LOG_QUERY_KEY],
+  [TRIAGE_VERDICTS_QUERY_KEY],
   [APPROVALS_QUERY_KEY],
   [RUNS_QUERY_KEY],
   [GRANTS_QUERY_KEY],
@@ -348,7 +350,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         return requestPullRequestTriage(transport, current.workspace.tenantId, repo, number);
       }
       await untilDeploymentReady(request, waitForWorkflow);
-      await invalidateChangeable(queryClient, [[RUN_IDS_QUERY_KEY], [RUN_LOG_QUERY_KEY], [RUNS_QUERY_KEY]]);
+      await invalidateChangeable(queryClient, [[TRIAGE_VERDICTS_QUERY_KEY]]);
     },
     [queryClient, requireSnapshot, waitForWorkflow],
   );

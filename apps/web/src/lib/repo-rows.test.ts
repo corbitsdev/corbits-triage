@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { stockTriggerMail } from "@corbits/triage-contracts";
-import { projectQueue, type PrItem, type RunLog } from "./hub-api.ts";
+import { projectQueue, type PrItem } from "./hub-api.ts";
 import { groupInbox, regroupInbox } from "./inbox-view.ts";
 import { repoHealth, repoRows, triageReadyRepos } from "./repo-rows.ts";
 
@@ -27,7 +26,7 @@ describe("repository rows", () => {
       item("acme/api", 4, { state: "new", owner: "Author", updatedAt: "2026-10-02T00:00:00Z" }),
     ];
     const pile = regroupInbox(groupInbox(items, triageReadyRepos(repos)), "repo").find((group) => group.key === "acme/api");
-    const [api] = repoRows(repos, items, [], new Set(), { repos: [{ repo: "acme/api", prs: [] }] }, null);
+    const [api] = repoRows(repos, items, new Set(), new Set(), { repos: [{ repo: "acme/api", prs: [] }] }, null);
     expect(api).toMatchObject({
       href: "/repositories/acme/api",
       posting: "Post automatically",
@@ -46,32 +45,28 @@ describe("repository rows", () => {
       item("acme/off", 5, {}),
       item("acme/raw", 6, {}),
     ];
-    const rows = repoRows(all, items, [], new Set(), undefined, null);
+    const rows = repoRows(all, items, new Set(), new Set(), undefined, null);
     expect(rows.map((row) => ("error" in row.pulls ? null : [row.pulls.awaiting, row.pulls.needsYou]))).toEqual([[2, 0], [0, 1], [0, 0], [0, 0]]);
     expect(groupInbox(items, triageReadyRepos(all)).awaiting).toBe(2);
   });
 
   test("a GitHub failure replaces only the GitHub counts; setup still shows", () => {
     const listing = { repos: [{ repo: "acme/api", prs: [] }, { repo: "acme/web", prs: [], error: "rate limited" }] };
-    const [api, web] = repoRows(repos, [], [], new Set(), listing, null);
+    const [api, web] = repoRows(repos, [], new Set(), new Set(), listing, null);
     expect(api?.pulls).toMatchObject({ open: 0 });
     expect(web).toMatchObject({ href: "/repositories/acme/web", posting: "Ask me", pulls: { error: "rate limited" }, health: { label: "Needs setup" } });
-    const failed = repoRows(repos, [], [], new Set(["acme/api"]), undefined, new Error("offline"));
+    const failed = repoRows(repos, [], new Set(), new Set(["acme/api"]), undefined, new Error("offline"));
     expect(failed.map((row) => row.pulls)).toEqual([{ error: "offline" }, { error: "offline" }]);
     expect(failed[0]?.health.label).toBe("Catching up");
   });
 
   test("GitHub's updatedAt reaches pull requests that already have a verdict", () => {
-    const log: RunLog = {
-      runId: "run-1",
-      anchorRunId: "run-1",
-      events: [
-        { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/api", prNumber: 8 }) } } },
-        { seq: 1, type: "StepCompleted", body: { stepId: "render", output: { ref: `inline:${JSON.stringify({ repo: "acme/api", number: 8, state: "ready" })}` } } },
-      ],
+    const verdict = {
+      runId: "run-1", at: "2026-10-01T00:30:00.000Z", headSha: "abc", settled: true, state: "ready-monitoring", actor: "author", humanGated: false,
+      degraded: null, commented: false, checks: [], detail: null,
     };
     const listing = { repos: [{ repo: "acme/api", prs: [{ number: 8, title: "PR 8", author: "ada", draft: false, sha: "abc", updatedAt: "2026-10-01T01:00:00.000Z", labels: [] }] }] };
-    const items = projectQueue([log], [], [], listing, new Date("2026-10-01T02:00:00.000Z"));
+    const items = projectQueue([{ repo: "acme/api", number: 8, activityAt: null, verdict, run: null }], [], listing);
     expect(items.find((row) => row.key === "acme/api#8")).toMatchObject({ runId: "run-1", updatedAt: "2026-10-01T01:00:00.000Z" });
   });
 

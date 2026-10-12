@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { schema, type DB, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
@@ -68,6 +68,23 @@ export async function resolveLiveDeployments(
     cancelling: row.cancellationRequestedAt !== null,
     workflow: row.workflow,
   }));
+}
+
+export type ActiveTenant = { id: string; domain: string };
+
+/** Tenants with a run of the workflow in flight, or with `deployments` one with a live deployment of it. */
+export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments"): Promise<ActiveTenant[]> {
+  const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
+  return db
+    .selectDistinct({ id: tenant.id, domain: tenant.domain })
+    .from(workflowRun)
+    .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
+    .innerJoin(tenant, eq(workflowRun.tenantId, tenant.id))
+    .where(and(
+      eq(workflowDefinition.name, definitionName),
+      what === "runs" ? ne(workflowRun.id, workflowRun.anchorRunId) : eq(workflowRun.id, workflowRun.anchorRunId),
+      what === "runs" ? eq(workflowRun.status, "running") : inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
+    ));
 }
 
 /** The deployment new mail goes to: the newest one not being cancelled. */

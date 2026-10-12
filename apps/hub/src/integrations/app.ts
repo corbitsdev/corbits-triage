@@ -17,6 +17,7 @@ import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 import { TRIAGE_STATS_PATH, TriageStats } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
+import { TRIAGE_VERDICTS_PATH, TriageVerdicts } from "../github/triage-verdicts.js";
 import { AcceptBody, Accepted, INVITATIONS_PATH, InvitationCreated, InvitationList, InviteBody, MY_INVITATIONS_PATH, MyInvitations } from "../invitations/invitations.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { DeployedVersions, WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
@@ -39,6 +40,7 @@ export type IntegrationHandlers = {
   prPreview: TenantHandler;
   triageStats: TenantHandler;
   triageTimeline: TenantHandler;
+  triageVerdicts: TenantHandler;
   workflowDeploy: TenantHandler;
   workflowVersions: TenantHandler;
   invitations: {
@@ -351,6 +353,29 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       responses: { 200: json("Verdicts in time order", TriageTimeline), ...invalid, 401: failures[401], 403: failures[403] },
     }),
     tenantRoute(handlers.triageTimeline),
+  );
+
+  app.get(
+    `${TRIAGE_VERDICTS_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Latest verdict of each open pull request",
+      description: "Needs `workflow-run:*` read, as reading run logs does. Reads only what the hub already recorded: verdicts (recorded within seconds of their step completing, by a loop over tenants with pr-triage runs in flight), the last read of the live logs and GitHub's last listing of open pull requests (the github-open-pulls listing, or one read as the App at most every 30 seconds when the caller holds `read` on the GitHub credential; without it, the last listing of any age). Each open pull request of a connected repository with a verdict or a live run, with its latest verdict, its latest run when that has not completed (`unknown` until the hub read the workspace's live logs since it started), and when author activity last started a run. Where GitHub's listing lacks a repository, those with a verdict in the last 14 days. With `repo` and `number`, that one pull request, open or not. Sends an ETag; a matching If-None-Match gets 304, answered from memory while nothing changed.",
+      tags: TAGS,
+      parameters: [
+        { in: "query", name: "repo", required: false, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
+        { in: "query", name: "number", required: false, schema: { type: "integer", minimum: 1, maximum: 2147483647 } },
+      ],
+      responses: {
+        200: json("Pull requests by repository and number", TriageVerdicts),
+        304: { description: "Unchanged since the ETag sent" },
+        ...invalid,
+        401: failures[401],
+        403: json("Not from the portal or no read of the workspace's runs", Failure),
+        404: json("The repository is not connected", Failure),
+        409: json("The workspace is not set up yet", Failure),
+      },
+    }),
+    tenantRoute(handlers.triageVerdicts),
   );
 
   app.post(
