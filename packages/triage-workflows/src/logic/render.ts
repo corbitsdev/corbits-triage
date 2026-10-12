@@ -1,7 +1,7 @@
 import { render, TRIAGE_LABELS, type Rendered, type TriageState } from "@corbits/rule-packs";
 import type { CheckOutput, CleanupMode, RuleCustomCheck } from "@corbits/triage-contracts";
 import type { SuggestedAction } from "./actions.js";
-import type { CheckResult, DeterministicResult } from "./checks.js";
+import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { ChangeCandidate } from "./candidates.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, focusedCandidateId, isScoped, itemParts, passText, type FilePlan, type FocusedChoice, type QualityPlan } from "./quality.js";
@@ -357,7 +357,12 @@ function failedStep(c: CheckResult, sources: Sources): Step {
     case "paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
     case "size": return { actor: "author", action: `Consider splitting it (${withoutLimit(c.evidence)})` };
     case "issue": return { actor: "author", action: "Link an issue" };
-    case "review": return { actor: "author", action: `Address requested changes from ${c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ")}` };
+    case "review": {
+      const reviewers = c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ");
+      return c.reason === REVIEW_ANSWERED_REASON
+        ? { actor: "maintainer", action: `Re-review: the author responded to changes requested by ${reviewers}` }
+        : { actor: "author", action: `Address requested changes from ${reviewers}` };
+    }
     case "duplicate": return { actor: "maintainer", action: `Confirm duplicate of ${c.evidence.join(", ")} or keep` };
     case "reviewers": return { actor: "maintainer", action: "Assign a reviewer" };
     case "drift": return { actor: "maintainer", action: `Decide on base drift (${withoutLimit(c.evidence)})` };
@@ -452,10 +457,14 @@ function failureEvidence(c: CheckResult): string {
   return c.kind === "model" && (c.check === "docs" || c.check === "tests") ? ` for ${listed}` : `: ${listed}`;
 }
 
-/** Public: only what the author must fix and what is not yet confirmed; never a score or model reasoning. */
+/**
+ * Public: only what the author must fix and what is not yet confirmed; never a score or model reasoning. A maintainer's
+ * requested changes are already in front of the author, so they are left out, and a comment holding nothing else is not posted.
+ */
 function authorComment(author: string, all: CheckResult[], sources: Sources): string {
   const checks = judged(all);
-  const mine = checks.filter((c) => c.result === "fail" && failedStep(c, sources).actor === "author");
+  const failing = checks.filter((c) => c.result === "fail");
+  const mine = failing.filter((c) => c.check !== "review" && failedStep(c, sources).actor === "author");
   const unconfirmed = sources ? checks.filter(unsure) : [];
   const lines: string[] = [];
   if (mine.length) {
@@ -471,7 +480,10 @@ function authorComment(author: string, all: CheckResult[], sources: Sources): st
     if (lines.length) lines.push("");
     lines.push("Some checks could not run this time. Triage will re-check this pull request.");
   }
-  if (!lines.length) lines.push("No changes needed from you. A maintainer will review this pull request.");
+  if (!lines.length) {
+    if (failing.some((c) => c.check === "review")) return "";
+    lines.push("No changes needed from you. A maintainer will review this pull request.");
+  }
   return bounded(lines);
 }
 

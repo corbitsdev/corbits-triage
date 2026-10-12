@@ -34,6 +34,7 @@ async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack =
     if (failGetPr.has(n)) await done(`pr:${n}`, { error: "404" }, true);
     else await done(`pr:${n}`, { title: `PR ${n}`, author: "octocat", sha: `sha${n}`, state: "open", draft: false, mergeable: true, requestedReviewers: 0, ...pr });
     await done(`reviews:${n}`, { reviews: [] });
+    await done(`comments:${n}`, { comments: [] });
     await done(`commits:${n}`, { commits: [] });
     await done(`files:${n}:0`, { files: [] });
   }

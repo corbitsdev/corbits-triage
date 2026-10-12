@@ -1,4 +1,4 @@
-import { reviewedOnHead, type Review } from "@corbits/github-tool";
+import { reviewedOnHead, type IssueComment, type Review } from "@corbits/github-tool";
 import { authorAssociation, authorKindOf, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { MAX_PATCH_INPUT_CHARS } from "./candidates.js";
@@ -57,17 +57,30 @@ function reviewersWith(latest: Map<string, string>, state: string): string[] {
   return [...latest].flatMap(([login, s]) => (s === state ? [login] : []));
 }
 
+/** The author answered the newest standing request for changes: the head moved past it, or the author commented or reviewed since. */
+function reviewAnswered(reviews: Review[], comments: IssueComment[], author: string, headSha: string, requested: string[]): boolean {
+  const asked = reviews.filter((r) => r.state === "CHANGES_REQUESTED" && r.reviewer !== undefined && requested.includes(r.reviewer) && r.submittedAt);
+  const newest = asked.reduce<Review | undefined>((latest, r) => (latest === undefined || r.submittedAt! > latest.submittedAt! ? r : latest), undefined);
+  if (newest === undefined) return false;
+  if (newest.commitId !== undefined && newest.commitId !== headSha) return true;
+  const since = newest.submittedAt!;
+  return comments.some((c) => !c.bot && c.author === author && c.createdAt > since) ||
+    reviews.some((r) => r.reviewer === author && r.submittedAt !== undefined && r.submittedAt > since);
+}
+
 export function buildFacts(
   repo: string,
   number: number,
   pr: PrData,
   checks: CheckRun[],
   reviews: Review[],
+  comments: IssueComment[],
   openPrs: PrFacts["openPrs"],
   policy: RepoPolicy,
 ): PrFacts {
   const latest = latestDecisive(reviews);
   const author = pr.author ?? "";
+  const changesRequested = reviewersWith(latest, "CHANGES_REQUESTED");
   const association = authorAssociation(pr.authorAssociation);
   const authorKind = authorKindOf(association, pr.authorBot === true);
   return {
@@ -87,7 +100,8 @@ export function buildFacts(
     requestedReviewers: Number(pr.requestedReviewers ?? 0),
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
-    changesRequested: reviewersWith(latest, "CHANGES_REQUESTED"),
+    changesRequested,
+    reviewAnswered: reviewAnswered(reviews, comments, author, pr.sha ?? "", changesRequested),
     reviewedBy: reviewedOnHead(reviews, pr.sha ?? ""),
     labels: pr.labels ?? [],
     assignees: pr.assignees ?? [],
@@ -193,6 +207,7 @@ export interface PullData {
   pr: PrData | null;
   checks: CheckRun[];
   reviews: Review[];
+  comments: IssueComment[];
   commits: Array<{ message?: string }>;
   files: PrFileFacts[] | string;
   /** The author's membership of the roles' teams; null when it was not read or could not be. */
@@ -231,6 +246,6 @@ export function assembleItem(number: number, data: PullData, { repo, openPrs, po
   if (typeof docs === "string") return { error: docs };
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, openPrs, policy), paths, files, commits, events, docs, ...membership(data.authorTeams, policy, repo) };
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, openPrs, policy), paths, files, commits, events, docs, ...membership(data.authorTeams, policy, repo) };
   return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
 }

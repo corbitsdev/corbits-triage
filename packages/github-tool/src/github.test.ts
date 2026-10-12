@@ -40,7 +40,7 @@ function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [
   let nextId = 100;
   const { gh, requests } = recorder(function respond(path, init) {
     const body = typeof init?.body === "string" ? JSON.parse(init.body).body : undefined;
-    if (path.endsWith("/pulls/8") && !init?.method) return { head: { sha: "abc123" }, labels: labels.map((name) => ({ name })) };
+    if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: "abc123" }, labels: labels.map((name) => ({ name })) };
     if (path.includes("/comments?per_page")) return comments;
     if (path.endsWith("/issues/8/comments") && init?.method === "POST") {
       const created = { id: nextId++, user: APP, body };
@@ -48,6 +48,11 @@ function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [
       return created;
     }
     const edit = /\/issues\/comments\/(\d+)$/.exec(path);
+    if (edit && init?.method === "DELETE") {
+      if (otherAppComments.includes(Number(edit[1]))) return Response.json({ message: "Forbidden" }, { status: 403 });
+      comments.splice(comments.findIndex((comment) => comment.id === Number(edit[1])), 1);
+      return new Response(null, { status: 204 });
+    }
     if (edit && init?.method === "PATCH") {
       if (otherAppComments.includes(Number(edit[1]))) return Response.json({ message: "Forbidden" }, { status: 403 });
       const target = comments.find((comment) => comment.id === Number(edit[1]));
@@ -88,6 +93,14 @@ describe("triage comment", () => {
     const { gh, comments } = fakeGithub([{ ...foreign }]);
     expect(await upsertTriageComment(gh, { repo: "acme/widgets", number: 8, body: "Ours" })).toEqual({ commentId: 100, updated: false });
     expect(comments).toEqual([foreign, { id: 100, user: APP, body: "<!-- corbits-triage -->\nOurs" }]);
+  });
+
+  test("an empty comment deletes the stale one and leaves another App's", async () => {
+    const other = { id: 9, user: { login: "other-app[bot]", type: "Bot" }, body: "<!-- corbits-triage -->\nTheirs" };
+    const { gh, comments } = fakeGithub([{ ...other }], [9]);
+    await mirror(gh, { ...MIRROR, comment: "Please resolve conflicts", close: false });
+    await mirror(gh, { ...MIRROR, comment: "", close: false });
+    expect(comments).toEqual([other]);
   });
 
   test("creates its own when GitHub refuses to edit another App's marked comment", async () => {

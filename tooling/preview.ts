@@ -50,7 +50,7 @@ function factsFor(n: number, openPrs: Pull[]): PrFacts {
   }));
   const paths = files.map((file) => file.path);
   const commits = gh<any[]>(`repos/${repo}/pulls/${n}/commits`).map((c) => String(c.commit.message).split("\n", 1)[0]!);
-  return { ...buildFacts(repo, n, pr, checks, reviews, openPrs, DEFAULT_REPO_POLICY), paths, files, commits };
+  return { ...buildFacts(repo, n, pr, checks, reviews, [], openPrs, DEFAULT_REPO_POLICY), paths, files, commits };
 }
 
 const endpoint = process.env.AI_GATEWAY_API_KEY ? { kind: "gateway" as const } : { kind: "official" as const };

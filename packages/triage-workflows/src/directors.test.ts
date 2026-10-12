@@ -78,6 +78,10 @@ describe("facts director policy", () => {
     } as ReactorInboundEvent);
     await decide({
       type: "tool.done",
+      result: { callId: "comments:8", content: { comments: [] } },
+    } as ReactorInboundEvent);
+    await decide({
+      type: "tool.done",
       result: { callId: "commits:8", content: { commits: [] } },
     } as ReactorInboundEvent);
     await decide({
@@ -144,7 +148,7 @@ describe("facts director policy", () => {
       await director.decide(done as ReactorInboundEvent, {} as ReactorState, caps);
       return (calls[1] ?? []).map((call) => call.id);
     }
-    expect(await fetched(false)).toEqual(["pr:8", "reviews:8", "commits:8", "files:8:0"]);
+    expect(await fetched(false)).toEqual(["pr:8", "reviews:8", "comments:8", "commits:8", "files:8:0"]);
     expect((await fetched(true)).filter((id) => id.startsWith("pr:"))).toEqual(["pr:7", "pr:8"]);
   });
 
