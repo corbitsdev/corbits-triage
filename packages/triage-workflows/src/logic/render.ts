@@ -1,5 +1,5 @@
 import { render, TRIAGE_LABELS, type Rendered, type TriageState } from "@corbits/rule-packs";
-import type { CleanupMode, RuleCustomCheck } from "@corbits/triage-contracts";
+import type { CheckOutput, CleanupMode, RuleCustomCheck } from "@corbits/triage-contracts";
 import type { SuggestedAction } from "./actions.js";
 import type { CheckResult, DeterministicResult } from "./checks.js";
 import type { ChangeCandidate } from "./candidates.js";
@@ -128,6 +128,11 @@ const UNDECIDED_REASON = "not enough evidence to decide";
 /** A file or hunk scoped check with no changed lines in scope to ask about. */
 const NOT_APPLICABLE_REASON = "does not apply";
 
+/** Files or hunks the judge never saw: GitHub left out their patch, or no request could hold them. */
+const UNREAD_REASON = "file could not be read";
+
+const NOT_APPLICABLE: CheckOutput = { kind: "not-applicable" };
+
 /** Whether this pull request should merge now; shown in the portal, never posted to GitHub. */
 export interface MergeVerdict {
   verdict: "ready" | "not-recommended";
@@ -173,6 +178,9 @@ const NO = 0.3;
 // A focused candidate counts as unrelated, or as part of the change, only when that side holds this much probability.
 const FOCUSED_DECIDES = 0.6;
 const MAX_FILE_EVIDENCE = 3;
+// The score, out of 100, at which a model check's answer passes: the band's yes edge, or focused's deciding share.
+const PASS_AT = Math.round(YES * 100);
+const FOCUSED_PASS_AT = Math.round(FOCUSED_DECIDES * 100);
 
 type ModelEvaluation = {
   checks: CheckResult[];
@@ -217,10 +225,19 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     return answer?.type === "noul" ? answer.noul : undefined;
   }
 
-  function push(check: string, decided: Decided, evidence: string[] = [], reason?: string) {
+  function push(check: string, decided: Decided, output: CheckOutput, evidence: string[] = [], reason?: string) {
     checks.push(decided.result === "unconfirmed"
-      ? { check, kind: "model", result: "unconfirmed", reason: decided.reason, evidence: [] }
-      : { check, kind: "model", result: decided.result, reason: reason ?? (decided.result === "fail" ? failureText(check, sources) : passText(check, sources)), evidence });
+      ? { check, kind: "model", result: "unconfirmed", reason: decided.reason, evidence: [], output }
+      : { check, kind: "model", result: decided.result, reason: reason ?? (decided.result === "fail" ? failureText(check, sources) : passText(check, sources)), evidence, output });
+  }
+
+  function unchecked(check: string, reason: string) {
+    push(check, { result: "unconfirmed", reason }, { kind: "could-not-check", reason });
+  }
+
+  /** How likely the check is fine, out of 100 and unrounded, so the score clears `passAt` exactly when the answer passes. */
+  function scored(fine: number, passAt: number, items: string[]): CheckOutput {
+    return { kind: "score", score: Math.min(fine * 100, 100), passAt, items };
   }
 
   /**
@@ -229,10 +246,13 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
    * which any answered item can show, and passes only when every item in scope was read and clears the bar.
    */
   function fileCheck(check: string, filePlan: FilePlan | undefined, yesPasses: boolean) {
-    if (!filePlan) return push(check, { result: "unconfirmed", reason: unavailable });
-    if (filePlan.changed.length > 0) return push(check, { result: "pass" }, filePlan.changed.slice(0, MAX_FILE_EVIDENCE));
-    if (!det.needsJudgment || judgeLimitExceeded) return push(check, { result: "unconfirmed", reason: unavailable });
-    if (yesPasses && Object.keys(filePlan.asked).length === 0 && filePlan.unread.length === 0) return push(check, { result: "pass" }, [], NOT_APPLICABLE_REASON);
+    if (!filePlan) return unchecked(check, unavailable);
+    if (filePlan.changed.length > 0) {
+      const changed = filePlan.changed.slice(0, MAX_FILE_EVIDENCE);
+      return push(check, { result: "pass" }, { kind: "met", items: changed }, changed);
+    }
+    if (!det.needsJudgment || judgeLimitExceeded) return unchecked(check, unavailable);
+    if (yesPasses && Object.keys(filePlan.asked).length === 0 && filePlan.unread.length === 0) return push(check, { result: "pass" }, NOT_APPLICABLE, [], NOT_APPLICABLE_REASON);
     const answered: Array<[string, number]> = [];
     for (const [id, item] of Object.entries(filePlan.asked)) {
       const noul = noulOf(id);
@@ -244,16 +264,19 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     const needing = answered.filter(([, short]) => short >= YES).sort((a, b) => b[1] - a[1]);
     if (needing.length > 0) {
       scores.push(needing[0]![1]);
-      return push(check, { result: "fail" }, needing.slice(0, MAX_FILE_EVIDENCE).map(([item]) => item));
+      const named = needing.slice(0, MAX_FILE_EVIDENCE).map(([item]) => item);
+      return push(check, { result: "fail" }, scored(1 - needing[0]![1], PASS_AT, named), named);
     }
-    if (unanswered) return push(check, { result: "unconfirmed", reason: unavailable });
+    if (unanswered) return unchecked(check, unavailable);
     // A file the judge could not read may need one, so only a fully read pull request passes.
-    if (filePlan.unread.length > 0) return push(check, { result: "unconfirmed", reason: UNDECIDED_REASON });
-    if (answered.length === 0) return push(check, { result: "pass" });
-    const top = Math.max(...answered.map(([, short]) => short));
-    const decided = band(top, false);
-    if (decided.result === "pass") scores.push(1 - top);
-    return push(check, decided);
+    if (filePlan.unread.length > 0) {
+      return push(check, { result: "unconfirmed", reason: UNDECIDED_REASON }, { kind: "could-not-check", reason: UNREAD_REASON, items: filePlan.unread });
+    }
+    if (answered.length === 0) return push(check, { result: "pass" }, NOT_APPLICABLE);
+    const weakest = answered.reduce((a, b) => (b[1] > a[1] ? b : a));
+    const decided = band(weakest[1], false);
+    if (decided.result === "pass") scores.push(1 - weakest[1]);
+    return push(check, decided, scored(1 - weakest[1], PASS_AT, [weakest[0]]));
   }
 
   for (const source of sources.quality) {
@@ -262,11 +285,17 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
       continue;
     }
     const unrelated: string[] = [];
+    const unread: string[] = [];
+    // How much probability says the candidate belongs to the change, least first among all and among the unrelated.
+    let weakest: [string, number] | undefined;
+    let weakestUnrelated: number | undefined;
     let candidateUnresolved = candidates.length === 0;
     let unanswered = judgeLimitExceeded === true;
     for (const [index, candidate] of candidates.entries()) {
+      const item = `${candidate.label} — ${candidate.path}`;
       if (!candidate.evidence) {
         candidateUnresolved = true;
+        unread.push(item);
         continue;
       }
       const answer = invalid ? undefined : parsed.decisions[focusedCandidateId(index)];
@@ -277,17 +306,23 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
       }
       const { probabilities } = answer;
       const related = probabilities.primary_or_supporting + probabilities.movement_or_superseded;
+      if (weakest === undefined || related < weakest[1]) weakest = [item, related];
       if (probabilities.unrelated >= FOCUSED_DECIDES || related >= FOCUSED_DECIDES) scores.push(Math.max(probabilities.unrelated, related));
       if (probabilities.unrelated >= FOCUSED_DECIDES) {
-        const evidence = `${candidate.label} — ${candidate.path}`;
-        if (!unrelated.includes(evidence)) unrelated.push(evidence);
+        if (!unrelated.includes(item)) unrelated.push(item);
+        weakestUnrelated = Math.min(weakestUnrelated ?? related, related);
       } else if (related < FOCUSED_DECIDES) {
         candidateUnresolved = true;
       }
     }
     anyUnanswered ||= unanswered;
     const reason = !det.needsJudgment ? NOT_ASKED_REASON : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON;
-    push("focused", unrelated.length > 0 ? { result: "fail" } : candidateUnresolved ? { result: "unconfirmed", reason } : { result: "pass" }, unrelated);
+    // A failure scores the unrelated candidates it names; otherwise every candidate must have been read and answered for a score.
+    const output: CheckOutput = weakestUnrelated !== undefined ? scored(weakestUnrelated, FOCUSED_PASS_AT, unrelated)
+      : weakest !== undefined && !unanswered && unread.length === 0 ? scored(weakest[1], FOCUSED_PASS_AT, [weakest[0]])
+        : det.needsJudgment && !unanswered && unread.length > 0 ? { kind: "could-not-check", reason: UNREAD_REASON, items: unread }
+          : { kind: "could-not-check", reason };
+    push("focused", unrelated.length > 0 ? { result: "fail" } : candidateUnresolved ? { result: "unconfirmed", reason } : { result: "pass" }, output, unrelated);
   }
   for (const row of sources.custom) {
     const { id } = row;
@@ -298,12 +333,12 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     const noul = noulOf(id);
     if (noul === undefined) {
       anyUnanswered = true;
-      push(id, { result: "unconfirmed", reason: unavailable });
+      unchecked(id, unavailable);
       continue;
     }
     const decided = band(noul, true);
     if (decided.result !== "unconfirmed") scores.push(Math.max(noul, 1 - noul));
-    push(id, decided);
+    push(id, decided, scored(noul, PASS_AT, []));
   }
   return { checks, scores, unanswered: anyUnanswered };
 }

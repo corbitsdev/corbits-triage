@@ -82,6 +82,12 @@ export function checkName(pack: CheckPack, id: string): string {
   return isCatalogId(id) ? CHECK_CATALOG[id].name : pack.custom.find((row) => row.id === id)?.name ?? id;
 }
 
+/** A check's name; a custom check's waits for its pack. */
+export function checkLabel(pack: CheckPack | null, id: string): string | null {
+  if (pack) return checkName(pack, id);
+  return isCatalogId(id) ? CHECK_CATALOG[id].name : null;
+}
+
 export function evaluationOf(pack: CheckPack, id: CheckRef): Evaluation {
   if (isCatalogId(id)) return CHECK_CATALOG[id].kind === "machine" ? "rule" : "model";
   return pack.custom.find((row) => row.id === id)?.kind ?? "rule";

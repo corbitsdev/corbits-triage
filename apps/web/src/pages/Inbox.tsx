@@ -82,7 +82,9 @@ import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useRunLogs } from "../lib/run-logs.ts";
-import { findPrItem, prHref } from "../lib/triage-view.ts";
+import { checkValueText, findPrItem, prHref } from "../lib/triage-view.ts";
+import { useRepoPack } from "../lib/check-packs.ts";
+import { checkLabel } from "../lib/pack-prose.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { CheckIcon, ChevronIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 
@@ -215,14 +217,18 @@ const GATE_MARK: Record<CheckResult["result"], { className: string; glyph: strin
   unconfirmed: { className: "mk judge", glyph: "?" },
 };
 
-export function CheckRow({ check }: { check: CheckResult }) {
+/** `name` is null until the pack that names a custom check has loaded. */
+export function CheckRow({ check, name }: { check: CheckResult; name: string | null }) {
   const mark = (check.gate ? GATE_MARK : CHECK_MARK)[check.result];
+  const source = check.kind === "model" ? [name, "Decision model"].filter(Boolean).join(" · ") : name;
+  const value = checkValueText(check);
   return (
     <li>
       <span className={mark.className} aria-hidden="true">{mark.glyph}</span>
       <span>
-        {check.reason || check.check}
-        <small>{check.kind === "model" ? "Decision model" : check.check}</small>
+        {check.reason || name}
+        {source ? <small>{source}</small> : null}
+        {value === null ? null : <small>{value}</small>}
         {check.evidence.map((evidence, index) => (
           <small key={`${index}:${evidence}`}><span className="sr-only">Evidence:</span> {evidence}</small>
         ))}
@@ -232,8 +238,9 @@ export function CheckRow({ check }: { check: CheckResult }) {
 }
 
 function Reasons({ item }: { item: PrItem }) {
+  const pack = useRepoPack(item.repo);
   if (item.checks.length > 0) {
-    return <ul className="why">{item.checks.map((check) => <CheckRow key={check.check} check={check} />)}</ul>;
+    return <ul className="why">{item.checks.map((check) => <CheckRow key={check.check} check={check} name={checkLabel(pack, check.check)} />)}</ul>;
   }
   if (item.evidence.length === 0) return null;
   return <ul className="why">{item.evidence.map((reason) => <li key={reason}><span className="mk judge">?</span><span>{reason}</span></li>)}</ul>;

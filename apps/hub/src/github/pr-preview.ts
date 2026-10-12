@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { authorTeams, getChecks, getReviews, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-tool/github";
-import { checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, type CheckPack } from "@corbits/triage-contracts";
+import { CheckOutputSchema, checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, type CheckPack } from "@corbits/triage-contracts";
 import { evaluate } from "../../../../packages/triage-workflows/src/actions/evaluate.js";
 import { rules, type RulesItem } from "../../../../packages/triage-workflows/src/actions/rules.js";
 import { checkName } from "../../../../packages/triage-workflows/src/logic/actions.js";
@@ -78,6 +78,7 @@ export const PreviewResponse = type({
     result: "'pass' | 'fail' | 'unconfirmed' | 'needs-judge'",
     reason: "string",
     evidence: "string[]",
+    output: CheckOutputSchema,
   }).array(),
   actions: type({ id: "string", status: "'not-woken'" })
     .or({ id: "string", status: "'skipped'", reason: "string" })

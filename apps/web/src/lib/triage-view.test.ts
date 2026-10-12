@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { CheckOutput } from "@corbits/triage-contracts";
 import type { HubApproval, MergeVerdict, PrItem } from "./hub-api.ts";
-import { approvalHeadline, findPrItem, mergeText } from "./triage-view.ts";
+import { approvalHeadline, checkValueText, findPrItem, mergeText } from "./triage-view.ts";
 
 function approval(close: boolean): HubApproval {
   return {
@@ -86,18 +87,18 @@ describe("mergeText", () => {
     return { merge: { verdict, score, threshold: 0.7, reasons } };
   }
 
-  test("ready shows the score against the threshold, or rules only", () => {
-    expect(mergeText(merge("ready", 0.82, []))).toBe("Ready to merge · score 82 (threshold 70)");
-    expect(mergeText(merge("ready", null, []))).toBe("Ready to merge · rules only");
+  test("ready names no overall score", () => {
+    expect(mergeText(merge("ready", 0.82, []))).toBe("Ready to merge");
+    expect(mergeText(merge("ready", null, []))).toBe("Ready to merge");
   });
 
-  test("a failing check is named before the score", () => {
+  test("a failing check is named before the threshold", () => {
     expect(mergeText(merge("not-recommended", 0.6, ["Failed: tests are not added or updated", "Score 0.6 is below the threshold 0.7"])))
       .toBe("Merge not recommended · tests are not added or updated");
   });
 
-  test("a low score alone shows the score against the threshold", () => {
-    expect(mergeText(merge("not-recommended", 0.62, ["Score 0.62 is below the threshold 0.7"]))).toBe("Merge not recommended · score 62 is below the threshold 70");
+  test("a low score alone says how sure Triage must be, not the score", () => {
+    expect(mergeText(merge("not-recommended", 0.62, ["Score 0.62 is below the threshold 0.7"]))).toBe("Merge not recommended · not sure enough of every answer to recommend merging (needs 70%)");
   });
 
   test("a degraded verdict says what could not be evaluated", () => {
@@ -107,5 +108,31 @@ describe("mergeText", () => {
 
   test("a verdict from before the merge verdict is not evaluated", () => {
     expect(mergeText({ merge: null })).toBe("Not evaluated");
+  });
+});
+
+describe("checkValueText", () => {
+  function value(output: CheckOutput | null, reason: string | null = "", evidence: string[] = []) {
+    return checkValueText({ output, reason, evidence });
+  }
+
+  test("shows each check's own value against its bar, facts as words, and a state as a state", () => {
+    expect(value({ kind: "score", score: 59.00000000000001, passAt: 70, items: ["src/api.ts"] })).toBe("59 / 70 (src/api.ts)");
+    expect(value({ kind: "score", score: 9.999999999999998, passAt: 70, items: ["src/api.ts"] }, "", ["src/api.ts"])).toBe("10 / 70");
+    expect(value({ kind: "values", values: { files: 33, lines: 2104 } })).toBe("33 files, 2,104 lines");
+    expect(value({ kind: "values", values: { status: "pending" } })).toBe("CI pending");
+    expect(value({ kind: "values", values: { behindBy: 12 } })).toBe("behind by 12");
+    expect(value({ kind: "values", values: { isDuplicate: true, duplicateOf: 7 } })).toBe("duplicate of #7");
+    expect(value({ kind: "values", values: { holds: false, approvals: 1 } })).toBe("does not hold, 1 approval");
+    expect(value({ kind: "met", items: ["src/a.test.ts"] }, "", ["src/a.test.ts"])).toBe("met");
+    expect(value({ kind: "not-applicable" })).toBe("not applicable");
+    expect(value({ kind: "could-not-check", reason: "file could not be read", items: ["dist/app.js"] }, "not enough evidence to decide")).toBe("couldn't check: file could not be read (dist/app.js)");
+    expect(value({ kind: "could-not-check", reason: "decision model unavailable" }, "decision model unavailable")).toBe("couldn't check");
+    expect(value(null)).toBeNull();
+  });
+
+  test("a score just under its bar never shows the bar", () => {
+    expect(value({ kind: "score", score: 69.5, passAt: 70, items: [] })).toBe("69 / 70");
+    expect(value({ kind: "score", score: 70, passAt: 70, items: [] })).toBe("70 / 70");
   });
 });

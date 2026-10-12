@@ -308,9 +308,9 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual(["tests-file-001", "docs-file-001", "focused-candidate-001"]);
     expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", nextAction: "Fix failing CI: build" });
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
-      { check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [] },
-      { check: "docs", kind: "model", result: "pass", reason: "documentation is up to date", evidence: [] },
-      { check: "tests", kind: "model", result: "pass", reason: "tests cover the change", evidence: [] },
+      { check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 80, passAt: 60, items: ["flag — src/flag.ts"] } },
+      { check: "docs", kind: "model", result: "pass", reason: "documentation is up to date", evidence: [], output: { kind: "score", score: 90, passAt: 70, items: ["src/flag.ts"] } },
+      { check: "tests", kind: "model", result: "pass", reason: "tests cover the change", evidence: [], output: { kind: "score", score: 90, passAt: 70, items: ["src/flag.ts"] } },
     ]);
   });
 
@@ -327,7 +327,7 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual([]);
     expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, humanGated: false, feedback, actor: "maintainer", nextAction: "Review once marked ready" });
     expect(verdict.merge.reasons).toEqual(["Failed: pull request is a draft", "Not confirmed: makes one focused change"]);
-    expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [] });
+    expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } });
     expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: feedback, close: false });
   });
 
@@ -472,7 +472,7 @@ describe("focused candidate judge input", () => {
 
     const verdict = await evaluate(judged, ctx, signal) as Verdict;
     expect(verdict.degraded).toBeNull();
-    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [] }]);
+    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 93, passAt: 60, items: ["large0 — src/large0.ts"] } }]);
   });
 
   test("a batch asks per pull request per chunk, and a failed chunk degrades only its own pull request", async () => {
@@ -488,7 +488,7 @@ describe("focused candidate judge input", () => {
     const { items: verdicts } = await evaluate(judged, ctx, signal) as { items: Verdict[] };
     expect(verdicts.map((verdict) => verdict.degraded)).toEqual(["inference-outage", null, null]);
     expect(verdicts[0]!.reason).toBe("decision model unavailable: upstream 503");
-    expect(verdicts[0]!.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "decision model unavailable", evidence: [] }]);
+    expect(verdicts[0]!.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "decision model unavailable", evidence: [], output: { kind: "could-not-check", reason: "decision model unavailable" } }]);
   });
 
   test("an evaluation whose metadata alone is over the budget skips the judge and leaves focused and tests to a maintainer without accusation", async () => {
@@ -501,8 +501,8 @@ describe("focused candidate judge input", () => {
     const verdict = await evaluate(ruled, ctx, signal) as Verdict;
     expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: "Not yet confirmed, a maintainer will check:\n- makes one focused change\n- tests cover the change", reason: "pull request too large for the decision model" });
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
-      { check: "focused", kind: "model", result: "unconfirmed", reason: "pull request too large for the decision model", evidence: [] },
-      { check: "tests", kind: "model", result: "unconfirmed", reason: "pull request too large for the decision model", evidence: [] },
+      { check: "focused", kind: "model", result: "unconfirmed", reason: "pull request too large for the decision model", evidence: [], output: { kind: "could-not-check", reason: "pull request too large for the decision model" } },
+      { check: "tests", kind: "model", result: "unconfirmed", reason: "pull request too large for the decision model", evidence: [], output: { kind: "could-not-check", reason: "pull request too large for the decision model" } },
     ]);
   });
 });
