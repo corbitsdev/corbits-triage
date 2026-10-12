@@ -6,14 +6,15 @@ import { del, get, set } from "idb-keyval";
 import { Toaster } from "sonner";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { PortalProvider, usePortal } from "./lib/portal.tsx";
-import { HeldInboxProvider } from "./lib/held-inbox.tsx";
+import { HeldInboxProvider, useSignOutAfterSending } from "./lib/held-inbox.tsx";
 import { isPersistedQuery } from "./lib/persisted-queries.ts";
 import { SessionProvider, useSession } from "./lib/session.tsx";
 import { DeniedNotice } from "./lib/denied.tsx";
-import type { PortalSnapshot } from "./lib/hub-api.ts";
+import type { PortalSnapshot, WorkspaceOption } from "./lib/hub-api.ts";
 import Layout from "./components/Layout.tsx";
 import LoadingIndicator from "./components/LoadingIndicator.tsx";
 import Connect from "./pages/Connect.tsx";
+import { OtherWorkspaces } from "./components/OtherWorkspaces.tsx";
 import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
 import { Welcome } from "./pages/Welcome.tsx";
@@ -91,13 +92,31 @@ function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
         {sections.map((section) => (
           <DeniedNotice key={section} section={section} />
         ))}
+        <OtherWorkspaces />
+      </section>
+    </div>
+  );
+}
+
+function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
+  const signOut = useSignOutAfterSending();
+  return (
+    <div className="gate">
+      <section className="onboarding centered-setup" aria-label="Invitation pending">
+        <h1>Invitation pending</h1>
+        {invitations.map((invitation) => (
+          <p key={invitation.tenantId} className="muted">
+            {invitation.name} has invited you. An admin needs to let you in.
+          </p>
+        ))}
+        <button type="button" className="btn" onClick={() => void signOut()}>Sign out</button>
       </section>
     </div>
   );
 }
 
 function Gate() {
-  const { configured, loading, connected, loadError, snapshot } = usePortal();
+  const { configured, loading, connected, loadError, snapshot, invitations } = usePortal();
   const { ready, session } = useSession();
   const location = useLocation();
   const path = location.pathname;
@@ -106,6 +125,7 @@ function Gate() {
   if (!ready) return <LoadingGate />;
   if (!session) return <Welcome />;
   if (!snapshot) {
+    if (invitations.length > 0) return <InvitationGate invitations={invitations} />;
     if (loading || !loadError) return <LoadingGate />;
     return <HubOutage message={loadError || "Could not reach the service."} />;
   }

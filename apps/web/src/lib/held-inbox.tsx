@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import { browserTimers, createHoldQueue, HOLD_MS, type Notices } from "./held-actions.ts";
 import { useRunDo } from "./do-runs.ts";
 import type { DoRef, PrGithubWriteInput } from "./hub-api.ts";
@@ -120,6 +121,18 @@ export function useSignOutAfterSending(): () => Promise<void> {
     await flush();
     await signOut();
   }, [flush, signOut]);
+}
+
+/** Sends what is held against the open workspace before another one opens. */
+export function useOpenWorkspaceAfterSending(): (tenantId: string) => Promise<void> {
+  const { flush } = useHeldInbox();
+  const { openWorkspace } = usePortal();
+  const navigate = useNavigate();
+  return useCallback(async function openWorkspaceAfterSending(tenantId: string) {
+    await flush();
+    openWorkspace(tenantId);
+    navigate("/");
+  }, [flush, navigate, openWorkspace]);
 }
 
 export function useHeldInbox(): HeldInbox {

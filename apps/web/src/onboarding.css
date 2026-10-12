@@ -119,6 +119,8 @@ body:has(.signin, .setup-flow),
 }
 .setup h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin-bottom: 8px; }
 .setup-lede { font-size: 15px; margin-bottom: 26px; }
+.other-workspaces { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 26px; font-size: 13px; }
+.other-workspaces .linkish { background: none; border: 0; padding: 0; font: 600 13px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .setup-steps {
   list-style: none;
   margin: 0;
