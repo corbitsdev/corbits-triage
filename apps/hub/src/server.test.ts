@@ -145,12 +145,16 @@ async function startHub(extraEnv: Record<string, string> = {}, dataDir = tempora
   return origin;
 }
 
+let memberCount = 0;
+
 /** JSON headers for a freshly signed-up member, sent from the hub's own origin. */
 async function signedIn(origin: string, email = `member-${crypto.randomUUID()}@example.com`): Promise<Record<string, string>> {
   const headers = { "content-type": "application/json", origin };
+  // Each member signs up from its own address so sign-up rate limits apply per member.
+  memberCount += 1;
   const signUp = await fetch(`${origin}/api/auth/sign-up/email`, {
     method: "POST",
-    headers,
+    headers: { ...headers, "x-forwarded-for": `198.51.100.${memberCount}` },
     body: JSON.stringify({ email, password: "password-123456", name: "Member" }),
   });
   expect(signUp.status).toBe(200);
@@ -186,6 +190,24 @@ test("composed hub upgrades the sidecar websocket", async () => {
   await expect(
     openWebSocket(`${origin.replace("http", "ws")}/api/sidecars/ws`),
   ).resolves.toBeUndefined();
+}, 40_000);
+
+test("repeated sign-in attempts from one client are rate limited", async () => {
+  const origin = await startHub();
+
+  async function signIn(clientIp: string) {
+    const response = await fetch(`${origin}/api/auth/sign-in/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, "x-forwarded-for": clientIp },
+      body: JSON.stringify({ email: "nobody@example.com", password: "wrong-password" }),
+    });
+    return response.status;
+  }
+
+  const statuses = [];
+  for (let attempt = 0; attempt < 4; attempt++) statuses.push(await signIn("203.0.113.1"));
+  expect(statuses).toEqual([401, 401, 401, 429]);
+  expect(await signIn("203.0.113.2")).toBe(401);
 }, 40_000);
 
 test("composed hub documents the integration routes and still answers an invalid action with 400", async () => {
