@@ -1,4 +1,4 @@
-import type { RepoRole, RuleCustomCheck } from "@corbits/triage-contracts";
+import type { CheckOutput, RepoRole, RuleCustomCheck } from "@corbits/triage-contracts";
 import { RE2JS } from "re2js";
 import { missingFrom } from "@corbits/github-tool";
 import type { CheckResult, Finding, PrFacts, PrFileFacts } from "./checks.js";
@@ -6,8 +6,8 @@ import { globMatch } from "./glob.js";
 
 const MAX_DIFF_HITS = 5;
 
-/** A gate decides an action's branch without being a defect, so it adds no finding. */
-type Outcome = { failed: boolean | null; reason: string; evidence?: string[]; state?: Finding["state"]; gate?: true };
+/** A gate decides an action's branch without being a defect, so it adds no finding. `measured` adds the numbers a rule counted. */
+type Outcome = { failed: boolean | null; reason: string; evidence?: string[]; state?: Finding["state"]; gate?: true; measured?: Record<string, number> };
 
 function matching(paths: string[], globs: string[]): string[] {
   return paths.filter((path) => globs.some((glob) => globMatch(path, glob)));
@@ -112,7 +112,7 @@ function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, R
     }
     case "min-approvals": {
       const failed = facts.approvals < check.count;
-      return { failed, reason: failed ? "not enough approvals" : "enough approvals", evidence: [`${facts.approvals} of ${check.count} approvals`], state: "awaiting-review" };
+      return { failed, reason: failed ? "not enough approvals" : "enough approvals", evidence: [`${facts.approvals} of ${check.count} approvals`], state: "awaiting-review", measured: { approvals: facts.approvals } };
     }
     case "author":
       return author(check, facts, roles);
@@ -124,10 +124,11 @@ export function evaluateRuleChecks(facts: PrFacts, rules: RuleCustomCheck[], rol
   const findings: Finding[] = [];
   const checks: CheckResult[] = [];
   for (const check of rules) {
-    const { failed, reason: detail, evidence = [], state = "needs-author-update", gate } = outcome(check, facts, roles);
+    const { failed, reason: detail, evidence = [], state = "needs-author-update", gate, measured } = outcome(check, facts, roles);
     const reason = `${check.name}: ${detail}`;
     if (failed && !gate) findings.push({ check: check.id, state, reason });
-    checks.push({ check: check.id, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence, ...(gate ? { gate } : {}) });
+    const output: CheckOutput = failed === null ? { kind: "could-not-check", reason: detail } : { kind: "values", values: { holds: !failed, ...measured } };
+    checks.push({ check: check.id, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence, output, ...(gate ? { gate } : {}) });
   }
   return { findings, checks };
 }

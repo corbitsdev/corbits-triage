@@ -487,7 +487,7 @@ test("a pack preview evaluates an open pull request without writing anything", a
 
     const rule = await previewed({ repo: REPO, number: 8 });
     expect(rule).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-needed" });
-    expect(rule.checks).toContainEqual({ check: "ci", name: "CI", kind: "machine", result: "pass", reason: "checks are success", evidence: [] });
+    expect(rule.checks).toContainEqual({ check: "ci", name: "CI", kind: "machine", result: "pass", reason: "checks are success", evidence: [], output: { kind: "values", values: { status: "passing" } } });
     const target = { labels: ["checked"] };
     expect(rule.actions).toEqual([{
       id: "tag", status: "decided", branch: "yes", reason: "CI passed.",
@@ -498,7 +498,7 @@ test("a pack preview evaluates an open pull request without writing anything", a
 
     const judged = await previewed({ repo: REPO, number: 8, pack: JUDGED_PACK });
     expect(judged).toMatchObject({ pack: "candidate", judge: "not-run", verdict: { state: "needs-author-update", degraded: null, merge: { verdict: "not-recommended" } } });
-    expect(judged.checks).toContainEqual({ check: "custom-1", name: "Explains why", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [] });
+    expect(judged.checks).toContainEqual({ check: "custom-1", name: "Explains why", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [], output: { kind: "could-not-check", reason: "needs the judge" } });
     const [waiting, sized] = judged.actions;
     if (waiting?.status !== "waits-on-judge") throw new Error("the judged action must wait on the judge");
     expect(waiting.branches.map((b) => [b.branch, b.dos.map((d) => d.target)])).toEqual([

@@ -162,6 +162,13 @@ describe("projectQueue reply unwrap", () => {
                   result: "fail",
                   reason: "mixes unrelated changes",
                   evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"],
+                  output: { kind: "score", score: 20, passAt: 60, items: ["Alpha — src/alpha.ts"] },
+                }, {
+                  check: "ci",
+                  kind: "machine",
+                  result: "pass",
+                  reason: "checks are success",
+                  evidence: [],
                 }],
               }),
             }),
@@ -193,7 +200,10 @@ describe("projectQueue reply unwrap", () => {
         key: "acme/widgets#8",
         confidence: 0.9,
         needsHuman: true,
-        checks: [expect.objectContaining({ evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"] })],
+        checks: [
+          expect.objectContaining({ evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"], output: { kind: "score", score: 20, passAt: 60, items: ["Alpha — src/alpha.ts"] } }),
+          expect.objectContaining({ check: "ci", output: null }),
+        ],
       }),
       expect.objectContaining({ key: "acme/gadgets#3", confidence: 0.4, state: "ready" }),
     ]);

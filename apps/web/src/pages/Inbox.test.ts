@@ -11,7 +11,9 @@ test("CheckRow renders ordered evidence accessibly below its reason and source",
       result: "fail",
       reason: "mixes unrelated changes",
       evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"],
+      output: { kind: "score", score: 20, passAt: 60, items: ["Alpha — src/alpha.ts"] },
     },
+    name: "Focused change",
   }));
 
   expect(html).toContain('<span class="mk flag" aria-hidden="true">!</span>');
@@ -21,11 +23,14 @@ test("CheckRow renders ordered evidence accessibly below its reason and source",
   expect(html.indexOf("mixes unrelated changes")).toBeLessThan(html.indexOf("Decision model"));
   expect(html.indexOf("Decision model")).toBeLessThan(html.indexOf("Alpha — src/alpha.ts"));
   expect(html.indexOf("Alpha — src/alpha.ts")).toBeLessThan(html.indexOf("Beta — src/beta.ts"));
+  expect(html).toContain("<small>Focused change · Decision model</small>");
+  expect(html).toContain("<small>20 / 60</small>");
 });
 
 test("CheckRow with no evidence adds no empty evidence rows", () => {
   const html = renderToStaticMarkup(createElement(CheckRow, {
-    check: { check: "ci", kind: "machine", result: "pass", reason: "checks pass", evidence: [] },
+    check: { check: "ci", kind: "machine", result: "pass", reason: "checks pass", evidence: [], output: null },
+    name: "CI",
   }));
   expect(html).toContain("checks pass");
   expect(html).not.toContain("Evidence:");
