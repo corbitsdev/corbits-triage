@@ -11,7 +11,7 @@ PR and backlog triage for GitHub repositories, running as workflows on a stock [
 - `packages/triage-contracts`, `packages/rule-packs`: types and deterministic checks
 - `vendor/interchange`: pin `74c57b39` plus deltas in `vendor/interchange/VENDORED.md`
 - `tooling/`: dev runner, eval scripts
-- `docs/`: [DEV](docs/DEV.md) (local setup), [DEPLOY](docs/DEPLOY.md), [SELF_HOST](docs/SELF_HOST.md)
+- `docs/`: [DEV](docs/DEV.md) (local setup), [DEPLOY](docs/DEPLOY.md), [SELF_HOST](docs/SELF_HOST.md), [DECISION_MODEL](docs/DECISION_MODEL.md) (how model checks are judged)
 
 ## Quickstart
 
