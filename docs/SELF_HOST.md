@@ -7,7 +7,7 @@ image on a given platform is in [DEPLOY.md](DEPLOY.md).
 ## What you need
 
 - Postgres 15+.
-- One machine or container for the hub, from `docs/Dockerfile`, with a
+- One machine or container for the hub, from the root `Dockerfile`, with a
   persistent volume for `HUB_DATA_DIR` and a public HTTPS domain. GitHub
   must reach it to deliver webhooks.
 - A GitHub account or organization that can create a GitHub App.

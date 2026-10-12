@@ -1,4 +1,4 @@
-FROM oven/bun:1
+FROM oven/bun:1.4
 WORKDIR /app
 COPY . .
 RUN bun install --frozen-lockfile && bun run --cwd apps/web build
