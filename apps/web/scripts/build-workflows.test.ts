@@ -18,6 +18,8 @@ test("packs each workflow deterministically, importing the GitHub tool instead o
   const second = await packWorkflows(path.join(scratch, "b"));
   expect(second).toEqual(first);
 
+  const packedTool = first.find((entry) => entry.name === tool.name);
+  if (!packedTool) throw new Error(`${tool.name} was not packed`);
   for (const workflow of WORKFLOW_PACKAGES) {
     const packed = first.find((entry) => entry.name === workflow.packageName);
     if (!packed) throw new Error(`${workflow.packageName} was not packed`);
@@ -25,7 +27,7 @@ test("packs each workflow deterministically, importing the GitHub tool instead o
     await mkdir(extracted, { recursive: true });
     await tar.x({ file: path.join(scratch, "a", packed.filename), cwd: extracted });
     const manifest = JSON.parse(await readFile(path.join(extracted, "package/package.json"), "utf8"));
-    expect(manifest.dependencies).toEqual({ [tool.name]: tool.version });
+    expect(manifest.dependencies).toEqual({ [tool.name]: packedTool.version });
     const bundle = await readFile(path.join(extracted, "package", workflow.entry), "utf8");
     const imports = new Bun.Transpiler({ loader: "js" }).scanImports(bundle).map((entry) => entry.path);
     expect(imports).toContain(tool.name);
