@@ -8,6 +8,7 @@ import {
 } from "react";
 import { getHubSession, signInHub, signOutHub, signUpHub, type HubUser } from "./hub-auth.ts";
 import { hubConfigured } from "./hub-origin.ts";
+import { announceSignOut, onSignOutElsewhere } from "./sign-out-channel.ts";
 
 interface SessionContextValue {
   ready: boolean;
@@ -47,6 +48,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(function signOutWithOtherTabs() {
+    return onSignOutElsewhere(function signedOutElsewhere() {
+      setSession(null);
+      setError("");
+    });
+  }, []);
+
   const signIn = useCallback(async function signIn(email: string, password: string) {
     const user = await signInHub({ email, password });
     setSession(user);
@@ -64,6 +72,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       await signOutHub();
     } finally {
       setSession(null);
+      announceSignOut();
     }
   }, []);
 
