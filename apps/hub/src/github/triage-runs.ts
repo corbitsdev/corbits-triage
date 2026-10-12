@@ -281,17 +281,6 @@ function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger
   });
 }
 
-/** The verdicts a run's log holds, one per head its trigger named. */
-export function recordedVerdicts(runId: string, events: readonly WorkflowRunEvent[]): RecordedVerdict[] {
-  const started = events.find((event) => event.type === "RunStarted");
-  if (!started) return [];
-  return headsOf(events, triggersOf(started.body)).flatMap(function recordedHead({ trigger, terminal, summary }): RecordedVerdict[] {
-    if (!summary) return [];
-    const { repo, number, headSha, startedAt } = trigger;
-    return [{ runId, repo, number, headSha, startedAt: new Date(startedAt), ...summary, runStatus: terminal?.status ?? "running" }];
-  });
-}
-
 export type ObserveRuns = (anchorRunId: string, domain: string) => Promise<ObservedRuns>;
 
 type Stamp = Pick<ObservedRun, "workflowVersion" | "offeringId">;
