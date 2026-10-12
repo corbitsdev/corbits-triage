@@ -107,5 +107,9 @@ for (const [pull, mix] of labels.mixes) {
   const [a, b] = [labels.pulls[pull]!, labels.pulls[mix]!];
   add(`${pull}+${mix}`, { pull, mix }, { needsTests: a.needsTests || b.needsTests, needsDocs: a.needsDocs || b.needsDocs }, "fail");
 }
+for (const [pull, mix] of labels.describedMixes) {
+  const [a, b] = [labels.pulls[pull]!, labels.pulls[mix]!];
+  add(`${pull}+${mix}-described`, { pull, mix, described: true }, { needsTests: a.needsTests || b.needsTests, needsDocs: a.needsDocs || b.needsDocs }, "fail");
+}
 writeFileSync(`${here}cases.jsonl`, `${cases.map((row) => JSON.stringify(row)).join("\n")}\n`);
 console.log(`${cases.length} cases`);
