@@ -9,7 +9,7 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { classificationSources, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import { classificationSources, isFromTriageSender, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoOutcome } from "@corbits/github-tool/do";
 import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-tool";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
@@ -20,6 +20,7 @@ import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount,
 import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import type { Judgment } from "./actions/evaluate.js";
+import type { Judged } from "./logic/item.js";
 import type { RulesItem } from "./actions/rules.js";
 
 export type Role = "facts" | "judge" | "execute" | "mirror";
@@ -137,8 +138,18 @@ function filesPage(r: ToolResult | undefined): FilesPage | string {
   return { files: content.files.flatMap(fileFacts), ...(next === undefined ? {} : { next }), ...(patchNext === undefined ? {} : { patchNext }) };
 }
 
+/** The judge answers a catch-up mail carried for each pull request it names; only the hub's mail is trusted to carry them. */
+function carriedAnswers(items: unknown[]): Map<number, Judged> {
+  return new Map(items.flatMap(function answersOf(item): Array<[number, Judged]> {
+    if (!isRecord(item) || typeof item.prNumber !== "number" || !isRecord(item.judged)) return [];
+    const judged = Object.entries(item.judged).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+    return judged.length > 0 ? [[item.prNumber, Object.fromEntries(judged)]] : [];
+  }));
+}
+
 function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
+  let carried = new Map<number, Judged>();
   function reply(items: RulesItem[], batch: boolean) {
     return caps.reply(JSON.stringify({ items, batch }));
   }
@@ -209,7 +220,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
 
       function onChecks(r2: BatchResults) {
         function itemFor(n: number): RulesItem {
-          return assembleItem(n, {
+          const item = assembleItem(n, {
             pr: prs.get(n) ?? null,
             checks: data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [],
             reviews: data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [],
@@ -218,6 +229,8 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
             files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
             authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
           }, { repo, openPrs, policy, pack, events, docs });
+          const judged = carried.get(n);
+          return judged === undefined || "error" in item ? item : { ...item, judged };
         }
         return reply(numbers.map(itemFor), batch);
       }
@@ -276,6 +289,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     if (Array.isArray(input.items)) {
       const numbers = input.items.flatMap((item) => (isRecord(item) && typeof item.prNumber === "number" ? [item.prNumber] : []));
       if (numbers.length === 0) return fail("facts: batch names no pull request");
+      carried = isFromTriageSender(message.content) ? carriedAnswers(input.items) : new Map();
       return fetchListed(repo, numbers, true, policy, pack, ["catch-up"]);
     }
     const number = input.prNumber;

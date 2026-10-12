@@ -150,7 +150,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     // One mail carries up to `batchSize` heads: each mail costs the deployment a fixed set of commits, whatever it carries.
     for (let from = 0; from < claimed.enqueue.length; from += deps.batchSize) {
       const batch = claimed.enqueue.slice(from, from + deps.batchSize);
-      const items = batch.map((queued) => ({ prNumber: queued.number, headSha: claimed.rows.find((row) => row.number === queued.number)!.headSha }));
+      const items = batch.map((queued) => ({ prNumber: queued.number, headSha: claimed.rows.find((row) => row.number === queued.number)!.headSha, ...(queued.judged && { judged: queued.judged }) }));
       try {
         await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo.pack, { items }));
       } catch (err) {
@@ -314,6 +314,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       now: deps.now(),
       policy: deps.policy,
       workflowVersion: pass.deployment.workflowVersion,
+      offeringId: pass.deployment.offeringId,
     });
     let failure: Failure | undefined;
     for (const repo of loaded) {
