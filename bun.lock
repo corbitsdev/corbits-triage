@@ -34,7 +34,6 @@
         "@intx/crypto": "0.4.0",
         "@intx/db": "workspace:*",
         "@intx/hub-api": "0.4.0",
-        "@intx/hub-client": "workspace:*",
         "@intx/hub-common": "workspace:*",
         "@intx/hub-sessions": "0.4.0",
         "@intx/inference": "workspace:*",
@@ -149,7 +148,6 @@
         "@intx/types": "workspace:*",
         "@intx/workflow": "workspace:*",
         "arktype": "catalog:",
-        "hono": "^4.11.9",
         "re2js": "2.8.6",
       },
       "devDependencies": {

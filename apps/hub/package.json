@@ -21,7 +21,6 @@
     "@intx/crypto": "0.4.0",
     "@intx/db": "workspace:*",
     "@intx/hub-api": "0.4.0",
-    "@intx/hub-client": "workspace:*",
     "@intx/hub-common": "workspace:*",
     "@intx/hub-sessions": "0.4.0",
     "@intx/inference": "workspace:*",

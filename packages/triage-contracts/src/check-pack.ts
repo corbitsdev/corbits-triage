@@ -12,9 +12,6 @@ export type CheckPackGroup = (typeof CHECK_PACK_GROUPS)[number];
 export const CATALOG_IDS = ["size", "focused", "docs", "issue", "conflicts", "ci", "tests", "paths"] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
-export const MACHINE_CHECK_IDS = ["size", "issue", "conflicts", "ci", "paths"] as const;
-export type MachineCheckId = (typeof MACHINE_CHECK_IDS)[number];
-
 export const QUALITY_CHECK_IDS = ["focused", "docs", "tests"] as const;
 export type QualityCheckId = (typeof QUALITY_CHECK_IDS)[number];
 

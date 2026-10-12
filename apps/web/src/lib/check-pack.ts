@@ -1,22 +1,11 @@
 import { ApiError, type Transport } from "@intx/hub-client";
 import {
   CHECK_PACK_TITLE_PREFIX,
-  applyRecommended,
   checkPackName,
-  emptyPack,
   readCheckPack,
-  recommendedPack,
   type CheckPack,
 } from "@corbits/triage-contracts";
-import { CONFIG_KEY, findArtifactByTitle, listArtifacts, newestByTitle, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
-
-export {
-  applyRecommended,
-  checkPackName,
-  emptyPack,
-  recommendedPack,
-  type CheckPack,
-};
+import { findArtifactByTitle, listArtifacts, newestByTitle, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
 
 function enc(value: string): string {
   return encodeURIComponent(value);
@@ -92,12 +81,6 @@ export async function writeCheckPack(transport: Transport, tenantId: string, rep
   return { kind: "pack", ...stored, pack: parsed };
 }
 
-export function customizeDraft(repo: string): CheckPack {
-  return emptyPack(repo);
-}
-
 export function repoNeedsCheckSetup(repo: { checkPack?: { name?: string } } | null | undefined): boolean {
   return !(repo?.checkPack?.name?.trim());
 }
-
-export { CONFIG_KEY };
