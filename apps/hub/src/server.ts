@@ -59,6 +59,7 @@ import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubPrDos } from "./github/pr-dos.js";
 import { createDoRunStore } from "./github/do-run-store.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
+import { createSessions } from "./sessions.js";
 import { migrateTriageTables } from "./triage-db.js";
 import { createTriageStats } from "./github/triage-stats.js";
 import { createTriageTimeline } from "./github/triage-timeline.js";
@@ -533,6 +534,7 @@ const integrations = createIntegrationsApp({
     now,
     log: logJson,
   }),
+  sessions: createSessions({ db: composition.db, getSession: composition.getSession, trustedPortalOrigins }),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them
 // through routeRequest before the stock logger.

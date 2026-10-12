@@ -6,6 +6,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
+import { lt } from "drizzle-orm";
 import { integer, text, timestamp } from "drizzle-orm/pg-core";
 import type { SignInSettings } from "./env.js";
 import { triageSchema } from "./triage-db.js";
@@ -55,6 +56,11 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     requireAllowed(user);
   }
 
+  // Codes nobody redeemed stay behind; each new request clears the expired ones.
+  async function deleteExpiredDeviceCodes() {
+    await db.delete(deviceCode).where(lt(deviceCode.expiresAt, new Date()));
+  }
+
   return betterAuth({
     baseURL: config.baseURL,
     secret: config.secret,
@@ -69,8 +75,10 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
       deviceAuthorization({
         validateClient: (clientId) => clientId === DEVICE_CLIENT_ID,
         verificationUri: new URL("/device", config.portalOrigin).toString(),
+        onDeviceAuthRequest: deleteExpiredDeviceCodes,
       }),
     ],
+    rateLimit: { customRules: { "/device/code": { window: 60, max: 5 } } },
     databaseHooks: {
       user: { create: { before: requireAllowedNewUser } },
       // Also checked per session, so accounts that predate the allowlist are held to it.

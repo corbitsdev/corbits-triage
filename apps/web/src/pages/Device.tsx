@@ -5,6 +5,8 @@ import { useSession } from "../lib/session.tsx";
 
 export const DEVICE_PATH = "/device";
 
+const CLIENT_NAMES: Record<string, string> = { "corbits-cli": "Corbits CLI" };
+
 type Step = "enter" | "decide" | "approved" | "denied";
 
 export function Device() {
@@ -12,6 +14,7 @@ export function Device() {
   const [params] = useSearchParams();
   const [userCode, setUserCode] = useState(params.get("user_code") ?? "");
   const [step, setStep] = useState<Step>("enter");
+  const [clientId, setClientId] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -30,7 +33,7 @@ export function Device() {
   function claim(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void act(async function claimCode() {
-      await claimDeviceCode(userCode.trim());
+      setClientId(await claimDeviceCode(userCode.trim()));
       setStep("decide");
     });
   }
@@ -57,7 +60,7 @@ export function Device() {
           </form>
         )}
         {step === "decide" && <>
-          <p className="muted">Code <strong>{userCode.trim().toUpperCase()}</strong> will act as {session?.email} with everything you can do. Approve only if you started it.</p>
+          <p className="muted"><strong>{CLIENT_NAMES[clientId] ?? clientId}</strong> with code <strong>{userCode.trim().toUpperCase()}</strong> will act as {session?.email} with everything you can do. Approve only if you started it.</p>
           <div className="row">
             <button type="button" className="btn primary" disabled={pending} onClick={() => decide("approve")}>Approve</button>
             <button type="button" className="btn" disabled={pending} onClick={() => decide("deny")}>Deny</button>

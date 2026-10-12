@@ -239,6 +239,8 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/invitations/{tenantId}/{invitationId}": ["delete"],
     "/api/integrations/my-invitations": ["get"],
     "/api/integrations/my-invitations/accept": ["post"],
+    "/api/integrations/sessions": ["get"],
+    "/api/integrations/sessions/{sessionId}": ["delete"],
   });
 
   const headers = await signedIn(origin);

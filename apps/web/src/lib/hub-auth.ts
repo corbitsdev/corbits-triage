@@ -112,7 +112,7 @@ export async function getAuthMethods(): Promise<AuthMethods> {
 
 /** Leaves the page for Google; the hub returns the browser to this page, with `?error=` on failure. */
 export async function signInWithGoogle(): Promise<void> {
-  const returnTo = `${window.location.origin}${window.location.pathname}`;
+  const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
   const { response, parsed } = await hubAuth("/sign-in/social", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -125,10 +125,12 @@ export async function signInWithGoogle(): Promise<void> {
   window.location.assign(url);
 }
 
-/** Claims the code an agent shows for this user, so it can then be approved or denied. */
-export async function claimDeviceCode(userCode: string): Promise<void> {
+/** Claims the code an agent shows for this user, so it can then be approved or denied. Returns the asking client's id. */
+export async function claimDeviceCode(userCode: string): Promise<string> {
   const { response, parsed } = await hubAuth(`/device?user_code=${encodeURIComponent(userCode)}`, { method: "GET" });
-  if (!response.ok) throw new ApiError(response.status, "unknown", messageOf(parsed, "That code is not valid."));
+  const clientId = (parsed as { client_id?: unknown } | undefined)?.client_id;
+  if (!response.ok || typeof clientId !== "string") throw new ApiError(response.status, "unknown", messageOf(parsed, "That code is not valid."));
+  return clientId;
 }
 
 export async function decideDeviceCode(userCode: string, decision: "approve" | "deny"): Promise<void> {
@@ -138,21 +140,4 @@ export async function decideDeviceCode(userCode: string, decision: "approve" | "
     body: JSON.stringify({ userCode }),
   });
   if (!response.ok) throw new ApiError(response.status, "unknown", messageOf(parsed, `Could not ${decision} the device.`));
-}
-
-export type HubDeviceSession = { token: string; userAgent: string | null; createdAt: string };
-
-export async function listHubSessions(): Promise<HubDeviceSession[]> {
-  const { response, parsed } = await hubAuth("/list-sessions", { method: "GET" });
-  if (!response.ok) throw new ApiError(response.status, "unknown", messageOf(parsed, "Could not list signed-in devices."));
-  return parsed as HubDeviceSession[];
-}
-
-export async function revokeHubSession(token: string): Promise<void> {
-  const { response, parsed } = await hubAuth("/revoke-session", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token }),
-  });
-  if (!response.ok) throw new ApiError(response.status, "unknown", messageOf(parsed, "Could not sign the device out."));
 }
