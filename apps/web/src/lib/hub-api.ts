@@ -67,7 +67,7 @@ export function githubAppInstallUrl(slug: string): string {
   return `https://github.com/apps/${encodeURIComponent(clean)}/installations/new`;
 }
 
-function activeGithubCredential(credentials: HubCredential[]): HubCredential | undefined {
+export function activeGithubCredential(credentials: HubCredential[]): HubCredential | undefined {
   return credentials.find((item) =>
     item.name === GITHUB_CREDENTIAL_NAME
     && typeof item.status === "string"
@@ -1278,6 +1278,37 @@ export async function listPrincipals(transport: Transport, tenantId: string): Pr
 export async function listRoles(transport: Transport, tenantId: string): Promise<HubRole[]> {
   const tid = enc(requireTenantId(tenantId));
   return listAll<HubRole>(transport, `/api/tenants/${tid}/roles`);
+}
+
+export async function createRole(transport: Transport, tenantId: string, name: string): Promise<HubRole> {
+  const tid = enc(requireTenantId(tenantId));
+  return transport.fetch<HubRole>("POST", `/api/tenants/${tid}/roles`, { name: requireId(name, "Role name") });
+}
+
+export async function renameRole(transport: Transport, tenantId: string, roleId: string, name: string): Promise<HubRole> {
+  const tid = enc(requireTenantId(tenantId));
+  const rid = enc(requireId(roleId, "Role id"));
+  return transport.fetch<HubRole>("PATCH", `/api/tenants/${tid}/roles/${rid}`, { name: requireId(name, "Role name") });
+}
+
+export async function deleteRole(transport: Transport, tenantId: string, roleId: string): Promise<void> {
+  const tid = enc(requireTenantId(tenantId));
+  const rid = enc(requireId(roleId, "Role id"));
+  await transport.fetch("DELETE", `/api/tenants/${tid}/roles/${rid}`);
+}
+
+/** Stock evaluate: whether `principalId` may do `action` on `resource`, as the hub would decide it. */
+export async function evaluateAccess(
+  transport: Transport,
+  tenantId: string,
+  principalId: string,
+  resource: string,
+  action: string,
+): Promise<boolean> {
+  const tid = enc(requireTenantId(tenantId));
+  const pid = enc(requireId(principalId, "Principal id"));
+  const result = await transport.fetch<{ effect: string }>("POST", `/api/tenants/${tid}/principals/${pid}/evaluate`, { resource, action });
+  return result.effect === "allow";
 }
 
 export async function createGrant(

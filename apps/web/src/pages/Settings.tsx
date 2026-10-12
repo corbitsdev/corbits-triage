@@ -6,7 +6,6 @@ import {
   accessWhoOptions,
   canRemoveGrant,
   grantCreateInputFromForm,
-  grantResourceLabel,
   grantWhoLabel,
   parseGrantEffect,
   type GrantEffect,
@@ -14,10 +13,11 @@ import {
 import { githubWebhookUrl } from "../lib/github-manifest.ts";
 import { useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../lib/github-manifest.ts";
-import { currentDeployment, githubAppSlugFromCredentials, hasActiveGithubCredential, type DeployedWorkflow, type HubCredential, type HubGrant, type HubPrincipal, type HubRole } from "../lib/hub-api.ts";
+import { describePermission, permissionCatalog, type Permission } from "../lib/permissions.ts";
+import { activeGithubCredential, currentDeployment, githubAppSlugFromCredentials, hasActiveGithubCredential, type DeployedWorkflow, type HubCredential, type HubGrant, type HubPrincipal, type HubRole } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
-import { useDeployedWorkflows, useGrants, usePrincipals, useRoles, type TenantSection } from "../lib/tenant-entities.ts";
+import { useAllowed, useDeployedWorkflows, useGrants, usePrincipals, useRoles, type TenantSection } from "../lib/tenant-entities.ts";
 import { WORKFLOW_PACKAGES } from "../lib/workflow-packages.ts";
 import { useSession } from "../lib/session.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
@@ -48,22 +48,25 @@ function parseTab(value: string | undefined): SettingsTab {
 function GrantRow({
   grant,
   who,
+  permission,
   readOnly,
   pending,
   onRemove,
 }: {
   grant: HubGrant;
   who: string;
+  permission: { label: string; resource?: string };
   readOnly: boolean;
   pending: boolean;
   onRemove: () => Promise<void>;
 }) {
-  const resource = grantResourceLabel(grant.resource);
   return (
     <tr>
       <td>{who}</td>
-      <td className="mono" aria-label={resource.detail}>{resource.label}</td>
-      <td className="mono">{grant.action}</td>
+      <td>
+        {permission.label}
+        {permission.resource && <span className="mono muted small-text"> {permission.resource}</span>}
+      </td>
       <td>{sentenceCase(grant.effect)}</td>
       <td>
         {canRemoveGrant(grant) ? (
@@ -78,13 +81,18 @@ function GrantRow({
   );
 }
 
+const OTHER_PERMISSION = "other";
+
 function AccessRules({
   grants,
   people,
   roles,
+  permissions,
   loading,
   denied,
   readOnly,
+  canAdd,
+  canRemove,
   addGrant,
   removeGrant,
   onError,
@@ -92,19 +100,25 @@ function AccessRules({
   grants: HubGrant[];
   people: HubPrincipal[];
   roles: HubRole[];
+  permissions: Permission[];
   loading: boolean;
   denied: boolean;
   readOnly: boolean;
+  canAdd: boolean;
+  canRemove: boolean;
   addGrant: (input: ReturnType<typeof grantCreateInputFromForm>) => Promise<void>;
   removeGrant: (grant: HubGrant) => Promise<void>;
   onError: (message: string) => void;
 }) {
   const [who, setWho] = useState("");
+  const [permissionIndex, setPermissionIndex] = useState("");
   const [resource, setResource] = useState("");
   const [action, setAction] = useState("");
   const [effect, setEffect] = useState<GrantEffect>("allow");
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const other = permissionIndex === OTHER_PERMISSION;
+  const locked = readOnly || adding || !canAdd;
   const whoOptions = accessWhoOptions(people, roles);
   const peopleOptions = whoOptions.filter((option) => option.group === "People");
   const roleOptions = whoOptions.filter((option) => option.group === "Roles");
@@ -114,8 +128,11 @@ function AccessRules({
     setAdding(true);
     onError("");
     try {
-      await addGrant(grantCreateInputFromForm({ who, resource, action, effect }));
+      const permission = other ? { resource, action } : permissions[Number(permissionIndex)];
+      if (!permission) throw new Error("Choose what they may do.");
+      await addGrant(grantCreateInputFromForm({ who, resource: permission.resource, action: permission.action, effect }));
       setWho("");
+      setPermissionIndex("");
       setResource("");
       setAction("");
       setEffect("allow");
@@ -142,9 +159,9 @@ function AccessRules({
   }
 
   return (
-    <div className="panel settings-panel" aria-label="Who can sign in">
-      <h2>Who can sign in</h2>
-      <p className="field-help">People who may use this app. This is not who reviews pull requests on GitHub.</p>
+    <div className="panel settings-panel" aria-label="Access rules">
+      <h2>Access rules</h2>
+      <p className="field-help">What each person or role may do in this app. This is not who reviews pull requests on GitHub.</p>
       {denied && <DeniedNotice section="access rules" />}
       {!denied && !loading && grants.length === 0 && <p className="muted">No access rules.</p>}
       {!denied && grants.length > 0 && (
@@ -153,8 +170,7 @@ function AccessRules({
             <thead>
               <tr>
                 <th>Who</th>
-                <th>Resource</th>
-                <th>Action</th>
+                <th>Permission</th>
                 <th>Effect</th>
                 <th><span className="sr-only">Actions</span></th>
               </tr>
@@ -165,7 +181,8 @@ function AccessRules({
                   key={grant.id}
                   grant={grant}
                   who={grantWhoLabel(grant, people, roles)}
-                  readOnly={readOnly}
+                  permission={describePermission(grant, permissions)}
+                  readOnly={readOnly || !canRemove}
                   pending={removingId === grant.id}
                   onRemove={() => remove(grant)}
                 />
@@ -179,7 +196,7 @@ function AccessRules({
           <label className="field">
             Who
             <span className="field-help">Person or role this rule applies to.</span>
-            <select value={who} onChange={(event) => setWho(event.target.value)} disabled={readOnly || adding}>
+            <select value={who} onChange={(event) => setWho(event.target.value)} disabled={locked}>
               <option value="">Select…</option>
               {peopleOptions.length > 0 && (
                 <optgroup label="People">
@@ -195,24 +212,188 @@ function AccessRules({
           </label>
           <label className="field">
             They may
-            <span className="field-help">Watch the board, confirm recommendations, or change settings.</span>
-            <input value={action} onChange={(event) => setAction(event.target.value)} disabled={readOnly || adding} placeholder="confirm recommendations" />
+            <select value={permissionIndex} onChange={(event) => setPermissionIndex(event.target.value)} disabled={locked}>
+              <option value="">Select…</option>
+              {permissions.map((permission, index) => <option key={permission.label} value={String(index)}>{permission.label}</option>)}
+              <option value={OTHER_PERMISSION}>Other…</option>
+            </select>
           </label>
-          <label className="field">
-            Resource
-            <span className="field-help">What this rule applies to.</span>
-            <input value={resource} onChange={(event) => setResource(event.target.value)} disabled={readOnly || adding} />
-          </label>
+          {other && (
+            <>
+              <label className="field">
+                Action
+                <span className="field-help">What they may do, such as read, create, manage or use.</span>
+                <input value={action} onChange={(event) => setAction(event.target.value)} disabled={locked} />
+              </label>
+              <label className="field">
+                Resource
+                <span className="field-help">What this rule applies to, such as credential:… or tool:*.</span>
+                <input value={resource} onChange={(event) => setResource(event.target.value)} disabled={locked} />
+              </label>
+            </>
+          )}
           <label className="field">
             Effect
-            <select value={effect} onChange={(event) => setEffect(parseGrantEffect(event.target.value))} disabled={readOnly || adding}>
+            <select value={effect} onChange={(event) => setEffect(parseGrantEffect(event.target.value))} disabled={locked}>
               <option value="allow">Allow</option>
               <option value="ask">Ask</option>
               <option value="deny">Deny</option>
             </select>
           </label>
-          <button type="submit" className="btn primary" disabled={readOnly || adding || !who || !resource.trim() || !action.trim()}>
+          <button type="submit" className="btn primary" disabled={locked || !who || !permissionIndex || (other && (!resource.trim() || !action.trim()))}>
             {adding ? "Adding…" : "Add rule"}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function RoleRow({
+  role,
+  readOnly,
+  renameRole,
+  removeRole,
+  onError,
+}: {
+  role: HubRole;
+  readOnly: boolean;
+  renameRole: (role: HubRole, name: string) => Promise<void>;
+  removeRole: (role: HubRole) => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [name, setName] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (name === null) return;
+    setPending(true);
+    onError("");
+    try {
+      await renameRole(role, name.trim());
+      setName(null);
+    } catch (cause) {
+      onError(`Could not rename the role. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(`Remove the ${role.name} role and its access rules?`)) return;
+    setPending(true);
+    onError("");
+    try {
+      await removeRole(role);
+    } catch (cause) {
+      onError(`Could not remove the role. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
+      setPending(false);
+    }
+  }
+
+  if (name !== null) {
+    return (
+      <tr>
+        <td colSpan={2}>
+          <form className="row wrap" onSubmit={(event) => void save(event)}>
+            <input aria-label="Role name" value={name} onChange={(event) => setName(event.target.value)} disabled={pending} autoFocus />
+            <button type="submit" className="btn primary" disabled={pending || !name.trim()}>{pending ? "Saving…" : "Save"}</button>
+            <button type="button" className="btn ghost" disabled={pending} onClick={() => setName(null)}>Cancel</button>
+          </form>
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <tr>
+      <td>{role.name}</td>
+      <td>
+        {role.isSystem ? (
+          <span className="muted small-text">Built-in</span>
+        ) : (
+          <div className="row wrap">
+            <button type="button" className="btn ghost" aria-label={`Rename ${role.name}`} disabled={readOnly || pending} onClick={() => setName(role.name)}>Rename</button>
+            <button type="button" className="btn ghost" aria-label={`Remove ${role.name}`} disabled={readOnly || pending} onClick={() => void remove()}>
+              {pending ? "Removing…" : "Remove"}
+            </button>
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function Roles({
+  roles,
+  loading,
+  denied,
+  readOnly,
+  canCreate,
+  canManage,
+  addRole,
+  renameRole,
+  removeRole,
+  onError,
+}: {
+  roles: HubRole[];
+  loading: boolean;
+  denied: boolean;
+  readOnly: boolean;
+  canCreate: boolean;
+  canManage: boolean;
+  addRole: (name: string) => Promise<void>;
+  renameRole: (role: HubRole, name: string) => Promise<void>;
+  removeRole: (role: HubRole) => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAdding(true);
+    onError("");
+    try {
+      await addRole(name.trim());
+      setName("");
+    } catch (cause) {
+      onError(`Could not add the role. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  return (
+    <div className="panel settings-panel" aria-label="Workspace roles">
+      <h2>Workspace roles</h2>
+      <p className="field-help">Give a role access rules below. A role takes effect once it is assigned to people.</p>
+      {denied && <DeniedNotice section="roles" />}
+      {!denied && !loading && roles.length > 0 && (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {roles.map((role) => (
+                <RoleRow key={role.id} role={role} readOnly={readOnly || !canManage} renameRole={renameRole} removeRole={removeRole} onError={onError} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {!denied && (
+        <form onSubmit={(event) => void submit(event)}>
+          <label className="field">
+            New role
+            <input value={name} onChange={(event) => setName(event.target.value)} disabled={readOnly || adding || !canCreate} />
+          </label>
+          <button type="submit" className="btn primary" disabled={readOnly || adding || !canCreate || !name.trim()}>
+            {adding ? "Adding…" : "Add role"}
           </button>
         </form>
       )}
@@ -329,7 +510,7 @@ function CredentialRow({
 }
 
 export default function Settings() {
-  const { snapshot, replaceSecret, revoke, addGrant, removeGrant, syncFromGithub, readOnly } = usePortal();
+  const { snapshot, replaceSecret, revoke, addGrant, removeGrant, addRole, renameRole, removeRole, syncFromGithub, readOnly } = usePortal();
   const { session } = useSession();
   const signOut = useSignOutAfterSending();
   const params = useParams();
@@ -347,6 +528,11 @@ export default function Settings() {
   const deniedCredentials = snapshot?.denied.credentials ?? false;
   const modelStored = hasDecisionModelCredential(credentials);
   const githubReady = hasActiveGithubCredential(credentials);
+  const canCreateRoles = useAllowed("role:*", "create");
+  const canManageRoles = useAllowed("role:*", "manage");
+  const canCreateGrants = useAllowed("grant:*", "create");
+  const canManageGrants = useAllowed("grant:*", "manage");
+  const permissions = permissionCatalog(activeGithubCredential(credentials)?.id ?? null);
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   async function syncAfterGithub() {
     try {
@@ -446,10 +632,25 @@ export default function Settings() {
               </section>
             </div>
             <div role="tabpanel" id={panelId("Access")} aria-labelledby={tabId("Access")} hidden={tab !== "Access"}>
+              <Roles
+                roles={roles.rows}
+                loading={roles.loading || roles.unavailable}
+                denied={roles.denied}
+                readOnly={readOnly}
+                canCreate={canCreateRoles}
+                canManage={canManageRoles}
+                addRole={addRole}
+                renameRole={renameRole}
+                removeRole={removeRole}
+                onError={setError}
+              />
               <AccessRules
                 grants={grants.rows}
                 people={principals.rows}
                 roles={roles.rows}
+                permissions={permissions}
+                canAdd={canCreateGrants}
+                canRemove={canManageGrants}
                 loading={[grants, principals, roles].some((section) => section.loading || section.unavailable)}
                 denied={grants.denied || principals.denied || roles.denied}
                 readOnly={readOnly}

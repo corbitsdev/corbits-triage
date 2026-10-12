@@ -10,7 +10,9 @@ import {
   hasActiveGithubCredential,
   configureGithubHook,
   createGrant,
+  createRole,
   deleteGrant,
+  deleteRole,
   ensureWorkspace,
   loadPortal,
   legacyHookCredentials,
@@ -18,6 +20,7 @@ import {
   portalConnected,
   replaceCredential,
   removeRepository,
+  renameRole,
   resolveApproval,
   revokeCredential,
   saveInference,
@@ -27,6 +30,7 @@ import {
   untilDeploymentReady,
   WAITING_FOR_WORKFLOW,
   type HubGrant,
+  type HubRole,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
   type PrItem,
@@ -66,6 +70,9 @@ interface PortalContextValue {
   revoke: (credentialId: string) => Promise<void>;
   addGrant: (input: CreateGrantInput) => Promise<void>;
   removeGrant: (grant: HubGrant) => Promise<void>;
+  addRole: (name: string) => Promise<void>;
+  renameRole: (role: HubRole, name: string) => Promise<void>;
+  removeRole: (role: HubRole) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
 }
 
@@ -91,6 +98,7 @@ export const GRANTS_QUERY_KEY = "grants";
 export const PRINCIPALS_QUERY_KEY = "principals";
 export const ROLES_QUERY_KEY = "roles";
 export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
+export const ALLOWED_QUERY_KEY = "allowed";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
   PORTAL_QUERY_KEY,
@@ -102,6 +110,7 @@ const REFRESH_QUERY_KEYS = [
   [PRINCIPALS_QUERY_KEY],
   [ROLES_QUERY_KEY],
   [DEPLOYED_WORKFLOWS_QUERY_KEY],
+  [ALLOWED_QUERY_KEY],
 ];
 
 function isRunLog(value: unknown): value is RunLog {
@@ -380,6 +389,36 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
+  const addRole = useCallback(
+    async function addRole(name: string) {
+      const current = requireSnapshot();
+      await createRole(createHubTransport(), current.workspace.tenantId, name);
+      notify("Role added.");
+      refresh();
+    },
+    [notify, refresh, requireSnapshot],
+  );
+
+  const renameRoleTo = useCallback(
+    async function renameRoleTo(role: HubRole, name: string) {
+      const current = requireSnapshot();
+      await renameRole(createHubTransport(), current.workspace.tenantId, role.id, name);
+      notify("Role renamed.");
+      refresh();
+    },
+    [notify, refresh, requireSnapshot],
+  );
+
+  const removeRole = useCallback(
+    async function removeRole(role: HubRole) {
+      const current = requireSnapshot();
+      await deleteRole(createHubTransport(), current.workspace.tenantId, role.id);
+      notify("Role removed.");
+      refresh();
+    },
+    [notify, refresh, requireSnapshot],
+  );
+
   /** Reads the App's repositories from GitHub, so returning from GitHub never waits on a webhook. */
   const syncFromGithub = useCallback(async function syncFromGithub() {
     const current = requireSnapshot();
@@ -424,6 +463,9 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         revoke,
         addGrant,
         removeGrant,
+        addRole,
+        renameRole: renameRoleTo,
+        removeRole,
         saveInferenceSecret,
       };
     },
@@ -449,6 +491,9 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       revoke,
       addGrant,
       removeGrant,
+      addRole,
+      renameRoleTo,
+      removeRole,
       saveInferenceSecret,
     ],
   );
