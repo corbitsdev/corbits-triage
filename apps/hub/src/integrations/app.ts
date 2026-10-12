@@ -17,6 +17,7 @@ import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
 import { TRIAGE_STATS_PATH, TriageStats } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
+import { AcceptBody, Accepted, INVITATIONS_PATH, InvitationCreated, InvitationList, InviteBody, MY_INVITATIONS_PATH, MyInvitations } from "../invitations/invitations.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { DeployedVersions, WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
@@ -40,6 +41,13 @@ export type IntegrationHandlers = {
   triageTimeline: TenantHandler;
   workflowDeploy: TenantHandler;
   workflowVersions: TenantHandler;
+  invitations: {
+    create: TenantHandler;
+    list: TenantHandler;
+    revoke: (req: Request, tenantId: string, invitationId: string) => Promise<Response>;
+    mine: (req: Request) => Promise<Response>;
+    accept: (req: Request) => Promise<Response>;
+  };
 };
 
 const TAGS = ["integrations"];
@@ -111,6 +119,15 @@ function tenantRoute(handle: TenantHandler) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     return handle(c.req.raw, tenantId);
+  };
+}
+
+function invitationRoute(handle: IntegrationHandlers["invitations"]["revoke"]) {
+  return function route(c: Context): Promise<Response> | Response {
+    const invitationId = c.req.param("invitationId") ?? "";
+    return tenantRoute(function revokeInvitation(req, tenantId) {
+      return handle(req, tenantId, invitationId);
+    })(c);
   };
 }
 
@@ -366,6 +383,89 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       responses: { 200: json("Live deployments and their versions", DeployedVersions), 401: failures[401], 403: failures[403] },
     }),
     tenantRoute(handlers.workflowVersions),
+  );
+
+  app.post(
+    `${INVITATIONS_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Invite someone to the workspace by email",
+      description: "Needs `principal:*` create, and the caller must hold every permission the role grants (so only an owner invites into a `*:*` role). Stock role routes still let an admin assign roles directly; this route does not change that. Replaces the email's open invite. The invitee gets a plain-text email with the accept link when the hub sends email; otherwise the link is returned to copy. Links expire after 7 days. A workspace may send a limited number of invites per hour.",
+      tags: TAGS,
+      requestBody: body(InviteBody),
+      responses: {
+        201: json("The invite and whether it was emailed", InvitationCreated),
+        ...invalid,
+        401: failures[401],
+        403: json("Not from the portal, not allowed to invite, a role granting more than the caller holds, or an email outside the sign-in allowlist", Failure),
+        404: json("Role not found in this workspace", Failure),
+        409: json("Already a member", Failure),
+        429: json("Too many invites from this workspace in the last hour", Failure),
+        502: json("The invite is saved but its email could not be sent", Failure),
+      },
+    }),
+    tenantRoute(handlers.invitations.create),
+  );
+
+  app.get(
+    `${INVITATIONS_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Open invites of the workspace, newest first",
+      description: "An invite's link is left out when its role grants more than the caller holds. `assignableRoleIds` lists the roles the caller may invite into.",
+      tags: TAGS,
+      responses: { 200: json("Open invites and the roles the caller may invite into", InvitationList), 401: failures[401], 403: failures[403] },
+    }),
+    tenantRoute(handlers.invitations.list),
+  );
+
+  app.delete(
+    `${INVITATIONS_PATH}/:tenantId/:invitationId`,
+    describeRoute({
+      summary: "Withdraw an open invite",
+      tags: TAGS,
+      responses: {
+        204: { description: "Withdrawn" },
+        401: failures[401],
+        403: failures[403],
+        404: json("Invite not found", Failure),
+        409: json("Already used, withdrawn or expired", Failure),
+      },
+    }),
+    invitationRoute(handlers.invitations.revoke),
+  );
+
+  app.get(
+    MY_INVITATIONS_PATH,
+    describeRoute({
+      summary: "Open invites to the signed-in user's email",
+      description: "Empty unless the session's email is verified, so an unverified sign-up learns nothing about invites to that address.",
+      tags: TAGS,
+      responses: { 200: json("Open invites, newest first", MyInvitations), 401: failures[401], 403: failures[403] },
+    }),
+    function myInvitations(c) {
+      return handlers.invitations.mine(c.req.raw);
+    },
+  );
+
+  app.post(
+    `${MY_INVITATIONS_PATH}/accept`,
+    describeRoute({
+      summary: "Accept an invite with its link token",
+      description: "Activates the signed-in user's membership with the invited role. Accepting a link the same user already accepted answers the same.",
+      tags: TAGS,
+      requestBody: body(AcceptBody),
+      responses: {
+        200: json("The workspace joined", Accepted),
+        ...invalid,
+        401: failures[401],
+        403: json("Not from the portal, signed in with a different email, or suspended", Failure),
+        404: json("Unknown invite link", Failure),
+        409: json("Already used, or already a member", Failure),
+        410: json("Expired or withdrawn", Failure),
+      },
+    }),
+    function acceptInvitation(c) {
+      return handlers.invitations.accept(c.req.raw);
+    },
   );
 
   return app;

@@ -21,6 +21,7 @@ import { useAllowed, useDeployedWorkflows, useGrants, usePrincipals, useRoles, t
 import { WORKFLOW_PACKAGES } from "../lib/workflow-packages.ts";
 import { useSession } from "../lib/session.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
+import { InvitePeople } from "../components/InvitePeople.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
 
 const TABS = ["Triage", "GitHub", "Integrations", "Model", "Access", "Account"] as const;
@@ -632,6 +633,7 @@ export default function Settings() {
               </section>
             </div>
             <div role="tabpanel" id={panelId("Access")} aria-labelledby={tabId("Access")} hidden={tab !== "Access"}>
+              <InvitePeople onSetupPage={false} />
               <Roles
                 roles={roles.rows}
                 loading={roles.loading || roles.unavailable}
