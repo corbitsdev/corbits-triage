@@ -478,6 +478,11 @@ function failureEvidence(c: CheckResult, repo: string, headSha: string): string 
   return c.kind === "model" && (c.check === "docs" || c.check === "tests") ? ` for ${listed}` : `: ${listed}`;
 }
 
+/** The failed checks that are the author's to fix; a maintainer's requested changes are already in front of the author. */
+export function authorFailures(all: CheckResult[], sources: Sources): CheckResult[] {
+  return judged(all).filter((c) => c.result === "fail" && c.check !== "review" && failedStep(c, sources).actor === "author");
+}
+
 /**
  * Public: only what the author must fix and what is not yet confirmed; never a score or model reasoning. A maintainer's
  * requested changes are already in front of the author, so they are left out, and a comment holding nothing else is not posted.
@@ -485,7 +490,7 @@ function failureEvidence(c: CheckResult, repo: string, headSha: string): string 
 function authorComment({ author, repo, headSha, sources }: RenderContext, all: CheckResult[]): string {
   const checks = judged(all);
   const failing = checks.filter((c) => c.result === "fail");
-  const mine = failing.filter((c) => c.check !== "review" && failedStep(c, sources).actor === "author");
+  const mine = authorFailures(checks, sources);
   const unconfirmed = sources ? checks.filter(unsure) : [];
   const lines: string[] = [];
   if (mine.length) {
@@ -614,6 +619,8 @@ export type Verdict = RenderOutput & {
   judged?: Judged;
   /** Set when the pack has an approve Do: whether this head may be approved. */
   approvable?: boolean;
+  /** Set when the pack has a request-changes Do: whether anything failed is the author's to fix on this head. */
+  changesWanted?: boolean;
 };
 
 export function toMirrorRequest(v: RenderOutput & { repo: string; number: number }): MirrorRequest {

@@ -209,17 +209,22 @@ export async function getChecks(gh: GithubFetch, repo: string, sha: string) {
   }));
 }
 
-export async function getReviews(gh: GithubFetch, repo: string, number: number) {
+/** `login` names the App, asked only when a review carries the request-changes marker, as only the App's marked requests are triage's own. */
+export async function getReviews(gh: GithubFetch, repo: string, number: number, appLogin?: AppLogin): Promise<Review[]> {
   const reviews = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+  const marked = reviews.some((v: any) => typeof v.body === "string" && v.body.includes(REQUEST_CHANGES_DO_MARKER));
+  const login = marked && appLogin ? await appLogin() : undefined;
   return reviews.map((v: any) => ({
     reviewer: v.user?.login,
     state: v.state,
     submittedAt: v.submitted_at,
     commitId: v.commit_id,
+    ...(login !== undefined && v.user?.login === login && typeof v.body === "string" && v.body.includes(REQUEST_CHANGES_DO_MARKER) ? { triageRequest: true as const } : {}),
   }));
 }
 
-export type Review = { reviewer?: string; state?: string; submittedAt?: string; commitId?: string };
+/** `triageRequest` marks the request-changes Do's own review, which is triage's verdict rather than a reviewer's. */
+export type Review = { reviewer?: string; state?: string; submittedAt?: string; commitId?: string; triageRequest?: true };
 
 /** Reviewers whose latest review still stands on the current head, when the review names its commit. */
 export function reviewedOnHead(reviews: Review[], headSha: string): string[] {
@@ -684,14 +689,34 @@ async function reviewsBy(gh: GithubFetch, repo: string, number: number, login: s
 /**
  * `login`'s approval of `sha`, still standing or since dismissed, which is not made again: a person who dismissed it does not want it.
  * The App's own dismissal of a stale approval reads the same, so a force-push back to that head is not approved again either,
- * as GitHub itself never restores a dismissed review.
+ * as GitHub itself never restores a dismissed review. A dismissed request for changes is not an approval.
  */
 export async function approvalOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<number | undefined> {
   const reviews = await reviewsBy(gh, input.repo, input.number, input.login);
-  return reviews.find((review) => review.commit_id === input.sha && (review.state === "APPROVED" || review.state === "DISMISSED"))?.id;
+  return reviews.find((review) => review.commit_id === input.sha
+    && (review.state === "APPROVED" || (review.state === "DISMISSED" && !review.body?.includes(REQUEST_CHANGES_DO_MARKER))))?.id;
 }
 
-const DISMISSAL_MESSAGE = "This pull request is no longer ready to approve, so this approval no longer stands.";
+/** Marks the changes the request-changes Do requested, so a repeat on the same head finds them. */
+export const REQUEST_CHANGES_DO_MARKER = "<!-- corbits-request-changes -->";
+
+/** The request-changes Do's review of `sha`, still standing or since dismissed, which is not made again: a person who dismissed it does not want it. */
+export async function changesRequestedOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<number | undefined> {
+  const reviews = await reviewsBy(gh, input.repo, input.number, input.login);
+  return reviews.find((review) => review.commit_id === input.sha
+    && (review.state === "CHANGES_REQUESTED" || review.state === "DISMISSED")
+    && review.body?.includes(REQUEST_CHANGES_DO_MARKER))?.id;
+}
+
+async function dismissDoReviews(gh: GithubFetch, input: { repo: string; number: number; login: string }, state: string, marker: string, message: string): Promise<number[]> {
+  const { repo, number } = input;
+  const reviews = await reviewsBy(gh, repo, number, input.login);
+  const stale = reviews.filter((review) => review.state === state && review.body?.includes(marker));
+  for (const review of stale) {
+    await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}/dismissals`, send("PUT", { message, event: "DISMISS" }));
+  }
+  return stale.map((review) => review.id);
+}
 
 /**
  * Dismisses the approve Do's standing approvals, of earlier heads and of this one alike, once the head may not be approved; a dismissed
@@ -699,13 +724,12 @@ const DISMISSAL_MESSAGE = "This pull request is no longer ready to approve, so t
  * GitHub never restores a dismissed review either.
  */
 export async function dismissDoApprovals(gh: GithubFetch, input: { repo: string; number: number; login: string }): Promise<number[]> {
-  const { repo, number } = input;
-  const reviews = await reviewsBy(gh, repo, number, input.login);
-  const stale = reviews.filter((review) => review.state === "APPROVED" && review.body?.includes(APPROVE_DO_MARKER));
-  for (const review of stale) {
-    await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}/dismissals`, send("PUT", { message: DISMISSAL_MESSAGE, event: "DISMISS" }));
-  }
-  return stale.map((review) => review.id);
+  return dismissDoReviews(gh, input, "APPROVED", APPROVE_DO_MARKER, "This pull request is no longer ready to approve, so this approval no longer stands.");
+}
+
+/** Dismisses the request-changes Do's standing requests once nothing failed is the author's to fix; a repeat changes nothing. */
+export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: string; number: number; login: string }): Promise<number[]> {
+  return dismissDoReviews(gh, input, "CHANGES_REQUESTED", REQUEST_CHANGES_DO_MARKER, "Nothing triage asked to change still fails, so this request no longer stands.");
 }
 
 export type CreateIssueCommentInput = {

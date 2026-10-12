@@ -128,7 +128,7 @@ const GLOB_MAX = 200;
 const GLOBS_MAX = 50;
 const CUSTOM_ID = /^custom-\d+$/;
 
-export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "close", "agent"] as const;
+export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "agent"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
 export const TRIAGE_EVENTS = [
@@ -173,6 +173,7 @@ export type Do = { automatic: boolean } & (
   | { kind: "request-review"; target: ReviewTarget }
   | { kind: "comment"; target: CommentTarget }
   | { kind: "approve"; target: CloseTarget }
+  | { kind: "request-changes"; target: CloseTarget }
   | { kind: "close"; target: CloseTarget }
   | { kind: "agent"; target: AgentTarget }
 );
@@ -222,7 +223,7 @@ const DoSchema = type({
   .or({ kind: "'assign'", automatic: "boolean", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
   .or({ kind: "'request-review'", automatic: "boolean", target: ReviewTargetSchema })
   .or({ kind: "'comment'", automatic: "boolean", target: { "+": "reject", body: Text } })
-  .or({ kind: "'approve' | 'close'", automatic: "boolean", target: { "+": "reject" } })
+  .or({ kind: "'approve' | 'request-changes' | 'close'", automatic: "boolean", target: { "+": "reject" } })
   .or({ kind: "'agent'", automatic: "boolean", target: { "+": "reject", prompt: Text, tools: Text.array() } });
 
 const ActionSchema = type({
@@ -584,6 +585,7 @@ function parseDo(raw: unknown, where: string): Do {
       return { kind, automatic, target: { body } };
     }
     case "approve":
+    case "request-changes":
     case "close":
       exactKeys(target, [], at);
       return { kind, automatic, target: {} };

@@ -53,7 +53,10 @@ const ACTIONS: Action[] = [
     checks: ["ci", "custom-1"],
     branches: {
       yes: [{ kind: "request-review", target: { to: "role", role: "maintainers" }, automatic: true }],
-      no: [{ kind: "comment", target: { body: "Please fix CI and link a ticket." }, automatic: false }],
+      no: [
+        { kind: "comment", target: { body: "Please fix CI and link a ticket." }, automatic: false },
+        { kind: "request-changes", target: {}, automatic: true },
+      ],
       unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] }, automatic: true }],
     },
   },

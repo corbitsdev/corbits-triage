@@ -43,6 +43,8 @@ export interface PrFacts {
   reviewers?: string[];
   approvals: number;
   changesRequested?: string[];
+  /** The App's own request for changes stands on the pull request. */
+  triageRequested?: boolean;
   /** The author pushed, commented or replied in a review after the newest standing request for changes. */
   reviewAnswered?: boolean;
   /** Logins whose latest review stands on the current head. */

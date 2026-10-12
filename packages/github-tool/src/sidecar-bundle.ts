@@ -10,6 +10,7 @@ import {
   createIssueComment,
   createReview,
   dismissDoApprovals,
+  dismissDoChangeRequests,
   getChecks,
   getApp,
   getPr,
@@ -63,7 +64,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "github_get_reviews",
-    description: "Get reviews for a pull request.",
+    description: "Get reviews for a pull request, marking this App's own request-changes Do reviews as triageRequest.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
   },
   {
@@ -110,25 +111,26 @@ const MIRROR_INPUT = obj({
   owned: { type: "array", items: str },
   comment: str,
   notReadyHead: str,
+  fixedHead: str,
 }, ["repo", "number", "labels", "comment"]);
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_mirror",
     description:
-      "Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals. Never merges.",
+      "Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_mirror_auto",
     description:
-      "Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals. Never merges.",
+      "Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_execute_do_auto",
     description:
-      "Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, approve, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close, comment or approval is refused once the pull request has moved past headSha; an approval is pinned to headSha and satisfied when this App already approved it. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.",
+      "Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, approve, request changes, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close, comment or review is refused once the pull request has moved past headSha; a review is pinned to headSha and satisfied when this App already made it there. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.",
     inputSchema: obj({ request: MIRROR_INPUT, step: obj({ effectId: str, headSha: str, kind: str, target: { type: "object" } }) }),
   },
   {
@@ -199,7 +201,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): 
     case "github_get_checks":
       return { checks: await getChecks(gh, a.repo, a.sha) };
     case "github_get_reviews":
-      return { reviews: await getReviews(gh, a.repo, a.number) };
+      return { reviews: await getReviews(gh, a.repo, a.number, login) };
     case "github_list_pr_commits":
       return { commits: await listPrCommits(gh, a.repo, a.number) };
     case "github_list_pr_files":
@@ -224,8 +226,16 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): 
         comment: a.comment,
         close: false,
       });
-      if (a.notReadyHead !== mirrored.sha) return mirrored;
-      return { ...mirrored, dismissed: await dismissDoApprovals(gh, { repo: a.repo, number: a.number, login: await login() }) };
+      if (a.notReadyHead !== mirrored.sha && a.fixedHead !== mirrored.sha) return mirrored;
+      const target = { repo: a.repo, number: a.number, login: await login() };
+      const dismissed = a.notReadyHead === mirrored.sha ? await dismissDoApprovals(gh, target) : [];
+      if (a.fixedHead !== mirrored.sha) return { ...mirrored, dismissed };
+      // A repository may restrict who dismisses reviews; the comment and labels still stand, and the reason is kept.
+      try {
+        return { ...mirrored, dismissed: [...dismissed, ...await dismissDoChangeRequests(gh, target)] };
+      } catch (err) {
+        return { ...mirrored, dismissed, changeRequestsKept: err instanceof Error ? err.message : String(err) };
+      }
     }
     case "github_execute_do_auto":
       return runDo(gh, a, login);

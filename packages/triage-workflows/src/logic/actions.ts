@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { missingFrom } from "@corbits/github-tool";
 import type { ResolvedTarget } from "@corbits/github-tool/do";
-import { ALL_CHECKS, BUILT_IN_CHECK_NAMES, CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from "@corbits/triage-contracts";
+import { ALL_CHECKS, BUILT_IN_CHECK_NAMES, CHECK_CATALOG, classificationSources, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
-import type { MergeVerdict } from "./render.js";
+import { authorFailures, type MergeVerdict } from "./render.js";
 import { errorText } from "./extract.js";
 
 export type Branch = "yes" | "no" | "unsure" | "always";
@@ -105,7 +105,21 @@ function people(task: Extract<Do, { kind: "assign" | "request-review" }>, { fact
   }
 }
 
-function resolve(task: Do, input: ActionInput): ResolvedTarget {
+/** The failed checks among the action's own that are the author's to fix. */
+function changesFor(action: Action, { checks, pack }: ActionInput): CheckResult[] {
+  const own = action.checks.includes(ALL_CHECKS) ? checks : checks.filter((c) => (action.checks as string[]).includes(c.check));
+  return authorFailures(own, classificationSources(pack));
+}
+
+/** Only what the author must fix is requested; anything else waits on a maintainer, not on the author. */
+function changesBody(action: Action, input: ActionInput): string {
+  const { pack } = input;
+  const failed = changesFor(action, input);
+  if (!failed.length) throw new Error("nothing that failed is the author's to fix");
+  return ["Triage requests changes:", ...failed.map((c) => `- ${checkName(c.check, pack)}: ${c.reason}`)].join("\n");
+}
+
+function resolve(task: Do, action: Action, input: ActionInput): ResolvedTarget {
   switch (task.kind) {
     case "labels":
       return task.target.from === "list" ? { labels: task.target.labels } : { unresolved: "derive", from: task.target.from };
@@ -123,6 +137,8 @@ function resolve(task: Do, input: ActionInput): ResolvedTarget {
       if (!users.length && !resolved.teams.length) throw new Error("no reviewer is left once the author is excluded");
       return { users: missingFrom([...reviewers, ...reviewedBy], users), teams: missingFrom(reviewers, resolved.teams) };
     }
+    case "request-changes":
+      return { body: changesBody(action, input) };
     case "comment":
     case "approve":
     case "close":
@@ -147,6 +163,7 @@ function satisfied(kind: ActionKind, target: ResolvedTarget, facts: PrFacts): bo
     // No effect id records a posted comment or agent run yet, so these always stand; facts do not say which review is the App's.
     case "comment":
     case "approve":
+    case "request-changes":
     case "agent":
       return false;
   }
@@ -168,7 +185,7 @@ export function evaluateAction(action: Action, input: ActionInput): ActionOutcom
   for (const [index, task] of dos.entries()) {
     const base = { id: action.id, branch, index, kind: task.kind, automatic: task.automatic };
     try {
-      const target = resolve(task, input);
+      const target = resolve(task, action, input);
       const { repo, number, headSha } = input.facts;
       const effectId = doEffectId({ repo, number, headSha, actionId: action.id, branch, index, kind: task.kind, target });
       if (!satisfied(task.kind, target, input.facts)) out.push({ ...base, effectId, target, reason });
@@ -192,6 +209,20 @@ export function approvalHeldBy(merge: MergeVerdict["verdict"], ci: PrFacts["chec
 /** The pack approves pull requests, so the approvals its approve Dos made are its own to take back. */
 export function packApproves(pack: CheckPack): boolean {
   return pack.actions.some((action) => Object.values(action.branches).some((dos: Do[]) => dos.some((step) => step.kind === "approve")));
+}
+
+function requestsChanges(action: Action): boolean {
+  return Object.values(action.branches).some((dos: Do[]) => dos.some((step) => step.kind === "request-changes"));
+}
+
+/**
+ * Whether any request-changes action still has something of its own checks for the author to fix; once none has, or the pack no longer
+ * requests changes, the App's standing requests are taken back. Undefined when there is nothing to take back or decide.
+ */
+export function changesWanted(input: ActionInput): boolean | undefined {
+  const requesting = input.pack.actions.filter(requestsChanges);
+  if (!requesting.length) return input.facts.triageRequested === true ? false : undefined;
+  return requesting.some((action) => changesFor(action, input).length > 0);
 }
 
 /** Approve Dos are skipped for `reason`, when the head may not be approved. */

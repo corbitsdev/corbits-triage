@@ -58,6 +58,8 @@ function resolvedAction(step: PreviewDo, target: Record<string, unknown>, repo: 
       return `comment ${quoted(String(target.body))}`;
     case "approve":
       return "approve the pull request";
+    case "request-changes":
+      return "request changes on the pull request";
     case "close":
       return "close it";
     case "agent":
