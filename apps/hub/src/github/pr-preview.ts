@@ -194,7 +194,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId);
 
     // The preview never asks the judge, so it reads no docs.
-    const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: {} });
+    const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: { docs: {}, rules: {} } });
     if (item instanceof Response) return item;
 
     const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, req.signal);

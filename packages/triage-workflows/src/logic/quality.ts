@@ -127,8 +127,15 @@ function judgedFiles(facts: PrFacts) {
   return (facts.files ?? []).filter((file) => !isGeneratedPath(file.path));
 }
 
+// Custom checks are the repository's own rules, so their requests carry its contribution rules and say where they are.
+const AGAINST_RULES = "Judge it by the pull request and the repository's contribution rules in `repository.rules`.";
+
 /** Every shape is asked as one direct question a yes answer passes. */
 function customInstructions(row: ModelCustomCheck): string {
+  return `${customQuestion(row)} ${AGAINST_RULES}`;
+}
+
+function customQuestion(row: ModelCustomCheck): string {
   switch (row.shape) {
     case "is-true":
       return `${row.name}: ${row.claim}`;
@@ -191,10 +198,11 @@ export type JudgeState = {
     paths: string[];
     files: StateFile[];
   };
-  repository: { docs: Record<string, string> };
+  /** `rules` are the contribution rules, given only to requests that ask custom checks, and left out of their `docs`. */
+  repository: { docs: Record<string, string>; rules?: Record<string, string> };
 };
 
-function judgeState(facts: PrFacts, files: StateFile[]): JudgeState {
+function judgeState(facts: PrFacts, files: StateFile[], withRules: boolean): JudgeState {
   return {
     pullRequest: {
       title: facts.title,
@@ -203,8 +211,12 @@ function judgeState(facts: PrFacts, files: StateFile[]): JudgeState {
       paths: (facts.paths ?? []).slice(0, MAX_PATHS),
       files,
     },
-    repository: { docs: facts.docs ?? {} },
+    repository: withRules ? withContributionRules(facts.docs ?? {}, facts.rules ?? {}) : { docs: facts.docs ?? {} },
   };
+}
+
+function withContributionRules(docs: Record<string, string>, rules: Record<string, string>): JudgeState["repository"] {
+  return { docs: Object.fromEntries(Object.entries(docs).filter(([path]) => !(path in rules))), rules };
 }
 
 function customCheck(id: string, sources: NonNullable<DeterministicResult["sources"]>) {
@@ -261,8 +273,9 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
   }
   const scoped = sources.custom.filter(isScoped);
   for (const row of scoped) plan[row.id] = { changed: [], asked: {}, unread: [] };
-  const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(judgeState(facts, []));
-  if (room < 0) return { candidates, plan, requests: [], judgeError: QUALITY_EVALUATION_LIMIT_ERROR };
+  const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(judgeState(facts, [], false));
+  const rulesRoom = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(judgeState(facts, [], true));
+  if (room < 0 || (sources.custom.length > 0 && rulesRoom < 0)) return { candidates, plan, requests: [], judgeError: QUALITY_EVALUATION_LIMIT_ERROR };
 
   const owners = new Map<string, Array<[number, ChangeCandidate]>>();
   if (isFocused(sources)) {
@@ -278,13 +291,15 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
   let chunk: StateFile[] = [];
   let used = 0;
   let questions: QualityQuestion[] = customQuestions(sources);
+  let asksCustom = questions.length > 0;
 
   // State without questions tells the judge nothing, so only requests that ask something are made.
   function flush() {
-    if (questions.length > 0) requests.push({ state: judgeState(facts, chunk), questions });
+    if (questions.length > 0) requests.push({ state: judgeState(facts, chunk, asksCustom), questions });
     chunk = [];
     used = 0;
     questions = [];
+    asksCustom = false;
   }
 
   function add(file: StateFile, bytes: number) {
@@ -311,12 +326,12 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     for (const row of scoped) {
       if (!inScope(row, path)) continue;
       if (row.scope === "file") {
-        out.push({ check: row.id, id: fileQuestionId(row.id, position), item: path, instructions: (file) => `Does the change in \`pullRequest.files[${file}]\` meet this rule: ${ruleText(row)}?` });
+        out.push({ check: row.id, id: fileQuestionId(row.id, position), item: path, instructions: (file) => `Does the change in \`pullRequest.files[${file}]\` meet this rule: ${ruleText(row)}? ${AGAINST_RULES}` });
         continue;
       }
       // Uncapped: every hunk read is one question per hunk-scoped check, so a wide diff spreads over many judge requests.
       for (let hunk = 0; hunk < read; hunk++) {
-        out.push({ check: row.id, id: hunkQuestionId(row.id, position, hunk), item: cited[hunk] ?? path, instructions: (file) => `Does the change in \`pullRequest.files[${file}].hunks[${hunk}]\` meet this rule: ${ruleText(row)}?` });
+        out.push({ check: row.id, id: hunkQuestionId(row.id, position, hunk), item: cited[hunk] ?? path, instructions: (file) => `Does the change in \`pullRequest.files[${file}].hunks[${hunk}]\` meet this rule: ${ruleText(row)}? ${AGAINST_RULES}` });
       }
     }
     return out;
@@ -326,7 +341,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const path = boundedPath(file.path);
     const hunks = typeof file.patch === "string" ? patchHunks(file.patch) : [];
     const read: StateFile = { path, ...(file.status ? { status: file.status } : {}), hunks, ...(file.patchTruncated ? { truncated: true as const } : {}) };
-    const fitted = hunks.length > 0 ? fitFile(room, read) : undefined;
+    const custom = scoped.some((row) => inScope(row, file.path));
+    const fitted = hunks.length > 0 ? fitFile(custom || (asksCustom && chunk.length === 0) ? rulesRoom : room, read) : undefined;
     if (!fitted) {
       // A pure rename or a binary file has no lines to read, so there is nothing to judge.
       const unchanged = file.additions === 0 && file.deletions === 0;
@@ -341,12 +357,13 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const asking = fileQuestions(file.path, position, fitted.hunks.length, typeof file.patch === "string" ? hunkCitations(file.path, file.patch, file.previousPath) : []);
     const bytes = jsonBytes(fitted);
     const owned = owners.get(path) ?? [];
-    if (chunk.length > 0 && (used + 1 + bytes > room || questions.length + asking.length + owned.length > MAX_SYSTEM_ONE_QUESTIONS)) flush();
+    if (chunk.length > 0 && (used + 1 + bytes > (custom || asksCustom ? rulesRoom : room) || questions.length + asking.length + owned.length > MAX_SYSTEM_ONE_QUESTIONS)) flush();
     add(fitted, bytes);
     for (const question of asking) {
       makeRoom(fitted, bytes);
       questions.push({ id: question.id, type: "boolean", instructions: question.instructions(chunk.length - 1) });
       plan[question.check]!.asked[question.id] = question.item;
+      if (question.check !== "tests" && question.check !== "docs") asksCustom = true;
     }
     for (const [index, candidate] of owned) {
       if ((candidate.hunk ?? 0) >= fitted.hunks.length) continue;

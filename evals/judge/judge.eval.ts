@@ -6,12 +6,12 @@
 import { EvalFailure, evaluate, type CheckFn, type Report } from "@corbits/evals";
 import { evaluate as systemOne, type FallbackResult } from "@corbits/system-one";
 import { readFileSync } from "node:fs";
-import { readRepoDocsPage } from "../../packages/github-tool/src/github.js";
+import { readRepoDocsPage, repoDocs, type RepoDocsPage } from "../../packages/github-tool/src/github.js";
 import { listFiles } from "../../apps/hub/src/github/pr-preview.js";
 import { DEFAULT_REPO_POLICY, emptyPack, type CheckPack } from "../../packages/triage-contracts/src/index.js";
 import { evaluate as evaluateStep } from "../../packages/triage-workflows/src/actions/evaluate.js";
 import { rules, type JudgeChunk } from "../../packages/triage-workflows/src/actions/rules.js";
-import { assembleItem } from "../../packages/triage-workflows/src/logic/facts.js";
+import { assembleItem, type RepoDocs } from "../../packages/triage-workflows/src/logic/facts.js";
 import type { Verdict } from "../../packages/triage-workflows/src/logic/render.js";
 import { MODEL_CHECKS, variant, type CaseInput, type Expected, type ModelCheck, type Snapshot, type StoredSnapshot } from "./cases.js";
 
@@ -57,16 +57,16 @@ function frozenGithub(pr: Snapshot) {
 }
 
 /** The docs as the facts director reads them, page by page. */
-async function readDocs(gh: ReturnType<typeof frozenGithub>, repo: string): Promise<Record<string, string>> {
-  const docs: Record<string, string> = {};
+async function readDocs(gh: ReturnType<typeof frozenGithub>, repo: string): Promise<RepoDocs> {
+  const pages: RepoDocsPage[] = [];
   let offset: number | undefined = 0;
   let ref: string | undefined;
   while (offset !== undefined) {
     const page = await readRepoDocsPage(gh, repo, { ref, offset });
-    for (const { path, text } of page.docs) docs[path] = (docs[path] ?? "") + text;
+    pages.push(page);
     ({ ref, next: offset } = page);
   }
-  return docs;
+  return repoDocs(pages);
 }
 
 function retryable(result: FallbackResult): boolean {

@@ -119,3 +119,20 @@ test("quality preflight keeps the leading hunks of a file too large for one requ
   expect(evaluation.candidates.slice(kept).every((candidate) => candidate.evidence === "")).toBe(true);
   expect(askedIds(evaluation.requests)).toEqual(Array.from({ length: kept }, (_, index) => focusedCandidateId(index)));
 });
+
+test("quality preflight gives the contribution rules only to requests that ask custom checks, in place of their copies in the docs", () => {
+  const line = (path: string, size: number) => ({ path, patch: `@@ -0,0 +1 @@\n+${"x".repeat(size)}` });
+  const rules = { "CONTRIBUTING.md": "Small commits.", "AGENTS.md": "y".repeat(8_000) };
+  const reversible = { id: "custom-1", name: "Reversible", group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "The migration can be rolled back.", scope: "file" as const, when: ["migrations/**"] };
+  const { requests } = prepareQualityEvaluation(
+    { ...facts([line("src/a.ts", 42_000), line("src/b.ts", 42_000), line("migrations/001.sql", 100)]), docs: { "README.md": "Run it.", "CONTRIBUTING.md": "Small commits." }, rules },
+    { quality: [{ id: "docs", group: "pull-request" }], custom: [reversible], rules: [] },
+  );
+  expect(requests.every(withinBudget)).toBe(true);
+  // Both large files share a request that the rules would not have left room for.
+  expect(requests.map((request) => [request.state.pullRequest.files.map((file) => file.path), request.state.repository])).toEqual([
+    [["src/a.ts", "src/b.ts"], { docs: { "README.md": "Run it.", "CONTRIBUTING.md": "Small commits." } }],
+    [["migrations/001.sql"], { docs: { "README.md": "Run it." }, rules }],
+  ]);
+  expect(requests[1]!.questions.find((question) => question.id === "custom-1-file-003")?.instructions).toContain("`repository.rules`");
+});

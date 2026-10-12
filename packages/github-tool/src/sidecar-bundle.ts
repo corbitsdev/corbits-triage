@@ -75,7 +75,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "github_read_repo_docs",
-    description: "Read one page of a repository's docs (its own markdown, README first) from offset, on ref or the default branch. Call again with next and the returned ref until next is absent.",
+    description: "Read one page of a repository's docs (its own markdown, README first) and its contribution rules from offset, on ref or the default branch. Call again with next and the returned ref until next is absent.",
     inputSchema: obj({ repo, ref: str, offset: { type: "integer" } }, ["repo"]),
   },
   {

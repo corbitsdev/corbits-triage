@@ -218,7 +218,7 @@ describe("facts director policy", () => {
     await director.decide({ type: "message.received", message: { content: JSON.stringify(start) } } as ReactorInboundEvent, {} as ReactorState, caps);
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
-      "docs:0": { docs: [], ref: "tree" },
+      "docs:0": { docs: [], rules: [], ref: "tree" },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
@@ -259,7 +259,7 @@ describe("judge on a blocked pull request", () => {
     await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets"), ...setup }) } });
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
-      "docs:0": { docs: [], ref: "tree" },
+      "docs:0": { docs: [], rules: [], ref: "tree" },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft, mergeable, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
@@ -305,7 +305,7 @@ describe("judge on a blocked pull request", () => {
     await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") }) } });
     const results: Record<string, unknown> = {
       github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
-      "docs:0": { docs: [], ref: "tree" },
+      "docs:0": { docs: [], rules: [], ref: "tree" },
       "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
       "reviews:8": { reviews: [] },
       "commits:8": { commits: [] },
