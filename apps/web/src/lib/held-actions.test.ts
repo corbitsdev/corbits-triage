@@ -71,3 +71,17 @@ test("an action waits out the hold, Undo cancels it, leaving sends it now, and a
     "restore comment",
   ]);
 });
+
+test("dropping discards what is held without sending or restoring it and clears the notices", async () => {
+  const { timers, elapse } = manualTimers();
+  const queue = createHoldQueue(timers, HOLD_MS);
+  const log: string[] = [];
+
+  queue.hold(action(log, "reply"));
+  queue.drop();
+  elapse();
+  await queue.flush();
+
+  expect(queue.notices()).toEqual({ held: null, outcome: null });
+  expect(log).toEqual([]);
+});
