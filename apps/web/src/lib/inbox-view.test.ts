@@ -34,6 +34,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     ci: null,
     headSha: null,
     activityAt: null,
+    reviewAnswered: false,
     canClose: false,
     pendingClose: false,
     posted: false,
@@ -138,6 +139,33 @@ describe("waitsOn", () => {
     expect(waitsOn(item({ ci: "pending" }), { kind: "approve" })).toBe("ci");
     expect(waitsOn(item({ ci: "success" }), { kind: "approve" })).toBe("nobody");
     expect(waitsOn(item({ state: "new", runId: null }), null)).toBe("nobody");
+  });
+});
+
+describe("requested changes", () => {
+  const review = { check: "review", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: [], gate: false } as const;
+  const reviewed = item({ state: "needs-author-update", comment: "", checks: [review] });
+
+  const entries = (pr: PrItem): OpenItem[] => [{ item: pr, handled: null }];
+
+  test("leave Needs you and wait on the author until the verdict sees an answer", () => {
+    expect(groupInbox([reviewed], READY).groups).toEqual([]);
+    expect(listCounts(entries(reviewed), READY)["needs-you"]).toBe(0);
+    expect(waitsOn(reviewed, null)).toBe("author");
+  });
+
+  test("an answered review is the maintainer's to re-review", () => {
+    const answered = { ...reviewed, reviewAnswered: true };
+    expect(groupInbox([answered], READY).groups.map((group) => group.action)).toEqual(["review"]);
+    expect(primaryAction(answered, inboxAction(answered))).toBe("approve");
+    expect(inboxStatus(answered)).toBe("Waiting for review");
+    expect(waitsOn(answered, null)).toBe("maintainer");
+  });
+
+  test("a pending approval keeps it in Needs you", () => {
+    const pending = { ...reviewed, pendingApprovalId: "a1" };
+    expect(listCounts(entries(pending), READY)["needs-you"]).toBe(1);
+    expect(waitsOn(pending, null)).toBe("maintainer");
   });
 });
 
