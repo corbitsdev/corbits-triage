@@ -106,3 +106,67 @@ test("PostgreSQL: a canonical insert after start is preserved and remains decryp
     await dropSchema(TEST_DB, { schema: testSchema });
   }
 }, 120_000);
+
+test("PostgreSQL: completing setup lets admins act on GitHub, once across reconnects", async () => {
+  const testSchema = `corbits_manifest_${randomBytes(6).toString("hex")}`;
+  let handle: ReturnType<typeof createDB> | undefined;
+  try {
+    await runMigrations(TEST_DB, { schema: testSchema });
+    handle = createDB({ ...TEST_DB, schema: testSchema });
+    const db = handle.db;
+    await migrateGithubManifest(db);
+
+    await db.insert(schema.tenant).values({
+      id: "tnt_manifest", name: "Manifest", slug: "manifest", domain: "manifest.test",
+    });
+    await db.insert(schema.principal).values({
+      id: "prn_manifest", tenantId: "tnt_manifest", kind: "user", refId: "usr_manifest", status: "active",
+    });
+    await db.insert(schema.provider).values({
+      id: "prv_github", tenantId: "tnt_manifest", name: "github", plugin: "http", apiBaseUrl: GITHUB_API_ORIGIN,
+    });
+    await db.insert(schema.role).values({ id: "rol_admin", tenantId: "tnt_manifest", name: "admin", isSystem: true });
+
+    const integration = createGithubManifestIntegration({
+      db,
+      cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
+      getSession: signedInSession,
+      authorizeCredential: allow,
+      trustedPortalOrigins: [PUBLIC_ORIGIN],
+      githubApiOrigin: GITHUB_API_ORIGIN,
+      publicOrigin: PUBLIC_ORIGIN,
+      fetchImpl: Object.assign(convertManifest, { preconnect: noPreconnect }),
+    });
+
+    async function connect(replace: boolean): Promise<number> {
+      const start = await integration.start(new Request(
+        `${PUBLIC_ORIGIN}/api/integrations/github-manifest/tnt_manifest/start`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: PUBLIC_ORIGIN, "sec-fetch-site": "same-origin" },
+          body: JSON.stringify({ portalOrigin: PUBLIC_ORIGIN, replace }),
+        },
+      ), "tnt_manifest");
+      const { state } = await start.json() as { state: string };
+      const callback = await integration.callback(new Request(
+        `${PUBLIC_ORIGIN}/api/integrations/github-manifest/callback?state=${encodeURIComponent(state)}&code=conversion-code`,
+      ));
+      return callback.status;
+    }
+
+    expect(await connect(false)).toBe(303);
+    expect(await connect(true)).toBe(303);
+
+    const [app] = await db.select().from(schema.credential).where(and(
+      eq(schema.credential.tenantId, "tnt_manifest"),
+      eq(schema.credential.name, "github"),
+    ));
+    const grants = await db.select().from(schema.grant).where(eq(schema.grant.roleId, "rol_admin"));
+    expect(grants.map(({ resource, action, effect, origin }) => ({ resource, action, effect, origin }))).toEqual([
+      { resource: `credential:${app?.id}`, action: "use", effect: "allow", origin: "role" },
+    ]);
+  } finally {
+    await handle?.close();
+    await dropSchema(TEST_DB, { schema: testSchema });
+  }
+}, 120_000);
