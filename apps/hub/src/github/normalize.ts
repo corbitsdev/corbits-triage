@@ -23,6 +23,17 @@ export interface PrMail {
 
 type Json = Record<string, any>;
 
+/** The repository whose default branch moved, and the pull request merged to move it. */
+export type BaseMove = { repo: string; merged: number };
+
+/** A pull request merged into the repository's default branch; null for anything else. */
+export function baseMoveOf(event: string, p: Json): BaseMove | null {
+  const pr = p?.pull_request;
+  const repo = p?.repository?.full_name;
+  if (event !== "pull_request" || p.action !== "closed" || pr?.merged !== true || typeof repo !== "string" || typeof pr.number !== "number") return null;
+  return pr.base?.ref === p.repository.default_branch ? { repo, merged: pr.number } : null;
+}
+
 export function normalize(event: string, deliveryId: string, p: Json): PrMail | null {
   if (!(EVENTS as readonly string[]).includes(event)) return null;
   const repo = p.repository?.full_name;

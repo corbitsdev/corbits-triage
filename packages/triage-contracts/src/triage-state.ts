@@ -4,7 +4,8 @@ export const TRIAGE_STATE_SCHEMA_VERSION = 1;
 /** A pr-triage run still going after this long lost its sidecar: three agent steps on either gate branch of up to fifteen minutes each, plus their retries. */
 export const PR_TRIAGE_STUCK_RUN_MS = 90 * 60_000;
 
-export const PR_TRIAGE_STATUSES = ["new", "queued", "running", "triaged", "failed"] as const;
+/** `stale`: the base branch moved after the head's verdict, so it is due again. */
+export const PR_TRIAGE_STATUSES = ["new", "queued", "running", "triaged", "failed", "stale"] as const;
 export type PrTriageStatus = (typeof PR_TRIAGE_STATUSES)[number];
 
 /** One open pull request at one head commit. Timestamps are ISO-8601. */
@@ -21,6 +22,8 @@ export type PrTriageRow = {
   workflowVersion?: string | number;
   firstSeenAt: string;
   queuedAt?: string;
+  /** Runs started before this do not settle the head: the base branch moved after them. */
+  staleBefore?: string;
   updatedAt: string;
   error?: string;
 };
@@ -69,6 +72,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
   if (cappedRetries !== undefined && (typeof cappedRetries !== "number" || !Number.isInteger(cappedRetries) || cappedRetries < 0)) return null;
   const runId = optionalString(row.runId);
   const queuedAt = optionalString(row.queuedAt);
+  const staleBefore = optionalString(row.staleBefore);
   const error = optionalString(row.error);
   return {
     number,
@@ -80,6 +84,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
     ...(workflowVersion !== undefined && { workflowVersion }),
     firstSeenAt,
     ...(queuedAt !== undefined && { queuedAt }),
+    ...(staleBefore !== undefined && { staleBefore }),
     updatedAt,
     ...(error !== undefined && { error }),
   };
