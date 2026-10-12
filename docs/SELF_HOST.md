@@ -169,3 +169,5 @@ migrations on every start; nothing else is needed.
   it: `DROP TABLE IF EXISTS corbits_triage_tenant_migration;`
 - A hub that ran the build creating `corbits_triage_verdict_backfill` can drop
   it: `DROP TABLE IF EXISTS corbits_triage_verdict_backfill;`
+- A hub that ran a build creating `corbits_github_manifest_state` can drop
+  it: `DROP TABLE IF EXISTS corbits_github_manifest_state;`

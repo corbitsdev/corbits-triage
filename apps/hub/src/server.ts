@@ -74,7 +74,7 @@ import { createPullHeadReader, createTenantHeadChecks, createTenantOpenHeads } f
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
-import { createGithubManifestIntegration, migrateGithubManifest } from "./github/manifest.js";
+import { createGithubManifestIntegration } from "./github/manifest.js";
 import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch } from "./github/tenant-config.js";
 import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "../../../packages/triage-workflows/src/pr-triage-historical.js";
@@ -209,7 +209,6 @@ cronTicker = createCronTicker({
   onDeliveryError: function logCronDeliveryError(error, schedule) { logJson({ level: "warn", msg: "cron_delivery_failed", scheduleId: schedule.id, tenantId: schedule.tenantId, error: String(error) }); },
 });
 cronTicker.start();
-await migrateGithubManifest(composition.db);
 await migrateRepoEnabledFlag(composition.db);
 await migrateDoRuns(composition.db);
 await migrateVerdictRecords(composition.db);
@@ -230,6 +229,7 @@ const githubManifest = createGithubManifestIntegration({
   githubApiOrigin: githubOrigin,
   publicOrigin: new URL(env.BETTER_AUTH_BASE_URL).origin,
   authorizeCredential: authorizePortal,
+  stateSecret: env.BETTER_AUTH_SECRET,
 });
 const githubPrActions = createGithubPrActions({
   db: composition.db,

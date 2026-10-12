@@ -39,11 +39,9 @@ const ManifestStart = type({
 export type ManifestStart = typeof ManifestStart.infer;
 
 export class ManifestStartError extends Error {
-  constructor(readonly reason: "replacement_confirmation_required" | "setup_in_progress" | "failed", readonly owned = false) {
+  constructor(readonly reason: "replacement_confirmation_required" | "failed") {
     super(reason === "replacement_confirmation_required"
       ? "Replacing the connected GitHub App requires confirmation."
-      : reason === "setup_in_progress"
-        ? "GitHub setup is already in progress."
       : "The service could not start GitHub setup.");
   }
 }
@@ -54,33 +52,20 @@ export async function startGithubManifest(
   tenantId: string,
   portalOrigin: string,
   replace: boolean,
-  restart: boolean,
 ): Promise<ManifestStart> {
   await ensureGitHubProvider(transport, tenantId);
   const response = await fetch(`${requestOrigin()}/api/integrations/github-manifest/${encodeURIComponent(tenantId)}/start`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ portalOrigin, replace, restart }),
+    body: JSON.stringify({ portalOrigin, replace }),
   });
   if (!response.ok) {
-    let body: { error?: unknown; owned?: unknown } = {};
+    let body: { error?: unknown } = {};
     try { body = await response.json() as typeof body; } catch { /* generic error below */ }
-    const reason = body.error === "replacement_confirmation_required" || body.error === "setup_in_progress" ? body.error : "failed";
-    throw new ManifestStartError(reason, body.owned === true);
+    throw new ManifestStartError(body.error === "replacement_confirmation_required" ? body.error : "failed");
   }
   return ManifestStart.assert(await response.json());
-}
-
-export async function cancelGithubManifest(tenantId: string): Promise<boolean> {
-  const response = await fetch(`${requestOrigin()}/api/integrations/github-manifest/${encodeURIComponent(tenantId)}/cancel`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-  });
-  if (!response.ok) throw new Error("The service could not cancel GitHub setup.");
-  return (await response.json() as { cancelled?: unknown }).cancelled === true;
 }
 
 export async function saveExistingGithubApp(input: {

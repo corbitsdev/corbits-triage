@@ -7,7 +7,6 @@ import { createHubTransport } from "../lib/hub-transport.ts";
 import { generateWebhookSecret, isPrivateKeyPem } from "../lib/connect-view.ts";
 import {
   ManifestStartError,
-  cancelGithubManifest,
   githubWebhookUrl,
   githubAppPickerUrl,
   GITHUB_APP_PICKER_UNAVAILABLE,
@@ -54,7 +53,6 @@ export default function Connect() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [fromGithub] = useState(returnedFromInstall);
-  const [setupInProgress, setSetupInProgress] = useState(false);
   const [manualSaved, setManualSaved] = useState(false);
   const [appId, setAppId] = useState("");
   const [privateKey, setPrivateKey] = useState("");
@@ -107,12 +105,12 @@ export default function Connect() {
       setError(`Could not read the private key. ${message(cause)}`);
     }
   }
-  async function startManifest(replace = false, restart = false) {
+  async function startManifest(replace = false) {
     setBusy(true);
     setError("");
     try {
       if (!snapshot) throw new Error("The workspace is still loading.");
-      const start = await startGithubManifest(createHubTransport(), snapshot.workspace.tenantId, window.location.origin, replace, restart);
+      const start = await startGithubManifest(createHubTransport(), snapshot.workspace.tenantId, window.location.origin, replace);
       postGithubManifest(start);
     } catch (cause) {
       if (cause instanceof ManifestStartError && cause.reason === "replacement_confirmation_required") {
@@ -122,29 +120,7 @@ export default function Connect() {
         }
         return;
       }
-      if (cause instanceof ManifestStartError && cause.reason === "setup_in_progress") {
-        setSetupInProgress(cause.owned);
-        setError(cause.owned
-          ? "You already have a GitHub setup in progress. Resume it by restarting the GitHub confirmation, or cancel it."
-          : "Another workspace member has GitHub setup in progress. Ask them to finish or cancel it.");
-        setBusy(false);
-        return;
-      }
       setError(`Could not start GitHub setup. ${message(cause)}`);
-      setBusy(false);
-    }
-  }
-
-  async function cancelSetup() {
-    if (!snapshot) return;
-    setBusy(true);
-    setError("");
-    try {
-      await cancelGithubManifest(snapshot.workspace.tenantId);
-      setSetupInProgress(false);
-    } catch (cause) {
-      setError(`Could not cancel GitHub setup. ${message(cause)}`);
-    } finally {
       setBusy(false);
     }
   }
@@ -262,7 +238,6 @@ export default function Connect() {
         : <p>GitHub will confirm a prefilled App. The private key stays on the hub and is never shown here.</p>}
       {error && <p role="alert" className="error">{error}</p>}
       <div className="task-actions"><button type="button" className="btn primary" disabled={busy} onClick={() => void startManifest()}>{busy ? "Opening GitHub…" : "Create GitHub App"}</button></div>
-      {setupInProgress && <div className="task-actions"><button type="button" className="btn" disabled={busy} onClick={() => void startManifest(false, true)}>Resume setup</button><button type="button" className="btn" disabled={busy} onClick={() => void cancelSetup()}>Cancel setup</button></div>}
       <details className="setup-help">
         <summary>Connect an existing GitHub App instead</summary>
         <p>Use the numeric App ID and private key from the App's General settings.</p>

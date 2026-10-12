@@ -2,25 +2,33 @@ import { describe, expect, test } from "bun:test";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import {
   authorizeCanonicalCredentialWrite,
-  completeManifest,
   createGithubManifestIntegration,
   exchangeGithubManifest,
-  pendingSetupAction,
+  manifestStateKey,
   prepareCanonicalManifestWrite,
+  signManifestState,
   validGithubProvider,
   validManifestMutationRequest,
-  type ClaimedManifest,
-  type ManifestCompletionStore,
+  verifyManifestState,
+  type ManifestState,
 } from "./manifest.js";
 
-const claim: ClaimedManifest = {
-  stateHash: "state-hash",
+const STATE_SECRET = "11".repeat(32);
+const STATE_KEY = manifestStateKey(STATE_SECRET);
+const NOW = new Date("2026-03-10T12:00:00Z");
+
+const setup: ManifestState = {
   tenantId: "tnt_one",
   principalId: "prn_one",
-  sessionId: "session-one",
+  userId: "usr_one",
+  sessionId: "ses_one",
   appCredentialId: "crd_app",
   hookCredentialId: "crd_hook",
+  providerId: "prv_github",
   returnOrigin: "https://portal.example",
+  replaces: { appUpdatedAt: NOW.getTime() - 60_000, hookUpdatedAt: NOW.getTime() - 60_000 },
+  nonce: "nonce",
+  expiresAt: NOW.getTime() + 60_000,
 };
 
 const conversion = {
@@ -34,26 +42,8 @@ const GITHUB_API_ORIGIN = "https://api.github.com";
 const GITHUB_PROVIDER = { id: "prv_github", tenantId: "tnt_one", name: "github", plugin: "http", apiBaseUrl: GITHUB_API_ORIGIN };
 const START_URL = "https://hub.example/api/integrations/github-manifest/tnt_one/start";
 
-function store(overrides: Partial<ManifestCompletionStore> = {}) {
-  const calls: string[] = [];
-  const value: ManifestCompletionStore & { calls: string[] } = {
-    calls,
-    async claim() {
-      return { kind: "claimed", value: claim };
-    },
-    async commit(_claimed, converted) {
-      calls.push(`commit:${converted.slug}`);
-    },
-    async release(_claimed, retryable) {
-      calls.push(`release:${retryable}`);
-    },
-    ...overrides,
-  };
-  return value;
-}
-
-async function convert() {
-  return conversion;
+function fixedNow(): Date {
+  return NOW;
 }
 
 async function signedInSession() {
@@ -82,22 +72,13 @@ function rowsQuery(rows: unknown[]) {
   };
 }
 
-/** A start() transaction whose selects return: no live setup, the GitHub provider, then `credentials`. */
-function startDb(credentials: unknown[], onInsert: () => void) {
-  const results = [[], [GITHUB_PROVIDER], credentials];
-  const tx = {
-    async execute() {},
-    select() {
-      return { from() { return { where() { return rowsQuery(results.shift() ?? []); } }; } };
-    },
-    insert() {
-      return { async values() { onInsert(); } };
-    },
-  };
+/** start() selects the GitHub provider via `.limit()`, then awaits the canonical `credentials`. */
+function startDb(credentials: unknown[]) {
+  const results = [[GITHUB_PROVIDER], credentials];
   return {
     query: { principal: { findFirst: activeMember } },
-    async transaction(fn: (value: typeof tx) => unknown) {
-      return fn(tx);
+    select() {
+      return { from() { return { where() { return rowsQuery(results.shift() ?? []); } }; } };
     },
   } as never;
 }
@@ -108,6 +89,10 @@ function startRequest(): Request {
     headers: { "content-type": "application/json", origin: "https://hub.example", "sec-fetch-site": "same-origin" },
     body: JSON.stringify({ portalOrigin: "https://hub.example", replace: false }),
   });
+}
+
+function callbackRequest(state: string): Request {
+  return new Request(`https://hub.example/api/integrations/github-manifest/callback?state=${encodeURIComponent(state)}&code=code`);
 }
 
 function mutationRequest(headers: Bun.HeadersInit): Request {
@@ -132,61 +117,43 @@ describe("GitHub manifest authorization", () => {
     ["fresh setup", []],
     ["replacement", [{ id: "crd_app", name: "github" }, { id: "crd_hook", name: "github-hook" }]],
   ] as const) {
-    test(`start returns 403 to a grantless member before reserving ${label}`, async () => {
-      let inserted = false;
+    test(`start returns 403 to a grantless member for ${label}`, async () => {
       const integration = createGithubManifestIntegration({
-        db: startDb([...credentials], function markInserted() { inserted = true; }),
+        db: startDb([...credentials]),
         cipher: {} as never,
         getSession: signedInSession,
         authorizeCredential: deny,
+        stateSecret: STATE_SECRET,
         trustedPortalOrigins: [],
         githubApiOrigin: GITHUB_API_ORIGIN,
         publicOrigin: "https://hub.example.com",
       });
       const response = await integration.start(startRequest(), "tnt_one");
       expect(response.status).toBe(403);
-      expect(inserted).toBeFalse();
     });
   }
 
   test("callback returns 403 without exchanging the code when replacement authority is absent", async () => {
     let exchanged = false;
-    const pending = {
-      stateHash: "unused", tenantId: "tnt_one", principalId: "prn_one", sessionId: "ses_one",
-      appCredentialId: "crd_app", hookCredentialId: "crd_hook", providerId: "prv_github",
-      returnOrigin: "https://portal.example", replacement: true, status: "pending",
-      appSlug: null, expiresAt: new Date(Date.now() + 60_000), createdAt: new Date(), updatedAt: new Date(),
-    };
     async function exchangeSpy() {
       exchanged = true;
       return Response.json(conversion);
     }
     const integration = createGithubManifestIntegration({
-      db: {
-        query: { principal: { findFirst: activeMember } },
-        select() { return { from() { return { async where() { return [pending]; } }; } }; },
-      } as never,
+      db: { query: { principal: { findFirst: activeMember } } } as never,
       cipher: {} as never,
       getSession: signedInSession,
       authorizeCredential: deny,
+      stateSecret: STATE_SECRET,
       trustedPortalOrigins: [],
       githubApiOrigin: GITHUB_API_ORIGIN,
       publicOrigin: "https://hub.example.com",
       fetchImpl: Object.assign(exchangeSpy, { preconnect: noPreconnect }),
+      now: fixedNow,
     });
-    const response = await integration.callback(new Request("https://hub.example/api/integrations/github-manifest/callback?state=state&code=code"));
+    const response = await integration.callback(callbackRequest(signManifestState(STATE_KEY, setup)));
     expect(response.status).toBe(403);
     expect(exchanged).toBeFalse();
-  });
-
-  test("allows only the owning principal to restart abandoned pending setup", () => {
-    const now = new Date("2026-03-10T12:00:00Z");
-    const pending = { principalId: "prn_owner", status: "pending", expiresAt: new Date("2026-03-10T13:00:00Z") };
-    expect(pendingSetupAction(pending, "prn_owner", false, now)).toBe("owned");
-    expect(pendingSetupAction(pending, "prn_owner", true, now)).toBe("replace");
-    expect(pendingSetupAction(pending, "prn_attacker", true, now)).toBe("other");
-    expect(pendingSetupAction({ ...pending, status: "processing" }, "prn_owner", true, now)).toBe("owned");
-    expect(pendingSetupAction({ ...pending, expiresAt: now }, "prn_attacker", true, now)).toBe("expired");
   });
 
   test("requires JSON, an exact trusted Origin, and rejects cross-site mutations", () => {
@@ -284,89 +251,44 @@ describe("GitHub manifest credential writes", () => {
   });
 });
 
-describe("GitHub manifest completion", () => {
-  test("binds state to session, principal, and tenant before exchanging", async () => {
+describe("GitHub manifest state", () => {
+  test("round-trips a signed state", () => {
+    expect(verifyManifestState(STATE_KEY, signManifestState(STATE_KEY, setup), NOW)).toEqual(setup);
+  });
+
+  test("refuses tampered, foreign-key and expired states", () => {
+    const token = signManifestState(STATE_KEY, setup);
+    const [, signature] = token.split(".");
+    const forged = `${Buffer.from(JSON.stringify({ ...setup, tenantId: "tnt_other" })).toString("base64url")}.${signature}`;
+    expect(verifyManifestState(STATE_KEY, forged, NOW)).toBeNull();
+    expect(verifyManifestState(STATE_KEY, `${token}x`, NOW)).toBeNull();
+    expect(verifyManifestState(manifestStateKey("22".repeat(32)), token, NOW)).toBeNull();
+    expect(verifyManifestState(STATE_KEY, token, new Date(setup.expiresAt))).toBeNull();
+  });
+
+  test("callback refuses another user's state without touching the database or GitHub", async () => {
     let exchanged = false;
-    const result = await completeManifest({
-      state: "state", code: "code",
-      identity: { sessionId: "other", principalId: "prn_one", tenantId: "tnt_one" },
-      store: store({ async claim() { return { kind: "rejected", reason: "identity_mismatch" }; } }),
-      async exchange() {
-        exchanged = true;
-        return conversion;
-      },
+    async function exchangeSpy() {
+      exchanged = true;
+      return Response.json(conversion);
+    }
+    async function otherUser() {
+      return { user: { id: "usr_other" }, session: { id: "ses_other" } };
+    }
+    const integration = createGithubManifestIntegration({
+      db: {} as never,
+      cipher: {} as never,
+      getSession: otherUser,
+      authorizeCredential: deny,
+      stateSecret: STATE_SECRET,
+      trustedPortalOrigins: [],
+      githubApiOrigin: GITHUB_API_ORIGIN,
+      publicOrigin: "https://hub.example.com",
+      fetchImpl: Object.assign(exchangeSpy, { preconnect: noPreconnect }),
+      now: fixedNow,
     });
-    expect(result).toEqual({ kind: "rejected", reason: "identity_mismatch" });
+    const response = await integration.callback(callbackRequest(signManifestState(STATE_KEY, setup)));
+    expect(response.status).toBe(400);
     expect(exchanged).toBeFalse();
-  });
-
-  for (const reason of ["expired", "completed"] as const) {
-    test(`rejects ${reason} state without exchanging`, async () => {
-      let exchanged = false;
-      const result = await completeManifest({
-        state: "state", code: "code", identity: claim,
-        store: store({ async claim() { return { kind: "rejected", reason }; } }),
-        async exchange() {
-          exchanged = true;
-          return conversion;
-        },
-      });
-      expect(result).toEqual({ kind: "rejected", reason });
-      expect(exchanged).toBeFalse();
-    });
-  }
-
-  test("only one concurrent callback can claim a pending state", async () => {
-    let claimed = false;
-    let exchanges = 0;
-    const options = {
-      state: "state", code: "code", identity: claim,
-      store: store({
-        async claim() {
-          if (claimed) return { kind: "rejected", reason: "processing" };
-          claimed = true;
-          return { kind: "claimed", value: claim };
-        },
-      }),
-      async exchange() {
-        exchanges += 1;
-        return conversion;
-      },
-    };
-    const results = await Promise.all([completeManifest(options), completeManifest(options)]);
-    expect(results.map((item) => item.kind).sort()).toEqual(["completed", "rejected"]);
-    expect(exchanges).toBe(1);
-  });
-
-  test("releases state after GitHub errors and never includes query values or secrets in logs/results", async () => {
-    const db = store();
-    const logs: string[] = [];
-    const result = await completeManifest({
-      state: "STATE-SENTINEL", code: "CODE-SENTINEL", identity: claim, store: db,
-      async exchange(): Promise<never> {
-        throw new Error("GitHub unavailable");
-      },
-      log(event) {
-        logs.push(JSON.stringify(event));
-      },
-    });
-    expect(result).toEqual({ kind: "failed", retryable: true });
-    expect(db.calls).toContain("release:true");
-    const observable = JSON.stringify({ result, logs });
-    expect(observable).not.toContain("STATE-SENTINEL");
-    expect(observable).not.toContain("CODE-SENTINEL");
-    expect(observable).not.toContain("PRIVATE-KEY-SENTINEL");
-    expect(observable).not.toContain("WEBHOOK-SECRET-SENTINEL");
-  });
-
-  test("a failed credential commit releases the state as non-retryable", async () => {
-    const db = store({
-      async commit() {
-        throw new Error("transaction rolled back");
-      },
-    });
-    const result = await completeManifest({ state: "state", code: "code", identity: claim, store: db, exchange: convert });
-    expect(result).toEqual({ kind: "failed", retryable: false });
-    expect(db.calls).toContain("release:false");
   });
 });
