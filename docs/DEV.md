@@ -4,7 +4,7 @@ Runs the hub (`apps/hub`, :3000) and portal (`apps/web`, :5173) against a local 
 
 ## 1. Prerequisites
 
-- Bun 1.3+
+- Bun 1.4+ (CI runs 1.4.2)
 - Postgres 15+ (Homebrew or Docker)
 - A GitHub account that can create GitHub Apps and own a sandbox repository
 
@@ -39,11 +39,7 @@ Hub on http://localhost:3000, portal on http://localhost:5173 (it proxies `/api`
 
 ## 5. Set up in the portal
 
-1. **Create an account** on the login page. Your workspace (tenant) is created on first sign-in.
-2. **Connect GitHub → Create GitHub App**, confirm the manifest on GitHub, and return. The App credentials go to the hub vault, not `.env`.
-3. **Add decision model** (last onboarding step, or Settings → Model): pick TypeSafe or Vercel AI Gateway and paste the key, or **Add my own provider** with base URL, model and key. The portal creates the model offering, then pushes and deploys `pr-triage` and `pr-triage-historical`; a notice confirms it. Saving a model always redeploys; otherwise visits skip the deploy unless the workflow source changed.
-4. **Choose repositories on GitHub**, then **Repositories → Refresh** and **Set up checks → Use recommended**.
-5. Open a pull request on the sandbox repo. It appears under **Triage**.
+Follow [Set up in the portal](SELF_HOST.md#set-up-in-the-portal) against http://localhost:5173, using a sandbox repository. GitHub App credentials and the model key go to the hub vault, not `.env`.
 
 ### Webhooks on localhost (unverified)
 
@@ -66,16 +62,19 @@ The App's webhook URL is built from the hub origin that starts the manifest flow
      -H "x-github-delivery: $(date +%s)" -H "x-hub-signature-256: sha256=$SIG" -d "$BODY"
    ```
 
-6. Set up checks for `acme/widgets`, then open a pull request as `octocat` through `http://localhost:4000` (`Authorization: Bearer octocat_token`). The emulator delivers the webhook and triage runs.
+6. Turn on triage for `acme/widgets`, then open a pull request as `octocat` through `http://localhost:4000` (`Authorization: Bearer octocat_token`). The emulator delivers the webhook and triage runs.
 
 Restarting the emulator regenerates the App key; reconnect the App after each restart or pin `private_key` in the config.
 
-## Checks
+## Tests and typecheck
 
 ```sh
-bun run test     # unit + integration
+bun run test     # unit + integration; hub tests need Postgres
 bun run check    # typecheck web, tooling, hub
+bun run lint
 ```
+
+Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
 ## Troubleshooting
 

@@ -11,8 +11,8 @@ services:
       interval: 2s
     restart: unless-stopped
   hub:
-    build: { context: .., dockerfile: docs/Dockerfile }
-    env_file: ../.env
+    build: .
+    env_file: .env
     environment:
       DATABASE_URL: postgres://interchange:interchange@postgres:5432/interchange
       HUB_DATA_DIR: /data
