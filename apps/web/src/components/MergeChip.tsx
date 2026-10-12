@@ -1,6 +1,6 @@
 import { Badge, type BadgeTone } from "@corbits/react-ui";
 import type { MergeVerdict } from "../lib/hub-api.ts";
-import { MERGE_LABEL, MERGE_SHORT_LABEL, mergeReasons, mergeText, NOT_EVALUATED } from "../lib/triage-view.ts";
+import { MERGE_LABEL, MERGE_SHORT_LABEL, mergeText, NOT_EVALUATED } from "../lib/triage-view.ts";
 
 const MERGE_TONE: Record<MergeVerdict["verdict"], BadgeTone> = { ready: "success", "not-recommended": "danger" };
 
@@ -11,15 +11,4 @@ export function MergeChip({ merge, compact = false, className }: MergeChipProps)
   if (merge === null) return <Badge tone="neutral" className={className} title={NOT_EVALUATED}>{NOT_EVALUATED}</Badge>;
   const label = compact ? MERGE_SHORT_LABEL : MERGE_LABEL;
   return <Badge tone={MERGE_TONE[merge.verdict]} className={className} title={mergeText({ merge })}>{label[merge.verdict]}</Badge>;
-}
-
-/** The chip, then every reason the merge is not recommended. */
-export function MergeVerdictLine({ merge }: { merge: MergeVerdict | null }) {
-  const reasons = merge === null ? [] : mergeReasons(merge);
-  return (
-    <div className="merge-verdict">
-      <p><MergeChip merge={merge} /></p>
-      {reasons.length === 0 ? null : <ul>{reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>}
-    </div>
-  );
 }

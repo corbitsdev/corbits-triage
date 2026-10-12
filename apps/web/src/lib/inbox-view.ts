@@ -94,7 +94,7 @@ function onlyRequestedChanges(item: Omit<StatusFields, "running">): boolean {
 }
 
 /** The author answered the requested changes, so they wait on the reviewer again. */
-function isReReview(item: Omit<StatusFields, "running">): boolean {
+export function isReReview(item: Omit<StatusFields, "running">): boolean {
   return onlyRequestedChanges(item) && item.reviewAnswered;
 }
 

@@ -2,35 +2,31 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import { Badge, EmptyState, type BadgeTone } from "@corbits/react-ui";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { AuthorKind } from "@corbits/triage-contracts";
-import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
+import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "../lib/error-text.ts";
 import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
 import type { PendingDo } from "../lib/pending-dos.ts";
-import { useHeldDos, usePendingDos } from "../lib/do-runs.ts";
-import { MergeChip, MergeVerdictLine } from "../components/MergeChip.tsx";
-import { SuggestedActions } from "../components/SuggestedActions.tsx";
-import { CitedEvidence } from "../components/CitedEvidence.tsx";
+import { useDoRuns, useHeldDos, usePendingDos } from "../lib/do-runs.ts";
+import { MergeChip } from "../components/MergeChip.tsx";
+import { Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
+import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, type PaneBar } from "../lib/pane-report.ts";
 import {
   COMPOSER_COPY,
   canRun,
-  ciStatus,
   doWrite,
   draftText,
   hasNumber,
   isComposerKind,
   needsConfirm,
   openComposer,
-  paneActions,
   paneFacts,
   paneWrite,
-  primaryButtonLabel,
   replyDraft,
   titleText,
   triageStartedText,
-  verdictHeadline,
   writeBlocker,
   type Composer,
   type NumberedItem,
@@ -44,7 +40,6 @@ import {
   AUTHOR_KIND_LABEL,
   INBOX_GROUPINGS,
   OPEN_GROUPINGS,
-  UNASSIGNED,
   WAITS_ON_LABEL,
   ageText,
   allOpen,
@@ -70,6 +65,7 @@ import {
   waitsOn,
   type InboxAction,
   type InboxGrouping,
+  type HandledMark,
   type InboxPile,
   type ListView,
   type OpenGrouping,
@@ -84,11 +80,10 @@ import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
-import { checkValueText, findPrItem, prHref } from "../lib/triage-view.ts";
+import { findPrItem } from "../lib/triage-view.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
-import { checkLabel } from "../lib/pack-prose.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
-import { CheckIcon, ChevronIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
+import { CheckIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 
 const POSTED = "Posted";
 
@@ -106,10 +101,6 @@ function actionDot(action: InboxAction | null): string {
 
 function dotClass(item: PrItem, action: InboxAction | null): string {
   return item.running ? `${actionDot(action)} live` : actionDot(action);
-}
-
-function filesText(count: number): string {
-  return `${count} ${count === 1 ? "file" : "files"}`;
 }
 
 function AuthorTag({ kind }: { kind: AuthorKind | null }) {
@@ -182,113 +173,36 @@ function Pile({ view, pile, selectedKey, search }: { view: ListView; pile: OpenP
 }
 
 function Byline({ item, author, detail }: { item: PrItem; author: string | null; detail: GithubPullDetail | undefined }) {
-  const ci = ciStatus(detail);
   return (
     <div className="byline">
       {author === null ? null : <span className="who"><span className="av">{initialsOf(author)}</span><span className="nm">{author}</span></span>}
       <AuthorTag kind={item.authorKind} />
-      <span>opened {ageText(item.waitingSince)} ago</span>
+      {detail === undefined ? null : <span>opened {ageText(detail.pr.createdAt)} ago</span>}
       {detail === undefined ? null : <span><span className="mono">+{detail.pr.additions} −{detail.pr.deletions}</span></span>}
-      {detail === undefined ? null : <span>{filesText(detail.pr.changedFiles)}</span>}
-      {ci === null ? null : <span className="ci"><span className={ci === "passing" ? "dot ready" : "dot hollow"} />CI {ci}</span>}
     </div>
   );
 }
 
-function Owner({ owner }: { owner: string | null }) {
-  const avatarClass = owner === null ? "av none" : "av";
-  const initials = owner === null ? null : initialsOf(owner);
-  const name = owner === null ? UNASSIGNED : owner;
-  const source = owner === null ? "" : " from the verdict";
-  return (
-    <div className="route">
-      <span className={avatarClass}>{initials}</span>
-      <div className="route-t"><div className="l1"><b>{name}</b>{source}</div></div>
-    </div>
-  );
-}
-
-const CHECK_MARK: Record<CheckResult["result"], { className: string; glyph: string }> = {
-  pass: { className: "mk ok", glyph: "✓" },
-  fail: { className: "mk flag", glyph: "!" },
-  unconfirmed: { className: "mk judge", glyph: "?" },
-};
-const GATE_MARK: Record<CheckResult["result"], { className: string; glyph: string }> = {
-  pass: { className: "mk match", glyph: "=" },
-  fail: { className: "mk match", glyph: "≠" },
-  unconfirmed: { className: "mk judge", glyph: "?" },
-};
-
-/** `name` is null until the pack that names a custom check has loaded; `sha` is the commit cited lines link into. */
-export function CheckRow({ check, name, repo, sha }: { check: CheckResult; name: string | null; repo: string; sha: string | null }) {
-  const mark = (check.gate ? GATE_MARK : CHECK_MARK)[check.result];
-  const source = check.kind === "model" ? [name, "Decision model"].filter(Boolean).join(" · ") : name;
-  const value = checkValueText(check);
-  return (
-    <li>
-      <span className={mark.className} aria-hidden="true">{mark.glyph}</span>
-      <span>
-        {check.reason || name}
-        {source ? <small>{source}</small> : null}
-        {value === null ? null : <small>{value}</small>}
-        {check.evidence.map((evidence, index) => (
-          <small key={`${index}:${evidence}`}><span className="sr-only">Evidence:</span> <CitedEvidence text={evidence} output={check.output} repo={repo} sha={sha} /></small>
-        ))}
-      </span>
-    </li>
-  );
-}
-
-function Reasons({ item }: { item: PrItem }) {
-  const pack = useRepoPack(item.repo);
-  if (item.checks.length > 0) {
-    return <ul className="why">{item.checks.map((check) => <CheckRow key={check.check} check={check} name={checkLabel(pack, check.check)} repo={item.repo} sha={item.verdictSha} />)}</ul>;
-  }
-  if (item.evidence.length === 0) return null;
-  return <ul className="why">{item.evidence.map((reason) => <li key={reason}><span className="mk judge">?</span><span>{reason}</span></li>)}</ul>;
-}
-
-type SuggestedReplyProps = {
+type FeedbackEditorProps = {
   item: PrItem;
   draft: ReplyDraft;
-  editing: boolean;
-  canPost: boolean;
   replyRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (text: string) => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
-  onPost: () => void;
-  onEdit: () => void;
   onCancel: () => void;
 };
 
-function SuggestedReply({ item, draft, editing, canPost, replyRef, onChange, onKeyDown, onPost, onEdit, onCancel }: SuggestedReplyProps) {
+function FeedbackEditor({ item, draft, replyRef, onChange, onKeyDown, onCancel }: FeedbackEditorProps) {
   return (
-    <>
-      <h3 className="lbl-h">
-        Suggested reply
+    <div className="compose">
+      <textarea ref={replyRef} value={draft.text} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} aria-label="Feedback" />
+      <div className="foot">
+        {draft.edited ? <span className="tag" style={{ margin: 0 }}>Edited</span> : null}
         <span className="sp" />
-      </h3>
-      {editing ? (
-        <div className="compose">
-          <textarea ref={replyRef} value={draft.text} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} aria-label="Suggested reply" />
-          <div className="foot">
-            <span className="hint"><kbd>⌘</kbd><kbd>⏎</kbd> send</span>
-            {draft.edited ? <span className="tag" style={{ margin: 0 }}>Edited</span> : null}
-            <span className="sp" />
-            {item.labels.length > 0 ? <span>Labels {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)}</span> : null}
-            <button type="button" className="btn btn-quiet btn-sm" disabled={!canPost} onClick={onCancel}>Cancel</button>
-          </div>
-        </div>
-      ) : (
-        <div className="suggest">
-          <p className="suggest-text">{draft.text}</p>
-          <div className="suggest-actions">
-            <button type="button" className="btn btn-sm" disabled={!canPost} onClick={onPost}>Post the suggestion</button>
-            <button type="button" className="btn btn-quiet btn-sm" disabled={!canPost} onClick={onEdit}>Edit the suggestion</button>
-          </div>
-        </div>
-      )}
-    </>
+        {item.labels.length > 0 ? <span>Labels {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)}</span> : null}
+        <button type="button" className="btn btn-quiet btn-sm" onClick={onCancel}>Done</button>
+      </div>
+    </div>
   );
 }
 
@@ -343,7 +257,7 @@ function ConfirmDuplicate({ item, onCancel, onConfirm }: { item: NumberedItem; o
       </p>
       <div className="acts">
         <button type="button" className="btn btn-quiet" onClick={() => dialogRef.current?.close()}>Cancel</button>
-        <button ref={confirmRef} type="button" className="btn btn-primary" onClick={onConfirm}>Close as duplicate <kbd aria-hidden="true">⏎</kbd></button>
+        <button ref={confirmRef} type="button" className="btn btn-primary" onClick={onConfirm}>Close as duplicate</button>
       </div>
     </dialog>
   );
@@ -351,7 +265,8 @@ function ConfirmDuplicate({ item, onCancel, onConfirm }: { item: NumberedItem; o
 
 type PaneProps = {
   item: PrItem;
-  posted: string | null;
+  /** What the maintainer did to it while it is still open; null in Needs you. */
+  handled: HandledMark | null;
   listTitle: string;
   restored: PaneDraft | null;
   sectionRef: RefObject<HTMLElement | null>;
@@ -359,39 +274,14 @@ type PaneProps = {
   onBack: () => void;
 };
 
-function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }: PaneProps) {
-  const { triagePullRequest, readOnly } = usePortal();
-  const pull = useGithubPull(item.repo, item.number);
-  const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
-  const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
-  const [composer, setComposer] = useState<Composer | null>(restored === null ? null : restored.composer);
-  const [confirming, setConfirming] = useState(false);
-  const [menu, setMenu] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const replyRef = useRef<HTMLTextAreaElement>(null);
-  const verdict = useRef({ runId: item.runId, comment: item.comment });
-  const facts = paneFacts(item, pull.data);
-  const gate = { item, facts, readOnly, busy };
-  const { primary, more } = paneActions(gate);
-  const draft = replyDraft(item, reply);
-  const canPost = draft !== null && canRun("reply", gate);
-  const dos = usePendingDos(item);
-  const heldDos = useHeldDos();
-  const doBlocked = writeBlocker(gate) !== null;
-  const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
-  const detailFiles = pull.data === undefined ? "" : ` · ${filesText(pull.data.pr.changedFiles)}`;
+type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; dos: PendingDo[]; doBlocked: boolean; running: boolean; onRun: (kind: PaneKind) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void };
 
-  // A new verdict replaces the suggested reply and the last note; composer text and an edit made while a run is merely in flight stay.
-  useEffect(function restartReplyOnNewVerdict() {
-    if (verdict.current.runId === item.runId && verdict.current.comment === item.comment) return;
-    verdict.current = { runId: item.runId, comment: item.comment };
-    setReply(draftText(item));
-    setEditing(false);
-    setDone(null);
-  }, [item.runId, item.comment]);
+/** One primary for the state, up to two secondaries, the rest in More; on a phone the second secondary moves into More. */
+function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo }: BottomBarProps) {
+  const [menu, setMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const { primary, secondary, more } = bar;
+  const narrowOnly = secondary[1];
 
   useEffect(function closeMenuOnOutsideClick() {
     if (!menu) return;
@@ -401,6 +291,76 @@ function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }:
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [menu]);
+
+  function choose(run: () => void) {
+    setMenu(false);
+    run();
+  }
+
+  return (
+    <div className="bar bar3">
+      {primary === null ? null : (
+        <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => onRun(primary.kind)}>
+          {primary.kind === "reply" && draft?.edited ? "Send edited feedback" : primary.label}
+          {primary.detail === null ? null : <span className="det">{primary.detail}</span>}
+        </button>
+      )}
+      {secondary.map((entry, index) => <button key={entry.kind} type="button" className={index === 1 ? "btn btn-quiet sec2" : "btn btn-quiet"} onClick={() => onRun(entry.kind)}>{entry.label}</button>)}
+      <span className="sp" />
+      <div className="menu-wrap" ref={menuRef}>
+        <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
+        {menu ? (
+          <div className="menu up" role="menu">
+            {narrowOnly === undefined ? null : <button type="button" role="menuitem" className="m-only" onClick={() => choose(() => onRun(narrowOnly.kind))}>{narrowOnly.label}</button>}
+            {onEdit === null ? null : <button type="button" role="menuitem" onClick={() => choose(onEdit)}>Edit feedback</button>}
+            {more.map((entry) => (
+              <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => choose(() => onRun(entry.kind))}>{entry.label}</button>
+            ))}
+            {dos.map((pending) => (
+              <button key={pending.key} type="button" role="menuitem" disabled={doBlocked || pending.running} onClick={() => choose(() => onDo(pending))}>
+                {pending.running ? `${pending.label}: already running` : pending.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }: PaneProps) {
+  const { triagePullRequest, readOnly } = usePortal();
+  const pull = useGithubPull(item.repo, item.number);
+  const pack = useRepoPack(item.repo);
+  const doRuns = useDoRuns(item.repo, item.number);
+  const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
+  const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
+  const [composer, setComposer] = useState<Composer | null>(restored === null ? null : restored.composer);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+  const verdict = useRef({ runId: item.runId, comment: item.comment });
+  const facts = paneFacts(item, pull.data);
+  const gate = { item, facts, readOnly, busy };
+  const bar = paneBar(gate, pull.data?.pr.base ?? null, facts.author);
+  const draft = replyDraft(item, reply);
+  const dos = usePendingDos(item);
+  const heldDos = useHeldDos();
+  const doBlocked = writeBlocker(gate) !== null;
+  const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
+  const status = paneStatus({ item, detail: pull.data, handled, approved: approvedByTriage(item, doRuns.data ?? []), primary: bar.primary });
+  const ended = endedText(item, pull.data, handled) !== null;
+
+  // A new verdict replaces the drafted feedback and the last note; composer text and an edit made while a run is merely in flight stay.
+  useEffect(function restartReplyOnNewVerdict() {
+    if (verdict.current.runId === item.runId && verdict.current.comment === item.comment) return;
+    verdict.current = { runId: item.runId, comment: item.comment };
+    setReply(draftText(item));
+    setEditing(false);
+    setDone(null);
+  }, [item.runId, item.comment]);
 
   useEffect(function focusReplyWhenEditing() {
     if (editing && replyRef.current) replyRef.current.focus();
@@ -442,7 +402,6 @@ function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }:
 
   function run(kind: PaneKind) {
     if (!hasNumber(item) || !canRun(kind, gate)) return;
-    setMenu(false);
     if (isComposerKind(kind)) {
       setComposer(openComposer(composer, kind));
       return;
@@ -470,13 +429,13 @@ function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }:
   useEffect(function paneShortcuts() {
     function onKeyDown(event: KeyboardEvent) {
       if (event.metaKey || event.ctrlKey || event.altKey || event.repeat || modalOpen() || isInteractiveShortcutTarget(event.target)) return;
-      if (event.key === "a" && primary !== null) {
+      if (event.key === "a" && bar.primary !== null) {
         event.preventDefault();
-        run(primary.kind);
+        run(bar.primary.kind);
       }
-      if (event.key === "e" && replyRef.current) {
+      if (event.key === "e" && draft !== null) {
         event.preventDefault();
-        replyRef.current.focus();
+        setEditing(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -486,26 +445,8 @@ function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }:
   return (
     <section ref={sectionRef} className="panel pane" aria-label="Selected pull request" tabIndex={-1}>
       <button type="button" className="btn btn-quiet btn-sm pane-back" onClick={onBack}>Back to {listTitle}</button>
-      <div className="bar">
-        {primary === null ? null : (
-          <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => run(primary.kind)}>
-            {primaryButtonLabel(primary, draft)} <kbd>a</kbd>
-          </button>
-        )}
-        <span className="sp" />
-        <div className="menu-wrap" ref={menuRef}>
-          <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
-          {menu ? (
-            <div className="menu up" role="menu">
-              {more.map((entry) => (
-                <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => run(entry.kind)}>{entry.label}</button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
       <div className="scroll">
-        <div className="pane-in">
+        <div className="pane-in r3">
           <header className="ph">
             <div className="crumb">
               <Link className="mono repo-link" to={`/repositories/${item.repo}`} title="Repository settings">{item.repo}</Link>
@@ -516,45 +457,31 @@ function Pane({ item, posted, listTitle, restored, sectionRef, onHold, onBack }:
             <h2 className="title">{titleText(facts.title)}</h2>
             <Byline item={item} author={facts.author} detail={pull.data} />
           </header>
-          <Owner owner={item.owner} />
-          <section className="verdict">
-            <p className="vh">{verdictHeadline(item)}</p>
-            <div className="vm">
-              <span><span className="st"><span className={dotClass(item, inboxAction(item))} />{inboxStatus(item)}</span></span>
-              {posted === null ? null : <span>{posted}</span>}
-              {item.priority === null ? null : <span><b>{item.priority}</b></span>}
-            </div>
-            <MergeVerdictLine merge={item.merge} />
-          </section>
-          <Reasons item={item} />
-          <Link className="disclose" to={prHref(item)}>
-            <ChevronIcon />
-            Show details
-            <span>{item.checks.length} checks{detailFiles} · commits · conversation</span>
-          </Link>
-          {draft === null ? null : (
-            <SuggestedReply
-              item={item}
-              draft={draft}
-              editing={editing}
-              canPost={canPost}
-              replyRef={replyRef}
-              onChange={setReply}
-              onKeyDown={onReplyKey}
-              onPost={() => run("reply")}
-              onEdit={() => setEditing(true)}
-              onCancel={() => setEditing(false)}
-            />
-          )}
-          <SuggestedActions dos={dos} disabled={doBlocked} onRun={runDo} />
+          <StatusLine status={status} />
+          <Problems problems={paneProblems(item.checks)} pack={pack} item={item} />
+          {editing && draft !== null ? (
+            <FeedbackEditor item={item} draft={draft} replyRef={replyRef} onChange={setReply} onKeyDown={onReplyKey} onCancel={() => setEditing(false)} />
+          ) : null}
           {composer === null ? null : (
             <ComposerForm composer={composer} busy={busy} readOnly={readOnly} onChange={setComposer} onCancel={() => setComposer(null)} onSubmit={onComposerSubmit} />
           )}
-          {confirming && hasNumber(item) ? <ConfirmDuplicate item={item} onCancel={() => setConfirming(false)} onConfirm={() => hold("close", reply)} /> : null}
+          {dos.filter((pending) => pending.error !== null).map((pending) => <p key={pending.key} role="alert" className="error">{pending.label} failed last time: {pending.error}</p>)}
           {error === null ? null : <p role="alert" className="error">{error}</p>}
           {done === null ? null : <p role="status" className="note">{done}</p>}
+          <ReportRows item={item} pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} pack={pack} />
+          {confirming && hasNumber(item) ? <ConfirmDuplicate item={item} onCancel={() => setConfirming(false)} onConfirm={() => hold("close", reply)} /> : null}
         </div>
       </div>
+      {ended ? null : <BottomBar
+        bar={bar}
+        draft={draft}
+        dos={dos}
+        doBlocked={doBlocked}
+        running={item.running}
+        onRun={run}
+        onEdit={draft === null || editing ? null : () => setEditing(true)}
+        onDo={runDo}
+      />}
     </section>
   );
 }
@@ -602,7 +529,7 @@ function Toasts({ notices, onUndo }: { notices: Notices; onUndo: () => void }) {
       {held === null ? null : (
         <div key={held.id} className="toast">
           <span>{held.message}</span>
-          <button type="button" aria-keyshortcuts="u" onClick={onUndo}>Undo <kbd aria-hidden="true">u</kbd></button>
+          <button type="button" aria-keyshortcuts="u" onClick={onUndo}>Undo</button>
           <span className="drain" aria-hidden="true"><i style={{ animationDuration: `${HOLD_MS}ms` }} /></span>
         </div>
       )}
@@ -772,8 +699,7 @@ export default function Inbox({ view }: { view: ListView }) {
           <div className="tools">
             <label className="search">
               <SearchIcon />
-              <input ref={searchRef} placeholder="Search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
-              <kbd>/</kbd>
+              <input ref={searchRef} placeholder="Search" aria-keyshortcuts="/" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
             </label>
             <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
             <div className="seg" role="group" aria-label="Group by">
@@ -793,13 +719,12 @@ export default function Inbox({ view }: { view: ListView }) {
             </div>
           )}
         </div>
-        <footer className="list-foot"><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>a</kbd> do suggested</span><span><kbd>/</kbd> search</span></footer>
       </section>
       {selected ? (
         <Pane
           key={paneKey}
           item={selected}
-          posted={listsOpen(view) ? postedLabel(selected, selectedMark) : isPostedToAuthor(selected) ? POSTED : null}
+          handled={listsOpen(view) ? selectedMark : null}
           listTitle={LIST_TITLE[view]}
           restored={paneDraft}
           sectionRef={sectionRef}

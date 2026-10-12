@@ -26,7 +26,7 @@ export const NOT_EVALUATED = "Not evaluated";
 const UNSURE_PREFIX = "Not sure enough of every answer";
 
 /** Why the merge is not recommended; each check shows its own value, so the threshold is named as how sure Triage must be. */
-export function mergeReasons(merge: MergeVerdict): string[] {
+function mergeReasons(merge: MergeVerdict): string[] {
   return merge.reasons.map((reason) => (SCORE_REASON.test(reason) ? `${UNSURE_PREFIX} to recommend merging (needs ${points(merge.threshold)}%)` : reason));
 }
 
@@ -74,9 +74,12 @@ function factsText(values: Record<string, number | boolean | string>): string {
 }
 
 /** Below its bar a score never shows the bar itself, so the shown number agrees with the check's result. */
+function shownScore(score: number, passAt: number): number {
+  return score >= passAt ? Math.round(score) : Math.min(Math.round(score), passAt - 1);
+}
+
 function scoreText(score: number, passAt: number): string {
-  const shown = score >= passAt ? Math.round(score) : Math.min(Math.round(score), passAt - 1);
-  return `${shown} / ${passAt}`;
+  return `${shownScore(score, passAt)} / ${passAt}`;
 }
 
 const MAX_LISTED = 3;
@@ -98,6 +101,18 @@ export function checkValueText({ output, reason, evidence }: { output: CheckOutp
     case "not-applicable": return "not applicable";
     case "could-not-check": return `${output.reason === reason ? "couldn't check" : `couldn't check: ${output.reason}`}${behind}`;
   }
+}
+
+/** What a check measured, as `9 files, 352 lines` or `Scored 59; couldn't read src/big.ts`; null for an output that is only a state, which the check's reason already says. */
+export function checkMeasuredText(output: CheckOutput | null): string | null {
+  if (output?.kind === "values") return upperFirst(factsText(output.values));
+  if (output?.kind !== "score") return null;
+  const unread = output.unread?.length ? `; couldn't read ${listed(output.unread)}` : "";
+  return `Scored ${shownScore(output.score, output.passAt)}${unread}`;
+}
+
+export function upperFirst(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export function approvalHeadline(approval: HubApproval): string {

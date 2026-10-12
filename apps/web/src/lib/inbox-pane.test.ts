@@ -69,6 +69,7 @@ function detail(pr: Partial<GithubPullDetail["pr"]>): GithubPullDetail {
       deletions: 1,
       changedFiles: 1,
       labels: [],
+      createdAt: "2026-09-30T00:00:00.000Z",
       updatedAt: "2026-10-01T00:00:00.000Z",
       ...pr,
     },
@@ -184,6 +185,11 @@ describe("paneWrite", () => {
     const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent, runDo });
     return { calls, outcome };
   }
+
+  test("a merge is pinned to the commit Triage checked, and refused before it is held when that is unknown", async () => {
+    expect((await record("merge", { verdictSha: "checked", headSha: "newer" }, "")).calls).toEqual([{ action: "merge", repo: "acme/widgets", number: 1, headSha: "checked" }]);
+    expect(() => paneWrite("merge", { ...item({}), number: 1 }, "")).toThrow("The commit Triage checked is not known");
+  });
 
   test("the reply and its labels start together, and the verdict is marked sent once the hub names the comment", async () => {
     expect(await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks, edited")).toEqual({
