@@ -32,6 +32,9 @@ const HeldInboxContext = createContext<HeldInbox | null>(null);
  */
 export function HeldInboxProvider({ children }: { children: ReactNode }) {
   const { writeGithub, notify } = usePortal();
+  const { session } = useSession();
+  const userId = session?.id ?? null;
+  const sessionUser = useRef(userId);
   const replySent = useMarkReplySent();
   const handledPulls = useHandledPulls();
   const runDo = useRunDo();
@@ -39,6 +42,15 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
   const notices = useSyncExternalStore(queue.subscribe, queue.notices);
   const [restored, setRestored] = useState<Restored>({});
   const inboxes = useRef(0);
+
+  // Explicit sign-out sends what is held first; a session that ends otherwise (a 401, another tab) cannot send it, so it is dropped.
+  useEffect(function dropWhenSessionChanges() {
+    sessionUser.current = userId;
+    return function dropHeld() {
+      queue.drop();
+      setRestored({});
+    };
+  }, [queue, userId]);
 
   useEffect(function sendHeldWhenPageGoes() {
     function onPageHide() {
@@ -67,7 +79,9 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
     function writeLeaving(input: PrGithubWriteInput) {
       return writeGithub(input, "leaving");
     }
+    const heldBy = sessionUser.current;
     function restore() {
+      if (sessionUser.current !== heldBy) return;
       if (write.settles !== null) handledPulls.release(item);
       write.restore?.();
       setRestored((current) => ({ ...current, [item.key]: { runId: item.runId, draft } }));

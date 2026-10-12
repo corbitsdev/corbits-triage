@@ -10,8 +10,18 @@ import { useSession } from "./session.tsx";
 
 const VISIT_QUERY_KEY = "pulse-visit";
 
+const STORAGE_PREFIX = "corbits-triage:pulse:";
+
 function storageKey(userId: string, tenantId: string): string {
-  return `corbits-triage:pulse:${userId}:${tenantId}`;
+  return `${STORAGE_PREFIX}${userId}:${tenantId}`;
+}
+
+/** Saved visits hold pull request titles, so they are removed when the session ends. */
+export function forgetSavedVisits(storage: Storage) {
+  const keys = Array.from({ length: storage.length }, (_, index) => storage.key(index));
+  for (const key of keys) {
+    if (key?.startsWith(STORAGE_PREFIX)) storage.removeItem(key);
+  }
 }
 
 function readSaved(key: string): SavedPulse | null {
