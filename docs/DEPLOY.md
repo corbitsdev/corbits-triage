@@ -59,6 +59,13 @@ By default anyone who reaches the hub can create an account with email and passw
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` enable "Continue with Google". Create an OAuth client (Web application) in Google Cloud with the redirect URI `<BETTER_AUTH_BASE_URL>/api/auth/callback/google`.
 - `AUTH_ALLOWED_EMAILS` restricts new accounts to exact emails and `@domains`, for example `@corbits.dev,@abklabs.com`. It requires Google and turns email/password sign-in off, since only Google verifies the address. It is checked at every sign-in, so existing accounts outside it are locked out too.
 
+## Inviting teammates
+
+Admins invite people by email from the portal; the invitee joins by opening the link signed in as that address. Invites to addresses outside `AUTH_ALLOWED_EMAILS` are refused. Optional:
+
+- `SMTP_URL` and `EMAIL_FROM` email the link through any SMTP provider. `SMTP_URL` holds the credentials, for example `smtps://user:password@smtp.example.com:465` (`smtp://` upgrades with STARTTLS when offered); percent-encode special characters in the password. `EMAIL_FROM` is the sender, for example `Triage <triage@example.com>`, on a domain the provider accepts. Set both or neither; without them the portal shows the link to copy and send yourself.
+- Links use `PORTAL_ORIGIN` when the portal is hosted separately, otherwise `BETTER_AUTH_BASE_URL`.
+
 ## Portal hosted separately
 
 Build `apps/web` (`bun run --cwd apps/web build`) and host `apps/web/dist` anywhere that fits one of these:
