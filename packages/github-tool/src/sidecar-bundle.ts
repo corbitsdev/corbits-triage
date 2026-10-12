@@ -4,6 +4,7 @@ import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 
 import {
   addAssignees,
+  authorTeams,
   codeownersForPr,
   createIssueComment,
   createReview,
@@ -90,6 +91,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_codeowners_for_pr",
     description: "List the code owners (users and team slugs) of a pull request's changed files from the base branch's CODEOWNERS, without the author.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
+  },
+  {
+    name: "github_author_teams",
+    description: "Say which of the given teams (@org/slug or slug) the author is an active member of. Teams past the first 20, outside the repository owner's organization, or not confirmable either way are unknown.",
+    inputSchema: obj({ repo, author: str, teams: { type: "array", items: str } }),
   },
 ];
 
@@ -185,6 +191,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
       return listOrgMembersForRepo(gh, a.repo);
     case "github_codeowners_for_pr":
       return codeownersForPr(gh, a.repo, a.number);
+    case "github_author_teams":
+      return authorTeams(gh, { repo: a.repo, author: a.author, teams: a.teams });
     case "github_mirror":
     case "github_mirror_auto":
       return mirror(gh, {

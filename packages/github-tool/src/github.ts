@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { minimatch } from "minimatch";
 import { isDocPath } from "@corbits/triage-contracts/paths";
+import { teamSlug } from "@corbits/triage-contracts/team";
 
 /** Authenticated fetch pinned to the GitHub API origin; takes a path. */
 export type GithubFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -121,6 +122,36 @@ export async function listOrgMembersForRepo(gh: GithubFetch, repo: string): Prom
   const rows = await jsonAll<{ login?: unknown }>(gh, `/orgs/${encodeURIComponent(owner.login)}/members?per_page=100`);
   const members = rows.flatMap((row) => typeof row.login === "string" && row.login.length > 0 ? [row.login] : []);
   return { organization: owner.login, members: [...new Set(members)].sort((a, b) => a.localeCompare(b)) };
+}
+
+export const MAX_AUTHOR_TEAMS = 20;
+
+export type AuthorTeams = { teams: string[]; unknown: string[] };
+
+type Membership = "member" | "not" | "unknown";
+
+/** A 404 hides both a non-member and a team the App cannot see, so the team itself is read to tell them apart. */
+async function membership(gh: GithubFetch, org: string, slug: string, author: string): Promise<Membership> {
+  const team = `/orgs/${encodeURIComponent(org)}/teams/${encodeURIComponent(slug)}`;
+  const headers = { accept: "application/vnd.github+json" };
+  const res = await gh(`${team}/memberships/${encodeURIComponent(author)}`, { headers });
+  if (res.ok) return (await res.json() as { state?: unknown }).state === "active" ? "member" : "not";
+  if (res.status !== 404) return "unknown";
+  const found = await gh(team, { headers });
+  return found.ok ? "not" : "unknown";
+}
+
+/** Which of `teams` the author actively belongs to. Teams past the first MAX_AUTHOR_TEAMS, in another org, in a repository no org owns, or whose membership GitHub will not show are unknown. */
+export async function authorTeams(gh: GithubFetch, input: { repo: string; author: string; teams: string[] }): Promise<AuthorTeams> {
+  const org = input.repo.split("/", 1)[0]!;
+  const result: AuthorTeams = { teams: [], unknown: input.teams.slice(MAX_AUTHOR_TEAMS) };
+  for (const team of input.teams.slice(0, MAX_AUTHOR_TEAMS)) {
+    const slug = teamSlug(team, input.repo);
+    const answer = slug === null ? "unknown" : await membership(gh, org, slug, input.author);
+    if (answer === "member") result.teams.push(team);
+    else if (answer === "unknown") result.unknown.push(team);
+  }
+  return result;
 }
 
 const MERGEABLE_RETRIES = 5;

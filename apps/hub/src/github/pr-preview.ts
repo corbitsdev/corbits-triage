@@ -5,13 +5,13 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { getChecks, getReviews, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type GithubFetch } from "@corbits/github-tool/github";
+import { authorTeams, getChecks, getReviews, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-tool/github";
 import { checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, type CheckPack } from "@corbits/triage-contracts";
 import { evaluate } from "../../../../packages/triage-workflows/src/actions/evaluate.js";
 import { rules, type RulesItem } from "../../../../packages/triage-workflows/src/actions/rules.js";
 import { checkName } from "../../../../packages/triage-workflows/src/logic/actions.js";
 import type { PrFileFacts } from "../../../../packages/triage-workflows/src/logic/checks.js";
-import { assembleItem, fileFacts, MAX_PATCH_CHARS, type ItemContext } from "../../../../packages/triage-workflows/src/logic/facts.js";
+import { assembleItem, fileFacts, MAX_PATCH_CHARS, roleTeams, type ItemContext } from "../../../../packages/triage-workflows/src/logic/facts.js";
 import { previewActions } from "../../../../packages/triage-workflows/src/logic/preview.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "../../../../packages/triage-workflows/src/logic/render.js";
 import type { CheckPackRead } from "./check-pack-store.js";
@@ -125,6 +125,16 @@ function candidatePack(raw: unknown, repo: string): CheckPack | string {
   }
 }
 
+/** As in the workflow, a failed membership read leaves every team unknown rather than failing the preview. */
+async function readAuthorTeams(gh: GithubFetch, repo: string, author: string, teams: string[]): Promise<AuthorTeams | null> {
+  if (!teams.length) return null;
+  try {
+    return await authorTeams(gh, { repo, author, teams });
+  } catch {
+    return null;
+  }
+}
+
 /** The rules step's item for an open pull request, read as the facts director reads it, or the error response to return. */
 async function readItem(gh: GithubFetch, number: number, context: Omit<ItemContext, "openPrs">): Promise<RulesItem | Response> {
   const { repo } = context;
@@ -139,8 +149,9 @@ async function readItem(gh: GithubFetch, number: number, context: Omit<ItemConte
     // readPr, not getPr: a preview reports mergeability as GitHub has it now rather than polling for it.
     const [pr, reviews, commits, files] = await Promise.all([readPr(gh, repo, number), getReviews(gh, repo, number), listPrCommits(gh, repo, number), listFiles(gh, repo, number)]);
     const checks = pr.sha ? await getChecks(gh, repo, pr.sha) : [];
+    const membership = pr.author ? await readAuthorTeams(gh, repo, pr.author, roleTeams(context.policy, repo)) : null;
     const openPrs = open.map((p) => ({ number: p.number, title: p.title }));
-    return assembleItem(number, { pr, checks, reviews, commits, files }, { ...context, openPrs });
+    return assembleItem(number, { pr, checks, reviews, commits, files, authorTeams: membership }, { ...context, openPrs });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return failure(502, "github_failed", `Could not read ${repo}#${number} from GitHub: ${message}.`);
