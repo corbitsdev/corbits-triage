@@ -188,6 +188,15 @@ describe("deriveState rule custom checks", () => {
     expect(result.checks.find((check) => check.check === "custom-6")?.result).toBe("unconfirmed");
   });
 
+  test("a pattern that backtracks under RegExp matches a long added line in linear time", () => {
+    const slow = emptyPack("acme/widgets");
+    slow.custom = [{ id: "custom-1", name: "Digits", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "\\d+\\d+\\d+x" }];
+    const started = performance.now();
+    const result = deriveState({ ...facts, files: [{ path: "src/api.ts", additions: 1, patch: `@@ -1 +1 @@\n+${"1".repeat(2_000)}` }] }, allOff, slow);
+    expect(performance.now() - started).toBeLessThan(250);
+    expect(result.checks[0]?.result).toBe("pass");
+  });
+
   test("author rules gate on people, roles or kinds and never add a finding", () => {
     const gated = emptyPack("acme/widgets");
     gated.custom = [
