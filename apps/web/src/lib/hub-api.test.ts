@@ -6,6 +6,7 @@ const NOW = new Date("2026-10-01T02:00:00.000Z");
 import {
   createGrant,
   deleteGrant,
+  ensureWorkspace,
   configureGithubApp,
   ensureHookCredential,
   githubAppSecret,
@@ -24,6 +25,7 @@ import {
   patchAppConfig,
   type HubApproval,
   type HubRun,
+  type Membership,
   type PortalSnapshot,
   type RunLog,
 } from "./hub-api.ts";
@@ -70,6 +72,8 @@ const approval = (id: string, close: boolean): HubApproval => ({
 const snapshot = (): PortalSnapshot => ({
   workspace: { tenantId: "tenant", principalId: "principal", userId: "user" },
   tenantName: "Acme",
+  workspaces: [],
+  invitations: [],
   repos: [],
   credentials: [],
   denied: { repos: false, credentials: false },
@@ -314,6 +318,73 @@ describe("projectQueue running pull requests", () => {
     expect(runningOf([row("pr", "running")])).toBe(true);
     expect(runningOf([row("run-9", "failed")])).toBe(false);
     expect(runningOf([row("pr", "stopped")])).toBe(false);
+  });
+});
+
+const membership = (tenantSlug: string, status: Membership["status"]): Membership => ({
+  principalId: `p-${tenantSlug}`,
+  tenantId: `t-${tenantSlug}`,
+  tenantName: tenantSlug,
+  tenantSlug,
+  kind: "user",
+  status,
+  roles: [],
+});
+
+/** Memberships newest first, as stock /api/me/principals lists them. */
+function membershipHub(memberships: Membership[]) {
+  const created: unknown[] = [];
+  const transport: Transport = {
+    fetch: async (method, path, body) => {
+      if (method === "GET" && path === "/api/me") return { id: "user", name: "ada", email: "ada@example.com" } as never;
+      if (method === "GET" && path.startsWith("/api/me/principals")) return { data: memberships, nextCursor: null } as never;
+      if (method === "POST" && path === "/api/tenants") {
+        created.push(body);
+        memberships.unshift(membership("corbits-triage-ada-user", "active"));
+        return {} as never;
+      }
+      throw new Error(`unexpected ${method} ${path}`);
+    },
+    subscribe: () => () => {},
+  };
+  return { created, memberships, transport };
+}
+
+describe("workspace resolution", () => {
+  test("opens the team workspace a member belongs to, without creating one", async () => {
+    const hub = membershipHub([membership("corbits-triage-team", "active")]);
+    expect(await ensureWorkspace(hub.transport, null)).toMatchObject({ kind: "member", workspace: { tenantId: "t-corbits-triage-team", principalId: "p-corbits-triage-team" } });
+    expect(hub.created).toEqual([]);
+  });
+
+  test("an invitee gets their pending invitations, not a new workspace", async () => {
+    const hub = membershipHub([membership("corbits-triage-team", "invited"), membership("other-app", "active")]);
+    expect(await ensureWorkspace(hub.transport, null)).toEqual({ kind: "invited", invitations: [{ tenantId: "t-corbits-triage-team", name: "corbits-triage-team", slug: "corbits-triage-team" }] });
+    expect(hub.created).toEqual([]);
+  });
+
+  test("a user with no triage membership or invitation gets a workspace of their own, named for them", async () => {
+    const hub = membershipHub([membership("corbits-triage-team", "suspended")]);
+    expect(await ensureWorkspace(hub.transport, null)).toMatchObject({ kind: "member", workspace: { tenantId: "t-corbits-triage-ada-user" } });
+    expect(hub.created).toEqual([{ name: "ada's workspace", slug: "corbits-triage-ada-user" }]);
+  });
+
+  test("a stray workspace of the user's own does not hide the team's, even when newer or sorted first", async () => {
+    const hub = membershipHub([membership("corbits-triage-ada-user", "active"), membership("corbits-triage-team", "active")]);
+    expect(await ensureWorkspace(hub.transport, "t-gone")).toMatchObject({ kind: "member", workspace: { tenantId: "t-corbits-triage-team" } });
+  });
+
+  test("a membership activated on a later poll joins the list without switching the open workspace", async () => {
+    const team = membership("corbits-triage-team", "invited");
+    const hub = membershipHub([membership("corbits-triage-ada-user", "active"), team]);
+    const first = await ensureWorkspace(hub.transport, null);
+    if (first.kind !== "member") throw new Error("expected a member");
+    expect(first.workspace.tenantId).toBe("t-corbits-triage-ada-user");
+    team.status = "active";
+    const later = await ensureWorkspace(hub.transport, first.workspace.tenantId);
+    expect(later).toMatchObject({ kind: "member", workspace: { tenantId: "t-corbits-triage-ada-user" }, invitations: [] });
+    if (later.kind !== "member") throw new Error("expected a member");
+    expect(later.workspaces.map((option) => option.tenantId)).toEqual(["t-corbits-triage-ada-user", "t-corbits-triage-team"]);
   });
 });
 

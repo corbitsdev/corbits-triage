@@ -20,6 +20,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { useApprovals, useRuns } from "../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
+import { OtherWorkspaces } from "../components/OtherWorkspaces.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
 
 type GuidedStep = "create" | "install" | "select" | "model";
@@ -323,6 +324,7 @@ export default function Connect() {
     <section className="setup" aria-labelledby="setup-title" aria-busy={busy}>
       <h1 id="setup-title">Set up Triage</h1>
       <p className="setup-lede">Three steps and Triage starts sorting your open pull requests.</p>
+      <OtherWorkspaces />
       <ol className="setup-steps">
         {renderStep(0, "Connect GitHub", githubDoneNote, renderCreateBody)}
         {renderStep(1, "Repositories", reposDoneNote, renderRepositoriesBody)}

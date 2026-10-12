@@ -38,13 +38,22 @@ export type Workspace = {
   userId: string;
 };
 
-type Membership = {
+/** Stock PrincipalSummary, as /api/me/principals returns it, newest principal first. */
+export type Membership = {
   principalId: string;
   tenantId: string;
+  tenantName: string;
   tenantSlug: string;
-  kind: string;
-  status: string;
+  kind: "user" | "agent";
+  status: "active" | "suspended" | "invited" | "deactivated";
+  roles: Array<{ id: string; name: string }>;
 };
+
+export type WorkspaceOption = { tenantId: string; name: string; slug: string };
+
+export type MemberAccess = { kind: "member"; workspace: Workspace; workspaces: WorkspaceOption[]; invitations: WorkspaceOption[] };
+export type InvitedAccess = { kind: "invited"; invitations: WorkspaceOption[] };
+export type WorkspaceAccess = MemberAccess | InvitedAccess | { kind: "none" };
 
 type Page<T> = { data: T[]; nextCursor: string | null };
 
@@ -163,6 +172,9 @@ export type SectionDenied = {
 export type PortalSnapshot = {
   workspace: Workspace;
   tenantName: string;
+  /** Every triage workspace the user is an active member of, the open one included. */
+  workspaces: WorkspaceOption[];
+  invitations: WorkspaceOption[];
   repos: RepoRecord[];
   config?: AppConfig;
   configVersion?: string;
@@ -462,7 +474,7 @@ export async function saveRepoSettings(
   });
 }
 
-type HubMe = { id: string; email?: string };
+type HubMe = { id: string; name?: string; email?: string };
 
 function rowName(row: unknown): unknown {
   return row && typeof row === "object" ? (row as { name?: unknown }).name : undefined;
@@ -472,16 +484,45 @@ function isTriageSlug(slug: string | undefined): boolean {
   return slug === WORKSPACE_SLUG || Boolean(slug?.startsWith(`${WORKSPACE_SLUG}-`));
 }
 
-/** The triage workspace this user belongs to: their own, or one they were invited to. */
-export async function resolveWorkspace(transport: Transport): Promise<Workspace | null> {
+function optionOf(entry: Membership): WorkspaceOption {
+  return { tenantId: entry.tenantId, name: entry.tenantName, slug: entry.tenantSlug };
+}
+
+/**
+ * The chosen workspace while the user is still active in it. Otherwise the newest workspace they joined, ahead of the one
+ * the portal created for them, so a stray workspace of their own never hides the team's. Invitations stand in only when no
+ * workspace is active.
+ */
+function chooseWorkspace(memberships: Membership[], user: HubMe, chosen: string | null): WorkspaceAccess {
+  const own = workspaceSlugFor(user);
+  const triage = memberships.filter((entry) => entry.kind === "user" && isTriageSlug(entry.tenantSlug));
+  const active = triage.filter((entry) => entry.status === "active");
+  const invitations = triage.filter((entry) => entry.status === "invited").map(optionOf);
+  const open = active.find((entry) => entry.tenantId === chosen) ?? active.find((entry) => entry.tenantSlug !== own) ?? active[0];
+  if (open) {
+    const workspace = { tenantId: open.tenantId, principalId: open.principalId, userId: user.id };
+    return { kind: "member", workspace, workspaces: active.map(optionOf), invitations };
+  }
+  if (invitations.length > 0) return { kind: "invited", invitations };
+  return { kind: "none" };
+}
+
+/** Two workspaces can share a name; the slug tells them apart. */
+export function sharesName(option: WorkspaceOption, options: WorkspaceOption[]): boolean {
+  return options.some((other) => other.tenantId !== option.tenantId && other.name === option.name);
+}
+
+export async function resolveWorkspace(transport: Transport, chosen: string | null): Promise<WorkspaceAccess> {
   const user = await transport.fetch<HubMe | null>("GET", "/api/me");
-  if (!user?.id) return null;
+  if (!user?.id) throw new Error("The hub did not return the signed-in user.");
   const memberships = await listAll<Membership>(transport, "/api/me/principals");
-  const chosen = memberships
-    .filter((entry) => entry.kind === "user" && entry.status === "active" && isTriageSlug(entry.tenantSlug))
-    .sort((a, b) => a.tenantSlug.localeCompare(b.tenantSlug))[0];
-  if (!chosen) return null;
-  return { tenantId: chosen.tenantId, principalId: chosen.principalId, userId: user.id };
+  return chooseWorkspace(memberships, user, chosen);
+}
+
+function workspaceNameFor(user: HubMe): string {
+  const who = user.name?.trim() || user.email?.split("@")[0];
+  if (!who) throw new Error("The hub returned a user without a name or email.");
+  return `${who}'s workspace`;
 }
 
 /** Stable per user, so a retry after a dropped response targets the same slug. */
@@ -491,32 +532,26 @@ export function workspaceSlugFor(user: HubMe): string {
   return [WORKSPACE_SLUG, local, suffix].filter(Boolean).join("-");
 }
 
-export async function createWorkspace(transport: Transport): Promise<Workspace> {
+async function createWorkspace(transport: Transport): Promise<MemberAccess | InvitedAccess> {
   const user = await transport.fetch<HubMe>("GET", "/api/me");
   try {
-    await transport.fetch("POST", "/api/tenants", { name: "Corbits Triage", slug: workspaceSlugFor(user) });
+    await transport.fetch("POST", "/api/tenants", { name: workspaceNameFor(user), slug: workspaceSlugFor(user) });
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
-    const raced = await resolveWorkspace(transport);
-    if (raced) return raced;
-    throw cause;
+    const raced = await resolveWorkspace(transport, null);
+    if (raced.kind === "none") throw cause;
+    return raced;
   }
-  const resolved = await resolveWorkspace(transport);
-  if (!resolved) throw new Error("The hub created the workspace but does not list it.");
+  const resolved = await resolveWorkspace(transport, null);
+  if (resolved.kind === "none") throw new Error("The hub created the workspace but does not list it.");
   return resolved;
 }
 
-export async function ensureWorkspace(transport: Transport): Promise<Workspace> {
-  const existing = await resolveWorkspace(transport);
-  if (existing) return existing;
-  try {
-    return await createWorkspace(transport);
-  } catch (cause) {
-    if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
-    const raced = await resolveWorkspace(transport);
-    if (raced) return raced;
-    throw cause;
-  }
+/** Opens a workspace the user is active in, else reports their invitations; only a user with neither gets a workspace of their own. */
+export async function ensureWorkspace(transport: Transport, chosen: string | null): Promise<MemberAccess | InvitedAccess> {
+  const existing = await resolveWorkspace(transport, chosen);
+  if (existing.kind !== "none") return existing;
+  return createWorkspace(transport);
 }
 
 /** Stock /api/hooks mount path shared with the hub (apps/hub). */
@@ -1387,7 +1422,8 @@ export async function listRuns(transport: Transport, tenantId: string): Promise<
 }
 
 /** Only what the gate needs; approvals, runs and access rules are read by the pages that show them. */
-export async function loadPortal(transport: Transport, workspace: Workspace, hasPack: CheckPackLookup): Promise<PortalSnapshot> {
+export async function loadPortal(transport: Transport, access: MemberAccess, hasPack: CheckPackLookup): Promise<PortalSnapshot> {
+  const { workspace, workspaces, invitations } = access;
   const tenantId = requireTenantId(workspace.tenantId);
   const tid = enc(tenantId);
   const tenantFallback: TenantBody = { id: tenantId, name: "", slug: WORKSPACE_SLUG };
@@ -1398,6 +1434,8 @@ export async function loadPortal(transport: Transport, workspace: Workspace, has
   return {
     workspace,
     tenantName: tenant.value.name,
+    workspaces,
+    invitations,
     repos: tenant.denied ? [] : await withPackPointers(reposFromConfig(tenant.value.config), hasPack),
     config: appConfig(tenant.value.config),
     configVersion: configFingerprint(tenant.value.config),
