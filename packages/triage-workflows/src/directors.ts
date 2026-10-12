@@ -11,12 +11,12 @@ import type {
 import { type } from "arktype";
 import { classificationSources, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoOutcome } from "@corbits/github-tool/do";
-import type { IssueComment, Review } from "@corbits/github-tool/github";
+import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-tool";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "./logic/checks.js";
 import { unrunnable } from "./logic/execute-do.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, roleTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData } from "./logic/facts.js";
+import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, roleTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import type { Judgment } from "./actions/evaluate.js";
@@ -104,18 +104,25 @@ function call(name: string, args: Record<string, unknown>, id = name): ToolCall 
 
 const TRUNCATED_RESULT = "[Tool output truncated";
 
-type DocsPage = { docs: Array<{ path: string; text: string }>; ref: string; next?: number };
+function ruleSpans(rows: unknown[]): RuleSpan[] {
+  return rows.flatMap((span) => {
+    if (!isRecord(span) || typeof span.path !== "string") return [];
+    const docsBytes = optionalCount(span.docsBytes);
+    const rulesBytes = optionalCount(span.rulesBytes);
+    return docsBytes === undefined || rulesBytes === undefined ? [] : [{ path: span.path, docsBytes, rulesBytes }];
+  });
+}
 
 /** A cut-off or unreadable docs page would hide docs the judge needs, so it is an error instead. */
-function docsPage(r: ToolResult | undefined): DocsPage | string {
+function docsPage(r: ToolResult | undefined): RepoDocsPage | string {
   if (!r) return "github_read_repo_docs did not answer";
   if (r.isError) return `github_read_repo_docs failed: ${asText(r.content)}`;
   if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return "github_read_repo_docs result was truncated";
-  const content = data<{ docs?: unknown; ref?: unknown; next?: unknown }>(r);
-  if (!content || !Array.isArray(content.docs) || typeof content.ref !== "string") return "github_read_repo_docs result is unreadable";
-  const docs = content.docs.flatMap((doc) => (isRecord(doc) && typeof doc.path === "string" && typeof doc.text === "string" ? [{ path: doc.path, text: doc.text }] : []));
+  const content = data<{ docs?: unknown; rules?: unknown; ref?: unknown; next?: unknown }>(r);
+  if (!content || !Array.isArray(content.docs) || !Array.isArray(content.rules) || typeof content.ref !== "string") return "github_read_repo_docs result is unreadable";
   const next = optionalCount(content.next);
-  return { docs, ref: content.ref, ...(next === undefined ? {} : { next }) };
+  const docs = content.docs.flatMap((doc) => (isRecord(doc) && typeof doc.path === "string" && typeof doc.text === "string" ? [{ path: doc.path, text: doc.text }] : []));
+  return { docs, rules: ruleSpans(content.rules), ref: content.ref, ...(next === undefined ? {} : { next }) };
 }
 
 /** A cut-off or unreadable file list would read as a pull request that changes nothing, so it is an error instead. */
@@ -139,7 +146,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return reply([{ error: reason }], false);
   }
 
-  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[], docs: Record<string, string> | string) {
+  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[], docs: RepoDocs | string) {
     function prCalls(n: number): ToolCall[] {
       return [
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
@@ -225,16 +232,16 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return call("github_read_repo_docs", { repo, offset, ...(ref === undefined ? {} : { ref }) }, `docs:${offset}`);
   }
 
-  /** Reads the repository's docs page by page from `offset` into `docs`, then hands them, or why they failed, to `then`. */
-  function readDocs(repo: string, offset: number, result: ToolResult | undefined, docs: Record<string, string>, then: (docs: Record<string, string> | string) => DirectorActions): DirectorActions {
+  /** Reads the repository's docs page by page from `offset` onto `pages`, then hands them, or why they failed, to `then`. */
+  function readDocs(repo: string, offset: number, result: ToolResult | undefined, pages: RepoDocsPage[], then: (docs: RepoDocs | string) => DirectorActions): DirectorActions {
     const page = docsPage(result);
     if (typeof page === "string") return then(page);
-    for (const { path, text } of page.docs) docs[path] = (docs[path] ?? "") + text;
+    pages.push(page);
     const { next, ref } = page;
-    if (next === undefined) return then(docs);
+    if (next === undefined) return then(repoDocs(pages));
     if (next <= offset) return then(`github_read_repo_docs did not advance past offset ${offset}`);
     function onNextDocs(r: BatchResults) {
-      return readDocs(repo, next!, r.get(`docs:${next}`), docs, then);
+      return readDocs(repo, next!, r.get(`docs:${next}`), pages, then);
     }
     return b.run([docsCall(repo, next, ref)], onNextDocs);
   }
@@ -248,10 +255,10 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       const listed = list?.prs ?? [];
       const openPrs = listed.map(({ number, title }) => ({ number, title }));
       const triageable = listed.filter((p) => policy.triageDrafts || p.draft !== true).map((p) => p.number);
-      function withDocs(docs: Record<string, string> | string) {
+      function withDocs(docs: RepoDocs | string) {
         return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack, events, docs);
       }
-      return judged ? readDocs(repo, 0, r.get("docs:0"), {}, withDocs) : withDocs({});
+      return judged ? readDocs(repo, 0, r.get("docs:0"), [], withDocs) : withDocs({ docs: {}, rules: {} });
     });
   }
 
