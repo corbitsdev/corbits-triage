@@ -1,5 +1,7 @@
 # Deploy
 
+How to run the hub image. What to configure is in [SELF_HOST.md](SELF_HOST.md).
+
 Two services:
 
 | Service | Image | State |
@@ -14,25 +16,16 @@ The hub serves the portal itself (`PORTAL_DIR`, set by the image), so one public
 The hub runs sidecars as local child processes, one per live deployment, on its own machine. This is the cheapest setup and the one supported today.
 
 1. Provision Postgres. Add `?sslmode=require` to its URL when reached over the public internet.
-2. Generate four secrets, one per variable: `openssl rand -hex 32`.
-3. Hub variables:
-   - `DATABASE_URL`
-   - `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`, `PRINCIPAL_KEY_ENCRYPTION_KEY`, `SIDECAR_CREDENTIAL_ENCRYPTION_KEY`
-   - `BETTER_AUTH_BASE_URL`: the public URL (`https://triage.example.com`)
-   - `HUB_DATA_DIR` on a persistent volume
-   - `PORT` (3000 in the image)
-   - `HUB_SIDECAR_STOP_TIMEOUT_MS` (optional, default 25000): how long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. Sidecars stop in parallel, so shutdown takes about one timeout. The platform's drain time must exceed it: on Railway set `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` (for example 30).
-4. On the hub's database role, set `idle_in_transaction_session_timeout` to `10min`:
+2. Set the hub's required variables ([SELF_HOST.md](SELF_HOST.md#required)) and any optional ones. The platform's drain time must exceed `HUB_SIDECAR_STOP_TIMEOUT_MS` (default 25000): sidecars stop in parallel, so shutdown takes about one timeout. On Railway set `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` (for example 30).
+3. On the hub's database role, set `idle_in_transaction_session_timeout` to `10min`:
 
    ```sql
    alter role <hub role> set idle_in_transaction_session_timeout = '10min';
    ```
 
    A workflow-run pack receive holds the deployment's allocation row lock for its whole transaction. If that receive wedges, the lock is held until the session ends; with the timeout, Postgres ends it after ten minutes, the hub logs a failed receive and the sidecar pushes again.
-5. Terminate TLS in front of the hub.
-6. Sign up in the portal and follow [SELF_HOST.md](SELF_HOST.md).
-
-The hub validates its variables at startup (`apps/hub/src/env.ts`), exits on a missing or malformed value, and runs migrations on every start. Secrets are runtime variables only, never build arguments.
+4. Terminate TLS in front of the hub.
+5. Sign up in the portal and follow [SELF_HOST.md](SELF_HOST.md#set-up-in-the-portal).
 
 Size the hub for its sidecars: each live deployment is a Bun process, and each PR event spawns a short-lived child run.
 
@@ -52,20 +45,6 @@ docker compose -f docs/compose.yml up --build
 
 Render is the same: a Postgres instance and one Docker web service with a disk at `HUB_DATA_DIR`.
 
-## Sign-in
-
-By default anyone who reaches the hub can create an account with email and password. Optional:
-
-- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` enable "Continue with Google". Create an OAuth client (Web application) in Google Cloud with the redirect URI `<BETTER_AUTH_BASE_URL>/api/auth/callback/google`.
-- `AUTH_ALLOWED_EMAILS` restricts new accounts to exact emails and `@domains`, for example `@corbits.dev,@abklabs.com`. It requires Google and turns email/password sign-in off, since only Google verifies the address. It is checked at every sign-in, so existing accounts outside it are locked out too.
-
-## Inviting teammates
-
-Admins invite people by email from the portal; the invitee joins by opening the link signed in as that address. Invites to addresses outside `AUTH_ALLOWED_EMAILS` are refused. Optional:
-
-- `SMTP_URL` and `EMAIL_FROM` email the link through any SMTP provider. `SMTP_URL` holds the credentials, for example `smtps://user:password@smtp.example.com:465` (`smtp://` upgrades with STARTTLS when offered); percent-encode special characters in the password. `EMAIL_FROM` is the sender, for example `Triage <triage@example.com>`, on a domain the provider accepts. Set both or neither; without them the portal shows the link to copy and send yourself.
-- Links use `PORTAL_ORIGIN` when the portal is hosted separately, otherwise `BETTER_AUTH_BASE_URL`.
-
 ## Portal hosted separately
 
 Build `apps/web` (`bun run --cwd apps/web build`) and host `apps/web/dist` anywhere that fits one of these:
@@ -84,11 +63,10 @@ Unrelated domains without a rewrite (for example `*.vercel.app` and `*.up.railwa
 
 ## Splitting sidecars out later
 
-Sidecars start through Interchange's `SidecarProvisioner` interface. The local-process provisioner is registered in `apps/hub/src/server.ts`; a remote provisioner (QEMU, Kubernetes, E2B) replaces it there. Remote sidecars dial the hub's `/api/sidecars/ws`; set `HUB_SIDECAR_WEBSOCKET_URL` to an address they can reach.
+Sidecars start through Interchange's `SidecarProvisioner` interface. The local-process provisioner is registered in `apps/hub/src/server.ts`; a remote provisioner (QEMU, Kubernetes, E2B) replaces it there. Remote sidecars would dial the hub's `/api/sidecars/ws` at `HUB_SIDECAR_WEBSOCKET_URL`. No remote provisioner exists yet, so this is not supported today.
 
 ## Known limitations
 
-- A hub restart stops its local sidecars, but their deployments still read as live, so events are not processed until the workflows are redeployed. There is no recovery step yet.
-- The hub carries Interchange patches (PR #193 step-env directors, INTR-583, CL-10210, CL-10211); see `vendor/interchange/VENDORED.md`.
+- The hub carries Interchange patches; see `vendor/interchange/VENDORED.md`.
 - Boot applies Interchange migration 0101: deleting a principal that still owns a credential is now refused (`credential.principal_id` FK is `ON DELETE RESTRICT`).
 - A trigger right after a deploy or restart can return `409 deployment_not_ready` until the deployment records its credential resolution; retry it.

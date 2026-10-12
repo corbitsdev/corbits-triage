@@ -1,33 +1,52 @@
 # Corbits Triage
 
-PR and backlog triage for GitHub repositories, running as workflows on a stock [Interchange](https://github.com/faremeter/interchange) hub. Interchange is the control plane (identity, grants, approvals, credentials, runs, audit).
+Pull request triage for GitHub repositories. For each pull request it gathers
+facts from GitHub, runs the repository's checks, reaches a verdict, and
+suggests or runs the repository's actions. It runs as workflows on a stock
+[Interchange](https://github.com/faremeter/interchange) hub, which owns
+identity, grants, credentials, runs and audit.
 
-## Layout
-
-- `apps/web`: portal. After sign-in it converges everything over stock hub routes: tenant, GitHub App credentials, workflow source and deployments (onto the tenant's System One offerings). Prebuilt workflow bundles ship with it (`scripts/build-workflows.ts`)
-- `apps/hub`: hub composition — stock `@intx/hub-api` plus `@corbits/webhooks` at `/api/hooks` (replay table is the library's). Mounted on the same block: `@corbits/artifacts`, `@corbits/cron`. Custom routes: GitHub App Manifest `GET/POST /api/integrations/github-manifest/{callback,start,cancel}` (PEM never in the browser) and synchronous pull request writes `POST /api/integrations/github-actions/:tenantId` (comment, review, merge, close). Temporary exception: HMAC intercept on `/api/hooks*` for `X-Hub-Signature-256` until `@corbits/webhooks` adds a GitHub verifier; it delivers to the tenant's live deployment as the system sender, like cron
-- `packages/triage-workflows`: `pr-triage` (PR event mail listener) and `pr-triage-historical` (open pull requests of a repository when triage is enabled for it, or on Triage again)
-- `packages/github-tool`, `packages/github-write-tool`: read-only GitHub tools and the triage writes (mirror and Dos)
-- `packages/triage-contracts`, `packages/rule-packs`: types and deterministic checks
-- `vendor/interchange`: pin `74c57b39` plus deltas in `vendor/interchange/VENDORED.md`
-- `tooling/`: dev runner, eval scripts
-- `docs/`: [DEV](docs/DEV.md) (local setup), [DEPLOY](docs/DEPLOY.md), [SELF_HOST](docs/SELF_HOST.md), [DECISION_MODEL](docs/DECISION_MODEL.md) (how model checks are judged)
+Nothing runs by default: a repository is triaged only after someone sets up
+its checks and enables it.
 
 ## Quickstart
 
+Requires Bun 1.4+ and Postgres 15+.
+
 ```sh
 bun install
-cp .env.example .env   # four secrets + database
+createdb interchange   # or any empty database; the hub migrates it on boot
+cp .env.example .env   # four secrets, and DATABASE_URL if not the default
 bun run dev
 ```
 
-Then follow [DEV.md](docs/DEV.md) step 5 in the portal. `.env` holds only Interchange settings; GitHub credentials live in the hub vault and deployments are found by workflow name.
+When it works, the hub listens on http://localhost:3000 and the portal on
+http://localhost:5173. Open the portal and follow
+[Set up in the portal](docs/SELF_HOST.md#set-up-in-the-portal): create an
+account, the GitHub App and the decision model, then turn on triage for a
+repository. Its open pull requests appear in the Inbox with a verdict, a
+score and the reasons for it.
 
-Merge via the GitHub API needs GitHub App `contents: write` in addition to `pull_requests: write`; existing installs must accept the new permission on GitHub.
+To run it for real, build `docs/Dockerfile` and follow
+[docs/SELF_HOST.md](docs/SELF_HOST.md).
 
-Author rules on roles that name teams need GitHub App `members: read` to read team membership; existing installs must accept the new permission on GitHub.
+## Read next
 
-Eval scripts: `bun run holdback | injection | report`.
+- [docs/PRODUCT.md](docs/PRODUCT.md): what it does, the kinds of checks,
+  actions, and what is not finished.
+- [docs/DECISION_MODEL.md](docs/DECISION_MODEL.md): how decision-model checks
+  are asked and judged, budgets, cost and measured accuracy.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, the triage
+  pipeline, tenancy and data.
+- [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md): stack, paths, environment,
+  scripts.
+- [docs/SELF_HOST.md](docs/SELF_HOST.md): requirements, every setting, the
+  GitHub App, the model key and email.
+- [docs/DEPLOY.md](docs/DEPLOY.md): Docker Compose, Railway, a separately
+  hosted portal, known limitations.
+- [docs/DEV.md](docs/DEV.md): local setup and the GitHub emulator.
+- [DESIGN.md](DESIGN.md): the portal's design tokens and rules.
+- [AGENTS.md](AGENTS.md): how the code is built and its boundaries.
 
 ## License
 
