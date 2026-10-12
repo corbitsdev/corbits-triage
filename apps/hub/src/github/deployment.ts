@@ -30,8 +30,12 @@ export function readyMaterializer(materialize: RunTriggerMaterialize): RunTrigge
   };
 }
 
-/** `cancelling` once cancellation was requested: the run stays live until the lifecycle sweep stops it. `workflowVersion` once read from its launch spec, for one pinned from the package registry. */
-export type LiveDeployment = { runId: string; address: string; createdAt: Date; cancelling: boolean; workflowVersion?: string };
+/**
+ * `cancelling` once cancellation was requested: the run stays live until the lifecycle sweep stops it. `workflowVersion`
+ * once read from its launch spec, for one pinned from the package registry; `offeringId`, the decision-model offering
+ * the deployment resolved, once read from its launch spec.
+ */
+export type LiveDeployment = { runId: string; address: string; createdAt: Date; cancelling: boolean; workflowVersion?: string; offeringId?: string };
 
 export type TenantDeployment = LiveDeployment & { workflow: string };
 
@@ -132,7 +136,7 @@ function pinFor(bundle: FrozenApprovalBundle): string | undefined {
   return pinOf(bundle.closure);
 }
 
-/** Each deployment with the workflow package version its frozen closure pins. */
+/** Each deployment with the workflow package version its frozen closure pins and the decision-model offering it resolved. */
 export async function withWorkflowVersions<T extends LiveDeployment>(
   launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">,
   deployments: readonly T[],
@@ -141,7 +145,8 @@ export async function withWorkflowVersions<T extends LiveDeployment>(
   for (const deployment of deployments) {
     const spec = await launchSpecs.get(deployment.runId);
     const workflowVersion = spec ? closureVersions(spec.frozenApprovalBundle)?.workflow.version : undefined;
-    versioned.push(workflowVersion === undefined ? deployment : { ...deployment, workflowVersion });
+    const offeringId = spec?.defaultSourceOfferingId ?? undefined;
+    versioned.push({ ...deployment, ...(workflowVersion !== undefined && { workflowVersion }), ...(offeringId !== undefined && { offeringId }) });
   }
   return versioned;
 }

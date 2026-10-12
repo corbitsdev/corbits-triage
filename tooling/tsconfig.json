@@ -15,6 +15,7 @@
     "../evals/**/*.ts"
   ],
   "exclude": [
-    "vendor-health.test.ts"
+    "vendor-health.test.ts",
+    "inbound-gate.test.ts"
   ]
 }

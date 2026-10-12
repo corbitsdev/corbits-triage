@@ -32,6 +32,7 @@ import {
   type CronTicker,
 } from "@corbits/cron";
 import { runCronMigrations } from "@corbits/cron/migrations";
+import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
@@ -278,7 +279,7 @@ const hookApp = createStockHookApp(
   composition.sidecarRouter,
 );
 
-const GITHUB_SENDER = "github";
+const GITHUB_SENDER = TRIAGE_MAIL_SENDER;
 const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
   await githubDeliverer.to(address, JSON.stringify(payload), tenantId, undefined);

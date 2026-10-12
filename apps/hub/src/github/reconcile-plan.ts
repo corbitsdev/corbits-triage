@@ -2,6 +2,7 @@
 // to queue again. Pure, so every recovery path is decided in one place.
 import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow } from "@corbits/triage-contracts";
 import { MODEL_NOT_ASKED } from "../../../../packages/triage-workflows/src/logic/settled.js";
+import type { Judged } from "../../../../packages/triage-workflows/src/logic/item.js";
 
 export type OpenPr = { number: number; headSha: string; updatedAt: string; draft: boolean };
 
@@ -17,6 +18,10 @@ export type ObservedRun = {
   workflowVersion?: string;
   /** The webhook event that started the run, as `event:action`. */
   trigger?: string;
+  /** Decision-model offering of the deployment the run ran on. */
+  offeringId?: string;
+  /** Judge answers the run's verdict says a later run of the same head can reuse. */
+  judged?: Judged;
 };
 
 export type ReconcilePolicy = {
@@ -71,10 +76,12 @@ export type TenantPlanInput = {
   policy: ReconcilePolicy;
   /** Workflow package version of the deployment new mail goes to; none when it was not deployed from the package registry. */
   workflowVersion: string | undefined;
+  /** Decision-model offering of the deployment new mail goes to; judge answers are carried only between runs on the same one. */
+  offeringId?: string;
 };
 
-/** A head to queue, why, and the row to keep instead when its mail cannot be delivered. */
-export type QueuedPr = { number: number; reason: string; undelivered: PrTriageRow };
+/** A head to queue, why, the judge answers its earlier runs got, and the row to keep instead when its mail cannot be delivered. */
+export type QueuedPr = { number: number; reason: string; judged?: Judged; undelivered: PrTriageRow };
 
 /** Rows for exactly the open heads; queued heads are already marked queued. */
 export type RepoPlan = { rows: PrTriageRow[]; enqueue: QueuedPr[] };
@@ -241,7 +248,19 @@ function counts(run: ObservedRun, row: PrTriageRow, workflowVersion: string | un
   return workflowVersion === undefined || row.workflowVersion !== workflowVersion || run.workflowVersion === workflowVersion;
 }
 
-type Due = { repo: string; index: number; row: PrTriageRow };
+type Due = { repo: string; index: number; row: PrTriageRow; judged: Judged };
+
+/**
+ * Every answer the head's completed runs got on the same workflow version and decision-model offering as the
+ * deployment mailed, a newer run's winning; none when either is unknown. The judge is asked only what none answered.
+ */
+function judgedOf(runs: readonly ObservedRun[], workflowVersion: string | undefined, offeringId: string | undefined): Judged {
+  if (workflowVersion === undefined || offeringId === undefined) return {};
+  const done = runs
+    .filter((run) => run.status === "completed" && run.workflowVersion === workflowVersion && run.offeringId === offeringId)
+    .sort((a, b) => ms(a.startedAt) - ms(b.startedAt));
+  return Object.assign({}, ...done.map((run) => run.judged ?? {}));
+}
 
 /** A head with no run and no verdict, even if its mail failed to deliver; a version-stale reset also has no run, so only its reason tells it apart. */
 function neverTriaged(row: PrTriageRow): boolean {
@@ -256,7 +275,7 @@ function byWait(a: Due, b: Due): number {
 }
 
 /** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running. */
-export function planTenant({ repos, runs, now, policy, workflowVersion }: TenantPlanInput): Map<string, RepoPlan> {
+export function planTenant({ repos, runs, now, policy, workflowVersion, offeringId }: TenantPlanInput): Map<string, RepoPlan> {
   const at = now.toISOString();
   const plans = new Map<string, RepoPlan>();
   const due: Due[] = [];
@@ -271,16 +290,16 @@ export function planTenant({ repos, runs, now, policy, workflowVersion }: Tenant
       const runsOfHead = (observed?.get(key) ?? []).filter((run) => counts(run, current, workflowVersion));
       const row = uncapped(observe(current, runsOfHead, now, policy), now, policy);
       if (inFlight(row)) busy.add(`${name} ${key}`);
-      if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row });
+      if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row, judged: judgedOf(runsOfHead, workflowVersion, offeringId) });
       next.push(row);
     }
     plans.set(name, { rows: next, enqueue: [] });
   }
-  for (const { repo, index, row } of due.sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0))) {
+  for (const { repo, index, row, judged } of due.sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0))) {
     const plan = plans.get(repo)!;
     const { runId: _run, error: _error, ...rest } = row;
     plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
-    plan.enqueue.push({ number: row.number, reason: row.error ?? "never triaged", undelivered: row });
+    plan.enqueue.push({ number: row.number, reason: row.error ?? "never triaged", ...(Object.keys(judged).length > 0 && { judged }), undelivered: row });
   }
   return plans;
 }
