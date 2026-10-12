@@ -1,13 +1,15 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
-import { createDB, dropSchema, runMigrations, schema } from "@intx/db";
+import { createDB, runMigrations, schema } from "@intx/db";
+import { migrateTriageTables } from "../triage-db.js";
 import { createOpenPullsCache, type RepoPulls } from "./open-pulls.js";
 import type { ObservedRun } from "./reconcile-plan.js";
 import { createTenantVersions, type TenantObservation } from "./tenant-observer.js";
 import { createTriageVerdicts, TriageVerdicts } from "./triage-verdicts.js";
-import { createVerdictRecordStore, migrateVerdictRecords, type RecordedVerdict } from "./verdict-record-store.js";
+import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_verdicts";
@@ -58,13 +60,16 @@ const OPEN: RepoPulls[] = [
 ];
 
 test("PostgreSQL: the latest verdict of each open pull request, with the run in flight for it, answered from memory while nothing changed", async () => {
-  const testSchema = `corbits_verdicts_${randomBytes(6).toString("hex")}`;
+  const database = `corbits_verdicts_${randomBytes(6).toString("hex")}`;
+  const admin = createDB(TEST_DB);
+  await admin.db.execute(sql.raw(`create database ${database}`));
+  const config = { ...TEST_DB, database };
   let handle: ReturnType<typeof createDB> | undefined;
   try {
-    await runMigrations(TEST_DB, { schema: testSchema });
-    handle = createDB({ ...TEST_DB, schema: testSchema });
+    await runMigrations(config, { schema: "public" });
+    handle = createDB(config);
     const db = handle.db;
-    await migrateVerdictRecords(db);
+    await migrateTriageTables(db, "public");
     await db.insert(schema.tenant).values([
       { id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config: CONFIG },
       { id: OTHER_TENANT, name: "Other", slug: "verdicts-other", domain: "verdicts-other.test", config: CONFIG },
@@ -173,6 +178,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     expect((await get()).status).toBe(401);
   } finally {
     await handle?.close();
-    await dropSchema(TEST_DB, { schema: testSchema });
+    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
+    await admin.close();
   }
 }, 120_000);

@@ -1,11 +1,11 @@
 // No stock principal exists until the invitee accepts, so the invite itself
 // lives here. The token is kept encrypted so an admin can copy the link later.
 import { createHash } from "node:crypto";
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
-import type { DB } from "@intx/db";
+import { and, eq, gt, isNull } from "drizzle-orm";
+import { text, timestamp } from "drizzle-orm/pg-core";
+import { triageSchema } from "../triage-db.js";
 
-export const invitation = pgTable("corbits_triage_invitation", {
+export const invitation = triageSchema.table("invitation", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull(),
   email: text("email").notNull(),
@@ -22,31 +22,6 @@ export const invitation = pgTable("corbits_triage_invitation", {
 });
 
 export type Invitation = typeof invitation.$inferSelect;
-
-export async function migrateInvitations(db: DB["db"]): Promise<void> {
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS corbits_triage_invitation (
-      id text PRIMARY KEY,
-      tenant_id text NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
-      email text NOT NULL,
-      role_id text NOT NULL REFERENCES role(id) ON DELETE CASCADE,
-      invited_by text REFERENCES principal(id) ON DELETE SET NULL,
-      token_hash text NOT NULL UNIQUE,
-      token text NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      expires_at timestamptz NOT NULL,
-      revoked_at timestamptz,
-      accepted_at timestamptz,
-      accepted_by text REFERENCES "user"(id) ON DELETE SET NULL,
-      emailed_at timestamptz
-    )
-  `);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS corbits_triage_invitation_email_idx ON corbits_triage_invitation (email, tenant_id)`);
-  await db.execute(sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS corbits_triage_invitation_open_idx ON corbits_triage_invitation (tenant_id, lower(email))
-    WHERE accepted_at IS NULL AND revoked_at IS NULL
-  `);
-}
 
 /** Neither accepted, revoked nor expired. */
 export function isOpen(now: Date) {

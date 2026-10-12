@@ -1,10 +1,12 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
-import { createDB, dropSchema, runMigrations, schema } from "@intx/db";
+import { createDB, runMigrations, schema } from "@intx/db";
+import { migrateTriageTables } from "../triage-db.js";
 import { createTriageTimeline, TriageTimeline } from "./triage-timeline.js";
-import { createVerdictRecordStore, migrateVerdictRecords, type RecordedVerdict } from "./verdict-record-store.js";
+import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_timeline";
@@ -32,13 +34,16 @@ async function allow(): Promise<boolean> {
 }
 
 test("PostgreSQL: a pull request's timeline scores each new outcome and names the checks that changed", async () => {
-  const testSchema = `corbits_timeline_${randomBytes(6).toString("hex")}`;
+  const database = `corbits_timeline_${randomBytes(6).toString("hex")}`;
+  const admin = createDB(TEST_DB);
+  await admin.db.execute(sql.raw(`create database ${database}`));
+  const config = { ...TEST_DB, database };
   let handle: ReturnType<typeof createDB> | undefined;
   try {
-    await runMigrations(TEST_DB, { schema: testSchema });
-    handle = createDB({ ...TEST_DB, schema: testSchema });
+    await runMigrations(config, { schema: "public" });
+    handle = createDB(config);
     const db = handle.db;
-    await migrateVerdictRecords(db);
+    await migrateTriageTables(db, "public");
     await db.insert(schema.tenant).values([
       { id: TENANT, name: "Timeline", slug: "timeline", domain: "timeline.test" },
       { id: OTHER_TENANT, name: "Other", slug: "timeline-other", domain: "timeline-other.test" },
@@ -85,6 +90,7 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
     expect((await get(`repo=${REPO}&number=2147483648`)).status).toBe(400);
   } finally {
     await handle?.close();
-    await dropSchema(TEST_DB, { schema: testSchema });
+    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
+    await admin.close();
   }
 }, 120_000);
