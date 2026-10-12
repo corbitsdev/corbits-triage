@@ -29,7 +29,7 @@ async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack =
   const mail = { kind: "pr", repo: REPO, items: numbers.map((n) => ({ prNumber: n, headSha: `sha${n}` })), policy: { enabled: true }, checkPack: pack };
   await facts.decide({ type: "message.received", message: { content: JSON.stringify(mail) } } as ReactorInboundEvent, {} as ReactorState, caps);
   await done("github_list_open_prs", { prs: numbers.map((n) => ({ number: n, title: `PR ${n}` })) });
-  if (called.has("docs:0")) await done("docs:0", { docs: [], ref: "tree" });
+  if (called.has("docs:0")) await done("docs:0", { docs: [], rules: [], ref: "tree" });
   for (const n of numbers) {
     if (failGetPr.has(n)) await done(`pr:${n}`, { error: "404" }, true);
     else await done(`pr:${n}`, { title: `PR ${n}`, author: "octocat", sha: `sha${n}`, state: "open", draft: false, mergeable: true, requestedReviewers: 0, ...pr });

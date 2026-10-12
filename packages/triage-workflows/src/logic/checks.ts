@@ -61,6 +61,8 @@ export interface PrFacts {
   commits?: string[];
   /** The repository's docs on the default branch, by path. */
   docs?: Record<string, string>;
+  /** The repository's contribution rules on the default branch, by path, read apart from its docs. */
+  rules?: Record<string, string>;
   branch?: string;
   /** Teams the pack's roles name that the author is an active member of, as the roles write them. */
   authorTeams?: string[];

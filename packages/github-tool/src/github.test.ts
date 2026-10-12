@@ -10,9 +10,14 @@ import {
   mergePr,
   mirror,
   parseCodeowners,
+  readRepoDocsPage,
+  REPO_DOCS_MAX_BYTES,
+  REPO_RULES_MAX_BYTES,
+  repoDocs,
   upsertTriageComment,
   type GithubFetch,
   type PrFilesPage,
+  type RepoDocsPage,
 } from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
@@ -318,5 +323,49 @@ describe("authorTeams", () => {
       return missing.clone();
     });
     expect(await authorTeams(gh, { repo: "alice/dotfiles", author: "bob", teams: ["core", "ops"] })).toEqual({ teams: [], unknown: ["core", "ops"] });
+  });
+});
+
+describe("readRepoDocsPage", () => {
+  const docs: Array<[string, string]> = [
+    ["README.md", "Run it.\n".repeat(1_000)],
+    ["docs/guide.md", "Configure it.\n".repeat(2_000)],
+    ["docs/CONTRIBUTING.md", "Keep commits small.\n".repeat(500)],
+    ["AGENTS.md", "No dynamic imports.\n"],
+    [".github/PULL_REQUEST_TEMPLATE/bug.md", "Steps to reproduce.\n"],
+    ["packages/hub/AGENTS.md", "Hub only.\n"],
+  ];
+
+  function repo() {
+    return recorder((path) => {
+      if (path.includes("/git/trees/")) return { sha: "tree", tree: docs.map(([doc, text], index) => ({ path: doc, type: "blob", sha: `blob${index}`, size: new TextEncoder().encode(text).byteLength })) };
+      const blob = /\/git\/blobs\/blob(\d+)$/.exec(path);
+      return blob ? new Response(docs[Number(blob[1])]![1]) : null;
+    });
+  }
+
+  async function readAll(gh: GithubFetch) {
+    const pages: RepoDocsPage[] = [];
+    let offset: number | undefined = 0;
+    while (offset !== undefined) {
+      const page = await readRepoDocsPage(gh, "o/r", { ref: "main", offset });
+      pages.push(page);
+      offset = page.next;
+    }
+    return { pages, ...repoDocs(pages) };
+  }
+
+  test("reads the root rules first within their own budget and every doc once", async () => {
+    const { gh, requests } = repo();
+    const { pages, docs: read, rules } = await readAll(gh);
+    expect(Object.keys(read)).toEqual(["README.md", "docs/CONTRIBUTING.md", "docs/guide.md"]);
+    expect(Object.values(read).reduce((sum, text) => sum + new TextEncoder().encode(text).byteLength, 0)).toBe(REPO_DOCS_MAX_BYTES);
+    expect(Object.keys(rules)).toEqual(["AGENTS.md", ".github/PULL_REQUEST_TEMPLATE/bug.md", "docs/CONTRIBUTING.md"]);
+    expect(rules["AGENTS.md"]).toBe(docs[3]![1]);
+    expect(Object.values(rules).reduce((sum, text) => sum + new TextEncoder().encode(text).byteLength, 0)).toBe(REPO_RULES_MAX_BYTES);
+    // A doc in both the docs and the rules is fetched and sent once; only a doc split across pages is fetched again.
+    const sent = pages.flatMap((page) => page.docs.map((doc) => doc.path));
+    expect(sent.filter((path, index) => sent.indexOf(path) !== index && sent[index - 1] !== path)).toEqual([]);
+    expect(requests.filter((request) => request.path.includes("/git/blobs/"))).toHaveLength(sent.length);
   });
 });

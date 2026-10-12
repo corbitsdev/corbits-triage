@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { minimatch } from "minimatch";
-import { isDocPath } from "@corbits/triage-contracts/paths";
+import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
 
 /** Authenticated fetch pinned to the GitHub API origin; takes a path. */
@@ -356,8 +356,14 @@ type RepoDoc = {
   text: string;
 };
 
+/** How much of a contribution rule file, read once, belongs to the docs and to the rules, in UTF-8 bytes. */
+export type RuleSpan = { path: string; docsBytes: number; rulesBytes: number };
+
 export type RepoDocsPage = {
+  /** Each doc read once, as far as the docs or the rules reach into it. */
   docs: RepoDoc[];
+  /** The contribution rules in reading order, and how much of each the docs and the rules take. */
+  rules: RuleSpan[];
   /** The tree this page was read from; pass it back with `next` so every page reads the same docs. */
   ref: string;
   /** The byte offset into the ordered docs where the next page starts. */
@@ -366,6 +372,9 @@ export type RepoDocsPage = {
 
 /** The most of a repository's docs any reader is given, in UTF-8 bytes. */
 export const REPO_DOCS_MAX_BYTES = 24_000;
+
+/** The most of a repository's contribution rules any reader is given, in UTF-8 bytes, apart from its docs. */
+export const REPO_RULES_MAX_BYTES = 8_000;
 
 type DocBlob = { path: string; sha: string; size: number };
 
@@ -376,8 +385,29 @@ function docRank(path: string): number {
   return path.includes("/") ? 3 : 2;
 }
 
+function byPath(a: DocBlob, b: DocBlob): number {
+  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+}
+
 function byDocOrder(a: DocBlob, b: DocBlob): number {
-  return docRank(a.path) - docRank(b.path) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  return docRank(a.path) - docRank(b.path) || byPath(a, b);
+}
+
+function byRuleOrder(a: DocBlob, b: DocBlob): number {
+  return contributionRuleRank(a.path)! - contributionRuleRank(b.path)! || byPath(a, b);
+}
+
+/** The bytes of each doc that `max` reaches, taking the docs in order. */
+function budget(blobs: DocBlob[], max: number): Map<string, number> {
+  const reach = new Map<string, number>();
+  let read = 0;
+  for (const blob of blobs) {
+    const size = Math.min(blob.size, max - read);
+    if (size <= 0) break;
+    reach.set(blob.path, size);
+    read += size;
+  }
+  return reach;
 }
 
 async function docTree(gh: GithubFetch, repo: string, ref: string): Promise<{ sha: string; blobs: DocBlob[] }> {
@@ -431,19 +461,23 @@ function fittingEnd(page: RepoDocsPage, path: string, bytes: Uint8Array, from: n
 }
 
 /**
- * One page of the repository's docs at `ref` (the default branch when absent), read in order and capped at
- * REPO_DOCS_MAX_BYTES in all. `offset` counts bytes across the ordered docs, so earlier docs are sized from the tree
- * rather than fetched; a doc longer than a page continues on the next one under the same path.
+ * One page of the repository's docs at `ref` (the default branch when absent). The docs are taken in order up to
+ * REPO_DOCS_MAX_BYTES and, apart from them, the contribution rules in their own order up to REPO_RULES_MAX_BYTES, so a
+ * long `docs/` never crowds the rules out; each doc is read once, as far as either reaches. `offset` counts bytes across
+ * the docs read, so earlier docs are sized from the tree rather than fetched; a doc longer than a page continues on the
+ * next one under the same path.
  */
 export async function readRepoDocsPage(gh: GithubFetch, repo: string, { ref, offset = 0 }: { ref?: string; offset?: number } = {}): Promise<RepoDocsPage> {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid docs offset ${offset}`);
   ref ??= String((await json(gh, `/repos/${repo}`)).default_branch);
   const { sha, blobs } = await docTree(gh, repo, ref);
-  const page: RepoDocsPage = { docs: [], ref: sha };
+  const docs = budget(blobs, REPO_DOCS_MAX_BYTES);
+  const rules = budget(blobs.filter((blob) => contributionRuleRank(blob.path) !== undefined).sort(byRuleOrder), REPO_RULES_MAX_BYTES);
+  const page: RepoDocsPage = { docs: [], rules: [...rules].map(([path, rulesBytes]) => ({ path, docsBytes: docs.get(path) ?? 0, rulesBytes })), ref: sha };
   let start = 0;
   for (const blob of blobs) {
-    if (start >= REPO_DOCS_MAX_BYTES) break;
-    const size = Math.min(blob.size, REPO_DOCS_MAX_BYTES - start);
+    const size = Math.max(docs.get(blob.path) ?? 0, rules.get(blob.path) ?? 0);
+    if (size === 0) continue;
     if (offset < start + size) {
       const all = await blobBytes(gh, repo, blob.sha);
       const bytes = all.subarray(0, charStart(all, size));
@@ -458,6 +492,30 @@ export async function readRepoDocsPage(gh: GithubFetch, repo: string, { ref, off
     start += size;
   }
   return page;
+}
+
+/** The docs and contribution rules the pages of readRepoDocsPage spell out, by path. */
+export function repoDocs(pages: readonly RepoDocsPage[]): { docs: Record<string, string>; rules: Record<string, string> } {
+  const texts: Record<string, string> = {};
+  for (const page of pages) for (const { path, text } of page.docs) texts[path] = (texts[path] ?? "") + text;
+  const spans = new Map((pages.at(-1)?.rules ?? []).map((span) => [span.path, span]));
+  const docs: Record<string, string> = {};
+  for (const [path, text] of Object.entries(texts)) {
+    const span = spans.get(path);
+    if (!span) docs[path] = text;
+    else if (span.docsBytes > 0) docs[path] = leadingBytes(text, span.docsBytes);
+  }
+  const rules: Record<string, string> = {};
+  for (const span of spans.values()) rules[span.path] = leadingBytes(texts[span.path] ?? "", span.rulesBytes);
+  return { docs, rules };
+}
+
+const utf8Encoder = new TextEncoder();
+
+/** The longest start of `text` within `limit` UTF-8 bytes, never splitting a character. */
+function leadingBytes(text: string, limit: number): string {
+  const bytes = utf8Encoder.encode(text);
+  return limit >= bytes.length ? text : utf8.decode(bytes.subarray(0, charStart(bytes, limit)));
 }
 
 export async function listIssueComments(gh: GithubFetch, repo: string, number: number): Promise<IssueComment[]> {
