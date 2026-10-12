@@ -1,9 +1,10 @@
-/** `*` matches within a path segment, `**` across segments. */
+import { RE2JS } from "re2js";
+
+/** `*` matches within a path segment, `**` across segments; everything else is literal. RE2 keeps matching linear. */
 export function globMatch(path: string, glob: string): boolean {
-  const escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "\u0000")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\u0000/g, ".*");
-  return new RegExp(`^${escaped}$`).test(path);
+  const pattern = glob
+    .split("**")
+    .map((part) => part.split("*").map(RE2JS.quote).join("[^/]*"))
+    .join(".*");
+  return RE2JS.matches(pattern, path);
 }
