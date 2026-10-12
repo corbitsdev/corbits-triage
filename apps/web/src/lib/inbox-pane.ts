@@ -211,6 +211,13 @@ async function sendReply({ write, replySent }: PaneIo, item: NumberedItem, body:
   return sent(`Posted to GitHub on #${number}.`);
 }
 
+/** The head the pull request is approved on, so commits pushed since are not approved with it. */
+export function approvedHead(item: PrItem): string {
+  const sha = item.headSha ?? item.verdictSha;
+  if (sha === null) throw new Error("The pull request's head is not known yet. Refresh and try again.");
+  return sha;
+}
+
 /** `body` is the reply draft for a reply and the composer text for a comment or requested changes. Throws before anything is held when there is nothing to send. */
 export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): PaneWrite {
   const { repo, number } = item;
@@ -247,15 +254,17 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
         },
       };
     }
-    case "approve":
+    case "approve": {
+      const headSha = approvedHead(item);
       return {
         settles: kind,
         pending: `Approving #${number}…`,
         async send({ write }) {
-          await write({ action: "review", repo, number, event: "APPROVE", body: "" });
+          await write({ action: "review", repo, number, event: "APPROVE", body: "", headSha });
           return sent(`Approved #${number}.`);
         },
       };
+    }
     case "merge":
       return {
         settles: kind,

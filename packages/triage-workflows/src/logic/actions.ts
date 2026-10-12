@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { missingFrom } from "@corbits/github-tool";
 import type { ResolvedTarget } from "@corbits/github-tool/do";
-import { CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from "@corbits/triage-contracts";
+import { ALL_CHECKS, CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
+import type { MergeVerdict } from "./render.js";
 import { errorText } from "./extract.js";
 
 export type Branch = "yes" | "no" | "unsure" | "always";
@@ -63,7 +64,10 @@ type Picked = { branch: Branch; dos: Do[]; reason: string } | { skipped: string 
 /** An unconfirmed check makes the outcome unsure; a check the pack does not run cannot decide it at all. */
 function pick(action: Action, { checks, pack }: ActionInput): Picked {
   if ("always" in action.branches) return { branch: "always", dos: action.branches.always, reason: "Always applies." };
-  const results = action.checks.map((id) => ({ name: checkName(id, pack), result: checks.find((c) => c.check === id)?.result }));
+  const every = action.checks.includes(ALL_CHECKS);
+  if (every && !checks.length) return { skipped: "Every check is off in this pack." };
+  const ids = every ? checks.map((c) => c.check) : action.checks;
+  const results = ids.map((id) => ({ name: checkName(id, pack), result: checks.find((c) => c.check === id)?.result }));
   const off = results.filter((r) => r.result === undefined);
   if (off.length) return { skipped: `${joined(off.map((r) => r.name))} ${off.length === 1 ? "is" : "are"} off in this pack.` };
   const failed = results.filter((r) => r.result === "fail").map((r) => r.name);
@@ -120,6 +124,7 @@ function resolve(task: Do, input: ActionInput): ResolvedTarget {
       return { users: missingFrom([...reviewers, ...reviewedBy], users), teams: missingFrom(reviewers, resolved.teams) };
     }
     case "comment":
+    case "approve":
     case "close":
     case "agent":
       return task.target;
@@ -139,8 +144,9 @@ function satisfied(kind: ActionKind, target: ResolvedTarget, facts: PrFacts): bo
       return "teams" in target && target.users.length === 0 && target.teams.length === 0;
     case "close":
       return facts.state === "closed";
-    // No effect id records a posted comment or agent run yet, so these always stand.
+    // No effect id records a posted comment or agent run yet, so these always stand; facts do not say which review is the App's.
     case "comment":
+    case "approve":
     case "agent":
       return false;
   }
@@ -171,6 +177,31 @@ export function evaluateAction(action: Action, input: ActionInput): ActionOutcom
     }
   }
   return { branch, reason, dos: out };
+}
+
+/**
+ * Why an approval cannot stand on this head, if it cannot: it says the pull request may merge, so the verdict must be ready to merge and CI
+ * must have finished green. A head without CI cannot be told apart from one whose CI has not started yet, so it is not approved either.
+ */
+export function approvalHeldBy(merge: MergeVerdict["verdict"], ci: PrFacts["checks"]): string | undefined {
+  if (merge !== "ready") return "The pull request is not ready to merge.";
+  if (ci !== "success") return "CI has not passed on this head.";
+  return undefined;
+}
+
+/** The pack approves pull requests, so the approvals its approve Dos made are its own to take back. */
+export function packApproves(pack: CheckPack): boolean {
+  return pack.actions.some((action) => Object.values(action.branches).some((dos: Do[]) => dos.some((step) => step.kind === "approve")));
+}
+
+/** Approve Dos are skipped for `reason`, when the head may not be approved. */
+export function heldApprovals(actions: SuggestedAction[], reason: string | undefined): SuggestedAction[] {
+  if (reason === undefined) return actions;
+  return actions.map(function held(action): SuggestedAction {
+    if (!("effectId" in action) || action.kind !== "approve") return action;
+    const { id, branch, index, kind, automatic } = action;
+    return { id, branch, index, kind, automatic, skipped: true, reason };
+  });
 }
 
 /** Suggest only: nothing here writes to GitHub, and automatic steps are suggested like the rest. */

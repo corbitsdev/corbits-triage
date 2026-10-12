@@ -18,6 +18,7 @@ const REPO = "acme/widgets";
 const HEAD = "abc123";
 const testSchema = `corbits_read_access_${randomBytes(6).toString("hex")}`;
 const requested: string[] = [];
+const reviewed: unknown[] = [];
 
 const READS: Record<string, unknown> = {
   [`/repos/${REPO}/pulls`]: [{ number: 8, title: "Fix the widget", draft: false, user: { login: "octocat" }, head: { sha: HEAD } }],
@@ -36,6 +37,11 @@ async function github(req: Request): Promise<Response> {
   requested.push(`${req.method} ${pathname}`);
   if (pathname === "/app/installations/1/access_tokens") return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
   if (req.method === "GET" && pathname in READS) return Response.json(READS[pathname]);
+  if (pathname === `/repos/${REPO}/installation`) return Response.json({ id: 1 });
+  if (req.method === "POST" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
+    reviewed.push(await req.json());
+    return Response.json({ id: 1, state: "APPROVED" });
+  }
   return new Response(null, { status: 404 });
 }
 
@@ -94,6 +100,7 @@ beforeAll(async () => {
     { id: "prn_member", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" },
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
     { id: "prn_admin", tenantId: TENANT, kind: "user", refId: "usr_admin", status: "active" },
+    { id: "prn_approver", tenantId: TENANT, kind: "user", refId: "usr_approver", status: "active" },
   ]);
   await db.insert(schema.role).values([
     { id: "rol_member", tenantId: TENANT, name: "member", isSystem: true },
@@ -105,6 +112,8 @@ beforeAll(async () => {
     { id: "grt_admin_read", tenantId: TENANT, roleId: "rol_admin", resource: "*", action: "read", effect: "allow", origin: "system" },
     { id: "grt_admin_manage", tenantId: TENANT, roleId: "rol_admin", resource: "*", action: "manage", effect: "allow", origin: "system" },
     { id: "grt_user_use", tenantId: TENANT, principalId: "prn_user", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
+    { id: "grt_approver_use", tenantId: TENANT, principalId: "prn_approver", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
+    { id: "grt_approver_approve", tenantId: TENANT, principalId: "prn_approver", resource: "github-review:*", action: "approve", effect: "allow", origin: "system" },
   ]);
   await db.insert(schema.provider).values({ id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: githubApiOrigin });
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
@@ -159,4 +168,16 @@ test("PostgreSQL: only a member who may save roles previews candidate roles, so 
   expect(admin.status).toBe(200);
   expect(requested).toContain(membership);
   expect(await probeResult(admin)).toBe("pass");
+});
+
+test("PostgreSQL: approving needs the approve grant on top of use, and pins the review to the head shown", async () => {
+  const approve = { action: "review", event: "APPROVE", repo: REPO, number: 8, body: "", headSha: HEAD };
+  const refused = await prActions(post("usr_user", "/actions", approve), TENANT);
+  expect(refused.status).toBe(403);
+  expect(await refused.json()).toEqual({ error: { code: "forbidden", message: "You do not have the grant to approve pull requests in this repository." } });
+  expect(reviewed).toEqual([]);
+
+  const approved = await prActions(post("usr_approver", "/actions", approve), TENANT);
+  expect(approved.status).toBe(200);
+  expect(reviewed).toEqual([{ body: "", event: "APPROVE", commit_id: HEAD }]);
 });

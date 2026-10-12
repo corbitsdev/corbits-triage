@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { EmptyState } from "@corbits/react-ui";
-import { applyRecommended, type Action } from "@corbits/triage-contracts";
+import { recommendedPack, type Action } from "@corbits/triage-contracts";
 import type { TriageStats } from "../../lib/hub-api.ts";
 import { moveAction, removeAction, upsertAction, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
@@ -41,7 +41,10 @@ export default function ActionsList({ draft, stats, disabled, edit, problem }: A
   }
 
   function startFromRecommended() {
-    edit((current) => ({ ...current, pack: applyRecommended(current.pack) }));
+    edit(function recommended(current) {
+      const { checks, actions } = recommendedPack(current.pack.repo);
+      return { ...current, pack: { ...current.pack, checks, actions } };
+    });
   }
 
   return (
@@ -80,7 +83,9 @@ export default function ActionsList({ draft, stats, disabled, edit, problem }: A
       {actions.length === 0 && editing !== NEW ? (
         <EmptyState
           title="No actions yet"
-          description="Actions label, assign, request review or comment when the checks you pick pass, fail or are unsure."
+          description={unset
+            ? "Actions label, assign, request review, comment or approve when the checks you pick pass, fail or are unsure. The recommended action approves each pull request automatically once every check passes and CI is green."
+            : "Actions label, assign, request review, comment or approve when the checks you pick pass, fail or are unsure."}
           action={unset ? <button type="button" className="btn btn-sm" disabled={disabled} onClick={startFromRecommended}>Start from recommended</button> : null}
         />
       ) : null}

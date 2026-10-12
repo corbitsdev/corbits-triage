@@ -4,7 +4,7 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-tool/github";
-import { emptyPack, recommendedPack, type Action, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { ALL_CHECKS, emptyPack, recommendedPack, type Action, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory, type DoResult } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
@@ -16,6 +16,8 @@ import { workflow as historical } from "./pr-triage-historical.js";
 const REPO = "acme/widgets";
 const HELLO: Action = { id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", automatic: false, target: { body: "hi" } }] } };
 const AUTO_HELLO: Action = { ...HELLO, id: "auto-hello", branches: { always: [{ kind: "comment", automatic: true, target: { body: "hi" } }] } };
+const APPROVE: Action = { id: "approve", when: ["opened", "updated"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } };
+const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 type Recorded = { method: string; path: string };
 type FileRow = { filename: string; status: string; additions: number; deletions: number; patch?: string; previous_filename?: string };
@@ -35,21 +37,35 @@ function bytes(text: string): number {
 }
 
 type Comment = { id: number; user: { type: string }; body: string };
+type Review = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body: string };
+type Ci = "none" | "pending" | "success" | "failure";
+
+const RUNS: Record<Ci, unknown[]> = {
+  none: [],
+  pending: [{ name: "build", status: "in_progress", conclusion: null }],
+  success: [{ name: "build", status: "completed", conclusion: "success" }],
+  failure: [{ name: "build", status: "completed", conclusion: "failure" }],
+};
 type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean };
 
-/** GitHub serving open pull request 8 changing `files` and carrying `labels`, failing every read of it when `missing`, keeping the comments posted on it, `prior` first, and refusing new ones when `failComments`. */
+/**
+ * GitHub serving open pull request 8 at `pr.head`, a draft when `pr.draft` and with CI `pr.ci`, changing `files` and carrying `labels`, failing every read of it when `missing`,
+ * keeping the comments and reviews posted on it, `prior` first, and refusing new comments when `failComments`.
+ */
 function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: { type: "Bot" }, body: prior }];
+  const reviews: Review[] = [];
+  const pr: { head: string; draft: boolean; ci: Ci } = { head: "abc", draft: false, ci: "none" };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
     if (missing && path.includes("/pulls/8")) return Response.json({ message: "Not Found" }, { status: 404 });
-    if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title: "Fix #3", user: { login: "octocat" }, draft: false, head: { sha: "abc" } }]);
+    if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title: "Fix #3", user: { login: "octocat" }, draft: pr.draft, head: { sha: pr.head } }]);
     if (path === `/repos/${REPO}/pulls/8`) {
-      return Response.json({ number: 8, title: "Fix #3", state: "open", draft: false, user: { login: "octocat" }, head: { sha: "abc", ref: "fix" }, base: { ref: "main" }, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
+      return Response.json({ number: 8, title: "Fix #3", state: "open", draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix" }, base: { ref: "main" }, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
     }
-    if (path.includes("/check-runs")) return Response.json({ check_runs: [] });
+    if (path.includes("/check-runs")) return Response.json({ check_runs: RUNS[pr.ci] });
     if (path === `/repos/${REPO}`) return Response.json({ default_branch: "main" });
     if (path.startsWith(`/repos/${REPO}/git/trees/`)) return Response.json({ sha: "tree", tree: DOCS.map(([doc, text], index) => ({ path: doc, type: "blob", sha: `blob${index}`, size: bytes(text) })) });
     if (path.startsWith(`/repos/${REPO}/git/blobs/blob`)) return new Response(DOCS[Number(path.slice(path.lastIndexOf("blob") + 4))]![1]);
@@ -63,10 +79,23 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
       comments.push({ id: comments.length + 10, user: { type: "Bot" }, body: JSON.parse(String(init?.body)).body });
       return Response.json(comments.at(-1));
     }
+    if (path === "/app") return Response.json({ slug: "corbits-triage" });
+    if (path.startsWith(`/repos/${REPO}/pulls/8/reviews?`)) return Response.json(reviews);
+    if (method === "POST" && path === `/repos/${REPO}/pulls/8/reviews`) {
+      const { commit_id, body } = JSON.parse(String(init?.body));
+      reviews.push({ id: reviews.length + 100, user: APP, state: "APPROVED", commit_id, body });
+      return Response.json(reviews.at(-1));
+    }
+    const dismissal = /^\/repos\/acme\/widgets\/pulls\/8\/reviews\/(\d+)\/dismissals$/.exec(path);
+    if (method === "PUT" && dismissal) {
+      const review = reviews.find((row) => row.id === Number(dismissal[1]));
+      if (review) review.state = "DISMISSED";
+      return Response.json(review);
+    }
     if (method === "GET") return Response.json([]);
     return Response.json({});
   }
-  return { gh: gh satisfies GithubFetch, requests, comments };
+  return { gh: gh satisfies GithubFetch, requests, comments, reviews, pr };
 }
 
 const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrants: [], resolvedBy: null });
@@ -137,7 +166,7 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
     hasUpstreamSignalResolver: true,
     invokeStep: stepInvoker(gh, invoked, judged, judgeFails),
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
-    triggerPayload: backlog ? { kind: "backlog", repo: REPO, policy, checkPack } : { kind: "pr", repo: REPO, prNumber: 8, policy, checkPack },
+    triggerPayload: backlog ? { kind: "backlog", repo: REPO, policy, checkPack } : { kind: "pr", repo: REPO, prNumber: 8, policy, checkPack, events: ["opened"] },
   }).complete;
   expect(terminalStatus).toBe("completed");
   const mirrors = Object.keys(outputs).filter((id) => id.startsWith("mirror"));
@@ -269,6 +298,92 @@ describe("pr-triage body", () => {
     const again = await triage(pack, { github });
     expect(again.dos).toEqual([{ effectId, status: "satisfied" }]);
     expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([expect.objectContaining({ body: `${doMarker(effectId)}\nhi` })]);
+  });
+
+  /** GitHub with CI green on head abc, for a pack that approves on every check. */
+  function approving() {
+    const github = fakeGithub();
+    github.pr.ci = "success";
+    return { github, pack: { ...emptyPack(REPO), checks: { draft: { enabled: true } }, actions: [APPROVE] } };
+  }
+
+  function appReads(github: ReturnType<typeof fakeGithub>): number {
+    return github.requests.filter((r) => r.path === "/app").length;
+  }
+
+  test("every check passing with CI green approves the head once, pinned to it, asking for the App once", async () => {
+    const { github, pack } = approving();
+    const first = await triage(pack, { github });
+    const effectId = ((first.verdict as Verdict).actions[0] as SuggestedDo).effectId;
+    expect(first.dos).toEqual([{ effectId, status: "done" }]);
+    expect(appReads(github)).toBe(1);
+    expect((await triage(pack, { github })).dos).toEqual([{ effectId, status: "satisfied" }]);
+    expect(github.reviews).toEqual([expect.objectContaining({ state: "APPROVED", commit_id: "abc" })]);
+  });
+
+  test.each<[string, (github: ReturnType<typeof fakeGithub>) => void, string]>([
+    ["a failing check", (github) => { github.pr.draft = true; }, ""],
+    ["pending CI", (github) => { github.pr.ci = "pending"; }, "CI has not passed on this head."],
+  ])("%s approves nothing", async (_, change, reason) => {
+    const { github, pack } = approving();
+    change(github);
+    const { dos, verdict } = await triage(pack, { github });
+    expect(dos).toEqual([]);
+    expect((verdict as Verdict).actions).toEqual(reason ? [expect.objectContaining({ kind: "approve", skipped: true, reason })] : []);
+    expect(github.reviews).toEqual([]);
+  });
+
+  test("passing the action's checks does not approve a pull request not ready to merge", async () => {
+    const { github, pack } = approving();
+    const forbidden = { ...pack, checks: { ...pack.checks, paths: { enabled: true, forbiddenGlobs: ["src/**"] } }, actions: [{ ...APPROVE, checks: ["draft" as const] }] };
+    const { dos, verdict } = await triage(forbidden, { github });
+    expect((verdict as Verdict).merge.verdict).toBe("not-recommended");
+    expect((verdict as Verdict).actions).toEqual([expect.objectContaining({ kind: "approve", skipped: true, reason: "The pull request is not ready to merge." })]);
+    expect(dos).toEqual([]);
+    expect(github.reviews).toEqual([]);
+  });
+
+  test("new commits that may not be approved take back the approve Do's approval of the earlier head, once", async () => {
+    const { github, pack } = approving();
+    await triage(pack, { github });
+    github.pr.head = "def";
+    github.pr.draft = true;
+    await triage(pack, { github });
+    await triage(pack, { github });
+    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
+    expect(github.requests.filter((r) => r.method === "PUT")).toEqual([{ method: "PUT", path: `/repos/${REPO}/pulls/8/reviews/100/dismissals` }]);
+  });
+
+  test("CI failing on a re-run takes back the approval of the same head, and green again does not approve it again", async () => {
+    const { github, pack } = approving();
+    await triage(pack, { github });
+    github.pr.ci = "failure";
+    await triage(pack, { github });
+    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
+    github.pr.ci = "success";
+    const green = await triage(pack, { github });
+    expect(green.dos).toEqual([expect.objectContaining({ status: "satisfied" })]);
+    expect(github.reviews).toHaveLength(1);
+  });
+
+  test.each<[string, CheckPack]>([
+    ["a pack that approves", approving().pack],
+    ["a pack without actions", emptyPack(REPO)],
+  ])("an inbox approval of an earlier head stays under %s", async (_, pack) => {
+    const github = fakeGithub();
+    github.pr.head = "def";
+    github.pr.draft = true;
+    github.reviews.push({ id: 7, user: APP, state: "APPROVED", commit_id: "abc", body: "" });
+    await triage({ ...pack, checks: { draft: { enabled: true } } }, { github });
+    expect(github.reviews).toEqual([expect.objectContaining({ id: 7, state: "APPROVED" })]);
+    expect(github.requests.filter((r) => r.method === "PUT")).toEqual([]);
+  });
+
+  test("a pack without an approve Do never asks for the App", async () => {
+    const github = fakeGithub();
+    github.pr.draft = true;
+    await triage({ ...emptyPack(REPO), checks: { draft: { enabled: true } } }, { github });
+    expect(appReads(github)).toBe(0);
   });
 
   test("a human-approved repository runs no Do", async () => {

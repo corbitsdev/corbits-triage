@@ -614,6 +614,8 @@ export type Verdict = RenderOutput & {
   actions: SuggestedAction[];
   /** The judge answers a later run of this head reuses instead of asking again. */
   judged?: Judged;
+  /** Set when the pack has an approve Do: whether this head may be approved. */
+  approvable?: boolean;
 };
 
 export function toMirrorRequest(v: RenderOutput & { repo: string; number: number }): MirrorRequest {

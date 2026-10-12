@@ -37,6 +37,8 @@ function label(action: SuggestedAction, repo: string): string | null {
     }
     case "comment":
       return typeof target.body === "string" && target.body.trim() ? "Comment" : null;
+    case "approve":
+      return "Approve";
     case "close":
       return "Close";
     case "agent":

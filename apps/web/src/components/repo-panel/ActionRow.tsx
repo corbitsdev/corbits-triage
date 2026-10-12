@@ -1,8 +1,8 @@
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
-import type { Action, Do } from "@corbits/triage-contracts";
+import { ALL_CHECKS, type Action, type Do } from "@corbits/triage-contracts";
 import type { TriageStats } from "../../lib/hub-api.ts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
-import { BRANCH_NAMES, doText, sentence, whenText, type Branch } from "../../lib/pack-prose.ts";
+import { ALL_CHECKS_NAME, BRANCH_NAMES, doText, sentence, whenText, type Branch } from "../../lib/pack-prose.ts";
 import CheckName from "./CheckName.tsx";
 import Joined from "./Joined.tsx";
 
@@ -24,7 +24,7 @@ type ActionRowProps = {
 export default function ActionRow({ action, index, count, draft, stats, disabled, reason, onEdit, onRemove, onMove }: ActionRowProps) {
   const branches = Object.entries(action.branches) as Array<[Branch, Do[]]>;
   const fired = stats?.actions[action.id];
-  const checks = action.checks.map((id) => ({ key: id, node: <CheckName id={id} draft={draft} stats={stats} /> }));
+  const checks = action.checks.map((id) => ({ key: id, node: id === ALL_CHECKS ? ALL_CHECKS_NAME : <CheckName id={id} draft={draft} stats={stats} /> }));
   return (
     <div className={reason ? "act invalid" : "act"} id={`rp-action-${action.id}`}>
       <div className="sentence">

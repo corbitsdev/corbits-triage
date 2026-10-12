@@ -96,6 +96,16 @@ hold it. Hub routes that read GitHub check the caller's `read` (or `use`)
 grant on the same credential; routes that write to GitHub check `use`. Reads
 (open pull requests, details, previews) use the secret on the caller's
 behalf and never return it; writes are pull request actions, triage and Dos.
+Approving a pull request from the portal also checks `approve` on
+`github-review:<owner>/<name>`, the repository name in lowercase; the admin
+role holds `approve` on `github-review:*` from GitHub setup, or once from a
+hub start for workspaces set up earlier, so an owner's removal stays, and
+owners hold every grant. In a run, the repository's pack decides when to
+approve, and only a head ready to merge with CI green is approved, from the
+newest verdict. In an automated repository whose pack approves, a settled
+head that may not be approved dismisses the approvals the approve Do made;
+one dismissed on a head is not made again on it. Human-approved repositories
+write nothing unattended, so their approvals are not dismissed.
 Hub routes that reach GitHub for the portal use the same adapter.
 
 ## Data
