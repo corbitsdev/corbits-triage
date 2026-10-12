@@ -1,17 +1,9 @@
 import { createHash } from "node:crypto";
-import { CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type LabelsTarget, type RepoRole, teamSlug } from "@corbits/triage-contracts";
+import { missingFrom } from "@corbits/github-tool";
+import type { ResolvedTarget } from "@corbits/github-tool/do";
+import { CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { errorText } from "./extract.js";
-
-export type ResolvedTarget =
-  | { labels: string[] }
-  | { users: string[] }
-  | { users: string[]; teams: string[] }
-  | { body: string }
-  | Record<string, never>
-  | { prompt: string; tools: string[] }
-  | { unresolved: "codeowners" }
-  | { unresolved: "derive"; from: Exclude<LabelsTarget["from"], "list"> };
 
 export type Branch = "yes" | "no" | "unsure" | "always";
 
@@ -54,16 +46,6 @@ export interface ActionInput {
 
 export function checkName(id: string, pack: CheckPack): string {
   return CHECK_CATALOG[id as CatalogId]?.name ?? pack.custom.find((c) => c.id === id)?.name ?? id;
-}
-
-/** GitHub logins, org names, team slugs and label names are case-insensitive. */
-function fold(name: string): string {
-  return name.toLowerCase();
-}
-
-export function missingFrom(have: string[] | undefined, wanted: string[]): string[] {
-  const held = new Set((have ?? []).map(fold));
-  return wanted.filter((name) => !held.has(fold(name)));
 }
 
 function joined(names: string[]): string {

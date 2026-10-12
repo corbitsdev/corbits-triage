@@ -1,9 +1,7 @@
 // Decides, from what GitHub and the run logs say now, which open pull requests
 // to queue again. Pure, so every recovery path is decided in one place.
 import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow } from "@corbits/triage-contracts";
-
-/** A verdict whose model checks were all skipped; a settled head is triaged again for it once, whatever attempts it spent. */
-export const MODEL_NOT_ASKED = "model not asked";
+import { MODEL_NOT_ASKED } from "../../../../packages/triage-workflows/src/logic/settled.js";
 
 export type OpenPr = { number: number; headSha: string; updatedAt: string; draft: boolean };
 

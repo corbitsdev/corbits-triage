@@ -1,6 +1,6 @@
 import type { RepoRole, RuleCustomCheck } from "@corbits/triage-contracts";
 import { RE2JS } from "re2js";
-import { missingFrom } from "./actions.js";
+import { missingFrom } from "@corbits/github-tool";
 import type { CheckResult, Finding, PrFacts, PrFileFacts } from "./checks.js";
 import { globMatch } from "./glob.js";
 

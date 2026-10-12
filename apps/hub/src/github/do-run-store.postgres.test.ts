@@ -11,7 +11,7 @@ const CLAIM: DoClaim = {
   actionId: "a", branch: "always", index: 0, kind: "labels", source: "portal", principalId: null,
 };
 
-test("PostgreSQL: one claim per Do effect; a failed or expired claim is taken again", async () => {
+test("PostgreSQL: one claim per Do effect; a failed or expired claim is taken again; a recorded run settles only a new or failed row", async () => {
   const testSchema = `corbits_dos_${randomBytes(6).toString("hex")}`;
   let handle: ReturnType<typeof createDB> | undefined;
   try {
@@ -43,6 +43,16 @@ test("PostgreSQL: one claim per Do effect; a failed or expired claim is taken ag
     expect(await store.settle(stale!, { status: "done", result: null })).toBeUndefined();
 
     expect((await store.list("tnt_dos", { repo: "acme/widgets", number: 8 })).map((row) => row.effectId).sort()).toEqual(["e1", "e2", "e3"]);
+
+    const ran = { ...CLAIM, source: "workflow" as const };
+    await store.record({ ...ran, effectId: "w1" }, { status: "done", result: null });
+    await store.record({ ...ran, effectId: "w1", runId: "run_2" }, { status: "satisfied", result: null });
+    expect(await store.read("tnt_dos", "w1")).toMatchObject({ status: "done", runId: "run_1", attempts: 1 });
+    await store.record(ran, { status: "failed", error: "github POST -> 500" });
+    expect(await store.read("tnt_dos", "e1")).toMatchObject({ status: "done", source: "portal", error: null });
+    await store.record({ ...ran, effectId: "w2" }, { status: "failed", error: "github POST -> 500" });
+    await store.record({ ...ran, effectId: "w2", runId: "run_2" }, { status: "done", result: null });
+    expect(await store.read("tnt_dos", "w2")).toMatchObject({ status: "done", runId: "run_2", error: null });
   } finally {
     await handle?.close();
     await dropSchema(TEST_DB, { schema: testSchema });
