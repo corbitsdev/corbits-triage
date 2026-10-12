@@ -169,7 +169,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     const { repo, number, event = "catch-up" } = body;
     const candidate = body.pack === undefined ? undefined : candidatePack(body.pack, repo);
     if (typeof candidate === "string") return failure(400, "invalid_pack", candidate);
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
+    const appJson = await githubAppCredential(deps, principalId, tenantId, "read");
     if (appJson instanceof Response) return appJson;
 
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
@@ -184,7 +184,9 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
       if (stored.status !== "ok") return failure(409, "needs_setup", "This repository still needs check setup.");
       pack = stored.pack;
     }
-    const policy = repoPolicy(body.roles === undefined ? record : { ...record, roles: body.roles });
+    // Candidate roles name the teams whose membership is read from GitHub, so only those who may save roles can try them.
+    const candidateRoles = body.roles !== undefined && await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage");
+    const policy = repoPolicy(candidateRoles ? { ...record, roles: body.roles } : record);
     const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId);
 
     // The preview never asks the judge, so it reads no docs.

@@ -1,10 +1,14 @@
 // Read-only pull request details for the portal's PR view (files with
 // patches, commits, conversation, referenced issues). Workflow run logs keep
 // only step outputs, so the view reads GitHub live with the tenant's App.
+import { eq } from "drizzle-orm";
 import { type } from "arktype";
+import { schema } from "@intx/db";
 import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues } from "@corbits/github-tool/github";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
+import { forInstallation } from "./open-pulls.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { repoRecords, triageNs } from "./tenant-config.js";
 
 export const GITHUB_PR_DETAILS_PATH = "/api/integrations/github-pull";
 
@@ -19,9 +23,14 @@ export function createGithubPrDetails(deps: PortalCredentialDeps & { githubApiOr
     const url = new URL(req.url);
     const query = Query({ repo: url.searchParams.get("repo"), number: url.searchParams.get("number") });
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
+    const appJson = await githubAppCredential(deps, principalId, tenantId, "read");
     if (appJson instanceof Response) return appJson;
-    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+
+    const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
+    if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
+    const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === query.repo && row.connected);
+    if (!record) return failure(409, "repo_not_connected", `${query.repo} is not connected to this workspace.`);
+    const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId);
 
     try {
       const { repo, number } = query;
