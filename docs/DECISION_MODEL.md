@@ -36,7 +36,8 @@ Questions are built in `packages/triage-workflows/src/logic/quality.ts`. Every r
 
 - the pull request's title, body (up to 4,000 chars), up to 50 commit messages and up to 200 changed paths, lockfiles included;
 - the judged files that fit the request, each patch split into hunks. Lockfiles (`bun.lock`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum` and similar) keep their path but their patch is never sent;
-- the repository's docs (`repository.docs`, markdown by path), see [budgets](#budgets-and-limits).
+- the repository's docs (`repository.docs`, markdown by path), see [budgets](#budgets-and-limits);
+- in requests that ask a custom check, the repository's contribution rules (`repository.rules`), taken out of `repository.docs` so each file is sent once. Custom questions say to judge by them.
 
 Questions point into the state by path, such as `` `pullRequest.files[3].hunks[0]` ``, rather than copying it.
 
@@ -83,12 +84,14 @@ Two different numbers come out of the answers:
 | State per request | 90,000 bytes (32k tokens is about 105 KB of diff) | `MAX_SYSTEM_ONE_STATE_BYTES` |
 | Questions per request | 256 (no documented cap; 300 were answered) | `MAX_SYSTEM_ONE_QUESTIONS` |
 | Repository docs | 24,000 bytes, default branch | `REPO_DOCS_MAX_BYTES` |
+| Contribution rules | 8,000 bytes, default branch | `REPO_RULES_MAX_BYTES` |
 | Patch read per file | 65,536 chars | `MAX_PATCH_INPUT_CHARS` |
 | Patch read per pull request | 270,000 chars | `MAX_PATCH_CHARS` |
 | GitHub tool page | 9,000 chars | `PR_FILES_PAGE_CHARS` |
 | Focused candidates | first 100 files, 200 candidates | `logic/candidates.ts` |
 
 - **Docs.** Docs are read from the default branch in this order: root `README`, then `docs/`, then other root markdown, then nested markdown, each in path order. Reading stops at 24,000 bytes; a doc that crosses the cap is cut and later docs are not seen. The same docs are in every request's state.
+- **Contribution rules.** Read under their own 8,000-byte budget, in this order: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING` and `PULL_REQUEST_TEMPLATE` at the root, then `CONTRIBUTING` and `PULL_REQUEST_TEMPLATE` in `.github/` (including `PULL_REQUEST_TEMPLATE/`), then the same two in `docs/`. An `AGENTS.md` or `CLAUDE.md` inside a package stays an ordinary doc. Only requests that ask a custom check carry them and give up room for them; requests that ask only built-in checks are unchanged.
 - **Request splitting.** Files fill each request's state in order up to the budget left after metadata and docs. A file too large for one request keeps its leading hunks. Each request asks only about the files it holds; whole-PR questions go in the first. If the title, body, commits, paths and docs alone exceed the budget, nothing is asked and the model checks stay unconfirmed ("pull request too large for the decision model").
 - **Oversized patches.** A patch larger than one tool page is read across pages and joined. Reading stops at 65,536 chars for a file, which is then marked cut. Once the pull request's 270,000-char budget is spent, later files are listed without patches.
 - **Unread files.** A file with lines changed but no patch to read (GitHub left it out, the per-PR budget was spent, or not even its first hunk fits a request) is unread, and a check that would ask about it stays unconfirmed. Treatment differs by check:
