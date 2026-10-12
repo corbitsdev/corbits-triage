@@ -305,7 +305,7 @@ function failedStep(c: CheckResult, sources: Sources): Step {
     case "ci": return { actor: "author", action: c.evidence.length ? `Fix failing CI: ${c.evidence.join(", ")}` : "Fix failing CI" };
     case "conflicts": return { actor: "author", action: "Resolve merge conflicts" };
     case "paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
-    case "size": return { actor: "author", action: `Split into smaller pull requests (${withoutLimit(c.evidence)})` };
+    case "size": return { actor: "author", action: `Consider splitting it (${withoutLimit(c.evidence)})` };
     case "issue": return { actor: "author", action: "Link an issue" };
     case "review": return { actor: "author", action: `Address requested changes from ${c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ")}` };
     case "duplicate": return { actor: "maintainer", action: `Confirm duplicate of ${c.evidence.join(", ")} or keep` };

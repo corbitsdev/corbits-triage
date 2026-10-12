@@ -43,7 +43,7 @@ function CatalogParams({ id, pack, saved, disabled, edit }: CatalogProps) {
         <span className="txt">In the verdict</span>
         <Switch className="sw" checked={on} onCheckedChange={(enabled) => set({ enabled })} label={`${checkName(pack, id)} in the verdict`} disabled={disabled} />
       </div>
-      {id === "size" ? <p className="txt">Flag more than {count("maxFiles", "Most files", 1)} files or {count("maxLines", "Most lines", 1)} lines</p> : null}
+      {id === "size" ? <p className="txt">Flag pull requests over {count("maxFiles", "Most files", 1)} files or {count("maxLines", "Most lines", 1)} lines changed</p> : null}
       {id === "drift" ? <p className="txt">Flag {count("maxBehindBy", "Commits behind", 0)} or more commits behind the base branch</p> : null}
       {id === "paths" ? <p className="txt">Never accept changes to <TokenList values={catalogValue(pack, id, "forbiddenGlobs") ?? []} noun="path" placeholder="path/**" mono disabled={disabled} onChange={(forbiddenGlobs) => set({ forbiddenGlobs })} /></p> : null}
       {id === "issue" ? (
