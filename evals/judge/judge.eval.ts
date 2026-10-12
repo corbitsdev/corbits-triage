@@ -132,7 +132,7 @@ try {
     run: judge,
     cases: `${here}cases.jsonl`,
     checks: Object.fromEntries(MODEL_CHECKS.map((check) => [check, answered(check)])),
-    // Main's code missed 10 docs cases, on the first 72 and on all 76.
+    // Main's code (`45f34e6`) missed 10 docs cases of the first 72.
     allow: { tests: 3, docs: 10, focused: 11 },
     about: { model: ENDPOINT.model },
     concurrency: 2,

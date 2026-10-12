@@ -112,14 +112,15 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 `evals/judge` replays frozen, labelled pull requests of this repository through the production steps (file paging, rules, one call per chunk, evaluate) against OpenCode Zen `jev-1.13`, with focused, docs and tests enabled.
 
 - **Cases**: 76 in `cases.jsonl`. These are 34 pull requests labelled in `labels.json` (needs tests, needs docs), 31 variants with their tests or docs removed (body and matching commit messages dropped too), 7 mixes of two unrelated pull requests that focused must fail, and 4 of those mixes again with a title and body describing both halves (`describedMixes`). #190 and #191 are one feature each spread across hub, portal, contracts and workflows, which focused must pass.
-- **Allowed misses**: tests 3, docs 9, focused 11 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
-- **Recent results**, misses out of 58 as reported in commit messages:
+- **Allowed misses**: tests 3, docs 10, focused 11 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
+- **Recent results**, misses as reported in commit messages and pull requests, out of 58 cases up to `45f34e6` and out of 72 on the row that says so:
 
 | Commit | Date | tests | docs | focused |
 | --- | --- | --- | --- | --- |
 | `e31d6ba` | 2026-10-11 | 2 | 8 | 10 |
 | `4c7fead`, run 1 | 2026-10-11 | 2 | 5 | 1 |
 | `4c7fead`, run 2 | 2026-10-11 | 2 | 6 | 1 |
+| `45f34e6`, 72 cases | 2026-10-12 | 2 | 10 | 4 |
 
 These cover one repository's pull requests. Custom checks and other repositories are unmeasured.
 
