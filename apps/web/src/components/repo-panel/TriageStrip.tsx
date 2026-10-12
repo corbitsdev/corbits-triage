@@ -1,17 +1,6 @@
 import { StatGrid, StatGridItem } from "@corbits/react-ui";
 import type { TriageStats } from "../../lib/hub-api.ts";
-
-const MINUTE = 60_000;
-
-function medianText(ms: number | null): string {
-  if (ms === null) return "–";
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(ms / MINUTE);
-  const hours = Math.floor(minutes / 60);
-  if (hours === 0) return `${minutes}m`;
-  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
-}
+import { actedOn, medianText } from "../../lib/repo-stats.ts";
 
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -30,7 +19,6 @@ export default function TriageStrip({ stats }: { stats: TriageStats | undefined 
   const span = `the last ${plural(stats.days, "day")}`;
   if (stats.triaged === 0) return <p className="hint strip">No pull requests triaged in {span}.</p>;
   const daily = stats.daily.map((day) => day.triaged);
-  const actedOn = Object.values(stats.actions).reduce((sum, action) => sum + action.executed, 0);
   return (
     <section className="strip" aria-label={`Triage in ${span}`}>
       <StatGrid columns={2}>
@@ -42,7 +30,7 @@ export default function TriageStrip({ stats }: { stats: TriageStats | undefined 
           sparklineLabel="Pull requests triaged each day"
         />
         <StatGridItem label="Needed you" value={String(stats.neededYou)} />
-        <StatGridItem label="Acted on" value={String(actedOn)} sub={plural(stats.comments, "comment")} />
+        <StatGridItem label="Acted on" value={String(actedOn(stats))} sub={plural(stats.comments, "comment")} />
         <StatGridItem label="Median to verdict" value={medianText(stats.medianTimeToVerdictMs)} />
       </StatGrid>
     </section>
