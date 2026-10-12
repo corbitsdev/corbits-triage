@@ -198,7 +198,7 @@ function createPortalQueryClient() {
 const PERSISTED_QUERIES_KEY = "corbits.queries";
 const PERSISTED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** Changed whenever a persisted query's shape changes, so older caches are dropped rather than read as the new shape. */
-const PERSISTED_SHAPE = "do-run-kind";
+const PERSISTED_SHAPE = "principal-run-lists";
 
 async function getPersisted(key: string): Promise<string | null> {
   return (await get<string>(key)) ?? null;

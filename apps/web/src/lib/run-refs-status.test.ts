@@ -23,7 +23,7 @@ test("a deployment that passes through pending/recovering keeps its current run 
   const state = { status: "pending", runIds: ["dep"] };
   const transport = transportFor(state);
   const queryClient = new QueryClient();
-  const read = async () => (await queryClient.fetchQuery({ ...runRefsQuery(queryClient, transport, TENANT), staleTime: 0 })).map((ref) => ref.runId);
+  const read = async () => (await queryClient.fetchQuery({ ...runRefsQuery(queryClient, transport, { tenantId: TENANT, principalId: "p1", userId: "u1" }), staleTime: 0 })).map((ref) => ref.runId);
 
   expect(await read()).toEqual([]);
   state.status = "deployed";
