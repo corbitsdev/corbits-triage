@@ -138,11 +138,18 @@ function openHeadsOf(drafts: number[]): BridgeDeps["openHeadsFor"] {
   };
 }
 
-function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[] } = {}) {
+type Recheck = [string, string, number];
+
+function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[] } = {}) {
   const sent = overrides.sent ?? [];
+  const rechecks = overrides.rechecks ?? [];
   async function accept(input: CoalescedEvent) {
     sent.push(input);
     return "queued" as const;
+  }
+  async function recheckOpenPulls(tenantId: string, repo: string, except: number) {
+    rechecks.push([tenantId, repo, except]);
+    return 1;
   }
   return createBridgeHandler({
     db: stubDb([hookRow()]),
@@ -152,6 +159,7 @@ function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[] } = {}) {
     log: ignoreLog,
     readCheckPack: packsFor(["octocat/hello"]),
     openHeadsFor: openHeadsOf([]),
+    recheckOpenPulls,
     ...overrides,
   });
 }
@@ -292,6 +300,45 @@ describe("bridge handler", () => {
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
+  });
+
+  test("a merge into the default branch re-checks that repository's other open pull requests", async () => {
+    const sent: Sent[] = [];
+    const rechecks: Recheck[] = [];
+    const db = stubDb([hookRow()], { corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: true }, { name: "octocat/other", connected: true, enabled: false }] } });
+    const handle = bridge({ db, sent, rechecks });
+    const pr = JSON.parse(prPayload);
+    function closed(repo: string, merged: boolean, base: string) {
+      return JSON.stringify({ ...pr, action: "closed", repository: { full_name: repo, default_branch: "main" }, pull_request: { ...pr.pull_request, state: "closed", merged, base: { ref: base } } });
+    }
+    const deliveries: Array<[string, string, string]> = [
+      ["pull_request", closed("octocat/hello", true, "main"), "accepted"],
+      ["pull_request", closed("octocat/hello", false, "main"), "ignored"],
+      ["pull_request", closed("octocat/hello", true, "release"), "ignored"],
+      ["pull_request", closed("octocat/other", true, "main"), "ignored"],
+    ];
+    for (const [i, [event, body, status]] of deliveries.entries()) {
+      const res = await handle(githubRequest(body, { event, delivery: `m${i}` }), TARGET);
+      expect(await res.json()).toEqual({ status });
+    }
+    expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7]]);
+    expect(sent).toHaveLength(0);
+  });
+
+  test("a base move the triage state refused is 500 and releases the id for retry", async () => {
+    let refusals = 1;
+    const rechecks: Recheck[] = [];
+    async function recheckOpenPulls(tenantId: string, repo: string, except: number) {
+      if (refusals-- > 0) throw new Error("triage state for octocat/hello changed since it was loaded");
+      rechecks.push([tenantId, repo, except]);
+      return 1;
+    }
+    const pr = JSON.parse(prPayload);
+    const merged = JSON.stringify({ ...pr, action: "closed", repository: { full_name: "octocat/hello", default_branch: "main" }, pull_request: { ...pr.pull_request, state: "closed", merged: true, base: { ref: "main" } } });
+    const handle = bridge({ recheckOpenPulls });
+    expect((await handle(githubRequest(merged, { delivery: "moved" }), TARGET)).status).toBe(500);
+    expect(await (await handle(githubRequest(merged, { delivery: "moved" }), TARGET)).json()).toEqual({ status: "accepted" });
+    expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7]]);
   });
 
   test("unactionable events are 202 ignored", async () => {

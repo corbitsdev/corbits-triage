@@ -5,7 +5,8 @@
 // the tenant system sender, so the run executes under its own materialized
 // grants. Pull request events are marked queued and handed to the coalescer,
 // which mails one run per pull request after a short window; a failed queue
-// write is 500 so GitHub retries.
+// write is 500 so GitHub retries. A pull request merged into the default
+// branch marks the repository's other heads outdated for the reconciler.
 //
 // TODO (upstream github verifier): delete this bridge once @corbits/webhooks
 // ships an X-Hub-Signature-256 verifier (with X-GitHub-Delivery replay keyed
@@ -16,7 +17,7 @@ import { schema, type DB } from "@intx/db";
 import { checkPackName, repoPolicy, triageEventOf, type CheckPack, type RepoPolicy } from "@corbits/triage-contracts";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
-import { normalize } from "./normalize.js";
+import { baseMoveOf, normalize, type BaseMove } from "./normalize.js";
 import { verifySignature } from "./signature.js";
 import {
   dropReposByInstallation,
@@ -63,6 +64,8 @@ export interface BridgeDeps {
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   /** Tells a pull request's head and whether it is a draft when its event does not say. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
+  /** Has the repository's open pull requests but `except` triaged again; resolves to how many were due. */
+  recheckOpenPulls: (tenantId: string, repo: string, except: number) => Promise<number>;
 }
 
 function repoRows(config: unknown): Array<Record<string, unknown>> {
@@ -364,6 +367,43 @@ async function handleInstallEvent(
   return json(202, { status: "accepted" });
 }
 
+async function tenantConfigOf(d: BridgeDeps, tenantId: string): Promise<unknown> {
+  return (await d.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } }))?.config;
+}
+
+/** A moved default branch can change every other open pull request's conflicts and drift, so they are triaged again; the merged one is not. */
+async function handleBaseMove(
+  d: BridgeDeps,
+  log: (entry: Record<string, unknown>) => void,
+  loaded: BridgeHook,
+  delivery: string,
+  event: string,
+  { repo, merged }: BaseMove,
+): Promise<Response> {
+  let tenantConfig: unknown;
+  try {
+    tenantConfig = await tenantConfigOf(d, loaded.tenantId);
+  } catch {
+    d.cache.forget(`${loaded.credentialId}:${delivery}`);
+    return json(500, { error: "tenant_config_unavailable" });
+  }
+  const connected = repoRecords(triageNs(tenantConfig)).some((row) => row.name === repo && row.connected);
+  if (!connected || !policyForRepo(tenantConfig, repo).enabled) {
+    log({ level: "info", msg: "ignored", delivery, event, repo, hook: loaded.credentialId, reason: connected ? "repo_not_enabled" : "unconfigured_repo" });
+    return json(202, { status: "ignored" });
+  }
+  let due: number;
+  try {
+    due = await d.recheckOpenPulls(loaded.tenantId, repo, merged);
+  } catch (err) {
+    d.cache.forget(`${loaded.credentialId}:${delivery}`);
+    log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo, error: String(err) });
+    return json(500, { error: "triage_state_unavailable" });
+  }
+  log({ level: "info", msg: "base_moved", delivery, event, repo, merged, due, hook: loaded.credentialId });
+  return json(202, { status: "accepted" });
+}
+
 export function logJson(entry: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
 }
@@ -407,6 +447,8 @@ export function createBridgeHandler(d: BridgeDeps) {
     if (INSTALL_EVENTS.has(event) && payload && typeof payload === "object" && !Array.isArray(payload)) {
       return handleInstallEvent(d, log, loaded, delivery, event, payload as Record<string, unknown>);
     }
+    const moved = baseMoveOf(event, payload as Record<string, unknown>);
+    if (moved) return handleBaseMove(d, log, loaded, delivery, event, moved);
     const mail = normalize(event, delivery, payload as Record<string, unknown>);
     if (!mail || mail.prNumber === null) {
       log({ level: "info", msg: "ignored", delivery, event, hook: loaded.credentialId });
@@ -431,10 +473,7 @@ export function createBridgeHandler(d: BridgeDeps) {
     }
     let tenantConfig: unknown;
     try {
-      tenantConfig = (await d.db.query.tenant.findFirst({
-        where: eq(schema.tenant.id, loaded.tenantId),
-        columns: { config: true },
-      }))?.config;
+      tenantConfig = await tenantConfigOf(d, loaded.tenantId);
     } catch {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       return json(500, { error: "tenant_config_unavailable" });

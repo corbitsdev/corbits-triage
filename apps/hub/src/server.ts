@@ -73,6 +73,7 @@ import { createTriageReconciler } from "./github/triage-reconciler.js";
 import { createPullHeadReader, createTenantHeadChecks, createTenantOpenHeads } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
+import { markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration, migrateGithubManifest } from "./github/manifest.js";
 import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch } from "./github/tenant-config.js";
 import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
@@ -415,6 +416,12 @@ coalescer = createCoalescer({
   now,
   log: logJson,
 });
+const kickTriage = triageLoop.kick;
+async function recheckOpenPulls(tenantId: string, repo: string, except: number): Promise<number> {
+  const due = await markBaseMoved(triageStateStore, tenantId, repo, except, now(), reconcilePolicy);
+  if (due > 0) kickTriage();
+  return due;
+}
 const bridge = createBridgeHandler({
   db: hookDeps.db,
   cipher: hookDeps.cipher,
@@ -422,6 +429,7 @@ const bridge = createBridgeHandler({
   coalescer,
   readCheckPack,
   openHeadsFor: tenantOpenHeads,
+  recheckOpenPulls,
 });
 
 function decodeSegments(rest: string): string[] | null {
