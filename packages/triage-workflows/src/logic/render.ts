@@ -2,13 +2,12 @@ import { render, TRIAGE_LABELS, type Rendered, type TriageState } from "@corbits
 import { citationOf, citationUrl, itemText, type CheckItem, type CheckOutput, type CleanupMode, type RuleCustomCheck } from "@corbits/triage-contracts";
 import type { SuggestedAction } from "./actions.js";
 import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
-import type { ChangeCandidate } from "./candidates.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, focusedCandidateId, isScoped, passText, type FilePlan, type FocusedChoice, type QualityPlan } from "./quality.js";
+import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan } from "./quality.js";
 
 type NoulAnswer = { type: "noul"; noul: number };
-type ChoiceAnswer = { type: "choice"; choice: FocusedChoice; probabilities: Record<FocusedChoice, number>; confidence: number };
+type ChoiceAnswer = { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number };
 type ModelAnswer = NoulAnswer | ChoiceAnswer;
 
 export interface ParsedAnswers {
@@ -67,20 +66,15 @@ function parseDecision(value: Record<string, unknown>): { id: string; answer: Mo
     return { id: value.id, answer: { type: "noul", noul: value.noul } };
   }
   if (value.type !== "choice" || !exactKeys(value, ["id", "type", "choice", "probabilities", "confidence"]) ||
-    typeof value.id !== "string" || !FOCUSED_CHOICES.includes(value.choice as FocusedChoice) || !probability(value.confidence) ||
-    !isRecord(value.probabilities) || !exactKeys(value.probabilities, [...FOCUSED_CHOICES])) return null;
-  const probabilities = value.probabilities as Record<FocusedChoice, unknown>;
-  if (!FOCUSED_CHOICES.every((choice) => probability(probabilities[choice]))) return null;
-  const sum = FOCUSED_CHOICES.reduce((total, choice) => total + (probabilities[choice] as number), 0);
+    typeof value.id !== "string" || !probability(value.confidence) || !isRecord(value.probabilities)) return null;
+  const probabilities = value.probabilities;
+  const choices = [FOCUSED_CHOICES, SLICE_CHOICES].find((options) => exactKeys(probabilities, [...options]));
+  if (!choices || !choices.includes(value.choice as never) || !choices.every((choice) => probability(probabilities[choice]))) return null;
+  const sum = choices.reduce((total, choice) => total + (probabilities[choice] as number), 0);
   if (Math.abs(sum - 1) > 0.02) return null;
   return {
     id: value.id,
-    answer: {
-      type: "choice",
-      choice: value.choice as FocusedChoice,
-      probabilities: probabilities as Record<FocusedChoice, number>,
-      confidence: value.confidence,
-    },
+    answer: { type: "choice", choice: value.choice as string, probabilities: probabilities as Record<string, number>, confidence: value.confidence },
   };
 }
 
@@ -103,9 +97,10 @@ export interface RenderInput {
   headSha: string;
   det: DeterministicResult;
   answers?: ParsedAnswers | Record<string, number> | null;
-  candidates?: ChangeCandidate[];
-  /** How docs and tests are decided, from the same evaluation as `candidates`. */
+  /** How the per-file checks are asked and which files they could not read. */
   plan?: QualityPlan;
+  /** How focused is asked, from the same evaluation as `plan`; undefined when it does not apply. */
+  focused: FocusedPlan | undefined;
   judgeError?: string;
   judgeLimitExceeded?: true;
   judgeSkipped?: true;
@@ -176,15 +171,29 @@ const MAX_ACTIONS = 2;
 // Jev's yes/no answers are calibrated probabilities: decide only well clear of a coin flip, otherwise leave it unsure.
 const YES = 0.7;
 const NO = 0.3;
-// A focused candidate counts as unrelated, or as part of the change, only when that side holds this much probability.
+// A focused slice serves the pull request's purpose, or is a separate change, only when that option holds this much probability.
 const FOCUSED_DECIDES = 0.6;
 const MAX_FILE_EVIDENCE = 3;
 const MAX_CODE_CHARS = 200;
+
+/** How likely a focused answer says its slice serves the pull request's purpose, and how likely a separate change. */
+function sides({ probabilities }: ChoiceAnswer): { serves: number; separate: number } {
+  return { serves: probabilities.one_thing ?? probabilities.serves_purpose ?? 0, separate: probabilities.more_than_one_thing ?? probabilities.separate_change ?? 0 };
+}
+
+/** The focused slices whose answers call them a separate change, for the follow-up file questions. */
+export function separateSlices({ decisions }: ParsedAnswers, focused: FocusedPlan): string[] {
+  return Object.keys(focused.slices).filter(function separate(id) {
+    const answer = decisions[id];
+    return answer?.type === "choice" && sides(answer).separate >= FOCUSED_DECIDES;
+  });
+}
+
 /** An answer clear of the unsure band: the verdict it drives would not change were it asked again. */
 function isDecisive(answer: ModelAnswer): boolean {
   if (answer.type === "noul") return answer.noul >= YES || answer.noul <= NO;
-  const { probabilities } = answer;
-  return probabilities.unrelated >= FOCUSED_DECIDES || probabilities.primary_or_supporting + probabilities.movement_or_superseded >= FOCUSED_DECIDES;
+  const { serves, separate } = sides(answer);
+  return serves >= FOCUSED_DECIDES || separate >= FOCUSED_DECIDES;
 }
 
 /** A judge reply a later run may reuse: well formed, with every answer decisive. */
@@ -193,7 +202,7 @@ export function isReusableReply(reply: string): boolean {
   return !malformed && Object.values(decisions).every(isDecisive);
 }
 
-// The score, out of 100, at which a model check's answer passes: the band's yes edge, or focused's deciding share.
+// The score, out of 100, at which a model check's answer passes: the band's yes edge, or focused's deciding probability.
 const PASS_AT = Math.round(YES * 100);
 const FOCUSED_PASS_AT = Math.round(FOCUSED_DECIDES * 100);
 
@@ -223,12 +232,12 @@ function band(noul: number, yesPasses: boolean): Decided {
   return { result: "unconfirmed", reason: UNDECIDED_REASON };
 }
 
-function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
+function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
   if (!det.sources) return { checks: [], scores: [], unanswered: false };
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
-  const expectedIds = askedQuestionIds(sources, candidates, plan);
+  const expectedIds = askedQuestionIds(sources, plan, focused);
   const unavailable = !det.needsJudgment ? NOT_ASKED_REASON : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
   const invalid = parsed.malformed || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
   const checks: CheckResult[] = [];
@@ -294,51 +303,45 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     return push(check, decided, scored(1 - weakest[1], PASS_AT, [weakest[0]]));
   }
 
+  /**
+   * Focused asks each request-sized slice of the diff whether it serves the pull request's purpose: any separate slice fails
+   * it, every serving slice passes it, and with no lines to read it does not apply. A failure names the files
+   * most likely to be the separate change, from the follow-up file questions. The score is the least serving slice's.
+   */
+  function focusedCheck(plan: FocusedPlan | undefined) {
+    if (!plan) return push("focused", { result: "pass" }, NOT_APPLICABLE, [], NOT_APPLICABLE_REASON);
+    const answered = Object.keys(plan.slices).flatMap((id) => {
+      const answer = invalid ? undefined : parsed.decisions[id];
+      return answer?.type === "choice" ? [sides(answer)] : [];
+    });
+    const separate = Math.max(...answered.map((side) => side.separate), 0);
+    const serves = Math.min(...answered.map((side) => side.serves), 1);
+    const unread = plan.unread.length > 0 ? { unread: plan.unread } : {};
+    if (separate >= FOCUSED_DECIDES) {
+      scores.push(separate);
+      const likely = Object.entries(plan.parts).flatMap(([id, item]): Array<[CheckItem, number]> => {
+        const noul = noulOf(id);
+        return noul !== undefined && noul >= YES ? [[item, noul]] : [];
+      }).sort((a, b) => b[1] - a[1]);
+      // A file split across failing slices is asked about once in each.
+      const named = [...new Set(likely.map(([item]) => item))].slice(0, MAX_FILE_EVIDENCE);
+      return push("focused", { result: "fail" }, { ...scored(serves, FOCUSED_PASS_AT, named), ...unread }, named.map(itemText));
+    }
+    const asked = Object.keys(plan.slices).length;
+    // An outage leaves a slice unanswered, and a pull request over the budget is asked nothing.
+    if (answered.length < asked || asked + plan.unread.length === 0) {
+      anyUnanswered = true;
+      return unchecked("focused", unavailable);
+    }
+    // A file the judge could not get whole may be the separate change, so only a fully read pull request passes.
+    if (plan.unread.length > 0) return push("focused", { result: "unconfirmed", reason: UNDECIDED_REASON }, { kind: "could-not-check", reason: UNREAD_REASON, items: plan.unread });
+    if (serves >= FOCUSED_DECIDES) scores.push(serves);
+    return push("focused", serves >= FOCUSED_DECIDES ? { result: "pass" } : { result: "unconfirmed", reason: UNDECIDED_REASON }, scored(serves, FOCUSED_PASS_AT, []));
+  }
+
   for (const source of sources.quality) {
-    if (source.id !== "focused") {
-      fileCheck(source.id, plan[source.id], false);
-      continue;
-    }
-    const unrelated: string[] = [];
-    const unread = new Set<string>();
-    // How much probability says the candidate belongs to the change, least first among all and among the unrelated.
-    let weakest: [string, number] | undefined;
-    let weakestUnrelated: number | undefined;
-    let candidateUnresolved = candidates.length === 0;
-    let unanswered = judgeLimitExceeded === true;
-    for (const [index, candidate] of candidates.entries()) {
-      const item = `${candidate.label} — ${candidate.path}`;
-      if (!candidate.evidence) {
-        candidateUnresolved = true;
-        unread.add(candidate.path);
-        continue;
-      }
-      const answer = invalid ? undefined : parsed.decisions[focusedCandidateId(index)];
-      if (answer?.type !== "choice") {
-        candidateUnresolved = true;
-        unanswered = true;
-        continue;
-      }
-      const { probabilities } = answer;
-      const related = probabilities.primary_or_supporting + probabilities.movement_or_superseded;
-      if (weakest === undefined || related < weakest[1]) weakest = [item, related];
-      if (probabilities.unrelated >= FOCUSED_DECIDES || related >= FOCUSED_DECIDES) scores.push(Math.max(probabilities.unrelated, related));
-      if (probabilities.unrelated >= FOCUSED_DECIDES) {
-        if (!unrelated.includes(item)) unrelated.push(item);
-        weakestUnrelated = Math.min(weakestUnrelated ?? related, related);
-      } else if (related < FOCUSED_DECIDES) {
-        candidateUnresolved = true;
-      }
-    }
-    anyUnanswered ||= unanswered;
-    const reason = !det.needsJudgment ? NOT_ASKED_REASON : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON;
-    const unreadPaths = [...unread];
-    // A failure scores the unrelated candidates it names; otherwise every candidate must have been read and answered for a score.
-    const output: CheckOutput = weakestUnrelated !== undefined ? { ...scored(weakestUnrelated, FOCUSED_PASS_AT, unrelated), ...(unreadPaths.length > 0 ? { unread: unreadPaths } : {}) }
-      : weakest !== undefined && !unanswered && unreadPaths.length === 0 ? scored(weakest[1], FOCUSED_PASS_AT, [weakest[0]])
-        : det.needsJudgment && !unanswered && unreadPaths.length > 0 ? { kind: "could-not-check", reason: UNREAD_REASON, items: unreadPaths }
-          : { kind: "could-not-check", reason };
-    push("focused", unrelated.length > 0 ? { result: "fail" } : candidateUnresolved ? { result: "unconfirmed", reason } : { result: "pass" }, output, unrelated);
+    if (source.id === "focused") focusedCheck(focused);
+    else fileCheck(source.id, plan[source.id], false);
   }
   for (const row of sources.custom) {
     const { id } = row;
@@ -378,7 +381,7 @@ function failedStep(c: CheckResult, sources: Sources): Step {
         ? { actor: "maintainer", action: `Re-review: the author responded to changes requested by ${reviewers}` }
         : { actor: "author", action: `Address requested changes from ${reviewers}` };
     }
-    case "focused": return { actor: "author", action: `Split out unrelated change: ${c.evidence.join("; ")}` };
+    case "focused": return { actor: "author", action: c.evidence.length ? `Split out unrelated change: ${c.evidence.join("; ")}` : "Split out unrelated changes" };
     default: {
       const rule = sources?.rules.find((r) => r.id === c.check);
       if (rule) return ruleStep(rule, c);
@@ -489,7 +492,7 @@ function authorComment({ author, repo, headSha, sources }: RenderContext, all: C
   const unconfirmed = sources ? checks.filter(unsure) : [];
   const lines: string[] = [];
   if (mine.length) {
-    lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
+    lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused" && c.evidence.length
       ? c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}`)
       : [`- ${c.reason}${failureEvidence(c, repo, headSha)}`]));
   }
