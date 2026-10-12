@@ -8,3 +8,4 @@ export * from "./triage-event.js";
 export * from "./paths.js";
 export * from "./team.js";
 export * from "./check-output.js";
+export * from "./do.js";

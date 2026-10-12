@@ -23,11 +23,11 @@
     "pack:tool": "bun run build.ts pack"
   },
   "dependencies": {
+    "@corbits/github-reads": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/types": "workspace:*",
-    "arktype": "catalog:",
-    "minimatch": "^10.2.6"
+    "arktype": "catalog:"
   },
   "devDependencies": {
     "@types/bun": "latest",

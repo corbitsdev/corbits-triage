@@ -3,7 +3,7 @@
 import { eq } from "drizzle-orm";
 import { schema } from "@intx/db";
 import { authorAssociation, authorKindOf, type AuthorKind } from "@corbits/triage-contracts";
-import { listOpenPrs, type GithubFetch } from "@corbits/github-tool/github";
+import { listOpenPrs, type GithubFetch } from "@corbits/github-reads";
 import { createGithubAppCredentialFetch, INSTALLATION_SELECTOR_HEADER } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";

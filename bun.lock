@@ -24,6 +24,7 @@
       "dependencies": {
         "@corbits/artifacts": "0.2.0",
         "@corbits/cron": "0.2.1",
+        "@corbits/github-reads": "workspace:*",
         "@corbits/github-tool": "workspace:*",
         "@corbits/github-write-tool": "workspace:*",
         "@corbits/rule-packs": "workspace:*",
@@ -85,15 +86,23 @@
         "vite": "^6.3.5",
       },
     },
+    "packages/github-reads": {
+      "name": "@corbits/github-reads",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/triage-contracts": "workspace:*",
+        "minimatch": "^10.2.6",
+      },
+    },
     "packages/github-tool": {
       "name": "@corbits/github-tool",
       "version": "0.7.2",
       "dependencies": {
+        "@corbits/github-reads": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
         "arktype": "catalog:",
-        "minimatch": "^10.2.6",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -141,6 +150,7 @@
       "name": "@corbits/triage-workflows",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/github-reads": "workspace:*",
         "@corbits/github-tool": "workspace:*",
         "@corbits/rule-packs": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
@@ -664,6 +674,8 @@
     "@corbits/cron": ["@corbits/cron@0.2.1", "", { "dependencies": { "arktype": "^2.2.3" }, "peerDependencies": { "@intx/db": "^0.4.0", "@intx/hub-api": "^0.4.0", "drizzle-orm": "^0.45.3", "hono": "^4.13.8", "postgres": "^3.4.9" } }, "sha512-eJm1nD9YSf9ehgkpE+1+9oiVfhZFfgb+Ck3jeHw2koTIeh9cwQ5eoLXigHlmDN+hAqqGeE+v/GBaHOuDy6uYbQ=="],
 
     "@corbits/evals": ["@corbits/evals@0.1.1", "", { "dependencies": { "@corbits/system-one": "^0.3.0" }, "peerDependencies": { "@intx/workflow": "^0.4.0" }, "optionalPeers": ["@intx/workflow"] }, "sha512-JjBbLVZn/xtrdQiOr/yglsBfiaa8fAksCaZ+kiu+bRK0MQAhUjUKRmp1G06JouHagAUsAlqhcbagI91gsoEASQ=="],
+
+    "@corbits/github-reads": ["@corbits/github-reads@workspace:packages/github-reads"],
 
     "@corbits/github-tool": ["@corbits/github-tool@workspace:packages/github-tool"],
 

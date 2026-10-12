@@ -4,7 +4,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues } from "@corbits/github-tool/github";
+import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues } from "@corbits/github-reads";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation } from "./open-pulls.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";

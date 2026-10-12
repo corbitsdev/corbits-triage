@@ -3,7 +3,7 @@
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
-import { getChecks, getPr, listOpenPrs, type GithubFetch } from "@corbits/github-tool/github";
+import { getChecks, getPr, listOpenPrs, type GithubFetch } from "@corbits/github-reads";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation } from "./open-pulls.js";
 import { appGithubFetch } from "./portal-credential.js";
