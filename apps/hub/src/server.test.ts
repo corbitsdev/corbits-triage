@@ -200,7 +200,6 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/auth-methods": ["get"],
     "/api/integrations/pack-schema": ["get"],
     "/api/integrations/github-manifest/{tenantId}/start": ["post"],
-    "/api/integrations/github-manifest/{tenantId}/cancel": ["post"],
     "/api/integrations/github-manifest/callback": ["get"],
     "/api/integrations/github-installations/{tenantId}/sync": ["post"],
     "/api/integrations/github-actions/{tenantId}": ["post"],

@@ -30,7 +30,7 @@ type TenantHandler = (req: Request, tenantId: string) => Promise<Response>;
 
 export type IntegrationHandlers = {
   authMethods: { google: boolean; emailPassword: boolean };
-  manifest: { start: TenantHandler; cancel: TenantHandler; callback: (req: Request) => Promise<Response> };
+  manifest: { start: TenantHandler; callback: (req: Request) => Promise<Response> };
   syncInstallations: TenantHandler;
   prActions: TenantHandler;
   dos: { run: TenantHandler; list: TenantHandler };
@@ -55,11 +55,10 @@ export type IntegrationHandlers = {
 const TAGS = ["integrations"];
 
 const Failure = type({ error: { code: "string", message: "string" } });
-const ManifestFailure = type({ error: "string", "owned?": "boolean" });
+const ManifestFailure = type({ error: "string" });
 const AuthMethods = type({ google: "boolean", emailPassword: "boolean" });
 const PackSchemas = type({ checkPack: "Record<string, unknown>", repoPolicy: "Record<string, unknown>" });
 const ManifestStart = type({ manifest: "Record<string, unknown>", state: "string" });
-const ManifestCancel = type({ cancelled: "boolean" });
 const InstallationsSynced = type({ installations: "number", repos: "string[]" });
 const TriageQueued = type({ status: "'queued'", headSha: "string" });
 const OpenPull = type({
@@ -170,20 +169,10 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         201: json("Manifest and state to post to GitHub", ManifestStart),
         400: json("Invalid request", ManifestFailure),
         ...manifestFailures,
-        409: json("Setup in progress, provider missing or replacement not confirmed", ManifestFailure),
+        409: json("Provider missing or replacement not confirmed", ManifestFailure),
       },
     }),
     tenantRoute(handlers.manifest.start),
-  );
-
-  app.post(
-    `${GITHUB_MANIFEST_PATH}/:tenantId/cancel`,
-    describeRoute({
-      summary: "Cancel the caller's pending GitHub App setup",
-      tags: TAGS,
-      responses: { 200: json("Whether a pending setup was cancelled", ManifestCancel), ...manifestFailures },
-    }),
-    tenantRoute(handlers.manifest.cancel),
   );
 
   app.get(
