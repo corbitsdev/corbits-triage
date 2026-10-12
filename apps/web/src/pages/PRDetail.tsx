@@ -17,6 +17,7 @@ import { MergeChip } from "../components/MergeChip.tsx";
 import { PrTimeline } from "../components/PrTimeline.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import { DiffView } from "../components/DiffView.tsx";
+import { CitedEvidence } from "../components/CitedEvidence.tsx";
 import { useDiffLayout } from "../lib/diff-layout.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
@@ -46,7 +47,7 @@ function IssueList({ issues, pending, error }: { issues: GithubPullDetail["issue
 
 const GATE_RESULT: Record<CheckResult["result"], string> = { pass: "matched", fail: "did not match", unconfirmed: "unknown" };
 
-function CheckRow({ check, name }: { check: CheckResult; name: string | null }) {
+function CheckRow({ check, name, repo, sha }: { check: CheckResult; name: string | null; repo: string; sha: string | null }) {
   const tone = check.result === "unconfirmed" ? "wait" : check.gate ? "match" : check.result;
   const value = checkValueText(check);
   return (
@@ -56,12 +57,12 @@ function CheckRow({ check, name }: { check: CheckResult; name: string | null }) 
       <span className="check-result">{check.gate ? GATE_RESULT[check.result] : check.result}</span>
       {check.reason ? <span className="check-fact">{check.reason}</span> : null}
       {value === null ? null : <span className="check-fact">{value}</span>}
-      {check.evidence.map((line) => <span className="check-fact mono small-text" key={line}>{line}</span>)}
+      {check.evidence.map((line) => <span className="check-fact mono small-text" key={line}><CitedEvidence text={line} output={check.output} repo={repo} sha={sha} /></span>)}
     </li>
   );
 }
 
-function CheckList({ repo, checks, fallback }: { repo: string; checks: CheckResult[]; fallback: string[] }) {
+function CheckList({ repo, sha, checks, fallback }: { repo: string; sha: string | null; checks: CheckResult[]; fallback: string[] }) {
   const pack = useRepoPack(repo);
   if (checks.length === 0) {
     return fallback.length === 0 ? <p className="muted">No triage findings.</p> : <ul>{fallback.map((reason) => <li key={reason}>{reason}</li>)}</ul>;
@@ -70,11 +71,11 @@ function CheckList({ repo, checks, fallback }: { repo: string; checks: CheckResu
   const passed = checks.filter((c) => c.result === "pass");
   return (
     <>
-      {open.length > 0 ? <ul className="verdict-checks">{open.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} />)}</ul> : null}
+      {open.length > 0 ? <ul className="verdict-checks">{open.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} repo={repo} sha={sha} />)}</ul> : null}
       {passed.length > 0 ? (
         <details className="check-group">
           <summary>{passed.length} checks passed</summary>
-          <ul className="verdict-checks">{passed.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} />)}</ul>
+          <ul className="verdict-checks">{passed.map((c) => <CheckRow key={c.check} check={c} name={checkLabel(pack, c.check)} repo={repo} sha={sha} />)}</ul>
         </details>
       ) : null}
     </>
@@ -166,7 +167,7 @@ function About({ item }: { item: PrItem }) {
       </section>
       <section className="brief">
         <h2>Checks</h2>
-        <CheckList repo={item.repo} checks={item.checks} fallback={item.evidence} />
+        <CheckList repo={item.repo} sha={item.verdictSha} checks={item.checks} fallback={item.evidence} />
         {item.labels.length > 0 && (
           <div className="row wrap">
             {item.labels.map((label) => <span key={label} className="badge">{label}</span>)}

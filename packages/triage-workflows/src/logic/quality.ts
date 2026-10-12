@@ -1,6 +1,6 @@
-import { isDocPath, isGeneratedPath, isTestPath, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
+import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
-import { boundedPath, extractChangeCandidates, patchHunks, type ChangeCandidate } from "./candidates.js";
+import { boundedPath, extractChangeCandidates, hunkCitations, patchHunks, type ChangeCandidate } from "./candidates.js";
 import { globMatch } from "./glob.js";
 
 interface BooleanQualityQuestion {
@@ -65,19 +65,6 @@ export function isScoped(row: ModelCustomCheck): row is ScopedCheck {
   return row.shape === "is-true" && (row.scope === "file" || row.scope === "hunk");
 }
 
-const HUNK_SUFFIX = / \(change \d+\)$/;
-
-/** How a hunk reads as evidence: its file's path and which change in the file it is. */
-function hunkItem(path: string, hunk: number): string {
-  return `${path} (change ${hunk + 1})`;
-}
-
-/** An evidence item's path and any hunk suffix, so a comment can set the path in code. */
-export function itemParts(item: string): [path: string, suffix: string] {
-  const suffix = HUNK_SUFFIX.exec(item)?.[0] ?? "";
-  return [item.slice(0, item.length - suffix.length), suffix];
-}
-
 function inScope(row: ScopedCheck, path: string): boolean {
   return row.when === undefined || row.when.some((glob) => globMatch(path, glob));
 }
@@ -91,8 +78,8 @@ function ruleText(row: ScopedCheck): string {
 export interface FilePlan {
   /** Changed files that satisfy the check; any one passes it without asking. */
   changed: string[];
-  /** Question id to the file, or the hunk within it, it asks about. */
-  asked: Record<string, string>;
+  /** Question id to the file, or the lines of the hunk within it, it asks about. */
+  asked: Record<string, CheckItem>;
   /** Files or hunks the check would ask about but no request could read, such as patches GitHub left out. */
   unread: string[];
 }
@@ -104,7 +91,7 @@ export type QualityPlan = Record<string, FilePlan>;
 interface FileQuestion {
   check: string;
   id: string;
-  item: string;
+  item: CheckItem;
   instructions: (file: number) => string;
 }
 
@@ -318,8 +305,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     return (["tests", "docs"] as const).filter((check) => plan[check]?.changed.length === 0);
   }
 
-  /** Every question about the file at `position` whose leading `read` hunks the request holds. */
-  function fileQuestions(path: string, position: number, read: number): FileQuestion[] {
+  /** Every question about the file at `position` whose leading `read` hunks the request holds; a patch without hunk headers is cited as its file. */
+  function fileQuestions(path: string, position: number, read: number, cited: CheckItem[]): FileQuestion[] {
     const out: FileQuestion[] = fileChecks(path).map((check) => ({ check, id: fileQuestionId(check, position), item: path, instructions: FILE_QUESTIONS[check] }));
     for (const row of scoped) {
       if (!inScope(row, path)) continue;
@@ -329,7 +316,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
       }
       // Uncapped: every hunk read is one question per hunk-scoped check, so a wide diff spreads over many judge requests.
       for (let hunk = 0; hunk < read; hunk++) {
-        out.push({ check: row.id, id: hunkQuestionId(row.id, position, hunk), item: hunkItem(path, hunk), instructions: (file) => `Does the change in \`pullRequest.files[${file}].hunks[${hunk}]\` meet this rule: ${ruleText(row)}?` });
+        out.push({ check: row.id, id: hunkQuestionId(row.id, position, hunk), item: cited[hunk] ?? path, instructions: (file) => `Does the change in \`pullRequest.files[${file}].hunks[${hunk}]\` meet this rule: ${ruleText(row)}?` });
       }
     }
     return out;
@@ -351,7 +338,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     }
     // Lines left out of a file may break a custom rule, so a scoped check cannot pass on what was read.
     if (fitted.truncated) for (const row of scoped) if (inScope(row, file.path)) plan[row.id]!.unread.push(file.path);
-    const asking = fileQuestions(file.path, position, fitted.hunks.length);
+    const asking = fileQuestions(file.path, position, fitted.hunks.length, typeof file.patch === "string" ? hunkCitations(file.path, file.patch, file.previousPath) : []);
     const bytes = jsonBytes(fitted);
     const owned = owners.get(path) ?? [];
     if (chunk.length > 0 && (used + 1 + bytes > room || questions.length + asking.length + owned.length > MAX_SYSTEM_ONE_QUESTIONS)) flush();
