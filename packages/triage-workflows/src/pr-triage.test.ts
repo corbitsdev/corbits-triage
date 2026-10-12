@@ -166,6 +166,11 @@ describe("pr-triage body", () => {
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "fail"], ["tests", "fail"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toEqual(["flag — src/flag.ts"]);
     expect((verdict as Verdict).checks.find((c) => c.check === "tests")?.evidence).toEqual(["src/flag.ts"]);
+    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => c.output)).toEqual([
+      { kind: "score", score: 20, passAt: 60, items: ["flag — src/flag.ts"] },
+      { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["src/flag.ts"] },
+      { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["src/flag.ts"] },
+    ]);
   });
 
   test("a file list past the tool-result cap still shows the judge its docs and test changes", async () => {
@@ -176,6 +181,10 @@ describe("pr-triage body", () => {
     const { judged, verdict } = await triage({ ...pack, checks: { docs: { enabled: true }, tests: { enabled: true } } }, { files });
     expect(judged.flatMap((call) => call.questions)).toEqual([]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["docs", "pass"], ["tests", "pass"]]);
+    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => c.output)).toEqual([
+      { kind: "met", items: ["docs/flag.md"] },
+      { kind: "met", items: ["src/flag.test.ts"] },
+    ]);
   });
 
   test("a deleted test does not cover the change and a pure rename asks nothing", async () => {
@@ -208,14 +217,18 @@ describe("pr-triage body", () => {
     expect(migrated.judged.flatMap((call) => call.questions)).toEqual([
       { id: "custom-1-file-002", type: "boolean", instructions: "Does the change in `pullRequest.files[1]` meet this rule: The migration can be rolled back?" },
     ]);
-    expect((migrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({ result: "fail", evidence: ["migrations/001_users.sql"] });
+    expect((migrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({
+      result: "fail",
+      evidence: ["migrations/001_users.sql"],
+      output: { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["migrations/001_users.sql"] },
+    });
     const twice = { ...migration, patch: "@@ -0,0 +1 @@\n+DROP TABLE users;\n@@ -9,0 +10 @@\n+DROP TABLE teams;" };
     const hunks = await triage({ ...pack, custom: [{ ...reversible, scope: "hunk" }] }, { files: [FLAG, twice] });
     expect(hunks.judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["custom-1-hunk-002-001", "custom-1-hunk-002-002"]);
     expect((hunks.verdict as Verdict).feedback).toContain('does not meet "Reversible": `migrations/001_users.sql` (change 1), `migrations/001_users.sql` (change 2)');
     const unmigrated = await triage(pack);
     expect(unmigrated.path).toEqual(RULES_PATH);
-    expect((unmigrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({ result: "pass", reason: "does not apply" });
+    expect((unmigrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({ result: "pass", reason: "does not apply", output: { kind: "not-applicable" } });
   });
 
   test("an automated repository whose judge fails still posts a comment; a human-approved one does not", async () => {

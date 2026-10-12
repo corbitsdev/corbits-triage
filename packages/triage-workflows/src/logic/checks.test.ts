@@ -53,7 +53,7 @@ describe("deriveState policy", () => {
   test("skips a finding when that check is disabled", () => {
     const draft = deriveState(noisy, only("draft"));
     expect(draft.findings).toEqual([]);
-    expect(draft.checks).toEqual([{ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [] }, expect.objectContaining({ check: "review" })]);
+    expect(draft.checks).toEqual([{ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } }, expect.objectContaining({ check: "review" })]);
     expect(deriveState(noisy, only("ci")).findings.map((finding) => finding.check)).toEqual(["checks"]);
     expect(deriveState(noisy, only("duplicate")).findings.map((finding) => finding.check)).toEqual(["duplicate"]);
     expect(deriveState(noisy, only("conflicts")).findings.map((finding) => finding.check)).toEqual(["conflicts"]);
@@ -83,6 +83,7 @@ describe("deriveState policy", () => {
       openPrs: [],
     };
     expect(deriveState(unknown).findings.map((finding) => finding.check)).toEqual(["conflicts"]);
+    expect(deriveState(unknown).checks.find((check) => check.check === "conflicts")?.output).toEqual({ kind: "could-not-check", reason: "mergeability not yet computed" });
     expect(deriveState(unknown, allOff).findings).toEqual([]);
   });
 });
@@ -126,6 +127,7 @@ describe("deriveState check pack", () => {
       result: "fail",
       reason: "pull request is over the size limits",
       evidence: ["80 files (max 30)"],
+      output: { kind: "values", values: { files: 80, lines: 20 } },
     });
     expect(result.checks.find((check) => check.check === "paths")?.result).toBe("pass");
     expect(result.sources?.custom).toEqual(pack.custom);
@@ -170,6 +172,9 @@ describe("deriveState rule custom checks", () => {
     expect(byId["custom-6"]).toMatchObject({ result: "fail", evidence: ["src/api.ts:11"] });
     expect(byId["custom-7"]).toMatchObject({ result: "fail", reason: "Two approvals: not enough approvals", evidence: ["1 of 2 approvals"] });
     expect(byId["custom-8"]).toMatchObject({ result: "pass" });
+    expect(byId["custom-4"]!.output).toEqual({ kind: "values", values: { holds: false } });
+    expect(byId["custom-7"]!.output).toEqual({ kind: "values", values: { holds: false, approvals: 1 } });
+    expect(byId["custom-1"]!.output).toEqual({ kind: "values", values: { holds: true } });
     expect(result.findings.map((finding) => [finding.check, finding.state])).toEqual([
       ["custom-4", "needs-author-update"],
       ["custom-5", "awaiting-review"],
@@ -186,6 +191,7 @@ describe("deriveState rule custom checks", () => {
     const result = deriveState(gaps, allOff, pack);
     expect(result.checks.find((check) => check.check === "custom-4")?.result).toBe("unconfirmed");
     expect(result.checks.find((check) => check.check === "custom-6")?.result).toBe("unconfirmed");
+    expect(result.checks.find((check) => check.check === "custom-6")?.output).toEqual({ kind: "could-not-check", reason: "some added lines could not be scanned" });
   });
 
   test("a pattern that backtracks under RegExp matches a long added line in linear time", () => {
@@ -229,5 +235,24 @@ describe("deriveState rule custom checks", () => {
     expect(staff({ authorTeams: ["ops"], authorTeamsUnknown: ["@acme/staff"] })).toMatchObject({ result: "pass", reason: "Staff: author is in team ops", gate: true });
     expect(staff({ authorTeams: [], authorTeamsUnknown: [] })).toMatchObject({ result: "fail", reason: "Staff: author is not one of the people or teams named", gate: true });
     expect(staff({ authorTeams: [], authorTeamsUnknown: ["ops"] })).toMatchObject({ result: "unconfirmed", reason: "Staff: team membership of ops is not known" });
+  });
+});
+
+describe("deriveState check output", () => {
+  test("each fact is named for what it states, so pending CI never reads as passing", () => {
+    const pack = recommendedPack("acme/widgets");
+    pack.checks.paths = { enabled: true, forbiddenGlobs: ["vendor/**"] };
+    pack.custom = [{ id: "custom-1", name: "No vendor", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["vendor/**"] }];
+    const facts: PrFacts = { ...noisy, checks: "pending", mergeable: true, paths: ["vendor/x.ts"], changedFiles: 1, additions: 1, deletions: 0 };
+    const outputs = Object.fromEntries(deriveState(facts, undefined, pack).checks.map((check) => [check.check, check.output]));
+    expect(outputs).toMatchObject({
+      draft: { kind: "values", values: { isDraft: true } },
+      ci: { kind: "values", values: { status: "pending" } },
+      duplicate: { kind: "values", values: { isDuplicate: true, duplicateOf: 7 } },
+      conflicts: { kind: "values", values: { hasConflicts: false } },
+      paths: { kind: "values", values: { touchesForbiddenPaths: true } },
+      size: { kind: "values", values: { files: 1, lines: 1 } },
+      "custom-1": { kind: "values", values: { holds: false } },
+    });
   });
 });

@@ -6,6 +6,7 @@ import {
   repoPolicy,
   type AuthorKind,
   type CatalogId,
+  type CheckOutput,
   type CheckPack,
   type IssueTracker,
   type RepoRole,
@@ -79,6 +80,7 @@ export interface CheckResult {
   result: "pass" | "fail" | "unconfirmed";
   reason: string;
   evidence: string[];
+  output: CheckOutput;
   /** Decides an action's branch without being a defect: never a step, a comment line, a merge reason or a retry. */
   gate?: true;
 }
@@ -96,6 +98,8 @@ export interface DeterministicResult {
 export const DUPLICATE_THRESHOLD = 0.85;
 export const DRIFT_THRESHOLD = 50;
 export const NEEDS_SETUP_REASON = "This repository still needs check setup.";
+
+const CI_STATUS: Record<PrFacts["checks"], string> = { success: "passing", failure: "failing", pending: "pending", none: "none" };
 
 const STATE_RANK: Record<TriageState, number> = {
   "ready-monitoring": 0,
@@ -196,8 +200,15 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
   function add(check: string, state: TriageState, reason: string) {
     findings.push({ check, state, reason });
   }
-  function result(check: CatalogId | "review", failed: boolean | null, reason: string, evidence: string[] = []) {
-    checks.push({ check, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence });
+  function result(check: CatalogId | "review", failed: boolean | null, reason: string, evidence: string[], output: CheckOutput) {
+    checks.push({
+      check,
+      kind: "machine",
+      result: failed === null ? "unconfirmed" : failed ? "fail" : "pass",
+      reason,
+      evidence,
+      output: failed === null ? { kind: "could-not-check", reason } : output,
+    });
   }
   const on = rules.enabled;
   const dup = on("duplicate") ? findDuplicate(facts) : null;
@@ -205,35 +216,47 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
   if (facts.state === "closed") add("state", "ready-monitoring", "pull request is closed");
   else {
     if (on("draft")) {
-      result("draft", facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", []);
+      result("draft", facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", [], { kind: "values", values: { isDraft: facts.draft } });
     }
     if (on("ci")) {
       const failing = facts.checks === "failure";
       if (failing) add("checks", "blocked", "required checks are failing");
-      result("ci", failing, failing ? "required checks are failing" : `checks are ${facts.checks}`, failing ? facts.failingChecks ?? [] : []);
+      result("ci", failing, failing ? "required checks are failing" : `checks are ${facts.checks}`, failing ? facts.failingChecks ?? [] : [], { kind: "values", values: { status: CI_STATUS[facts.checks] } });
     }
     if (on("duplicate")) {
       if (dup) add("duplicate", "needs-decision", `possible duplicate of #${dup.number}`);
-      result("duplicate", dup !== null, dup ? "possible duplicate" : "no duplicate found", dup ? [`#${dup.number}`] : []);
+      result("duplicate", dup !== null, dup ? "possible duplicate" : "no duplicate found", dup ? [`#${dup.number}`] : [], { kind: "values", values: dup ? { isDuplicate: true, duplicateOf: dup.number } : { isDuplicate: false } });
     }
     if (on("conflicts") && facts.mergeable === false) add("conflicts", "blocked", "merge conflicts with base");
     const unreviewed = facts.requestedReviewers === 0 && facts.approvals === 0;
     if (on("reviewers")) {
       if (unreviewed) add("reviewers", "awaiting-review", "no reviewers assigned");
-      result("reviewers", unreviewed, unreviewed ? "no reviewers assigned" : "reviewers assigned", [`${facts.requestedReviewers} requested, ${facts.approvals} approved`]);
+      result("reviewers", unreviewed, unreviewed ? "no reviewers assigned" : "reviewers assigned", [`${facts.requestedReviewers} requested, ${facts.approvals} approved`], {
+        kind: "values",
+        values: { requested: facts.requestedReviewers, approvals: facts.approvals },
+      });
     }
     const drifted = facts.baseBehindBy >= rules.maxBehindBy;
     if (on("drift")) {
       if (drifted) add("drift", "needs-decision", `base has drifted ${facts.baseBehindBy} commits`);
-      result("drift", drifted, drifted ? "base has drifted" : "base is current", [`${facts.baseBehindBy} commits behind (max ${rules.maxBehindBy})`]);
+      result("drift", drifted, drifted ? "base has drifted" : "base is current", [`${facts.baseBehindBy} commits behind (max ${rules.maxBehindBy})`], {
+        kind: "values",
+        values: { behindBy: facts.baseBehindBy },
+      });
     }
     const requested = facts.changesRequested ?? [];
     if (requested.length) add("review", "needs-author-update", "a reviewer requested changes");
-    result("review", requested.length > 0, requested.length ? "a reviewer requested changes" : "no changes requested", requested.map((login) => `changes requested by @${login}`));
+    result("review", requested.length > 0, requested.length ? "a reviewer requested changes" : "no changes requested", requested.map((login) => `changes requested by @${login}`), {
+      kind: "values",
+      values: { changesRequested: requested.length },
+    });
     if (on("conflicts") && !findings.length && facts.mergeable === null) add("conflicts", "stale-unknown", "mergeability not yet computed");
     if (on("conflicts")) {
       const conflicted = facts.mergeable === null ? null : !facts.mergeable;
-      result("conflicts", conflicted, conflicted === null ? "mergeability not yet computed" : conflicted ? "merge conflicts with base" : "no merge conflicts");
+      result("conflicts", conflicted, conflicted === null ? "mergeability not yet computed" : conflicted ? "merge conflicts with base" : "no merge conflicts", [], {
+        kind: "values",
+        values: { hasConflicts: conflicted === true },
+      });
     }
     if (on("size")) {
       const changedFiles = facts.changedFiles ?? 0;
@@ -244,17 +267,26 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
       if (size.over) add("size", "needs-author-update", `pull request changes ${lines} lines (max ${rules.maxLines})`);
       const measured = [...(rules.maxFiles !== undefined ? [files] : []), ...(rules.maxLines !== undefined ? [size] : [])];
       const over = measured.filter((m) => m.over);
-      result("size", over.length > 0, over.length ? "pull request is over the size limits" : "pull request is within the size limits", (over.length ? over : measured).map((m) => m.text));
+      result("size", over.length > 0, over.length ? "pull request is over the size limits" : "pull request is within the size limits", (over.length ? over : measured).map((m) => m.text), {
+        kind: "values",
+        values: { files: changedFiles, lines },
+      });
     }
     if (on("paths") && rules.forbiddenGlobs.length > 0) {
       const matched = (facts.paths ?? []).filter((path) => rules.forbiddenGlobs.some((glob) => globMatch(path, glob)));
       if (matched.length) add("paths", "needs-author-update", "pull request touches a forbidden path");
-      result("paths", matched.length > 0, matched.length ? "pull request touches a forbidden path" : "no forbidden paths touched", matched);
+      result("paths", matched.length > 0, matched.length ? "pull request touches a forbidden path" : "no forbidden paths touched", matched, {
+        kind: "values",
+        values: { touchesForbiddenPaths: matched.length > 0 },
+      });
     }
     if (on("issue") && rules.tracker !== "off") {
       const ref = issueReference(facts, rules.tracker);
       if (!ref) add("issue", "needs-author-update", "pull request does not reference an issue");
-      result("issue", ref === null, ref ? "references an issue" : "pull request does not reference an issue", ref ? [ref] : []);
+      result("issue", ref === null, ref ? "references an issue" : "pull request does not reference an issue", ref ? [ref] : [], {
+        kind: "values",
+        values: { linkedIssue: ref !== null },
+      });
     }
     if (pack) {
       const custom = evaluateRuleChecks(facts, classificationSources(pack).rules, roles);
