@@ -116,8 +116,9 @@ Hub routes that reach GitHub for the portal use the same adapter.
   deployments and runs.
 - Artifacts: the check pack (`check-pack/{owner}/{repo}`) and the triage state
   (`triage-state/{owner}/{repo}`) per repository.
-- Triage tables: `corbits_triage_verdict` (verdicts per head),
-  `corbits_triage_do_run` (Dos run) and `corbits_triage_invitation`.
+- Triage tables, in the `corbits_triage` schema: `verdict` (verdicts per
+  head), `do_run` (Dos run) and `invitation`, created from
+  `apps/hub/migrations` at hub start.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

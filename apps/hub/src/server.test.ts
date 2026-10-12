@@ -838,7 +838,7 @@ test("an invite link lets only the invited email join, once, with the invited ro
     expect(await accept(as.bob, bobInvite.link)).toMatchObject({ status: 410, body: { error: { code: "revoked" } } });
 
     const expiring = Created.assert((await invite(as.owner, bob)).body);
-    await db.execute(sql`UPDATE corbits_triage_invitation SET expires_at = now() WHERE id = ${expiring.id}`);
+    await db.execute(sql`UPDATE corbits_triage.invitation SET expires_at = now() WHERE id = ${expiring.id}`);
     expect(await accept(as.bob, expiring.link)).toMatchObject({ status: 410, body: { error: { code: "expired" } } });
 
     const asOwner = Created.assert((await invite(as.owner, dee, "owner")).body);

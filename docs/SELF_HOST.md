@@ -171,3 +171,9 @@ migrations on every start; nothing else is needed.
   it: `DROP TABLE IF EXISTS corbits_triage_verdict_backfill;`
 - A hub that ran a build creating `corbits_github_manifest_state` can drop
   it: `DROP TABLE IF EXISTS corbits_github_manifest_state;`
+- Triage's tables move from `public.corbits_triage_*` into the
+  `corbits_triage` schema on first start. If an older build runs after that,
+  it recreates empty `public.corbits_triage_*` tables and the next start
+  stops with "relation already exists"; drop the empty public ones
+  (`DROP TABLE public.corbits_triage_verdict, public.corbits_triage_do_run,
+  public.corbits_triage_invitation;`) and start again.

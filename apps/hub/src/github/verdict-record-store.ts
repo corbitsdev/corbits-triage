@@ -3,9 +3,10 @@
 // only the runs since the deployment last rotated, so this table is what a
 // window of stats reads, and what the portal shows of each pull request.
 import { and, asc, desc, eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
-import { boolean, integer, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import type { DB } from "@intx/db";
+import { triageSchema } from "../triage-db.js";
 
 export type RecordedCheck = { check: string; result: string };
 export type RecordedDo = { actionId: string; effectId: string };
@@ -59,7 +60,7 @@ export const VerdictDetail = type({
 });
 export type VerdictDetail = typeof VerdictDetail.infer;
 
-export const verdictRecord = pgTable("corbits_triage_verdict", {
+export const verdictRecord = triageSchema.table("verdict", {
   tenantId: text("tenant_id").notNull(),
   runId: text("run_id").notNull(),
   repo: text("repo").notNull(),
@@ -85,34 +86,6 @@ export const verdictRecord = pgTable("corbits_triage_verdict", {
 
 export type VerdictRecord = typeof verdictRecord.$inferSelect;
 export type RecordedVerdict = Omit<typeof verdictRecord.$inferInsert, "tenantId">;
-
-export async function migrateVerdictRecords(db: DB["db"]): Promise<void> {
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS corbits_triage_verdict (
-      tenant_id text NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
-      run_id text NOT NULL,
-      repo text NOT NULL,
-      number integer NOT NULL,
-      head_sha text NOT NULL,
-      started_at timestamptz NOT NULL,
-      verdict_at timestamptz NOT NULL,
-      settled boolean NOT NULL,
-      state text NOT NULL,
-      actor text NOT NULL,
-      human_gated boolean NOT NULL,
-      degraded text,
-      checks jsonb NOT NULL,
-      dos jsonb NOT NULL,
-      commented boolean NOT NULL,
-      PRIMARY KEY (tenant_id, run_id, repo, number)
-    )
-  `);
-  await db.execute(sql`ALTER TABLE corbits_triage_verdict ADD COLUMN IF NOT EXISTS detail jsonb`);
-  await db.execute(sql`ALTER TABLE corbits_triage_verdict ADD COLUMN IF NOT EXISTS trigger text`);
-  await db.execute(sql`ALTER TABLE corbits_triage_verdict ADD COLUMN IF NOT EXISTS run_status text`);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS corbits_triage_verdict_repo_idx ON corbits_triage_verdict (tenant_id, repo, verdict_at)`);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS corbits_triage_verdict_pull_idx ON corbits_triage_verdict (tenant_id, repo, number, verdict_at)`);
-}
 
 export type PullRef = { repo: string; number: number };
 
