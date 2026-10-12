@@ -2,20 +2,13 @@ import { errorText } from "./error-text.ts";
 import type { Outcome } from "./held-actions.ts";
 import type { DoRef, DoRun, GithubPullDetail, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import { offersClose, type PendingDo } from "./pending-dos.ts";
-import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction, type StatusFields } from "./inbox-view.ts";
+import { inboxAction, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
 
 const UNTITLED = "Untitled pull request";
 
 /** A verdict rendered before GitHub facts were read carries no title. */
 export function titleText(title: string | null): string {
   return title === null ? UNTITLED : title;
-}
-
-export function verdictHeadline(item: StatusFields & Pick<PrItem, "evidence" | "nextAction">): string {
-  if (item.running) return inboxStatus(item);
-  if (item.nextAction !== null) return item.nextAction;
-  const [firstEvidence] = item.evidence;
-  return firstEvidence === undefined ? inboxStatus(item) : firstEvidence;
 }
 
 type PaneFacts = { title: string | null; author: string | null; draft: boolean | null; mergeable: boolean | null };
@@ -26,22 +19,12 @@ export function paneFacts(item: PrItem, detail: GithubPullDetail | undefined): P
   return { title: detail.pr.title, author: detail.pr.author, draft: detail.pr.draft, mergeable: detail.pr.mergeable };
 }
 
-type CiStatus = "passing" | "waiting";
+export type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "unchecked-commits" | "mergeability-unknown" | "not-mergeable" | "draft";
 
-const PASSING_CONCLUSION = /pass|success|neutral|skipped/i;
-
-/** A check still running has no conclusion yet. */
-function checkPassed(check: GithubPullDetail["checks"][number]): boolean {
-  return check.conclusion !== null && PASSING_CONCLUSION.test(check.conclusion);
+/** Commits were pushed after the head Triage checked; the hub checks them again. */
+export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha">): boolean {
+  return item.verdictSha !== null && item.headSha !== null && item.verdictSha !== item.headSha;
 }
-
-/** Null before GitHub has loaded or when the pull request has no checks. */
-export function ciStatus(detail: GithubPullDetail | undefined): CiStatus | null {
-  if (detail === undefined || detail.checks.length === 0) return null;
-  return detail.checks.every(checkPassed) ? "passing" : "waiting";
-}
-
-type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "mergeability-unknown" | "not-mergeable" | "draft";
 
 export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean };
 
@@ -60,6 +43,7 @@ export function writeBlocker(gate: PaneGate): ActionBlocker | null {
 function actionBlocker(kind: PaneKind, gate: PaneGate): ActionBlocker | null {
   const blocker = writeBlocker(gate);
   if (blocker !== null || kind !== "merge") return blocker;
+  if (hasUncheckedCommits(gate.item)) return "unchecked-commits";
   if (gate.facts.mergeable === null) return "mergeability-unknown";
   if (!gate.facts.mergeable) return "not-mergeable";
   if (gate.facts.draft === true) return "draft";
@@ -120,11 +104,6 @@ export function draftText(item: Pick<PrItem, "comment">): string {
 export function replyDraft(item: PrItem, text: string): ReplyDraft | null {
   if (!hasDraftComment(item.comment)) return null;
   return { text, edited: text !== item.comment };
-}
-
-export function primaryButtonLabel(primary: PaneAction<PrimaryAction>, draft: ReplyDraft | null): string {
-  if (primary.kind === "reply" && draft?.edited) return "Post edited reply";
-  return primaryLabel(primary.kind);
 }
 
 type ComposerKind = "comment" | "changes";
@@ -211,11 +190,22 @@ async function sendReply({ write, replySent }: PaneIo, item: NumberedItem, body:
   return sent(`Posted to GitHub on #${number}.`);
 }
 
+/** The head the pull request is on, once the open pull requests have loaded, else the one the verdict judged. */
+export function currentHead(item: Pick<PrItem, "headSha" | "verdictSha">): string | null {
+  return item.headSha ?? item.verdictSha;
+}
+
 /** The head the pull request is approved on, so commits pushed since are not approved with it. */
 export function approvedHead(item: PrItem): string {
-  const sha = item.headSha ?? item.verdictSha;
+  const sha = currentHead(item);
   if (sha === null) throw new Error("The pull request's head is not known yet. Refresh and try again.");
   return sha;
+}
+
+/** The head Triage checked, so commits pushed since are not merged unchecked: GitHub refuses a merge whose head has moved. */
+export function checkedHead(item: PrItem): string {
+  if (item.verdictSha === null) throw new Error("The commit Triage checked is not known. Triage it again before merging.");
+  return item.verdictSha;
 }
 
 /** `body` is the reply draft for a reply and the composer text for a comment or requested changes. Throws before anything is held when there is nothing to send. */
@@ -265,15 +255,17 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
         },
       };
     }
-    case "merge":
+    case "merge": {
+      const headSha = checkedHead(item);
       return {
         settles: kind,
         pending: `Merging #${number}…`,
         async send({ write }) {
-          await write({ action: "merge", repo, number });
+          await write({ action: "merge", repo, number, headSha });
           return sent(`Merged #${number}.`);
         },
       };
+    }
     case "close":
       return {
         settles: kind,
