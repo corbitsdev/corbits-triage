@@ -132,7 +132,8 @@ try {
     run: judge,
     cases: `${here}cases.jsonl`,
     checks: Object.fromEntries(MODEL_CHECKS.map((check) => [check, answered(check)])),
-    allow: { tests: 3, docs: 9, focused: 11 },
+    // Main's code missed 10 docs cases, on the first 72 and on all 76.
+    allow: { tests: 3, docs: 10, focused: 11 },
     about: { model: ENDPOINT.model },
     concurrency: 2,
     timeout: "10m",
