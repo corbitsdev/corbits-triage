@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "bun:test";
 import { type } from "arktype";
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { count, eq, sql } from "drizzle-orm";
+import { count, eq, inArray, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
@@ -795,7 +795,6 @@ test("an invite link lets only the invited email join, once, with the invited ro
     expect(smtp.sent().filter((mail) => mail.text.includes(first.link))).toHaveLength(1);
     const emailedAt = async (inviteId: string) => (await db.select({ at: invitation.emailedAt }).from(invitation).where(eq(invitation.id, inviteId)))[0]?.at;
     expect(await emailedAt(id)).toBeInstanceOf(Date);
-    expect(await accept(as.ann, first.link)).toMatchObject({ status: 410, body: { error: { code: "revoked" } } });
 
     const bounced = await invite(as.owner, bounce);
     expect(bounced).toMatchObject({ status: 502, body: { error: { code: "email_failed" } } });
@@ -810,8 +809,10 @@ test("an invite link lets only the invited email join, once, with the invited ro
       return (await fetch(`${origin}/api/integrations/my-invitations`, { headers: as.ann })).json();
     }
     expect(await myInvitations()).toEqual({ invitations: [] });
-    await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.email, ann));
+    expect(await accept(as.ann, link)).toMatchObject({ status: 403, body: { error: { code: "unverified_email", message: "Verify your email address before accepting this invite." } } });
+    await db.update(schema.user).set({ emailVerified: true }).where(inArray(schema.user.email, [ann, bob, cat, dee]));
     expect(await myInvitations()).toMatchObject({ invitations: [{ tenantId }] });
+    expect(await accept(as.ann, first.link)).toMatchObject({ status: 410, body: { error: { code: "revoked" } } });
 
     const wrong = await accept(as.bob, link);
     expect(wrong).toMatchObject({ status: 403, body: { error: { message: "This invite is for a different email. Sign in with the invited address." } } });

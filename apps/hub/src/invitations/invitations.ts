@@ -224,6 +224,8 @@ export function createInvitations(deps: InvitationDeps) {
   async function accept(req: Request): Promise<Response> {
     const user = await signedInUser(req);
     if (user instanceof Response) return user;
+    // Matching the invited address proves nothing until its owner has verified it.
+    if (!user.emailVerified) return failure(403, "unverified_email", "Verify your email address before accepting this invite.");
     const body = AcceptBody(await readJson(req));
     if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
     const now = deps.now();
