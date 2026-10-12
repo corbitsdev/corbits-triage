@@ -162,7 +162,7 @@ const email = emailSettings(env);
 const composition = await createInterchangeHub({
   database,
   settings: interchangeSettings(env),
-  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin },
+  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env) },
   credentialCipher,
   sidecarProvisioners: [local.provisioner],
   probeSidecarProvisioners: [local.provisioner],
