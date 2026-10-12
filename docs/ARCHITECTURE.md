@@ -31,7 +31,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     It also replaces a `pr-triage` deployment with a fresh copy once its run
     log grows past a limit.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
-    exchanged server side, so the private key never reaches the browser.
+    exchanged server side, so the private key never reaches the browser. The
+    `state` round-tripped through GitHub is signed by the hub and bound to the
+    user who started setup, so no setup state is stored.
   - **Integration routes** under `/api/integrations/`: pull request actions
     and Dos, details, previews, triage stats and timeline, invitations, and
     workflow deploy. Each is described in `/openapi.json`. Pull request
@@ -115,8 +117,7 @@ Hub routes that reach GitHub for the portal use the same adapter.
 - Artifacts: the check pack (`check-pack/{owner}/{repo}`) and the triage state
   (`triage-state/{owner}/{repo}`) per repository.
 - Triage tables: `corbits_triage_verdict` (verdicts per head),
-  `corbits_triage_do_run` (Dos run), `corbits_triage_invitation` and
-  `corbits_github_manifest_state` (session-bound manifest conversion).
+  `corbits_triage_do_run` (Dos run) and `corbits_triage_invitation`.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 
