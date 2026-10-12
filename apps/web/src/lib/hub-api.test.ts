@@ -143,7 +143,7 @@ describe("All-view queue sources", () => {
 });
 
 describe("projectQueue reply unwrap", () => {
-  test("unwraps output.reply as a single verdict or items list", () => {
+  test("unwraps output.reply as a single verdict or items list, keeping the head each verdict judged", () => {
     const single: RunLog = {
       runId: "run-reply",
       anchorRunId: "run-reply",
@@ -158,6 +158,7 @@ describe("projectQueue reply unwrap", () => {
               reply: JSON.stringify({
                 repo: "acme/widgets",
                 number: 8,
+                headSha: "abc123",
                 state: "needs-decision",
                 confidence: 0.9,
                 humanGated: true,
@@ -203,6 +204,7 @@ describe("projectQueue reply unwrap", () => {
     expect(projectQueue([single, listed], [], [], undefined, NOW)).toEqual([
       expect.objectContaining({
         key: "acme/widgets#8",
+        verdictSha: "abc123",
         confidence: 0.9,
         needsHuman: true,
         checks: [
@@ -210,7 +212,7 @@ describe("projectQueue reply unwrap", () => {
           expect.objectContaining({ check: "ci", output: null }),
         ],
       }),
-      expect.objectContaining({ key: "acme/gadgets#3", confidence: 0.4, state: "ready" }),
+      expect.objectContaining({ key: "acme/gadgets#3", confidence: 0.4, state: "ready", verdictSha: null }),
     ]);
   });
 

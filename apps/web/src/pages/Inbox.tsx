@@ -12,6 +12,7 @@ import type { PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDos, usePendingDos } from "../lib/do-runs.ts";
 import { MergeChip, MergeVerdictLine } from "../components/MergeChip.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
+import { CitedEvidence } from "../components/CitedEvidence.tsx";
 import {
   COMPOSER_COPY,
   canRun,
@@ -218,8 +219,8 @@ const GATE_MARK: Record<CheckResult["result"], { className: string; glyph: strin
   unconfirmed: { className: "mk judge", glyph: "?" },
 };
 
-/** `name` is null until the pack that names a custom check has loaded. */
-export function CheckRow({ check, name }: { check: CheckResult; name: string | null }) {
+/** `name` is null until the pack that names a custom check has loaded; `sha` is the commit cited lines link into. */
+export function CheckRow({ check, name, repo, sha }: { check: CheckResult; name: string | null; repo: string; sha: string | null }) {
   const mark = (check.gate ? GATE_MARK : CHECK_MARK)[check.result];
   const source = check.kind === "model" ? [name, "Decision model"].filter(Boolean).join(" · ") : name;
   const value = checkValueText(check);
@@ -231,7 +232,7 @@ export function CheckRow({ check, name }: { check: CheckResult; name: string | n
         {source ? <small>{source}</small> : null}
         {value === null ? null : <small>{value}</small>}
         {check.evidence.map((evidence, index) => (
-          <small key={`${index}:${evidence}`}><span className="sr-only">Evidence:</span> {evidence}</small>
+          <small key={`${index}:${evidence}`}><span className="sr-only">Evidence:</span> <CitedEvidence text={evidence} output={check.output} repo={repo} sha={sha} /></small>
         ))}
       </span>
     </li>
@@ -241,7 +242,7 @@ export function CheckRow({ check, name }: { check: CheckResult; name: string | n
 function Reasons({ item }: { item: PrItem }) {
   const pack = useRepoPack(item.repo);
   if (item.checks.length > 0) {
-    return <ul className="why">{item.checks.map((check) => <CheckRow key={check.check} check={check} name={checkLabel(pack, check.check)} />)}</ul>;
+    return <ul className="why">{item.checks.map((check) => <CheckRow key={check.check} check={check} name={checkLabel(pack, check.check)} repo={item.repo} sha={item.verdictSha} />)}</ul>;
   }
   if (item.evidence.length === 0) return null;
   return <ul className="why">{item.evidence.map((reason) => <li key={reason}><span className="mk judge">?</span><span>{reason}</span></li>)}</ul>;

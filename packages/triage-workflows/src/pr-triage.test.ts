@@ -222,10 +222,13 @@ describe("pr-triage body", () => {
       evidence: ["migrations/001_users.sql"],
       output: { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["migrations/001_users.sql"] },
     });
-    const twice = { ...migration, patch: "@@ -0,0 +1 @@\n+DROP TABLE users;\n@@ -9,0 +10 @@\n+DROP TABLE teams;" };
+    const twice = { ...migration, patch: "@@ -0,0 +1 @@\n+DROP TABLE users;\n@@ -12,2 +11,0 @@\n-CREATE TABLE teams ();\n-CREATE TABLE orgs ();" };
     const hunks = await triage({ ...pack, custom: [{ ...reversible, scope: "hunk" }] }, { files: [FLAG, twice] });
     expect(hunks.judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["custom-1-hunk-002-001", "custom-1-hunk-002-002"]);
-    expect((hunks.verdict as Verdict).feedback).toContain('does not meet "Reversible": `migrations/001_users.sql` (change 1), `migrations/001_users.sql` (change 2)');
+    expect((hunks.verdict as Verdict).checks.find((c) => c.check === "custom-1")?.output).toMatchObject({
+      items: [{ path: "migrations/001_users.sql", added: { start: 1, end: 1 } }, { path: "migrations/001_users.sql", removed: { path: "migrations/001_users.sql", start: 12, end: 13 } }],
+    });
+    expect((hunks.verdict as Verdict).feedback).toContain(`does not meet "Reversible": [\`migrations/001_users.sql:1\`](https://github.com/${REPO}/blob/abc/migrations/001_users.sql?plain=1#L1), \`migrations/001_users.sql (removed lines 12–13)\``);
     const unmigrated = await triage(pack);
     expect(unmigrated.path).toEqual(RULES_PATH);
     expect((unmigrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({ result: "pass", reason: "does not apply", output: { kind: "not-applicable" } });

@@ -1614,6 +1614,8 @@ export type PrItem = {
   labels: string[];
   comment: string | null;
   sha: string | null;
+  /** The head commit the verdict judged, which cited lines link into; null for a verdict recorded before it was stamped. */
+  verdictSha: string | null;
   degraded: string | null;
   needsHuman: boolean;
   closed: boolean;
@@ -1995,6 +1997,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         labels: strings(r.labels),
         comment: typeof r.feedback === "string" ? r.feedback : null,
         sha: triggered && typeof sha === "string" ? sha : null,
+        verdictSha: typeof r.headSha === "string" ? r.headSha : null,
         degraded: typeof r.degraded === "string" ? r.degraded : null,
         needsHuman: r.humanGated === true,
         closed: false,
@@ -2069,6 +2072,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         labels: pr.labels,
         comment: null,
         sha: pr.sha,
+        verdictSha: null,
         degraded: null,
         needsHuman: false,
         closed: false,

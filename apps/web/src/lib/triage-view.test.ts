@@ -37,6 +37,7 @@ function item(repo: string, number: number): PrItem {
     labels: [],
     comment: null,
     sha: null,
+    verdictSha: null,
     degraded: null,
     needsHuman: true,
     closed: false,
@@ -120,6 +121,7 @@ describe("checkValueText", () => {
     expect(value({ kind: "score", score: 59.00000000000001, passAt: 70, items: ["src/api.ts"] })).toBe("59 / 70 (src/api.ts)");
     expect(value({ kind: "score", score: 9.999999999999998, passAt: 70, items: ["src/api.ts"] }, "", ["src/api.ts"])).toBe("10 / 70");
     expect(value({ kind: "score", score: 20, passAt: 60, items: ["src/api.ts"], unread: ["a.ts", "a.ts", "b.ts", "c.ts", "d.ts", "e.ts"] }, "", ["src/api.ts"])).toBe("20 / 60; couldn't read: a.ts, b.ts, c.ts +2 more");
+    expect(value({ kind: "score", score: 10, passAt: 70, items: [{ path: "src/router.ts", added: { start: 40, end: 58 } }, { path: "src/router.ts", removed: { path: "src/router.ts", start: 12, end: 13 } }] })).toBe("10 / 70 (src/router.ts:40-58, src/router.ts (removed lines 12–13))");
     expect(value({ kind: "values", values: { files: 33, lines: 2104 } })).toBe("33 files, 2,104 lines");
     expect(value({ kind: "values", values: { status: "pending" } })).toBe("CI pending");
     expect(value({ kind: "values", values: { behindBy: 12 } })).toBe("behind by 12");

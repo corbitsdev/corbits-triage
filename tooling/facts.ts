@@ -26,6 +26,7 @@ export function toFacts(pr: PRRecord): PrFacts {
 }
 
 export function triage(pr: PRRecord): RenderOutput {
-  const v = renderVerdict({ author: pr.author, det: deriveState(toFacts(pr)), threshold: DEFAULT_MERGE_THRESHOLD });
+  const facts = toFacts(pr);
+  const v = renderVerdict({ author: pr.author, repo: facts.repo, headSha: facts.headSha, det: deriveState(facts), threshold: DEFAULT_MERGE_THRESHOLD });
   return { ...v, humanGated: v.humanGated || pr.spam >= 0.9 || pr.confidence < 0.5 };
 }

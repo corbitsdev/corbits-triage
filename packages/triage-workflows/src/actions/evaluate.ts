@@ -52,7 +52,7 @@ function verdictOf(it: Item, replies: unknown[]): Verdict {
     const { candidates, plan, requests } = prepareQualityEvaluation(it.facts, it.det.sources);
     const { judge, judgeError } = it.det.needsJudgment ? { ...it, ...judgmentOf(replies.splice(0, requests.length)) } : it;
     const answers = judge !== undefined ? parseAnswers(judge) : null;
-    const rendered = renderVerdict({ author: it.facts.author, det: it.det, answers, candidates, plan, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, threshold: packMergeThreshold(it.pack) });
+    const rendered = renderVerdict({ author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, candidates, plan, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, threshold: packMergeThreshold(it.pack) });
     // A degraded verdict is incomplete, so nothing is suggested from it.
     const actions = it.pack && rendered.degraded === null ? evaluateActions({ facts: it.facts, checks: rendered.checks, pack: it.pack, roles: it.roles ?? {} }) : [];
     const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions };
