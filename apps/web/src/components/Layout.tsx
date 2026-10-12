@@ -1,13 +1,44 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { initialsOf, listCounts } from "../lib/inbox-view.ts";
-import { useSignOutAfterSending } from "../lib/held-inbox.tsx";
+import { useOpenWorkspaceAfterSending, useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { useOpenItems, useOpenPullsUnanswered } from "../lib/open-pulls.ts";
+import { sharesName } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { useSession } from "../lib/session.tsx";
-import { GearIcon, InboxIcon, ListIcon, PersonIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, GearIcon, InboxIcon, ListIcon, PersonIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+
+function WorkspaceItems({ close }: { close: () => void }) {
+  const { snapshot } = usePortal();
+  const openWorkspace = useOpenWorkspaceAfterSending();
+  if (!snapshot || (snapshot.workspaces.length < 2 && snapshot.invitations.length === 0)) return null;
+  const current = snapshot.workspace.tenantId;
+  const options = [...snapshot.workspaces, ...snapshot.invitations];
+
+  async function choose(tenantId: string) {
+    close();
+    if (tenantId !== current) await openWorkspace(tenantId);
+  }
+
+  return (
+    <>
+      {snapshot.workspaces.map((workspace) => (
+        <button key={workspace.tenantId} type="button" role="menuitemradio" aria-checked={workspace.tenantId === current} onClick={() => void choose(workspace.tenantId)}>
+          <span className="ws-option"><b>{workspace.name}</b>{sharesName(workspace, options) ? <small>{workspace.slug}</small> : null}</span>
+          {workspace.tenantId === current ? <CheckIcon /> : null}
+        </button>
+      ))}
+      {snapshot.invitations.map((invitation) => (
+        <button key={invitation.tenantId} type="button" role="menuitem" disabled>
+          <span className="ws-option"><b>{invitation.name}</b><small>Invited. An admin needs to let you in.</small></span>
+        </button>
+      ))}
+      <hr />
+    </>
+  );
+}
 
 function UserBlock() {
   const { session } = useSession();
@@ -38,6 +69,7 @@ function UserBlock() {
     <div className="menu-wrap" ref={wrapRef}>
       {open ? (
         <div className="menu up me-menu" role="menu">
+          <WorkspaceItems close={() => setOpen(false)} />
           <button type="button" role="menuitem" onClick={() => go("/settings")}><GearIcon />Settings</button>
           <button type="button" role="menuitem" onClick={() => go("/repositories")}><RepoIcon />Repositories</button>
           <hr />
