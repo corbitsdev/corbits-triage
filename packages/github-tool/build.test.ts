@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import * as tar from "tar";
 
 import { buildEntry, packTool } from "./build";
+import pkg from "./package.json";
 
 const scratch = await mkdtemp(path.join(tmpdir(), "github-tool-pack-"));
 afterAll(async function cleanup() {
@@ -16,6 +17,7 @@ test("packs a byte-identical, self-contained tool tarball that loads under Node"
   const first = await packTool(await buildEntry(path.join(scratch, "a/index.js")), path.join(scratch, "a"));
   const second = await packTool(await buildEntry(path.join(scratch, "b/index.js")), path.join(scratch, "b"));
   expect(second.integrity).toBe(first.integrity);
+  expect(first.version).toMatch(new RegExp(`^${pkg.version}-sha-[0-9a-f]{8}$`));
 
   const extracted = path.join(scratch, "extracted");
   await mkdir(extracted);
