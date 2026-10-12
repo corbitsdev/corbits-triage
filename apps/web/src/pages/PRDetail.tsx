@@ -9,7 +9,7 @@ import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "../lib/error-text.ts";
-import { approvedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { approvedHead, checkedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
 import { usePendingDos, useRunDo } from "../lib/do-runs.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
@@ -327,7 +327,7 @@ export default function PRDetail() {
     try {
       setError("");
       if (kind === "merge") {
-        await writeGithub({ action: "merge", repo: item.repo, number: item.number }, "now");
+        await writeGithub({ action: "merge", repo: item.repo, number: item.number, headSha: checkedHead(item) }, "now");
       } else {
         await writeGithub({
           action: "close",

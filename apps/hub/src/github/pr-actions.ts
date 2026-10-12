@@ -42,7 +42,7 @@ export const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.int
     }).narrow(namesReviewers))
     .or({ action: "'review'", event: "'REQUEST_CHANGES'", body: "string" })
     .or({ action: "'review'", event: "'APPROVE'", body: "string", headSha: "string > 0" })
-    .or({ action: "'merge'" })
+    .or({ action: "'merge'", "headSha?": "string > 0" })
     .or({ action: "'close'", labels: "string[]", comment: "string" }),
 );
 
@@ -66,7 +66,7 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
     case "review":
       return createReview(gh, { repo, number, body: body.body, event: body.event, ...("headSha" in body ? { commitId: body.headSha } : {}) });
     case "merge":
-      return mergePr(gh, { repo, number });
+      return mergePr(gh, { repo, number, ...(body.headSha ? { sha: body.headSha } : {}) });
     case "close":
       return mirror(gh, { repo, number, labels: body.labels, owned: TRIAGE_LABELS, comment: body.comment, close: true });
   }

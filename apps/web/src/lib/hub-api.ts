@@ -1086,7 +1086,7 @@ export type PrGithubWriteInput =
   | { action: "request-review"; repo: string; number: number; reviewers?: string[]; teamReviewers?: string[] }
   | { action: "review"; repo: string; number: number; event: "REQUEST_CHANGES"; body: string }
   | { action: "review"; repo: string; number: number; event: "APPROVE"; body: string; headSha: string }
-  | { action: "merge"; repo: string; number: number }
+  | { action: "merge"; repo: string; number: number; headSha: string }
   | { action: "close"; repo: string; number: number; labels: string[]; comment: string };
 
 /** The hub answers a reply with the GitHub comment it wrote; other writes carry none. */
@@ -1243,6 +1243,7 @@ export type GithubPullDetail = {
     deletions: number;
     changedFiles: number;
     labels: string[];
+    createdAt: string;
     updatedAt: string;
   };
   files: Array<{ path: string; previousPath?: string; status: string; additions: number; deletions: number; patch?: string }>;

@@ -180,6 +180,7 @@ function prFields(p: any) {
     deletions: p.deletions,
     changedFiles: p.changed_files,
     labels: p.labels?.map((l: any) => l.name) ?? [],
+    createdAt: p.created_at,
     updatedAt: p.updated_at,
   };
 }
@@ -752,12 +753,14 @@ export async function requestReviewers(gh: GithubFetch, input: RequestReviewersI
 export type MergePrInput = {
   repo: string;
   number: number;
+  /** The head that may merge; GitHub refuses the merge once the pull request has moved past it. Defaults to the current head. */
+  sha?: string;
 };
 
 export async function mergePr(gh: GithubFetch, input: MergePrInput) {
   const pr = await getPr(gh, input.repo, input.number);
   if (pr.mergeable !== true) throw new Error("pull request is not mergeable");
-  const merged = await json(gh, `/repos/${input.repo}/pulls/${input.number}/merge`, send("PUT", pr.sha ? { sha: pr.sha } : {}));
+  const merged = await json(gh, `/repos/${input.repo}/pulls/${input.number}/merge`, send("PUT", (input.sha ?? pr.sha) ? { sha: input.sha ?? pr.sha } : {}));
   return { merged: merged.merged === true, sha: merged.sha ?? pr.sha };
 }
 
