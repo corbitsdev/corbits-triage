@@ -5,7 +5,7 @@ import type { HubRun, RunLog } from "./hub-api.ts";
 
 type Source = { logs?: RunLog[]; runs?: HubRun[] };
 
-const catchingUp = (source: Source, repo: string) => isRepoCatchingUp(source.logs ?? [], source.runs ?? [], repo);
+const catchingUp = (source: Source, repo: string) => isRepoCatchingUp(source.logs ?? [], source.runs ?? [], new Set(), repo);
 
 const backlogRun = (status: string): HubRun => ({
   id: "run-backlog",

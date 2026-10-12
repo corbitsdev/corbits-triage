@@ -15,6 +15,8 @@ export type ObservedRun = {
   unconfirmed?: true;
   /** Workflow package version of the deployment the run ran on; the row remembers it so a later deployment can tell the head needs triage again. */
   workflowVersion?: string;
+  /** The webhook event that started the run, as `event:action`. */
+  trigger?: string;
 };
 
 export type ReconcilePolicy = {
@@ -76,6 +78,11 @@ export type RepoPlan = { rows: PrTriageRow[]; enqueue: QueuedPr[] };
 
 export function runKey(number: number, headSha: string): string {
   return `${number}@${headSha}`;
+}
+
+/** The pull request number a `runKey` names. */
+export function runKeyNumber(key: string): number {
+  return Number(key.slice(0, key.indexOf("@")));
 }
 
 function ms(iso: string): number {

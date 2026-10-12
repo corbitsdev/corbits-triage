@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useIsRestoring, useQuery, useQueryClient, type Query, type UseQueryResult } from "@tanstack/react-query";
-import { projectQueue, type PrItem } from "./hub-api.ts";
+import { projectQueue, type PrItem, type PullTriage } from "./hub-api.ts";
 import { repoOf, type HandledKind, type HandledMark, type OpenItem } from "./inbox-view.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
 import { usePortal } from "./portal.tsx";
-import { useRunLogs } from "./run-logs.ts";
-import { useApprovals, useApprovalsFirstLoad, useRuns } from "./tenant-entities.ts";
+import { useApprovals, useApprovalsFirstLoad } from "./tenant-entities.ts";
+import { usePullTriage, useTriageVerdicts } from "./triage-verdicts.ts";
 
 export const OPEN_PULLS_QUERY_KEY = "open-pulls";
+
+const NO_PULLS: PullTriage[] = [];
 
 export function isOpenPullsQuery(query: Query): boolean {
   return query.queryKey[0] === OPEN_PULLS_QUERY_KEY;
@@ -128,7 +130,7 @@ function withoutPull(handled: Handled | undefined, item: PrItem): Handled {
   return Object.fromEntries(Object.entries(handled ?? {}).filter(([key]) => key !== item.key));
 }
 
-/** Activity older than the entry's means its run log has not loaded yet, not that the author went back in time. */
+/** Activity older than the entry's means the hub has not recorded it yet, not that the author went back in time. */
 function isNewerActivity(entry: HandledEntry, item: PrItem): boolean {
   return item.activityAt !== null && (entry.activityAt === null || item.activityAt > entry.activityAt);
 }
@@ -207,17 +209,29 @@ export function useHandledPulls(): HandledPulls {
   }, [queryClient, tenantId]);
 }
 
-/** Every pull request with a verdict, including closed ones, for the pull request page. */
-export function usePullRequestItems(): PrItem[] {
-  const { logs } = useRunLogs();
-  const runs = useRuns();
+/** Every open pull request, and with `pulls` the ones the pull request page read on its own, open or not. */
+export function usePullRequestItems(pulls: PullTriage[] = NO_PULLS): PrItem[] {
+  const verdicts = useTriageVerdicts();
   const approvals = useApprovals();
   const { data } = useOpenPulls();
   const sent = useSentReplies();
   return useMemo(function projectWithSentReplies() {
-    const items = projectQueue(logs, runs.rows, approvals.rows, data, new Date());
+    const listed = verdicts.data?.pulls ?? NO_PULLS;
+    const extra = pulls.filter((pull) => !listed.some((open) => open.repo === pull.repo && open.number === pull.number));
+    const items = projectQueue([...listed, ...extra], approvals.rows, data);
     return items.map((item) => (item.runId !== null && sent[item.key] === item.runId ? { ...item, posted: true } : item));
-  }, [logs, runs.rows, approvals.rows, data, sent]);
+  }, [verdicts.data, pulls, approvals.rows, data, sent]);
+}
+
+/** The pull request page's items: the open ones, and the one it shows read on its own once it is neither open nor listed, as after a merge. */
+export function usePullPageItems(repo: string | null, number: number | null): PrItem[] {
+  const verdicts = useTriageVerdicts();
+  const openPulls = useOpenPulls();
+  const named = (pull: { repo: string; number: number }) => pull.repo === repo && pull.number === number;
+  const listed = verdicts.data?.pulls.some(named) === true;
+  const open = openPulls.data?.repos.some((row) => row.repo === repo && row.prs.some((pr) => pr.number === number)) === true;
+  const single = usePullTriage(repo ?? "", number, repo !== null && verdicts.data !== undefined && !listed && !open);
+  return usePullRequestItems(single?.pulls);
 }
 
 /**
@@ -235,7 +249,7 @@ export function useOpenPullsUnanswered(): boolean {
 
 /** True until every source the queue is projected from has loaded; the lists are not meaningful before that. */
 export function useQueueLoading(): boolean {
-  const { pending } = useRunLogs();
+  const { pending } = useTriageVerdicts();
   const approvals = useApprovals();
   const openPullsUnanswered = useOpenPullsUnanswered();
   return pending || approvals.loading || approvals.unavailable || openPullsUnanswered;
@@ -243,7 +257,7 @@ export function useQueueLoading(): boolean {
 
 /** The global loading pulse: the queue's sources, without polling approvals on pages that do not show them. */
 export function useQueueLoadingPulse(): boolean {
-  const { pending } = useRunLogs();
+  const { pending } = useTriageVerdicts();
   const approvalsLoading = useApprovalsFirstLoad();
   const openPullsUnanswered = useOpenPullsUnanswered();
   return pending || approvalsLoading || openPullsUnanswered;

@@ -1,19 +1,3 @@
-type EventLike = { type?: unknown; body?: unknown };
-type LogLike = { events?: EventLike[] };
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? value as Record<string, unknown> : {};
-}
-
-function payloadRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== "string") return record(value);
-  try {
-    return record(JSON.parse(value));
-  } catch {
-    return {};
-  }
-}
-
 /** Accept the two PEM envelopes GitHub emits for App private keys. */
 export function isPrivateKeyPem(value: string): boolean {
   const pem = value.trim();
@@ -30,20 +14,4 @@ export function generateWebhookSecret(fill: (bytes: Uint8Array) => void = fillRa
   fill(bytes);
   if (bytes.length !== 32) throw new Error("Webhook secret generator must return 32 bytes");
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-/** True only after the hub log records a GitHub PR payload for this repository. */
-export function hasVerifiedWebhookDelivery(logs: LogLike[], repo: string): boolean {
-  function isPrDelivery(event: EventLike): boolean {
-    if (event.type !== "RunStarted") return false;
-    const trigger = record(record(event.body).trigger);
-    const payload = payloadRecord(trigger.payload);
-    return payload.kind === "pr" && payload.repo === repo;
-  }
-  return logs.some((log) => (log.events ?? []).some(isPrDelivery));
-}
-
-/** A confidence-bearing result proves inference contributed; credentials alone do not. */
-export function hasObservedInference(items: Array<{ confidence: number | null }>): boolean {
-  return items.some((item) => typeof item.confidence === "number" && Number.isFinite(item.confidence));
 }

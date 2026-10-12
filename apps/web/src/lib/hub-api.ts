@@ -1,14 +1,13 @@
 import {
   ApiError,
   findAwaitingSignal,
-  isTerminalRunEvents,
   listWorkflowDeployments,
   readWorkflowRunEvents,
   triggerWorkflowRun,
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, readCheckPack, checkPackName, triggerRequestOf, parseCheckOutput, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
+import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -944,13 +943,6 @@ export function currentDeployment(deployments: readonly DeployedWorkflow[], work
   return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling);
 }
 
-// Interchange's `WorkflowDeploymentStatus` values after which the anchor starts no more runs.
-const ENDED_DEPLOYMENT_STATUSES = new Set(["released", "failed", "destroy_failed"]);
-
-export function isEndedDeployment(status: string): boolean {
-  return ENDED_DEPLOYMENT_STATUSES.has(status);
-}
-
 export const SERVICE_NOT_RUNNING = "The service is not running. Restart the hub, then try again.";
 
 function isTerminalMailFailure(cause: unknown): boolean {
@@ -1198,6 +1190,39 @@ export type TriageTimeline = { repo: string; number: number; entries: TimelineEn
 
 export async function loadTriageTimeline(transport: Transport, tenantId: string, repo: string, number: number): Promise<TriageTimeline> {
   return transport.fetch<TriageTimeline>("GET", `/api/integrations/triage-timeline/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`);
+}
+
+/** One recorded verdict of a pull request, as the hub's triage-verdicts route answers. */
+export type PullVerdict = {
+  runId: string;
+  at: string;
+  headSha: string;
+  settled: boolean;
+  state: string;
+  actor: string;
+  humanGated: boolean;
+  degraded: string | null;
+  commented: boolean;
+  checks: Array<{ check: string; result: string }>;
+  /** The verdict's own fields and the facts it read; null on verdicts the hub recorded before it kept them. */
+  detail: Record<string, unknown> | null;
+};
+
+/** A pull request's latest run, when it has not completed; `unknown` until the hub read the live logs since it started. */
+export type PullRun = { runId: string; startedAt: string; status: "running" | RunFailure } | { status: "unknown" };
+
+export type PullTriage = { repo: string; number: number; activityAt: string | null; verdict: PullVerdict | null; run: PullRun | null };
+
+/**
+ * `triaged`: connected repositories with any verdict or a pr-triage run in flight; `active`: those with a verdict in the last 14
+ * days or a run in flight; `scored`: whether the decision model scored any verdict.
+ */
+export type TriageVerdicts = { pulls: PullTriage[]; triaged: string[]; active: string[]; scored: boolean };
+
+/** The open pull requests' latest verdicts, or with `pull` that one pull request's, open or not. */
+export async function loadTriageVerdicts(transport: Transport, tenantId: string, pull?: { repo: string; number: number }): Promise<TriageVerdicts> {
+  const query = pull === undefined ? "" : `?repo=${enc(validateRepo(pull.repo))}&number=${pull.number}`;
+  return transport.fetch<TriageVerdicts>("GET", `/api/integrations/triage-verdicts/${enc(requireTenantId(tenantId))}${query}`);
 }
 
 export type GithubPullDetail = {
@@ -1676,7 +1701,8 @@ export type RunFailure = "failed" | "cancelled" | "stuck";
 
 export type CheckResult = {
   check: string;
-  kind: "machine" | "model";
+  /** Null for a verdict the hub recorded before it kept the checks' detail. */
+  kind: "machine" | "model" | null;
   result: "pass" | "fail" | "unconfirmed";
   reason: string | null;
   evidence: string[];
@@ -1686,6 +1712,10 @@ export type CheckResult = {
   gate: boolean;
 };
 
+function isCheckResult(value: unknown): value is CheckResult["result"] {
+  return value === "pass" || value === "fail" || value === "unconfirmed";
+}
+
 function checkResults(value: unknown): CheckResult[] {
   if (!Array.isArray(value)) return [];
   const out: CheckResult[] = [];
@@ -1693,10 +1723,15 @@ function checkResults(value: unknown): CheckResult[] {
     const c = obj(entry);
     if (typeof c.check !== "string") continue;
     if (c.kind !== "machine" && c.kind !== "model") continue;
-    if (c.result !== "pass" && c.result !== "fail" && c.result !== "unconfirmed") continue;
+    if (!isCheckResult(c.result)) continue;
     out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence), output: parseCheckOutput(c.output) ?? null, gate: c.gate === true });
   }
   return out;
+}
+
+/** A verdict recorded before the hub kept its detail still has each check's result. */
+function recordedChecks(checks: PullVerdict["checks"]): CheckResult[] {
+  return checks.flatMap(({ check, result }) => (isCheckResult(result) ? [{ check, kind: null, result, reason: null, evidence: [], output: null, gate: false }] : []));
 }
 
 function canonicalPrHref(repo: string, number: number): string {
@@ -1733,12 +1768,6 @@ const TRIAGE_TO_QUEUE: Record<string, QueueState> = {
   "stale-unknown": "stale",
 };
 
-const VERDICT_STEPS = new Set(["evaluate", "evaluateRules", "render", "renderJudged", "renderDet", "renderAll"]);
-const CHECK_STEPS = new Set(["rules", "facts", "checks", "checkAll"]);
-const MIRROR_STEPS = new Set(["mirror", "mirrorRules"]);
-
-type StepOutput = { stepId: string; output: unknown };
-
 function unwrapStepOutput(output: unknown): unknown {
   const record = obj(output);
   if (!Object.hasOwn(record, "reply")) return output;
@@ -1751,192 +1780,10 @@ function unwrapStepOutput(output: unknown): unknown {
   }
 }
 
-function renderRows(output: unknown): unknown[] {
-  if (Array.isArray(output)) return output;
-  const record = obj(output);
-  return Array.isArray(record.items) ? record.items : [output];
-}
-
-function stepOutputs(log: RunLog): StepOutput[] {
-  const out: StepOutput[] = [];
-  for (const event of log.events) {
-    if (event.type !== "StepCompleted") continue;
-    const body = obj(event.body);
-    if (typeof body.stepId !== "string") continue;
-    const resolved = resolveInlineRef(obj(body.output).ref);
-    if (resolved === null) continue;
-    out.push({
-      stepId: body.stepId.split(/[/.]/).pop() ?? body.stepId,
-      output: unwrapStepOutput(resolved),
-    });
-  }
-  return out;
-}
-
-type Verdict = { repo: string; number: number; render: Record<string, unknown>; evidence: string[]; facts: Record<string, unknown> };
-
 function evidenceOf(det: unknown): string[] {
   const d = obj(det);
   const findings = Array.isArray(d.findings) ? d.findings.map((f) => obj(f).reason) : [];
   return [...new Set([...findings, d.reason].filter((r): r is string => typeof r === "string" && r.length > 0))];
-}
-
-/** Verdicts in a run: evaluate outputs (older runs: render, renderJudged/renderDet, renderAll.items) joined to rules evidence by repo#number. */
-function runVerdicts(log: RunLog): Verdict[] {
-  const steps = stepOutputs(log);
-  const evidence = new Map<string, string[]>();
-  const prFacts = new Map<string, Record<string, unknown>>();
-  for (const { stepId, output } of steps) {
-    if (!CHECK_STEPS.has(stepId)) continue;
-    const o = obj(output);
-    const rows = Array.isArray(output) ? output : Array.isArray(o.rows) ? o.rows : Array.isArray(o.items) ? o.items : [o];
-    for (const row of rows) {
-      const r = obj(obj(row).row ?? row);
-      const facts = obj(r.facts);
-      const repo = r.repo ?? facts.repo;
-      const number = r.number ?? facts.number;
-      if (typeof repo !== "string" || typeof number !== "number") continue;
-      evidence.set(`${repo}#${number}`, evidenceOf(r.det));
-      prFacts.set(`${repo}#${number}`, facts);
-    }
-  }
-  const verdicts: Verdict[] = [];
-  for (const { stepId, output } of steps) {
-    if (!VERDICT_STEPS.has(stepId)) continue;
-    for (const item of renderRows(output)) {
-      const render = obj(item);
-      if (typeof render.repo !== "string" || !render.repo || typeof render.number !== "number" || render.number < 1) continue;
-      const key = `${render.repo}#${render.number}`;
-      verdicts.push({ repo: render.repo, number: render.number, render, evidence: typeof render.reason === "string" && render.reason ? [render.reason] : (evidence.get(key) ?? []), facts: prFacts.get(key) ?? {} });
-    }
-  }
-  return verdicts;
-}
-
-const MIRROR_CALL_PREFIX = "github_mirror_auto:";
-
-/** Pull requests the run's mirror step posted to: its results name each call `github_mirror_auto:<repo>#<number>`. */
-function mirroredPulls(log: RunLog): Set<string> {
-  const posted = new Set<string>();
-  for (const { stepId, output } of stepOutputs(log)) {
-    if (!MIRROR_STEPS.has(stepId)) continue;
-    const o = obj(output);
-    const results: unknown[] = Array.isArray(o.results) ? o.results : [o];
-    for (const result of results) {
-      const r = obj(result);
-      if (r.ok === true && typeof r.call === "string" && r.call.startsWith(MIRROR_CALL_PREFIX)) posted.add(r.call.slice(MIRROR_CALL_PREFIX.length));
-    }
-  }
-  return posted;
-}
-
-function logTime(log: RunLog): string {
-  const last = log.events[log.events.length - 1];
-  const at = last ? (obj(last).at ?? obj(last.body).at) : null;
-  return typeof at === "string" ? at : "";
-}
-
-/** The pull requests a pr-triage run was triggered for, from its RunStarted trigger: one, or several `items` of a catch-up mail. */
-function triggeredPulls(log: RunLog): string[] {
-  const started = log.events.find((e) => e.type === "RunStarted");
-  const payload = obj(triggerRequestOf(obj(obj(started?.body).trigger).payload));
-  if (payload.kind !== "pr" || typeof payload.repo !== "string") return [];
-  const items: unknown[] = Array.isArray(payload.items) ? payload.items : [payload];
-  return items.flatMap((item) => (typeof obj(item).prNumber === "number" ? [`${payload.repo}#${obj(item).prNumber}`] : []));
-}
-
-/**
- * Webhook events, as `event:action`, that mean someone other than the App moved the pull request: a push, reopen, ready for review,
- * review request, comment or review. CI results, catch-up and backlog runs, labels, assignment and edits do not; the App's own writes start no run.
- */
-const AUTHOR_ACTIVITY = new Set([
-  "pull_request:synchronize",
-  "pull_request:reopened",
-  "pull_request:ready_for_review",
-  "pull_request:review_requested",
-  "issue_comment:created",
-  "pull_request_review:submitted",
-]);
-
-/** When the newest run triggered by author activity started, per pull request. */
-function authorActivity(logs: RunLog[]): Map<string, string> {
-  const activity = new Map<string, string>();
-  for (const log of logs) {
-    const started = log.events.find((e) => e.type === "RunStarted");
-    const at = started ? (obj(started).at ?? obj(started.body).at) : null;
-    const payload = obj(triggerRequestOf(obj(obj(started?.body).trigger).payload));
-    if (typeof at !== "string" || !AUTHOR_ACTIVITY.has(`${payload.event}:${payload.action}`)) continue;
-    for (const pull of triggeredPulls(log)) {
-      const newest = activity.get(pull);
-      if (newest === undefined || at > newest) activity.set(pull, at);
-    }
-  }
-  return activity;
-}
-
-// Hub run statuses, in both the lifecycle and the run-view vocabulary, after which a run makes no progress.
-const SETTLED_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "error", "stopped"]);
-
-type SettledRuns = Map<string, string>;
-
-export function isSettledRunStatus(status: string): boolean {
-  return SETTLED_RUN_STATUSES.has(status);
-}
-
-function settledRuns(runs: HubRun[]): SettledRuns {
-  return new Map(runs.filter((run) => SETTLED_RUN_STATUSES.has(run.status)).map((run) => [run.id, run.status]));
-}
-
-function startedAt(log: RunLog): number | null {
-  const started = log.events.find((e) => e.type === "RunStarted");
-  const at = started ? (obj(started).at ?? obj(started.body).at) : null;
-  return typeof at === "string" ? new Date(at).getTime() : null;
-}
-
-/** How a run ended without a verdict, from its log, the hub's settled status, or how long it has been going. */
-function runFailure(log: RunLog, settled: SettledRuns, now: Date): RunFailure | null {
-  const last = log.events[log.events.length - 1]?.type;
-  if (last === "RunFailed") return "failed";
-  if (last === "RunCancelled") return "cancelled";
-  if (last === "RunCompleted") return null;
-  const status = settled.get(log.runId) ?? settled.get(log.anchorRunId);
-  if (status === "cancelled" || status === "stopped") return "cancelled";
-  if (status !== undefined) return "failed";
-  const began = startedAt(log);
-  return began !== null && now.getTime() - began > PR_TRIAGE_STUCK_RUN_MS ? "stuck" : null;
-}
-
-/** A run that has started and has not ended in its log, settled on the hub or gone stuck. */
-export function isLiveRun(log: RunLog, runs: HubRun[], now: Date): boolean {
-  return startedAt(log) !== null && !isTerminalRunEvents(log.events) && runFailure(log, settledRuns(runs), now) === null;
-}
-
-/** Pull requests whose latest pr-triage run has started, has not rendered and has not settled in its log or on the hub. */
-function runningPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, settled: SettledRuns, now: Date): Set<string> {
-  const running = new Set<string>();
-  for (const { log, verdicts } of logs) {
-    const live = !isTerminalRunEvents(log.events) && runFailure(log, settled, now) === null;
-    for (const pull of triggeredPulls(log)) {
-      if (live) running.add(pull);
-      else running.delete(pull);
-    }
-    for (const v of verdicts) running.delete(`${v.repo}#${v.number}`);
-  }
-  return running;
-}
-
-/** Pull requests whose latest pr-triage run ended without a verdict, and how. */
-function failedPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, settled: SettledRuns, now: Date): Map<string, RunFailure> {
-  const failed = new Map<string, RunFailure>();
-  for (const { log, verdicts } of logs) {
-    const failure = runFailure(log, settled, now);
-    for (const pull of triggeredPulls(log)) {
-      if (failure === null) failed.delete(pull);
-      else failed.set(pull, failure);
-    }
-    for (const v of verdicts) failed.delete(`${v.repo}#${v.number}`);
-  }
-  return failed;
 }
 
 function isGithubWriteApproval(approval: HubApproval): boolean {
@@ -1948,76 +1795,76 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
     || tool === "github_merge_pr";
 }
 
+function textOf(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+/** A stuck run is a failure, not running, so its Dos stay enabled: running them again is the way out. */
+function failureOf(run: PullRun | null): RunFailure | null {
+  return run === null || run.status === "running" || run.status === "unknown" ? null : run.status;
+}
+
+/** A run the hub has not read yet may be going, so it holds writes like one that is. */
+function isRunning(run: PullRun | null): boolean {
+  return run?.status === "running" || run?.status === "unknown";
+}
+
+function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
+  const key = `${pull.repo}#${pull.number}`;
+  const detail = obj(verdict.detail);
+  const facts = obj(detail.facts);
+  return {
+    key,
+    repo: pull.repo,
+    number: pull.number,
+    title: textOf(facts.title),
+    author: textOf(facts.author),
+    authorKind: null,
+    draft: typeof facts.draft === "boolean" ? facts.draft : null,
+    mergeable: typeof facts.mergeable === "boolean" ? facts.mergeable : null,
+    state: TRIAGE_TO_QUEUE[verdict.state] ?? "stale",
+    priority: textOf(detail.priority),
+    owner: textOf(detail.owner),
+    nextAction: textOf(detail.nextAction),
+    confidence: typeof detail.score === "number" ? detail.score : null,
+    merge: mergeVerdict(detail.merge),
+    evidence: strings(detail.evidence),
+    checks: verdict.detail === null ? recordedChecks(verdict.checks) : checkResults(detail.checks),
+    labels: strings(detail.labels),
+    comment: typeof detail.feedback === "string" ? detail.feedback : null,
+    sha: verdict.headSha,
+    verdictSha: typeof detail.headSha === "string" ? detail.headSha : null,
+    degraded: verdict.degraded,
+    needsHuman: verdict.humanGated,
+    closed: false,
+    pendingApprovalId: null,
+    runId: verdict.runId,
+    waitingSince: verdict.at,
+    updatedAt: null,
+    ci: isCiState(facts.checks) ? facts.checks : null,
+    headSha: null,
+    activityAt: pull.activityAt,
+    reviewAnswered: facts.reviewAnswered === true,
+    canClose: detail.duplicate === true,
+    pendingClose: false,
+    posted: verdict.commented,
+    running: isRunning(pull.run),
+    failure: failureOf(pull.run),
+    actions: suggestedActions(detail.actions),
+    href: canonicalPrHref(pull.repo, pull.number),
+  };
+}
+
 /**
- * Queue projection from StepCompleted outputs read inline from the run event
- * logs. Latest run wins per repo#number. Pending github_mirror approvals only
- * overlay needs-human; they never decide the verdict. With the open pull
- * requests, unseen ones join as "new" and verdicts of closed ones stop needing a human.
- * A pull request whose latest pr-triage run has started but neither rendered nor settled is running.
+ * Queue projection from the hub's latest verdict of each pull request. Pending github_mirror approvals only
+ * overlay needs-human; they never decide the verdict. With the open pull requests, unseen ones join as "new"
+ * and verdicts of closed ones stop needing a human.
  */
-export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubApproval[], openPulls: OpenPulls | undefined, now: Date): PrItem[] {
+export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], openPulls: OpenPulls | undefined): PrItem[] {
   const items = new Map<string, PrItem>();
-  const logs = runLogs
-    .map((log, i) => ({ log, i }))
-    .sort((a, b) => logTime(a.log).localeCompare(logTime(b.log)) || a.i - b.i)
-    .map(({ log }) => ({ log, verdicts: runVerdicts(log) }));
-  const settled = settledRuns(runs);
-  const running = runningPulls(logs, settled, now);
-  const failed = failedPulls(logs, settled, now);
-  const activity = authorActivity(runLogs);
-  for (const { log, verdicts } of logs) {
-    const started = log.events.find((e) => e.type === "RunStarted");
-    const eventStep = stepOutputs(log).find((s) => s.stepId === "event");
-    const payload = eventStep ? obj(eventStep.output) : obj(triggerRequestOf(obj(obj(started?.body).trigger).payload));
-    const at = logTime(log) || null;
-    const posted = mirroredPulls(log);
-    for (const v of verdicts) {
-      const key = `${v.repo}#${v.number}`;
-      const r = v.render;
-      const named = Array.isArray(payload.items) ? payload.items.map(obj).find((item) => item.prNumber === v.number) : payload;
-      const triggered = payload.repo === v.repo && named?.prNumber === v.number;
-      const sha = named?.headSha ?? named?.sha;
-      items.set(key, {
-        key,
-        repo: v.repo,
-        number: v.number,
-        title: typeof v.facts.title === "string" && v.facts.title ? v.facts.title : null,
-        author: typeof v.facts.author === "string" && v.facts.author ? v.facts.author : null,
-        authorKind: null,
-        draft: typeof v.facts.draft === "boolean" ? v.facts.draft : null,
-        mergeable: typeof v.facts.mergeable === "boolean" ? v.facts.mergeable : null,
-        state: TRIAGE_TO_QUEUE[String(r.state)] ?? "stale",
-        priority: typeof r.priority === "string" ? r.priority : null,
-        owner: typeof r.owner === "string" ? r.owner : null,
-        nextAction: typeof r.nextAction === "string" ? r.nextAction : null,
-        confidence: typeof r.confidence === "number" ? r.confidence : null,
-        merge: mergeVerdict(r.merge),
-        evidence: v.evidence,
-        checks: checkResults(r.checks),
-        labels: strings(r.labels),
-        comment: typeof r.feedback === "string" ? r.feedback : null,
-        sha: triggered && typeof sha === "string" ? sha : null,
-        verdictSha: typeof r.headSha === "string" ? r.headSha : null,
-        degraded: typeof r.degraded === "string" ? r.degraded : null,
-        needsHuman: r.humanGated === true,
-        closed: false,
-        pendingApprovalId: null,
-        runId: log.runId,
-        waitingSince: at,
-        updatedAt: null,
-        ci: isCiState(v.facts.checks) ? v.facts.checks : null,
-        headSha: null,
-        activityAt: activity.get(key) ?? null,
-        reviewAnswered: v.facts.reviewAnswered === true,
-        canClose: r.duplicate === true,
-        pendingClose: false,
-        posted: posted.has(key) && typeof r.feedback === "string" && r.feedback.trim() !== "",
-        running: running.has(key),
-        failure: failed.get(key) ?? null,
-        actions: suggestedActions(r.actions),
-        href: canonicalPrHref(v.repo, v.number),
-      });
-    }
+  const triage = new Map(pulls.map((pull) => [`${pull.repo}#${pull.number}`, pull]));
+  for (const pull of pulls) {
+    if (pull.verdict) items.set(`${pull.repo}#${pull.number}`, verdictItem(pull, pull.verdict));
   }
   for (const approval of approvals) {
     if (!isGithubWriteApproval(approval) || !isPendingStatus(approval.status)) continue;
@@ -2034,11 +1881,11 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
       waitingSince: approval.createdAt ?? item.waitingSince,
     });
   }
-  if (openPulls) joinOpenPulls(items, openPulls, running, failed, activity);
+  if (openPulls) joinOpenPulls(items, openPulls, triage);
   return [...items.values()];
 }
 
-function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running: Set<string>, failed: Map<string, RunFailure>, activity: Map<string, string>): void {
+function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage: Map<string, PullTriage>): void {
   for (const { repo, prs, error } of openPulls.repos) {
     if (error) continue;
     const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
@@ -2049,9 +1896,11 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
       const key = `${repo}#${pr.number}`;
       const known = items.get(key);
       if (known) {
-        items.set(key, { ...known, authorKind: pr.authorKind ?? null, updatedAt: pr.updatedAt, headSha: pr.sha });
+        // A verdict recorded before the hub kept its facts takes the pull request's from GitHub.
+        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: known.draft ?? pr.draft, authorKind: pr.authorKind ?? null, updatedAt: pr.updatedAt, headSha: pr.sha });
         continue;
       }
+      const pull = triage.get(key);
       items.set(key, {
         key,
         repo,
@@ -2082,13 +1931,13 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         updatedAt: pr.updatedAt,
         ci: null,
         headSha: pr.sha,
-        activityAt: activity.get(key) ?? null,
+        activityAt: pull?.activityAt ?? null,
         reviewAnswered: false,
         canClose: false,
         pendingClose: false,
         posted: false,
-        running: running.has(key),
-        failure: failed.get(key) ?? null,
+        running: isRunning(pull?.run ?? null),
+        failure: failureOf(pull?.run ?? null),
         actions: [],
         href: canonicalPrHref(repo, pr.number),
       });
