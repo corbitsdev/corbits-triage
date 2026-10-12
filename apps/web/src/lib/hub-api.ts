@@ -1819,6 +1819,11 @@ function runFailure(log: RunLog, settled: SettledRuns, now: Date): RunFailure | 
   return began !== null && now.getTime() - began > PR_TRIAGE_STUCK_RUN_MS ? "stuck" : null;
 }
 
+/** A run that has started and has not ended in its log, settled on the hub or gone stuck. */
+export function isLiveRun(log: RunLog, runs: HubRun[], now: Date): boolean {
+  return startedAt(log) !== null && !isTerminalRunEvents(log.events) && runFailure(log, settledRuns(runs), now) === null;
+}
+
 /** Pull requests whose latest pr-triage run has started, has not rendered and has not settled in its log or on the hub. */
 function runningPulls(logs: Array<{ log: RunLog; verdicts: Verdict[] }>, settled: SettledRuns, now: Date): Set<string> {
   const running = new Set<string>();

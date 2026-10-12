@@ -1,7 +1,9 @@
 // Holds a pull request's webhook events for a short window and mails them as
-// one triage run: the head the latest pull_request event named (else the
-// first event's), the latest event for workflows that read one, and every
-// event seen. The head is marked
+// one triage run: the head the latest new commit or opening of the pull
+// request named (else the first event's), the latest event for workflows that read one, and every
+// event seen. A new commit or a pull request opened, reopened or marked ready
+// closes its window after a short burst instead, so its triage starts at once
+// with the events GitHub sends alongside it. The head is marked
 // queued when its first event is accepted, so a window lost to a restart is
 // recovered by the reconciler. Every accepted event opens or joins a window,
 // even on a head already queued: a queued row does not say whether its run
@@ -15,7 +17,7 @@ import type { HeadChecksReader } from "./tenant-open-heads.js";
 import { failHead, queueHead, restoreHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 
-export type CoalesceWindow = { quietMs: number; maxWaitMs: number };
+export type CoalesceWindow = { quietMs: number; maxWaitMs: number; burstMs: number };
 
 /** Schedules `fire` after `ms`; the returned function cancels it. */
 export type SetTimer = (fire: () => Promise<void>, ms: number) => () => void;
@@ -56,9 +58,17 @@ type Open = {
   head: QueuedHead;
   remembered: Remembered;
   events: TriageEvent[];
+  /** Holds a new commit or a newly opened pull request, so it closes on the burst and later events do not extend it. */
+  starting: boolean;
   cancelQuiet: () => void;
   cancelDeadline: () => void;
 };
+
+const STARTING_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review"]);
+
+function startsTriage({ mail }: CoalescedEvent): boolean {
+  return mail.event === "pull_request" && mail.action !== null && STARTING_ACTIONS.has(mail.action);
+}
 
 async function settled(work: Promise<unknown>): Promise<void> {
   try {
@@ -72,12 +82,14 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
   const windows = new Map<string, Open>();
   /** The last accept or flush of each pull request, so they never interleave. */
   const tails = new Map<string, Promise<void>>();
+  /** The head each pull request's latest new commit or opening named, kept past its window so a late event cannot move it back. */
+  const newest = new Map<string, string>();
 
   function keyOf({ tenantId, record, number }: CoalescedEvent): string {
     return `${tenantId}\n${record.name}\n${number}`;
   }
 
-  function headOf({ tenantId, record, number, headSha }: CoalescedEvent): QueuedHead {
+  function headOf({ tenantId, record, number }: CoalescedEvent, headSha: string): QueuedHead {
     return { tenantId, repo: record.name, number, headSha };
   }
 
@@ -159,29 +171,34 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
   }
 
   async function join(key: string, open: Open, input: CoalescedEvent): Promise<Accepted> {
-    // Check runs and comments may name a superseded commit; only the pull request itself says where its head is.
-    if (input.mail.event === "pull_request" && input.headSha !== open.head.headSha) {
-      const head = headOf(input);
+    if (startsTriage(input) && input.headSha !== open.head.headSha) {
+      const head = headOf(input, input.headSha);
       open.remembered = await queue(head);
       open.head = head;
     }
     open.latest = input;
     if (!open.events.includes(input.event)) open.events.push(input.event);
+    if (open.starting) return "coalesced";
+    open.starting = startsTriage(input);
     open.cancelQuiet();
-    open.cancelQuiet = timer(key, deps.window.quietMs);
+    open.cancelQuiet = timer(key, open.starting ? deps.window.burstMs : deps.window.quietMs);
     return "coalesced";
   }
 
   async function acceptNow(key: string, input: CoalescedEvent): Promise<Accepted> {
+    const starting = startsTriage(input);
+    // Other events, even other pull_request ones, may name a superseded commit; only a new commit or an opening says where the head is.
+    if (starting) newest.set(key, input.headSha);
     const open = windows.get(key);
     if (open) return join(key, open, input);
-    const head = headOf(input);
+    const head = headOf(input, newest.get(key) ?? input.headSha);
     windows.set(key, {
       latest: input,
       head,
       remembered: await queue(head),
       events: [input.event],
-      cancelQuiet: timer(key, deps.window.quietMs),
+      starting,
+      cancelQuiet: timer(key, starting ? deps.window.burstMs : deps.window.quietMs),
       cancelDeadline: timer(key, deps.window.maxWaitMs),
     });
     return "queued";

@@ -1,16 +1,17 @@
 import { afterEach, expect, jest, test } from "bun:test";
 import { environmentManager, isServer, QueriesObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { Transport } from "@intx/hub-client";
+import { RUNS_QUERY_KEY } from "./portal.tsx";
 import { runLogQuery, runRefsQuery } from "./run-logs.ts";
 
 const TENANT = "t1";
 const BASE = `/api/tenants/${TENANT}/workflows`;
-const started = { seq: 0, type: "RunStarted", body: {} };
+const started = { seq: 0, type: "RunStarted", body: { at: new Date().toISOString() } };
 const ended = [started, { seq: 1, type: "RunCompleted", body: {} }];
 const deployment = (id: string, status: string) => ({ id, tenantId: TENANT, definitionAssetId: "asset", status, createdAt: "2026-10-01T00:00:00.000Z" });
 
 const DEPLOYMENTS = [deployment("live", "running"), deployment("old", "released")];
-const RUNS: Record<string, string[]> = { live: ["live", "done-1", "done-2", "done-3", "busy"], old: ["old", "done-old"] };
+const RUNS: Record<string, string[]> = { live: ["live", "done-1", "done-2", "done-3", "busy", "stuck", "settled", "unstarted"], old: ["old", "done-old"] };
 const EVENTS: Record<string, unknown[]> = {
   "live": [started, { seq: 1, type: "ChildSpawned", body: {} }],
   "old": [started, { seq: 1, type: "RunCancelled", body: {} }],
@@ -19,7 +20,11 @@ const EVENTS: Record<string, unknown[]> = {
   "done-3": ended,
   "done-old": ended,
   "busy": [started],
+  "stuck": [{ seq: 0, type: "RunStarted", body: { at: "2000-01-01T00:00:00.000Z" } }],
+  "settled": [started],
+  "unstarted": [],
 };
+const RUN_STATUSES = [{ id: "settled", definitionId: "def", definitionName: "pr-triage", status: "failed", createdAt: "2026-10-01T00:00:00.000Z" }];
 
 function countingTransport(calls: string[]): Transport {
   return {
@@ -52,9 +57,10 @@ test("one tab reads only what can still change over two minutes", async () => {
   const calls: string[] = [];
   const transport = countingTransport(calls);
   const queryClient = new QueryClient();
+  queryClient.setQueryData([RUNS_QUERY_KEY, TENANT], RUN_STATUSES);
   const refs = new QueryObserver(queryClient, runRefsQuery(queryClient, transport, TENANT));
   const logs = new QueriesObserver(queryClient, []);
-  refs.subscribe((result) => logs.setQueries((result.data ?? []).map((ref) => runLogQuery(transport, TENANT, ref))));
+  refs.subscribe((result) => logs.setQueries((result.data ?? []).map((ref) => runLogQuery(queryClient, transport, TENANT, ref))));
   logs.subscribe(() => {});
   for (let second = 0; second <= 120; second++) {
     await flush();
@@ -63,12 +69,15 @@ test("one tab reads only what can still change over two minutes", async () => {
   await flush();
   const count = (suffix: string) => calls.filter((path) => path.endsWith(suffix)).length;
 
-  expect(count("/deployments")).toBe(13);
-  expect(count("/live/runs")).toBe(13);
+  expect(count("/deployments")).toBe(41);
+  expect(count("/live/runs")).toBe(41);
   expect(count("/old/runs")).toBe(1);
   expect(count("/runs/live/events")).toBe(0);
   expect(count("/runs/done-1/events")).toBe(1);
   expect(count("/runs/done-old/events")).toBe(1);
-  expect(count("/runs/busy/events")).toBe(13);
-  expect(calls.length).toBe(44);
+  expect(count("/runs/busy/events")).toBe(61);
+  expect(count("/runs/stuck/events")).toBe(13);
+  expect(count("/runs/settled/events")).toBe(13);
+  expect(count("/runs/unstarted/events")).toBe(13);
+  expect(calls.length).toBe(187);
 });
