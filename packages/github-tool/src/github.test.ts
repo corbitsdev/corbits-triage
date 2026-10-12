@@ -177,6 +177,15 @@ describe("mergePr", () => {
     ]);
   });
 
+  test("merges only the head it was given", async () => {
+    const { gh, requests } = recorder(function respond(path, init) {
+      if (init?.method === "PUT") return { merged: true, sha: "checked" };
+      return { mergeable: true, head: { sha: "newer" }, state: "open" };
+    });
+    await mergePr(gh, { repo: "acme/widgets", number: 8, sha: "checked" });
+    expect(requests.at(-1)).toEqual({ path: "/repos/acme/widgets/pulls/8/merge", method: "PUT", body: { sha: "checked" } });
+  });
+
   test("refuses when not mergeable and does not PUT", async () => {
     const { gh, requests } = recorder(function respond() {
       return { mergeable: false, head: { sha: "abc123" }, state: "open" };
