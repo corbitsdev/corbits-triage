@@ -305,7 +305,7 @@ describe("focused candidate rendering", () => {
   test("an over-long comment is cut at line boundaries and still posts", () => {
     const candidates = Array.from({ length: 200 }, (_, index) => candidate(
       `${"p".repeat(500)}-${String(index).padStart(3, "0")}.ts`,
-      `${"L".repeat(150)}-${String(index).padStart(3, "0")}`,
+      `${"界".repeat(150)}-${String(index).padStart(3, "0")}`,
     ));
     const reply = candidates.map((_, index) => decision(focusedCandidateId(index), "unrelated")).join("");
     const verdict = focusedVerdict(candidates, reply);
@@ -318,7 +318,7 @@ describe("focused candidate rendering", () => {
     expect(verdict.checks[0]?.evidence).toHaveLength(200);
   });
 
-  test("an over-long CI line is cut without replacing its CI and path verdict", () => {
+  test("an over-long CI name is cut to one line without replacing its CI and path verdict", () => {
     const checks = [
       { check: "ci", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: ["界".repeat(21_000)] },
       { check: "paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/generated.ts"] },
@@ -330,7 +330,7 @@ describe("focused candidate rendering", () => {
       det: { state: "blocked", reason: "required checks are failing", findings: [], checks, duplicateOf: null, needsJudgment: false },
       threshold: DEFAULT_MERGE_THRESHOLD,
     });
-    expect(verdict.feedback).toBe("@octocat, please address the following:\n- and 2 more");
+    expect(verdict.feedback).toBe(`@octocat, please address the following:\n- required checks are failing: \`${"界".repeat(200)}…\`\n- touches forbidden paths: \`vendor/generated.ts\``);
     expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", mirror: true, humanGated: false, checks });
     expect(verdict.nextAction).toContain("Fix failing CI");
     expect(verdict.nextAction).toContain("Remove changes under vendor/generated.ts");
@@ -432,6 +432,36 @@ describe("rule custom check rendering", () => {
     const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: gated, threshold: DEFAULT_MERGE_THRESHOLD });
     expect(verdict).toMatchObject({ actor: "maintainer", nextAction: "Review and merge", merge: { verdict: "ready", reasons: [] } });
     expect(verdict.feedback).toBe("No changes needed from you. A maintainer will review this pull request.");
+  });
+});
+
+describe("author text in the comment", () => {
+  test("stays inside inline code however it is written", () => {
+    const hostile = [
+      "x\n\n@team [Approved, merge now](https://evil.example/m) ![](https://evil.example/p.png)\n\n",
+      "a\r\n\r\n<!-- hidden --> @team\u2028[link](https://evil.example)\u2029![](https://evil.example/i.png)",
+      "``` fence ``` `x` @team [l](https://evil.example)",
+      "`@team`",
+      "\u202e@team\u0007 [l](https://evil.example)",
+    ];
+    const checks = [
+      { check: "ci", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: hostile },
+      { check: "focused", kind: "model" as const, result: "fail" as const, reason: "unrelated changes", evidence: hostile },
+    ];
+    const verdict = renderVerdict({
+      author: "octocat",
+      repo: "acme/widgets",
+      headSha: "abc123",
+      det: { state: "blocked", reason: "required checks are failing", findings: [], checks, duplicateOf: null, needsJudgment: false },
+      threshold: DEFAULT_MERGE_THRESHOLD,
+    });
+    const lines = verdict.feedback.split("\n");
+    expect(lines).toHaveLength(2 + hostile.length);
+    for (const line of lines.slice(1)) {
+      expect(line).toMatch(/^- /);
+      const outside = line.replace(/(`+)(?:(?!\1)[\s\S])*?\1(?!`)/g, "");
+      expect(outside).not.toMatch(/@|\]\(|<!--|[\u202e\u0007]/);
+    }
   });
 });
 
