@@ -80,6 +80,10 @@ export type RuleKind = (typeof RULE_KINDS)[number];
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
 export type ModelShape = (typeof MODEL_SHAPES)[number];
 
+/** What an is-true check asks about: the whole pull request, or each changed file or hunk under its `when` globs. */
+export const CUSTOM_SCOPES = ["pull-request", "file", "hunk"] as const;
+export type CustomScope = (typeof CUSTOM_SCOPES)[number];
+
 export const AUTHOR_KINDS = ["owner", "member", "collaborator", "contributor", "first-timer", "outside", "bot"] as const;
 export type AuthorKind = (typeof AUTHOR_KINDS)[number];
 export const AUTHOR_WHO = ["users", "role", "kinds"] as const;
@@ -114,9 +118,12 @@ type RuleParams = {
 };
 export type RuleCheck = { [K in RuleKind]: { rule: K } & RuleParams[K] }[RuleKind];
 
-/** `score` passes at `min` or above on a 0 to 10 scale; `choose` fails when the answer is one of `failOn`. */
+/**
+ * `score` passes at `min` or above on a 0 to 10 scale; `choose` fails when the answer is one of `failOn`. A file or hunk
+ * scoped `is-true` asks whether each item in scope meets `claim`, and applies only to paths matching `when` when it is set.
+ */
 type ModelParams = {
-  "is-true": { claim: string };
+  "is-true": { claim: string; scope?: CustomScope; when?: string[] };
   score: { subject: string; min: number };
   choose: { options: string[]; failOn: string[] };
 };
@@ -260,7 +267,7 @@ const CustomCheckSchema = type({ ...RULE, rule: "'paths-unchanged'", globs: Text
   .or({ ...RULE, rule: "'author'", who: "'users'", users: Texts })
   .or({ ...RULE, rule: "'author'", who: "'role'", role: Text })
   .or({ ...RULE, rule: "'author'", who: "'kinds'", kinds: type.enumerated(...AUTHOR_KINDS).array().atLeastLength(1) })
-  .or({ ...MODEL, shape: "'is-true'", claim: Text })
+  .or({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Texts })
   .or({ ...MODEL, shape: "'score'", subject: Text, min: `0 <= number.integer <= ${SCORE_MAX}` })
   .or({ ...MODEL, shape: "'choose'", options: Text.array().atLeastLength(2), failOn: Texts });
 
@@ -480,11 +487,19 @@ function parseRule(row: Record<string, unknown>, where: string): RuleCheck {
   }
 }
 
+function parseScope(row: Record<string, unknown>, where: string): { scope?: CustomScope; when?: string[] } {
+  const scope = row.scope === undefined ? undefined : oneOf(row.scope, CUSTOM_SCOPES, `${where} scope`);
+  if (row.when === undefined) return scope === undefined ? {} : { scope };
+  if (scope === undefined || scope === "pull-request") throw new Error(`${where} when needs a file or hunk scope.`);
+  return { scope, when: texts(row.when, `${where} when`) };
+}
+
 function parseModel(row: Record<string, unknown>, where: string): ModelCheck {
   const shape = oneOf(row.shape, MODEL_SHAPES, `${where} shape`);
+  if (shape !== "is-true" && (row.scope !== undefined || row.when !== undefined)) throw new Error(`${where} scope and when apply only to is-true checks.`);
   switch (shape) {
     case "is-true":
-      return { shape, claim: text(row.claim, `${where} claim`) };
+      return { shape, claim: text(row.claim, `${where} claim`), ...parseScope(row, where) };
     case "score":
       return { shape, subject: text(row.subject, `${where} subject`), min: integer(row.min, 0, SCORE_MAX, `${where} min`) };
     case "choose": {

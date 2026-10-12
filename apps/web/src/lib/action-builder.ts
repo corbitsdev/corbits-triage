@@ -8,6 +8,7 @@ import {
   type CheckPackGroup,
   type CheckRef,
   type CustomCheck,
+  type CustomScope,
   type Do,
   type LabelsTarget,
   type ModelShape,
@@ -52,6 +53,8 @@ type CheckParams = {
   label?: string;
   count?: number;
   claim?: string;
+  scope?: CustomScope;
+  when?: string[];
   subject?: string;
   min?: number;
   options?: string[];
@@ -79,7 +82,7 @@ const PARAMS: Record<RuleKind | ModelShape, readonly (keyof CheckParams)[]> = {
   "diff-excludes": ["pattern"],
   "min-approvals": ["count"],
   author: ["who", "users", "role", "kinds"],
-  "is-true": ["claim"],
+  "is-true": ["claim", "scope", "when"],
   score: ["subject", "min"],
   choose: ["options", "failOn"],
 };
