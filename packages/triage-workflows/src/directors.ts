@@ -11,7 +11,7 @@ import type {
 import { type } from "arktype";
 import { classificationSources, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoOutcome } from "@corbits/github-tool/do";
-import type { Review } from "@corbits/github-tool/github";
+import type { IssueComment, Review } from "@corbits/github-tool/github";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "./logic/checks.js";
 import { unrunnable } from "./logic/execute-do.js";
@@ -144,6 +144,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       return [
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
         call("github_get_reviews", { repo, number: n }, `reviews:${n}`),
+        call("github_list_issue_comments", { repo, number: n }, `comments:${n}`),
         call("github_list_pr_commits", { repo, number: n }, `commits:${n}`),
         filesCall(n, FIRST_FILES_PAGE),
       ];
@@ -205,6 +206,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
             pr: prs.get(n) ?? null,
             checks: data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [],
             reviews: data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [],
+            comments: data<{ comments: IssueComment[] }>(r1.get(`comments:${n}`))?.comments ?? [],
             commits: data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits ?? [],
             files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
             authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),

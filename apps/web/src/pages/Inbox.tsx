@@ -54,6 +54,7 @@ import {
   hasDraftComment,
   inboxAction,
   inboxStatus,
+  inNeedsYou,
   initialsOf,
   isLoudAuthorKind,
   isPostedToAuthor,
@@ -654,7 +655,7 @@ export default function Inbox({ view }: { view: ListView }) {
   const entries = useMemo(() => viewEntries(view, open, enabled), [open, view, enabled]);
   const items = useMemo(() => entries.map((entry) => entry.item), [entries]);
   const searched = useMemo(() => entries.filter((entry) => matchesQuery(entry.item, query)), [entries, query]);
-  const rows = useMemo(() => searched.map((entry) => entry.item).filter((item) => listsOpen(view) || inboxAction(item) !== null), [searched, view]);
+  const rows = useMemo(() => searched.map((entry) => entry.item).filter((item) => listsOpen(view) || inNeedsYou(item)), [searched, view]);
   const now = useMemo(() => Date.now(), [searched, filters]);
   const shown = useMemo(() => searched.filter((entry) => matchesFilters(entry.item, filters, now)), [searched, filters, now]);
   const needsYou = useMemo(() => groupInbox(shown.map((entry) => entry.item), ready), [shown, ready]);

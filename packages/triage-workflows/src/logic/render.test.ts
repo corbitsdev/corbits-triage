@@ -3,7 +3,7 @@ import { classificationSources, DEFAULT_MERGE_THRESHOLD, emptyPack, type CheckPa
 import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict, toMirrorRequest } from "./render.js";
 import { focusedCandidateId, QUALITY_EVALUATION_LIMIT_ERROR, type QualityPlan } from "./quality.js";
 import type { ChangeCandidate } from "./candidates.js";
-import type { DeterministicResult } from "./checks.js";
+import { REVIEW_ANSWERED_REASON, type DeterministicResult } from "./checks.js";
 
 describe("duplicate rendering", () => {
   test("keeps a detected duplicate open until a human requests close", () => {
@@ -424,5 +424,35 @@ describe("rule custom check rendering", () => {
     const verdict = renderVerdict({ author: "octocat", det: gated, threshold: DEFAULT_MERGE_THRESHOLD });
     expect(verdict).toMatchObject({ actor: "maintainer", nextAction: "Review and merge", merge: { verdict: "ready", reasons: [] } });
     expect(verdict.feedback).toBe("No changes needed from you. A maintainer will review this pull request.");
+  });
+});
+
+describe("requested changes rendering", () => {
+  const review = { check: "review", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: ["changes requested by @maya"] } as const;
+  const conflicts = { check: "conflicts", kind: "machine", result: "fail", reason: "merge conflicts with base", evidence: [] } as const;
+  const det: DeterministicResult = {
+    state: "needs-author-update",
+    reason: "a reviewer requested changes",
+    findings: [{ check: "review", state: "needs-author-update", reason: "a reviewer requested changes" }],
+    checks: [review],
+    duplicateOf: null,
+    needsJudgment: false,
+    sources: { quality: [], custom: [], rules: [] },
+  };
+
+  test("posts nothing when the maintainer's review is the only reason, and still waits on the author", () => {
+    const verdict = renderVerdict({ author: "octocat", det, threshold: DEFAULT_MERGE_THRESHOLD });
+    expect(verdict).toMatchObject({ state: "needs-author-update", actor: "author", nextAction: "Address requested changes from @maya", feedback: "" });
+  });
+
+  test("hands an answered review back to the maintainer without a comment", () => {
+    const answered = { ...review, reason: REVIEW_ANSWERED_REASON };
+    const verdict = renderVerdict({ author: "octocat", det: { ...det, checks: [answered] }, threshold: DEFAULT_MERGE_THRESHOLD });
+    expect(verdict).toMatchObject({ state: "needs-author-update", actor: "maintainer", nextAction: "Re-review: the author responded to changes requested by @maya", feedback: "" });
+  });
+
+  test("leaves the review out of a comment that has other reasons", () => {
+    const verdict = renderVerdict({ author: "octocat", det: { ...det, checks: [review, conflicts] }, threshold: DEFAULT_MERGE_THRESHOLD });
+    expect(verdict.feedback).toBe("@octocat, please address the following:\n- merge conflicts with base");
   });
 });

@@ -33,6 +33,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     ci: null,
     headSha: null,
     activityAt: null,
+    reviewAnswered: false,
     canClose: false,
     pendingClose: false,
     posted: false,

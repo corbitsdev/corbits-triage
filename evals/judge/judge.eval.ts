@@ -97,6 +97,7 @@ async function judge(input: CaseInput): Promise<Outcomes> {
     pr: { title: pr.title, body: pr.body, author: pr.author, sha: "eval", branch: "eval", state: "open", mergeable: true, changedFiles: files.length, additions, deletions },
     checks: [],
     reviews: [],
+    comments: [],
     commits: pr.commits.map((message) => ({ message })),
     files,
     authorTeams: null,

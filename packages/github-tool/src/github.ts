@@ -218,7 +218,7 @@ export async function getReviews(gh: GithubFetch, repo: string, number: number) 
   }));
 }
 
-export type Review = { reviewer?: string; state?: string; commitId?: string };
+export type Review = { reviewer?: string; state?: string; submittedAt?: string; commitId?: string };
 
 /** Reviewers whose latest review still stands on the current head, when the review names its commit. */
 export function reviewedOnHead(reviews: Review[], headSha: string): string[] {
@@ -525,6 +525,8 @@ export function missingFrom(have: string[] | undefined, wanted: string[]): strin
 export async function mirror(gh: GithubFetch, i: MirrorInput) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
+  // An empty comment means nothing is asked of the author, so an earlier one on an open pull request would be stale instructions.
+  if (!i.comment && pr.state === "open") await deleteTriageComments(gh, repo, number);
   const posted = i.comment ? await upsertTriageComment(gh, { repo, number, body: i.comment }) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   // GitHub label names are case-insensitive.
@@ -546,12 +548,26 @@ export type TriageCommentInput = {
   body: string;
 };
 
+async function triageComments(gh: GithubFetch, repo: string, number: number): Promise<Array<{ id: number }>> {
+  const comments = await jsonAll<any>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
+  return comments.filter((c) => c.user?.type === "Bot" && typeof c.body === "string" && isTriageComment(c.body));
+}
+
+async function deleteTriageComments(gh: GithubFetch, repo: string, number: number) {
+  for (const candidate of await triageComments(gh, repo, number)) {
+    const path = `/repos/${repo}/issues/comments/${candidate.id}`;
+    const res = await gh(path, { method: "DELETE", headers: { accept: "application/vnd.github+json" } });
+    // Another App's marked comment is not ours to delete.
+    if (res.status === 403 || res.status === 404) continue;
+    if (!res.ok) throw new Error(`github DELETE ${path} -> ${res.status}`);
+  }
+}
+
 /** Edits the App's one Triage comment on the pull request, creating it only when none exists. */
 export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput) {
   const { repo, number } = input;
   const body = `${TRIAGE_COMMENT_MARKER}\n${input.body}`;
-  const comments = await jsonAll<any>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
-  const candidates = comments.filter((c) => c.user?.type === "Bot" && typeof c.body === "string" && isTriageComment(c.body));
+  const candidates = await triageComments(gh, repo, number);
   const edit = send("PATCH", { body });
   for (const candidate of candidates) {
     const path = `/repos/${repo}/issues/comments/${candidate.id}`;

@@ -25,13 +25,17 @@ export const INBOX_STATUS_LABEL: Record<QueueState, string> = {
   new: "Not triaged yet",
 };
 
+/** What the status line reads: the run, the verdict's state and whether requested changes were answered. */
+export type StatusFields = Pick<PrItem, "running" | "state" | "comment" | "checks" | "reviewAnswered">;
+
 /** A running pull request says so; it keeps its previous verdict for grouping. */
-export function inboxStatus(item: Pick<PrItem, "running" | "state">): string {
-  return item.running ? "Running" : INBOX_STATUS_LABEL[item.state];
+export function inboxStatus(item: StatusFields): string {
+  if (item.running) return "Running";
+  return INBOX_STATUS_LABEL[isReReview(item) ? "awaiting-review" : item.state];
 }
 
 /** The row's one-line reason: the running status, else the verdict's first piece of evidence. */
-export function rowWhy(item: Pick<PrItem, "running" | "state" | "evidence">): string | null {
+export function rowWhy(item: StatusFields & Pick<PrItem, "evidence">): string | null {
   return item.running ? inboxStatus(item) : (item.evidence[0] ?? null);
 }
 
@@ -68,8 +72,9 @@ export function inboxAction(item: PrItem): InboxAction | null {
       return "decide";
     case "awaiting-review":
       return "review";
-    case "blocked":
     case "needs-author-update":
+      return isReReview(item) ? "review" : "unblock";
+    case "blocked":
       return "unblock";
     case "ready":
       return "merge";
@@ -81,6 +86,26 @@ export function inboxAction(item: PrItem): InboxAction | null {
 /** The author must act and the App already told them so; there is nothing left to send. */
 export function isPostedToAuthor(item: PrItem): boolean {
   return item.state === "needs-author-update" && item.posted;
+}
+
+/** A maintainer's requested changes are all the verdict holds against the pull request; triage has nothing to add to them. */
+function onlyRequestedChanges(item: Omit<StatusFields, "running">): boolean {
+  return item.state === "needs-author-update" && !hasDraftComment(item.comment) && item.checks.some((c) => c.check === "review" && c.result === "fail");
+}
+
+/** The author answered the requested changes, so they wait on the reviewer again. */
+function isReReview(item: Omit<StatusFields, "running">): boolean {
+  return onlyRequestedChanges(item) && item.reviewAnswered;
+}
+
+/** The author has yet to answer the requested changes, and no approval waits on the maintainer. */
+function awaitsReviewFix(item: PrItem): boolean {
+  return onlyRequestedChanges(item) && !item.reviewAnswered && item.pendingApprovalId === null;
+}
+
+/** Needs you holds what waits on the maintainer. */
+export function inNeedsYou(item: PrItem): boolean {
+  return inboxAction(item) !== null && !awaitsReviewFix(item);
 }
 
 /** A comment only counts as a draft when it holds non-empty text; a degraded verdict's empty feedback is nothing to post. */
@@ -130,7 +155,7 @@ const AUTHOR_TURN: ReadonlySet<HandledKind | null> = new Set(["changes", "reply"
 
 /** Who must act next, checked in order; `entry` is the pull request's handled mark, null while it is in Needs you. */
 export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
-  if ((entry === null && inboxAction(item) !== null) || item.pendingApprovalId !== null) return "maintainer";
+  if ((entry === null && inNeedsYou(item)) || item.pendingApprovalId !== null) return "maintainer";
   if (item.draft === true || item.state === "needs-author-update" || (entry !== null && AUTHOR_TURN.has(entry.kind))) return "author";
   if (item.ci === "pending") return "ci";
   return "nobody";
@@ -180,7 +205,7 @@ export type InboxView = { groups: InboxGroup[]; awaiting: number };
 export function groupInbox(items: PrItem[], ready: ReadonlySet<string>): InboxView {
   const sorted = [...items].sort(compareInboxItems);
   const groups = INBOX_ACTION_ORDER
-    .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inboxAction(item) === action) }))
+    .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inNeedsYou(item) && inboxAction(item) === action) }))
     .filter((group) => group.items.length > 0);
   return { groups, awaiting: items.filter((item) => ready.has(item.repo) && inboxAction(item) === null).length };
 }
@@ -228,7 +253,7 @@ export function firstTimers(open: OpenItem[], enabled: ReadonlySet<string>): Ope
 /** The rail counts: Needs you counts its rows, so not pull requests still awaiting their first verdict; the other views count their lists. */
 export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Record<ListView, number> {
   return {
-    "needs-you": open.filter((entry) => entry.handled === null && inboxAction(entry.item) !== null).length,
+    "needs-you": open.filter((entry) => entry.handled === null && inNeedsYou(entry.item)).length,
     "all-open": allOpen(open, enabled).length,
     "first-timers": firstTimers(open, enabled).length,
   };

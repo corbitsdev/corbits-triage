@@ -8,7 +8,7 @@ const KEY = "acme/widgets#8";
 const inline = (value: unknown) => ({ ref: `inline:${JSON.stringify(value)}` });
 
 /** A pr-triage run for #8 started by `trigger` (`event:action`, or none for a catch-up), with a ready verdict and the CI state it saw. */
-function run(runId: string, at: string, trigger: string | null, checks = "success"): RunLog {
+function run(runId: string, at: string, trigger: string | null, checks = "success", facts: Record<string, unknown> = {}): RunLog {
   const [event, action] = trigger === null ? [] : trigger.split(":");
   const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, event, action };
   return {
@@ -16,7 +16,7 @@ function run(runId: string, at: string, trigger: string | null, checks = "succes
     anchorRunId: "pr",
     events: [
       { seq: 0, type: "RunStarted", body: { at, trigger: { payload: stockTriggerMail(request) } } },
-      { seq: 1, type: "StepCompleted", body: { at, stepId: "rules", output: inline({ repo: "acme/widgets", number: 8, facts: { checks } }) } },
+      { seq: 1, type: "StepCompleted", body: { at, stepId: "rules", output: inline({ repo: "acme/widgets", number: 8, facts: { checks, ...facts } }) } },
       { seq: 2, type: "StepCompleted", body: { at, stepId: "render", output: inline({ repo: "acme/widgets", number: 8, state: "ready-monitoring" }) } },
       { seq: 3, type: "RunCompleted", body: { at } },
     ],
@@ -74,5 +74,14 @@ describe("handled pull requests", () => {
   test("an entry stored before kinds were recorded matches on the verdict run it answered", () => {
     expect(marksOf([PUSHED], open("a"), { [KEY]: "run-1" })).toEqual([[KEY, { kind: null }]]);
     expect(marksOf([PUSHED, run("run-2", "2026-10-01T01:00:00.000Z", "check_run:completed")], open("a"), { [KEY]: "run-1" })).toEqual([[KEY, null]]);
+  });
+});
+
+describe("answered reviews", () => {
+  test("come from the newest verdict's facts, whatever woke its run", () => {
+    const reviewed = run("run-2", "2026-10-01T01:00:00.000Z", "pull_request_review:submitted", "success", { reviewAnswered: false });
+    const ci = run("run-3", "2026-10-01T01:30:00.000Z", "check_run:completed", "success", { reviewAnswered: true });
+    expect(projectQueue([PUSHED, reviewed], [], [], open("a"), NOW)[0]?.reviewAnswered).toBe(false);
+    expect(projectQueue([PUSHED, reviewed, ci], [], [], open("a"), NOW)[0]?.reviewAnswered).toBe(true);
   });
 });

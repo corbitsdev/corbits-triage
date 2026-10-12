@@ -1628,6 +1628,8 @@ export type PrItem = {
   headSha: string | null;
   /** When the newest run triggered by author activity started; see `AUTHOR_ACTIVITY`. */
   activityAt: string | null;
+  /** The verdict saw the author push, comment or reply in a review after the newest standing request for changes. */
+  reviewAnswered: boolean;
   canClose: boolean;
   pendingClose: boolean;
   /** The verdict's reply is on GitHub: the run's mirror step wrote non-empty feedback, or this portal sent it (see `useQueueItems`). */
@@ -2003,6 +2005,7 @@ export function projectQueue(runLogs: RunLog[], runs: HubRun[], approvals: HubAp
         ci: isCiState(v.facts.checks) ? v.facts.checks : null,
         headSha: null,
         activityAt: activity.get(key) ?? null,
+        reviewAnswered: v.facts.reviewAnswered === true,
         canClose: r.duplicate === true,
         pendingClose: false,
         posted: posted.has(key) && typeof r.feedback === "string" && r.feedback.trim() !== "",
@@ -2076,6 +2079,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, running
         ci: null,
         headSha: pr.sha,
         activityAt: activity.get(key) ?? null,
+        reviewAnswered: false,
         canClose: false,
         pendingClose: false,
         posted: false,
