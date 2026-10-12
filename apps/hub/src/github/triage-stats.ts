@@ -75,9 +75,14 @@ function windowStart(now: Date, days: number): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - (days - 1) * DAY_MS);
 }
 
-/** Degraded verdicts are left out: they judged nothing. */
+/** A verdict counts once its run completed; one recorded before runs' ends were was of a completed run. */
+function completed(verdict: VerdictRecord): boolean {
+  return verdict.runStatus === null || verdict.runStatus === "completed";
+}
+
+/** Degraded verdicts are left out: they judged nothing; so are those of runs still going or that failed or were cancelled. */
 function aggregate(repo: string, days: number, from: Date, since: Date | null, records: readonly VerdictRecord[], dos: readonly DoRun[]): TriageStats {
-  const judged = records.filter((verdict) => verdict.degraded === null);
+  const judged = records.filter((verdict) => verdict.degraded === null && completed(verdict));
   const latest = latestPerHead(judged);
   const settled = judged.filter((verdict) => verdict.settled);
 

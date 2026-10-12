@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "
 import { useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, projectQueue, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
-import { generateWebhookSecret, hasObservedInference, hasVerifiedWebhookDelivery, isPrivateKeyPem } from "../lib/connect-view.ts";
+import { generateWebhookSecret, isPrivateKeyPem } from "../lib/connect-view.ts";
 import {
   ManifestStartError,
   cancelGithubManifest,
@@ -17,8 +17,9 @@ import {
 } from "../lib/github-manifest.ts";
 import { useGithubSync } from "../lib/github-sync.ts";
 import { usePortal } from "../lib/portal.tsx";
-import { useRunLogs } from "../lib/run-logs.ts";
-import { useApprovals, useRuns } from "../lib/tenant-entities.ts";
+import { useBacklogLogs } from "../lib/run-logs.ts";
+import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
+import { useRuns } from "../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { OtherWorkspaces } from "../components/OtherWorkspaces.tsx";
@@ -63,13 +64,14 @@ export default function Connect() {
   const [webhookUrlNotice, setWebhookUrlNotice] = useState("");
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
-  const { logs } = useRunLogs();
-  const approvals = useApprovals();
+  const logs = useBacklogLogs();
+  const verdicts = useTriageVerdicts();
   const runs = useRuns();
-  const items = useMemo(() => projectQueue(logs, runs.rows, approvals.rows, undefined, new Date()), [logs, runs.rows, approvals.rows]);
-  const githubReady = repos.some((repo) => hasVerifiedWebhookDelivery(logs, repo.name));
+  const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
+  const githubReady = repos.some((repo) => triaged.has(repo.name));
   const modelStored = hasDecisionModelCredential(snapshot?.credentials ?? []);
-  const inferenceReady = hasObservedInference(items);
+  // A verdict the decision model scored proves inference contributed; credentials alone do not.
+  const inferenceReady = verdicts.data?.scored === true;
   const liveReady = githubReady && inferenceReady;
 
   async function generateAndCopyWebhookSecret() {
@@ -236,7 +238,7 @@ export default function Connect() {
   }
 
   function renderInstallRow(repo: RepoRecord) {
-    const catchingUp = isRepoCatchingUp(logs, runs.rows, repo.name);
+    const catchingUp = isRepoCatchingUp(logs, runs.rows, triaged, repo.name);
     return <div key={repo.name} className="install-row"><strong className="mono">{repo.name}</strong><span className={`status-badge${catchingUp ? "" : " status-ok"}`}><span aria-hidden="true" />{catchingUp ? "Catching up open pull requests…" : "Connected"}</span></div>;
   }
 

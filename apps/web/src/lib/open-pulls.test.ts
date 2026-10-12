@@ -1,26 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { stockTriggerMail } from "@corbits/triage-contracts";
-import { projectQueue, type OpenPulls, type RunLog } from "./hub-api.ts";
+import { projectQueue, type OpenPulls, type PullTriage } from "./hub-api.ts";
 import { openItems, withPull, type Handled } from "./open-pulls.ts";
 
-const NOW = new Date("2026-10-01T02:00:00.000Z");
 const KEY = "acme/widgets#8";
-const inline = (value: unknown) => ({ ref: `inline:${JSON.stringify(value)}` });
 
-/** A pr-triage run for #8 started by `trigger` (`event:action`, or none for a catch-up), with a ready verdict and the CI state it saw. */
-function run(runId: string, at: string, trigger: string | null, checks = "success", facts: Record<string, unknown> = {}): RunLog {
-  const [event, action] = trigger === null ? [] : trigger.split(":");
-  const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, event, action };
-  return {
-    runId,
-    anchorRunId: "pr",
-    events: [
-      { seq: 0, type: "RunStarted", body: { at, trigger: { payload: stockTriggerMail(request) } } },
-      { seq: 1, type: "StepCompleted", body: { at, stepId: "rules", output: inline({ repo: "acme/widgets", number: 8, facts: { checks, ...facts } }) } },
-      { seq: 2, type: "StepCompleted", body: { at, stepId: "render", output: inline({ repo: "acme/widgets", number: 8, state: "ready-monitoring" }) } },
-      { seq: 3, type: "RunCompleted", body: { at } },
-    ],
+/** #8 as the hub answers it: a ready verdict from `runId`, which saw `ci`, and when author activity last started a run. */
+function latest(runId: string, activityAt: string | null, ci = "success", facts: Record<string, unknown> = {}): PullTriage {
+  const verdict = {
+    runId, at: "2026-10-01T01:00:00.000Z", headSha: "a", settled: true, state: "ready-monitoring", actor: "author", humanGated: false,
+    degraded: null, commented: false, checks: [], detail: { facts: { checks: ci, ...facts } },
   };
+  return { repo: "acme/widgets", number: 8, activityAt, verdict, run: null };
 }
 
 function open(sha: string, numbers = [8]): OpenPulls {
@@ -28,60 +18,56 @@ function open(sha: string, numbers = [8]): OpenPulls {
   return { repos: [{ repo: "acme/widgets", prs }] } as OpenPulls;
 }
 
-const PUSHED = run("run-1", "2026-10-01T00:00:00.000Z", "pull_request:synchronize", "pending");
+const PUSHED = latest("run-1", "2026-10-01T00:00:00.000Z", "pending");
 
-function marksOf(logs: RunLog[], pulls: OpenPulls, handled: Handled, held: Handled = {}) {
-  return openItems(projectQueue(logs, [], [], pulls, NOW), handled, held).map((entry) => [entry.item.key, entry.handled]);
+function marksOf(pull: PullTriage, pulls: OpenPulls, handled: Handled, held: Handled = {}) {
+  return openItems(projectQueue([pull], [], pulls), handled, held).map((entry) => [entry.item.key, entry.handled]);
 }
 
 function approved(): Handled {
-  const [item] = projectQueue([PUSHED], [], [], open("a"), NOW);
+  const [item] = projectQueue([PUSHED], [], open("a"));
   if (item === undefined) throw new Error("no item");
   expect(item).toMatchObject({ ci: "pending", headSha: "a", activityAt: "2026-10-01T00:00:00.000Z" });
   return withPull({}, item, "approve");
 }
 
 describe("handled pull requests", () => {
-  test("a CI or catch-up verdict keeps the pull request handled", () => {
-    const later = [PUSHED, run("run-2", "2026-10-01T01:00:00.000Z", "check_run:completed"), run("run-3", "2026-10-01T01:30:00.000Z", null)];
-    expect(marksOf(later, open("a"), approved())).toEqual([[KEY, { kind: "approve" }]]);
+  test("a newer verdict without author activity keeps the pull request handled", () => {
+    expect(marksOf(latest("run-3", "2026-10-01T00:00:00.000Z"), open("a"), approved())).toEqual([[KEY, { kind: "approve" }]]);
   });
 
-  test("a push, comment or review request brings the pull request back", () => {
+  test("a push or newer author activity brings the pull request back", () => {
     const handled = approved();
-    expect(marksOf([PUSHED], open("b"), handled)).toEqual([[KEY, null]]);
-    for (const trigger of ["pull_request:synchronize", "issue_comment:created", "pull_request:review_requested"]) {
-      expect(marksOf([PUSHED, run("run-2", "2026-10-01T01:00:00.000Z", trigger)], open("a"), handled)).toEqual([[KEY, null]]);
-    }
+    expect(marksOf(PUSHED, open("b"), handled)).toEqual([[KEY, null]]);
+    expect(marksOf(latest("run-2", "2026-10-01T01:00:00.000Z"), open("a"), handled)).toEqual([[KEY, null]]);
   });
 
-  test("a run log or head not loaded yet keeps the pull request handled", () => {
-    const pushedAgain = run("run-2", "2026-10-01T01:00:00.000Z", "pull_request:synchronize");
-    const [item] = projectQueue([PUSHED, pushedAgain], [], [], open("a"), NOW);
+  test("activity the hub has not recorded yet, or a head not read, keeps the pull request handled", () => {
+    const [item] = projectQueue([latest("run-2", "2026-10-01T01:00:00.000Z")], [], open("a"));
     if (item === undefined) throw new Error("no item");
-    expect(marksOf([PUSHED], open("a"), withPull({}, item, "approve"))).toEqual([[KEY, { kind: "approve" }]]);
+    expect(marksOf(PUSHED, open("a"), withPull({}, item, "approve"))).toEqual([[KEY, { kind: "approve" }]]);
     const failed: OpenPulls = { repos: [{ repo: "acme/widgets", prs: [], error: "rate limited" }] };
-    expect(marksOf([PUSHED], failed, approved())).toEqual([[KEY, { kind: "approve" }]]);
+    expect(marksOf(PUSHED, failed, approved())).toEqual([[KEY, { kind: "approve" }]]);
   });
 
   test("a merge or close leaves both lists, held or sent", () => {
-    const [item] = projectQueue([PUSHED], [], [], open("a"), NOW);
+    const [item] = projectQueue([PUSHED], [], open("a"));
     if (item === undefined) throw new Error("no item");
-    expect(marksOf([PUSHED], open("a"), withPull({}, item, "merge"))).toEqual([]);
-    expect(marksOf([PUSHED], open("a"), {}, withPull({}, item, "close"))).toEqual([]);
+    expect(marksOf(PUSHED, open("a"), withPull({}, item, "merge"))).toEqual([]);
+    expect(marksOf(PUSHED, open("a"), {}, withPull({}, item, "close"))).toEqual([]);
   });
 
   test("an entry stored before kinds were recorded matches on the verdict run it answered", () => {
-    expect(marksOf([PUSHED], open("a"), { [KEY]: "run-1" })).toEqual([[KEY, { kind: null }]]);
-    expect(marksOf([PUSHED, run("run-2", "2026-10-01T01:00:00.000Z", "check_run:completed")], open("a"), { [KEY]: "run-1" })).toEqual([[KEY, null]]);
+    expect(marksOf(PUSHED, open("a"), { [KEY]: "run-1" })).toEqual([[KEY, { kind: null }]]);
+    expect(marksOf(latest("run-2", "2026-10-01T00:00:00.000Z"), open("a"), { [KEY]: "run-1" })).toEqual([[KEY, null]]);
   });
 });
 
 describe("answered reviews", () => {
-  test("come from the newest verdict's facts, whatever woke its run", () => {
-    const reviewed = run("run-2", "2026-10-01T01:00:00.000Z", "pull_request_review:submitted", "success", { reviewAnswered: false });
-    const ci = run("run-3", "2026-10-01T01:30:00.000Z", "check_run:completed", "success", { reviewAnswered: true });
-    expect(projectQueue([PUSHED, reviewed], [], [], open("a"), NOW)[0]?.reviewAnswered).toBe(false);
-    expect(projectQueue([PUSHED, reviewed, ci], [], [], open("a"), NOW)[0]?.reviewAnswered).toBe(true);
+  test("come from the newest verdict's facts", () => {
+    const reviewed = latest("run-2", "2026-10-01T01:00:00.000Z", "success", { reviewAnswered: false });
+    const answered = latest("run-3", "2026-10-01T01:00:00.000Z", "success", { reviewAnswered: true });
+    expect(projectQueue([reviewed], [], open("a"))[0]?.reviewAnswered).toBe(false);
+    expect(projectQueue([answered], [], open("a"))[0]?.reviewAnswered).toBe(true);
   });
 });

@@ -14,7 +14,8 @@ import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.
 import { usePortal } from "../lib/portal.tsx";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
 import { repoRows, type RepoRow } from "../lib/repo-rows.ts";
-import { useRunLogs } from "../lib/run-logs.ts";
+import { useBacklogLogs } from "../lib/run-logs.ts";
+import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
 import { relativeTime } from "../lib/triage-view.ts";
 
@@ -57,7 +58,8 @@ function selectedRepo(params: { owner?: string; repo?: string }): { name: string
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
   const packStore = useHubRepoPackStore();
-  const { logs } = useRunLogs();
+  const logs = useBacklogLogs();
+  const verdicts = useTriageVerdicts();
   const runs = useRuns();
   const navigate = useNavigate();
   const params = useParams();
@@ -71,10 +73,12 @@ export default function Repositories() {
   const { data: openPulls, error: pullsError } = useOpenPulls();
   const packed = useMemo(() => repos.filter((repo) => repo.checkPack).map((repo) => repo.name), [repos]);
   const packs = useCheckPacks(packed);
-  const catchingUp = useMemo(() => catchingUpRepos(logs, runs.rows), [logs, runs.rows]);
+  const triaged = useMemo(() => new Set(verdicts.data?.triaged), [verdicts.data]);
+  const active = useMemo(() => new Set(verdicts.data?.active), [verdicts.data]);
+  const catchingUp = useMemo(() => catchingUpRepos(logs, runs.rows, triaged), [logs, runs.rows, triaged]);
   const rows = useMemo(
-    () => repoRows(repos, items, logs, catchingUp, openPulls, pullsError),
-    [repos, items, logs, catchingUp, openPulls, pullsError],
+    () => repoRows(repos, items, active, catchingUp, openPulls, pullsError),
+    [repos, items, active, catchingUp, openPulls, pullsError],
   );
   const accounts = [...new Set(repos.map((repo) => repo.name.split("/")[0]!))];
   const selectedConfig = repos.find((repo) => repo.name === selection.name);
