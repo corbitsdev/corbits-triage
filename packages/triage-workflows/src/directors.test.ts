@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { listPrFilesPage } from "@corbits/github-tool/github";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import { MAX_DOS_PER_RUN, triageDirectorFactory, type DoResult } from "./directors.js";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
@@ -285,6 +286,55 @@ describe("judge on a blocked pull request", () => {
     const asked = requests.flatMap((request) => request.providerOptions.systemOne.questions.map((q) => q.id));
     return { asked, verdict: await evaluate(judged, ctx, signal) as Verdict };
   }
+
+  test("reads a patch too long for one page across pages and judges every hunk", async () => {
+    const patch = Array.from({ length: 6 }, (_, index) => `@@ -${index * 10 + 1} +${index * 10 + 1} @@\n+const part${index} = "${"x".repeat(2_500)}";`).join("\n");
+    async function gh() {
+      return Response.json([{ filename: "src/big.ts", status: "modified", additions: 6, deletions: 0, patch }]);
+    }
+    const pending: ToolCall[] = [];
+    let reply = "";
+    const decide = director("facts", {
+      executeTools(calls: ToolCall[]) { pending.push(...calls); return { type: "execute_tools", calls }; },
+      reply(content: string) { reply = content; return { type: "reply", content }; },
+    });
+    await decide({ type: "message.received", message: { content: JSON.stringify({ kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: recommendedPack("acme/widgets") }) } });
+    const results: Record<string, unknown> = {
+      github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
+      "docs:0": { docs: [], ref: "tree" },
+      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc", state: "open", draft: false, mergeable: true, requestedReviewers: 1 },
+      "reviews:8": { reviews: [] },
+      "commits:8": { commits: [] },
+      "checks:8": { checks: [] },
+    };
+    let pages = 0;
+    async function filesPage(args: ToolCall["arguments"]) {
+      pages++;
+      return listPrFilesPage(gh, "acme/widgets", 8, args as Parameters<typeof listPrFilesPage>[3]);
+    }
+    while (pending.length) {
+      const next = pending.shift()!;
+      const content = next.name === "github_list_pr_files" ? await filesPage(next.arguments) : results[next.id];
+      await decide({ type: "tool.done", result: { callId: next.id, content } });
+    }
+    const { asked, verdict } = await judgeAndEvaluate(reply, undefined, []);
+    expect(pages).toBeGreaterThan(1);
+    expect(asked.filter((id) => id.startsWith("focused-candidate-"))).toHaveLength(6);
+    expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "pass" });
+  });
+
+  test("a generated or binary file left unread does not hold focused back, unread code does", async () => {
+    const read = { path: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
+    const lockfile = { path: "bun.lock", status: "modified", additions: 900, deletions: 0 };
+    const binary = { path: "logo.png", status: "added", additions: 0, deletions: 0 };
+    const code = { path: "src/b.ts", status: "modified", additions: 900, deletions: 0 };
+    async function focused(files: unknown[]) {
+      const { verdict } = await judgeAndEvaluate(await facts([], true, false, {}, files), undefined, []);
+      return verdict.checks.find((check) => check.check === "focused");
+    }
+    expect(await focused([read, lockfile, binary])).toMatchObject({ result: "pass" });
+    expect(await focused([read, lockfile, binary, code])).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check", items: ["src/b.ts"] } });
+  });
 
   test("a coalesced run wakes an action on any event it carries, not only the latest", async () => {
     const checkPack = {

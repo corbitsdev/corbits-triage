@@ -255,20 +255,26 @@ describe("listPrFiles", () => {
 });
 
 describe("listPrFilesPage", () => {
-  test("pages every file under the cap, cutting an oversized patch on a hunk boundary", async () => {
+  test("pages every file under the cap, reading an oversized patch across pages", async () => {
     function hunk(line: number) {
       return `@@ -${line} +${line} @@\n+${"x".repeat(3_000)}`;
     }
     function row(filename: string, patch: string) {
       return { filename, status: "modified", additions: 1, deletions: 0, patch };
     }
-    const big = [1, 2, 3, 4].map(hunk).join("\n");
+    const big = `${[1, 2, 3, 4].map(hunk).join("\n")}\n+${"\"".repeat(9_000)}`;
     const { gh } = recorder(() => [row("a.ts", hunk(1)), row("big.ts", big), row("c.ts", hunk(1))]);
     const pages: PrFilesPage[] = [];
-    for (let offset: number | undefined = 0; offset !== undefined; offset = pages.at(-1)!.next) pages.push(await listPrFilesPage(gh, "acme/widgets", 8, { offset }));
+    let cursor: { offset: number; patchOffset?: number } | undefined = { offset: 0 };
+    while (cursor) {
+      const page: PrFilesPage = await listPrFilesPage(gh, "acme/widgets", 8, cursor);
+      pages.push(page);
+      cursor = page.next === undefined ? undefined : { offset: page.next, ...(page.patchNext === undefined ? {} : { patchOffset: page.patchNext }) };
+    }
     expect(pages.every((page) => JSON.stringify(page).length <= 10_000)).toBe(true);
-    expect(pages.flatMap((page) => page.files.map((file) => file.path))).toEqual(["a.ts", "big.ts", "c.ts"]);
-    expect(pages[1]!.files[0]).toMatchObject({ patch: [1, 2].map(hunk).join("\n"), patchTruncated: true });
+    const files = pages.flatMap((page) => page.files);
+    expect([...new Set(files.map((file) => file.path))]).toEqual(["a.ts", "big.ts", "c.ts"]);
+    expect(files.filter((file) => file.path === "big.ts").map((file) => file.patch).join("")).toBe(big);
     expect((await listPrFilesPage(gh, "acme/widgets", 8, { patches: false })).files.map((file) => file.patch)).toEqual([undefined, undefined, undefined]);
   });
 });

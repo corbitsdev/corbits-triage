@@ -1,7 +1,8 @@
 import type { PrFileFacts } from "./checks.js";
 
 const MAX_FILES = 100;
-const MAX_INPUT_CHARS = 65_536;
+/** The most of one file's patch candidates and the judge read. */
+export const MAX_PATCH_INPUT_CHARS = 65_536;
 const MAX_CANDIDATES = 200;
 const MAX_EVIDENCE_CHARS = 4_096;
 const MAX_LABEL_CHARS = 160;
@@ -68,7 +69,7 @@ type Hunk = {
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(?:.*)?$/;
 
 function readablePatch(patch: string): string {
-  return safeText(patch.slice(0, MAX_INPUT_CHARS));
+  return safeText(patch.slice(0, MAX_PATCH_INPUT_CHARS));
 }
 
 /** A file's patch as the hunks candidates point at: split at hunk headers, whole when it has none, empty when it is. */
@@ -154,28 +155,34 @@ function candidate(file: PrFileFacts, path: string, label: string, evidence: str
   };
 }
 
+/** A pure rename or a binary file has no lines to read, so there is nothing to classify. */
+function unchanged(file: PrFileFacts): boolean {
+  return file.patch === undefined && file.additions === 0 && file.deletions === 0;
+}
+
+/**
+ * One candidate per hunk read, in file order. A file whose lines were not all read, because GitHub left out its patch,
+ * it was cut, or it falls past MAX_FILES or MAX_CANDIDATES, also gets one candidate without evidence that lists it unread.
+ */
 export function extractChangeCandidates(files: readonly PrFileFacts[] | undefined): ChangeCandidate[] {
   const candidates: ChangeCandidate[] = [];
-  for (const file of (files ?? []).slice(0, MAX_FILES)) {
-    if (candidates.length >= MAX_CANDIDATES) break;
+  for (const [position, file] of (files ?? []).entries()) {
+    if (unchanged(file)) continue;
     const path = boundedPath(file.path);
     const patch = typeof file.patch === "string" ? readablePatch(file.patch) : "";
-    if (patch.length === 0) {
+    const room = position < MAX_FILES ? MAX_CANDIDATES - candidates.length : 0;
+    if (patch.length === 0 || room <= 0) {
       candidates.push(candidate(file, path, path, ""));
       continue;
     }
-
     const hunks = hunksOf(patch);
     if (hunks.length === 0) {
       candidates.push(candidate(file, path, path, patch, 0));
       continue;
     }
-    for (const [index, hunk] of hunks.entries()) {
-      if (candidates.length >= MAX_CANDIDATES) return candidates;
-      candidates.push(candidate(file, path, hunkLabel(path, hunk), hunk.lines.join("\n"), index));
-    }
-    // The hunks left out of a cut patch are unseen, so the file stays unresolved for a human.
-    if (file.patchTruncated && candidates.length < MAX_CANDIDATES) candidates.push(candidate(file, path, path, ""));
+    for (const [index, hunk] of hunks.slice(0, room).entries()) candidates.push(candidate(file, path, hunkLabel(path, hunk), hunk.lines.join("\n"), index));
+    const cut = file.patchTruncated === true || (file.patch?.length ?? 0) > MAX_PATCH_INPUT_CHARS;
+    if (hunks.length > room || cut) candidates.push(candidate(file, path, path, ""));
   }
   return candidates;
 }

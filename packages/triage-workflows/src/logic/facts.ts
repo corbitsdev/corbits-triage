@@ -1,6 +1,7 @@
 import { reviewedOnHead, type Review } from "@corbits/github-tool";
 import { authorAssociation, authorKindOf, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
+import { MAX_PATCH_INPUT_CHARS } from "./candidates.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "./extract.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";
@@ -102,6 +103,44 @@ export function buildFacts(
 
 // Patch text past three judge requests' worth is not read, so later pages leave patches out.
 export const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
+
+/** One page of `github_list_pr_files`, its files read as facts. */
+export type FilesPage = { files: PrFileFacts[]; next?: number; patchNext?: number };
+
+/** Where the next page of files starts, and whether it still carries patches. */
+export type FilesCursor = { offset: number; patchOffset?: number; patches: boolean };
+
+export type ListedFiles = { files: PrFileFacts[]; patchChars: number };
+
+export const FIRST_FILES_PAGE: FilesCursor = { offset: 0, patches: true };
+
+/**
+ * Adds one page to `listed`, joining a patch continued from the previous page, and returns the next page's cursor,
+ * none when every file is read, or why the pages cannot be read. A patch past the budget is left cut and marked so.
+ */
+export function addFilesPage(listed: ListedFiles, cursor: FilesCursor, page: FilesPage): FilesCursor | undefined | string {
+  let files = page.files;
+  if (cursor.patchOffset !== undefined) {
+    const continued = listed.files.at(-1);
+    if (!continued || files[0]?.path !== continued.path) return `github_list_pr_files did not continue the patch at offset ${cursor.offset}`;
+    continued.patch = (continued.patch ?? "") + (files[0].patch ?? "");
+    listed.patchChars += files[0].patch?.length ?? 0;
+    files = files.slice(1);
+  }
+  listed.files.push(...files);
+  listed.patchChars += files.reduce((chars, file) => chars + (file.patch?.length ?? 0), 0);
+  const patches = listed.patchChars < MAX_PATCH_CHARS;
+  if (page.next === undefined) return undefined;
+  if (page.patchNext !== undefined) {
+    if (page.next < cursor.offset || (page.next === cursor.offset && page.patchNext <= (cursor.patchOffset ?? 0))) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
+    const cut = listed.files.at(-1)!;
+    if (patches && (cut.patch?.length ?? 0) < MAX_PATCH_INPUT_CHARS) return { offset: page.next, patchOffset: page.patchNext, patches };
+    cut.patchTruncated = true;
+    return { offset: page.next + 1, patches };
+  }
+  if (page.next <= cursor.offset) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
+  return { offset: page.next, patches };
+}
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;

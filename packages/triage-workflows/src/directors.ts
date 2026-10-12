@@ -13,10 +13,10 @@ import { classificationSources, repoPolicy, triageEventsOf, type CheckPack, type
 import type { DoOutcome } from "@corbits/github-tool/do";
 import type { Review } from "@corbits/github-tool/github";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
-import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
+import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "./logic/checks.js";
 import { unrunnable } from "./logic/execute-do.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, roleTeams, type CheckRun, type PrData, type PullData } from "./logic/facts.js";
+import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, roleTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import type { Judgment } from "./actions/evaluate.js";
@@ -104,9 +104,7 @@ function call(name: string, args: Record<string, unknown>, id = name): ToolCall 
 
 const TRUNCATED_RESULT = "[Tool output truncated";
 
-type FilesPage = { files: PrFileFacts[]; next?: number };
 type DocsPage = { docs: Array<{ path: string; text: string }>; ref: string; next?: number };
-type ListedFiles = { files: PrFileFacts[]; patchChars: number };
 
 /** A cut-off or unreadable docs page would hide docs the judge needs, so it is an error instead. */
 function docsPage(r: ToolResult | undefined): DocsPage | string {
@@ -125,10 +123,11 @@ function filesPage(r: ToolResult | undefined): FilesPage | string {
   if (!r) return "github_list_pr_files did not answer";
   if (r.isError) return `github_list_pr_files failed: ${asText(r.content)}`;
   if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return "github_list_pr_files result was truncated";
-  const content = data<{ files?: unknown; next?: unknown }>(r);
+  const content = data<{ files?: unknown; next?: unknown; patchNext?: unknown }>(r);
   if (!content || !Array.isArray(content.files)) return "github_list_pr_files result is unreadable";
   const next = optionalCount(content.next);
-  return { files: content.files.flatMap(fileFacts), ...(next === undefined ? {} : { next }) };
+  const patchNext = optionalCount(content.patchNext);
+  return { files: content.files.flatMap(fileFacts), ...(next === undefined ? {} : { next }), ...(patchNext === undefined ? {} : { patchNext }) };
 }
 
 function factsDirector(caps: ReactorCapabilities): ReactorDirector {
@@ -146,7 +145,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
         call("github_get_reviews", { repo, number: n }, `reviews:${n}`),
         call("github_list_pr_commits", { repo, number: n }, `commits:${n}`),
-        filesCall(n, 0),
+        filesCall(n, FIRST_FILES_PAGE),
       ];
     }
 
@@ -154,25 +153,23 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     const listed = new Map<number, ListedFiles>();
     const filesErrors = new Map<number, string>();
 
-    function filesCall(n: number, offset: number): ToolCall {
-      const patches = (listed.get(n)?.patchChars ?? 0) < MAX_PATCH_CHARS;
-      return call("github_list_pr_files", { repo, number: n, offset, ...(patches ? {} : { patches: false }) }, `files:${n}:${offset}`);
+    function filesId(n: number, { offset, patchOffset }: FilesCursor): string {
+      return `files:${n}:${offset}${patchOffset === undefined ? "" : `:${patchOffset}`}`;
     }
 
-    /** Adds one page of files and returns the offset of the next page, if any. */
-    function addFiles(n: number, offset: number, result: ToolResult | undefined): number | undefined {
+    function filesCall(n: number, cursor: FilesCursor): ToolCall {
+      const { offset, patchOffset, patches } = cursor;
+      return call("github_list_pr_files", { repo, number: n, offset, ...(patchOffset === undefined ? {} : { patchOffset }), ...(patches ? {} : { patches: false }) }, filesId(n, cursor));
+    }
+
+    /** Adds one page of files and returns where the next page starts, if any. */
+    function addFiles(n: number, cursor: FilesCursor, result: ToolResult | undefined): FilesCursor | undefined {
       const page = filesPage(result);
-      if (typeof page === "string") {
-        filesErrors.set(n, `${page} for #${n}`);
-        return undefined;
-      }
       const read = listed.get(n) ?? { files: [], patchChars: 0 };
-      read.files.push(...page.files);
-      read.patchChars += page.files.reduce((chars, file) => chars + (file.patch?.length ?? 0), 0);
       listed.set(n, read);
-      if (page.next === undefined) return undefined;
-      if (page.next > offset) return page.next;
-      filesErrors.set(n, `github_list_pr_files did not advance past offset ${offset} for #${n}`);
+      const next = typeof page === "string" ? page : addFilesPage(read, cursor, page);
+      if (typeof next !== "string") return next;
+      filesErrors.set(n, `${next} for #${n}`);
       return undefined;
     }
 
@@ -190,15 +187,15 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         return [...authors].map((author) => call("github_author_teams", { repo, author, teams }, `teams:${author}`));
       }
 
-      function readFiles(r: BatchResults, offsets: Array<[number, number]>): DirectorActions {
-        const next = offsets.flatMap(function nextPage([n, offset]): Array<[number, number]> {
-          const following = addFiles(n, offset, r.get(`files:${n}:${offset}`));
+      function readFiles(r: BatchResults, cursors: Array<[number, FilesCursor]>): DirectorActions {
+        const next = cursors.flatMap(function nextPage([n, cursor]): Array<[number, FilesCursor]> {
+          const following = addFiles(n, cursor, r.get(filesId(n, cursor)));
           return following === undefined ? [] : [[n, following]];
         });
         function onNextFiles(r3: BatchResults) {
           return readFiles(r3, next);
         }
-        if (next.length) return b.run(next.map(([n, offset]) => filesCall(n, offset)), onNextFiles);
+        if (next.length) return b.run(next.map(([n, cursor]) => filesCall(n, cursor)), onNextFiles);
         return b.run([...numbers.flatMap(checkCall), ...teamsCalls()], onChecks);
       }
 
@@ -216,7 +213,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         return reply(numbers.map(itemFor), batch);
       }
 
-      return readFiles(r1, numbers.map((n) => [n, 0]));
+      return readFiles(r1, numbers.map((n) => [n, FIRST_FILES_PAGE]));
     }
 
     return b.run(numbers.flatMap(prCalls), onPrs);
