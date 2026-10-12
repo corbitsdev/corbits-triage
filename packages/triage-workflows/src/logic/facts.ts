@@ -6,6 +6,8 @@ import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "./extract.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";
 
+export type RepoDocs = Required<Pick<PrFacts, "docs" | "rules">>;
+
 export interface PrData {
   title?: string;
   body?: string | null;
@@ -234,8 +236,8 @@ export interface ItemContext {
   policy: RepoPolicy;
   pack: CheckPack;
   events: TriageEvent[];
-  /** The repository's docs by path, or why they could not be read. */
-  docs: Record<string, string> | string;
+  /** The repository's docs and contribution rules by path, or why they could not be read. */
+  docs: RepoDocs | string;
 }
 
 /** The rules step's item for one pull request, or the error that degrades it. */
@@ -246,6 +248,6 @@ export function assembleItem(number: number, data: PullData, { repo, openPrs, po
   if (typeof docs === "string") return { error: docs };
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, openPrs, policy), paths, files, commits, events, docs, ...membership(data.authorTeams, policy, repo) };
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, openPrs, policy), paths, files, commits, events, ...docs, ...membership(data.authorTeams, policy, repo) };
   return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
 }

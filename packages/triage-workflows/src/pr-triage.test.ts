@@ -3,7 +3,7 @@ import { createSizeCapTransform } from "@intx/inference";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker, type WorkflowAuthorizeFn } from "@intx/workflow";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
-import { REPO_DOCS_MAX_BYTES, type GithubFetch } from "@corbits/github-tool/github";
+import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-tool/github";
 import { emptyPack, recommendedPack, type Action, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory, type DoResult } from "./directors.js";
@@ -24,8 +24,11 @@ const FLAG: FileRow = { filename: "src/flag.ts", status: "added", additions: 1, 
 
 const README = `Run \`bun run dev\` to start.\n${"Read the guide.\n".repeat(500)}`;
 const GUIDE = "設定を確認してください。\n".repeat(600);
-// Together over the docs cap and several tool results long, with a multibyte doc split across pages.
-const DOCS = [["README.md", README], ["docs/guide.md", GUIDE], ["vendor/lib/README.md", "Vendored."]] as const;
+const AGENTS = "Every change needs a test.\n";
+const CONTRIBUTING = "One concern per pull request.\n".repeat(400);
+// Together over the docs cap and several tool results long, with a multibyte doc split across pages; the contribution
+// rules fall outside it and, over their own cap, are read again apart from it.
+const DOCS = [["README.md", README], ["docs/guide.md", GUIDE], ["vendor/lib/README.md", "Vendored."], ["CHANGELOG.md", "Changes."], ["AGENTS.md", AGENTS], [".github/CONTRIBUTING.md", CONTRIBUTING]] as const;
 
 function bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
@@ -68,7 +71,7 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
 
 const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrants: [], resolvedBy: null });
 
-type SystemOne = { questions: Array<{ id: string; instructions: string }>; state: { repository: { docs: Record<string, string> } } };
+type SystemOne = { questions: Array<{ id: string; instructions: string }>; state: { repository: { docs: Record<string, string>; rules?: Record<string, string> } } };
 
 /** Calls every focused candidate unrelated, says no change meets a custom rule, and answers every other question yes, so each asked file needs docs and tests. */
 function judgeText({ questions }: SystemOne) {
@@ -156,6 +159,7 @@ describe("pr-triage body", () => {
     const { path, judged, verdict } = await triage(recommendedPack(REPO));
     expect(path).toEqual(JUDGE_PATH);
     expect(judged).toHaveLength(1);
+    expect(judged[0]!.state.repository).not.toHaveProperty("rules");
     const { "README.md": readme, "docs/guide.md": guide, ...rest } = judged[0]!.state.repository.docs;
     expect(readme).toBe(README);
     expect(GUIDE.startsWith(guide!)).toBe(true);
@@ -215,8 +219,13 @@ describe("pr-triage body", () => {
     const migration = { ...FLAG, filename: "migrations/001_users.sql", patch: "@@ -0,0 +1 @@\n+DROP TABLE users;" };
     const migrated = await triage(pack, { files: [FLAG, migration] });
     expect(migrated.judged.flatMap((call) => call.questions)).toEqual([
-      { id: "custom-1-file-002", type: "boolean", instructions: "Does the change in `pullRequest.files[1]` meet this rule: The migration can be rolled back?" },
+      { id: "custom-1-file-002", type: "boolean", instructions: "Does the change in `pullRequest.files[1]` meet this rule: The migration can be rolled back? Judge it by the pull request and the repository's contribution rules in `repository.rules`." },
     ]);
+    const rules = migrated.judged[0]!.state.repository.rules!;
+    expect(Object.keys(rules)).toEqual(["AGENTS.md", ".github/CONTRIBUTING.md"]);
+    expect(rules["AGENTS.md"]).toBe(AGENTS);
+    expect(CONTRIBUTING.startsWith(rules[".github/CONTRIBUTING.md"]!)).toBe(true);
+    expect(bytes(AGENTS) + bytes(rules[".github/CONTRIBUTING.md"]!)).toBe(REPO_RULES_MAX_BYTES);
     expect((migrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({
       result: "fail",
       evidence: ["migrations/001_users.sql"],
