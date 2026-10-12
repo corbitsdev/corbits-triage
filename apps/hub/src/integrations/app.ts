@@ -291,7 +291,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     `${GITHUB_PR_PREVIEW_PATH}/:tenantId`,
     describeRoute({
       summary: "Preview a pack on an open pull request",
-      description: "Evaluates the saved pack, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the checks it answers need it and actions on them list each branch they could take.",
+      description: "Evaluates the saved pack, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the checks it answers need it and actions on them list each branch they could take. Candidate roles apply only when the caller may manage the workspace; otherwise the saved roles are used.",
       tags: TAGS,
       requestBody: body(PreviewBody),
       responses: {

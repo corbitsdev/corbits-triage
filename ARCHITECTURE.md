@@ -56,8 +56,10 @@ config (`corbitsTriage.repos`) plus a per-repository check-pack artifact.
 Runs act under the grants materialized for their deployment. GitHub access
 is a tenant credential bound to the GitHub tool package; a trusted sidecar
 adapter turns the App key into short-lived installation tokens at the fetch
-boundary, so workflow and tool code never hold it. Hub-side PR actions
-check the caller's `use` grant on the same credential.
+boundary, so workflow and tool code never hold it. Hub routes that read
+GitHub check the caller's `read` (or `use`) grant on the same credential;
+routes that write to GitHub check `use`. Reads use the secret on the
+caller's behalf and never return it.
 
 ## Classification
 
