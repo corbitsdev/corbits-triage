@@ -21,9 +21,9 @@ function preview(actions: PreviewAction[]): PullPreview {
     judge: "not-run",
     verdict: { state: "needs-human", priority: "p2", labels: [], owner: "", humanGated: true, confidence: "unknown", degraded: null, reason: "needs the judge", nextAction: "", actor: "maintainer", feedback: "Thanks!\n\nPlease add tests." },
     checks: [
-      { check: "size", name: "Size", kind: "machine", result: "pass", reason: "", evidence: [] },
-      { check: "custom-1", name: "No vendor changes", kind: "machine", result: "fail", reason: "", evidence: [] },
-      { check: "custom-2", name: "Clear intent", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [] },
+      { check: "size", name: "Size", kind: "machine", result: "pass", reason: "", evidence: [], output: { kind: "values", values: { files: 33, lines: 2104 } } },
+      { check: "custom-1", name: "No vendor changes", kind: "machine", result: "fail", reason: "", evidence: [], output: { kind: "values", values: { holds: false } } },
+      { check: "custom-2", name: "Clear intent", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [], output: { kind: "could-not-check", reason: "needs the judge" } },
     ],
     actions,
   };
@@ -65,8 +65,8 @@ test.each<[string, PreviewAction[], Pick<ReturnType<typeof previewProse>, "actio
   const prose = previewProse(preview(actions), pack);
   expect({ actions: prose.actions, notWoken: prose.notWoken }).toEqual(want);
   expect(prose.checks).toEqual([
-    { result: "pass", label: "Passed", names: ["Size"] },
-    { result: "fail", label: "Failed", names: ["No vendor changes"] },
+    { result: "pass", label: "Passed", names: ["Size (33 files, 2,104 lines)"] },
+    { result: "fail", label: "Failed", names: ["No vendor changes (does not hold)"] },
     { result: "needs-judge", label: "Needs the judge", names: ["Clear intent"] },
   ]);
   expect(prose.comment).toBe("Thanks!\n\nPlease add tests.");

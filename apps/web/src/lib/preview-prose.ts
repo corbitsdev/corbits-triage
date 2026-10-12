@@ -1,6 +1,7 @@
 import type { CheckPack } from "@corbits/triage-contracts";
 import { strings, type PreviewCheck, type PreviewBranch, type PreviewDo, type PullPreview } from "./hub-api.ts";
 import { actionLabel, BRANCH_NAMES, DO_NAMES, listed, quoted, sentence } from "./pack-prose.ts";
+import { checkValueText } from "./triage-view.ts";
 
 export type CheckLine = { result: PreviewCheck["result"]; label: string; names: string[] };
 
@@ -67,10 +68,16 @@ function branchLine(branch: PreviewBranch, repo: string): BranchLine {
   return { branch: BRANCH_NAMES[branch.branch], reason: branch.reason, dos };
 }
 
+/** The judge never runs in a preview, so a check waiting on it has no value to show. */
+function nameWithValue(row: PreviewCheck): string {
+  const value = row.result === "needs-judge" ? null : checkValueText(row);
+  return value === null ? row.name : `${row.name} (${value})`;
+}
+
 /** A preview response in the panel's prose, actions named by their place in the pack that was previewed. */
 export function previewProse(preview: PullPreview, pack: CheckPack): PreviewProse {
   const checks = CHECK_LABELS.flatMap(function line([result, text]): CheckLine[] {
-    const names = preview.checks.filter((row) => row.result === result).map((row) => row.name);
+    const names = preview.checks.filter((row) => row.result === result).map(nameWithValue);
     return names.length ? [{ result, label: text, names }] : [];
   });
   const actions: ActionLine[] = [];

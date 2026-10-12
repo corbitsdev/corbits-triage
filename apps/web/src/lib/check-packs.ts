@@ -1,4 +1,4 @@
-import { queryOptions, skipToken, useQueries, useQueryClient, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { queryOptions, skipToken, useQueries, useQuery, useQueryClient, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { CATALOG_IDS, catalogCheckEnabled, checkPackName, type CheckPack } from "@corbits/triage-contracts";
 import { listCheckPacks } from "./check-pack.ts";
 import { createHubTransport } from "./hub-transport.ts";
@@ -28,6 +28,14 @@ export function checkPackQuery(queryClient: QueryClient, tenantId: string | unde
       },
     staleTime: 60_000,
   });
+}
+
+/** The repository's check pack once loaded; null while it loads or when the repository has none. */
+export function useRepoPack(repo: string): CheckPack | null {
+  const { snapshot } = usePortal();
+  const queryClient = useQueryClient();
+  const found = useQuery(checkPackQuery(queryClient, snapshot?.workspace.tenantId, repo)).data;
+  return found?.kind === "pack" ? found.pack : null;
 }
 
 /** Catalog checks switched on plus every custom check, which has no off state. */

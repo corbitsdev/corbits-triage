@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, readCheckPack, checkPackName, triggerRequestOf, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type AuthorKind, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
+import { repoPolicy, readCheckPack, checkPackName, triggerRequestOf, parseCheckOutput, ACTION_KINDS, PR_TRIAGE_STUCK_RUN_MS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -1171,7 +1171,7 @@ export type PreviewAction =
   | ({ id: string; status: "decided" } & PreviewBranch)
   | { id: string; status: "waits-on-judge"; branches: PreviewBranch[] };
 
-export type PreviewCheck = { check: string; name: string; kind: "machine" | "model"; result: "pass" | "fail" | "unconfirmed" | "needs-judge"; reason: string; evidence: string[] };
+export type PreviewCheck = { check: string; name: string; kind: "machine" | "model"; result: "pass" | "fail" | "unconfirmed" | "needs-judge"; reason: string; evidence: string[]; output: CheckOutput };
 
 export type PullPreview = {
   repo: string;
@@ -1562,6 +1562,8 @@ export type CheckResult = {
   result: "pass" | "fail" | "unconfirmed";
   reason: string | null;
   evidence: string[];
+  /** Null for a verdict made before checks carried output. */
+  output: CheckOutput | null;
   /** Decides an action's branch; shown as matched or not, never as a failure. */
   gate: boolean;
 };
@@ -1574,7 +1576,7 @@ function checkResults(value: unknown): CheckResult[] {
     if (typeof c.check !== "string") continue;
     if (c.kind !== "machine" && c.kind !== "model") continue;
     if (c.result !== "pass" && c.result !== "fail" && c.result !== "unconfirmed") continue;
-    out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence), gate: c.gate === true });
+    out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence), output: parseCheckOutput(c.output) ?? null, gate: c.gate === true });
   }
   return out;
 }

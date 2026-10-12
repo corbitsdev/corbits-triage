@@ -1,3 +1,4 @@
+import type { CheckOutput } from "@corbits/triage-contracts";
 import { resolveInlineRef, type HubApproval, type MergeVerdict, type PrItem, type RunLog } from "./hub-api.ts";
 
 function obj(value: unknown): Record<string, unknown> {
@@ -22,28 +23,73 @@ export const MERGE_SHORT_LABEL: Record<MergeVerdict["verdict"], string> = { read
 
 export const NOT_EVALUATED = "Not evaluated";
 
-/** The weakest model answer against the pack's threshold, in points; rules only when a ready verdict asked no model check, none when no model answered. */
-export function mergeScoreText(merge: MergeVerdict): string | null {
-  if (merge.score !== null) return `score ${points(merge.score)} (threshold ${points(merge.threshold)})`;
-  return merge.verdict === "ready" ? "rules only" : null;
-}
+const UNSURE_PREFIX = "Not sure enough of every answer";
 
-/** Why the merge is not recommended, with the score in points like the rest of the portal. */
+/** Why the merge is not recommended; each check shows its own value, so the threshold is named as how sure Triage must be. */
 export function mergeReasons(merge: MergeVerdict): string[] {
-  return merge.reasons.map((reason) => (SCORE_REASON.test(reason) && merge.score !== null
-    ? `Score ${points(merge.score)} is below the threshold ${points(merge.threshold)}`
-    : reason));
+  return merge.reasons.map((reason) => (SCORE_REASON.test(reason) ? `${UNSURE_PREFIX} to recommend merging (needs ${points(merge.threshold)}%)` : reason));
 }
 
-/** The merge verdict in one line: ready with its score, or not recommended with the first thing in the way, a low score last. */
+/** The merge verdict in one line: ready, or not recommended with the first thing in the way, the threshold last. */
 export function mergeText(item: Pick<PrItem, "merge">): string {
   const { merge } = item;
   if (merge === null) return NOT_EVALUATED;
-  if (merge.verdict === "ready") return `${MERGE_LABEL.ready} · ${mergeScoreText(merge)}`;
+  if (merge.verdict === "ready") return MERGE_LABEL.ready;
   const reasons = mergeReasons(merge);
-  const blocker = reasons.find((reason) => !reason.startsWith("Score ")) ?? reasons[0];
+  const blocker = reasons.find((reason) => !reason.startsWith(UNSURE_PREFIX)) ?? reasons[0];
   if (blocker === undefined) return MERGE_LABEL["not-recommended"];
   return `${MERGE_LABEL["not-recommended"]} · ${lowerFirst(blocker.replace(/^Failed: /, ""))}`;
+}
+
+const COUNT = new Intl.NumberFormat("en-US");
+
+function counted(value: number | boolean | string, one: string): string {
+  return `${COUNT.format(Number(value))} ${value === 1 ? one : `${one}s`}`;
+}
+
+const FACTS: Record<string, (value: number | boolean | string) => string> = {
+  isDraft: (value) => (value ? "draft" : "not a draft"),
+  status: (value) => (value === "none" ? "no CI" : `CI ${value}`),
+  isDuplicate: (value) => (value ? "duplicate" : "not a duplicate"),
+  hasConflicts: (value) => (value ? "has conflicts" : "no conflicts"),
+  touchesForbiddenPaths: (value) => (value ? "touches forbidden paths" : "no forbidden paths"),
+  linkedIssue: (value) => (value ? "issue linked" : "no issue linked"),
+  files: (value) => counted(value, "file"),
+  lines: (value) => counted(value, "line"),
+  behindBy: (value) => `behind by ${COUNT.format(Number(value))}`,
+  requested: (value) => `${COUNT.format(Number(value))} requested`,
+  approvals: (value) => counted(value, "approval"),
+  changesRequested: (value) => counted(value, "change request"),
+  holds: (value) => (value ? "holds" : "does not hold"),
+};
+
+function fact(name: string, value: number | boolean | string): string {
+  return FACTS[name]?.(value) ?? `${name.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()} ${value}`;
+}
+
+function factsText(values: Record<string, number | boolean | string>): string {
+  const { duplicateOf, ...rest } = values;
+  const text = Object.entries(rest).map(([name, value]) => fact(name, value)).join(", ");
+  return duplicateOf === undefined ? text : `${text} of #${duplicateOf}`;
+}
+
+/** Below its bar a score never shows the bar itself, so the shown number agrees with the check's result. */
+function scoreText(score: number, passAt: number): string {
+  const shown = score >= passAt ? Math.round(score) : Math.min(Math.round(score), passAt - 1);
+  return `${shown} / ${passAt}`;
+}
+
+/** What the check found, as `59 / 70`, `33 files, 2,104 lines` or `couldn't check: file could not be read`; the row shows the check's name, reason and evidence. Null for a verdict from before checks carried output. */
+export function checkValueText({ output, reason, evidence }: { output: CheckOutput | null; reason: string | null; evidence: readonly string[] }): string | null {
+  if (output === null) return null;
+  const behind = output.kind !== "values" && output.kind !== "not-applicable" && output.items?.length && evidence.length === 0 ? ` (${output.items.join(", ")})` : "";
+  switch (output.kind) {
+    case "values": return factsText(output.values);
+    case "score": return `${scoreText(output.score, output.passAt)}${behind}`;
+    case "met": return `met${behind}`;
+    case "not-applicable": return "not applicable";
+    case "could-not-check": return `${output.reason === reason ? "couldn't check" : `couldn't check: ${output.reason}`}${behind}`;
+  }
 }
 
 export function approvalHeadline(approval: HubApproval): string {

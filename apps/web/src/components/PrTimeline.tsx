@@ -1,11 +1,9 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CheckPack } from "@corbits/triage-contracts";
-import { checkPackQuery } from "../lib/check-packs.ts";
+import { useRepoPack } from "../lib/check-packs.ts";
 import { relativeTime } from "../lib/duration.ts";
 import { errorText } from "../lib/error-text.ts";
 import type { CheckChange, DoRun, PrItem, TimelineEntry } from "../lib/hub-api.ts";
 import { DO_NAMES, DONE_DO_NAMES, checkName } from "../lib/pack-prose.ts";
-import { usePortal } from "../lib/portal.tsx";
 import { usePrTimeline } from "../lib/pr-timeline.ts";
 
 function doText({ kind, status }: DoRun): string {
@@ -52,11 +50,8 @@ function DoRow({ run }: { run: DoRun }) {
 }
 
 export function PrTimeline({ item }: { item: PrItem }) {
-  const { snapshot } = usePortal();
-  const queryClient = useQueryClient();
   const timeline = usePrTimeline(item.repo, item.number);
-  const packArtifact = useQuery(checkPackQuery(queryClient, snapshot?.workspace.tenantId, item.repo)).data;
-  const pack = packArtifact?.kind === "pack" ? packArtifact.pack : null;
+  const pack = useRepoPack(item.repo);
   const { items } = timeline;
   const trend = items.flatMap((row) => (row.type === "verdict" && row.verdict.settled && row.verdict.readiness !== null ? [row.verdict.readiness] : []));
   return (
