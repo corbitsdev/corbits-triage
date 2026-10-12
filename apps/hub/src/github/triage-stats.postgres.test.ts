@@ -1,11 +1,13 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
-import { createDB, dropSchema, runMigrations, schema } from "@intx/db";
-import { createDoRunStore, migrateDoRuns } from "./do-run-store.js";
+import { createDB, runMigrations, schema } from "@intx/db";
+import { migrateTriageTables } from "../triage-db.js";
+import { createDoRunStore } from "./do-run-store.js";
 import { createTriageStats, TriageStats } from "./triage-stats.js";
-import { createVerdictRecordStore, migrateVerdictRecords, type RecordedVerdict } from "./verdict-record-store.js";
+import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_stats";
@@ -20,14 +22,16 @@ function verdict(runId: string, number: number, runStatus: string | null): Recor
 }
 
 test("PostgreSQL: only verdicts of completed runs count as triaged", async () => {
-  const testSchema = `corbits_stats_${randomBytes(6).toString("hex")}`;
+  const database = `corbits_stats_${randomBytes(6).toString("hex")}`;
+  const admin = createDB(TEST_DB);
+  await admin.db.execute(sql.raw(`create database ${database}`));
+  const config = { ...TEST_DB, database };
   let handle: ReturnType<typeof createDB> | undefined;
   try {
-    await runMigrations(TEST_DB, { schema: testSchema });
-    handle = createDB({ ...TEST_DB, schema: testSchema });
+    await runMigrations(config, { schema: "public" });
+    handle = createDB(config);
     const db = handle.db;
-    await migrateVerdictRecords(db);
-    await migrateDoRuns(db);
+    await migrateTriageTables(db, "public");
     await db.insert(schema.tenant).values({ id: TENANT, name: "Stats", slug: "stats", domain: "stats.test" });
     await db.insert(schema.principal).values({ id: "prn_stats", tenantId: TENANT, kind: "user", refId: "usr_stats", status: "active" });
     const verdicts = createVerdictRecordStore(db);
@@ -42,6 +46,7 @@ test("PostgreSQL: only verdicts of completed runs count as triaged", async () =>
     expect(TriageStats.assert(await res.json())).toMatchObject({ triaged: 2, verdicts: { "ready-monitoring": 2 } });
   } finally {
     await handle?.close();
-    await dropSchema(TEST_DB, { schema: testSchema });
+    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
+    await admin.close();
   }
 }, 120_000);

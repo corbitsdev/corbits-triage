@@ -1,17 +1,18 @@
 // One row per pack Do effect, holding its latest state; the claim makes two
 // requests for the same effect write to GitHub at most once.
 import { and, desc, eq, gte, lt, or, sql, type SQL } from "drizzle-orm";
-import { integer, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import { integer, jsonb, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 import type { DB } from "@intx/db";
 import type { ActionKind } from "@corbits/triage-contracts";
 import type { Branch } from "../../../../packages/triage-workflows/src/logic/actions.js";
 import type { DoOutcome } from "@corbits/github-tool/do";
+import { triageSchema } from "../triage-db.js";
 
 /** A running claim older than this is taken to have died and may be claimed again. */
 const LEASE = sql`interval '2 minutes'`;
 const LIST_LIMIT = 200;
 
-export const doRun = pgTable("corbits_triage_do_run", {
+export const doRun = triageSchema.table("do_run", {
   tenantId: text("tenant_id").notNull(),
   effectId: text("effect_id").notNull(),
   runId: text("run_id").notNull(),
@@ -36,33 +37,6 @@ export type DoRun = typeof doRun.$inferSelect;
 /** How a Do another writer ran ended. */
 export type RecordedOutcome = DoOutcome | { status: "failed"; error: string };
 export type DoClaim = Omit<DoRun, "status" | "result" | "error" | "attempts" | "createdAt" | "updatedAt">;
-
-export async function migrateDoRuns(db: DB["db"]): Promise<void> {
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS corbits_triage_do_run (
-      tenant_id text NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
-      effect_id text NOT NULL,
-      run_id text NOT NULL,
-      repo text NOT NULL,
-      number integer NOT NULL,
-      head_sha text NOT NULL,
-      action_id text NOT NULL,
-      branch text NOT NULL,
-      do_index integer NOT NULL,
-      kind text NOT NULL,
-      source text NOT NULL,
-      principal_id text REFERENCES principal(id) ON DELETE SET NULL,
-      status text NOT NULL CHECK (status IN ('running', 'done', 'satisfied', 'failed')),
-      result jsonb,
-      error text,
-      attempts integer NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now(),
-      PRIMARY KEY (tenant_id, effect_id)
-    )
-  `);
-  await db.execute(sql`CREATE INDEX IF NOT EXISTS corbits_triage_do_run_pr_idx ON corbits_triage_do_run (tenant_id, repo, number, created_at DESC)`);
-}
 
 export type DoRunFilter = { repo: string; number?: number; runId?: string };
 
