@@ -60,6 +60,15 @@ function GithubReturn() {
     if (window.opener) window.close();
   }, [sync.isSuccess]);
 
+  if (sync.denied) {
+    return (
+      <div className="gate">
+        <section className="onboarding centered-setup">
+          <p className="muted">Ask an owner or admin to finish connecting GitHub.</p>
+        </section>
+      </div>
+    );
+  }
   if (sync.error) return <HubOutage message={`Could not read your repositories from GitHub. ${sync.error.message}`} />;
   if (sync.isSuccess && !window.opener) return <Navigate to="/repositories" replace />;
   return <LoadingGate />;
