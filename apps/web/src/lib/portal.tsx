@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
@@ -31,12 +31,15 @@ import {
   WAITING_FOR_WORKFLOW,
   type HubGrant,
   type HubRole,
+  type InvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
   type PrItem,
   type RunLog,
   type PortalSnapshot,
+  type WorkspaceOption,
 } from "./hub-api.ts";
+import { readChosenWorkspace, writeChosenWorkspace } from "./chosen-workspace.ts";
 import type { CreateGrantInput } from "./grant-actions.ts";
 import { ensureWorkflows, suggestOfferings } from "./workflow-deploy.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
@@ -53,10 +56,13 @@ interface PortalContextValue {
   readOnly: boolean;
   connected: boolean;
   snapshot: PortalSnapshot | null;
+  /** Workspaces the user is invited to but not yet a member of, while they are a member of none. */
+  invitations: WorkspaceOption[];
   loadError: string;
   notify: (message: string) => void;
   refresh: () => void;
   refreshNow: () => Promise<PortalSnapshot | null>;
+  openWorkspace: (tenantId: string) => void;
   syncFromGithub: () => Promise<SyncResult>;
   configureApp: (secret: string) => Promise<void>;
   configureHook: (secret: string) => Promise<string>;
@@ -75,6 +81,8 @@ interface PortalContextValue {
   removeRole: (role: HubRole) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
 }
+
+const NO_INVITATIONS: WorkspaceOption[] = [];
 
 const PortalContext = createContext<PortalContextValue | null>(null);
 
@@ -143,38 +151,61 @@ export function useSignOutWhenRejected(): (cause: unknown) => void {
 
 const convergedTenants = new Set<string>();
 
+type PortalLoad = PortalSnapshot | InvitedAccess;
+
+function isInvited(load: PortalLoad): load is InvitedAccess {
+  return "kind" in load;
+}
+
+function snapshotOf(load: PortalLoad | undefined): PortalSnapshot | null {
+  return load && !isInvited(load) ? load : null;
+}
+
 export function PortalProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
   const signOutWhenRejected = useSignOutWhenRejected();
   const configured = hubConfigured();
   const queryClient = useQueryClient();
   const enabled = configured && Boolean(session);
+  const userId = session?.id;
+  /** The workspace open in this tab, kept on every poll until the user switches. */
+  const opened = useRef<{ userId: string; tenantId: string } | null>(null);
 
-  const loadSnapshot = useCallback(async function loadSnapshot() {
+  const loadSnapshot = useCallback(async function loadSnapshot(): Promise<PortalLoad> {
+    if (!userId) throw new Error("Sign in to open a workspace.");
     const transport = createHubTransport();
     try {
-      const workspace = await ensureWorkspace(transport);
-      const tenantId = workspace.tenantId;
+      const current = opened.current?.userId === userId ? opened.current.tenantId : readChosenWorkspace(userId);
+      const access = await ensureWorkspace(transport, current);
+      if (access.kind === "invited") return access;
+      const tenantId = access.workspace.tenantId;
+      opened.current = { userId, tenantId };
       async function hasPack(repo: string) {
         return (await queryClient.fetchQuery(checkPackIndexQuery(tenantId))).has(checkPackName(repo));
       }
-      return await loadPortal(transport, workspace, hasPack);
+      return await loadPortal(transport, access, hasPack);
     } catch (cause: unknown) {
       signOutWhenRejected(cause);
       throw cause;
     }
-  }, [queryClient, signOutWhenRejected]);
+  }, [queryClient, signOutWhenRejected, userId]);
 
   const refresh = useCallback(function refresh() {
     for (const queryKey of REFRESH_QUERY_KEYS) void queryClient.invalidateQueries({ queryKey, predicate: canChange });
   }, [queryClient]);
   const refreshNow = useCallback(async function refreshNow() {
     await Promise.all(REFRESH_QUERY_KEYS.map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
-    return queryClient.fetchQuery({
+    return snapshotOf(await queryClient.fetchQuery({
       queryKey: PORTAL_QUERY_KEY,
       queryFn: loadSnapshot,
-    });
+    }));
   }, [loadSnapshot, queryClient]);
+  const openWorkspace = useCallback(function openWorkspace(tenantId: string) {
+    if (!userId) throw new Error("Sign in to open a workspace.");
+    opened.current = { userId, tenantId };
+    writeChosenWorkspace(userId, tenantId);
+    void queryClient.resetQueries({ queryKey: PORTAL_QUERY_KEY });
+  }, [queryClient, userId]);
   const notify = useCallback(function notify(message: string) {
     toast(message);
   }, []);
@@ -188,13 +219,14 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     queryFn: loadSnapshot,
   });
 
-  const snapshot = enabled ? portalQuery.data ?? null : null;
+  const snapshot = enabled ? snapshotOf(portalQuery.data) : null;
+  const invitations = enabled && portalQuery.data && isInvited(portalQuery.data) ? portalQuery.data.invitations : NO_INVITATIONS;
   const loading = enabled && portalQuery.isPending;
   const unauthorized = portalQuery.error instanceof ApiError && portalQuery.error.status === 401;
-  const loadError = enabled && !snapshot && portalQuery.isError && !unauthorized
+  const loadError = enabled && !portalQuery.data && portalQuery.isError && !unauthorized
     ? (portalQuery.error instanceof Error ? portalQuery.error.message : String(portalQuery.error))
     : "";
-  const readOnly = Boolean(enabled && !snapshot && portalQuery.isError && !unauthorized);
+  const readOnly = Boolean(enabled && !portalQuery.data && portalQuery.isError && !unauthorized);
 
   useEffect(function clearSnapshotWhenDisabled() {
     if (!enabled) {
@@ -446,10 +478,12 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         readOnly,
         connected: snapshot ? portalConnected(snapshot) : false,
         snapshot,
+        invitations,
         loadError,
         notify,
         refresh,
         refreshNow,
+        openWorkspace,
         syncFromGithub,
         configureApp,
         configureHook,
@@ -474,10 +508,12 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       loading,
       readOnly,
       snapshot,
+      invitations,
       loadError,
       notify,
       refresh,
       refreshNow,
+      openWorkspace,
       syncFromGithub,
       configureApp,
       configureHook,
