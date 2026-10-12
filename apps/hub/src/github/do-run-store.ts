@@ -5,7 +5,7 @@ import { integer, jsonb, pgTable, primaryKey, text, timestamp } from "drizzle-or
 import type { DB } from "@intx/db";
 import type { ActionKind } from "@corbits/triage-contracts";
 import type { Branch } from "../../../../packages/triage-workflows/src/logic/actions.js";
-import type { DoOutcome } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
+import type { DoOutcome } from "@corbits/github-tool/do";
 
 /** A running claim older than this is taken to have died and may be claimed again. */
 const LEASE = sql`interval '2 minutes'`;
@@ -33,6 +33,8 @@ export const doRun = pgTable("corbits_triage_do_run", {
 }, (t) => [primaryKey({ columns: [t.tenantId, t.effectId] })]);
 
 export type DoRun = typeof doRun.$inferSelect;
+/** How a Do another writer ran ended. */
+export type RecordedOutcome = DoOutcome | { status: "failed"; error: string };
 export type DoClaim = Omit<DoRun, "status" | "result" | "error" | "attempts" | "createdAt" | "updatedAt">;
 
 export async function migrateDoRuns(db: DB["db"]): Promise<void> {
@@ -95,6 +97,22 @@ export function createDoRunStore(db: DB["db"]) {
         })
         .returning();
       return row;
+    },
+
+    /**
+     * Records a Do another writer already ran, in one statement: a new row, or a failed one now settled.
+     * A settled or running row is left alone, so recording the same outcome again changes nothing.
+     */
+    async record(claim: DoClaim, outcome: RecordedOutcome): Promise<void> {
+      const final = outcome.status === "failed" ? { status: outcome.status, error: outcome.error, result: null } : { ...outcome, error: null };
+      await db
+        .insert(doRun)
+        .values({ ...claim, ...final, attempts: 1 })
+        .onConflictDoUpdate({
+          target: [doRun.tenantId, doRun.effectId],
+          set: { ...final, runId: claim.runId, source: claim.source, principalId: claim.principalId, updatedAt: sql`now()` },
+          setWhere: and(eq(doRun.status, "failed"), sql`excluded.status <> 'failed'`),
+        });
     },
 
     async read(tenantId: string, effectId: string): Promise<DoRun | undefined> {

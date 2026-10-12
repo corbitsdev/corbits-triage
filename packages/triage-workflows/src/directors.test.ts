@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
-import { triageDirectorFactory } from "./directors.js";
+import { MAX_DOS_PER_RUN, triageDirectorFactory, type DoResult } from "./directors.js";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
-import type { Verdict } from "./logic/render.js";
+import { NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
 import { evaluate, rules } from "./actions/index.js";
 import type { RulesOutput } from "./actions/rules.js";
 import type { EffectContext } from "@intx/workflow";
@@ -546,5 +546,47 @@ describe("mirror director cleanup mode", () => {
 
   test("human-approved never calls a tool", async () => {
     expect(await mirrorCalls({ ...verdict, cleanupMode: "human-approved" })).toEqual([]);
+  });
+});
+
+describe("execute", () => {
+  const REQUEST = { repo: "acme/widgets", number: 8, labels: [], owned: [], comment: "", close: false };
+
+  function comment(index: number) {
+    return { id: "hi", branch: "always", index, kind: "comment", automatic: true, reason: "Always applies.", effectId: `e${index}`, target: { body: "hi" } };
+  }
+
+  /** Answers every Do call done, one at a time as the director asks, and returns the calls and its reply. */
+  async function execute(verdict: Record<string, unknown>) {
+    const calls: ToolCall[] = [];
+    let reply: { dos: DoResult[] } | undefined;
+    const caps = {
+      executeTools(batch: ToolCall[]) { calls.push(...batch); return { type: "execute_tools", calls: batch }; },
+      reply(content: string) { reply = JSON.parse(content); return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const director = triageDirectorFactory({ role: "execute" }, {} as never, { systemPrompt: "" } as never);
+    let taken = [await director.decide({ type: "message.received", message: { content: JSON.stringify(verdict) } } as ReactorInboundEvent, {} as ReactorState, caps)].flat() as Array<{ type: string; calls?: ToolCall[] }>;
+    while (reply === undefined) {
+      const asked = taken.flatMap((action) => action.calls ?? []);
+      expect(asked).toHaveLength(1);
+      const result = { callId: asked[0]!.id, content: { status: "done" } };
+      taken = [await director.decide({ type: "tool.done", result } as ReactorInboundEvent, {} as ReactorState, caps)].flat() as typeof taken;
+    }
+    return { calls, dos: reply.dos };
+  }
+
+  const verdict = { repo: "acme/widgets", number: 8, headSha: "abc", degraded: null, state: "ready", cleanupMode: "automated", request: REQUEST, checks: [], actions: [comment(0)] };
+
+  test("a verdict whose judge was skipped runs no Do", async () => {
+    const skipped = { ...verdict, checks: [{ check: "focused", kind: "model", result: "unconfirmed", reason: NEEDS_JUDGE_REASON }] };
+    expect(await execute(skipped)).toEqual({ calls: [], dos: [{ effectId: "e0", status: "skipped", error: "verdict not settled" }] });
+  });
+
+  test("Dos run one at a time, and those past the per-run cap stay pending", async () => {
+    const many = { ...verdict, actions: Array.from({ length: MAX_DOS_PER_RUN + 2 }, (_, index) => comment(index)) };
+    const { calls, dos } = await execute(many);
+    expect(calls).toHaveLength(MAX_DOS_PER_RUN);
+    expect(calls[0]!.arguments).toEqual({ request: REQUEST, step: { effectId: "e0", headSha: "abc", kind: "comment", target: { body: "hi" } } });
+    expect(dos.filter((d) => d.status === "skipped").map((d) => d.effectId)).toEqual([`e${MAX_DOS_PER_RUN}`, `e${MAX_DOS_PER_RUN + 1}`]);
   });
 });

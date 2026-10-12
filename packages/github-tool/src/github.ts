@@ -218,6 +218,15 @@ export async function getReviews(gh: GithubFetch, repo: string, number: number) 
   }));
 }
 
+export type Review = { reviewer?: string; state?: string; commitId?: string };
+
+/** Reviewers whose latest review still stands on the current head, when the review names its commit. */
+export function reviewedOnHead(reviews: Review[], headSha: string): string[] {
+  const latest = new Map<string, Review>();
+  for (const r of reviews) if (r.reviewer && r.state !== "PENDING") latest.set(r.reviewer, r);
+  return [...latest].flatMap(([login, r]) => (r.state !== "DISMISSED" && (r.commitId === undefined || r.commitId === headSha) ? [login] : []));
+}
+
 export type PrCommit = {
   sha: string;
   message: string;
@@ -489,6 +498,12 @@ export interface MirrorInput {
 
 function lowercase(name: string): string {
   return name.toLowerCase();
+}
+
+/** GitHub logins, org names, team slugs and label names are case-insensitive. */
+export function missingFrom(have: string[] | undefined, wanted: string[]): string[] {
+  const held = new Set((have ?? []).map(lowercase));
+  return wanted.filter((name) => !held.has(lowercase(name)));
 }
 
 export async function mirror(gh: GithubFetch, i: MirrorInput) {

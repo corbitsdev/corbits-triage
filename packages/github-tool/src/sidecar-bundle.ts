@@ -25,6 +25,7 @@ import {
   requestReviewers,
   type GithubFetch,
 } from "./github";
+import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
 
 export const CREDENTIAL_HANDLE = "github";
 
@@ -122,6 +123,12 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
     inputSchema: MIRROR_INPUT,
   },
   {
+    name: "github_execute_do_auto",
+    description:
+      "Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close or comment is refused once the pull request has moved past headSha. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.",
+    inputSchema: obj({ request: MIRROR_INPUT, step: obj({ effectId: str, headSha: str, kind: str, target: { type: "object" } }) }),
+  },
+  {
     name: "github_create_review",
     description: "Create a pull request review with event COMMENT, APPROVE, or REQUEST_CHANGES. Never merges.",
     inputSchema: obj({
@@ -161,6 +168,17 @@ interface Env extends BaseEnv {
 }
 
 type ToolCallInput = { id: string; name: string; arguments: Record<string, any> };
+
+/** A Do that cannot run is reported, not failed, so it stays pending for a person. */
+async function runDo(gh: GithubFetch, args: unknown) {
+  try {
+    const { status } = await executeDo(gh, parseDoInput(args));
+    return { status };
+  } catch (err) {
+    if (err instanceof DoNotRunnableError) return { status: "skipped", reason: err.message };
+    throw err;
+  }
+}
 
 async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> {
   const a = call.arguments;
@@ -203,6 +221,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
         comment: a.comment,
         close: a.close === true,
       });
+    case "github_execute_do_auto":
+      return runDo(gh, a);
     case "github_create_review":
       return createReview(gh, { repo: a.repo, number: a.number, body: a.body ?? "", event: a.event });
     case "github_create_issue_comment":

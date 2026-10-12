@@ -44,7 +44,7 @@ function request(): Request {
 }
 
 async function noRuns(): Promise<ObservedRuns> {
-  return { byRepo: new Map(), runCount: 0, verdicts: [] };
+  return { byRepo: new Map(), runCount: 0, verdicts: [], executed: [] };
 }
 
 function route(store: TriageStateStore, deliver: Deliver) {
@@ -75,6 +75,7 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver) 
     observeRuns: noRuns,
     store,
     verdicts: { record: async () => {} },
+    dos: { record: async () => {} },
     readCheckPack: async () => ({ status: "ok", pack: PACK }),
     deliver: async (_tenant, _address, payload) => deliver(payload),
     policy: DEFAULT_RECONCILE_POLICY,

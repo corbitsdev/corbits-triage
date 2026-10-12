@@ -31,5 +31,5 @@
     "dist",
     "package.json"
   ],
-  "description": "GitHub mutation tools (mirror, review, comment, merge; approval: ask except github_mirror_auto)"
+  "description": "GitHub mutation tools (mirror, triage Dos, review, comment, assign, request reviewers, merge; approval: ask except github_mirror_auto and github_execute_do_auto)"
 }

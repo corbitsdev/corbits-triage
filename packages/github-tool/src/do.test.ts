@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { GithubFetch } from "@corbits/github-tool/github";
-import type { ResolvedTarget, SuggestedDo } from "./actions.js";
-import { DoNotRunnableError, doMarker, executeDo } from "./execute-do.js";
+import type { GithubFetch } from "./github";
+import { DoNotRunnableError, doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from "./do";
 
 type FakeComment = { id: number; user: { login: string; type: string }; body: string };
 
@@ -39,13 +38,13 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
   return { gh: gh satisfies GithubFetch, writes };
 }
 
-function step(kind: SuggestedDo["kind"], target: ResolvedTarget): SuggestedDo {
-  return { id: "a", branch: "always", index: 0, effectId: "e1", kind, automatic: false, reason: "", target };
+function step(kind: DoStep["kind"], target: ResolvedTarget): DoStep {
+  return { effectId: "e1", headSha: "abc", kind, target };
 }
 
 const REQUEST = { repo: "acme/widgets", number: 8, labels: ["triage:blocked"], owned: ["triage:blocked"], comment: "Blocked", close: false };
 
-function run(gh: GithubFetch, task: SuggestedDo) {
+function run(gh: GithubFetch, task: DoStep) {
   return executeDo(gh, { request: REQUEST, step: task });
 }
 
@@ -97,7 +96,16 @@ describe("executeDo", () => {
     ]);
   });
 
-  test.each<[string, SuggestedDo]>([
+  test.each<[string, DoStep]>([
+    ["a comment", step("comment", { body: "Thanks" })],
+    ["a close", step("close", {})],
+  ])("%s is not written once the pull request has moved on", async (_, task) => {
+    const { gh, writes } = fakeGithub();
+    await expect(run(gh, { ...task, headSha: "older" })).rejects.toBeInstanceOf(HeadMovedError);
+    expect(writes).toEqual([]);
+  });
+
+  test.each<[string, DoStep]>([
     ["agent Dos", step("agent", { prompt: "fix it", tools: [] })],
     ["derived labels", step("labels", { unresolved: "derive", from: "type" })],
   ])("%s are not runnable", async (_, task) => {

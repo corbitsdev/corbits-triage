@@ -9,7 +9,8 @@ import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type Reconcil
 import { repoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type LiveDeployment, type Redeployed } from "./deployment.js";
-import { mergeObservedRuns, observeDeployments, type ObserveRuns, type ObservedRuns } from "./triage-runs.js";
+import { mergeObservedRuns, observeDeployments, type ExecutedDo, type ObserveRuns, type ObservedRuns } from "./triage-runs.js";
+import type { DoRunStore } from "./do-run-store.js";
 import type { RecordedVerdict, VerdictRecordStore } from "./verdict-record-store.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
@@ -35,6 +36,8 @@ export type TriageReconcilerDeps = {
   observeRuns: ObserveRuns;
   store: TriageStateStore;
   verdicts: Pick<VerdictRecordStore, "record">;
+  /** Where the Dos a run executed are recorded, beside those the portal runs. */
+  dos: Pick<DoRunStore, "record">;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   policy: ReconcilePolicy;
@@ -61,6 +64,10 @@ function enabledRepos(config: unknown): EnabledRepo[] {
 
 function verdictKey(verdict: RecordedVerdict): string {
   return `${verdict.runId}\n${verdict.repo}\n${verdict.number}`;
+}
+
+function doKey(executed: ExecutedDo): string {
+  return `${executed.runId}\n${executed.effectId}`;
 }
 
 function isRunning(runs: ObservedRuns): boolean {
@@ -94,11 +101,19 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   /** Verdicts recorded per tenant that its live logs still hold; a restart records them again, which changes nothing. */
   const recorded = new Map<string, Set<string>>();
 
+  /** Executed Dos recorded per tenant that its live logs still hold; recording one again changes nothing. */
+  const recordedDos = new Map<string, Set<string>>();
+
   async function recordVerdicts(tenantId: string, runs: ObservedRuns): Promise<void> {
     const seen = recorded.get(tenantId) ?? new Set<string>();
+    const seenDos = recordedDos.get(tenantId) ?? new Set<string>();
     try {
       await deps.verdicts.record(tenantId, runs.verdicts.filter((verdict) => !seen.has(verdictKey(verdict))));
+      for (const { outcome, ...claim } of runs.executed.filter((executed) => !seenDos.has(doKey(executed)))) {
+        await deps.dos.record({ ...claim, tenantId, source: "workflow", principalId: null }, outcome);
+      }
       recorded.set(tenantId, new Set(runs.verdicts.map(verdictKey)));
+      recordedDos.set(tenantId, new Set(runs.executed.map(doKey)));
     } catch (err) {
       deps.log({ level: "error", msg: "triage_verdicts_unrecorded", tenantId, error: String(err) });
     }
