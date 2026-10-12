@@ -142,13 +142,18 @@ export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" |
   };
 }
 
-/** A pull request's webhook events go out as one mail once none arrived for the quiet period, or at most four quiet periods after the first; the window must close before the reconciler gives up on its queued head. */
+const COALESCE_BURST_MS = 3_000;
+
+/**
+ * A pull request's webhook events go out as one mail once none arrived for the quiet period, or at most four quiet periods after the first; the window must close before the reconciler gives up on its queued head.
+ * A new commit or a newly opened pull request waits only for the burst, long enough to take in the review requests, labels and assignees GitHub delivers with it within a second or so.
+ */
 export function triageCoalesceWindow(env: HubEnv, policy: ReconcilePolicy): CoalesceWindow {
   const quietMs = numberOr(env.TRIAGE_COALESCE_QUIET_MS, 30_000);
   if (4 * quietMs >= policy.unstartedAfterMs) {
     throw new Error(`TRIAGE_COALESCE_QUIET_MS must be below ${policy.unstartedAfterMs / 4}: four times it must stay under the ${policy.unstartedAfterMs} ms a queued head may wait to start`);
   }
-  return { quietMs, maxWaitMs: 4 * quietMs };
+  return { quietMs, maxWaitMs: 4 * quietMs, burstMs: Math.min(COALESCE_BURST_MS, quietMs) };
 }
 
 export type SignInSettings = {
