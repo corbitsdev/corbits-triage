@@ -82,4 +82,4 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 - **"No decision model offering found"**: save Settings → Model.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
 - **New PRs never reach triage**: the hub logs `stale_deployment` when the tenant has no live `pr-triage` deployment. Reload the portal to redeploy.
-- **Portal shows `HTTP 404` on Set up checks**: the hub process is older than the code. Restart `bun run dev`.
+- **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.

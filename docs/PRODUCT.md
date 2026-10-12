@@ -21,13 +21,20 @@ requests in this repository** and saves.
 ## What you see
 
 - **Inbox**: open pull requests across repositories with triage on, in three views:
-  Needs you, All open and First-timers. Each opens a pane with the verdict, a
-  score, the reasons, and the suggested actions to run, edit or skip.
+  Needs you, All open and First-timers. Each opens a reading pane: one status
+  line, the problems (failed checks, unsure answers, checks that could not
+  run), the description, and folded rows for the linked issue, the changed
+  files and the checks that passed. A bar at the bottom offers the next step
+  for that state (merge, send feedback, reply, approve, close as duplicate,
+  triage again); the rest and the pack's Dos are under More. Merging from the
+  portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
-- **Repositories**: per repository, its checks, its actions, the triage
-  switch and **Triage open pull requests again**.
-- **Settings**: the GitHub App, the decision model, the team and its access
-  rules, and the deployed workflow versions.
+- **Repositories**: per repository, its checks, its actions, its roles,
+  whether Triage posts automatically or asks first, the merge score threshold,
+  a preview against an open pull request, recent stats, the triage switch and
+  **Triage open pull requests again**.
+- **Settings**: the deployed workflow versions, the GitHub App, the decision
+  model, invitations, workspace roles and access rules, and the account.
 
 The portal shows the score and the reasons. Evidence for a file or a change
 cites its changed lines (`src/router.ts:40-58`) and links them at the commit
@@ -103,17 +110,23 @@ An action is **When → Checks → Yes / No / Unsure → Dos**:
   every action.
 - **Checks**: the checks whose combined verdict picks the branch. Any
   unconfirmed check makes it Unsure. With no checks, the action always runs.
-- **Dos**: labels, assign, request review, comment, close. Each Do has its own
-  automatic flag: automatic Dos run on GitHub during triage, the rest wait in
-  the Inbox for a click.
+- **Dos**: labels, assign, request review, comment, approve, close. Each Do
+  has its own automatic flag: automatic Dos run on GitHub during triage, the
+  rest wait in the Inbox for a click.
 
-Close never runs automatically on Unsure or without checks.
+Close never runs automatically on Unsure or without checks. Approve runs only
+for a head that is ready to merge with CI green; in a repository that posts
+automatically, a later head that may not be approved has the approve Do's
+approvals dismissed. Approvals made from the Inbox are never dismissed.
 
 ## Triage over time
 
 Turning triage on triages a repository's open pull requests; after that,
 pull request events are triaged as they arrive, and the hub re-queues any
-open pull request whose latest commit has no verdict. See
+open pull request whose latest commit has no verdict. A pull request merged
+into the default branch makes the repository's other open pull requests due
+again, each at most once per 15 minutes. A re-check reuses the decision
+model's earlier answers for anything unchanged. See
 [ARCHITECTURE.md](ARCHITECTURE.md#workflows).
 
 ## Not finished

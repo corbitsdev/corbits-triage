@@ -13,6 +13,7 @@ with the `intx-src` export condition, so every hub command runs with
 | --- | --- |
 | `src/env.ts` | Only reader of the environment. arktype schema plus the helpers that turn it into config. |
 | `src/server.ts` | Composition root: loads env, runs migrations, builds every component and injects config. |
+| `migrations/*.sql`, `src/triage-db.ts` | Triage's tables in the `corbits_triage` schema, applied at start in one transaction under an advisory lock. |
 | `src/interchange-hub.ts` | Mirror of the stock hub bootstrap with the database config, auth config, credential cipher and Interchange settings injected. |
 | `src/auth.ts` | better-auth config: stock settings, optional Google sign-in and email allowlist, `PORTAL_ORIGIN` as a trusted origin. |
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
@@ -24,8 +25,11 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`, pull request events → coalescer. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
-| `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts` | Re-queues untriaged heads and rotates `pr-triage` deployments. |
-| `src/github/manifest.ts` | GitHub App Manifest flow: start, callback, cancel. |
+| `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads and rotates `pr-triage` deployments. |
+| `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
+| `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and records verdicts and Dos. |
+| `src/github/verdict-record-store.ts`, `do-run-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict and Do records and the routes that serve them. |
+| `src/github/manifest.ts` | GitHub App Manifest flow: start and callback. The setup state is an HMAC-SHA256 token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes and bound to the user who started it; nothing is stored. |
 | `src/github/pr-*.ts` | Pull request actions, Dos, details, previews and single-PR triage. |
 | `src/github/github-app-*` | Credential adapter: App JWT → installation token, cached per installation, pinned to the GitHub API origin. |
 
@@ -42,11 +46,13 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
 - `src/lib/workflow-deploy.ts`: `suggestOfferings` matches tenant offerings;
   `ensureWorkflows` publishes the tool and workflow tarballs to the tenant's
   `corbits` package registry and deploys each workflow pinned to its version
-  through the hub's workflow-deploy route, redeploying only when a new version
-  was published.
+  through the hub's workflow-deploy route, redeploying a workflow only when
+  its deployment runs another version or the decision model was saved.
 - `scripts/build-workflows.ts`: packs the GitHub tools and each workflow of
   `packages/triage-workflows` as tarballs into `public/packages/`, listed in
-  `index.json`.
+  `index.json`. Each version is `<base>-sha-<8 hex>`, a SHA-256 over the
+  package manifest and files (`tooling/pack-tarball.ts`), so any change to
+  the tool or a workflow publishes a new version.
 - `src/lib/hub-api.ts`: typed calls over the hub routes.
 - `src/lib/decision-models.ts`: presets (TypeSafe, Vercel AI Gateway,
   OpenCode Zen, all serving Jev) plus a custom provider. Saving stores the key
@@ -69,8 +75,8 @@ resolves its offering when deployed.
 - `github-tool`: GitHub reads, the mirror write (marker-comment upsert) and
   Dos; sidecar tool bundles.
 - `github-write-tool`: build wrapper for the write bundle.
-- `triage-contracts`: check pack schema, repository policy, triage state and
-  shared types.
+- `triage-contracts`: check pack schema, repository policy, triage state,
+  trigger mail and shared types.
 - `rule-packs`: verdict states and their labels.
 - `openai-null-delta`: inference adapter fix for null stream deltas.
 

@@ -20,23 +20,33 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   origin carries the portal, the API and GitHub webhooks. Triage adds:
   - **GitHub bridge**: verifies GitHub's HMAC on `/api/hooks/*`, updates the
     tenant's repository list from installation events, and hands pull
-    request events to the coalescer. Temporary until `@corbits/webhooks`
-    verifies GitHub signatures.
+    request events to the coalescer. A pull request merged into the default
+    branch marks the repository's other triaged heads `stale`. Temporary
+    until `@corbits/webhooks` verifies GitHub signatures.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live `pr-triage` deployment, as the tenant system
-    sender, the same path cron uses.
+    sender, the same path cron uses. A new commit or a newly opened pull
+    request waits only a few seconds.
   - **Reconciler**: on an interval, compares each enabled repository's open
     pull requests with the run logs and stored state, and re-queues every
-    head without a verdict, in batches and under a per-tenant in-flight cap.
-    It also replaces a `pr-triage` deployment with a fresh copy once its run
-    log grows past a limit.
+    head without a verdict, and every stale head at most once per 15 minutes,
+    in batches and under a per-tenant in-flight cap. A catch-up mail carries
+    the decision-model answers recorded in the head's last verdict (from its
+    run log) when the deployment runs the
+    same workflow version and decision-model offering. It also replaces a
+    `pr-triage` deployment with a fresh copy once its run log grows past a
+    limit.
+  - **Run recorder**: reads the live logs of tenants with a `pr-triage` run in
+    flight and records each verdict and executed Do.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
     exchanged server side, so the private key never reaches the browser. The
     `state` round-tripped through GitHub is signed by the hub and bound to the
     user who started setup, so no setup state is stored.
-  - **Integration routes** under `/api/integrations/`: pull request actions
-    and Dos, details, previews, triage stats and timeline, invitations, and
-    workflow deploy. Each is described in `/openapi.json`. Pull request
+  - **Integration routes** under `/api/integrations/`: sign-in methods,
+    GitHub App setup and installation sync, open pull requests, details,
+    actions, Dos, previews and single pull request triage, latest verdicts,
+    triage stats and timeline, the check pack schema, invitations, and
+    workflow deploy and versions. Each is described in `/openapi.json`. Pull request
     actions are synchronous: a maintainer's click must not wait on a
     workflow spin-up.
 - **Sidecars**: one per live deployment, started by the hub's
@@ -70,8 +80,9 @@ one does.
    repository's docs and its contribution rules from GitHub.
 2. **rules**: runs the rule checks and builds the decision-model questions.
 3. **route**: skips the judge when no question needs asking.
-4. **judge**: one System One call per chunk of questions. The only step that
-   infers; see [DECISION_MODEL.md](DECISION_MODEL.md).
+4. **judge**: one System One call per chunk of questions that no carried
+   answer matches. The only step that infers; see
+   [DECISION_MODEL.md](DECISION_MODEL.md).
 5. **evaluate**: combines rule results and answers into checks, a verdict and
    each action's branch.
 6. **execute**: runs the automatic Dos on GitHub.
@@ -115,10 +126,14 @@ Hub routes that reach GitHub for the portal use the same adapter.
 - Interchange's own tables, artifacts and run logs hold tenants, credentials,
   deployments and runs.
 - Artifacts: the check pack (`check-pack/{owner}/{repo}`) and the triage state
-  (`triage-state/{owner}/{repo}`) per repository.
+  (`triage-state/{owner}/{repo}`) per repository. The triage state holds each
+  open head's status (`new`, `queued`, `running`, `triaged`, `failed`,
+  `stale`) and attempts.
 - Triage tables, in the `corbits_triage` schema: `verdict` (verdicts per
-  head), `do_run` (Dos run) and `invitation`, created from
-  `apps/hub/migrations` at hub start.
+  head), `do_run` (Dos run) and
+  `invitation`, applied from `apps/hub/migrations` at hub start in one
+  transaction under an advisory lock. Nothing else is stored: the GitHub App
+  setup state is a signed token.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 
