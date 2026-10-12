@@ -285,7 +285,7 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
       continue;
     }
     const unrelated: string[] = [];
-    const unread: string[] = [];
+    const unread = new Set<string>();
     // How much probability says the candidate belongs to the change, least first among all and among the unrelated.
     let weakest: [string, number] | undefined;
     let weakestUnrelated: number | undefined;
@@ -295,7 +295,7 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
       const item = `${candidate.label} — ${candidate.path}`;
       if (!candidate.evidence) {
         candidateUnresolved = true;
-        unread.push(item);
+        unread.add(candidate.path);
         continue;
       }
       const answer = invalid ? undefined : parsed.decisions[focusedCandidateId(index)];
@@ -317,10 +317,11 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     }
     anyUnanswered ||= unanswered;
     const reason = !det.needsJudgment ? NOT_ASKED_REASON : candidates.length === 0 ? "no change candidates" : unanswered ? unavailable : UNDECIDED_REASON;
+    const unreadPaths = [...unread];
     // A failure scores the unrelated candidates it names; otherwise every candidate must have been read and answered for a score.
-    const output: CheckOutput = weakestUnrelated !== undefined ? scored(weakestUnrelated, FOCUSED_PASS_AT, unrelated)
-      : weakest !== undefined && !unanswered && unread.length === 0 ? scored(weakest[1], FOCUSED_PASS_AT, [weakest[0]])
-        : det.needsJudgment && !unanswered && unread.length > 0 ? { kind: "could-not-check", reason: UNREAD_REASON, items: unread }
+    const output: CheckOutput = weakestUnrelated !== undefined ? { ...scored(weakestUnrelated, FOCUSED_PASS_AT, unrelated), ...(unreadPaths.length > 0 ? { unread: unreadPaths } : {}) }
+      : weakest !== undefined && !unanswered && unreadPaths.length === 0 ? scored(weakest[1], FOCUSED_PASS_AT, [weakest[0]])
+        : det.needsJudgment && !unanswered && unreadPaths.length > 0 ? { kind: "could-not-check", reason: UNREAD_REASON, items: unreadPaths }
           : { kind: "could-not-check", reason };
     push("focused", unrelated.length > 0 ? { result: "fail" } : candidateUnresolved ? { result: "unconfirmed", reason } : { result: "pass" }, output, unrelated);
   }

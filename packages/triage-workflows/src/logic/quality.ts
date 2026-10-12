@@ -369,7 +369,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     }
   }
   flush();
-  // A candidate no request could hold reads as one without evidence, which leaves focused for a human.
+  // A candidate no request could hold reads as one without evidence, so focused lists its file unread.
   return { candidates: candidates.map((candidate, index) => (asked.has(index) || !candidate.evidence ? candidate : { ...candidate, evidence: "" })), plan, requests };
 }
 

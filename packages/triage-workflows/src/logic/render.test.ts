@@ -127,13 +127,21 @@ describe("focused candidate rendering", () => {
     expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 80, passAt: 60, items: ["A — src/a.ts"] } }]);
   });
 
+  test("passes only a fully read pull request, and a failure still lists what it could not read", () => {
+    const candidates = [candidate("src/a.ts", "A"), candidate("src/big.ts", "Big", ""), candidate("src/big.ts", "Big", "")];
+    const related = focusedVerdict(candidates, decision("focused-candidate-001", "primary_or_supporting"));
+    expect(related.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "could-not-check", reason: "file could not be read", items: ["src/big.ts"] } }]);
+    const unrelated = focusedVerdict(candidates, decision("focused-candidate-001", "unrelated"));
+    expect(unrelated.checks[0]).toMatchObject({ result: "fail", output: { kind: "score", items: ["A — src/a.ts"], unread: ["src/big.ts"] } });
+  });
+
   test.each([
     ["ambiguous", [candidate("src/a.ts", "A")], decision("focused-candidate-001", "ambiguous"), { kind: "score", score: 20, passAt: 60, items: ["A — src/a.ts"] }],
     ["split", [candidate("src/a.ts", "A")], JSON.stringify({
       id: "focused-candidate-001", type: "choice", choice: "unrelated", confidence: 0.9,
       probabilities: { primary_or_supporting: 0.35, unrelated: 0.5, movement_or_superseded: 0.05, ambiguous: 0.1 },
     }), { kind: "score", score: 40, passAt: 60, items: ["A — src/a.ts"] }],
-    ["empty evidence", [candidate("src/a.ts", "A", "")], decision("focused-candidate-001", "unrelated"), { kind: "could-not-check", reason: "file could not be read", items: ["A — src/a.ts"] }],
+    ["empty evidence", [candidate("src/a.ts", "A", "")], decision("focused-candidate-001", "unrelated"), { kind: "could-not-check", reason: "file could not be read", items: ["src/a.ts"] }],
     ["no candidates", [], "", { kind: "could-not-check", reason: "no change candidates" }],
   ] as const)("names an unsure focused check (%s) in the comment, awaits review and is red", (_name, candidates, reply, output) => {
     const verdict = focusedVerdict([...candidates], reply);

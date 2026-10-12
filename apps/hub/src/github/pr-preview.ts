@@ -11,7 +11,7 @@ import { evaluate } from "../../../../packages/triage-workflows/src/actions/eval
 import { rules, type RulesItem } from "../../../../packages/triage-workflows/src/actions/rules.js";
 import { checkName } from "../../../../packages/triage-workflows/src/logic/actions.js";
 import type { PrFileFacts } from "../../../../packages/triage-workflows/src/logic/checks.js";
-import { assembleItem, fileFacts, MAX_PATCH_CHARS, roleTeams, type ItemContext } from "../../../../packages/triage-workflows/src/logic/facts.js";
+import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, roleTeams, type FilesCursor, type ItemContext, type ListedFiles } from "../../../../packages/triage-workflows/src/logic/facts.js";
 import { previewActions } from "../../../../packages/triage-workflows/src/logic/preview.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "../../../../packages/triage-workflows/src/logic/render.js";
 import type { CheckPackRead } from "./check-pack-store.js";
@@ -103,18 +103,15 @@ const NO_EFFECTS: EffectContext = {
 
 /** Every file of the pull request, with patches until the evaluation budget is spent, as the facts director reads them. */
 export async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
-  const files: PrFileFacts[] = [];
-  let patchChars = 0;
-  let offset: number | undefined = 0;
-  while (offset !== undefined) {
-    const page = await listPrFilesPage(gh, repo, number, { offset, patches: patchChars < MAX_PATCH_CHARS });
-    const read = page.files.flatMap(fileFacts);
-    files.push(...read);
-    patchChars += read.reduce((chars, file) => chars + (file.patch?.length ?? 0), 0);
-    if (page.next !== undefined && page.next <= offset) throw new Error(`github_list_pr_files did not advance past offset ${offset} for #${number}`);
-    offset = page.next;
+  const listed: ListedFiles = { files: [], patchChars: 0 };
+  let cursor: FilesCursor | undefined = FIRST_FILES_PAGE;
+  while (cursor !== undefined) {
+    const page = await listPrFilesPage(gh, repo, number, cursor);
+    const next = addFilesPage(listed, cursor, { ...page, files: page.files.flatMap(fileFacts) });
+    if (typeof next === "string") throw new Error(`${next} for #${number}`);
+    cursor = next;
   }
-  return files;
+  return listed.files;
 }
 
 /** The candidate pack checked as a stored one is, or why it is refused. */

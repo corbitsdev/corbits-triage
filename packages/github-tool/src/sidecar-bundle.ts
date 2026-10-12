@@ -70,8 +70,8 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "github_list_pr_files",
-    description: "List one page of files changed on a pull request from offset, with patches when GitHub returns them and they fit. Call again with next until it is absent; patches false leaves patches out.",
-    inputSchema: obj({ repo, number: { type: "integer" }, offset: { type: "integer" }, patches: { type: "boolean" } }, ["repo", "number"]),
+    description: "List one page of files changed on a pull request from offset, with patches when GitHub returns them. Call again with next, and patchNext as patchOffset when present, until next is absent; a patch continued on the next page is the rest of the previous page's last patch. patches false leaves patches out.",
+    inputSchema: obj({ repo, number: { type: "integer" }, offset: { type: "integer" }, patchOffset: { type: "integer" }, patches: { type: "boolean" } }, ["repo", "number"]),
   },
   {
     name: "github_read_repo_docs",
@@ -200,7 +200,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput): Promise<unknown> 
     case "github_list_pr_commits":
       return { commits: await listPrCommits(gh, a.repo, a.number) };
     case "github_list_pr_files":
-      return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patches: a.patches !== false });
+      return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patchOffset: a.patchOffset, patches: a.patches !== false });
     case "github_read_repo_docs":
       return readRepoDocsPage(gh, a.repo, { ref: a.ref, offset: a.offset });
     case "github_list_issue_comments":

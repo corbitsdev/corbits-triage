@@ -143,16 +143,18 @@ describe("extractChangeCandidates", () => {
 
     const hunks = Array.from({ length: 205 }, (_, index) => `@@ -0,0 +${index + 1} @@\n+const candidate${index} = true;`).join("\n");
     const candidateBound = extractChangeCandidates([{ path: "many.ts", patch: hunks }, { path: "later.ts" }]);
-    expect(candidateBound).toHaveLength(200);
-    expect(candidateBound.at(-1)).toMatchObject({ path: "many.ts", hunk: 199, label: "candidate199" });
+    expect(candidateBound).toHaveLength(202);
+    expect(candidateBound[199]).toMatchObject({ path: "many.ts", hunk: 199, label: "candidate199" });
+    expect(candidateBound.slice(200)).toEqual([{ path: "many.ts", label: "many.ts", evidence: "" }, { path: "later.ts", label: "later.ts", evidence: "" }]);
 
-    const fileBound = extractChangeCandidates(Array.from({ length: 101 }, (_, index) => ({ path: `fallback-${index}.ts` })));
-    expect(fileBound).toHaveLength(100);
-    expect(fileBound.at(-1)?.path).toBe("fallback-99.ts");
+    const patched = (path: string) => ({ path, patch: "@@ -0,0 +1 @@\n+const value = 1;" });
+    const fileBound = extractChangeCandidates(Array.from({ length: 101 }, (_, index) => patched(`file-${index}.ts`)));
+    expect(fileBound).toHaveLength(101);
+    expect(fileBound.at(-1)).toEqual({ path: "file-100.ts", label: "file-100.ts", evidence: "" });
 
     const beyondInput = `@@ -0,0 +1 @@\n+return value;\n${"x".repeat(65_536)}\n+const tooLate = true;`;
     expect(extractChangeCandidates([{ path: "input.ts", patch: beyondInput }]).map((candidate) => candidate.label))
-      .toEqual(["input.ts:1"]);
+      .toEqual(["input.ts:1", "input.ts"]);
 
     const longLabel = "l".repeat(200);
     expect(extractChangeCandidates([{ path: "label.ts", patch: `@@ -0,0 +1 @@\n+const value = { name: "${longLabel}" };` }])[0]?.label)

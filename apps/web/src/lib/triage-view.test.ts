@@ -119,6 +119,7 @@ describe("checkValueText", () => {
   test("shows each check's own value against its bar, facts as words, and a state as a state", () => {
     expect(value({ kind: "score", score: 59.00000000000001, passAt: 70, items: ["src/api.ts"] })).toBe("59 / 70 (src/api.ts)");
     expect(value({ kind: "score", score: 9.999999999999998, passAt: 70, items: ["src/api.ts"] }, "", ["src/api.ts"])).toBe("10 / 70");
+    expect(value({ kind: "score", score: 20, passAt: 60, items: ["src/api.ts"], unread: ["a.ts", "a.ts", "b.ts", "c.ts", "d.ts", "e.ts"] }, "", ["src/api.ts"])).toBe("20 / 60; couldn't read: a.ts, b.ts, c.ts +2 more");
     expect(value({ kind: "values", values: { files: 33, lines: 2104 } })).toBe("33 files, 2,104 lines");
     expect(value({ kind: "values", values: { status: "pending" } })).toBe("CI pending");
     expect(value({ kind: "values", values: { behindBy: 12 } })).toBe("behind by 12");
