@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, type Action, type CheckRef, type Do } from "@corbits/triage-contracts";
 import { doEffectId, evaluateActions, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
-import type { PrFacts } from "./checks.js";
+import { deriveState, type PrFacts } from "./checks.js";
 
 const facts: PrFacts = {
   repo: "acme/widgets",
@@ -72,6 +72,12 @@ describe("evaluateActions", () => {
     expect(run([branching(["opened"], ["ci", "tests"])])).toEqual([
       { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "no" }, reason: "Tests failed." },
     ]);
+  });
+
+  test("skips an action whose custom check is switched off", () => {
+    const pack = { ...emptyPack("acme/widgets"), custom: [{ id: "custom-1", name: "Vendor", group: "code-vs-ci" as const, enabled: false, kind: "rule" as const, rule: "paths-unchanged" as const, globs: ["vendor/**"] }], actions: [branching(["opened"], ["custom-1"])] };
+    const { checks: ran } = deriveState(facts, undefined, pack);
+    expect(evaluateActions({ facts, checks: ran, pack, roles: {} })).toEqual([{ id: "a", skipped: true, reason: "Vendor is off in this pack." }]);
   });
 
   test("skips an action whose check is off in the pack", () => {

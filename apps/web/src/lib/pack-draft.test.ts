@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CATALOG_IDS, catalogCheckEnabled, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type Action, type CheckPack, type CustomCheck, type Do } from "@corbits/triage-contracts";
-import { changeCount, fromPack, removeCustom, setCatalogCheck, setMergeThreshold, toPack, upsertAction, validate } from "./pack-draft.ts";
+import { CATALOG_IDS, catalogCheckEnabled, classificationSources, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type Action, type CheckPack, type CustomCheck, type Do } from "@corbits/triage-contracts";
+import { changeCount, fromPack, removeCustom, setCatalogCheck, setCustomEnabled, setMergeThreshold, toPack, upsertAction, validate } from "./pack-draft.ts";
 
 const repo = "acme/widgets";
 
@@ -95,5 +95,17 @@ describe("pack draft", () => {
     expect(validate(removed)).toBeNull();
     const only = fromPack(pack({ custom, actions: [actions[3]!] }), policy);
     expect(removeCustom(only, "custom-8")).toEqual({ reason: "Action action-4 checks only custom-8. Give it another check or remove the action first." });
+  });
+
+  test("switching a custom check off keeps it in the pack but out of evaluation, and back on restores the saved row", () => {
+    const stored = pack({ custom });
+    const saved = fromPack(stored, policy);
+    const off = setCustomEnabled(saved, "custom-8", false);
+    expect(changeCount(saved, off)).toBe(1);
+    const read = readCheckPack(JSON.stringify(toPack(off)));
+    expect(read.custom.find((row) => row.id === "custom-8")?.enabled).toBe(false);
+    expect(classificationSources(read).custom).toEqual([]);
+    expect(classificationSources(setCustomEnabled(saved, "custom-1", false).pack).rules.map((row) => row.id)).not.toContain("custom-1");
+    expect(setCustomEnabled(off, "custom-8", true).pack).toEqual(stored);
   });
 });
