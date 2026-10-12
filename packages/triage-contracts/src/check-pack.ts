@@ -141,7 +141,7 @@ const SCORE_MAX = 10;
 const PATTERN_MAX = 200;
 const CUSTOM_ID = /^custom-\d+$/;
 
-export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "close", "agent"] as const;
+export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "close", "agent"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
 export const TRIAGE_EVENTS = [
@@ -163,6 +163,9 @@ export type TriageEvent = (typeof TRIAGE_EVENTS)[number];
 const COMMENT_BODY_MAX = 65536;
 
 export type CheckRef = CatalogId | `custom-${number}`;
+/** An action's reference to every check the pack runs, catalog and custom, as they are when it is evaluated. */
+export const ALL_CHECKS = "all";
+export type ActionCheckRef = CheckRef | typeof ALL_CHECKS;
 
 export type LabelsTarget = { from: "list"; labels: string[] } | { from: "type" } | { from: "paths" };
 /** A role names an entry in the repository policy's roles, resolved at evaluation time. */
@@ -182,6 +185,7 @@ export type Do = { automatic: boolean } & (
   | { kind: "assign"; target: PeopleTarget }
   | { kind: "request-review"; target: ReviewTarget }
   | { kind: "comment"; target: CommentTarget }
+  | { kind: "approve"; target: CloseTarget }
   | { kind: "close"; target: CloseTarget }
   | { kind: "agent"; target: AgentTarget }
 );
@@ -192,7 +196,8 @@ export type Branches = { yes?: Do[]; no?: Do[]; unsure?: Do[] } | { always: Do[]
 export type Action = {
   id: string;
   when: "every" | TriageEvent[];
-  checks: CheckRef[];
+  /** `[ALL_CHECKS]` alone, or the checks by id. */
+  checks: ActionCheckRef[];
   branches: Branches;
 };
 
@@ -230,7 +235,7 @@ const DoSchema = type({
   .or({ kind: "'assign'", automatic: "boolean", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
   .or({ kind: "'request-review'", automatic: "boolean", target: ReviewTargetSchema })
   .or({ kind: "'comment'", automatic: "boolean", target: { "+": "reject", body: Text } })
-  .or({ kind: "'close'", automatic: "boolean", target: { "+": "reject" } })
+  .or({ kind: "'approve' | 'close'", automatic: "boolean", target: { "+": "reject" } })
   .or({ kind: "'agent'", automatic: "boolean", target: { "+": "reject", prompt: Text, tools: Text.array() } });
 
 const ActionSchema = type({
@@ -353,6 +358,7 @@ export function recommendedPack(repo: string): CheckPack {
       tests: { enabled: true },
       paths: { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
     },
+    actions: [{ id: "approve", when: ["opened", "updated", "checks"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } }],
   };
 }
 
@@ -598,6 +604,7 @@ function parseDo(raw: unknown, where: string): Do {
       if (body.length > COMMENT_BODY_MAX) throw new Error(`${at} body must be at most ${COMMENT_BODY_MAX} characters.`);
       return { kind, automatic, target: { body } };
     }
+    case "approve":
     case "close":
       exactKeys(target, [], at);
       return { kind, automatic, target: {} };
@@ -653,8 +660,12 @@ function parseWhen(raw: unknown, where: string): Action["when"] {
   return [...events];
 }
 
-function parseCheckRefs(raw: unknown, customIds: ReadonlySet<string>, where: string): CheckRef[] {
+function parseCheckRefs(raw: unknown, customIds: ReadonlySet<string>, where: string): ActionCheckRef[] {
   if (!Array.isArray(raw)) throw new Error(`${where} must be a list.`);
+  if (raw.includes(ALL_CHECKS)) {
+    if (raw.length > 1) throw new Error(`${where} ${ALL_CHECKS} must be the only check.`);
+    return [ALL_CHECKS];
+  }
   const refs = new Set<CheckRef>();
   for (const item of raw) {
     const id = text(item, where);

@@ -32,11 +32,14 @@ export const EVENT_NAMES: Record<ActionEvent, string> = {
   merged: "merged",
 };
 
+export const ALL_CHECKS_NAME = "all checks";
+
 export const DO_NAMES: Record<ActionKind, string> = {
   labels: "Add labels",
   assign: "Assign",
   "request-review": "Request review",
   comment: "Comment",
+  approve: "Approve",
   close: "Close",
   agent: "Run an agent",
 };
@@ -47,6 +50,7 @@ export const DONE_DO_NAMES: Record<ActionKind, string> = {
   assign: "Assigned",
   "request-review": "Requested review",
   comment: "Posted comment",
+  approve: "Approved the pull request",
   close: "Closed the pull request",
   agent: "Ran an agent",
 };
@@ -144,6 +148,8 @@ function doAction(step: Do): string {
       return `request review from ${people(step.target)}`;
     case "comment":
       return `comment ${quoted(step.target.body)}`;
+    case "approve":
+      return "approve the pull request";
     case "close":
       return "close it";
     case "agent":
