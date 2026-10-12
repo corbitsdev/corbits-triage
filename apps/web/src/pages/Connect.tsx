@@ -20,6 +20,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { useRunLogs } from "../lib/run-logs.ts";
 import { useApprovals, useRuns } from "../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
+import { InvitePeople } from "../components/InvitePeople.tsx";
 import { OtherWorkspaces } from "../components/OtherWorkspaces.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
 
@@ -330,6 +331,7 @@ export default function Connect() {
         {renderStep(1, "Repositories", reposDoneNote, renderRepositoriesBody)}
         {renderStep(2, "Decision model", "", renderModelBody)}
       </ol>
+      <InvitePeople onSetupPage />
     </section>
   </main></div>;
 }

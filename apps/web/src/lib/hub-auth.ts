@@ -110,9 +110,9 @@ export async function getAuthMethods(): Promise<AuthMethods> {
   return { google: body.google, emailPassword: body.emailPassword };
 }
 
-/** Leaves the page for Google; the hub returns the browser here, with `?error=` on failure. */
+/** Leaves the page for Google; the hub returns the browser to this page, with `?error=` on failure. */
 export async function signInWithGoogle(): Promise<void> {
-  const returnTo = `${window.location.origin}/`;
+  const returnTo = `${window.location.origin}${window.location.pathname}`;
   const { response, parsed } = await hubAuth("/sign-in/social", {
     method: "POST",
     headers: { "content-type": "application/json" },

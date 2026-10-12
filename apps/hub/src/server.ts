@@ -42,9 +42,12 @@ import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.j
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
+import { createInvitations } from "./invitations/invitations.js";
+import { migrateInvitations } from "./invitations/invitation-store.js";
+import { createSmtpInviteEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { databaseConfig, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson, MAX_BODY_BYTES } from "./github/bridge.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
@@ -142,6 +145,7 @@ process.once("SIGTERM", onShutdownSignal);
 
 const portalOrigin = env.PORTAL_ORIGIN === undefined ? [] : [new URL(env.PORTAL_ORIGIN).origin];
 const signIn = signInSettings(env);
+const email = emailSettings(env);
 const composition = await createInterchangeHub({
   database,
   settings: interchangeSettings(env),
@@ -197,6 +201,7 @@ await migrateGithubManifest(composition.db);
 await migrateRepoEnabledFlag(composition.db);
 await migrateDoRuns(composition.db);
 await migrateVerdictRecords(composition.db);
+await migrateInvitations(composition.db);
 const doRunStore = createDoRunStore(composition.db);
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
@@ -461,6 +466,19 @@ const integrations = createIntegrationsApp({
     trustedPortalOrigins,
     authorize: authorizePortal,
     launchSpecs,
+  }),
+  invitations: createInvitations({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    getSession: composition.getSession,
+    trustedPortalOrigins,
+    authorize: authorizePortal,
+    principalKeyStore: composition.principalKeyStore,
+    allowedEmails: signIn.allowedEmails,
+    linkOrigin: inviteLinkOrigin(env),
+    sendEmail: email === undefined ? undefined : createSmtpInviteEmail(email),
+    now,
+    log: logJson,
   }),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them
