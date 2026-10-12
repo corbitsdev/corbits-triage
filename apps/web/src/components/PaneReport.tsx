@@ -1,5 +1,7 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
+import { Skeleton } from "@corbits/react-ui";
 import type { CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
@@ -74,6 +76,63 @@ function Disclosure({ label, children }: { label: ReactNode; children: ReactNode
   );
 }
 
+/** The author's own account, open above the folds; a long one shows its first part until expanded. */
+export function Description({ pull }: { pull: PullState }) {
+  const [expanded, setExpanded] = useState(false);
+  const [long, setLong] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
+  const textRef = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const body = pull.data?.pr.body?.trim() ? pull.data.pr.body : null;
+
+  useLayoutEffect(function measureOverflow() {
+    const node = textRef.current;
+    if (node === null || expanded) return;
+    const measure = () => setLong(node.scrollHeight > node.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [body, expanded]);
+
+  /** Collapsing a long description can leave its top above the fold; bring it back only then. */
+  function toggle() {
+    if (!expanded) {
+      setExpanded(true);
+      return;
+    }
+    flushSync(() => setExpanded(false));
+    sectionRef.current?.scrollIntoView({ block: "nearest" });
+  }
+
+  if (pull.loading) {
+    return (
+      <section className="desc" aria-hidden="true">
+        <Skeleton className="desc-sk" />
+        <Skeleton className="desc-sk" />
+        <Skeleton className="desc-sk short" />
+      </section>
+    );
+  }
+  if (pull.data === undefined) return null;
+  return (
+    <section ref={sectionRef} className="desc" aria-label="Description">
+      {body === null ? <p className="none">No description.</p> : (
+        <>
+          <div id={id} ref={textRef} className={expanded ? "desc-t" : `desc-t clamp${long ? " fade" : ""}`}>
+            <Markdown text={body} />
+          </div>
+          {long || expanded ? (
+            <button type="button" className="desc-more" aria-expanded={expanded} aria-controls={id} onClick={toggle}>
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
 function LinkedIssues({ detail }: { detail: GithubPullDetail }) {
   const linear = linearIssues(detail);
   if (detail.issues.length + linear.length === 0) return <p className="none">None found.</p>;
@@ -143,7 +202,7 @@ function PullStatus({ pull }: { pull: PullState }) {
   return null;
 }
 
-/** What Triage read, folded away: the description, the linked issue, the changed files and the checks that passed. */
+/** What Triage read, folded away: the linked issue, the changed files and the checks that passed. */
 export function ReportRows({ item, pull, pack }: { item: PrItem; pull: PullState; pack: CheckPack | null }) {
   const detail = pull.data;
   const passed = passedChecks(item.checks);
@@ -151,7 +210,6 @@ export function ReportRows({ item, pull, pack }: { item: PrItem; pull: PullState
     <div className="disc3">
       {detail === undefined ? <PullStatus pull={pull} /> : (
         <>
-          <Disclosure label="Description">{detail.pr.body?.trim() ? <Markdown text={detail.pr.body} /> : <p className="none">No description.</p>}</Disclosure>
           <Disclosure label={issueLabel(detail)}><LinkedIssues detail={detail} /></Disclosure>
           <Disclosure label={plural(detail.pr.changedFiles, "file", "files")}><Files files={detail.files} changed={detail.pr.changedFiles} /></Disclosure>
         </>
