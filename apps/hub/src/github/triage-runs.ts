@@ -11,7 +11,7 @@ import { unsettledBy } from "../../../../packages/triage-workflows/src/logic/set
 import type { LiveDeployment } from "./deployment.js";
 import { runKey, type ObservedRun } from "./reconcile-plan.js";
 import type { DoClaim, RecordedOutcome } from "./do-run-store.js";
-import type { RecordedDo, RecordedVerdict } from "./verdict-record-store.js";
+import { VerdictDetail, type RecordedDo, type RecordedVerdict } from "./verdict-record-store.js";
 
 const TERMINAL_EVENTS: Record<string, Terminal["status"]> = {
   RunCompleted: "completed",
@@ -21,23 +21,23 @@ const TERMINAL_EVENTS: Record<string, Terminal["status"]> = {
 const INLINE_PREFIX = "inline:";
 const NO_VERDICT = "run completed without a verdict";
 
-type Trigger = { repo: string; number: number; headSha: string; startedAt: string };
+type Trigger = { repo: string; number: number; headSha: string; startedAt: string; event?: string };
 type Unsettled = Pick<ObservedRun, "unsettled" | "unconfirmed">;
 type Terminal = Unsettled & { status: Exclude<ObservedRun["status"], "running"> };
-type Summary = Omit<RecordedVerdict, "runId" | "repo" | "number" | "headSha" | "startedAt" | "settled">;
+type Summary = Omit<RecordedVerdict, "runId" | "repo" | "number" | "headSha" | "startedAt">;
 /** A Do the run's execute step wrote, found already written, or failed to write. */
 export type ExecutedDo = Omit<DoClaim, "tenantId" | "source" | "principalId"> & { outcome: RecordedOutcome };
 type HeadDo = Omit<ExecutedDo, "runId">;
 type Head = { trigger: Trigger; terminal?: Terminal; summary?: Summary; executed?: HeadDo[] };
 /** No heads when the trigger names no pull request head, such as a portal run typed without a sha; a catch-up mail names several. */
-type KnownRun = { anchorRunId: string; heads: Head[] };
+type KnownRun = { anchorRunId: string; heads: Head[]; /** The newest event read; a running run is read again once its log moves past it. */ seq: number };
 
 export type ObservedRuns = {
   /** Runs by repository, then by `runKey`. */
   byRepo: Map<string, Map<string, ObservedRun[]>>;
   /** Runs in the log, one per mail it received, including those that name no pull request head. */
   runCount: number;
-  /** One per head a completed run made a verdict for. */
+  /** One per head a run made a verdict for, from when its verdict step completed, however the run then ends. */
   verdicts: RecordedVerdict[];
   /** Dos the ended runs executed, whether or not the run completed. */
   executed: ExecutedDo[];
@@ -66,11 +66,17 @@ function parseJson(value: unknown): unknown {
   }
 }
 
-function headOf(item: unknown, repo: string, startedAt: string): Trigger[] {
+function headOf(item: unknown, repo: string, startedAt: string, event: string | undefined): Trigger[] {
   const number = asRecord(item)?.["prNumber"];
   const headSha = asRecord(item)?.["headSha"];
   if (typeof number !== "number" || typeof headSha !== "string" || headSha === "") return [];
-  return [{ repo, number, headSha, startedAt }];
+  return [{ repo, number, headSha, startedAt, ...(event !== undefined && { event }) }];
+}
+
+/** A webhook mail's `event:action`; catch-up and portal mails name none. */
+function eventOf(payload: Record<string, unknown>): string | undefined {
+  const { event, action } = payload;
+  return typeof event === "string" && typeof action === "string" ? `${event}:${action}` : undefined;
 }
 
 /** The heads a mail named: one as `prNumber`/`headSha`, or several as `items` of the same. */
@@ -80,11 +86,12 @@ function triggersOf(started: Record<string, unknown>): Trigger[] {
   const startedAt = started["at"];
   if (payload?.["kind"] !== "pr" || typeof repo !== "string" || typeof startedAt !== "string") return [];
   const items = payload["items"];
-  return (Array.isArray(items) ? items : [payload]).flatMap((item) => headOf(item, repo, startedAt));
+  return (Array.isArray(items) ? items : [payload]).flatMap((item) => headOf(item, repo, startedAt, eventOf(payload)));
 }
 
-/** The evaluate action on either gate branch outputs the verdict; deployments before it rendered it in a `render` step. */
-const VERDICT_STEPS = new Set(["evaluate", "evaluateRules", "render"]);
+/** The evaluate action on either gate branch outputs the verdict; deployments before it rendered it in a `render` step, or older still in `renderJudged`, `renderDet` or `renderAll`. */
+const VERDICT_STEPS = new Set(["evaluate", "evaluateRules", "render", "renderJudged", "renderDet", "renderAll"]);
+const RULES_STEPS = new Set(["rules"]);
 const MIRROR_STEPS = new Set(["mirror", "mirrorRules"]);
 const EXECUTE_STEPS = new Set(["execute", "executeRules"]);
 
@@ -131,6 +138,24 @@ function verdictsOf(events: readonly WorkflowRunEvent[]): Array<Record<string, u
   return (Array.isArray(items) ? items.map(asRecord) : [verdict]).map((item) => withResults(item, results));
 }
 
+type Ruled = { facts: Record<string, unknown>; evidence: string[] };
+
+/** The reasons the rules step's findings give, which the portal shows when the verdict names none. */
+function evidenceOf(det: unknown): string[] {
+  const findings = asRecord(det)?.["findings"];
+  const reasons = [...(Array.isArray(findings) ? findings.map((finding) => asRecord(finding)?.["reason"]) : []), asRecord(det)?.["reason"]];
+  return [...new Set(reasons.filter((reason): reason is string => typeof reason === "string" && reason !== ""))];
+}
+
+/** The facts the rules step read for each pull request, and its findings' reasons, by `repo#number`. */
+function ruledOf(events: readonly WorkflowRunEvent[]): Map<string, Ruled> {
+  const items = inlineOutput(lastCompleted(events, RULES_STEPS))?.["items"];
+  return new Map((Array.isArray(items) ? items : []).flatMap(function pull(item): Array<[string, Ruled]> {
+    const facts = asRecord(asRecord(item)?.["facts"]);
+    return facts ? [[`${String(facts["repo"])}#${String(facts["number"])}`, { facts, evidence: evidenceOf(asRecord(item)?.["det"]) }]] : [];
+  }));
+}
+
 /** Gates decide actions, not the verdict; a model check the verdict never asked about says nothing about the pull request. */
 function recorded(c: { kind?: string; reason?: string; gate?: boolean }): boolean {
   return c.gate !== true && !(c.kind === "model" && c.reason === NOT_ASKED_REASON);
@@ -166,12 +191,22 @@ function suggestedDos(actions: readonly unknown[]): RecordedDo[] {
   });
 }
 
-/** What the stats read of a verdict; none for one written before it carried these fields or made for another head. */
-function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigger, mirrored: ReadonlySet<string>): Summary | undefined {
+/** The verdict as the portal shows it; none when it does not read as one. */
+function detailOf(verdict: Record<string, unknown>, ruled: Ruled | undefined): VerdictDetail | undefined {
+  const reason = verdict["reason"];
+  const evidence = typeof reason === "string" && reason !== "" ? [reason] : (ruled?.evidence ?? []);
+  const detail = VerdictDetail({ ...verdict, evidence, ...(ruled && { facts: ruled.facts }) });
+  return detail instanceof type.errors ? undefined : detail;
+}
+
+/** What the stats and the portal read of a verdict; none for one written before it carried these fields or made for another head. */
+function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigger, mirrored: ReadonlySet<string>, ruled: Ruled | undefined): Summary | undefined {
   const fields = SummaryFields(verdict);
   if (fields instanceof type.errors || typeof at !== "string" || verdict["repo"] !== trigger.repo || verdict["number"] !== trigger.number) return undefined;
+  const detail = detailOf(verdict, ruled);
   return {
     verdictAt: new Date(at),
+    settled: unsettledBy(verdict, trigger.headSha).unsettled === undefined,
     state: fields.state,
     actor: fields.actor,
     humanGated: fields.humanGated,
@@ -179,6 +214,8 @@ function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigg
     checks: (fields.checks ?? []).filter(recorded).map(({ check, result }) => ({ check, result })),
     dos: suggestedDos(fields.actions ?? []),
     commented: (fields.request?.comment ?? "") !== "" && mirrored.has(mirrorCallId(trigger.repo, trigger.number)),
+    ...(detail && { detail }),
+    ...(trigger.event !== undefined && { trigger: trigger.event }),
   };
 }
 
@@ -217,17 +254,31 @@ function terminalOf(status: Terminal["status"], verdict: Record<string, unknown>
 /** The verdict step's output is the verdict: one per head in mail order, or one degraded verdict for every head. Any other count pairs nothing, so no head settles on another's verdict. */
 function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger[]): Head[] {
   const status = TERMINAL_EVENTS[events.at(-1)?.type ?? ""];
-  if (status === undefined) return triggers.map((trigger) => ({ trigger }));
   const verdicts = verdictsOf(events);
   const verdictAt = lastCompleted(events, VERDICT_STEPS)?.body["at"];
   const mirrored = mirroredCalls(events);
-  // A run that failed after its execute step still wrote those Dos, so they are recorded whatever the run's end.
+  const ruled = ruledOf(events);
+  // The verdict is kept from when its step completed, so a run that fails after it still shows it; a run that failed after
+  // its execute step still wrote those Dos, so they are recorded whatever the run's end.
   return triggers.map(function headVerdict(trigger, i) {
     const verdict = verdicts.length === triggers.length ? verdicts[i] : verdicts.length === 1 ? verdicts[0] : undefined;
+    const summary = verdict && summaryOf(verdict, verdictAt, trigger, mirrored, ruled.get(`${trigger.repo}#${trigger.number}`));
+    const kept = { trigger, ...(summary && { summary }) };
+    if (status === undefined) return kept;
     const executed = verdict ? executedOf(verdict, trigger) : [];
-    if (status !== "completed") return { trigger, terminal: { status }, executed };
-    const summary = verdict && summaryOf(verdict, verdictAt, trigger, mirrored);
-    return { trigger, terminal: terminalOf(status, verdict, trigger.headSha), executed, ...(summary && { summary }) };
+    if (status !== "completed") return { ...kept, terminal: { status }, executed };
+    return { ...kept, terminal: terminalOf(status, verdict, trigger.headSha), executed };
+  });
+}
+
+/** The verdicts a run's log holds, one per head its trigger named. */
+export function recordedVerdicts(runId: string, events: readonly WorkflowRunEvent[]): RecordedVerdict[] {
+  const started = events.find((event) => event.type === "RunStarted");
+  if (!started) return [];
+  return headsOf(events, triggersOf(started.body)).flatMap(function recordedHead({ trigger, terminal, summary }): RecordedVerdict[] {
+    if (!summary) return [];
+    const { repo, number, headSha, startedAt } = trigger;
+    return [{ runId, repo, number, headSha, startedAt: new Date(startedAt), ...summary, runStatus: terminal?.status ?? "running" }];
   });
 }
 
@@ -307,7 +358,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
     const open: string[] = [];
     for (const [runId, event] of latest) {
       const ended = event !== null && TERMINAL_EVENTS[event.type] !== undefined;
-      if (known.has(runId) && !ended) {
+      if (!ended && known.get(runId)?.seq === (event?.seq ?? -1)) {
         open.push(runId);
         continue;
       }
@@ -316,7 +367,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
       // A run that has not committed RunStarted yet is read again next pass.
       if (!started) continue;
       const heads = headsOf(events, triggersOf(started.body));
-      remember(runId, { anchorRunId, heads });
+      remember(runId, { anchorRunId, heads, seq: events.at(-1)?.seq ?? -1 });
       if (heads.some((head) => head.terminal === undefined)) open.push(runId);
     }
     const settled = await deps.readSettled(anchorRunId, open);
@@ -331,7 +382,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
     for (const runId of [...settledIds, ...latest.keys()]) {
       for (const { trigger, terminal, summary, executed: dos = [] } of known.get(runId)?.heads ?? []) {
         const { repo, number, headSha, startedAt } = trigger;
-        if (summary) verdicts.push({ runId, repo, number, headSha, startedAt: new Date(startedAt), settled: terminal?.unsettled === undefined, ...summary });
+        if (summary) verdicts.push({ runId, repo, number, headSha, startedAt: new Date(startedAt), ...summary, runStatus: terminal?.status ?? "running" });
         executed.push(...dos.map((done) => ({ ...done, runId })));
         const byHead = byRepo.get(repo) ?? new Map<string, ObservedRun[]>();
         byRepo.set(repo, byHead);
@@ -342,6 +393,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
           startedAt,
           ...(terminal?.unsettled !== undefined && { unsettled: terminal.unsettled }),
           ...(terminal?.unconfirmed && { unconfirmed: true }),
+          ...(trigger.event !== undefined && { trigger: trigger.event }),
         };
         byHead.set(key, [...(byHead.get(key) ?? []), seen]);
       }

@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
-import { usePullRequestItems, useQueueLoading } from "../lib/open-pulls.ts";
+import { usePullPageItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
@@ -257,7 +257,8 @@ export default function PRDetail() {
   const [filePath, setFilePath] = useState("");
   const [composer, setComposer] = useState<null | { kind: "comment" | "approve" | "changes"; body: string }>(null);
   const id = params.id ?? params.number ?? "";
-  const queueItems = usePullRequestItems();
+  const routed = params.owner && params.repo && Number.isInteger(Number(params.number)) ? { repo: `${params.owner}/${params.repo}`, number: Number(params.number) } : null;
+  const queueItems = usePullPageItems(routed?.repo ?? null, routed?.number ?? null);
   const loading = useQueueLoading();
   const item = snapshot ? findPrItem(queueItems, params) : undefined;
   const approvals = useApprovals();

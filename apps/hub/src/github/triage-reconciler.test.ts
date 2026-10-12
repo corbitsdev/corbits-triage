@@ -8,6 +8,9 @@ import { TriageStateConflictError } from "./triage-state-store.js";
 import { createRunTriggerDeliverer, type RunTriggerMaterialize } from "@corbits/webhooks";
 import { readyMaterializer, type LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
+import { createRunRecorder } from "./run-recorder.js";
+import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
+import type { RecordedVerdict } from "./verdict-record-store.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
@@ -166,17 +169,39 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
   const deployments = (options.deployments ?? [LIVE]).map((live) => ({ ...live }));
   const released: string[] = [];
   const dos: Array<{ effectId: string; source: string; status: string; error?: string; result?: unknown }> = [];
+  const verdicts: RecordedVerdict[] = [];
+  async function liveDeployments() {
+    if (failNextList) {
+      failNextList = false;
+      throw new Error("transient list failure");
+    }
+    return deployments.map((live) => ({ ...live }));
+  }
+  const observer = createTenantObserver({
+    liveDeployments,
+    observeRuns: createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 }),
+    recordRuns: createRunRecorder({
+      verdicts: {
+        async record(_tenantId, recorded) {
+          verdicts.push(...recorded);
+        },
+      },
+      dos: {
+        async record(claim, outcome) {
+          dos.push({ effectId: claim.effectId, source: claim.source, ...outcome });
+        },
+      },
+      log: () => {},
+    }),
+    versions: createTenantVersions(),
+    minIntervalMs: 0,
+    now,
+  });
   const reconcile = createTriageReconciler({
     tenants: async function tenants() {
       return [tenant()];
     },
-    liveDeployments: async function liveDeployments() {
-      if (failNextList) {
-        failNextList = false;
-        throw new Error("transient list failure");
-      }
-      return deployments.map((live) => ({ ...live }));
-    },
+    liveDeployments,
     rotation: {
       afterRuns: options.rotateAfterRuns ?? 1_000,
       async redeploy(_tenantId, anchorRunId) {
@@ -208,13 +233,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
         return repos[record.name]!;
       };
     },
-    observeRuns: createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 }),
-    verdicts: { record: async () => {} },
-    dos: {
-      async record(claim, outcome) {
-        dos.push({ effectId: claim.effectId, source: claim.source, ...outcome });
-      },
-    },
+    observeTenant: observer.observe,
     store: {
       async load(_tenantId, repo) {
         return { rows: saved.get(repo) ?? [], version: { artifactId: `art_${repo}`, version: 1 } };
@@ -247,7 +266,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     const stopped = deployments.filter((live) => live.cancelling);
     for (const live of stopped) deployments.splice(deployments.indexOf(live), 1);
   }
-  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, dos };
+  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, dos, verdicts };
 }
 
 function settled(from: number, count: number): Record<string, WorkflowRunEvent[]> {
@@ -288,6 +307,37 @@ describe("triage reconciler", () => {
       { effectId: "e-label", source: "workflow", status: "failed", error: "github POST -> 500" },
     ]);
     expect(verdictFor(log, REPO, 1)?.["actions"]).toMatchObject([{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }]);
+  });
+
+  test("a verdict is recorded with what the portal shows of it: its own fields, the facts it read and the webhook event that started it", async () => {
+    const mail = stockTriggerMail({ kind: "pr", repo: REPO, prNumber: 1, headSha: "sha1", event: "pull_request", action: "synchronize" });
+    const facts = { repo: REPO, number: 1, title: "Add widgets", author: "ann", draft: false, mergeable: true, checks: "success", body: "not shown" };
+    const ruled: WorkflowRunEvent = { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "rules", output: { ref: `inline:${JSON.stringify({ items: [{ facts, det: {} }] })}` } } };
+    const check = { check: "ci", kind: "machine", result: "pass", reason: "green", evidence: [], gate: false };
+    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready-monitoring", actor: "author", humanGated: false, priority: "P2", feedback: "Thanks.", checks: [check], det: { sources: {} } };
+    const { reconcile, verdicts } = harness({ [repoKey(LIVE.runId)]: { run_1: [startedBy(mail, "2026-10-07T01:00:00.000Z"), ruled, rendered(verdict), completed] } }, [head(1)]);
+    await reconcile();
+    expect(verdicts).toMatchObject([{
+      runId: "run_1",
+      trigger: "pull_request:synchronize",
+      detail: { priority: "P2", feedback: "Thanks.", reason: "", checks: [check], facts: { title: "Add widgets", author: "ann", draft: false, mergeable: true, checks: "success" } },
+    }]);
+    expect(verdicts[0]!.detail).not.toHaveProperty("det");
+    expect(verdicts[0]!.detail?.facts).not.toHaveProperty("body");
+  });
+
+  test("a verdict is recorded once its step completes, and kept when the run then fails", async () => {
+    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready-monitoring", actor: "author", humanGated: false };
+    const log = [started(1), rendered(verdict)];
+    const { reconcile, verdicts } = harness({ [repoKey(LIVE.runId)]: { run_1: log } }, [head(1)]);
+    await reconcile();
+    expect(verdicts.map(({ runId, state, settled, runStatus }) => ({ runId, state, settled, runStatus }))).toEqual([{ runId: "run_1", state: "ready-monitoring", settled: true, runStatus: "running" }]);
+    log.push({ seq: 3, type: "RunFailed", body: { type: "RunFailed", seq: 3 } });
+    await reconcile();
+    expect(verdicts.map(({ runId, state, runStatus }) => ({ runId, state, runStatus }))).toEqual([
+      { runId: "run_1", state: "ready-monitoring", runStatus: "running" },
+      { runId: "run_1", state: "ready-monitoring", runStatus: "failed" },
+    ]);
   });
 
   test("the Dos of a run that failed after executing them are recorded", async () => {

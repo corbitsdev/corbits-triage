@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
-import { stockTriggerMail } from "@corbits/triage-contracts";
 import { createHoldQueue, HOLD_MS } from "./held-actions.ts";
-import { projectQueue, runPackDo, type DoRun, type PrItem, type RunLog } from "./hub-api.ts";
+import { projectQueue, runPackDo, type DoRun, type PrItem } from "./hub-api.ts";
 import { doWrite } from "./inbox-pane.ts";
 import { pendingDos, type PendingDo } from "./pending-dos.ts";
 
-const NOW = new Date("2026-10-01T02:00:00.000Z");
+const NOW = "2026-10-01T02:00:00.000Z";
 const pull = { repo: "acme/widgets", number: 8 };
 const NONE: ReadonlySet<string> = new Set();
 
@@ -14,24 +13,14 @@ function step(kind: string, target: Record<string, unknown>, index = 0): Record<
   return { id: "route", branch: "no", index, effectId: `effect-${index}`, kind, automatic: false, reason: "Size failed.", target };
 }
 
-/** A pr-triage verdict as the run log carries it, read back the way the inbox reads it. */
+/** A pr-triage verdict as the hub's triage-verdicts route answers it, read back the way the inbox reads it. */
 function verdict(actions: unknown[], extra: Record<string, unknown> = {}): PrItem {
-  const log: RunLog = {
-    runId: "run-8",
-    anchorRunId: "run-8",
-    events: [
-      { seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", ...pull, prNumber: 8 }) } } },
-      {
-        seq: 1,
-        type: "StepCompleted",
-        body: {
-          stepId: "renderJudged",
-          output: { ref: `inline:${JSON.stringify({ ...pull, state: "needs-decision", labels: ["triage:needs-decision"], feedback: "Please split this.", actions, ...extra })}` },
-        },
-      },
-    ],
+  const detail = { labels: ["triage:needs-decision"], feedback: "Please split this.", actions, ...extra };
+  const recorded = {
+    runId: "run-8", at: NOW, headSha: "abc", settled: true, state: "needs-decision", actor: "maintainer", humanGated: true,
+    degraded: null, commented: false, checks: [], detail,
   };
-  const [item] = projectQueue([log], [], [], undefined, NOW);
+  const [item] = projectQueue([{ ...pull, activityAt: null, verdict: recorded, run: null }], [], undefined);
   if (item === undefined) throw new Error("no verdict projected");
   return item;
 }

@@ -52,14 +52,18 @@ import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js
 import { createBridgeHandler, logJson, MAX_BODY_BYTES } from "./github/bridge.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
-import { createGithubOpenPulls } from "./github/open-pulls.js";
+import { activeTenants, createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
+import { createGithubOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubPrDos } from "./github/pr-dos.js";
 import { createDoRunStore, migrateDoRuns } from "./github/do-run-store.js";
 import { createVerdictRecordStore, migrateVerdictRecords } from "./github/verdict-record-store.js";
 import { createTriageStats } from "./github/triage-stats.js";
 import { createTriageTimeline } from "./github/triage-timeline.js";
+import { createRunRecorder } from "./github/run-recorder.js";
+import { createRecordPass, createTenantObserver, createTenantVersions } from "./github/tenant-observer.js";
+import { createVerdictBackfill, migrateVerdictBackfill } from "./github/verdict-backfill.js";
+import { createTriageVerdicts } from "./github/triage-verdicts.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
@@ -87,6 +91,11 @@ const EXPECTED_DEPLOYMENT_SET = {
 const TRIAGE_KNOWN_RUNS = 10_000;
 const TRIAGE_RETRY_MS = 15_000;
 const TRIAGE_RETRY_MAX_MS = 120_000;
+/** How often the live logs of tenants with a pr-triage run in flight are read and recorded, and how stale a shared read may be. */
+const TRIAGE_RECORD_MS = 2_000;
+/** A tenant whose logs could not be read is left at most this long before the recording loop tries again. */
+const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
+
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
@@ -124,12 +133,14 @@ const local = createLocalProcessSidecarProvisioner({
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
 let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
+let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   cronTicker?.stop();
   triageLoop?.stop();
+  recordLoop?.stop();
   coalescer?.stop();
   try {
     await local.shutdown();
@@ -201,6 +212,7 @@ await migrateGithubManifest(composition.db);
 await migrateRepoEnabledFlag(composition.db);
 await migrateDoRuns(composition.db);
 await migrateVerdictRecords(composition.db);
+await migrateVerdictBackfill(composition.db);
 await migrateInvitations(composition.db);
 const doRunStore = createDoRunStore(composition.db);
 const verdictRecordStore = createVerdictRecordStore(composition.db);
@@ -247,7 +259,9 @@ const githubPrDetails = createGithubPrDetails({
   authorize: authorizePortal,
 });
 
+const openPullsCache = createOpenPullsCache(now);
 const githubOpenPulls = createGithubOpenPulls({
+  cache: openPullsCache,
   db: composition.db,
   cipher: composition.credentialCipher,
   getSession: composition.getSession,
@@ -316,16 +330,43 @@ const observeTriageRuns = createTriageRuns({
   readSettled: createSettledStatusReader(composition.db),
   maxKnownRuns: TRIAGE_KNOWN_RUNS,
 });
+const tenantVersions = createTenantVersions();
+const tenantObserver = createTenantObserver({
+  liveDeployments: livePrTriageDeployments,
+  observeRuns: observeTriageRuns,
+  recordRuns: createRunRecorder({ verdicts: verdictRecordStore, dos: doRunStore, log: logJson }),
+  versions: tenantVersions,
+  minIntervalMs: TRIAGE_RECORD_MS,
+  now,
+});
+const recordPass = createRecordPass({
+  observer: tenantObserver,
+  activeTenants: function activePrTriageTenants(what) {
+    return activeTenants(composition.db, prTriageWorkflow.id, what);
+  },
+  backoffMs: TRIAGE_RECORD_MS,
+  maxBackoffMs: TRIAGE_RECORD_MAX_BACKOFF_MS,
+  now,
+  log: logJson,
+});
+recordLoop = createReconcileLoop(recordPass.pass, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
+const backfillVerdicts = createVerdictBackfill({
+  db: composition.db,
+  runReader: composition.runReader,
+  verdicts: verdictRecordStore,
+  versions: tenantVersions,
+  workflow: prTriageWorkflow.id,
+  now,
+  log: logJson,
+});
 const reconcilePolicy = triageReconcilePolicy(env);
 const reconcileTriage = createTriageReconciler({
   tenants: reconcileTenants,
   liveDeployments: livePrTriageDeployments,
   rotation: { afterRuns: triageRotateAfterRuns(env), ...deploymentRotation },
   openHeadsFor: tenantOpenHeads,
-  observeRuns: observeTriageRuns,
+  observeTenant: tenantObserver.observe,
   store: triageStateStore,
-  verdicts: verdictRecordStore,
-  dos: doRunStore,
   readCheckPack,
   deliver: deliverToDeployment,
   policy: reconcilePolicy,
@@ -451,6 +492,20 @@ const integrations = createIntegrationsApp({
     authorize: authorizePortal,
     verdicts: verdictRecordStore,
   }),
+  triageVerdicts: createTriageVerdicts({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    getSession: composition.getSession,
+    trustedPortalOrigins,
+    authorize: authorizePortal,
+    verdicts: verdictRecordStore,
+    observer: tenantObserver,
+    ready: recordPass.ready,
+    versions: tenantVersions,
+    openPulls: openPullsCache,
+    githubApiOrigin: githubOrigin,
+    now,
+  }),
   workflowDeploy: createWorkflowDeploy({
     db: composition.db,
     cipher: composition.credentialCipher,
@@ -531,6 +586,8 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
 }
 
 triageLoop.start();
+recordLoop.start();
+void backfillVerdicts();
 
 console.log(JSON.stringify({
   ts: new Date().toISOString(),

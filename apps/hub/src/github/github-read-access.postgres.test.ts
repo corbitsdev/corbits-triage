@@ -6,7 +6,7 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { emptyPack } from "@corbits/triage-contracts";
-import { createGithubOpenPulls } from "./open-pulls.js";
+import { createGithubOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createGithubPrActions } from "./pr-actions.js";
 import { createGithubPrDetails } from "./pr-details.js";
 import { createGithubPrPreview } from "./pr-preview.js";
@@ -54,7 +54,7 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
 }
 
 const deps = { db: handle.db, cipher, getSession: sessionOf, authorize: authorizePortal, trustedPortalOrigins: [PORTAL], githubApiOrigin };
-const openPulls = createGithubOpenPulls(deps);
+const openPulls = createGithubOpenPulls({ ...deps, cache: createOpenPullsCache(() => new Date()) });
 const prDetails = createGithubPrDetails(deps);
 const prActions = createGithubPrActions(deps);
 const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO) } as const; } });

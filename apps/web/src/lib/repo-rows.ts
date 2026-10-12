@@ -1,7 +1,6 @@
 import { repoPolicy } from "@corbits/triage-contracts";
 import { repoNeedsCheckSetup } from "./check-pack.ts";
-import { hasVerifiedWebhookDelivery } from "./connect-view.ts";
-import type { OpenPulls, PrItem, RepoRecord, RunLog } from "./hub-api.ts";
+import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
@@ -57,11 +56,11 @@ function pullsOf(open: PrItem[], ready: boolean): RepoPulls {
   };
 }
 
-/** `items` are the open pull requests; `pullsError` is the open pull request listing's own failure. */
+/** `items` are the open pull requests; `active` the repositories with a verdict in the last 14 days or a run in flight; `pullsError` is the open pull request listing's own failure. */
 export function repoRows(
   repos: RepoRecord[],
   items: PrItem[],
-  logs: RunLog[],
+  active: ReadonlySet<string>,
   catchingUp: Set<string>,
   openPulls: OpenPulls | undefined,
   pullsError: Error | null,
@@ -77,7 +76,7 @@ export function repoRows(
       needsSetup,
       posting: policy.cleanupMode === "automated" ? "Post automatically" : "Ask me",
       pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), triageReady(repo)) : { error },
-      health: repoHealth({ needsSetup, enabled: policy.enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: hasVerifiedWebhookDelivery(logs, repo.name) }),
+      health: repoHealth({ needsSetup, enabled: policy.enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: active.has(repo.name) }),
     };
   });
 }

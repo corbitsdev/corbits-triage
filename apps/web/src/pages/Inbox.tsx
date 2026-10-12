@@ -83,7 +83,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
-import { useRunLogs } from "../lib/run-logs.ts";
+import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { checkValueText, findPrItem, prHref } from "../lib/triage-view.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
@@ -643,7 +643,7 @@ export default function Inbox({ view }: { view: ListView }) {
   const open = useOpenItems();
   const loading = useQueueLoading();
   const openPullsUnanswered = useOpenPullsUnanswered();
-  const { denied } = useRunLogs();
+  const { denied } = useTriageVerdicts();
   const [query, setQuery] = useState("");
   const [needsYouGrouping, setNeedsYouGrouping] = useState<InboxGrouping>("action");
   const [openGrouping, setOpenGrouping] = useState<OpenGrouping>("repo");
