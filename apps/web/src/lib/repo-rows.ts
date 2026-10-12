@@ -2,7 +2,7 @@ import { repoPolicy } from "@corbits/triage-contracts";
 import { repoNeedsCheckSetup } from "./check-pack.ts";
 import { hasVerifiedWebhookDelivery } from "./connect-view.ts";
 import type { OpenPulls, PrItem, RepoRecord, RunLog } from "./hub-api.ts";
-import { inboxAction, UNASSIGNED } from "./inbox-view.ts";
+import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
 
@@ -47,11 +47,11 @@ function newest(times: Array<string | null>): string | null {
 
 /** Needs you is the inbox's pile for the repository; the rest wait for a first verdict, but only once the repository can be triaged. */
 function pullsOf(open: PrItem[], ready: boolean): RepoPulls {
-  const actionable = open.filter((item) => inboxAction(item) !== null);
+  const actionable = open.filter(inNeedsYou);
   return {
     open: open.length,
     needsYou: actionable.length,
-    awaiting: ready ? open.length - actionable.length : 0,
+    awaiting: ready ? open.filter((item) => inboxAction(item) === null).length : 0,
     owners: [...new Set(actionable.map((item) => item.owner ?? UNASSIGNED))],
     lastActivity: newest(open.map((item) => item.updatedAt)),
   };

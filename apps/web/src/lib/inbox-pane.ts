@@ -2,7 +2,7 @@ import { errorText } from "./error-text.ts";
 import type { Outcome } from "./held-actions.ts";
 import type { DoRef, DoRun, GithubPullDetail, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import { offersClose, type PendingDo } from "./pending-dos.ts";
-import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
+import { inboxAction, inboxStatus, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction, type StatusFields } from "./inbox-view.ts";
 
 const UNTITLED = "Untitled pull request";
 
@@ -11,7 +11,7 @@ export function titleText(title: string | null): string {
   return title === null ? UNTITLED : title;
 }
 
-export function verdictHeadline(item: Pick<PrItem, "running" | "state" | "evidence" | "nextAction">): string {
+export function verdictHeadline(item: StatusFields & Pick<PrItem, "evidence" | "nextAction">): string {
   if (item.running) return inboxStatus(item);
   if (item.nextAction !== null) return item.nextAction;
   const [firstEvidence] = item.evidence;

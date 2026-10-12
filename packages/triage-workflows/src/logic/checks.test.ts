@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPO_POLICY, emptyPack, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
-import { deriveState, type PrFacts } from "./checks.ts";
+import { deriveState, REVIEW_ANSWERED_REASON, type PrFacts } from "./checks.ts";
 
 const noisy: PrFacts = {
   repo: "acme/widgets",
@@ -254,5 +254,15 @@ describe("deriveState check output", () => {
       size: { kind: "values", values: { files: 1, lines: 1 } },
       "custom-1": { kind: "values", values: { holds: false } },
     });
+  });
+});
+
+describe("review check", () => {
+  test("keeps the author's turn on requested changes and names an answered review", () => {
+    const requested = { ...noisy, changesRequested: ["maya"] };
+    const review = (facts: PrFacts) => deriveState(facts, allOff).checks.find((check) => check.check === "review");
+    expect(review(requested)).toMatchObject({ result: "fail", reason: "a reviewer requested changes" });
+    expect(review({ ...requested, reviewAnswered: true })).toMatchObject({ result: "fail", reason: REVIEW_ANSWERED_REASON });
+    expect(deriveState({ ...requested, reviewAnswered: true }, allOff).state).toBe("needs-author-update");
   });
 });

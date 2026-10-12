@@ -5,7 +5,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { authorTeams, getChecks, getReviews, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-tool/github";
+import { authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-tool/github";
 import { CheckOutputSchema, checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, type CheckPack } from "@corbits/triage-contracts";
 import { evaluate } from "../../../../packages/triage-workflows/src/actions/evaluate.js";
 import { rules, type RulesItem } from "../../../../packages/triage-workflows/src/actions/rules.js";
@@ -145,11 +145,17 @@ async function readItem(gh: GithubFetch, number: number, context: Omit<ItemConte
       return failure(409, "pull_request_not_open", `${repo}#${number} is not an open pull request.`);
     }
     // readPr, not getPr: a preview reports mergeability as GitHub has it now rather than polling for it.
-    const [pr, reviews, commits, files] = await Promise.all([readPr(gh, repo, number), getReviews(gh, repo, number), listPrCommits(gh, repo, number), listFiles(gh, repo, number)]);
+    const [pr, reviews, comments, commits, files] = await Promise.all([
+      readPr(gh, repo, number),
+      getReviews(gh, repo, number),
+      listIssueComments(gh, repo, number),
+      listPrCommits(gh, repo, number),
+      listFiles(gh, repo, number),
+    ]);
     const checks = pr.sha ? await getChecks(gh, repo, pr.sha) : [];
     const membership = pr.author ? await readAuthorTeams(gh, repo, pr.author, roleTeams(context.policy, repo)) : null;
     const openPrs = open.map((p) => ({ number: p.number, title: p.title }));
-    return assembleItem(number, { pr, checks, reviews, commits, files, authorTeams: membership }, { ...context, openPrs });
+    return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: membership }, { ...context, openPrs });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return failure(502, "github_failed", `Could not read ${repo}#${number} from GitHub: ${message}.`);

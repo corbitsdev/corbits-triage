@@ -45,6 +45,8 @@ export interface PrFacts {
   reviewers?: string[];
   approvals: number;
   changesRequested?: string[];
+  /** The author pushed, commented or replied in a review after the newest standing request for changes. */
+  reviewAnswered?: boolean;
   /** Logins whose latest review stands on the current head. */
   reviewedBy?: string[];
   labels?: string[];
@@ -67,6 +69,9 @@ export interface PrFacts {
   /** What woke this run; empty for webhook actions no pack event names. */
   events?: TriageEvent[];
 }
+
+/** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
+export const REVIEW_ANSWERED_REASON = "a reviewer requested changes; the author has responded";
 
 export interface Finding {
   check: string;
@@ -246,7 +251,8 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
     }
     const requested = facts.changesRequested ?? [];
     if (requested.length) add("review", "needs-author-update", "a reviewer requested changes");
-    result("review", requested.length > 0, requested.length ? "a reviewer requested changes" : "no changes requested", requested.map((login) => `changes requested by @${login}`), {
+    const requestedReason = facts.reviewAnswered === true ? REVIEW_ANSWERED_REASON : "a reviewer requested changes";
+    result("review", requested.length > 0, requested.length ? requestedReason : "no changes requested", requested.map((login) => `changes requested by @${login}`), {
       kind: "values",
       values: { changesRequested: requested.length },
     });
