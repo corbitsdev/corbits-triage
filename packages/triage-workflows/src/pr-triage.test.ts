@@ -3,7 +3,7 @@ import { createSizeCapTransform } from "@intx/inference";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker, type WorkflowAuthorizeFn } from "@intx/workflow";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { REPO_DOCS_MAX_BYTES, type GithubFetch } from "@corbits/github-tool/github";
-import { emptyPack, recommendedPack, type Action, type CheckPack } from "@corbits/triage-contracts";
+import { emptyPack, recommendedPack, type Action, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory } from "./directors.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
@@ -56,11 +56,12 @@ function fakeGithub(missing: boolean, files: FileRow[], labels: string[], prior?
 
 const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrants: [], resolvedBy: null });
 
-type SystemOne = { questions: Array<{ id: string }>; state: { repository: { docs: Record<string, string> } } };
+type SystemOne = { questions: Array<{ id: string; instructions: string }>; state: { repository: { docs: Record<string, string> } } };
 
-/** Calls every focused candidate unrelated and answers every other question yes, so each asked file needs docs and tests. */
+/** Calls every focused candidate unrelated, says no change meets a custom rule, and answers every other question yes, so each asked file needs docs and tests. */
 function judgeText({ questions }: SystemOne) {
   function answer({ id }: { id: string }) {
+    if (id.startsWith("custom-")) return { id, type: "noul", noul: 0.1 };
     if (!id.startsWith("focused-candidate-")) return { id, type: "noul", noul: 0.9 };
     return { id, type: "choice", choice: "unrelated", probabilities: { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 }, confidence: 0.9 };
   }
@@ -182,6 +183,24 @@ describe("pr-triage body", () => {
     expect(path.invoked.filter((agent) => agent === "triage-judge").length).toBeGreaterThanOrEqual(2);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"], ["tests", "pass"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toHaveLength(files.length);
+  });
+
+  test("a scoped custom check fails naming the migration or change that breaks it and does not apply without one", async () => {
+    const reversible: CustomCheck = { id: "custom-1", name: "Reversible", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "The migration can be rolled back.", scope: "file", when: ["migrations/**"] };
+    const pack = { ...emptyPack(REPO), custom: [reversible] };
+    const migration = { ...FLAG, filename: "migrations/001_users.sql", patch: "@@ -0,0 +1 @@\n+DROP TABLE users;" };
+    const migrated = await triage(pack, { files: [FLAG, migration] });
+    expect(migrated.judged.flatMap((call) => call.questions)).toEqual([
+      { id: "custom-1-file-002", type: "boolean", instructions: "Does the change in `pullRequest.files[1]` meet this rule: The migration can be rolled back?" },
+    ]);
+    expect((migrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({ result: "fail", evidence: ["migrations/001_users.sql"] });
+    const twice = { ...migration, patch: "@@ -0,0 +1 @@\n+DROP TABLE users;\n@@ -9,0 +10 @@\n+DROP TABLE teams;" };
+    const hunks = await triage({ ...pack, custom: [{ ...reversible, scope: "hunk" }] }, { files: [FLAG, twice] });
+    expect(hunks.judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["custom-1-hunk-002-001", "custom-1-hunk-002-002"]);
+    expect((hunks.verdict as Verdict).feedback).toContain('does not meet "Reversible": `migrations/001_users.sql` (change 1), `migrations/001_users.sql` (change 2)');
+    const unmigrated = await triage(pack);
+    expect(unmigrated.path).toEqual(RULES_PATH);
+    expect((unmigrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({ result: "pass", reason: "does not apply" });
   });
 
   test("an automated repository whose judge fails still posts a comment; a human-approved one does not", async () => {
