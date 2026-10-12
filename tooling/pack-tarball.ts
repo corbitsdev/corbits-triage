@@ -26,6 +26,18 @@ async function listSorted(cwd: string, rel: string): Promise<string[]> {
   return out;
 }
 
+// Same manifest and files always give the same version and changed ones a new version, since a published
+// version is never overwritten; `sha-` keeps it valid semver.
+export async function contentVersion(
+  base: string,
+  manifest: Record<string, unknown>,
+  files: Record<string, string>,
+): Promise<string> {
+  const hash = createHash("sha256").update(JSON.stringify(manifest));
+  for (const file of Object.values(files)) hash.update(await fs.readFile(file));
+  return `${base}-sha-${hash.digest("hex").slice(0, 8)}`;
+}
+
 // Same input must give the same integrity, so the hub can refuse a republished version with different bytes.
 // `files` maps a path inside the package to the source file copied there.
 export async function packPackage(

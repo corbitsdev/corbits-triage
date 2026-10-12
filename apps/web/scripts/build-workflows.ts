@@ -1,12 +1,11 @@
 // Packs each workflow as a tarball into public/packages/ beside the GitHub tool it depends on,
 // so the portal can publish them to the hub.
-import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildEntry, packTool } from "../../../packages/github-tool/build.ts";
 import tool from "../../../packages/github-tool/package.json";
-import { packPackage, type PackedTarball } from "../../../tooling/pack-tarball.ts";
+import { contentVersion, packPackage, type PackedTarball } from "../../../tooling/pack-tarball.ts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowPackage } from "../src/lib/workflow-packages.ts";
 
 const WORKFLOW_SRC = resolve(import.meta.dir, "../../../packages/triage-workflows");
@@ -51,7 +50,7 @@ function assertOnlyToolImports(workflow: WorkflowPackage, code: string): void {
   }
 }
 
-async function packWorkflow(workflow: WorkflowPackage, outDir: string): Promise<PackedTarball> {
+async function packWorkflow(workflow: WorkflowPackage, toolVersion: string, outDir: string): Promise<PackedTarball> {
   const stage = await mkdtemp(join(tmpdir(), `${workflow.name}-`));
   try {
     await bundle(workflow, stage);
@@ -62,18 +61,12 @@ async function packWorkflow(workflow: WorkflowPackage, outDir: string): Promise<
     };
     const manifest = {
       type: "module",
-      dependencies: { [tool.name]: tool.version },
+      dependencies: { [tool.name]: toolVersion },
       interchange: interchangeEntries(workflow),
       files: [workflow.entry.slice(2), DIRECTORS, ACTIONS, "package.json"],
     };
-    const hash = createHash("sha256").update(JSON.stringify({ name: workflow.packageName, ...manifest }));
-    for (const file of Object.values(files)) {
-      const bytes = await readFile(file);
-      assertOnlyToolImports(workflow, bytes.toString("utf8"));
-      hash.update(bytes);
-    }
-    // Content-hashed so the same package always gets the same version; `sha-` keeps it valid semver.
-    const version = `0.1.0-sha-${hash.digest("hex").slice(0, 8)}`;
+    for (const file of Object.values(files)) assertOnlyToolImports(workflow, await readFile(file, "utf8"));
+    const version = await contentVersion("0.1.0", { name: workflow.packageName, ...manifest }, files);
     return await packPackage({ name: workflow.packageName, version, ...manifest }, files, outDir);
   } finally {
     await rm(stage, { recursive: true, force: true });
@@ -92,8 +85,9 @@ async function packGithubTool(outDir: string): Promise<PackedTarball> {
 /** Packs the GitHub tool and every workflow into `outDir`, with an index.json listing them. */
 export async function packWorkflows(outDir: string): Promise<PackageIndexEntry[]> {
   await rm(outDir, { recursive: true, force: true });
-  const packed = [await packGithubTool(outDir)];
-  for (const workflow of WORKFLOW_PACKAGES) packed.push(await packWorkflow(workflow, outDir));
+  const packedTool = await packGithubTool(outDir);
+  const packed = [packedTool];
+  for (const workflow of WORKFLOW_PACKAGES) packed.push(await packWorkflow(workflow, packedTool.version, outDir));
   const index = packed.map(({ name, version, filename, integrity }) => ({ name, version, filename, integrity }));
   await Bun.write(join(outDir, "index.json"), `${JSON.stringify(index, null, 2)}\n`);
   return index;
