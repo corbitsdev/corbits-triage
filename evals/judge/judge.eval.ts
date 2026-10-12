@@ -99,6 +99,7 @@ async function judge(input: CaseInput): Promise<Outcomes> {
     reviews: [],
     commits: pr.commits.map((message) => ({ message })),
     files,
+    authorTeams: null,
   };
   const item = assembleItem(pr.number, data, { repo: pr.repo, openPrs: [], policy: DEFAULT_REPO_POLICY, pack: pack(pr.repo), events: ["opened"], docs: await readDocs(gh, pr.repo) });
   const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, AbortSignal.timeout(1_000));

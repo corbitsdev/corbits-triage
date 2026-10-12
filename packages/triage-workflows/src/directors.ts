@@ -12,7 +12,7 @@ import { type } from "arktype";
 import { classificationSources, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts, type PrFileFacts } from "./logic/checks.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
-import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, type CheckRun, type PrData, type Review } from "./logic/facts.js";
+import { assembleItem, fileFacts, MAX_PATCH_CHARS, optionalCount, roleTeams, type CheckRun, type PrData, type PullData, type Review } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
 import type { Judgment } from "./actions/evaluate.js";
 import type { RulesItem } from "./actions/rules.js";
@@ -145,6 +145,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       ];
     }
 
+    const teams = roleTeams(policy, repo);
     const listed = new Map<number, ListedFiles>();
     const filesErrors = new Map<number, string>();
 
@@ -178,6 +179,12 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
         return sha ? [call("github_get_checks", { repo, sha }, `checks:${n}`)] : [];
       }
 
+      function teamsCalls(): ToolCall[] {
+        if (!teams.length) return [];
+        const authors = new Set(numbers.flatMap((n) => prs.get(n)?.author ?? []));
+        return [...authors].map((author) => call("github_author_teams", { repo, author, teams }, `teams:${author}`));
+      }
+
       function readFiles(r: BatchResults, offsets: Array<[number, number]>): DirectorActions {
         const next = offsets.flatMap(function nextPage([n, offset]): Array<[number, number]> {
           const following = addFiles(n, offset, r.get(`files:${n}:${offset}`));
@@ -187,7 +194,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           return readFiles(r3, next);
         }
         if (next.length) return b.run(next.map(([n, offset]) => filesCall(n, offset)), onNextFiles);
-        return b.run(numbers.flatMap(checkCall), onChecks);
+        return b.run([...numbers.flatMap(checkCall), ...teamsCalls()], onChecks);
       }
 
       function onChecks(r2: BatchResults) {
@@ -198,6 +205,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
             reviews: data<{ reviews: Review[] }>(r1.get(`reviews:${n}`))?.reviews ?? [],
             commits: data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits ?? [],
             files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
+            authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
           }, { repo, openPrs, policy, pack, events, docs });
         }
         return reply(numbers.map(itemFor), batch);

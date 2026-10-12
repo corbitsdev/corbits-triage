@@ -24,6 +24,7 @@ export const GITHUB_APP_PERMISSIONS = {
   checks: "read",
   contents: "write",
   issues: "write",
+  members: "read",
   metadata: "read",
   pull_requests: "write",
 } as const;
