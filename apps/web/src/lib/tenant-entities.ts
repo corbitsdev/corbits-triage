@@ -1,6 +1,7 @@
 import { skipToken, useIsFetching, useQuery } from "@tanstack/react-query";
 import { ApiError, type Transport } from "@intx/hub-client";
 import {
+  evaluateAccess,
   listApprovals,
   listDeployedWorkflows,
   listGrants,
@@ -16,6 +17,7 @@ import {
 } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import {
+  ALLOWED_QUERY_KEY,
   APPROVALS_QUERY_KEY,
   DEPLOYED_WORKFLOWS_QUERY_KEY,
   GRANTS_QUERY_KEY,
@@ -96,4 +98,24 @@ export function useRoles(): TenantSection<HubRole> {
 
 export function useDeployedWorkflows(): TenantSection<DeployedWorkflow> {
   return useTenantSection(DEPLOYED_WORKFLOWS_QUERY_KEY, listDeployedWorkflows, DIRECTORY_REFRESH_MS);
+}
+
+/** Whether the signed-in member may do `action` on `resource`; false until the hub answers. */
+export function useAllowed(resource: string, action: string): boolean {
+  const { snapshot } = usePortal();
+  const signOutWhenRejected = useSignOutWhenRejected();
+  const workspace = snapshot?.workspace;
+  const query = useQuery({
+    queryKey: [ALLOWED_QUERY_KEY, workspace?.tenantId, workspace?.principalId, resource, action],
+    queryFn: workspace === undefined ? skipToken : async function readAllowed() {
+      try {
+        return await evaluateAccess(createHubTransport(), workspace.tenantId, workspace.principalId, resource, action);
+      } catch (cause: unknown) {
+        signOutWhenRejected(cause);
+        throw cause;
+      }
+    },
+    staleTime: DIRECTORY_REFRESH_MS,
+  });
+  return query.data === true;
 }
