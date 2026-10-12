@@ -1,3 +1,4 @@
+import type { LineCitation } from "@corbits/triage-contracts";
 import type { PrFileFacts } from "./checks.js";
 
 const MAX_FILES = 100;
@@ -62,6 +63,7 @@ function boundedEvidence(value: string): string {
 }
 
 type Hunk = {
+  oldStart: number;
   newStart: number;
   lines: string[];
 };
@@ -80,13 +82,41 @@ export function patchHunks(patch: string): string[] {
   return hunks.length > 0 ? hunks.map((hunk) => hunk.lines.join("\n")) : [readable];
 }
 
+/** The lines each hunk of a file's patch changes, in `patchHunks` order; empty when the patch has no hunk headers. */
+export function hunkCitations(path: string, patch: string, previousPath = path): LineCitation[] {
+  return hunksOf(readablePatch(patch)).map((hunk) => citation(path, previousPath, hunk));
+}
+
+function range(lines: number[]): { start: number; end: number } | undefined {
+  return lines.length > 0 ? { start: lines[0]!, end: lines.at(-1)! } : undefined;
+}
+
+/** A hunk's added lines in the head file and removed lines in the base file, each first to last. */
+function citation(path: string, previousPath: string, hunk: Hunk): LineCitation {
+  const added: number[] = [];
+  const removed: number[] = [];
+  let oldLine = hunk.oldStart;
+  let newLine = hunk.newStart;
+  for (const line of hunk.lines.slice(1)) {
+    if (line.startsWith("+")) added.push(newLine++);
+    else if (line.startsWith("-")) removed.push(oldLine++);
+    else if (!line.startsWith("\\")) {
+      oldLine++;
+      newLine++;
+    }
+  }
+  const addedRange = range(added);
+  const removedRange = range(removed);
+  return { path, ...(addedRange ? { added: addedRange } : {}), ...(removedRange ? { removed: { path: previousPath, ...removedRange } } : {}) };
+}
+
 function hunksOf(patch: string): Hunk[] {
   const hunks: Hunk[] = [];
   let current: Hunk | undefined;
   for (const line of patch.split("\n")) {
     const header = HUNK_HEADER.exec(line);
     if (header) {
-      current = { newStart: Number(header[2]), lines: [line] };
+      current = { oldStart: Number(header[1]), newStart: Number(header[2]), lines: [line] };
       hunks.push(current);
     } else if (current) {
       current.lines.push(line);

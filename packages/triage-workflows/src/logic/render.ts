@@ -1,10 +1,10 @@
 import { render, TRIAGE_LABELS, type Rendered, type TriageState } from "@corbits/rule-packs";
-import type { CheckOutput, CleanupMode, RuleCustomCheck } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, type CheckItem, type CheckOutput, type CleanupMode, type RuleCustomCheck } from "@corbits/triage-contracts";
 import type { SuggestedAction } from "./actions.js";
 import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { ChangeCandidate } from "./candidates.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, focusedCandidateId, isScoped, itemParts, passText, type FilePlan, type FocusedChoice, type QualityPlan } from "./quality.js";
+import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, focusedCandidateId, isScoped, passText, type FilePlan, type FocusedChoice, type QualityPlan } from "./quality.js";
 
 type NoulAnswer = { type: "noul"; noul: number };
 type ChoiceAnswer = { type: "choice"; choice: FocusedChoice; probabilities: Record<FocusedChoice, number>; confidence: number };
@@ -97,6 +97,9 @@ export function parseAnswers(reply: unknown): ParsedAnswers {
 
 export interface RenderInput {
   author: string;
+  /** The pull request's repository and head commit, which the comment links cited lines into. */
+  repo: string;
+  headSha: string;
   det: DeterministicResult;
   answers?: ParsedAnswers | Record<string, number> | null;
   candidates?: ChangeCandidate[];
@@ -236,7 +239,7 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
   }
 
   /** How likely the check is fine, out of 100 and unrounded, so the score clears `passAt` exactly when the answer passes. */
-  function scored(fine: number, passAt: number, items: string[]): CheckOutput {
+  function scored(fine: number, passAt: number, items: CheckItem[]): CheckOutput {
     return { kind: "score", score: Math.min(fine * 100, 100), passAt, items };
   }
 
@@ -253,7 +256,7 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     }
     if (!det.needsJudgment || judgeLimitExceeded) return unchecked(check, unavailable);
     if (yesPasses && Object.keys(filePlan.asked).length === 0 && filePlan.unread.length === 0) return push(check, { result: "pass" }, NOT_APPLICABLE, [], NOT_APPLICABLE_REASON);
-    const answered: Array<[string, number]> = [];
+    const answered: Array<[CheckItem, number]> = [];
     for (const [id, item] of Object.entries(filePlan.asked)) {
       const noul = noulOf(id);
       // Read as how likely the item falls short, whichever way its question is put.
@@ -265,7 +268,7 @@ function evaluateModel({ det, answers, candidates = [], plan = {}, judgeError, j
     if (needing.length > 0) {
       scores.push(needing[0]![1]);
       const named = needing.slice(0, MAX_FILE_EVIDENCE).map(([item]) => item);
-      return push(check, { result: "fail" }, scored(1 - needing[0]![1], PASS_AT, named), named);
+      return push(check, { result: "fail" }, scored(1 - needing[0]![1], PASS_AT, named), named.map(itemText));
     }
     if (unanswered) return unchecked(check, unavailable);
     // A file the judge could not read may need one, so only a fully read pull request passes.
@@ -420,9 +423,11 @@ function inlineCode(text: string): string {
   return `\`${text.replace(/`/g, "'")}\``;
 }
 
-function evidenceCode(item: string): string {
-  const [path, suffix] = itemParts(item);
-  return `${inlineCode(path)}${suffix}`;
+/** Cited lines link to the head commit; the link text stays inline code. */
+function evidenceCode(c: CheckResult, evidence: string, repo: string, headSha: string): string {
+  const citation = citationOf(c.output, evidence);
+  const url = citation && citationUrl(repo, headSha, citation);
+  return url ? `[${inlineCode(evidence)}](${url})` : inlineCode(evidence);
 }
 
 /** A model check the judge was asked about but did not settle; a decision model outage is counted on its own. */
@@ -451,9 +456,9 @@ function bounded(lines: string[]): string {
 }
 
 /** Docs and tests name the files that need them; other checks, scoped custom ones included, name what they found. */
-function failureEvidence(c: CheckResult): string {
+function failureEvidence(c: CheckResult, repo: string, headSha: string): string {
   if (!c.evidence.length) return "";
-  const listed = c.evidence.map(evidenceCode).join(", ");
+  const listed = c.evidence.map((evidence) => evidenceCode(c, evidence, repo, headSha)).join(", ");
   return c.kind === "model" && (c.check === "docs" || c.check === "tests") ? ` for ${listed}` : `: ${listed}`;
 }
 
@@ -461,7 +466,7 @@ function failureEvidence(c: CheckResult): string {
  * Public: only what the author must fix and what is not yet confirmed; never a score or model reasoning. A maintainer's
  * requested changes are already in front of the author, so they are left out, and a comment holding nothing else is not posted.
  */
-function authorComment(author: string, all: CheckResult[], sources: Sources): string {
+function authorComment({ author, repo, headSha, sources }: RenderContext, all: CheckResult[]): string {
   const checks = judged(all);
   const failing = checks.filter((c) => c.result === "fail");
   const mine = failing.filter((c) => c.check !== "review" && failedStep(c, sources).actor === "author");
@@ -470,7 +475,7 @@ function authorComment(author: string, all: CheckResult[], sources: Sources): st
   if (mine.length) {
     lines.push(`@${author}, please address the following:`, ...mine.flatMap((c) => c.check === "focused"
       ? c.evidence.map((evidence) => `- Split out unrelated change: ${inlineCode(evidence)}`)
-      : [`- ${c.reason}${failureEvidence(c)}`]));
+      : [`- ${c.reason}${failureEvidence(c, repo, headSha)}`]));
   }
   if (unconfirmed.length) {
     if (lines.length) lines.push("");
@@ -511,12 +516,15 @@ type VerdictBase = Omit<RenderOutput, "nextAction" | "actor" | "feedback" | "che
 
 interface RenderContext {
   author: string;
+  repo: string;
+  headSha: string;
   sources: Sources;
   reviewers: string[];
   threshold: number;
 }
 
-function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, { author, sources, reviewers, threshold }: RenderContext, commented = checks): RenderOutput {
+function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, ctx: RenderContext, commented = checks): RenderOutput {
+  const { sources, reviewers, threshold } = ctx;
   return {
     ...rendered,
     ...nextStep(checks, sources, reviewers),
@@ -524,14 +532,14 @@ function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number 
     score,
     confidence: score ?? "unknown",
     merge: mergeVerdict(checks, sources, score, threshold),
-    feedback: authorComment(author, commented, sources),
+    feedback: authorComment(ctx, commented),
     checks,
   };
 }
 
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], threshold } = input;
-  const ctx = { author, sources: det.sources, reviewers, threshold };
+  const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], threshold } = input;
+  const ctx = { author, repo, headSha, sources: det.sources, reviewers, threshold };
   const evaluated = evaluateModel(input);
   const checks = [...det.checks, ...evaluated.checks];
   const score = scoreOf(evaluated.scores);
