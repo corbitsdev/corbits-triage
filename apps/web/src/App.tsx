@@ -5,7 +5,7 @@ import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persi
 import { del, get, set } from "idb-keyval";
 import { Toaster } from "sonner";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { PortalProvider, usePortal } from "./lib/portal.tsx";
+import { INVITE_PATH, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { HeldInboxProvider, useSignOutAfterSending } from "./lib/held-inbox.tsx";
 import { isPersistedQuery } from "./lib/persisted-queries.ts";
 import { SessionProvider, useSession } from "./lib/session.tsx";
@@ -17,6 +17,7 @@ import Connect from "./pages/Connect.tsx";
 import { OtherWorkspaces } from "./components/OtherWorkspaces.tsx";
 import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
+import { AcceptInvite } from "./pages/AcceptInvite.tsx";
 import { Welcome } from "./pages/Welcome.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
@@ -106,7 +107,7 @@ function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
         <h1>Invitation pending</h1>
         {invitations.map((invitation) => (
           <p key={invitation.tenantId} className="muted">
-            {invitation.name} has invited you. An admin needs to let you in.
+            {invitation.name} has invited you. {invitation.byLink ? "Open the link in your invitation email to join." : "An admin needs to let you in."}
           </p>
         ))}
         <button type="button" className="btn" onClick={() => void signOut()}>Sign out</button>
@@ -124,6 +125,7 @@ function Gate() {
   if (!configured) return <NotConfigured />;
   if (!ready) return <LoadingGate />;
   if (!session) return <Welcome />;
+  if (path.startsWith(INVITE_PATH)) return <AcceptInvite token={path.slice(INVITE_PATH.length)} />;
   if (!snapshot) {
     if (invitations.length > 0) return <InvitationGate invitations={invitations} />;
     if (loading || !loadError) return <LoadingGate />;

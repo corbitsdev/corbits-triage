@@ -161,6 +161,8 @@ body:has(.signin, .setup-flow),
 .setup-flow details.setup-help[open] { gap: 14px; }
 .setup-flow .setup-help > p { margin-bottom: 8px; }
 .setup-flow .setup-help > .task-actions { margin-top: 8px; }
+.setup-flow .setup-invite { margin-top: 16px; }
+.setup-flow .setup-invite[open], .setup-flow .setup-invite form { display: grid; gap: 12px; }
 .setup-flow .connection-fields > label { align-content: start; }
 .setup-flow .pem-field { position: relative; }
 .setup-flow .setup-help .connection-fields {

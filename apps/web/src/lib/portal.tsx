@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient, type Query } from "@tanstack/react-query";
+import { useLocation } from "react-router-dom";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
 import { isTerminalRunEvents } from "@intx/hub-client";
@@ -107,6 +108,9 @@ export const PRINCIPALS_QUERY_KEY = "principals";
 export const ROLES_QUERY_KEY = "roles";
 export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
 export const ALLOWED_QUERY_KEY = "allowed";
+export const INVITATIONS_QUERY_KEY = "invitations";
+/** Portal path of an invite link, as the hub writes it. */
+export const INVITE_PATH = "/invite/";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
   PORTAL_QUERY_KEY,
@@ -119,6 +123,7 @@ const REFRESH_QUERY_KEYS = [
   [ROLES_QUERY_KEY],
   [DEPLOYED_WORKFLOWS_QUERY_KEY],
   [ALLOWED_QUERY_KEY],
+  [INVITATIONS_QUERY_KEY],
 ];
 
 function isRunLog(value: unknown): value is RunLog {
@@ -166,7 +171,9 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const signOutWhenRejected = useSignOutWhenRejected();
   const configured = hubConfigured();
   const queryClient = useQueryClient();
-  const enabled = configured && Boolean(session);
+  // An invite link is accepted before any workspace is opened, so the user is never given one of their own meanwhile.
+  const acceptingInvite = useLocation().pathname.startsWith(INVITE_PATH);
+  const enabled = configured && Boolean(session) && !acceptingInvite;
   const userId = session?.id;
   /** The workspace open in this tab, kept on every poll until the user switches. */
   const opened = useRef<{ userId: string; tenantId: string } | null>(null);

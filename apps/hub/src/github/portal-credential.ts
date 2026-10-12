@@ -21,7 +21,7 @@ export function failure(status: number, code: string, message: string, details?:
 
 /** The signed-in member's principal id, or the error response to return. */
 // Browsers omit Origin on same-origin GETs, and reads change nothing, so they only need to not be cross-site.
-function fromPortal(req: Request, trustedOrigins: readonly string[]): boolean {
+export function fromPortal(req: Request, trustedOrigins: readonly string[]): boolean {
   if (req.method === "GET") return req.headers.get("sec-fetch-site")?.toLowerCase() !== "cross-site";
   return validManifestMutationRequest(req, new Set([new URL(req.url).origin, ...trustedOrigins]));
 }
