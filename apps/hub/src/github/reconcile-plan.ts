@@ -38,6 +38,8 @@ export type ReconcilePolicy = {
   cappedRetryCycles: number;
   /** A verdict waiting only on GitHub, such as mergeability not computed yet, is retried no sooner than this after its run. */
   unconfirmedRetryMs: number;
+  /** A head the base branch moved under is queued again no sooner than this after it was last queued, so a run of merges re-checks it once per window instead of once per merge. */
+  baseMoveWindowMs: number;
   /** Heads a tenant has queued or running at once; further due heads wait, never-triaged ones first, then oldest waiting first. */
   maxInFlight: number;
 };
@@ -55,6 +57,7 @@ export const DEFAULT_RECONCILE_POLICY: ReconcilePolicy = {
   cappedRetryAfterMs: 6 * 60 * MINUTE,
   cappedRetryCycles: 3,
   unconfirmedRetryMs: 5 * MINUTE,
+  baseMoveWindowMs: 15 * MINUTE,
   maxInFlight: 5,
 };
 
@@ -130,20 +133,43 @@ function sinceQueued(row: PrTriageRow, runs: readonly ObservedRun[], policy: Rec
   return runs.filter((run) => ms(run.startedAt) >= since);
 }
 
+export const BASE_MOVED = "base branch moved";
+
+/**
+ * Runs started since the base branch last moved under the head, allowing for the sidecar clock trailing the hub's; all of them when it never did.
+ * The allowance cuts both ways: a run that really started up to `clockSkewMs` before the move still counts as current, accepted so a
+ * post-move run on a trailing clock is never re-run forever.
+ */
+function sinceStale(row: PrTriageRow, runs: readonly ObservedRun[], policy: ReconcilePolicy): readonly ObservedRun[] {
+  const stale = row.staleBefore;
+  return stale === undefined ? runs : runs.filter((run) => ms(run.startedAt) >= ms(stale) - policy.clockSkewMs);
+}
+
 /**
  * A clean completed run settles the head; otherwise a run still going keeps it
  * running; only once every run has ended does the failure of the one since the
  * hub last queued the head count. A head queued or running on the hub's word
  * only sees runs since it was queued, so a head queued again on top of a
- * verdict stays queued until its new run starts.
+ * verdict stays queued until its new run starts. Runs from before the base
+ * branch last moved settle nothing; one of them in flight holds the head
+ * until it ends, and the head is stale then.
  */
 function observe(row: PrTriageRow, observed: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): PrTriageRow {
   const at = now.toISOString();
-  const runs = row.status === "queued" || row.status === "running" ? sinceQueued(row, observed, policy) : observed;
+  const waiting = row.status === "queued" || row.status === "running";
+  const current = sinceStale(row, observed, policy);
+  const runs = waiting ? sinceQueued(row, current, policy) : current;
   const settled = runs.find((run) => run.status === "completed" && run.unsettled === undefined);
   if (settled) return withStatus(row, { status: "triaged", run: settled }, at);
   const live = pick(row, runs.filter((run) => run.status === "running" && !isStuck(run, now, policy)));
   if (live) return withStatus(row, { status: "running", run: live }, at);
+  if (waiting) {
+    // A run the base branch moved under keeps its slot until it ends; its verdict is outdated, so the head is due again then.
+    const outdated = sinceQueued(row, observed, policy).filter((run) => !current.includes(run));
+    const still = pick(row, outdated.filter((run) => run.status === "running" && !isStuck(run, now, policy)));
+    if (still) return withStatus(row, { status: "running", run: still }, at);
+    if (outdated.length > 0) return withStatus(row, { status: "stale", runId: row.runId, error: BASE_MOVED }, at);
+  }
   const ended = pick(row, sinceQueued(row, runs, policy));
   if (ended) {
     const failed = withStatus(row, { status: "failed", run: ended, error: failure(ended, isStuck(ended, now, policy)) }, at);
@@ -168,6 +194,7 @@ function uncapped(row: PrTriageRow, now: Date, policy: ReconcilePolicy): PrTriag
 }
 
 function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): boolean {
+  if (row.status === "stale") return row.queuedAt === undefined || now.getTime() - ms(row.queuedAt) >= policy.baseMoveWindowMs;
   if (row.status === "new") return now.getTime() - ms(pr.updatedAt) >= policy.webhookGraceMs;
   if (row.status !== "failed" || row.attempts >= policy.maxAttempts) return false;
   const last = row.queuedAt === undefined ? -Infinity : ms(row.queuedAt);
