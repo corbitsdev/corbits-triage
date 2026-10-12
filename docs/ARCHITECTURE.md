@@ -98,8 +98,8 @@ grant on the same credential; routes that write to GitHub check `use`. Reads
 behalf and never return it; writes are pull request actions, triage and Dos.
 Approving a pull request from the portal also checks `approve` on
 `github-review:<owner>/<name>`, the repository name in lowercase; the admin
-role holds `approve` on `github-review:*` from GitHub setup, or once from a
-hub start for workspaces set up earlier, so an owner's removal stays, and
+role holds `approve` on `github-review:*` from GitHub setup; in workspaces set
+up earlier, an owner adds it in Settings → Access or reconnects GitHub, and
 owners hold every grant. In a run, the repository's pack decides when to
 approve, and only a head ready to merge with CI green is approved, from the
 newest verdict. In an automated repository whose pack approves, a settled

@@ -5,7 +5,6 @@ import { and, eq, sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { migrateAdminGithubGrants } from "./admin-github-grant.js";
 import { createGithubManifestIntegration, migrateGithubManifest } from "./manifest.js";
 
 const PUBLIC_ORIGIN = "https://hub.example.com";
@@ -167,42 +166,6 @@ test("PostgreSQL: completing setup lets admins act on GitHub, once across reconn
       { resource: `credential:${app?.id}`, action: "use", effect: "allow", origin: "role" },
       { resource: "github-review:*", action: "approve", effect: "allow", origin: "role" },
     ]);
-  } finally {
-    await handle?.close();
-    await dropSchema(TEST_DB, { schema: testSchema });
-  }
-}, 120_000);
-
-test("PostgreSQL: a workspace set up before admins could approve gets the grant at one start, and an owner's removal stays", async () => {
-  const testSchema = `corbits_manifest_${randomBytes(6).toString("hex")}`;
-  let handle: ReturnType<typeof createDB> | undefined;
-  try {
-    await runMigrations(TEST_DB, { schema: testSchema });
-    handle = createDB({ ...TEST_DB, schema: testSchema });
-    const db = handle.db;
-    await db.insert(schema.tenant).values({ id: "tnt_older", name: "Older", slug: "older", domain: "older.test" });
-    await db.insert(schema.provider).values({ id: "prv_github", tenantId: "tnt_older", name: "github", plugin: "http", apiBaseUrl: GITHUB_API_ORIGIN });
-    await db.insert(schema.role).values({ id: "rol_admin", tenantId: "tnt_older", name: "admin", isSystem: true });
-    await db.insert(schema.credential).values({
-      id: "crd_github", tenantId: "tnt_older", principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key", secret: "sealed", status: "active",
-    });
-    await db.insert(schema.grant).values({ id: "grt_use", tenantId: "tnt_older", roleId: "rol_admin", resource: "credential:crd_github", action: "use", effect: "allow", origin: "role" });
-
-    async function adminGrants() {
-      const grants = await db.select().from(schema.grant).where(eq(schema.grant.roleId, "rol_admin"));
-      return grants.map(({ resource, action }) => ({ resource, action }));
-    }
-
-    await migrateAdminGithubGrants(db);
-    await migrateAdminGithubGrants(db);
-    expect(await adminGrants()).toEqual([
-      { resource: "credential:crd_github", action: "use" },
-      { resource: "github-review:*", action: "approve" },
-    ]);
-
-    await db.delete(schema.grant).where(and(eq(schema.grant.roleId, "rol_admin"), eq(schema.grant.action, "approve")));
-    await migrateAdminGithubGrants(db);
-    expect(await adminGrants()).toEqual([{ resource: "credential:crd_github", action: "use" }]);
   } finally {
     await handle?.close();
     await dropSchema(TEST_DB, { schema: testSchema });
