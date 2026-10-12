@@ -567,6 +567,8 @@ describe("mirror director cleanup mode", () => {
     repo: "acme/widgets",
     number: 8,
     state: "ready-monitoring",
+    headSha: "abc",
+    merge: { verdict: "ready" },
     mirror: true,
     request,
     confidence: 0.9,

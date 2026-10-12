@@ -6,7 +6,7 @@ import {
   type ActionKind,
   type CheckPack,
   type CheckPackGroup,
-  type CheckRef,
+  type ActionCheckRef,
   type CustomCheck,
   type CustomScope,
   type Do,
@@ -39,7 +39,7 @@ export type DoForm = {
 /** `always` runs when there are no checks; otherwise only the yes, no and unsure lists that have Dos are kept. */
 export type ActionForm = {
   when: "every" | ActionEvent[];
-  checks: CheckRef[];
+  checks: ActionCheckRef[];
   yes: DoForm[];
   no: DoForm[];
   unsure: DoForm[];
@@ -120,6 +120,7 @@ function doTarget(form: DoForm): Record<string, unknown> {
       return peopleTarget(form);
     case "comment":
       return { body: form.body };
+    case "approve":
     case "close":
       return {};
     case "agent":

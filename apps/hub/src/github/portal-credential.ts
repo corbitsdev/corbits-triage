@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-tool/github";
+import { APPROVE_ACTION, reviewResource } from "./admin-github-grant.js";
 import { validManifestMutationRequest } from "./manifest.js";
 
 type SessionResult = { user: { id: string } };
@@ -62,6 +63,12 @@ export async function githubAppCredential(
     return failure(403, "forbidden", "You do not have access to the GitHub App credential.");
   }
   return d.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
+}
+
+/** The response to return when the member may not approve pull requests in `repo`. */
+export async function approvalRefused(d: PortalCredentialDeps, principalId: string, tenantId: string, repo: string): Promise<Response | undefined> {
+  if (await d.authorize(principalId, tenantId, reviewResource(repo), APPROVE_ACTION)) return undefined;
+  return failure(403, "forbidden", "You do not have the grant to approve pull requests in this repository.");
 }
 
 /** GitHub fetch that the App credential adapter turns into App-JWT or installation-token calls. */
