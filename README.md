@@ -27,7 +27,7 @@ account, the GitHub App and the decision model, then turn on triage for a
 repository. Its open pull requests appear in the Inbox with a verdict, a
 score and the reasons for it.
 
-To run it for real, build `docs/Dockerfile` and follow
+To run it for real, build the root `Dockerfile` and follow
 [docs/SELF_HOST.md](docs/SELF_HOST.md).
 
 ## Read next

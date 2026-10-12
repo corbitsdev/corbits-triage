@@ -7,7 +7,7 @@ Two services:
 | Service | Image | State |
 | --- | --- | --- |
 | Postgres | any managed or self-run Postgres | `DATABASE_URL` |
-| Hub | `docs/Dockerfile`: Interchange hub, webhooks, GitHub bridge, sidecars, and the built portal | volume at `HUB_DATA_DIR` |
+| Hub | `Dockerfile`: Interchange hub, webhooks, GitHub bridge, sidecars, and the built portal | volume at `HUB_DATA_DIR` |
 
 The hub serves the portal itself (`PORTAL_DIR`, set by the image), so one public domain covers the portal, the API and GitHub webhooks (`/api/hooks/...`).
 
@@ -31,17 +31,17 @@ Size the hub for its sidecars: each live deployment is a Bun process, and each P
 
 ### Docker Compose
 
-`docs/compose.yml` runs Postgres and the hub at `http://localhost:3000`:
+`compose.yml` runs Postgres and the hub at `http://localhost:3000`:
 
 ```sh
 cp .env.example .env   # fill the four secrets
-docker compose -f docs/compose.yml up --build
+docker compose up --build
 ```
 
 ### Railway
 
 1. Add a Postgres service.
-2. Add a service from this repo with Dockerfile `docs/Dockerfile` and a public domain on port 3000. Variables: the four secrets, `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `BETTER_AUTH_BASE_URL` (the public URL), `HUB_DATA_DIR=/data`, `PORT=3000`. Attach a volume at `/data`.
+2. Add a service from this repo (Railway builds the root `Dockerfile`) with a public domain on port 3000. Variables: the four secrets, `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `BETTER_AUTH_BASE_URL` (the public URL), `HUB_DATA_DIR=/data`, `PORT=3000`. Attach a volume at `/data`.
 
 Render is the same: a Postgres instance and one Docker web service with a disk at `HUB_DATA_DIR`.
 

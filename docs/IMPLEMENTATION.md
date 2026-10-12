@@ -100,8 +100,8 @@ GitHub emulator).
 
 ## Build and deploy
 
-One image, `docs/Dockerfile`: the hub, serving the built portal from
-`PORTAL_DIR`. See [DEPLOY.md](DEPLOY.md).
+One image, the root `Dockerfile`: the hub, serving the built portal from
+`PORTAL_DIR`. Its base, `oven/bun:1.4`, matches the Bun minor CI runs. See [DEPLOY.md](DEPLOY.md).
 
 ## Vendored deltas
 
