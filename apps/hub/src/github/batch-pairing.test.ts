@@ -36,7 +36,7 @@ async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack =
     await done(`reviews:${n}`, { reviews: [] });
     await done(`comments:${n}`, { comments: [] });
     await done(`commits:${n}`, { commits: [] });
-    await done(`files:${n}:0`, { files: [] });
+    await done(`files:${n}:0`, { files: [{ path: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }] });
   }
   for (const n of numbers) if (!failGetPr.has(n)) await done(`checks:${n}`, { checks: [] });
   const ctx = {} as never;
@@ -166,12 +166,12 @@ describe("verdicts the decision model was never asked about", () => {
     const local = await triage(oversized);
     const provider = await triage(compact, { type: "inference.error", error: { message: QUALITY_EVALUATION_LIMIT_ERROR } } as ReactorInboundEvent);
     const ambiguousDecision = JSON.stringify({
-      id: "focused-candidate-001", type: "choice", choice: "ambiguous", confidence: 0.9,
-      probabilities: { primary_or_supporting: 0.03, unrelated: 0.03, movement_or_superseded: 0.04, ambiguous: 0.9 },
+      id: "focused", type: "choice", choice: "cant_tell", confidence: 0.9,
+      probabilities: { one_thing: 0.05, more_than_one_thing: 0.05, cant_tell: 0.9 },
     });
     const ambiguousResult = await triage(compact, { type: "inference.done", turn: { content: [{ type: "text", text: ambiguousDecision }] } } as ReactorInboundEvent);
     expect(local.judged).toBeUndefined();
-    expect(local.ruled.items[0]).toMatchObject({ judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true });
+    expect(local.ruled.items[0]).toMatchObject({ judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ KB\)$/), judgeLimitExceeded: true });
     expect(provider.judged).toEqual([{ judgeError: QUALITY_EVALUATION_LIMIT_ERROR }]);
 
     const deterministic = (await observe([1], local.reply, "run_limit", at(0))).get("1@sha1")!;

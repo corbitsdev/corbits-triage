@@ -1,5 +1,5 @@
 // Judge eval: replays frozen pull requests through the production triage steps (the hub's file paging, rules,
-// one System One call per judge chunk, evaluate) against the production decision model and checks each model check's
+// one System One call per judge chunk, focused's follow-up calls, evaluate) against the production decision model and checks each model check's
 // answer against its label. The judge is not deterministic, so each check may miss a few cases.
 //
 //   bun run eval:judge
@@ -10,6 +10,7 @@ import { readRepoDocsPage, repoDocs, type RepoDocsPage } from "../../packages/gi
 import { listFiles } from "../../apps/hub/src/github/pr-preview.js";
 import { DEFAULT_REPO_POLICY, emptyPack, type CheckPack } from "../../packages/triage-contracts/src/index.js";
 import { evaluate as evaluateStep } from "../../packages/triage-workflows/src/actions/evaluate.js";
+import { parts } from "../../packages/triage-workflows/src/actions/parts.js";
 import { rules, type JudgeChunk } from "../../packages/triage-workflows/src/actions/rules.js";
 import { assembleItem, type RepoDocs } from "../../packages/triage-workflows/src/logic/facts.js";
 import type { Verdict } from "../../packages/triage-workflows/src/logic/render.js";
@@ -105,7 +106,10 @@ async function judge(input: CaseInput): Promise<Outcomes> {
   const item = assembleItem(pr.number, data, { repo: pr.repo, openPrs: [], policy: DEFAULT_REPO_POLICY, pack: pack(pr.repo), events: ["opened"], docs: await readDocs(gh, pr.repo) });
   const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, AbortSignal.timeout(1_000));
   const output = await Promise.all(ruled.chunks.map(judgeChunk));
-  const verdict = await evaluateStep({ items: ruled.items, batch: false, judge: { output } }, NO_EFFECTS, AbortSignal.timeout(1_000)) as Verdict;
+  const judged = { items: ruled.items, batch: false, judge: { output } };
+  const { chunks } = await parts(judged, NO_EFFECTS, AbortSignal.timeout(1_000));
+  const partsOutput = await Promise.all(chunks.map(judgeChunk));
+  const verdict = await evaluateStep({ ...judged, judgeParts: { output: partsOutput } }, NO_EFFECTS, AbortSignal.timeout(1_000)) as Verdict;
   return Object.fromEntries(MODEL_CHECKS.map((check) => {
     const result = verdict.checks.find((row) => row.check === check)?.result;
     return [check, result === "pass" || result === "fail" ? result : "unsure"];
@@ -132,8 +136,9 @@ try {
     run: judge,
     cases: `${here}cases.jsonl`,
     checks: Object.fromEntries(MODEL_CHECKS.map((check) => [check, answered(check)])),
-    // Main's code (`45f34e6`) missed 10 docs cases of the first 72.
-    allow: { tests: 3, docs: 10, focused: 11 },
+    // Focused decided every case in each measured run; two misses leave room for answers near the band edge. Docs missed 9
+    // and 10 of the 76 cases in the recorded runs, and main's code (`45f34e6`) missed 10 of the first 72.
+    allow: { tests: 3, docs: 11, focused: 2 },
     about: { model: ENDPOINT.model },
     concurrency: 2,
     timeout: "10m",

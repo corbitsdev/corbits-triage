@@ -1,7 +1,7 @@
 import { reviewedOnHead, type IssueComment, type Review } from "@corbits/github-tool";
 import { authorAssociation, authorKindOf, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
-import { MAX_PATCH_INPUT_CHARS } from "./candidates.js";
+import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "./extract.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";

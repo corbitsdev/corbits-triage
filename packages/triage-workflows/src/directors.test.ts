@@ -7,7 +7,7 @@ import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
-import { evaluate, rules } from "./actions/index.js";
+import { evaluate, parts, rules } from "./actions/index.js";
 import type { RulesOutput } from "./actions/rules.js";
 import type { EffectContext } from "@intx/workflow";
 
@@ -271,12 +271,12 @@ describe("judge on a blocked pull request", () => {
     return reply;
   }
 
-  /** No file needs docs or tests; a focused candidate is unrelated when focused is failing; every other question is a noul pass or fail. */
+  /** No file needs docs or tests; focused is more than one thing when it is failing; every other question is a noul pass or fail. */
   function answer(id: string, failing: string[]) {
     if (/^(docs|tests)-file-/.test(id)) return { id, type: "noul", noul: 0.1 };
-    if (!id.startsWith("focused-candidate-")) return { id, type: "noul", noul: failing.includes(id) ? 0.1 : 0.9 };
-    const choice = failing.includes("focused") ? "unrelated" : "primary_or_supporting";
-    const probabilities = { primary_or_supporting: 0.1, unrelated: 0.1, movement_or_superseded: 0.1, ambiguous: 0.1, [choice]: 0.7 };
+    if (id !== "focused") return { id, type: "noul", noul: failing.includes(id) ? 0.1 : 0.9 };
+    const choice = failing.includes("focused") ? "more_than_one_thing" : "one_thing";
+    const probabilities = { one_thing: 0.2, more_than_one_thing: 0.2, cant_tell: 0.1, [choice]: 0.7 };
     return { id, type: "choice", choice, probabilities, confidence: 0.9 };
   }
 
@@ -291,7 +291,7 @@ describe("judge on a blocked pull request", () => {
     return { asked, verdict: await evaluate(judged, ctx, signal) as Verdict };
   }
 
-  test("reads a patch too long for one page across pages and judges every hunk", async () => {
+  test("reads a patch too long for one page across pages and judges it whole", async () => {
     const patch = Array.from({ length: 6 }, (_, index) => `@@ -${index * 10 + 1} +${index * 10 + 1} @@\n+const part${index} = "${"x".repeat(2_500)}";`).join("\n");
     async function gh() {
       return Response.json([{ filename: "src/big.ts", status: "modified", additions: 6, deletions: 0, patch }]);
@@ -321,13 +321,13 @@ describe("judge on a blocked pull request", () => {
       const content = next.name === "github_list_pr_files" ? await filesPage(next.arguments) : results[next.id];
       await decide({ type: "tool.done", result: { callId: next.id, content } });
     }
-    const { asked, verdict } = await judgeAndEvaluate(reply, undefined, []);
+    const { verdict } = await judgeAndEvaluate(reply, undefined, []);
     expect(pages).toBeGreaterThan(1);
-    expect(asked.filter((id) => id.startsWith("focused-candidate-"))).toHaveLength(6);
     expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "pass" });
+    expect(verdict.checks.find((check) => check.check === "focused")?.output).toEqual({ kind: "score", score: 70, passAt: 60, items: [] });
   });
 
-  test("a generated or binary file left unread does not hold focused back, unread code does", async () => {
+  test("code GitHub sent no patch for leaves focused unconfirmed, a generated or binary file does not", async () => {
     const read = { path: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
     const lockfile = { path: "bun.lock", status: "modified", additions: 900, deletions: 0 };
     const binary = { path: "logo.png", status: "added", additions: 0, deletions: 0 };
@@ -336,7 +336,7 @@ describe("judge on a blocked pull request", () => {
       const { verdict } = await judgeAndEvaluate(await facts([], true, false, {}, files), undefined, []);
       return verdict.checks.find((check) => check.check === "focused");
     }
-    expect(await focused([read, lockfile, binary])).toMatchObject({ result: "pass" });
+    expect((await focused([read, lockfile, binary]))?.output).toEqual({ kind: "score", score: 70, passAt: 60, items: [] });
     expect(await focused([read, lockfile, binary, code])).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check", items: ["src/b.ts"] } });
   });
 
@@ -359,10 +359,10 @@ describe("judge on a blocked pull request", () => {
 
   test("a CI-blocked pull request records the model's answers but stays driven by CI", async () => {
     const { asked, verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true, false, {}, code), undefined, []);
-    expect(asked).toEqual(["tests-file-001", "docs-file-001", "focused-candidate-001"]);
+    expect(asked).toEqual(["tests-file-001", "docs-file-001", "focused"]);
     expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", nextAction: "Fix failing CI: build" });
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
-      { check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 80, passAt: 60, items: ["flag — src/flag.ts"] } },
+      { check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 70, passAt: 60, items: [] } },
       { check: "docs", kind: "model", result: "pass", reason: "documentation is up to date", evidence: [], output: { kind: "score", score: 90, passAt: 70, items: ["src/flag.ts"] } },
       { check: "tests", kind: "model", result: "pass", reason: "tests cover the change", evidence: [], output: { kind: "score", score: 90, passAt: 70, items: ["src/flag.ts"] } },
     ]);
@@ -376,11 +376,11 @@ describe("judge on a blocked pull request", () => {
   });
 
   test("a clean draft awaits review with an informational draft check, asks nothing of the author and is red", async () => {
-    const feedback = "Not yet confirmed, a maintainer will check:\n- makes one focused change";
+    const feedback = "No changes needed from you. A maintainer will review this pull request.";
     const { asked, verdict } = await judgeAndEvaluate(await facts([], true, true), undefined, []);
     expect(asked).toEqual([]);
     expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, humanGated: false, feedback, actor: "maintainer", nextAction: "Review once marked ready" });
-    expect(verdict.merge.reasons).toEqual(["Failed: pull request is a draft", "Not confirmed: makes one focused change"]);
+    expect(verdict.merge.reasons).toEqual(["Failed: pull request is a draft"]);
     expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } });
     expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: feedback, close: false });
   });
@@ -431,7 +431,7 @@ describe("judge on a blocked pull request", () => {
   });
 });
 
-describe("focused candidate judge input", () => {
+describe("focused judge input", () => {
   function prFacts(files: Array<Record<string, unknown>>) {
     return {
       repo: "acme/widgets",
@@ -453,52 +453,42 @@ describe("focused candidate judge input", () => {
   }
 
   const pack = { ...emptyPack("acme/widgets"), checks: { focused: { enabled: true } } };
-  const probabilities = { primary_or_supporting: 0.9, unrelated: 0.05, movement_or_superseded: 0.03, ambiguous: 0.02 };
+  /** A focused answer with `serves` the probability its slice serves the pull request's purpose; undefined for any other question. */
+  function focusedAnswer(id: string, serves: number, separate: number) {
+    if (id === "focused") return { id, type: "choice", choice: "one_thing", probabilities: { one_thing: serves, more_than_one_thing: separate, cant_tell: 1 - serves - separate }, confidence: 0.9 };
+    if (!/^focused-slice-\d+$/.test(id)) return undefined;
+    const choice = serves >= separate ? "serves_purpose" : "separate_change";
+    return { id, type: "choice", choice, probabilities: { serves_purpose: serves, separate_change: separate, cant_tell: 1 - serves - separate }, confidence: 0.9 };
+  }
 
   function ruledFor(files: Array<Record<string, unknown>>) {
     return rules({ items: [{ facts: prFacts(files), pack }], batch: false }, ctx, signal);
   }
 
   function primary(questions: Array<{ id: string }>) {
-    return questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: "primary_or_supporting", probabilities, confidence: 0.9 })).join("");
+    return questions.map(({ id }) => JSON.stringify(focusedAnswer(id, 0.9, 0.05) ?? { id, type: "noul", noul: 0.1 })).join("");
   }
 
-  test("sends one typed choice per hunk, pointing at that hunk in the pull request state", async () => {
+  test("asks one choice about the whole pull request, and a question per file only once it fails", async () => {
     const patch = "@@ -1 +1 @@\n-const item = { name: \"Old\" };\n+const item = { name: \"New\" };";
     const ruled = await ruledFor([{ path: "src/a.ts", previousPath: "src/old-a.ts", status: "renamed", patch }]);
-    const { requests } = await judgeChunks(ruled, primary);
-    expect(requests).toHaveLength(1);
-    const systemOne = requests[0]!.providerOptions.systemOne;
-    expect(systemOne.questions.map((question: Record<string, unknown>) => ({
-      id: question.id,
-      type: question.type,
-      choices: Object.keys(question.criteria as Record<string, unknown>),
-    }))).toEqual([
-      {
-        id: "focused-candidate-001",
-        type: "choice",
-        choices: ["primary_or_supporting", "unrelated", "movement_or_superseded", "ambiguous"],
-      },
+    const first = await judgeChunks(ruled, () => JSON.stringify({ id: "focused", type: "choice", choice: "more_than_one_thing", probabilities: { one_thing: 0.1, more_than_one_thing: 0.85, cant_tell: 0.05 }, confidence: 0.9 }));
+    expect(first.requests).toHaveLength(1);
+    const systemOne = first.requests[0]!.providerOptions.systemOne;
+    expect(systemOne.questions.map((question: Record<string, unknown>) => [question.id, Object.keys(question.criteria as Record<string, unknown>)])).toEqual([
+      ["focused", ["one_thing", "more_than_one_thing", "cant_tell"]],
     ]);
-    expect(systemOne.questions[0]!.instructions).toContain("`pullRequest.files[0].hunks[0]` (Old, New)");
     expect(systemOne.state.pullRequest.files).toEqual([{ path: "src/a.ts", status: "renamed", hunks: [patch] }]);
-  });
+    const passing = await judgeChunks(ruled, primary);
+    expect((await parts(passing.judged, ctx, signal)).chunks).toEqual([]);
 
-  test("an author's label cannot mention, link or format in the judge prompt or the comment", async () => {
-    const payload = JSON.stringify({ name: "@acme/security [click](https://evil.example)" });
-    const ruled = await ruledFor([{ path: "src/owner.ts", patch: `@@ -0,0 +1 @@\n+export const owner = ${payload};` }]);
-    const unrelated = { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 };
-    const { requests, judged } = await judgeChunks(ruled, () => JSON.stringify({ id: "focused-candidate-001", type: "choice", choice: "unrelated", probabilities: unrelated, confidence: 0.9 }));
-    const systemOne = requests[0]!.providerOptions.systemOne;
-    expect(systemOne.questions[0]!.instructions).toContain("(acme/security click)");
-    expect(systemOne.questions[0]!.instructions).not.toContain("@acme");
-    const verdict = await evaluate(judged, ctx, signal) as Verdict;
-    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Split out unrelated change: `acme/security click — src/owner.ts`"]);
-  });
-
-  test("skips the judge when focused has no candidates and no other questions", async () => {
-    const ruled = await ruledFor([]);
-    expect(ruled).toMatchObject({ chunks: [], needsJudgment: false });
+    const { chunks } = await parts(first.judged, ctx, signal);
+    const second = await judgeChunks({ ...ruled, chunks }, (questions) => questions.map(({ id }) => JSON.stringify({ id, type: "noul", noul: 0.9 })).join(""));
+    expect(second.requests.map((request) => request.providerOptions.systemOne.questions.map((question) => [question.id, question.instructions]))).toEqual([
+      [["focused-file-001", expect.stringContaining("`pullRequest.files[0]`")]],
+    ]);
+    const verdict = await evaluate({ ...first.judged, judgeParts: second.judged.judge }, ctx, signal) as Verdict;
+    expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: ["src/a.ts"] });
   });
 
   function largeFiles(prefix: string, count: number) {
@@ -514,27 +504,33 @@ describe("focused candidate judge input", () => {
     return bytes(state) <= MAX_SYSTEM_ONE_STATE_BYTES && questions.length <= MAX_SYSTEM_ONE_QUESTIONS;
   }
 
-  test("a pull request over the request budget is asked in several calls that together cover every candidate", async () => {
+  test("a pull request over the request budget is judged in slices that read every file: it passes when each serves its purpose and fails when one is separate", async () => {
     const files = largeFiles("large", 24);
     expect(files.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(MAX_SYSTEM_ONE_STATE_BYTES);
     const ruled = await ruledFor(files);
     const { requests, judged } = await judgeChunks(ruled, primary);
     expect(requests.length).toBeGreaterThanOrEqual(2);
     expect(requests.every(withinBudget)).toBe(true);
-    const asked = requests.flatMap((request) => request.providerOptions.systemOne.questions.map((question) => question.id));
-    expect(asked).toEqual(files.map((_, index) => `focused-candidate-${String(index + 1).padStart(3, "0")}`));
-
+    const slices = requests.map((request) => request.providerOptions.systemOne.state.pullRequest.files.map((file: { path: string }) => file.path));
+    expect(slices.flat()).toEqual(files.map((file) => file.path));
     const verdict = await evaluate(judged, ctx, signal) as Verdict;
     expect(verdict.degraded).toBeNull();
-    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 93, passAt: 60, items: ["large0 — src/large0.ts"] } }]);
+    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 90, passAt: 60, items: [] } }]);
+
+    const split = await judgeChunks(ruled, (questions, call) => questions.map(({ id }) => JSON.stringify(call === 1 ? focusedAnswer(id, 0.1, 0.8) : focusedAnswer(id, 0.9, 0.05))).join(""));
+    const { chunks } = await parts(split.judged, ctx, signal);
+    const named = await judgeChunks({ ...ruled, chunks }, (questions) => questions.map(({ id }) => JSON.stringify({ id, type: "noul", noul: 0.9 })).join(""));
+    expect(named.requests.flatMap((request) => request.providerOptions.systemOne.state.pullRequest.files.map((file: { path: string }) => file.path))).toEqual(slices[1]);
+    const failed = await evaluate({ ...split.judged, judgeParts: named.judged.judge }, ctx, signal) as Verdict;
+    expect(failed.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: slices[1]!.slice(0, 3) });
   });
 
-  test("a batch asks per pull request per chunk, and a failed chunk degrades only its own pull request", async () => {
+  test("a batch asks per pull request, and a failed chunk degrades only its own pull request", async () => {
     const items = Array.from({ length: 3 }, (_, index) => ({ facts: { ...prFacts(largeFiles(`batch${index}x`, 24)), number: index + 1 }, pack }));
     const ruled = await rules({ items, batch: true }, ctx, signal);
     expect(new Set(ruled.chunks.map((chunk) => chunk.item))).toEqual(new Set([0, 1, 2]));
     expect(ruled.chunks.length).toBeGreaterThanOrEqual(6);
-    const failed = ruled.chunks.findLastIndex((chunk) => chunk.item === 0);
+    const failed = ruled.chunks.findIndex((chunk) => chunk.item === 0);
     const { requests, judged } = await judgeChunks(ruled, (questions, call) => (call === failed ? { error: "upstream 503" } : primary(questions)));
     expect(requests).toHaveLength(ruled.chunks.length);
     expect(requests.every(withinBudget)).toBe(true);
@@ -550,13 +546,14 @@ describe("focused candidate judge input", () => {
     const withTests = { ...pack, checks: { ...pack.checks, tests: { enabled: true } } };
     const ruled = await rules({ items: [{ facts: { ...prFacts(files), paths: files.map((file) => file.path) }, pack: withTests }], batch: false }, ctx, signal);
     expect(ruled.needsJudgment).toBe(false);
-    expect(ruled.items[0]).toMatchObject({ judgeError: "pull request too large for the decision model", judgeLimitExceeded: true });
+    const tooLarge = "pull request too large for the decision model (112 KB)";
+    expect(ruled.items[0]).toMatchObject({ judgeError: tooLarge, judgeLimitExceeded: true });
 
     const verdict = await evaluate(ruled, ctx, signal) as Verdict;
-    expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: "Not yet confirmed, a maintainer will check:\n- makes one focused change\n- tests cover the change", reason: "pull request too large for the decision model" });
+    expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: "Not yet confirmed, a maintainer will check:\n- makes one focused change\n- tests cover the change", reason: tooLarge });
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
-      { check: "focused", kind: "model", result: "unconfirmed", reason: "pull request too large for the decision model", evidence: [], output: { kind: "could-not-check", reason: "pull request too large for the decision model" } },
-      { check: "tests", kind: "model", result: "unconfirmed", reason: "pull request too large for the decision model", evidence: [], output: { kind: "could-not-check", reason: "pull request too large for the decision model" } },
+      { check: "focused", kind: "model", result: "unconfirmed", reason: tooLarge, evidence: [], output: { kind: "could-not-check", reason: tooLarge } },
+      { check: "tests", kind: "model", result: "unconfirmed", reason: tooLarge, evidence: [], output: { kind: "could-not-check", reason: tooLarge } },
     ]);
   });
 });

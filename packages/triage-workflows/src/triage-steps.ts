@@ -15,12 +15,16 @@ function replyOf(id: string) {
 /** A map's output is an array, which a merge cannot take, so it rides as `judge.output`. */
 const JUDGED = { project: { from: "steps" }, fields: ["judge"] } as const;
 
+/** Both judge maps, the first round and focused's follow-up, as `judge.output` and `judgeParts.output`. */
+const BOTH_JUDGED = { project: { from: "steps" }, fields: ["judge", "judgeParts"] } as const;
+
 /** The chunks are already in the run log twice, as the map's input and each judge call's; evaluate re-derives them. */
 const RULED = { project: outputOf("rules"), fields: ["items", "batch"] } as const;
 
 // Actions cannot reach a bound credential on this Interchange pin, so the deterministic facts, execute and mirror steps run
 // as directors, reaching GitHub through the tool's credential, until upstream exposes credentials to actions. The judge maps over the
-// rules output's chunks, one System One call each. Each gate branch evaluates, executes and mirrors on its own: a live run never
+// rules output's chunks, one System One call each; a second map asks focused's file questions only for the items it failed,
+// and makes no call otherwise. Each gate branch evaluates, executes and mirrors on its own: a live run never
 // hands a skipped step's output to a selector, so a join after the gate could not read the judge when it was skipped.
 export function triageSteps() {
   return {
@@ -28,7 +32,9 @@ export function triageSteps() {
     rules: action({ handler: "rules", input: replyOf("facts"), after: ["facts"] }),
     route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "judge", else: "evaluateRules", after: ["rules"] }),
     judge: map({ over: { from: "steps.rules.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["route"] }),
-    evaluate: action({ handler: "evaluate", input: { merge: [RULED, JUDGED] }, after: ["judge"] }),
+    parts: action({ handler: "parts", input: { merge: [RULED, JUDGED] }, after: ["judge"] }),
+    judgeParts: map({ over: { from: "steps.parts.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["parts"] }),
+    evaluate: action({ handler: "evaluate", input: { merge: [RULED, BOTH_JUDGED] }, after: ["judgeParts"] }),
     execute: step({ agent: executeAgent, input: outputOf("evaluate"), after: ["evaluate"], ...STEP }),
     mirror: step({ agent: mirrorAgent, input: outputOf("evaluate"), after: ["execute"], ...STEP }),
     evaluateRules: action({ handler: "evaluate", input: outputOf("rules"), after: ["route"] }),

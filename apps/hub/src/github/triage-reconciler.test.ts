@@ -132,10 +132,10 @@ function githubAnswer({ id, name }: ToolCall, pr: Record<string, unknown>): Reco
   throw new Error(`unexpected call ${name}`);
 }
 
-/** Every question answered as the change being focused, with `related` the probability it belongs to the change. */
+/** Focused answered as one thing with probability `related`, and no file as a separate change. */
 function focusedAnswers(questions: Array<{ id: string }>, related: number): string {
-  const probabilities = { primary_or_supporting: related, unrelated: (1 - related) / 2, movement_or_superseded: 0, ambiguous: (1 - related) / 2 };
-  return questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: "primary_or_supporting", probabilities, confidence: 0.9 })).join("");
+  const probabilities = { one_thing: related, more_than_one_thing: (1 - related) / 2, cant_tell: (1 - related) / 2 };
+  return questions.map(({ id }) => JSON.stringify(id === "focused" ? { id, type: "choice", choice: "one_thing", probabilities, confidence: 0.9 } : { id, type: "noul", noul: 0.1 })).join("");
 }
 
 /** Runs a trigger mail through the real facts director, rules, a judge answering every chunk, and evaluate, as the workflow does. */

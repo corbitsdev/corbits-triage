@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { PrFacts, PrFileFacts } from "./checks.js";
-import { focusedCandidateId, MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation, type JudgeRequest } from "./quality.js";
+import { patchHunks } from "./hunks.js";
+import { focusedPartRequests, MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation, type JudgeRequest } from "./quality.js";
 
 const SOURCES = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
 
@@ -26,7 +27,7 @@ function facts(files: PrFileFacts[]): PrFacts {
 function compactHunks(count: number, offset = 0): string {
   return Array.from({ length: count }, (_, index) => [
     `@@ -${index + 1} +${index + 1} @@`,
-    `+const value${offset + index} = { name: "Candidate ${offset + index}" };`,
+    `+const value${offset + index} = { name: "Hunk ${offset + index}" };`,
   ].join("\n")).join("\n");
 }
 
@@ -34,11 +35,7 @@ function withinBudget({ state, questions }: JudgeRequest): boolean {
   return questions.length <= MAX_SYSTEM_ONE_QUESTIONS && new TextEncoder().encode(JSON.stringify(state)).byteLength <= MAX_SYSTEM_ONE_STATE_BYTES;
 }
 
-function askedIds(requests: JudgeRequest[]): string[] {
-  return requests.flatMap((request) => request.questions.map((question) => question.id));
-}
-
-test("quality preflight sends the pull request, its hunks and the docs, and points each candidate at its hunk", () => {
+test("quality preflight sends the pull request, its hunks and the docs, and asks focused once about the whole pull request", () => {
   const patch = '@@ -0,0 +1 @@\n+const config = { name: "Visible 設定" };';
   const { requests, judgeError } = prepareQualityEvaluation({
     ...facts([{ path: "bun.lock", patch: "@@ -1 +1 @@\n-a\n+b" }, { path: "src/config.ts", status: "modified", patch }]),
@@ -59,33 +56,84 @@ test("quality preflight sends the pull request, its hunks and the docs, and poin
     },
     repository: { docs: { "README.md": "Run it." } },
   });
-  expect(requests[0]!.questions.map(({ id }) => id)).toEqual(["focused-candidate-001"]);
-  expect(requests[0]!.questions[0]!.instructions).toContain("`pullRequest.files[0].hunks[0]` (Visible 設定)");
+  expect(requests[0]!.questions.map(({ id, type }) => [id, type])).toEqual([["focused", "choice"]]);
+  expect(requests[0]!.questions[0]!.instructions).toContain("one thing, or more than one thing");
 });
 
-test("quality preflight splits files in order across requests under the state budget and asks every candidate once against its own file", () => {
+test("quality preflight splits files in order across requests under the state budget and asks focused about each request's slice", () => {
+  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "tests" as const, group: "code-vs-ci" as const }] };
   const files = Array.from({ length: 30 }, (_, index) => ({
     path: `src/file${index}.ts`,
     patch: [`@@ -1 +1,40 @@`, `+export const file${index} = 1;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(12)}${line}`)].join("\n"),
   }));
-  const evaluation = prepareQualityEvaluation(facts(files), SOURCES);
+  const evaluation = prepareQualityEvaluation(facts(files), sources);
   expect(evaluation.judgeError).toBeUndefined();
   expect(evaluation.requests.length).toBeGreaterThan(1);
   expect(evaluation.requests.every(withinBudget)).toBe(true);
-  expect(evaluation.requests.flatMap((request) => request.state.pullRequest.files.map((file) => file.path))).toEqual(files.map((file) => file.path));
-  expect(askedIds(evaluation.requests)).toEqual(files.map((_, index) => focusedCandidateId(index)));
-  for (const { state, questions } of evaluation.requests) {
-    for (const question of questions) {
-      const candidate = evaluation.candidates[Number(question.id.slice(-3)) - 1]!;
-      const file = state.pullRequest.files.findIndex((f) => f.path === candidate.path);
-      expect(question.instructions).toContain(`pullRequest.files[${file}].hunks[0]`);
-    }
-  }
-  expect(prepareQualityEvaluation(facts(files), SOURCES)).toEqual(evaluation);
+  const held = evaluation.requests.map((request) => request.state.pullRequest.files.map((file) => file.path));
+  expect(held.flat()).toEqual(files.map((file) => file.path));
+  expect(evaluation.requests.map((request) => request.questions.filter((question) => question.type === "choice").map((question) => question.id))).toEqual(held.map((_, index) => [`focused-slice-${String(index + 1).padStart(3, "0")}`]));
+  expect(Object.values(evaluation.focused!.slices)).toEqual(held);
+  expect(evaluation.focused!.unread).toEqual([]);
+  expect(prepareQualityEvaluation(facts(files), sources)).toEqual(evaluation);
 });
 
-test("quality preflight asks custom questions in the first request and file questions with their file, splitting at the question cap", () => {
-  const custom = Array.from({ length: 57 }, (_, index) => ({ id: `custom-${index + 1}`, name: `Check ${index + 1}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
+test("quality preflight shows the whole-pull-request question every file of a wide pull request of small files", () => {
+  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }, { id: "tests" as const, group: "code-vs-ci" as const }] };
+  const files = Array.from({ length: 120 }, (_, index) => ({ path: `src/file${index}.ts`, patch: compactHunks(1, index) }));
+  const evaluation = prepareQualityEvaluation(facts(files), sources);
+  expect(evaluation.requests).toHaveLength(1);
+  expect(evaluation.requests[0]!.state.pullRequest.files).toHaveLength(120);
+  expect(evaluation.focused).toEqual({ slices: { focused: files.map((file) => file.path) }, unread: [], parts: {} });
+});
+
+test("quality preflight does not ask focused when only generated files changed", () => {
+  const evaluation = prepareQualityEvaluation(facts([{ path: "bun.lock", patch: "@@ -1 +1 @@\n-a\n+b" }]), SOURCES);
+  expect(evaluation).toEqual({ plan: {}, requests: [] });
+});
+
+test("quality preflight never lets the changed paths crowd out the diff, and says how large metadata over the budget is", () => {
+  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }, { id: "tests" as const, group: "code-vs-ci" as const }] };
+  const files = Array.from({ length: 3_000 }, (_, index) => ({ path: `packages/area-${index % 40}/src/module-${index}/file-${index}.ts`, additions: 1, deletions: 0, patch: compactHunks(1, index) }));
+  const evaluation = prepareQualityEvaluation({ ...facts(files), paths: files.map((file) => file.path), docs: { "README.md": "d".repeat(24_000) } }, sources);
+  expect(evaluation.judgeError).toBeUndefined();
+  expect(evaluation.requests.every(withinBudget)).toBe(true);
+  const { paths, directories } = evaluation.requests[0]!.state.pullRequest;
+  expect(paths).toHaveLength(200);
+  expect(Object.values(directories!).reduce((total, row) => total + row.files, 0)).toBe(3_000);
+  expect(new TextEncoder().encode(JSON.stringify(directories)).byteLength).toBeLessThanOrEqual(8 * 1024);
+  expect(Object.values(evaluation.focused!.slices).flat()).toHaveLength(3_000);
+
+  const tooLarge = prepareQualityEvaluation({ ...facts(files.slice(0, 1)), docs: { "README.md": "d".repeat(100_000) } }, SOURCES);
+  expect(tooLarge).toMatchObject({ requests: [], judgeError: "pull request too large for the decision model (98 KB)" });
+});
+
+test("quality preflight shows focused a hunk too large for any request in pieces cut at line ends", () => {
+  const lines = Array.from({ length: 1_500 }, (_, index) => `+const value${index} = "${"x".repeat(20)}";`);
+  const patch = ["@@ -0,0 +1,1500 @@", ...lines].join("\n");
+  const evaluation = prepareQualityEvaluation({ ...facts([{ path: "src/big.ts", status: "added", additions: 1_500, deletions: 0, patch }]), docs: { "README.md": "d".repeat(40_000) } }, SOURCES);
+  expect(evaluation.requests.length).toBeGreaterThan(1);
+  expect(evaluation.requests.every(withinBudget)).toBe(true);
+  expect(evaluation.requests.flatMap((request) => request.state.pullRequest.files.flatMap((file) => file.hunks)).join("\n")).toBe(patch);
+  expect(evaluation.focused!.unread).toEqual([]);
+});
+
+test("focused's follow-up asks a failing slice's request again, one question per file it holds, at most 30 in all", () => {
+  const files = Array.from({ length: 60 }, (_, index) => ({
+    path: `src/file${index}.ts`,
+    patch: [`@@ -1 +1,40 @@`, `+export const file${index} = 1;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(12)}${line}`)].join("\n"),
+  }));
+  const { focused, requests } = prepareQualityEvaluation(facts(files), SOURCES);
+  const [, second] = Object.keys(focused!.slices) as [string, string];
+  const parts = focusedPartRequests(requests, [second]);
+  expect(parts.requests.map((request) => request.state)).toEqual([requests[1]!.state]);
+  expect(Object.values(parts.asked)).toEqual(focused!.slices[second]);
+  expect(parts.requests[0]!.questions.map((question) => question.instructions)).toEqual(focused!.slices[second]!.map((_, index) => expect.stringContaining(`\`pullRequest.files[${index}]\``)));
+  expect(Object.keys(focusedPartRequests(requests, Object.keys(focused!.slices)).asked)).toHaveLength(30);
+});
+
+test("quality preflight asks whole pull request questions in the first request and file questions with their file, splitting at the question cap", () => {
+  const custom = Array.from({ length: 253 }, (_, index) => ({ id: `custom-${index + 1}`, name: `Check ${index + 1}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
   const sources = {
     quality: [
       { id: "focused" as const, group: "pull-request" as const },
@@ -94,30 +142,27 @@ test("quality preflight asks custom questions in the first request and file ques
     ],
     custom,
   };
-  const evaluation = prepareQualityEvaluation(facts([{ path: "src/a.ts", patch: compactHunks(150) }, { path: "src/b.ts", patch: compactHunks(50, 150) }]), sources);
+  const evaluation = prepareQualityEvaluation(facts([{ path: "src/a.ts", patch: compactHunks(2) }, { path: "src/b.ts", patch: compactHunks(2, 2) }]), sources);
   expect(evaluation.judgeError).toBeUndefined();
   const [first, second, ...rest] = evaluation.requests.map((request) => request.questions.map((question) => question.id));
-  expect(first).toEqual([...custom.map((row) => row.id), "tests-file-001", "docs-file-001", ...Array.from({ length: 150 }, (_, index) => focusedCandidateId(index))]);
-  expect(second).toEqual(["tests-file-002", "docs-file-002", ...Array.from({ length: 50 }, (_, index) => focusedCandidateId(150 + index))]);
+  expect(first).toEqual([...custom.map((row) => row.id), "tests-file-001", "docs-file-001", "focused-slice-001"]);
+  expect(second).toEqual(["tests-file-002", "docs-file-002", "focused-slice-002"]);
   expect(rest).toEqual([]);
+  expect(evaluation.requests.every(withinBudget)).toBe(true);
   expect(evaluation.requests[1]!.state.pullRequest.files.map((file) => file.path)).toEqual(["src/b.ts"]);
 });
 
-test("quality preflight keeps the leading hunks of a file too large for one request and leaves the rest without evidence", () => {
+test("quality preflight shows focused a file too large for one request in slices of its hunks", () => {
   const patch = Array.from({ length: 20 }, (_, index) => `@@ -${index + 1} +${index + 1} @@\n+// ${"設".repeat(3_000)}`).join("\n");
   const evaluation = prepareQualityEvaluation(facts([{ path: "src/wide.ts", patch }]), SOURCES);
   expect(evaluation.judgeError).toBeUndefined();
-  expect(evaluation.requests).toHaveLength(1);
-  const [request] = evaluation.requests as [JudgeRequest];
-  expect(withinBudget(request)).toBe(true);
-  const [file] = request.state.pullRequest.files;
-  expect(file?.truncated).toBe(true);
-  const kept = file!.hunks.length;
-  expect(kept).toBeGreaterThan(0);
-  expect(kept).toBeLessThan(20);
-  expect(file!.hunks).toEqual(evaluation.candidates.slice(0, kept).map((candidate) => candidate.evidence));
-  expect(evaluation.candidates.slice(kept).every((candidate) => candidate.evidence === "")).toBe(true);
-  expect(askedIds(evaluation.requests)).toEqual(Array.from({ length: kept }, (_, index) => focusedCandidateId(index)));
+  expect(evaluation.requests.length).toBeGreaterThan(1);
+  expect(evaluation.requests.every(withinBudget)).toBe(true);
+  const parts = evaluation.requests.map((request) => request.state.pullRequest.files[0]!);
+  expect(parts.flatMap((part) => part.hunks)).toEqual(patchHunks(patch));
+  expect(parts.slice(1).every((part) => part.continued)).toBe(true);
+  expect(Object.keys(evaluation.focused!.slices)).toHaveLength(parts.length);
+  expect(evaluation.focused!.unread).toEqual([]);
 });
 
 test("quality preflight gives the contribution rules only to requests that ask custom checks, in place of their copies in the docs", () => {
