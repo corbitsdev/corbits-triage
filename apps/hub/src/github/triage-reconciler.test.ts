@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type PrTriageRow } from "@corbits/triage-contracts";
-import { DEFAULT_RECONCILE_POLICY, type OpenPr } from "./reconcile-plan.js";
+import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
-import { TriageStateConflictError } from "./triage-state-store.js";
+import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 import { createRunTriggerDeliverer, type RunTriggerMaterialize } from "@corbits/webhooks";
 import { readyMaterializer, type LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
@@ -12,6 +12,7 @@ import { createRunRecorder } from "./run-recorder.js";
 import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
 import type { RecordedVerdict } from "./verdict-record-store.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
+import { markBaseMoved } from "./triage-queue.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
 import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
@@ -25,6 +26,11 @@ const LONG_AGO = "2026-10-07T00:00:00.000Z";
 const VERSION = "0.1.0-sha-11111111";
 const LIVE = deployment("run_live", new Date(LONG_AGO));
 const MINUTE = 60_000;
+const BASE_MOVE_WINDOW = DEFAULT_RECONCILE_POLICY.baseMoveWindowMs / MINUTE;
+
+function at(minutes: number): Date {
+  return new Date(NOW.getTime() + minutes * MINUTE);
+}
 let failNextList = false;
 
 function deployment(runId: string, createdAt: Date): LiveDeployment {
@@ -234,21 +240,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       };
     },
     observeTenant: observer.observe,
-    store: {
-      async load(_tenantId, repo) {
-        return { rows: saved.get(repo) ?? [], version: { artifactId: `art_${repo}`, version: 1 } };
-      },
-      async save(_tenantId, repo, rows, expected) {
-        if (refusals > 0) {
-          refusals -= 1;
-          options.onRefusedSave?.(repo);
-          throw new TriageStateConflictError(repo);
-        }
-        saved.set(repo, rows);
-        options.onSave?.(repo, rows);
-        return expected;
-      },
-    },
+    store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
       return { status: "ok", pack: emptyPack(repo) };
     },
@@ -262,11 +254,28 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     now,
     log: (entry) => logged.push(entry),
   });
+  function store(): TriageStateStore {
+    return {
+      async load(_tenantId, repo) {
+        return { rows: saved.get(repo) ?? [], version: { artifactId: `art_${repo}`, version: 1 } };
+      },
+      async save(_tenantId, repo, rows, expected) {
+        if (refusals > 0) {
+          refusals -= 1;
+          options.onRefusedSave?.(repo);
+          throw new TriageStateConflictError(repo);
+        }
+        saved.set(repo, rows);
+        options.onSave?.(repo, rows);
+        return expected;
+      },
+    };
+  }
   function sweep(): void {
     const stopped = deployments.filter((live) => live.cancelling);
     for (const live of stopped) deployments.splice(deployments.indexOf(live), 1);
   }
-  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, dos, verdicts };
+  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, dos, verdicts, store: store() };
 }
 
 function settled(from: number, count: number): Record<string, WorkflowRunEvent[]> {
@@ -404,6 +413,127 @@ describe("triage reconciler", () => {
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([1]);
     expect(logged.find((entry) => entry["msg"] === "triage_requeued")?.["reason"]).toBe("degraded: facts interrupted: abort");
+  });
+
+  test("a merge triages the repository's other settled heads again, not the merged one or another repository's", async () => {
+    const OTHER = "acme/gadgets";
+    const runs: Record<string, WorkflowRunEvent[]> = {
+      ...settled(1, 3),
+      run_other: [startedBy(stockTriggerMail({ kind: "pr", repo: OTHER, prNumber: 4, headSha: "sha4" }), "2026-10-07T01:00:00.000Z"), rendered(current(4)), completed],
+    };
+    let now = NOW;
+    const open = { [REPO]: heads(1, 3), [OTHER]: [head(4)] };
+    const { reconcile, delivered, saved, logged, store } = harness({ [repoKey(LIVE.runId)]: runs }, open, { now: () => now });
+    await reconcile();
+    expect(delivered).toEqual([]);
+
+    now = at(1);
+    open[REPO] = [head(1), head(3)];
+    expect(await markBaseMoved(store, TENANT_ID, REPO, 2, now, DEFAULT_RECONCILE_POLICY)).toBe(2);
+    now = at(2);
+    await reconcile();
+    expect(mailedHeads(delivered)).toEqual([[REPO, 1], [REPO, 3]]);
+    expect(logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"])).toEqual(["base branch moved", "base branch moved"]);
+    expect(saved.get(OTHER)?.[0]).toMatchObject({ status: "triaged" });
+
+    runs["run_recheck"] = [startedBatch([1, 3], at(2).toISOString()), rendered({ items: [current(1), current(3)] }), completed];
+    now = at(3);
+    await reconcile();
+    expect(saved.get(REPO)?.map((row) => [row.number, row.status, row.runId])).toEqual([[1, "triaged", "run_recheck"], [3, "triaged", "run_recheck"]]);
+  });
+
+  test("a head in flight when the base branch moves runs again once its run ends and its base move window has passed", async () => {
+    const runs: Record<string, WorkflowRunEvent[]> = { run_1: [started(1, at(-1).toISOString())], run_3: [started(3), rendered(current(3)), completed] };
+    let now = NOW;
+    const { reconcile, delivered, saved, store } = harness({ [repoKey(LIVE.runId)]: runs }, [head(1), head(3)], { now: () => now });
+    await reconcile();
+    expect(saved.get(REPO)?.map((row) => row.status)).toEqual(["running", "triaged"]);
+
+    now = at(1);
+    expect(await markBaseMoved(store, TENANT_ID, REPO, 7, now, DEFAULT_RECONCILE_POLICY)).toBe(1);
+    now = at(2);
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([3]);
+    expect(saved.get(REPO)?.map((row) => row.status)).toEqual(["running", "queued"]);
+
+    // #3's run starts before a second merge and ends after it; #1's run outlives both.
+    runs["run_3b"] = [started(3, at(2.5).toISOString())];
+    now = at(4);
+    expect(await markBaseMoved(store, TENANT_ID, REPO, 8, now, DEFAULT_RECONCILE_POLICY)).toBe(0);
+    now = at(5);
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([3]);
+    expect(saved.get(REPO)?.map((row) => row.status)).toEqual(["running", "running"]);
+
+    runs["run_1"]!.push(rendered(current(1)), completed);
+    runs["run_3b"]!.push(rendered(current(3)), completed);
+    now = at(6);
+    await reconcile();
+    // #1 was never queued by the hub, so it goes at once; #3, queued at minute 2, waits out its window.
+    expect(mailedNumbers(delivered)).toEqual([3, 1]);
+
+    runs["run_1b"] = [started(1, at(6).toISOString()), rendered(current(1)), completed];
+    now = at(1 + BASE_MOVE_WINDOW);
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([3, 1]);
+    now = at(2 + BASE_MOVE_WINDOW);
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([3, 1, 3]);
+
+    runs["run_3c"] = [started(3, now.toISOString()), rendered(current(3)), completed];
+    now = at(3 + BASE_MOVE_WINDOW);
+    await reconcile();
+    expect(saved.get(REPO)?.map((row) => [row.number, row.status, row.runId])).toEqual([[1, "triaged", "run_1b"], [3, "triaged", "run_3c"]]);
+  });
+
+  test("a merge re-checks a head that failed past its attempts, and counts only the heads it makes due", async () => {
+    let now = NOW;
+    const { reconcile, delivered, saved, store } = harness({}, [head(1), head(2)], { now: () => now });
+    const capped: PrTriageRow = { number: 1, headSha: "sha1", status: "failed", attempts: DEFAULT_RECONCILE_POLICY.maxAttempts, error: "degraded: facts interrupted: abort", firstSeenAt: LONG_AGO, queuedAt: LONG_AGO, updatedAt: LONG_AGO };
+    const backingOff: PrTriageRow = { ...capped, number: 2, headSha: "sha2", attempts: 1, queuedAt: NOW.toISOString() };
+    saved.set(REPO, [capped, backingOff]);
+    await reconcile();
+    expect(delivered).toEqual([]);
+    now = at(1);
+    expect(await markBaseMoved(store, TENANT_ID, REPO, 9, now, DEFAULT_RECONCILE_POLICY)).toBe(1);
+    now = at(2);
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([1]);
+  });
+
+  test("merges inside a head's base move window re-check it once when the window closes, not once per merge", async () => {
+    const runs = settled(1, 2);
+    let now = NOW;
+    const { reconcile, delivered, store } = harness({ [repoKey(LIVE.runId)]: runs }, heads(1, 2), { now: () => now });
+    await reconcile();
+    now = at(1);
+    await markBaseMoved(store, TENANT_ID, REPO, 9, now, DEFAULT_RECONCILE_POLICY);
+    now = at(2);
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([1, 2]);
+
+    runs["run_recheck"] = [startedBatch([1, 2], at(2).toISOString()), rendered({ items: [current(1), current(2)] }), completed];
+    for (const minute of [4, 6, 8, 10, 12]) {
+      now = at(minute);
+      await markBaseMoved(store, TENANT_ID, REPO, minute, now, DEFAULT_RECONCILE_POLICY);
+      now = at(minute + 1);
+      await reconcile();
+    }
+    expect(delivered).toHaveLength(1);
+    now = at(2 + BASE_MOVE_WINDOW);
+    await reconcile();
+    expect(delivered).toHaveLength(2);
+    expect(mailedNumbers(delivered)).toEqual([1, 2, 1, 2]);
+  });
+
+  test("a run after a base move settles its head though the sidecar clock trails the hub's by under the skew allowance", () => {
+    const moved = NOW.getTime();
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const row: PrTriageRow = { number: 7, headSha: "abc", status: "queued", attempts: 1, firstSeenAt: LONG_AGO, queuedAt: iso(moved + 50), staleBefore: iso(moved), updatedAt: iso(moved + 50) };
+    const run: ObservedRun = { runId: "run_after", status: "completed", startedAt: iso(moved + 50 - 500) };
+    const pr = { number: 7, headSha: "abc", updatedAt: LONG_AGO, draft: false };
+    const plans = planTenant({ repos: [{ name: REPO, prs: [pr], rows: [row] }], runs: new Map([[REPO, new Map([["7@abc", [run]]])]]), now: at(1), policy: DEFAULT_RECONCILE_POLICY, workflowVersion: undefined });
+    expect(plans.get(REPO)!.rows[0]!.status).toBe("triaged");
   });
 
   test("heads settled under another workflow version than the live deployment's, a legacy integer included, are queued again", async () => {
