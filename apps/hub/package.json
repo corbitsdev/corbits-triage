@@ -33,9 +33,11 @@
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:",
     "hono": "catalog:",
-    "hono-openapi": "^1.2.0"
+    "hono-openapi": "^1.2.0",
+    "nodemailer": "^10.1.0"
   },
   "devDependencies": {
-    "@intx/harness": "workspace:*"
+    "@intx/harness": "workspace:*",
+    "@types/nodemailer": "^8.0.2"
   }
 }

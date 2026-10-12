@@ -26,6 +26,7 @@ import {
   type HubApproval,
   type HubRun,
   type Membership,
+  type MyInvitation,
   type PortalSnapshot,
   type RunLog,
 } from "./hub-api.ts";
@@ -332,12 +333,13 @@ const membership = (tenantSlug: string, status: Membership["status"]): Membershi
 });
 
 /** Memberships newest first, as stock /api/me/principals lists them. */
-function membershipHub(memberships: Membership[]) {
+function membershipHub(memberships: Membership[], linkInvitations: MyInvitation[] = []) {
   const created: unknown[] = [];
   const transport: Transport = {
     fetch: async (method, path, body) => {
       if (method === "GET" && path === "/api/me") return { id: "user", name: "ada", email: "ada@example.com" } as never;
       if (method === "GET" && path.startsWith("/api/me/principals")) return { data: memberships, nextCursor: null } as never;
+      if (method === "GET" && path === "/api/integrations/my-invitations") return { invitations: linkInvitations } as never;
       if (method === "POST" && path === "/api/tenants") {
         created.push(body);
         memberships.unshift(membership("corbits-triage-ada-user", "active"));
@@ -360,6 +362,13 @@ describe("workspace resolution", () => {
   test("an invitee gets their pending invitations, not a new workspace", async () => {
     const hub = membershipHub([membership("corbits-triage-team", "invited"), membership("other-app", "active")]);
     expect(await ensureWorkspace(hub.transport, null)).toEqual({ kind: "invited", invitations: [{ tenantId: "t-corbits-triage-team", name: "corbits-triage-team", slug: "corbits-triage-team" }] });
+    expect(hub.created).toEqual([]);
+  });
+
+  test("a user invited by email link gets the invite, not a new workspace", async () => {
+    const invite = { id: "inv", tenantId: "t-team", tenantName: "Team", tenantSlug: "corbits-triage-team", expiresAt: "2026-10-19T00:00:00.000Z" };
+    const hub = membershipHub([], [invite]);
+    expect(await ensureWorkspace(hub.transport, null)).toEqual({ kind: "invited", invitations: [{ tenantId: "t-team", name: "Team", slug: "corbits-triage-team", byLink: true }] });
     expect(hub.created).toEqual([]);
   });
 

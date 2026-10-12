@@ -30,6 +30,9 @@ const HubEnvSchema = type({
   "GOOGLE_CLIENT_ID?": "string",
   "GOOGLE_CLIENT_SECRET?": "string",
   "AUTH_ALLOWED_EMAILS?": "string",
+  "SMTP_URL?": type("string").narrow((value, ctx) =>
+    /^smtps?:\/\/[^\s]+$/.test(value) || ctx.mustBe("an smtp:// or smtps:// URL")),
+  "EMAIL_FROM?": "string",
   "GITHUB_API_ORIGIN?": "string.url",
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
@@ -178,6 +181,22 @@ export function signInSettings(env: HubEnv): SignInSettings {
     ...(clientId !== undefined && clientSecret !== undefined && { google: { clientId, clientSecret } }),
     ...(allowedEmails !== undefined && { allowedEmails }),
   };
+}
+
+export type EmailSettings = { smtpUrl: string; from: string };
+
+/** Unset means invites are not emailed; the portal shows the link to copy instead. */
+export function emailSettings(env: HubEnv): EmailSettings | undefined {
+  const { SMTP_URL: smtpUrl, EMAIL_FROM: from } = env;
+  if (smtpUrl === undefined && from !== undefined) throw new Error("EMAIL_FROM requires SMTP_URL");
+  if (smtpUrl !== undefined && from === undefined) throw new Error("SMTP_URL requires EMAIL_FROM");
+  if (smtpUrl === undefined || from === undefined) return undefined;
+  return { smtpUrl, from };
+}
+
+/** Where invite links point: the portal's own origin when it is hosted apart from the hub. */
+export function inviteLinkOrigin(env: HubEnv): string {
+  return new URL(env.PORTAL_ORIGIN ?? env.BETTER_AUTH_BASE_URL).origin;
 }
 
 export type InterchangeSettings = {
