@@ -2,8 +2,9 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { createDB, dropSchema, runMigrations, schema } from "@intx/db";
-import { createDoRunStore, migrateDoRuns, type DoClaim } from "./do-run-store.js";
+import { createDB, runMigrations, schema } from "@intx/db";
+import { migrateTriageTables } from "../triage-db.js";
+import { createDoRunStore, type DoClaim } from "./do-run-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const CLAIM: DoClaim = {
@@ -12,13 +13,16 @@ const CLAIM: DoClaim = {
 };
 
 test("PostgreSQL: one claim per Do effect; a failed or expired claim is taken again; a recorded run settles only a new or failed row", async () => {
-  const testSchema = `corbits_dos_${randomBytes(6).toString("hex")}`;
+  const database = `corbits_dos_${randomBytes(6).toString("hex")}`;
+  const admin = createDB(TEST_DB);
+  await admin.db.execute(sql.raw(`create database ${database}`));
+  const config = { ...TEST_DB, database };
   let handle: ReturnType<typeof createDB> | undefined;
   try {
-    await runMigrations(TEST_DB, { schema: testSchema });
-    handle = createDB({ ...TEST_DB, schema: testSchema });
+    await runMigrations(config, { schema: "public" });
+    handle = createDB(config);
     const db = handle.db;
-    await migrateDoRuns(db);
+    await migrateTriageTables(db, "public");
     await db.insert(schema.tenant).values({ id: "tnt_dos", name: "Dos", slug: "dos", domain: "dos.test" });
     const store = createDoRunStore(db);
 
@@ -38,7 +42,7 @@ test("PostgreSQL: one claim per Do effect; a failed or expired claim is taken ag
 
     const stale = await store.claim({ ...CLAIM, effectId: "e3" });
     expect(await store.claim({ ...CLAIM, effectId: "e3" })).toBeUndefined();
-    await db.execute(sql`UPDATE corbits_triage_do_run SET updated_at = now() - interval '3 minutes' WHERE effect_id = 'e3'`);
+    await db.execute(sql`UPDATE corbits_triage.do_run SET updated_at = now() - interval '3 minutes' WHERE effect_id = 'e3'`);
     expect(await store.claim({ ...CLAIM, effectId: "e3" })).toMatchObject({ status: "running", attempts: 2 });
     expect(await store.settle(stale!, { status: "done", result: null })).toBeUndefined();
 
@@ -55,6 +59,7 @@ test("PostgreSQL: one claim per Do effect; a failed or expired claim is taken ag
     expect(await store.read("tnt_dos", "w2")).toMatchObject({ status: "done", runId: "run_2", error: null });
   } finally {
     await handle?.close();
-    await dropSchema(TEST_DB, { schema: testSchema });
+    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
+    await admin.close();
   }
 }, 120_000);
