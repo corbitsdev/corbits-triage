@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { packPackage, type PackedTarball } from "../../tooling/pack-tarball.ts";
+import { contentVersion, packPackage, type PackedTarball } from "../../tooling/pack-tarball.ts";
 import pkg from "./package.json";
 
 const PACKAGE_DIR = import.meta.dir;
@@ -22,10 +22,8 @@ export async function buildEntry(outFile = path.join(PACKAGE_DIR, ENTRY)): Promi
   return outFile;
 }
 
-export function packTool(entryFile: string, outDir: string): Promise<PackedTarball> {
+export async function packTool(entryFile: string, outDir: string): Promise<PackedTarball> {
   const manifest = {
-    name: pkg.name,
-    version: pkg.version,
     description: pkg.description,
     license: pkg.license,
     type: "module",
@@ -34,7 +32,9 @@ export function packTool(entryFile: string, outDir: string): Promise<PackedTarba
     files: ["dist", "package.json"],
     interchange: { ...pkg.interchange, tools: ENTRY },
   };
-  return packPackage(manifest, { [ENTRY]: entryFile }, outDir);
+  const files = { [ENTRY]: entryFile };
+  const version = await contentVersion(pkg.version, { name: pkg.name, ...manifest }, files);
+  return packPackage({ name: pkg.name, version, ...manifest }, files, outDir);
 }
 
 if (import.meta.main) {

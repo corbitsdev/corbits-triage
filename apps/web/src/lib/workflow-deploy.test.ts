@@ -154,7 +154,7 @@ describe("ensureWorkflows", () => {
   test("refuses to republish a version whose bytes changed, before publishing or deploying anything", async () => {
     const hub = fakeHub({ [INDEX[2]!.filename]: "sha512-other" });
     await expect(ensureWorkflows(hub.transport, "t", OFFERINGS, false, hub.fetchRaw))
-      .rejects.toThrow("@corbits/pr-triage-historical-workflow@0.1.0-sha-bbbbbbbb is already published with different contents. Bump its version.");
+      .rejects.toThrow("@corbits/pr-triage-historical-workflow@0.1.0-sha-bbbbbbbb is already published with different contents; this build did not pack reproducibly.");
     expect(puts(hub.requests)).toEqual([]);
     expect(hub.deployed).toEqual([]);
   });

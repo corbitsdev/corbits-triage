@@ -74,7 +74,7 @@ async function publishPackages(
     const existing = listed.find((tarball) => tarball.filename === entry.filename);
     if (!existing) missing.push(entry);
     else if (existing.integrity !== entry.integrity) {
-      throw new Error(`${entry.name}@${entry.version} is already published with different contents. Bump its version.`);
+      throw new Error(`${entry.name}@${entry.version} is already published with different contents; this build did not pack reproducibly.`);
     }
   }
   for (const entry of missing) {
