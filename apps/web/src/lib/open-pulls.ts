@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useIsRestoring, useQuery, useQueryClient, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { projectQueue, type PrItem } from "./hub-api.ts";
-import type { HandledKind, HandledMark, OpenItem } from "./inbox-view.ts";
+import { repoOf, type HandledKind, type HandledMark, type OpenItem } from "./inbox-view.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
 import { usePortal } from "./portal.tsx";
 import { useRunLogs } from "./run-logs.ts";
@@ -67,6 +67,8 @@ export type Handled = Record<string, HandledEntry | string | null>;
 const HANDLED_PULLS_QUERY_KEY = "handled-pulls";
 /** Held actions can still be undone, so they stay in memory; a pull request moves to the persisted handled map once its send starts. */
 const HELD_PULLS_QUERY_KEY = "held-pulls";
+/** The pull requests acted on from the inbox since the last visit ended; kept in memory and saved with the visit. */
+const ACTED_PULLS_QUERY_KEY = "acted-pulls";
 
 /** Merged and closed pull requests leave every list, not just the inbox. */
 const LEAVING: ReadonlySet<HandledKind | null> = new Set(["merge", "close"]);
@@ -82,6 +84,26 @@ function handledKey(tenantId: string | undefined) {
 
 function heldKey(tenantId: string | undefined) {
   return [HELD_PULLS_QUERY_KEY, tenantId];
+}
+
+function actedKey(tenantId: string | undefined) {
+  return [ACTED_PULLS_QUERY_KEY, tenantId];
+}
+
+function noneActed(): string[] {
+  return [];
+}
+
+/** Keys of the pull requests acted on since the last visit ended, and a way to set them when a visit starts or carries on. */
+export function useActedPulls(): { acted: string[]; replace: (keys: string[]) => void } {
+  const { snapshot } = usePortal();
+  const queryClient = useQueryClient();
+  const tenantId = snapshot?.workspace.tenantId;
+  const { data } = useQuery({ queryKey: actedKey(tenantId), queryFn: noneActed, staleTime: Infinity, gcTime: Infinity });
+  const replace = useCallback(function replaceActed(keys: string[]) {
+    queryClient.setQueryData<string[]>(actedKey(tenantId), keys);
+  }, [queryClient, tenantId]);
+  return { acted: data ?? [], replace };
 }
 
 /** Kept in IndexedDB, so an approved or commented pull request stays out of the inbox after a reload. */
@@ -122,10 +144,6 @@ export function handledMark(handled: Handled, item: PrItem): HandledMark | null 
   const entry = handled[item.key];
   if (entry === null || typeof entry === "string") return entry === item.runId ? { kind: null } : null;
   return isNewerActivity(entry, item) || isOtherHead(entry, item) ? null : { kind: entry.kind };
-}
-
-function repoOf(key: string): string {
-  return key.slice(0, key.lastIndexOf("#"));
 }
 
 /**
@@ -175,10 +193,12 @@ export function useHandledPulls(): HandledPulls {
     function markHandled(item: PrItem, kind: HandledKind) {
       queryClient.setQueryData<Handled>(handledKey(tenantId), (handled) => withPull(handled, item, kind));
       queryClient.setQueryData<Handled>(heldKey(tenantId), (held) => withoutPull(held, item));
+      queryClient.setQueryData<string[]>(actedKey(tenantId), (acted = []) => (acted.includes(item.key) ? acted : [...acted, item.key]));
     }
     function release(item: PrItem) {
       queryClient.setQueryData<Handled>(heldKey(tenantId), (held) => withoutPull(held, item));
       queryClient.setQueryData<Handled>(handledKey(tenantId), (handled) => withoutPull(handled, item));
+      queryClient.setQueryData<string[]>(actedKey(tenantId), (acted = []) => acted.filter((key) => key !== item.key));
     }
     function sent(kind: HandledKind) {
       if (LEAVING.has(kind)) void queryClient.invalidateQueries({ queryKey: [OPEN_PULLS_QUERY_KEY, tenantId] });

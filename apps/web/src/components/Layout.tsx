@@ -4,9 +4,10 @@ import { initialsOf, listCounts } from "../lib/inbox-view.ts";
 import { useSignOutAfterSending } from "../lib/held-inbox.tsx";
 import { useOpenItems, useOpenPullsUnanswered } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
+import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { useSession } from "../lib/session.tsx";
-import { GearIcon, InboxIcon, ListIcon, PersonIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { GearIcon, InboxIcon, ListIcon, PersonIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function UserBlock() {
   const { session } = useSession();
@@ -60,7 +61,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const counts = useMemo(() => listCounts(open, enabled), [open, enabled]);
   const openPullsUnanswered = useOpenPullsUnanswered();
   const path = location.pathname;
-  const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : "inbox";
+  const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : path.startsWith("/pulse") ? "pulse" : "inbox";
   const needsYouActive = path.startsWith("/inbox") || path.startsWith("/triage");
   const allOpenActive = path.startsWith("/open");
   const firstTimersActive = path.startsWith("/first-timers");
@@ -75,61 +76,67 @@ export default function Layout({ children }: { children: ReactNode }) {
   }, [room]);
 
   return (
-    <div className="app shell">
-      <a className="skip" href="#main">
-        Skip to content
-      </a>
-      <nav className="rail" aria-label="Main">
-        <Link className="brand" to="/inbox">
-          <img src="/triage-logo.svg" alt="Corbits" />
-          Triage
-        </Link>
-        <h3>Inbox</h3>
-        <Link className="nav-a" to="/inbox" aria-current={needsYouActive ? "true" : undefined}>
-          <InboxIcon />
-          Needs you
-          {openPullsUnanswered ? null : <span className="n">{counts["needs-you"]}</span>}
-        </Link>
-        <Link className="nav-a" to="/open" aria-current={allOpenActive ? "true" : undefined}>
-          <ListIcon />
-          All open
-          {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
-        </Link>
-        <Link className="nav-a" to="/first-timers" aria-current={firstTimersActive ? "true" : undefined}>
-          <PersonIcon />
-          First-timers
-          {openPullsUnanswered ? null : <span className="n">{counts["first-timers"]}</span>}
-        </Link>
-        <span className="grow" />
-        <UserBlock />
-      </nav>
-      {ownPanels ? children : (
-        <div className={room === "pr" ? "stage has-sliver" : "stage"} id="stage">
-          {children}
-        </div>
-      )}
-      <nav className="mobile-nav" aria-label="Mobile">
-        <NavLink to="/inbox" className={needsYouActive ? "active" : undefined}>
-          <InboxIcon />
-          Needs you
-        </NavLink>
-        <NavLink to="/open" className={allOpenActive ? "active" : undefined}>
-          <ListIcon />
-          All open
-        </NavLink>
-        <NavLink to="/first-timers" className={firstTimersActive ? "active" : undefined}>
-          <PersonIcon />
-          First-timers
-        </NavLink>
-        <NavLink to="/repositories">
-          <RepoIcon />
-          Repos
-        </NavLink>
-        <NavLink to="/settings">
-          <GearIcon />
-          Settings
-        </NavLink>
-      </nav>
-    </div>
+    <PulseProvider open={open} path={path}>
+      <div className="app shell">
+        <a className="skip" href="#main">
+          Skip to content
+        </a>
+        <nav className="rail" aria-label="Main">
+          <Link className="brand" to="/inbox">
+            <img src="/triage-logo.svg" alt="Corbits" />
+            Triage
+          </Link>
+          <Link className="nav-a" to="/pulse" aria-current={room === "pulse" ? "true" : undefined}>
+            <PulseIcon />
+            Pulse
+          </Link>
+          <h3>Inbox</h3>
+          <Link className="nav-a" to="/inbox" aria-current={needsYouActive ? "true" : undefined}>
+            <InboxIcon />
+            Needs you
+            {openPullsUnanswered ? null : <span className="n">{counts["needs-you"]}</span>}
+          </Link>
+          <Link className="nav-a" to="/open" aria-current={allOpenActive ? "true" : undefined}>
+            <ListIcon />
+            All open
+            {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
+          </Link>
+          <Link className="nav-a" to="/first-timers" aria-current={firstTimersActive ? "true" : undefined}>
+            <PersonIcon />
+            First-timers
+            {openPullsUnanswered ? null : <span className="n">{counts["first-timers"]}</span>}
+          </Link>
+          <span className="grow" />
+          <UserBlock />
+        </nav>
+        {ownPanels ? children : (
+          <div className={room === "pr" ? "stage has-sliver" : "stage"} id="stage">
+            {children}
+          </div>
+        )}
+        <nav className="mobile-nav" aria-label="Mobile">
+          <NavLink to="/inbox" className={needsYouActive ? "active" : undefined}>
+            <InboxIcon />
+            Needs you
+          </NavLink>
+          <NavLink to="/open" className={allOpenActive ? "active" : undefined}>
+            <ListIcon />
+            All open
+          </NavLink>
+          <NavLink to="/first-timers" className={firstTimersActive ? "active" : undefined}>
+            <PersonIcon />
+            First-timers
+          </NavLink>
+          <NavLink to="/repositories">
+            <RepoIcon />
+            Repos
+          </NavLink>
+          <NavLink to="/settings">
+            <GearIcon />
+            Settings
+          </NavLink>
+        </nav>
+      </div>
+    </PulseProvider>
   );
 }
