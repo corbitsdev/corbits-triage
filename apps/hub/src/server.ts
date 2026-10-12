@@ -63,7 +63,6 @@ import { createTriageStats } from "./github/triage-stats.js";
 import { createTriageTimeline } from "./github/triage-timeline.js";
 import { createRunRecorder } from "./github/run-recorder.js";
 import { createRecordPass, createTenantObserver, createTenantVersions } from "./github/tenant-observer.js";
-import { createVerdictBackfill, migrateVerdictBackfill } from "./github/verdict-backfill.js";
 import { createTriageVerdicts } from "./github/triage-verdicts.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createGithubPrPreview } from "./github/pr-preview.js";
@@ -214,7 +213,6 @@ await migrateGithubManifest(composition.db);
 await migrateRepoEnabledFlag(composition.db);
 await migrateDoRuns(composition.db);
 await migrateVerdictRecords(composition.db);
-await migrateVerdictBackfill(composition.db);
 await migrateInvitations(composition.db);
 const doRunStore = createDoRunStore(composition.db);
 const verdictRecordStore = createVerdictRecordStore(composition.db);
@@ -353,15 +351,6 @@ const recordPass = createRecordPass({
   log: logJson,
 });
 recordLoop = createReconcileLoop(recordPass.pass, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
-const backfillVerdicts = createVerdictBackfill({
-  db: composition.db,
-  runReader: composition.runReader,
-  verdicts: verdictRecordStore,
-  versions: tenantVersions,
-  workflow: prTriageWorkflow.id,
-  now,
-  log: logJson,
-});
 const reconcilePolicy = triageReconcilePolicy(env);
 const reconcileTriage = createTriageReconciler({
   tenants: reconcileTenants,
@@ -597,7 +586,6 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
 
 triageLoop.start();
 recordLoop.start();
-void backfillVerdicts();
 
 console.log(JSON.stringify({
   ts: new Date().toISOString(),

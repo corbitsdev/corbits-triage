@@ -167,3 +167,5 @@ migrations on every start; nothing else is needed.
   permissions until an owner accepts the new ones on GitHub.
 - A hub that ran the build creating `corbits_triage_tenant_migration` can drop
   it: `DROP TABLE IF EXISTS corbits_triage_tenant_migration;`
+- A hub that ran the build creating `corbits_triage_verdict_backfill` can drop
+  it: `DROP TABLE IF EXISTS corbits_triage_verdict_backfill;`
