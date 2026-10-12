@@ -1,9 +1,9 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { DB } from "@intx/db";
 import { schema } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 
-const { credential, grant, role } = schema;
+const { grant, role } = schema;
 
 type Tx = Parameters<Parameters<DB["db"]["transaction"]>[0]>[0];
 
@@ -40,30 +40,3 @@ export async function grantAdminGithub(tx: Tx, tenantId: string, credentialId: s
   await allowRole(tx, tenantId, admin.id, ANY_REVIEW_RESOURCE, APPROVE_ACTION, stamp);
 }
 
-const ADMIN_APPROVE_MIGRATION = "admin-github-approve";
-
-/**
- * Workspaces whose GitHub was set up before admins could approve get the grant once; each is marked done, so a grant the owner
- * removes later stays removed across restarts. GitHub setup still grants on every connect.
- */
-export async function migrateAdminGithubGrants(db: DB["db"]): Promise<void> {
-  await db.execute(sql`
-    CREATE TABLE IF NOT EXISTS corbits_triage_tenant_migration (
-      tenant_id text NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
-      name text NOT NULL,
-      done_at timestamptz NOT NULL DEFAULT now(),
-      PRIMARY KEY (tenant_id, name)
-    )
-  `);
-  const apps = await db.select({ id: credential.id, tenantId: credential.tenantId }).from(credential).where(and(
-    eq(credential.name, "github"),
-    eq(credential.status, "active"),
-    sql`NOT EXISTS (SELECT 1 FROM corbits_triage_tenant_migration m WHERE m.tenant_id = ${credential.tenantId} AND m.name = ${ADMIN_APPROVE_MIGRATION})`,
-  ));
-  for (const app of apps) {
-    await db.transaction(async function grantAdmin(tx) {
-      await grantAdminGithub(tx, app.tenantId, app.id, new Date());
-      await tx.execute(sql`INSERT INTO corbits_triage_tenant_migration (tenant_id, name) VALUES (${app.tenantId}, ${ADMIN_APPROVE_MIGRATION}) ON CONFLICT DO NOTHING`);
-    });
-  }
-}

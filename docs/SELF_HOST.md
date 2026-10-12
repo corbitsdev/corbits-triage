@@ -165,3 +165,5 @@ migrations on every start; nothing else is needed.
 - Merges need Contents: write, and author rules on roles that name teams
   need Members: read. An App created before these were requested keeps its old
   permissions until an owner accepts the new ones on GitHub.
+- A hub that ran the build creating `corbits_triage_tenant_migration` can drop
+  it: `DROP TABLE IF EXISTS corbits_triage_tenant_migration;`
