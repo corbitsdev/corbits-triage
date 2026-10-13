@@ -32,7 +32,7 @@
 
 /* Rail */
 .shell .rail { display: flex; flex-direction: column; gap: 4px; padding: 18px 12px 14px; min-height: 0; overflow: auto; }
-.shell .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; text-decoration: none; padding: 0 8px 12px; color: inherit; }
+.shell .brand { display: flex; align-items: center; padding: 0 8px 12px; }
 .shell .brand img { width: 26px; height: 26px; }
 .shell .ws { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; margin-bottom: 10px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--white); font: inherit; font-size: 14px; font-weight: 600; color: inherit; }
 .shell button.ws { cursor: pointer; }
