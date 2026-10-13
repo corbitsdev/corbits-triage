@@ -339,7 +339,7 @@ async function tenantConfigOf(d: BridgeDeps, tenantId: string): Promise<unknown>
   return (await d.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } }))?.config;
 }
 
-/** A moved default branch can change every other open pull request's conflicts and drift, so they are triaged again; the merged one is not. */
+/** A moved default branch can change every other open pull request's conflicts, so they are triaged again; the merged one is not. */
 async function handleBaseMove(
   d: BridgeDeps,
   log: (entry: Record<string, unknown>) => void,

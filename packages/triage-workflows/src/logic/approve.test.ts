@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ALL_CHECKS, emptyPack, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { ALL_CHECKS, emptyPack, readCheckPack, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import { approvalHeldBy, evaluateActions, heldApprovals } from "./actions.js";
 import { deriveState, type PrFacts } from "./checks.js";
 import { renderVerdict } from "./render.js";
@@ -14,13 +14,10 @@ const facts: PrFacts = {
   state: "open",
   draft: false,
   mergeable: true,
-  baseBehindBy: 0,
   checks: "success",
-  requestedReviewers: 1,
   reviewers: ["alice"],
   reviewedBy: [],
   approvals: 0,
-  openPrs: [],
   labels: [],
   assignees: [],
   paths: ["src/search.ts"],
@@ -31,7 +28,7 @@ const VENDOR: CustomCheck = { id: "custom-1", name: "Vendor", group: "code-vs-ci
 
 const pack: CheckPack = {
   ...emptyPack("acme/widgets"),
-  checks: { draft: { enabled: true }, conflicts: { enabled: true }, ci: { enabled: true } },
+  checks: { conflicts: { enabled: true }, ci: { enabled: true } },
   actions: [{ id: "approve", when: ["opened"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } }],
 };
 
@@ -61,8 +58,14 @@ describe("approving on every check", () => {
     expect(suggested({ ...pack, checks: { ...pack.checks, ci: { enabled: false } } }, { checks })).toEqual(held);
   });
 
+  test("a stored action on draft and CI takes the no branch on a draft with CI green", () => {
+    const wip = { id: "wip", when: ["opened"], checks: ["draft", "ci"], branches: { yes: [{ kind: "approve", automatic: true, target: {} }], no: [{ kind: "labels", automatic: true, target: { from: "list", labels: ["wip"] } }] } };
+    const stored = readCheckPack(JSON.stringify({ ...pack, actions: [wip] }));
+    expect(suggested(stored, { draft: true })).toEqual([expect.objectContaining({ id: "wip", kind: "labels", branch: "no" })]);
+  });
+
   test("a check turned off no longer decides, and a custom check added later must pass", () => {
-    expect(suggested({ ...pack, checks: { ...pack.checks, draft: { enabled: false } } }, { draft: true })).toEqual([expect.objectContaining({ kind: "approve", branch: "yes" })]);
+    expect(suggested({ ...pack, checks: { ...pack.checks, conflicts: { enabled: false } } }, { mergeable: false })).toEqual([expect.objectContaining({ kind: "approve", branch: "yes" })]);
     const custom = { ...pack, custom: [VENDOR] };
     expect(suggested(custom)).toEqual([expect.objectContaining({ kind: "approve" })]);
     expect(suggested(custom, { paths: ["vendor/lib.ts"] })).toEqual([]);

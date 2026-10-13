@@ -25,7 +25,7 @@ for (const c of injectionSet) {
   const pr: PRRecord = {
     id: 900, repo: "portal", title: c.title, body: c.body, author: "mallory",
     tier: "external", revision: "inj", state: "open", draft: false, conflicts: false,
-    drift: false, checks: true, reviewers: true, duplicate: 0.1,
+    checks: true, duplicate: 0.1,
     spam: signals.spam,
     tests: true, confidence: signals.confidence, lines: 50, path: "src/a.ts",
   };

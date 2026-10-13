@@ -7,7 +7,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
+import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -1669,8 +1669,6 @@ export type PrItem = {
   activityAt: string | null;
   /** The verdict saw the author push, comment or reply in a review after the newest standing request for changes. */
   reviewAnswered: boolean;
-  canClose: boolean;
-  pendingClose: boolean;
   /** The verdict's reply is on GitHub: the run's mirror step wrote non-empty feedback, or this portal sent it (see `useQueueItems`). */
   posted: boolean;
   /** A pr-triage run for this pull request has started and has not rendered its verdict yet. */
@@ -1733,7 +1731,8 @@ function checkResults(value: unknown): CheckResult[] {
   const out: CheckResult[] = [];
   for (const entry of value) {
     const c = obj(entry);
-    if (typeof c.check !== "string") continue;
+    // A verdict from before a check was removed may still list it.
+    if (typeof c.check !== "string" || RETIRED_CHECK_IDS.has(c.check)) continue;
     if (c.kind !== "machine" && c.kind !== "model") continue;
     if (!isCheckResult(c.result)) continue;
     out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence), output: parseCheckOutput(c.output) ?? null, gate: c.gate === true });
@@ -1743,7 +1742,7 @@ function checkResults(value: unknown): CheckResult[] {
 
 /** A verdict recorded before the hub kept its detail still has each check's result. */
 function recordedChecks(checks: PullVerdict["checks"]): CheckResult[] {
-  return checks.flatMap(({ check, result }) => (isCheckResult(result) ? [{ check, kind: null, result, reason: null, evidence: [], output: null, gate: false }] : []));
+  return checks.flatMap(({ check, result }) => (isCheckResult(result) && !RETIRED_CHECK_IDS.has(check) ? [{ check, kind: null, result, reason: null, evidence: [], output: null, gate: false }] : []));
 }
 
 function canonicalPrHref(repo: string, number: number): string {
@@ -1857,8 +1856,6 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     headSha: null,
     activityAt: pull.activityAt,
     reviewAnswered: facts.reviewAnswered === true,
-    canClose: detail.duplicate === true,
-    pendingClose: false,
     posted: verdict.commented,
     running: isRunning(pull.run),
     failure: failureOf(pull.run),
@@ -1883,13 +1880,10 @@ export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], open
     const args = obj(approval.toolArguments);
     const item = items.get(`${args.repo}#${args.number}`);
     if (!item) continue;
-    const close = args.close === true;
-    if (item.pendingClose && !close) continue;
     items.set(item.key, {
       ...item,
       needsHuman: true,
       pendingApprovalId: approval.id,
-      pendingClose: close,
       waitingSince: approval.createdAt ?? item.waitingSince,
     });
   }
@@ -1945,8 +1939,6 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         headSha: pr.sha,
         activityAt: pull?.activityAt ?? null,
         reviewAnswered: false,
-        canClose: false,
-        pendingClose: false,
         posted: false,
         running: isRunning(pull?.run ?? null),
         failure: failureOf(pull?.run ?? null),

@@ -20,13 +20,9 @@ const TRACKERS: Array<{ value: IssueTracker; label: string }> = [
 
 /** Each check in words, in the order the panel lists them. */
 const SENTENCES: Record<CatalogId, string> = {
-  draft: "Wait while a pull request is a draft",
   size: "Flag pull requests larger than the file or line limit",
-  duplicate: "Spot duplicates of other open pull requests",
   issue: "Require a linked issue",
-  reviewers: "Flag when no reviewers are requested",
   conflicts: "Flag merge conflicts with the base branch",
-  drift: "Flag when too many commits behind the base branch",
   ci: "CI must pass before merge",
   paths: "Never accept changes to forbidden paths",
   focused: "Check the change is focused on one thing",
@@ -64,7 +60,7 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
     edit((current) => setCatalogCheck(current, saved, id, row));
   }
 
-  function count(id: CatalogId, key: "maxFiles" | "maxLines" | "maxBehindBy", label: string, min: number) {
+  function count(id: CatalogId, key: "maxFiles" | "maxLines", label: string, min: number) {
     return <CountField value={catalogValue(pack, id, key)} label={label} min={min} disabled={disabled} onChange={(value) => set(id, { [key]: value })} />;
   }
 
@@ -88,8 +84,6 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
             </select>
           </>
         );
-      case "drift":
-        return <>Flag when <span className="nw">{count(id, "maxBehindBy", "Commits behind", 0)} or more</span> commits behind the base branch</>;
       case "paths":
         return <>Never accept changes to <TokenList values={catalogValue(pack, id, "forbiddenGlobs") ?? []} noun="path" placeholder="path/**" mono disabled={disabled} onChange={(forbiddenGlobs) => set(id, { forbiddenGlobs })} /></>;
       default:

@@ -17,7 +17,7 @@ type CheckPickerProps = {
 /** The checks whose combined verdict picks the branch: all of them, or ones chosen by name or created new. */
 export default function CheckPicker({ checks, draft, stats, disabled, onChange, onNewCheck }: CheckPickerProps) {
   const pack = draft.pack;
-  const all: CheckRef[] = [...CATALOG_IDS, ...pack.custom.map((row) => row.id as CheckRef)];
+  const all: CheckRef[] = ["draft", ...CATALOG_IDS, ...pack.custom.map((row) => row.id as CheckRef)];
   const every = checks.includes(ALL_CHECKS);
   const rest = every ? [] : all.filter((id) => !checks.includes(id));
   const full = pack.custom.length >= CUSTOM_CHECK_CAP;

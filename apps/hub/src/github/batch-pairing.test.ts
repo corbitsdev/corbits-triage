@@ -88,7 +88,7 @@ describe("batch pairing through the real facts director and evaluate action", ()
 });
 
 describe("verdicts the decision model was never asked about", () => {
-  const pack: CheckPack = { ...emptyPack(REPO), checks: { draft: { enabled: true }, conflicts: { enabled: true }, focused: { enabled: true } } };
+  const pack: CheckPack = { ...emptyPack(REPO), checks: { conflicts: { enabled: true }, focused: { enabled: true } } };
   const at = (minute: number) => new Date(Date.UTC(2026, 9, 7, 1, minute)).toISOString();
 
   // The hub stamps each run with its deployment's version as it reads the log.
@@ -137,7 +137,7 @@ describe("verdicts the decision model was never asked about", () => {
     function facts(files: Array<{ path: string; patch?: string }>) {
       return {
         repo: REPO, number: 1, title: "Change", author: "octocat", tier: "external", headSha: "sha1", state: "open", draft: false,
-        mergeable: true, baseBehindBy: 0, checks: "success", requestedReviewers: 0, approvals: 0, openPrs: [],
+        mergeable: true, checks: "success", approvals: 0,
         files,
         paths: files.map((file) => file.path),
       };

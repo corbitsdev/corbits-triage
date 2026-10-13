@@ -50,14 +50,11 @@ function counted(value: number | boolean | string, one: string): string {
 const FACTS: Record<string, (value: number | boolean | string) => string> = {
   isDraft: (value) => (value ? "draft" : "not a draft"),
   status: (value) => (value === "none" ? "no CI" : `CI ${value}`),
-  isDuplicate: (value) => (value ? "duplicate" : "not a duplicate"),
   hasConflicts: (value) => (value ? "has conflicts" : "no conflicts"),
   touchesForbiddenPaths: (value) => (value ? "touches forbidden paths" : "no forbidden paths"),
   linkedIssue: (value) => (value ? "issue linked" : "no issue linked"),
   files: (value) => counted(value, "file"),
   lines: (value) => counted(value, "line"),
-  behindBy: (value) => `behind by ${COUNT.format(Number(value))}`,
-  requested: (value) => `${COUNT.format(Number(value))} requested`,
   approvals: (value) => counted(value, "approval"),
   changesRequested: (value) => counted(value, "change request"),
   holds: (value) => (value ? "holds" : "does not hold"),
@@ -68,9 +65,7 @@ function fact(name: string, value: number | boolean | string): string {
 }
 
 function factsText(values: Record<string, number | boolean | string>): string {
-  const { duplicateOf, ...rest } = values;
-  const text = Object.entries(rest).map(([name, value]) => fact(name, value)).join(", ");
-  return duplicateOf === undefined ? text : `${text} of #${duplicateOf}`;
+  return Object.entries(values).map(([name, value]) => fact(name, value)).join(", ");
 }
 
 /** Below its bar a score never shows the bar itself, so the shown number agrees with the check's result. */
@@ -120,7 +115,6 @@ export function approvalHeadline(approval: HubApproval): string {
   const repo = typeof args.repo === "string" ? args.repo : null;
   const number = typeof args.number === "number" ? `#${args.number}` : null;
   const target = [repo, number].filter(Boolean).join("");
-  if (target && args.close === true) return `An agent wants to post a triage comment and labels, then close ${target}`;
   return target ? `An agent wants to post a triage comment and labels on ${target}` : "An agent is waiting for your approval";
 }
 

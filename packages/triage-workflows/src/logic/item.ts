@@ -24,13 +24,13 @@ export interface Item {
 
 const NO_FACTS: PrFacts = {
   repo: "", number: 0, title: "", author: "", tier: "external", headSha: "", state: "open", draft: false, mergeable: null,
-  baseBehindBy: 0, checks: "none", requestedReviewers: 0, approvals: 0, openPrs: [],
+  checks: "none", approvals: 0,
 };
 
 export function degradedItem(reason: string): Item {
   return {
     facts: NO_FACTS,
-    det: { state: "stale-unknown", reason, findings: [], checks: [], duplicateOf: null, needsJudgment: false },
+    det: { state: "stale-unknown", reason, findings: [], checks: [], needsJudgment: false },
     error: reason,
   };
 }

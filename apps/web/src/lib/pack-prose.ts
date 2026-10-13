@@ -1,4 +1,5 @@
 import {
+  BUILT_IN_CHECK_NAMES,
   CATALOG_IDS,
   CHECK_CATALOG,
   TRIAGE_EVENTS,
@@ -82,18 +83,17 @@ export function isCatalogId(id: string): id is CatalogId {
   return (CATALOG_IDS as readonly string[]).includes(id);
 }
 
-/** pr-triage always runs this one; it is in no pack, so it has no name there. */
-const REVIEW_CHECK = { id: "review", name: "Changes requested" };
-
 export function checkName(pack: CheckPack, id: string): string {
-  if (id === REVIEW_CHECK.id) return REVIEW_CHECK.name;
+  const builtIn = BUILT_IN_CHECK_NAMES.get(id);
+  if (builtIn !== undefined) return builtIn;
   return isCatalogId(id) ? CHECK_CATALOG[id].name : pack.custom.find((row) => row.id === id)?.name ?? id;
 }
 
 /** A check's name; a custom check's waits for its pack. */
 export function checkLabel(pack: CheckPack | null, id: string): string | null {
   if (pack) return checkName(pack, id);
-  if (id === REVIEW_CHECK.id) return REVIEW_CHECK.name;
+  const builtIn = BUILT_IN_CHECK_NAMES.get(id);
+  if (builtIn !== undefined) return builtIn;
   return isCatalogId(id) ? CHECK_CATALOG[id].name : null;
 }
 

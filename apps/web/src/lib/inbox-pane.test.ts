@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Outcome } from "./held-actions.ts";
 import type { GithubPullDetail, PrGithubWriteInput, PrItem } from "./hub-api.ts";
-import { canRun, needsConfirm, paneActions, paneFacts, paneWrite, replyDraft, type PaneGate } from "./inbox-pane.ts";
+import { canRun, paneActions, paneFacts, paneWrite, replyDraft, type PaneGate } from "./inbox-pane.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   return {
@@ -35,8 +35,6 @@ function item(overrides: Partial<PrItem>): PrItem {
     headSha: null,
     activityAt: null,
     reviewAnswered: false,
-    canClose: false,
-    pendingClose: false,
     posted: false,
     running: false,
     failure: null,
@@ -100,14 +98,9 @@ describe("paneActions", () => {
     expect(paneActions(gate({}, undefined, { readOnly: true })).more.map((row) => row.blocker)).toEqual(["read-only", "read-only", "read-only", "read-only"]);
   });
 
-  test("the menu leaves out the suggested action; a duplicate keeps its close row and is confirmed, anything writable closes plainly", () => {
+  test("the menu leaves out the suggested action; anything writable closes plainly", () => {
     expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close pull request", "Triage again"]);
-    expect(needsConfirm("close", item({}))).toBe(false);
-    expect(needsConfirm("close", item({ canClose: true }))).toBe(true);
     expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
-    expect(paneActions(gate({ canClose: true })).primary?.kind).toBe("close");
-    expect(paneActions(gate({ canClose: true })).more.at(-2)).toEqual({ kind: "close", blocker: null, label: "Close as duplicate" });
-    expect(paneActions(gate({ canClose: true }, undefined, { readOnly: true })).more.at(-2)).toEqual({ kind: "close", blocker: "read-only", label: "Close as duplicate" });
   });
 
   test("a pack close Do stands in for the menu's plain close", () => {
@@ -217,8 +210,8 @@ describe("paneWrite", () => {
     await expect(record("reply", { comment: "Thanks" }, "Thanks", { replyFail: "Secondary rate limit" })).rejects.toThrow("Secondary rate limit");
   });
 
-  test("closing a duplicate without a drafted comment posts none", async () => {
-    expect((await record("close", { canClose: true, labels: ["duplicate"] }, "")).calls).toEqual([
+  test("closing without a drafted comment posts none", async () => {
+    expect((await record("close", { labels: ["duplicate"] }, "")).calls).toEqual([
       { action: "close", repo: "acme/widgets", number: 1, labels: ["duplicate"], comment: "" },
     ]);
   });

@@ -58,18 +58,15 @@ type PaneActions = { primary: PaneAction<PrimaryAction> | null; more: MenuEntry[
 
 const MORE_ORDER: PrimaryAction[] = ["reply", "approve", "changes", "comment", "merge"];
 
-const PLAIN_CLOSE_LABEL = "Close pull request";
-
 function paneAction<K extends PaneKind>(kind: K, gate: PaneGate): PaneAction<K> {
   return { kind, blocker: actionBlocker(kind, gate) };
 }
 
-/** A flagged duplicate closes as one, even when that is already the suggested action; anything else may close plainly, when writable and the pack offers no close of its own. */
+/** A pull request may close plainly, when writable and the pack offers no close of its own. */
 function closeEntry(gate: PaneGate): MenuEntry | null {
   const close = paneAction("close", gate);
-  if (gate.item.canClose) return { ...close, label: primaryLabel("close") };
   if (close.blocker !== null || offersClose(gate.item)) return null;
-  return { ...close, label: PLAIN_CLOSE_LABEL };
+  return { ...close, label: primaryLabel("close") };
 }
 
 /** A pull request the hub has run before, or gave up on, can be run again; one still waiting for its first run cannot. */
@@ -139,11 +136,6 @@ export function hasNumber(item: PrItem): item is NumberedItem {
 
 export function canRun(kind: PaneKind, gate: PaneGate): boolean {
   return actionBlocker(kind, gate) === null;
-}
-
-/** Closing a flagged duplicate tells a contributor their work is not wanted, so it is confirmed before it is held. */
-export function needsConfirm(kind: PaneKind, item: PrItem): boolean {
-  return kind === "close" && item.canClose;
 }
 
 export type WriteKind = HandledKind;
@@ -269,10 +261,10 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
     case "close":
       return {
         settles: kind,
-        pending: item.canClose ? `Closing #${number} as a duplicate…` : `Closing #${number}…`,
+        pending: `Closing #${number}…`,
         async send({ write }) {
           await write({ action: "close", repo, number, labels: item.labels, comment: item.comment ?? "" });
-          return sent(item.canClose ? `Closed #${number} as a duplicate.` : `Closed #${number}.`);
+          return sent(`Closed #${number}.`);
         },
       };
   }

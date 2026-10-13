@@ -2,15 +2,14 @@ import type { AuthorKind } from "@corbits/triage-contracts";
 import type { PrItem, QueueState } from "./hub-api.ts";
 import { priorityRank } from "./triage-view.ts";
 
-export type InboxAction = "decide" | "review" | "unblock" | "duplicate" | "merge" | "failed";
+export type InboxAction = "decide" | "review" | "unblock" | "merge" | "failed";
 
-export const INBOX_ACTION_ORDER: InboxAction[] = ["decide", "review", "unblock", "duplicate", "merge", "failed"];
+export const INBOX_ACTION_ORDER: InboxAction[] = ["decide", "review", "unblock", "merge", "failed"];
 
 export const INBOX_ACTION_LABEL: Record<InboxAction, string> = {
   decide: "Decide",
   review: "Review",
   unblock: "Unblock",
-  duplicate: "Close duplicates",
   merge: "Merge",
   failed: "Failed",
 };
@@ -48,7 +47,7 @@ const PRIMARY_LABEL: Record<PrimaryAction, string> = {
   comment: "Comment",
   approve: "Approve",
   changes: "Request changes",
-  close: "Close as duplicate",
+  close: "Close pull request",
   merge: "Merge",
   triage: "Triage again",
 };
@@ -65,7 +64,6 @@ const ROW_LABEL: Record<PrimaryAction, string> = {
 
 /** The pile a pull request lands in; null means it is still awaiting its first verdict and is only counted. */
 export function inboxAction(item: PrItem): InboxAction | null {
-  if (item.canClose) return "duplicate";
   switch (item.state) {
     case "needs-decision":
     case "stale":
@@ -125,8 +123,6 @@ export function primaryAction(item: PrItem, action: InboxAction | null): Primary
       if (item.state !== "needs-author-update") return "changes";
       if (isPostedToAuthor(item)) return null;
       return hasDraftComment(item.comment) ? "reply" : "comment";
-    case "duplicate":
-      return "close";
     case "merge":
       return "merge";
     case "failed":

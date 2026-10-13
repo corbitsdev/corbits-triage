@@ -112,7 +112,6 @@ describe("GitHub App credential adapter", () => {
         labels: ["triaged"],
         owned: [],
         comment: "Done",
-        close: false,
       },
     }, signal)).toMatchObject({ content: { commentId: 99, closed: false, sha: "abc" } });
 

@@ -17,11 +17,8 @@ export function toFacts(pr: PRRecord): PrFacts {
     state: pr.state,
     draft: pr.draft,
     mergeable: pr.conflicts ? false : true,
-    baseBehindBy: pr.drift ? 60 : 0,
     checks: pr.checks ? "success" : "failure",
-    requestedReviewers: pr.reviewers ? 1 : 0,
     approvals: 0,
-    openPrs: pr.duplicate >= 0.85 ? [{ number: -pr.id, title: pr.title }] : [],
   };
 }
 

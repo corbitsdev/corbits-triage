@@ -1,36 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { classificationSources, DEFAULT_MERGE_THRESHOLD, emptyPack, type CheckPack } from "@corbits/triage-contracts";
-import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict, toMirrorRequest } from "./render.js";
+import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict } from "./render.js";
 import { focusedCandidateId, QUALITY_EVALUATION_LIMIT_ERROR, type QualityPlan } from "./quality.js";
 import type { ChangeCandidate } from "./candidates.js";
 import { REVIEW_ANSWERED_REASON, type DeterministicResult } from "./checks.js";
-
-describe("duplicate rendering", () => {
-  test("keeps a detected duplicate open until a human requests close", () => {
-    const verdict = renderVerdict({
-      author: "octocat",
-      repo: "acme/widgets",
-      headSha: "abc123",
-      det: {
-        state: "needs-decision",
-        reason: "matches #7",
-        findings: [],
-        checks: [],
-        duplicateOf: 7,
-        needsJudgment: false,
-      },
-      threshold: DEFAULT_MERGE_THRESHOLD,
-    });
-
-    expect(verdict.duplicate).toBe(true);
-    expect(verdict.close).toBe(false);
-    expect(toMirrorRequest({ repo: "acme/widgets", number: 8, ...verdict })).toMatchObject({
-      repo: "acme/widgets",
-      number: 8,
-      close: false,
-    });
-  });
-});
 
 describe("custom check rendering", () => {
   test("a model row is asked by its stored id; a rule row is not a question", () => {
@@ -50,7 +23,6 @@ describe("custom check rendering", () => {
         reason: "all deterministic checks passed",
         findings: [],
         checks: [],
-        duplicateOf: null,
         needsJudgment: true,
         sources: classificationSources(pack),
       },
@@ -70,7 +42,6 @@ const FOCUSED_DET: DeterministicResult = {
   reason: "all configured checks pass",
   findings: [],
   checks: [],
-  duplicateOf: null,
   needsJudgment: true,
   sources: FOCUSED_SOURCES,
 };
@@ -327,7 +298,7 @@ describe("focused candidate rendering", () => {
       author: "octocat",
       repo: "acme/widgets",
       headSha: "abc123",
-      det: { state: "blocked", reason: "required checks are failing", findings: [], checks, duplicateOf: null, needsJudgment: false },
+      det: { state: "blocked", reason: "required checks are failing", findings: [], checks, needsJudgment: false },
       threshold: DEFAULT_MERGE_THRESHOLD,
     });
     expect(verdict.feedback).toBe(`@octocat, please address the following:\n- required checks are failing: \`${"界".repeat(200)}…\`\n- touches forbidden paths: \`vendor/generated.ts\``);
@@ -407,7 +378,6 @@ describe("rule custom check rendering", () => {
       { check: "custom-1", kind: "machine", result: "fail", reason: "Branch naming: branch does not match the pattern", evidence: ["@acme/team"] },
       { check: "custom-2", kind: "machine", result: "fail", reason: "Two approvals: not enough approvals", evidence: ["1 of 2 approvals"] },
     ],
-    duplicateOf: null,
     needsJudgment: false,
     sources: { quality: [], custom: [], rules: [...rules] },
   };
@@ -452,7 +422,7 @@ describe("author text in the comment", () => {
       author: "octocat",
       repo: "acme/widgets",
       headSha: "abc123",
-      det: { state: "blocked", reason: "required checks are failing", findings: [], checks, duplicateOf: null, needsJudgment: false },
+      det: { state: "blocked", reason: "required checks are failing", findings: [], checks, needsJudgment: false },
       threshold: DEFAULT_MERGE_THRESHOLD,
     });
     const lines = verdict.feedback.split("\n");
@@ -473,7 +443,6 @@ describe("requested changes rendering", () => {
     reason: "a reviewer requested changes",
     findings: [{ check: "review", state: "needs-author-update", reason: "a reviewer requested changes" }],
     checks: [review],
-    duplicateOf: null,
     needsJudgment: false,
     sources: { quality: [], custom: [], rules: [] },
   };

@@ -19,7 +19,6 @@ export interface PrData {
   state?: string;
   draft?: boolean;
   mergeable?: boolean | null;
-  requestedReviewers?: number;
   reviewers?: string[];
   additions?: number;
   deletions?: number;
@@ -77,7 +76,6 @@ export function buildFacts(
   checks: CheckRun[],
   reviews: Review[],
   comments: IssueComment[],
-  openPrs: PrFacts["openPrs"],
   policy: RepoPolicy,
 ): PrFacts {
   const latest = latestDecisive(reviews);
@@ -96,10 +94,8 @@ export function buildFacts(
     state: pr.state === "closed" ? "closed" : "open",
     draft: pr.draft === true,
     mergeable: pr.mergeable ?? null,
-    baseBehindBy: 0,
     checks: summarizeChecks(checks),
     failingChecks: checks.filter(failed).flatMap((r) => (r.name ? [r.name] : [])),
-    requestedReviewers: Number(pr.requestedReviewers ?? 0),
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,
@@ -107,7 +103,6 @@ export function buildFacts(
     reviewedBy: reviewedOnHead(reviews, pr.sha ?? ""),
     labels: pr.labels ?? [],
     assignees: pr.assignees ?? [],
-    openPrs,
     changedFiles: Number(pr.changedFiles ?? 0),
     additions: Number(pr.additions ?? 0),
     deletions: Number(pr.deletions ?? 0),
@@ -232,7 +227,6 @@ function membership(read: PullData["authorTeams"], policy: RepoPolicy, repo: str
 
 export interface ItemContext {
   repo: string;
-  openPrs: PrFacts["openPrs"];
   policy: RepoPolicy;
   pack: CheckPack;
   events: TriageEvent[];
@@ -241,13 +235,13 @@ export interface ItemContext {
 }
 
 /** The rules step's item for one pull request, or the error that degrades it. */
-export function assembleItem(number: number, data: PullData, { repo, openPrs, policy, pack, events, docs }: ItemContext): RulesItem {
+export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs }: ItemContext): RulesItem {
   const { pr, files } = data;
   if (!pr) return { error: `github_get_pr failed for #${number}` };
   if (typeof files === "string") return { error: files };
   if (typeof docs === "string") return { error: docs };
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, openPrs, policy), paths, files, commits, events, ...docs, ...membership(data.authorTeams, policy, repo) };
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, events, ...docs, ...membership(data.authorTeams, policy, repo) };
   return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
 }

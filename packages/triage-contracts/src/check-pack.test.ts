@@ -75,19 +75,39 @@ describe("check pack contract", () => {
       schemaVersion: 1,
       repo: REPO,
       checks: {
-        draft: { enabled: true },
+        conflicts: { enabled: true },
         notACheck: { enabled: true },
         size: { enabled: false, maxFiles: 10, maxLines: 100 },
       },
     });
     expect(parsed?.checks).toEqual({
-      draft: { enabled: true },
+      conflicts: { enabled: true },
       size: { enabled: false, maxFiles: 10, maxLines: 100 },
     });
     expect(parsed?.custom).toEqual([]);
-    expect(catalogCheckEnabled(parsed!, "draft")).toBe(true);
+    expect(catalogCheckEnabled(parsed!, "conflicts")).toBe(true);
     expect(catalogCheckEnabled(parsed!, "size")).toBe(false);
     expect(catalogCheckEnabled(parsed!, "ci")).toBe(false);
+  });
+
+  test("a stored pack naming removed checks loads without them", () => {
+    const read = readCheckPack({
+      ...emptyPack(REPO),
+      checks: {
+        draft: { enabled: true },
+        duplicate: { enabled: true },
+        reviewers: { enabled: true },
+        drift: { enabled: true, maxBehindBy: 50 },
+        issue: { enabled: true, tracker: "github", requireLabel: true, label: "linked" },
+      },
+      actions: [
+        { ...BASE, checks: ["drift", "ci", "reviewers"] },
+        { ...BASE, id: "b", checks: ["draft", "duplicate"] },
+        { ...BASE, id: "c", checks: ["duplicate"] },
+      ],
+    });
+    expect(read.checks).toEqual({ issue: { enabled: true, tracker: "github" } });
+    expect(read.actions).toEqual([{ ...BASE, checks: ["ci"] }, { ...BASE, id: "b", checks: ["draft"] }]);
   });
 
   test("legacy custom round-trip; blanks dropped; last duplicate id wins", () => {
@@ -210,7 +230,7 @@ describe("check pack contract", () => {
     }
     expect(() => readCheckPack({ ...emptyPack(REPO), schemaVersion: 2 })).toThrow("schemaVersion must be 1.");
     expect(() => readCheckPack({ ...emptyPack(REPO), actions: [{ ...BASE, checks: ["custom-9"] }] })).toThrow(
-      "Action a checks custom-9 must be a catalog check or a custom check in this pack.",
+      "Action a checks custom-9 must be a catalog check, the draft check or a custom check in this pack.",
     );
   });
 
@@ -229,7 +249,7 @@ describe("check pack contract", () => {
       custom: CUSTOM,
     };
     const next = applyRecommended(started);
-    expect(next.checks.draft?.enabled).toBe(true);
+    expect(next.checks.size?.enabled).toBe(true);
     expect(next.custom).toEqual(started.custom);
   });
 });

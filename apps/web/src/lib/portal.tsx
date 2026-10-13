@@ -35,7 +35,6 @@ import {
   type InvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
-  type PrItem,
   type RunLog,
   type PortalSnapshot,
   type WorkspaceOption,
@@ -70,7 +69,6 @@ interface PortalContextValue {
   removeRepo: (repo: string) => Promise<void>;
   runBacklog: (repo: string, message?: string) => Promise<void>;
   triagePullRequest: (repo: string, number: number) => Promise<void>;
-  closeDuplicate: (item: PrItem) => Promise<void>;
   writeGithub: (input: PrGithubWriteInput, delivery: GithubDelivery) => Promise<PrGithubWriteResult>;
   decide: (approvalId: string, decision: "once" | "always" | "deny") => Promise<void>;
   replaceSecret: (credentialId: string, secret: string) => Promise<void>;
@@ -355,23 +353,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [queryClient, requireSnapshot, waitForWorkflow],
   );
 
-  const closeDuplicate = useCallback(
-    async function closeDuplicate(item: PrItem) {
-      const current = requireSnapshot();
-      if (!item.canClose || item.number === null || item.comment === null) throw new Error("Only a confirmed duplicate can be closed.");
-      await githubPrAction(createHubTransport(), current.workspace.tenantId, {
-        action: "close",
-        repo: item.repo,
-        number: item.number,
-        labels: item.labels,
-        comment: item.comment,
-      });
-      notify(`Closed ${item.key} as a duplicate.`);
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
   const writeGithub = useCallback(
     async function writeGithub(input: PrGithubWriteInput, delivery: GithubDelivery) {
       const current = requireSnapshot();
@@ -506,7 +487,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         removeRepo,
         runBacklog,
         triagePullRequest,
-        closeDuplicate,
         writeGithub,
         decide,
         replaceSecret,
@@ -536,7 +516,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       removeRepo,
       runBacklog,
       triagePullRequest,
-      closeDuplicate,
       writeGithub,
       decide,
       replaceSecret,

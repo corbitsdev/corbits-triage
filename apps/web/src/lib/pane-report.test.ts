@@ -36,8 +36,6 @@ function item(overrides: Partial<PrItem>): PrItem {
     headSha: "head-1",
     activityAt: null,
     reviewAnswered: false,
-    canClose: false,
-    pendingClose: false,
     posted: false,
     running: false,
     failure: null,
@@ -74,11 +72,11 @@ function detail(pr: Partial<GithubPullDetail["pr"]>): GithubPullDetail {
 describe("paneProblems", () => {
   test("lists only what is in the way, failures first, with cited lines apart from other evidence", () => {
     const gate = check({ check: "custom-1", result: "fail", gate: true });
-    const reviewers = check({ check: "reviewers", result: "fail", reason: "no reviewers assigned", evidence: ["0 requested, 0 approved"], output: { kind: "values", values: { requested: 0 } } });
-    const problems = paneProblems([CANT, check({}), UNSURE, gate, FAIL, reviewers]);
-    expect(problems.map((problem) => [problem.check.check, problem.severity])).toEqual([["tests", "fail"], ["reviewers", "fail"], ["focused", "unsure"], ["conflicts", "cant"]]);
+    const size = check({ check: "size", result: "fail", reason: "pull request is over the size limits", evidence: ["31 files (max 30)"], output: { kind: "values", values: { files: 31 } } });
+    const problems = paneProblems([CANT, check({}), UNSURE, gate, FAIL, size]);
+    expect(problems.map((problem) => [problem.check.check, problem.severity])).toEqual([["tests", "fail"], ["size", "fail"], ["focused", "unsure"], ["conflicts", "cant"]]);
     expect(problems[0]).toMatchObject({ text: "The new retry path has no test", cited: ["retry.rs:40-49"], notes: [] });
-    expect(problems[1]).toMatchObject({ cited: [], notes: ["0 requested, 0 approved"] });
+    expect(problems[1]).toMatchObject({ cited: [], notes: ["31 files (max 30)"] });
   });
 
   test("an undecided gate could not be checked; a check from before outputs is unsure only when a model asked it", () => {
@@ -105,9 +103,9 @@ describe("paneStatus", () => {
     expect(statusOf({ state: "needs-author-update", checks: [requested], reviewAnswered: true })).toMatchObject({ text: "Ready for your re-review" });
     expect(barOf(item({ state: "needs-author-update", checks: [requested], reviewAnswered: true })).primary?.kind).toBe("approve");
     expect(statusOf({ state: "stale" }).text).toBe("Rechecking");
-    const reviewers = check({ check: "reviewers", result: "fail", reason: "no reviewers assigned" });
-    expect(barOf(item({ state: "awaiting-review", checks: [reviewers] })).primary?.kind).toBe("approve");
-    expect(statusOf({ state: "awaiting-review", checks: [reviewers] }).text).toBe("Waiting for review · 1 thing to fix");
+    const draft = check({ check: "draft", result: "fail", reason: "pull request is a draft" });
+    expect(barOf(item({ state: "awaiting-review", checks: [draft] })).primary?.kind).toBe("approve");
+    expect(statusOf({ state: "awaiting-review", checks: [draft] }).text).toBe("Waiting for review · 1 thing to fix");
   });
 
   test("commits Triage has not checked are rechecked, never ready, and never merged from the primary", () => {
@@ -156,7 +154,6 @@ describe("paneBar", () => {
     expect(barOf(item({ comment: "Please add a test." })).primary).toMatchObject({ kind: "reply", label: "Send feedback", detail: "to @ada" });
     expect(barOf(item({ state: "awaiting-review" })).primary).toMatchObject({ kind: "approve", label: "Approve", detail: null });
     expect(barOf(item({ state: "needs-author-update", posted: true, comment: "Fix it." })).primary).toMatchObject({ kind: "comment", label: "Reply", detail: "to @ada" });
-    expect(barOf(item({ canClose: true })).primary).toMatchObject({ kind: "close", label: "Close as duplicate" });
   });
 
   test("at most two runnable secondaries; the rest, and anything blocked, wait in More", () => {

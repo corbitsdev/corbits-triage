@@ -109,21 +109,20 @@ const MIRROR_INPUT = obj({
   labels: { type: "array", items: str },
   owned: { type: "array", items: str },
   comment: str,
-  close: { type: "boolean" },
   notReadyHead: str,
-}, ["repo", "number", "labels", "comment", "close"]);
+}, ["repo", "number", "labels", "comment"]);
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_mirror",
     description:
-      "Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. Closes it only when close is true. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals. Never merges.",
+      "Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_mirror_auto",
     description:
-      "Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. Closes it only when close is true. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals. Never merges.",
+      "Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
@@ -223,7 +222,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): 
         labels: a.labels,
         owned: a.owned,
         comment: a.comment,
-        close: a.close === true,
+        close: false,
       });
       if (a.notReadyHead !== mirrored.sha) return mirrored;
       return { ...mirrored, dismissed: await dismissDoApprovals(gh, { repo: a.repo, number: a.number, login: await login() }) };

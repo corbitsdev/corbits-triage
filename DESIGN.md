@@ -216,7 +216,7 @@ Depth comes from material, not shadow: the light pane sits inside the graphite r
 ## Components
 
 - **Buttons:** one size (40px desktop, 44px touch) and one radius. Clusters align right. One heat primary per region. A disabled primary uses inset and mute ink, never faded heat.
-- **Pull request actions:** Confirm and Dismiss appear only when an approval is pending, and Close as duplicate only for duplicates. Secondary GitHub writes sit in a More menu.
+- **Pull request actions:** Confirm and Dismiss appear only when an approval is pending. Secondary GitHub writes sit in a More menu.
 - **Board rows:** title, then a mono identity line with state, owner, and age, then why and next action. Hover is a sheet wash.
 - **Fields:** sheet background and strong rule; the border turns heat on focus.
 - **Tabs:** selected tabs are underlined in heat.

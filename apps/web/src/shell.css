@@ -278,7 +278,7 @@
 .inbox .pane-back { display: none; }
 .inbox .pane:focus { outline: none; }
 
-/* Undo toast and the close-as-duplicate confirm */
+/* Undo toast */
 .inbox .toasts { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; justify-items: center; }
 .inbox .toast { position: relative; display: flex; align-items: center; gap: 14px; padding: 9px 9px 9px 16px; background: var(--ink); color: var(--white); border-radius: var(--r-md); font-size: 14px; white-space: nowrap; }
 .inbox .toast.note { padding: 9px 16px; max-width: min(560px, calc(100vw - 32px)); white-space: normal; }
@@ -289,12 +289,6 @@
 .inbox .toast .drain i { display: block; height: 100%; background: var(--white); animation: drain linear forwards; }
 @keyframes drain { from { width: 100%; } to { width: 0; } }
 @media (prefers-reduced-motion: reduce) { .inbox .toast .drain i { animation: none; } }
-.inbox .dialog { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 22px; border: 1px solid var(--rule-strong); border-radius: var(--r-lg); background: var(--white); color: var(--ink); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18); }
-.inbox .dialog[open] { display: grid; gap: 14px; }
-.inbox .dialog::backdrop { background: rgba(0, 0, 0, 0.18); }
-.inbox .dialog h2 { margin: 0; font-size: 18px; }
-.inbox .dialog p { margin: 0; font-size: 14px; }
-.inbox .dialog .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 @media (max-width: 960px) {
   .inbox { grid-template-columns: minmax(0, 1fr); }

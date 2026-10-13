@@ -304,7 +304,7 @@ describe("pr-triage body", () => {
   function approving() {
     const github = fakeGithub();
     github.pr.ci = "success";
-    return { github, pack: { ...emptyPack(REPO), checks: { draft: { enabled: true } }, actions: [APPROVE] } };
+    return { github, pack: { ...emptyPack(REPO), checks: { conflicts: { enabled: true } }, actions: [APPROVE] } };
   }
 
   function appReads(github: ReturnType<typeof fakeGithub>): number {
@@ -335,7 +335,7 @@ describe("pr-triage body", () => {
 
   test("passing the action's checks does not approve a pull request not ready to merge", async () => {
     const { github, pack } = approving();
-    const forbidden = { ...pack, checks: { ...pack.checks, paths: { enabled: true, forbiddenGlobs: ["src/**"] } }, actions: [{ ...APPROVE, checks: ["draft" as const] }] };
+    const forbidden = { ...pack, checks: { ...pack.checks, paths: { enabled: true, forbiddenGlobs: ["src/**"] } }, actions: [{ ...APPROVE, checks: ["conflicts" as const] }] };
     const { dos, verdict } = await triage(forbidden, { github });
     expect((verdict as Verdict).merge.verdict).toBe("not-recommended");
     expect((verdict as Verdict).actions).toEqual([expect.objectContaining({ kind: "approve", skipped: true, reason: "The pull request is not ready to merge." })]);
@@ -374,7 +374,7 @@ describe("pr-triage body", () => {
     github.pr.head = "def";
     github.pr.draft = true;
     github.reviews.push({ id: 7, user: APP, state: "APPROVED", commit_id: "abc", body: "" });
-    await triage({ ...pack, checks: { draft: { enabled: true } } }, { github });
+    await triage({ ...pack, checks: { conflicts: { enabled: true } } }, { github });
     expect(github.reviews).toEqual([expect.objectContaining({ id: 7, state: "APPROVED" })]);
     expect(github.requests.filter((r) => r.method === "PUT")).toEqual([]);
   });
@@ -382,7 +382,7 @@ describe("pr-triage body", () => {
   test("a pack without an approve Do never asks for the App", async () => {
     const github = fakeGithub();
     github.pr.draft = true;
-    await triage({ ...emptyPack(REPO), checks: { draft: { enabled: true } } }, { github });
+    await triage({ ...emptyPack(REPO), checks: { conflicts: { enabled: true } } }, { github });
     expect(appReads(github)).toBe(0);
   });
 
