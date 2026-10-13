@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { classificationSources, DEFAULT_MERGE_THRESHOLD, emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict } from "./render.js";
-import { focusedCandidateId, QUALITY_EVALUATION_LIMIT_ERROR, type QualityPlan } from "./quality.js";
-import type { ChangeCandidate } from "./candidates.js";
+import { QUALITY_EVALUATION_LIMIT_ERROR, type FocusedPlan, type QualityPlan } from "./quality.js";
 import { REVIEW_ANSWERED_REASON, type DeterministicResult } from "./checks.js";
 
 describe("custom check rendering", () => {
@@ -45,25 +44,33 @@ const FOCUSED_DET: DeterministicResult = {
   needsJudgment: true,
   sources: FOCUSED_SOURCES,
 };
-const CHOICES = ["primary_or_supporting", "unrelated", "movement_or_superseded", "ambiguous"] as const;
 
-function decision(id: string, choice: typeof CHOICES[number]): string {
-  const probabilities = Object.fromEntries(CHOICES.map((option) => [option, option === choice ? 0.7 : 0.1]));
-  return JSON.stringify({ id, type: "choice", choice, probabilities, confidence: 0.9 });
+function focusedAnswer(one: number, more: number): string {
+  const probabilities = { one_thing: one, more_than_one_thing: more, cant_tell: 1 - one - more };
+  return JSON.stringify({ id: "focused", type: "choice", choice: one >= more ? "one_thing" : "more_than_one_thing", probabilities, confidence: 0.9 });
 }
 
-function candidate(path: string, label: string, evidence = `@@ -0,0 +1 @@\n+const value = { name: "${label}" };`): ChangeCandidate {
-  return { path, label, evidence };
+function sliceAnswer(id: string, serves: number, separate: number): string {
+  const probabilities = { serves_purpose: serves, separate_change: separate, cant_tell: 1 - serves - separate };
+  return JSON.stringify({ id, type: "choice", choice: serves >= separate ? "serves_purpose" : "separate_change", probabilities, confidence: 0.9 });
 }
 
-function focusedVerdict(candidates: ChangeCandidate[], reply: string, threshold = DEFAULT_MERGE_THRESHOLD) {
+/** Focused asked of `slices`, with follow-up file questions, one per path in order, answered with how likely each file is a separate change. */
+function focusedPlan(separate: Record<string, number>, slices: Record<string, string[]> = { focused: Object.keys(separate) }, unread: string[] = []): { focused: FocusedPlan; nouls: string } {
+  const ids = Object.keys(separate).map((_, index) => `focused-file-${String(index + 1).padStart(3, "0")}`);
+  const parts = Object.fromEntries(Object.keys(separate).map((path, index) => [ids[index]!, path]));
+  const nouls = Object.values(separate).map((noul, index) => JSON.stringify({ id: ids[index], type: "noul", noul })).join("");
+  return { focused: { slices, unread, parts }, nouls };
+}
+
+function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).focused, threshold = DEFAULT_MERGE_THRESHOLD) {
   return renderVerdict({
     author: "octocat",
     repo: "acme/widgets",
     headSha: "abc123",
     det: FOCUSED_DET,
     answers: parseAnswers(reply),
-    candidates,
+    focused,
     threshold,
   });
 }
@@ -72,126 +79,98 @@ const UNSURE_FOCUSED = "Not yet confirmed, a maintainer will check:\n- makes one
 const OUTAGE_NOTE = "Some checks could not run this time. Triage will re-check this pull request.";
 const APPROVAL_NOTE = "No changes needed from you. A maintainer will review this pull request.";
 
-describe("focused candidate rendering", () => {
-  test("orders confirmed unrelated candidates in evidence and one reply line each", () => {
-    const candidates = [candidate("src/alpha.ts", "Alpha"), candidate("src/beta.ts", "Beta")];
-    const verdict = focusedVerdict(candidates, [
-      decision("focused-candidate-001", "unrelated"),
-      decision("focused-candidate-002", "unrelated"),
-    ].join(""));
-    expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, humanGated: false, score: 0.7, confidence: 0.7 });
+describe("focused rendering", () => {
+  test("fails on more than one thing, naming at most three files most likely to be the separate change", () => {
+    const { focused, nouls } = focusedPlan({ "src/a.ts": 0.1, "src/b.ts": 0.75, "src/c.ts": 0.9, "src/d.ts": 0.8, "src/e.ts": 0.71, "src/f.ts": 0.6 });
+    const verdict = focusedVerdict(focusedAnswer(0.1, 0.85) + nouls, focused);
+    expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, humanGated: false, score: 0.85 });
     expect(verdict.checks).toEqual([{
       check: "focused",
       kind: "model",
       result: "fail",
       reason: "mixes unrelated changes",
-      evidence: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"],
-      output: { kind: "score", score: 20, passAt: 60, items: ["Alpha — src/alpha.ts", "Beta — src/beta.ts"] },
+      evidence: ["src/c.ts", "src/d.ts", "src/b.ts"],
+      output: { kind: "score", score: expect.closeTo(10), passAt: 60, items: ["src/c.ts", "src/d.ts", "src/b.ts"] },
     }]);
-    expect(verdict.reason).toContain("Alpha — src/alpha.ts, Beta — src/beta.ts");
+    expect(verdict.reason).toBe("mixes unrelated changes: src/c.ts, src/d.ts, src/b.ts");
     expect(verdict.feedback.split("\n").slice(1)).toEqual([
-      "- Split out unrelated change: `Alpha — src/alpha.ts`",
-      "- Split out unrelated change: `Beta — src/beta.ts`",
+      "- Split out unrelated change: `src/c.ts`",
+      "- Split out unrelated change: `src/d.ts`",
+      "- Split out unrelated change: `src/b.ts`",
     ]);
   });
 
-  test.each([
-    ["primary or supporting", "primary_or_supporting"],
-    ["movement or superseded", "movement_or_superseded"],
-  ] as const)("treats %s as focused", (_name, choice) => {
-    const verdict = focusedVerdict([candidate("src/a.ts", "A")], decision("focused-candidate-001", choice));
-    expect(verdict).toMatchObject({ state: "ready-monitoring", mirror: true, humanGated: false });
-    expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 80, passAt: 60, items: ["A — src/a.ts"] } }]);
+  test("names a file split across failing slices once", () => {
+    const focused: FocusedPlan = { slices: { "focused-slice-001": ["src/a.ts"], "focused-slice-002": ["src/a.ts"] }, unread: [], parts: { "focused-slice-001-file-001": "src/a.ts", "focused-slice-002-file-001": "src/a.ts" } };
+    const nouls = Object.keys(focused.parts).map((id) => JSON.stringify({ id, type: "noul", noul: 0.9 })).join("");
+    const verdict = focusedVerdict(sliceAnswer("focused-slice-001", 0.1, 0.8) + sliceAnswer("focused-slice-002", 0.1, 0.8) + nouls, focused);
+    expect(verdict.checks[0]).toMatchObject({ result: "fail", evidence: ["src/a.ts"], output: { items: ["src/a.ts"] } });
   });
 
-  test("passes only a fully read pull request, and a failure still lists what it could not read", () => {
-    const candidates = [candidate("src/a.ts", "A"), candidate("src/big.ts", "Big", ""), candidate("src/big.ts", "Big", "")];
-    const related = focusedVerdict(candidates, decision("focused-candidate-001", "primary_or_supporting"));
-    expect(related.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "could-not-check", reason: "file could not be read", items: ["src/big.ts"] } }]);
-    const unrelated = focusedVerdict(candidates, decision("focused-candidate-001", "unrelated"));
-    expect(unrelated.checks[0]).toMatchObject({ result: "fail", output: { kind: "score", items: ["A — src/a.ts"], unread: ["src/big.ts"] } });
+  test("still fails when no file is clearly the separate change", () => {
+    const { focused, nouls } = focusedPlan({ "src/a.ts": 0.5 });
+    const verdict = focusedVerdict(focusedAnswer(0.2, 0.8) + nouls, focused);
+    expect(verdict.checks[0]).toMatchObject({ result: "fail", evidence: [], output: { kind: "score", items: [] } });
+    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- mixes unrelated changes"]);
+    expect(verdict.nextAction).toBe("Split out unrelated changes");
   });
 
-  test.each([
-    ["ambiguous", [candidate("src/a.ts", "A")], decision("focused-candidate-001", "ambiguous"), { kind: "score", score: 20, passAt: 60, items: ["A — src/a.ts"] }],
-    ["split", [candidate("src/a.ts", "A")], JSON.stringify({
-      id: "focused-candidate-001", type: "choice", choice: "unrelated", confidence: 0.9,
-      probabilities: { primary_or_supporting: 0.35, unrelated: 0.5, movement_or_superseded: 0.05, ambiguous: 0.1 },
-    }), { kind: "score", score: 40, passAt: 60, items: ["A — src/a.ts"] }],
-    ["empty evidence", [candidate("src/a.ts", "A", "")], decision("focused-candidate-001", "unrelated"), { kind: "could-not-check", reason: "file could not be read", items: ["src/a.ts"] }],
-    ["no candidates", [], "", { kind: "could-not-check", reason: "no change candidates" }],
-  ] as const)("names an unsure focused check (%s) in the comment, awaits review and is red", (_name, candidates, reply, output) => {
-    const verdict = focusedVerdict([...candidates], reply);
+  test("passes on one thing only when every file was read, and a failure lists what it could not read", () => {
+    const verdict = focusedVerdict(focusedAnswer(0.8, 0.1));
+    expect(verdict).toMatchObject({ state: "ready-monitoring", mirror: true, humanGated: false, score: 0.8 });
+    expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 80, passAt: 60, items: [] } }]);
+    const unread = focusedPlan({}, { focused: [] }, ["src/big.ts"]).focused;
+    expect(focusedVerdict(focusedAnswer(0.8, 0.1), unread).checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "could-not-check", reason: "file could not be read", items: ["src/big.ts"] } }]);
+    expect(focusedVerdict(focusedAnswer(0.1, 0.8), unread).checks[0]).toMatchObject({ result: "fail", output: { kind: "score", unread: ["src/big.ts"] } });
+  });
+
+  test("a diff in slices fails on any separate slice, passes when every slice serves, and scores the least serving one", () => {
+    const { focused, nouls } = focusedPlan({ "src/b.ts": 0.9 }, { "focused-slice-001": ["src/a.ts"], "focused-slice-002": ["src/b.ts"] });
+    function check(...answers: string[]) {
+      return focusedVerdict(answers.join(""), focused).checks[0];
+    }
+    expect(check(sliceAnswer("focused-slice-001", 0.9, 0.05), sliceAnswer("focused-slice-002", 0.7, 0.2))).toMatchObject({ result: "pass", output: { kind: "score", score: 70 } });
+    expect(check(sliceAnswer("focused-slice-001", 0.9, 0.05), sliceAnswer("focused-slice-002", 0.1, 0.8), nouls)).toMatchObject({ result: "fail", evidence: ["src/b.ts"], output: { kind: "score", score: expect.closeTo(10) } });
+    expect(check(sliceAnswer("focused-slice-001", 0.9, 0.05), sliceAnswer("focused-slice-002", 0.5, 0.4))).toMatchObject({ result: "unconfirmed", output: { kind: "score", score: 50 } });
+    expect(focusedVerdict(sliceAnswer("focused-slice-001", 0.9, 0.05), focused)).toMatchObject({ degraded: "inference-outage", checks: [{ result: "unconfirmed", reason: "decision model unavailable" }] });
+  });
+
+  test("does not apply with no lines to read", () => {
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, plan: {}, threshold: DEFAULT_MERGE_THRESHOLD });
+    expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "does not apply", evidence: [], output: { kind: "not-applicable" } }]);
+    expect(verdict.degraded).toBeNull();
+  });
+
+  test("names an unsure focused check in the comment, awaits review and is red", () => {
+    const verdict = focusedVerdict(focusedAnswer(0.5, 0.4));
     expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, merge: { verdict: "not-recommended" } });
-    expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: expect.any(String), evidence: [], output }]);
+    expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "score", score: 50, passAt: 60, items: [] } }]);
     expect(verdict.feedback).toBe(UNSURE_FOCUSED);
-    expect(verdict.merge.reasons).toContain("Not confirmed: makes one focused change");
-    expect(verdict.reason).not.toContain("mixes unrelated changes");
+    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: null, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Not confirmed: makes one focused change"] });
   });
 
   test.each([
     ["missing", ""],
-    ["malformed", JSON.stringify({ id: "focused-candidate-001", type: "choice", choice: "unrelated", probabilities: { unrelated: 1 }, confidence: 2 })],
+    ["malformed", JSON.stringify({ id: "focused", type: "choice", choice: "one_thing", probabilities: { one_thing: 1 }, confidence: 2 })],
   ] as const)("a %s answer is an outage that still posts", (_name, reply) => {
-    const verdict = focusedVerdict([candidate("src/a.ts", "A")], reply);
+    const verdict = focusedVerdict(reply);
     expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: "inference-outage", feedback: OUTAGE_NOTE });
     expect(verdict.merge).toEqual({ verdict: "not-recommended", score: null, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Could not evaluate 1 check"] });
   });
 
   test("the judge budget and a judge outage both still post", () => {
-    const candidates = [candidate("src/a.ts", "A")];
-    const limited = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, candidates, judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true, threshold: DEFAULT_MERGE_THRESHOLD });
+    const limited = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}, {}).focused, judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true, threshold: DEFAULT_MERGE_THRESHOLD });
     expect(limited).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: UNSURE_FOCUSED });
     expect(limited.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: QUALITY_EVALUATION_LIMIT_ERROR, evidence: [], output: { kind: "could-not-check", reason: QUALITY_EVALUATION_LIMIT_ERROR } }]);
     expect(limited.reason).toBe(QUALITY_EVALUATION_LIMIT_ERROR);
-    const outage = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, candidates, judgeError: "upstream 503", threshold: DEFAULT_MERGE_THRESHOLD });
+    const outage = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}).focused, judgeError: "upstream 503", threshold: DEFAULT_MERGE_THRESHOLD });
     expect(outage).toMatchObject({ mirror: true, humanGated: false, degraded: "inference-outage", feedback: OUTAGE_NOTE });
   });
 
-  test("names confirmed unrelated candidates when another is unresolved", () => {
-    const verdict = focusedVerdict(
-      [candidate("src/a.ts", "A"), candidate("src/b.ts", "B")],
-      decision("focused-candidate-001", "unrelated") + decision("focused-candidate-002", "ambiguous"),
-    );
-    expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, humanGated: false });
-    expect(verdict.checks[0]).toMatchObject({ check: "focused", result: "fail", evidence: ["A — src/a.ts"] });
-    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Split out unrelated change: `A — src/a.ts`"]);
-  });
-
-  test("dedupes exact unrelated display evidence only after validating every candidate", () => {
-    const candidates = [
-      candidate("src/a.ts", "Repeated"),
-      candidate("src/a.ts", "Repeated"),
-      candidate("src/a.ts", "Distinct"),
-    ];
-    const allUnrelated = focusedVerdict(candidates, [0, 1, 2].map((index) => decision(focusedCandidateId(index), "unrelated")).join(""));
-    expect(allUnrelated.checks[0]?.evidence).toEqual(["Repeated — src/a.ts", "Distinct — src/a.ts"]);
-    expect(allUnrelated.feedback.split("\n").slice(1)).toEqual([
-      "- Split out unrelated change: `Repeated — src/a.ts`",
-      "- Split out unrelated change: `Distinct — src/a.ts`",
-    ]);
-    expect(allUnrelated.reason).toContain("Repeated — src/a.ts, Distinct — src/a.ts");
-
-    const unresolvedDuplicate = focusedVerdict(candidates, [
-      decision("focused-candidate-001", "unrelated"),
-      decision("focused-candidate-002", "ambiguous"),
-      decision("focused-candidate-003", "unrelated"),
-    ].join(""));
-    expect(unresolvedDuplicate).toMatchObject({ mirror: true, humanGated: false });
-    expect(unresolvedDuplicate.checks[0]?.evidence).toEqual(["Repeated — src/a.ts", "Distinct — src/a.ts"]);
-  });
-
   test("rejects duplicate decisions and illegal choice probability keys", () => {
-    const duplicate = decision("focused-candidate-001", "unrelated") + decision("focused-candidate-001", "unrelated");
-    expect(focusedVerdict([candidate("a.ts", "A")], duplicate)).toMatchObject({ degraded: "inference-outage" });
-    const illegal = JSON.stringify({
-      id: "focused-candidate-001",
-      type: "choice",
-      choice: "unrelated",
-      probabilities: { unrelated: 0.9, other: 0.1 },
-      confidence: 0.9,
-    });
-    expect(focusedVerdict([candidate("a.ts", "A")], illegal)).toMatchObject({ degraded: "inference-outage" });
+    expect(focusedVerdict(focusedAnswer(0.8, 0.1) + focusedAnswer(0.8, 0.1))).toMatchObject({ degraded: "inference-outage" });
+    const illegal = JSON.stringify({ id: "focused", type: "choice", choice: "one_thing", probabilities: { one_thing: 0.9, other: 0.1 }, confidence: 0.9 });
+    expect(focusedVerdict(illegal)).toMatchObject({ degraded: "inference-outage" });
   });
 
   test("strictly validates noul decisions and decides them only outside the unsure band", () => {
@@ -206,16 +185,16 @@ describe("focused candidate rendering", () => {
     const plan: QualityPlan = { tests: { changed: [], asked: { "tests-file-001": "src/a.ts" }, unread: [] } };
     function results(tests: number, custom: number) {
       const answers = noul({ "tests-file-001": tests, "custom-1": custom });
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, candidates: [], plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ check, result, evidence }) => [check, result, evidence]);
+      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ check, result, evidence }) => [check, result, evidence]);
     }
     expect(results(0.9, 0.2)).toEqual([["tests", "fail", ["src/a.ts"]], ["custom-1", "fail", []]]);
     expect(results(0.5, 0.5)).toEqual([["tests", "unconfirmed", []], ["custom-1", "unconfirmed", []]]);
     expect(results(0.2, 0.9)).toEqual([["tests", "pass", []], ["custom-1", "pass", []]]);
 
     const duplicate = parseAnswers('{"id":"custom-1","type":"noul","noul":0.9}{"id":"custom-1","type":"noul","noul":0.9}');
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: duplicate, candidates: [], plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
+    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: duplicate, plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
     const unknown = parseAnswers('{"id":"tests","type":"noul","noul":0.9}');
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: unknown, candidates: [], plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
+    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: unknown, plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
   });
 
   test("a model check scores how likely it is fine, unsure answers included, and a file it could not read is a state", () => {
@@ -231,7 +210,7 @@ describe("focused candidate rendering", () => {
     function outputs(unread: string[]) {
       const plan: QualityPlan = { tests: { changed: [], asked, unread } };
       const answers = noul({ "tests-file-001": 0.2, "tests-file-002": 0.41, "custom-1": 0.55 });
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, candidates: [], plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ result, output }) => [result, output]);
+      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ result, output }) => [result, output]);
     }
     expect(outputs([])).toEqual([
       ["unconfirmed", { kind: "score", score: expect.closeTo(59), passAt: 70, items: ["src/b.ts"] }],
@@ -251,11 +230,10 @@ describe("focused candidate rendering", () => {
     };
     const plan: QualityPlan = { tests: { changed: [], asked: { "tests-file-001": "src/a.ts" }, unread: [] } };
     function modelChecks(answer: number) {
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "tests-file-001": answer, "custom-1": answer }), candidates: [], plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks;
+      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "tests-file-001": answer, "custom-1": answer }), plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks;
     }
-    function focusedCheck(related: number) {
-      const probabilities = { primary_or_supporting: related, unrelated: 0.2, movement_or_superseded: 0, ambiguous: 0.8 - related };
-      return focusedVerdict([candidate("src/a.ts", "A")], JSON.stringify({ id: "focused-candidate-001", type: "choice", choice: "ambiguous", probabilities, confidence: 0.9 })).checks;
+    function focusedCheck(one: number) {
+      return focusedVerdict(focusedAnswer(one, 0.2)).checks;
     }
     const checks = [0.3, 0.305, 0.695, 0.7].flatMap(modelChecks).concat([0.595, 0.6].flatMap(focusedCheck));
     for (const check of checks) {
@@ -265,28 +243,16 @@ describe("focused candidate rendering", () => {
     expect(checks.map((check) => check.result)).toContain("pass");
   });
 
-  test("a failing focused check scores the unrelated candidates its evidence names", () => {
-    const unrelated = { primary_or_supporting: 0.3, unrelated: 0.6, movement_or_superseded: 0, ambiguous: 0.1 };
-    const unsure = { primary_or_supporting: 0.2, unrelated: 0.2, movement_or_superseded: 0, ambiguous: 0.6 };
-    const reply = [unrelated, unsure].map((probabilities, index) => JSON.stringify({ id: focusedCandidateId(index), type: "choice", choice: "ambiguous", probabilities, confidence: 0.9 })).join("");
-    const [check] = focusedVerdict([candidate("src/a.ts", "A"), candidate("src/b.ts", "B")], reply).checks;
-    expect(check).toMatchObject({ result: "fail", evidence: ["A — src/a.ts"], output: { kind: "score", score: expect.closeTo(30), passAt: 60, items: ["A — src/a.ts"] } });
-  });
-
   test("an over-long comment is cut at line boundaries and still posts", () => {
-    const candidates = Array.from({ length: 200 }, (_, index) => candidate(
-      `${"p".repeat(500)}-${String(index).padStart(3, "0")}.ts`,
-      `${"界".repeat(150)}-${String(index).padStart(3, "0")}`,
-    ));
-    const reply = candidates.map((_, index) => decision(focusedCandidateId(index), "unrelated")).join("");
-    const verdict = focusedVerdict(candidates, reply);
+    const custom = Array.from({ length: 200 }, (_, index) => ({ id: `custom-${index + 1}`, name: `${"N".repeat(500)}-${index}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
+    const det: DeterministicResult = { ...FOCUSED_DET, sources: { quality: [], custom, rules: [] } };
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul(Object.fromEntries(custom.map((row) => [row.id, 0.1]))), threshold: DEFAULT_MERGE_THRESHOLD });
     const lines = verdict.feedback.split("\n").slice(1);
     expect(new TextEncoder().encode(verdict.feedback).byteLength).toBeLessThanOrEqual(MAX_MIRROR_COMMENT_BYTES);
-    expect(lines[0]).toContain(candidates[0]!.label);
+    expect(lines[0]).toContain(custom[0]!.name);
     expect(lines.at(-1)).toBe(`- and ${200 - (lines.length - 1)} more`);
     expect(lines.length).toBeGreaterThan(50);
     expect(verdict).toMatchObject({ mirror: true, humanGated: false, actor: "author" });
-    expect(verdict.checks[0]?.evidence).toHaveLength(200);
   });
 
   test("an over-long CI name is cut to one line without replacing its CI and path verdict", () => {
@@ -335,11 +301,6 @@ describe("merge verdict", () => {
     const checks = [{ check: "paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/a.ts"] }];
     const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, state: "blocked", checks }, answers: noul({ "docs-file-001": 0.1, "tests-file-001": 0.1 }), plan: PLAN, threshold: 0.7 });
     expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.9, threshold: 0.7, reasons: ["Failed: touches forbidden paths"] });
-  });
-
-  test("an unsure focused check is red", () => {
-    const verdict = focusedVerdict([candidate("src/a.ts", "A")], decision("focused-candidate-001", "ambiguous"));
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: null, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Not confirmed: makes one focused change"] });
   });
 
   test("a failed chunk is red with the count of checks it could not evaluate and keeps the answered ones", () => {
