@@ -1225,23 +1225,6 @@ export async function listRoles(transport: Transport, tenantId: string): Promise
   return listAll<HubRole>(transport, `/api/tenants/${tid}/roles`);
 }
 
-export async function createRole(transport: Transport, tenantId: string, name: string): Promise<HubRole> {
-  const tid = enc(requireTenantId(tenantId));
-  return transport.fetch<HubRole>("POST", `/api/tenants/${tid}/roles`, { name: requireId(name, "Role name") });
-}
-
-export async function renameRole(transport: Transport, tenantId: string, roleId: string, name: string): Promise<HubRole> {
-  const tid = enc(requireTenantId(tenantId));
-  const rid = enc(requireId(roleId, "Role id"));
-  return transport.fetch<HubRole>("PATCH", `/api/tenants/${tid}/roles/${rid}`, { name: requireId(name, "Role name") });
-}
-
-export async function deleteRole(transport: Transport, tenantId: string, roleId: string): Promise<void> {
-  const tid = enc(requireTenantId(tenantId));
-  const rid = enc(requireId(roleId, "Role id"));
-  await transport.fetch("DELETE", `/api/tenants/${tid}/roles/${rid}`);
-}
-
 /** Stock evaluate: whether `principalId` may do `action` on `resource`, as the hub would decide it. */
 export async function evaluateAccess(
   transport: Transport,

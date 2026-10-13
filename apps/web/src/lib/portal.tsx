@@ -13,9 +13,7 @@ import {
   hasActiveGithubCredential,
   configureGithubHook,
   createGrant,
-  createRole,
   deleteGrant,
-  deleteRole,
   ensureWorkspace,
   loadPortal,
   legacyHookCredentials,
@@ -23,7 +21,6 @@ import {
   portalConnected,
   replaceCredential,
   removeRepository,
-  renameRole,
   resolveApproval,
   revokeCredential,
   saveInference,
@@ -33,7 +30,6 @@ import {
   untilDeploymentReady,
   WAITING_FOR_WORKFLOW,
   type HubGrant,
-  type HubRole,
   type InvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
@@ -78,10 +74,7 @@ interface PortalContextValue {
   replaceSecret: (credentialId: string, secret: string) => Promise<void>;
   revoke: (credentialId: string) => Promise<void>;
   addGrant: (input: CreateGrantInput) => Promise<void>;
-  removeGrant: (grant: HubGrant) => Promise<void>;
-  addRole: (name: string) => Promise<void>;
-  renameRole: (role: HubRole, name: string) => Promise<void>;
-  removeRole: (role: HubRole) => Promise<void>;
+  removeGrants: (grants: readonly HubGrant[]) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
 }
 
@@ -414,42 +407,16 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const removeGrant = useCallback(
-    async function removeGrant(grant: HubGrant) {
+  const removeGrants = useCallback(
+    async function removeGrants(grants: readonly HubGrant[]) {
       const current = requireSnapshot();
-      await deleteGrant(createHubTransport(), current.workspace.tenantId, grant);
-      notify("Access rule removed.");
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
-  const addRole = useCallback(
-    async function addRole(name: string) {
-      const current = requireSnapshot();
-      await createRole(createHubTransport(), current.workspace.tenantId, name);
-      notify("Role added.");
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
-  const renameRoleTo = useCallback(
-    async function renameRoleTo(role: HubRole, name: string) {
-      const current = requireSnapshot();
-      await renameRole(createHubTransport(), current.workspace.tenantId, role.id, name);
-      notify("Role renamed.");
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
-  const removeRole = useCallback(
-    async function removeRole(role: HubRole) {
-      const current = requireSnapshot();
-      await deleteRole(createHubTransport(), current.workspace.tenantId, role.id);
-      notify("Role removed.");
-      refresh();
+      const transport = createHubTransport();
+      try {
+        for (const grant of grants) await deleteGrant(transport, current.workspace.tenantId, grant);
+      } finally {
+        refresh();
+      }
+      notify(grants.length === 1 ? "Access rule removed." : "Access rules removed.");
     },
     [notify, refresh, requireSnapshot],
   );
@@ -499,10 +466,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         replaceSecret,
         revoke,
         addGrant,
-        removeGrant,
-        addRole,
-        renameRole: renameRoleTo,
-        removeRole,
+        removeGrants,
         saveInferenceSecret,
       };
     },
@@ -529,10 +493,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       replaceSecret,
       revoke,
       addGrant,
-      removeGrant,
-      addRole,
-      renameRoleTo,
-      removeRole,
+      removeGrants,
       saveInferenceSecret,
     ],
   );
