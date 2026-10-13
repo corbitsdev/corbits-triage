@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@corbits/react-ui";
-import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "../lib/decision-models.ts";
+import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "@corbits/triage-contracts";
 import { usePortal } from "../lib/portal.tsx";
 
 export function DecisionModelForm() {
