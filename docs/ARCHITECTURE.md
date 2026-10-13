@@ -35,7 +35,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     run log) when the deployment runs the
     same workflow version and decision-model offering. It also replaces a
     `pr-triage` deployment with a fresh copy once its run log grows past a
-    limit.
+    limit, and redeploys one that Interchange failed, after two minutes and
+    at most three times an hour.
   - **Run recorder**: reads the live logs of tenants with a `pr-triage` run in
     flight and records each verdict and executed Do.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
@@ -80,13 +81,15 @@ one does.
    repository's docs and its contribution rules from GitHub.
 2. **rules**: runs the rule checks and builds the decision-model questions.
 3. **route**: skips the judge when no question needs asking.
-4. **judge**: one System One call per chunk of questions that no carried
+4. **judge**: one System One call per request of questions that no carried
    answer matches. The only step that infers; see
    [DECISION_MODEL.md](DECISION_MODEL.md).
-5. **evaluate**: combines rule results and answers into checks, a verdict and
+5. **parts**: only when focused fails, one question per file of each failing
+   slice through a second judge map; no call otherwise.
+6. **evaluate**: combines rule results and answers into checks, a verdict and
    each action's branch.
-6. **execute**: runs the automatic Dos on GitHub.
-7. **mirror**: writes the triage labels and one marker comment for
+7. **execute**: runs the automatic Dos on GitHub.
+8. **mirror**: writes the triage labels and one marker comment for
    repositories set to automated cleanup.
 
 Rules, routing and evaluation are deterministic `action` steps. Facts,

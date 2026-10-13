@@ -25,7 +25,7 @@ requests in this repository** and saves.
   line, the problems (failed checks, unsure answers, checks that could not
   run), the description, and folded rows for the linked issue, the changed
   files and the checks that passed. A bar at the bottom offers the next step
-  for that state (merge, send feedback, reply, approve, close as duplicate,
+  for that state (merge, request changes, comment, reply, approve, close,
   triage again); the rest and the pack's Dos are under More. Merging from the
   portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
@@ -110,7 +110,8 @@ An action is **When → Checks → Yes / No / Unsure → Dos**:
   every action.
 - **Checks**: the checks whose combined verdict picks the branch. Any
   unconfirmed check makes it Unsure. With no checks, the action always runs.
-- **Dos**: labels, assign, request review, comment, approve, close. Each Do
+- **Dos**: labels, assign, request review, comment, approve, request changes,
+  convert to draft, close, agent. Each Do
   has its own automatic flag: automatic Dos run on GitHub during triage, the
   rest wait in the Inbox for a click.
 
@@ -118,6 +119,8 @@ Close never runs automatically on Unsure or without checks. Approve runs only
 for a head that is ready to merge with CI green; in a repository that posts
 automatically, a later head that may not be approved has the approve Do's
 approvals dismissed. Approvals made from the Inbox are never dismissed.
+Request changes lists only the failed checks the author must fix, once per
+head; the automatic mirror dismisses it once none still fails.
 
 ## Triage over time
 
