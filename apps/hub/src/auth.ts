@@ -41,6 +41,8 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     trustedOrigins: config.trustedOrigins,
     database: drizzleAdapter(db, { provider: "pg" }),
     emailAndPassword: { enabled: authMethods(config).emailPassword },
+    // better-auth only rate-limits when NODE_ENV is production, which the deployment does not set.
+    rateLimit: { enabled: true },
     ...(google && { socialProviders: { google } }),
     databaseHooks: {
       user: { create: { before: requireAllowedNewUser } },
