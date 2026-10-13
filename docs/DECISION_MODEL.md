@@ -34,7 +34,7 @@ The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that inf
 
 Questions are built in `packages/triage-workflows/src/logic/quality.ts`. Every request's state holds:
 
-- the pull request's title, body (up to 4,000 chars), up to 50 commit messages and up to 200 changed paths, lockfiles included. When focused is asked, every path is listed instead while the list fits 8 KB; past that, the first 200 paths come with `pullRequest.directories`, every changed file counted by directory (files and changed lines) at the deepest level that fits 8 KB;
+- the pull request's title, body (up to 4,000 chars), up to 50 commit subjects (each cut to 200 chars) and up to 200 changed paths, lockfiles included. When focused is asked, paths are listed instead while they fit 8 KB; when any is left out, `pullRequest.directories` comes too, every changed file counted by directory (files and changed lines) at the deepest level that fits 8 KB;
 - the judged files that fit the request, each patch split into hunks. Lockfiles (`bun.lock`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum` and similar) keep their path but their patch is never sent;
 - the repository's docs (`repository.docs`, markdown by path), see [budgets](#budgets-and-limits);
 - in requests that ask a custom check, the repository's contribution rules (`repository.rules`), taken out of `repository.docs` so each file is sent once. Custom questions say to judge by them.
@@ -45,7 +45,7 @@ Questions point into the state by path, such as `` `pullRequest.files[3].hunks[0
   - When the diff fits one request, it asks about the whole pull request: `one_thing`, `more_than_one_thing` or `cant_tell`.
   - Otherwise each request asks whether its slice of the diff serves the pull request's main purpose or would belong in its own pull request, even if the title or body mentions it: `serves_purpose`, `separate_change` or `cant_tell`. Asking the slice question of a one-request diff too measured worse (70 of 72 against 72), and without "even if the title or body mentions it" it passed a mix whose description named both halves.
   - A pull request with no lines to read, such as one that changes only lockfiles, is not asked; focused does not apply.
-  - Only when focused fails, each failing slice's request is sent again with one Noul per file it holds, at most 30 in all: "is the change in this file a separate change from the one the title and body describe?". Those answers never decide focused; they name the files to split out.
+  - Only when focused fails, each failing slice's request is sent again with one Noul per file it holds that no earlier slice asked about, at most 30 in all: "is the change in this file a separate change from the one the title and body describe?". Those answers never decide focused; they name the files to split out. A follow-up that fails or comes back malformed is not retried; it only leaves its files unnamed and never costs the first answers. A first-round reply that is malformed, or answers a question its request did not ask, leaves only its own request's questions unanswered.
 - **Docs**: path rules decide in code first. Changing (not removing) any doc file passes docs with no question asked.
   - A doc file is `*.md` or `*.mdx` outside `vendor/`, `node_modules/`, `dist/` and `build/`, legal notices excluded.
   - A test file is under `test/`, `tests/` or `__tests__/`, or named `*.test.*` or `*.spec.*` with a JS or TS extension (`[cm]?[jt]sx?`). It is not asked about.
@@ -87,6 +87,8 @@ Two different numbers come out of the answers:
 | Jev context, state + all questions | 64k tokens | [models](https://docs.typesafe.ai/models.md) |
 | State per request | 90,000 bytes (32k tokens is about 105 KB of diff) | `MAX_SYSTEM_ONE_STATE_BYTES` |
 | Questions per request | 256 (no documented cap; 300 were answered) | `MAX_SYSTEM_ONE_QUESTIONS` |
+| Room for files per request | at least 8 KB | `MIN_FILE_ROOM` |
+| Requests per pull request | 64 (about 5.8 MB of state, $0.17 at most) | `MAX_JUDGE_REQUESTS` |
 | Repository docs | 24,000 bytes, default branch | `REPO_DOCS_MAX_BYTES` |
 | Contribution rules | 8,000 bytes, default branch | `REPO_RULES_MAX_BYTES` |
 | Patch read per file | 65,536 chars | `MAX_PATCH_INPUT_CHARS` |
@@ -95,7 +97,7 @@ Two different numbers come out of the answers:
 
 - **Docs.** Docs are read from the default branch in this order: root `README`, then `docs/`, then other root markdown, then nested markdown, each in path order. Reading stops at 24,000 bytes; a doc that crosses the cap is cut and later docs are not seen. The same docs are in every request's state.
 - **Contribution rules.** Read under their own 8,000-byte budget, in this order: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING` and `PULL_REQUEST_TEMPLATE` at the root, then `CONTRIBUTING` and `PULL_REQUEST_TEMPLATE` in `.github/` (including `PULL_REQUEST_TEMPLATE/`), then the same two in `docs/`. An `AGENTS.md` or `CLAUDE.md` inside a package stays an ordinary doc. Only requests that ask a custom check carry them and give up room for them; requests that ask only built-in checks are unchanged.
-- **Request splitting.** Files fill each request's state in order up to the budget left after metadata and docs. A file too large for one request keeps its leading hunks there for every check, and focused reads its remaining hunks in the next requests; a hunk too large for any request is cut at line ends across several. Each request asks only about the files it holds; whole-PR questions go in the first, and focused asks in each. If the title, body, commits, path list and docs alone exceed the budget, nothing is asked and the model checks stay unconfirmed ("pull request too large for the decision model (N KB)", the size of that metadata).
+- **Request splitting.** Files fill each request's state in order up to the budget left after metadata and docs. A file too large for one request keeps its leading hunks there for every check, and focused reads its remaining hunks in the next requests; a hunk too large for any request is cut at line ends across several. Each request asks only about the files it holds; whole-PR questions go in the first, and focused asks in each. If the title, body, commits, path list and docs leave less than 8 KB of the budget for files, nothing is asked and the model checks stay unconfirmed ("pull request too large for the decision model (N KB)", the size of that metadata). The same holds when the split needs more than 64 requests ("… (N requests)").
 - **Oversized patches.** A patch larger than one tool page is read across pages and joined. Reading stops at 65,536 chars for a file, which is then marked cut. Once the pull request's 270,000-char budget is spent, later files are listed without patches.
 - **Unread files.** A file with lines changed but no patch to read (GitHub left it out, the per-PR budget was spent, or not even its first hunk fits a request) is unread, and a check that would ask about it stays unconfirmed. Treatment differs by check:
   - Docs asks about a cut file from the hunks that were read; it is not unread for docs. A changed doc file passes docs by rule regardless.

@@ -138,13 +138,19 @@ const PASSES: Record<QualityCheckId, string> = {
 const MAX_BODY = 4000;
 const MAX_PATHS = 200;
 const MAX_COMMITS = 50;
-// Focused judges a slice against every changed file, so its requests list them all while they fit this share of the
-// state, and otherwise summarize them by directory in the same share.
+// A subject is short by convention; a long one would crowd the diff out of every request.
+const MAX_SUBJECT = 200;
+// Focused judges a slice against every changed file, so its requests list them while they fit this share of the state,
+// and summarize all of them by directory in the same share when any is left out.
 const FOCUSED_PATH_BYTES = 8 * 1024;
 // Jev caps a request's state at about 32k tokens, roughly 105 KB of diff; questions do not count toward it.
 export const MAX_SYSTEM_ONE_STATE_BYTES = 90_000;
 // No cap is documented; requests of 300 questions were answered whole.
 export const MAX_SYSTEM_ONE_QUESTIONS = 256;
+// Below this much room for files a hunk is cut into so many pieces that each costs a request of mostly metadata.
+const MIN_FILE_ROOM = 8 * 1024;
+// About 5.8 MB of state; the 270,000-char patch budget fills about five requests, 3,000 small files 24.
+const MAX_JUDGE_REQUESTS = 64;
 export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the decision model";
 
 /** Lockfiles say nothing the judge decides on, so it never reads them. */
@@ -233,12 +239,18 @@ function directories(facts: PrFacts): NonNullable<JudgeState["pullRequest"]["dir
   return summary;
 }
 
-/** The changed paths a request lists: the first 200, or for focused every one, or the first 200 and a directory summary. */
+/** The changed paths a request lists: the first 200, or for focused those that fit its share and a directory summary when any is left out. */
 function pathList(facts: PrFacts, focused: boolean): PathList {
   const paths = facts.paths ?? [];
-  if (focused && jsonBytes(paths) <= FOCUSED_PATH_BYTES) return { paths };
-  const capped = paths.slice(0, MAX_PATHS);
-  return focused && capped.length < paths.length ? { paths: capped, directories: directories(facts) } : { paths: capped };
+  if (!focused) return { paths: paths.slice(0, MAX_PATHS) };
+  const listed: string[] = [];
+  let bytes = 2;
+  for (const path of paths) {
+    bytes += jsonBytes(path) + (listed.length > 0 ? 1 : 0);
+    if (bytes > FOCUSED_PATH_BYTES) break;
+    listed.push(path);
+  }
+  return listed.length < paths.length ? { paths: listed, directories: directories(facts) } : { paths };
 }
 
 function judgeState(facts: PrFacts, files: StateFile[], withRules: boolean, listed: PathList): JudgeState {
@@ -246,7 +258,7 @@ function judgeState(facts: PrFacts, files: StateFile[], withRules: boolean, list
     pullRequest: {
       title: facts.title,
       body: (facts.body ?? "").slice(0, MAX_BODY),
-      commits: (facts.commits ?? []).slice(0, MAX_COMMITS),
+      commits: (facts.commits ?? []).slice(0, MAX_COMMITS).map((subject) => subject.slice(0, MAX_SUBJECT)),
       ...listed,
       files,
     },
@@ -365,7 +377,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
   const metadata = jsonBytes(judgeState(facts, [], sources.custom.length > 0, listed));
   const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(judgeState(facts, [], false, listed));
   const rulesRoom = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(judgeState(facts, [], true, listed));
-  if (room < 0 || (sources.custom.length > 0 && rulesRoom < 0)) return { plan, ...(focused && { focused }), requests: [], judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${Math.ceil(metadata / 1024)} KB)` };
+  if (room < MIN_FILE_ROOM || (sources.custom.length > 0 && rulesRoom < MIN_FILE_ROOM)) return { plan, ...(focused && { focused }), requests: [], judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${Math.ceil(metadata / 1024)} KB)` };
   // Each request that holds files asks focused about them, so one slot is kept for it.
   const questionCap = MAX_SYSTEM_ONE_QUESTIONS - (focused ? 1 : 0);
 
@@ -450,11 +462,12 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const read = stateFile(file, hunks);
     const custom = scoped.some((row) => inScope(row, file.path));
     const fitted = hunks.length > 0 ? fitFile(custom || (asksCustom && chunk.length === 0) ? rulesRoom : room, read) : undefined;
+    if (focused && file.patchTruncated) focused.unread.push(file.path);
     if (!fitted) {
       // A pure rename or a binary file has no lines to read, so there is nothing to judge.
       const unchanged = file.additions === 0 && file.deletions === 0;
       if (!unchanged) {
-        if (focused && hunks.length === 0) focused.unread.push(file.path);
+        if (focused && hunks.length === 0 && !file.patchTruncated) focused.unread.push(file.path);
         if (asksDocs(file.path)) plan.docs!.unread.push(file.path);
         for (const row of scoped) if (inScope(row, file.path)) plan[row.id]!.unread.push(file.path);
       }
@@ -463,7 +476,6 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     }
     // Lines left out of a file may break a custom rule, so a scoped check cannot pass on what was read.
     if (fitted.truncated) for (const row of scoped) if (inScope(row, file.path)) plan[row.id]!.unread.push(file.path);
-    if (focused && file.patchTruncated) focused.unread.push(file.path);
     const asking = fileQuestions(file.path, position, fitted.hunks.length, typeof file.patch === "string" ? hunkCitations(file.path, file.patch, file.previousPath) : []);
     const bytes = jsonBytes(fitted);
     if (chunk.length > 0 && (used + 1 + bytes > (custom || asksCustom ? rulesRoom : room) || questions.length + asking.length > questionCap)) flush();
@@ -477,6 +489,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     if (focused && fitted.hunks.length < hunks.length) addRest(read, fitted.hunks.length);
   }
   flush();
+  if (requests.length > MAX_JUDGE_REQUESTS) return { plan, ...(focused && { focused }), requests: [], judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length} requests)` };
   const ids = Object.keys(focused?.slices ?? {});
   // With no lines to read, such as only generated files changed, focused does not apply.
   if (!focused || ids.length + focused.unread.length === 0) return { plan, requests };
@@ -500,19 +513,21 @@ export interface FocusedParts {
 }
 
 /**
- * Asked only after focused fails: each failing slice's request again, with one question per file it holds, whether it
- * is a separate change. The answers name what to split out and never decide the check.
+ * Asked only after focused fails: each failing slice's request again, with one question per file it holds that an
+ * earlier slice did not ask about, whether it is a separate change. The answers name what to split out and never decide
+ * the check.
  */
 export function focusedPartRequests(requests: readonly JudgeRequest[], failing: readonly string[]): FocusedParts {
   const asked: Record<string, CheckItem> = {};
   const parts: JudgeRequest[] = [];
   for (const { state, questions } of requests) {
     const slice = questions.find((question) => failing.includes(question.id));
-    const files = state.pullRequest.files.slice(0, MAX_PART_FILES - Object.keys(asked).length);
+    const named = new Set(Object.values(asked));
+    const files = state.pullRequest.files.flatMap((file, index) => (named.has(file.path) ? [] : [{ path: file.path, index }])).slice(0, MAX_PART_FILES - named.size);
     if (!slice || files.length === 0) continue;
-    parts.push({ state, questions: files.map(function fileQuestion(file, index): QualityQuestion {
+    parts.push({ state, questions: files.map(function fileQuestion({ path, index }): QualityQuestion {
       const id = `${slice.id}-file-${ordinal(index)}`;
-      asked[id] = file.path;
+      asked[id] = path;
       return { id, type: "boolean", instructions: focusedFileQuestion(index) };
     }) });
   }
