@@ -19,7 +19,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
 | `src/hooks.ts` | `@corbits/webhooks` mount and its migrations. |
 | `src/integrations/app.ts` | The `/api/integrations/*` routes and their OpenAPI descriptions. |
-| `src/invitations/` | Team invitations and invite email over SMTP. |
+| `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
 | `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |

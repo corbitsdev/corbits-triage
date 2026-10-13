@@ -108,7 +108,7 @@ export const ROLES_QUERY_KEY = "roles";
 export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
 export const ALLOWED_QUERY_KEY = "allowed";
 export const INVITATIONS_QUERY_KEY = "invitations";
-/** Portal path of an invite link, as the hub writes it. */
+/** Portal path an invite's magic link lands on, as the hub writes it. */
 export const INVITE_PATH = "/invite/";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
@@ -175,7 +175,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const signOutWhenRejected = useSignOutWhenRejected();
   const configured = hubConfigured();
   const queryClient = useQueryClient();
-  // An invite link is accepted before any workspace is opened, so the user is never given one of their own meanwhile.
+  // The invited workspace opens straight from the link, so the user is never given one of their own meanwhile.
   const acceptingInvite = useLocation().pathname.startsWith(INVITE_PATH);
   const enabled = configured && Boolean(session) && !acceptingInvite;
   const userId = session?.id;

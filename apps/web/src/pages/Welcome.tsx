@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { getAuthMethods, signInWithGoogle, type AuthMethods } from "../lib/hub-auth.ts";
+import { getAuthMethods, requestPasswordReset, signInWithGoogle, type AuthMethods } from "../lib/hub-auth.ts";
 import { useSession } from "../lib/session.tsx";
 
 function message(cause: unknown): string {
@@ -20,6 +20,7 @@ export function Welcome() {
   const [pending, setPending] = useState(false);
   const [localError, setLocalError] = useState(returnedSignInError);
   const [methods, setMethods] = useState<AuthMethods | null>(null);
+  const [notice, setNotice] = useState("");
 
   useEffect(function loadAuthMethods() {
     async function load() {
@@ -55,6 +56,19 @@ export function Welcome() {
       await signInWithGoogle();
     } catch (cause: unknown) {
       setLocalError(`Could not start Google sign-in. ${message(cause)}.`);
+      setPending(false);
+    }
+  }
+
+  async function resetPassword() {
+    setPending(true);
+    setLocalError("");
+    try {
+      await requestPasswordReset(email);
+      setNotice(`If an account uses ${email}, a link to set its password is on its way.`);
+    } catch (cause: unknown) {
+      setLocalError(`Could not send the reset email. ${message(cause)}.`);
+    } finally {
       setPending(false);
     }
   }
@@ -108,6 +122,7 @@ export function Welcome() {
               />
             </label>
           </>}
+          {notice && <p role="status" className="field-help">{notice}</p>}
           {(localError || error) && (
             <p role="alert" className="field-error">
               {localError || (error ? `Could not load your session. ${error} Reload the page to try again.` : "")}
@@ -120,6 +135,11 @@ export function Welcome() {
             <button type="button" className="signin-switch" onClick={toggleMode}>
               {creating ? "Have an account? Sign in" : "New here? Create an account"}
             </button>
+            {methods.passwordReset && !creating && (
+              <button type="button" className="signin-switch" disabled={pending || !email} onClick={() => void resetPassword()}>
+                Reset password
+              </button>
+            )}
           </>}
         </form>
       </main>
