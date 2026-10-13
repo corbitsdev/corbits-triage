@@ -3,7 +3,7 @@
 // that changed since the judged verdict before it. The portal merges in the
 // pull request's Do runs, which it already reads from the github-dos route.
 import { type } from "arktype";
-import { failure, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure, runReadPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 import type { RecordedCheck, VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_TIMELINE_PATH = "/api/integrations/triage-timeline";
@@ -89,7 +89,7 @@ function timeline(records: readonly VerdictRecord[]): TimelineEntry[] {
 
 export function createTriageTimeline(deps: TriageTimelineDeps) {
   return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
+    const principalId = await runReadPrincipal(deps, req, tenantId);
     if (principalId instanceof Response) return principalId;
     const url = new URL(req.url);
     const query = TimelineQuery({ repo: url.searchParams.get("repo"), number: url.searchParams.get("number") });

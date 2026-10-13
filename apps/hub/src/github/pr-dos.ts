@@ -12,7 +12,7 @@ import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader }
 import { doEffectId, type SuggestedDo } from "../../../../packages/triage-workflows/src/logic/actions.js";
 import { unrunnable } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { appGithubFetch, approvalRefused, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, approvalRefused, failure, githubAppCredential, portalMember, runReadPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 import type { DoRun, DoRunStore } from "./do-run-store.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
@@ -209,7 +209,7 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {
   }
 
   async function list(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
+    const principalId = await runReadPrincipal(deps, req, tenantId);
     if (principalId instanceof Response) return principalId;
     const url = new URL(req.url);
     const query = DoQuery(Object.fromEntries(url.searchParams));

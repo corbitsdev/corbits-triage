@@ -243,6 +243,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     `${GITHUB_DOS_PATH}/:tenantId`,
     describeRoute({
       summary: "Recorded pack Dos of a repository, newest first",
+      description: "Needs `workflow-run:*` read.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
@@ -318,7 +319,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     `${TRIAGE_STATS_PATH}/:tenantId`,
     describeRoute({
       summary: "Triage stats of a repository over the last whole UTC days",
-      description: "From the recorded verdicts and Dos, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. Cached for a minute.",
+      description: "Needs `workflow-run:*` read. From the recorded verdicts and Dos, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. Cached for a minute.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
@@ -333,7 +334,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     `${TRIAGE_TIMELINE_PATH}/:tenantId`,
     describeRoute({
       summary: "Readiness history of a pull request",
-      description: "From the recorded verdicts only, oldest first; the pull request's Do runs are read from github-dos. A verdict with the same head, settled and degraded state and check results as the one before it is left out. Each scores its checks (pass 1, unconfirmed half, fail 0, out of 100) and lists the checks whose result changed since the previous judged verdict; degraded verdicts score nothing.",
+      description: "Needs `workflow-run:*` read. From the recorded verdicts only, oldest first; the pull request's Do runs are read from github-dos. A verdict with the same head, settled and degraded state and check results as the one before it is left out. Each scores its checks (pass 1, unconfirmed half, fail 0, out of 100) and lists the checks whose result changed since the previous judged verdict; degraded verdicts score nothing.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },

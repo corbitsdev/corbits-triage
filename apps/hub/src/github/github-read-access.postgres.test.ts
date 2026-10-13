@@ -9,7 +9,11 @@ import { emptyPack } from "@corbits/triage-contracts";
 import { createGithubOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createGithubPrActions } from "./pr-actions.js";
 import { createGithubPrDetails } from "./pr-details.js";
+import { createGithubPrDos } from "./pr-dos.js";
 import { createGithubPrPreview } from "./pr-preview.js";
+import { createTriageStats } from "./triage-stats.js";
+import { createTriageTimeline } from "./triage-timeline.js";
+import { createTriageVerdicts } from "./triage-verdicts.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_read_access";
@@ -180,4 +184,19 @@ test("PostgreSQL: approving needs the approve grant on top of use, and pins the 
   const approved = await prActions(post("usr_approver", "/actions", approve), TENANT);
   expect(approved.status).toBe(200);
   expect(reviewed).toEqual([{ body: "", event: "APPROVE", commit_id: HEAD }]);
+});
+
+test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {
+  const unused = {} as never;
+  const routes = [
+    createTriageVerdicts({ ...deps, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, now: unused }),
+    createTriageTimeline({ ...deps, verdicts: unused }),
+    createTriageStats({ ...deps, verdicts: unused, dos: unused, now: unused }),
+    createGithubPrDos({ ...deps, runReader: unused, store: unused, verdicts: unused, log: unused }).list,
+  ];
+  for (const route of routes) {
+    const res = await route(get("usr_user", `/verdicts?repo=${REPO}&number=8`), TENANT);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: { code: "forbidden", message: "You do not have access to this workspace's triage runs." } });
+  }
 });

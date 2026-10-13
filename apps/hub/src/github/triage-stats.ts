@@ -3,7 +3,7 @@
 // for it on every view.
 import { type } from "arktype";
 import type { DoRun, DoRunStore } from "./do-run-store.js";
-import { failure, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure, runReadPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_STATS_PATH = "/api/integrations/triage-stats";
@@ -148,7 +148,7 @@ export function createTriageStats(deps: TriageStatsDeps) {
   }
 
   return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
+    const principalId = await runReadPrincipal(deps, req, tenantId);
     if (principalId instanceof Response) return principalId;
     const query = StatsQuery(Object.fromEntries(new URL(req.url).searchParams));
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
