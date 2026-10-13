@@ -41,6 +41,8 @@ function label(action: SuggestedAction, repo: string): string | null {
       return "Approve";
     case "request-changes":
       return "Request changes";
+    case "convert-to-draft":
+      return "Convert to draft";
     case "close":
       return "Close";
     case "agent":

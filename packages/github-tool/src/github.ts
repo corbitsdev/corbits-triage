@@ -160,6 +160,7 @@ const MERGEABLE_BACKOFF_MS = 1500;
 function prFields(p: any) {
   return {
     number: p.number,
+    nodeId: p.node_id,
     title: p.title,
     body: p.body,
     state: p.state,
@@ -730,6 +731,41 @@ export async function dismissDoApprovals(gh: GithubFetch, input: { repo: string;
 /** Dismisses the request-changes Do's standing requests once nothing failed is the author's to fix; a repeat changes nothing. */
 export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: string; number: number; login: string }): Promise<number[]> {
   return dismissDoReviews(gh, input, "CHANGES_REQUESTED", REQUEST_CHANGES_DO_MARKER, "Nothing triage asked to change still fails, so this request no longer stands.");
+}
+
+type TimelineEvent = { event?: string; sha?: string; commit_id?: string; actor?: { login?: string } };
+
+/**
+ * Whether `login` already converted the pull request to draft since `sha` became its head, so marking that head ready is not undone.
+ * The timeline is oldest first; the head arrives as its commit or a force-push to it. A head the timeline does not show is not converted
+ * yet, as drafting it once is better than never.
+ */
+export async function draftedOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<boolean> {
+  const timeline = await jsonAll<TimelineEvent>(gh, `/repos/${input.repo}/issues/${input.number}/timeline?per_page=100`);
+  const landed = timeline.findLastIndex((e) => (e.event === "committed" && e.sha === input.sha) || (e.event === "head_ref_force_pushed" && e.commit_id === input.sha));
+  if (landed < 0) return false;
+  return timeline.slice(landed + 1).some((e) => e.event === "convert_to_draft" && e.actor?.login === input.login);
+}
+
+/** Names the repository of a request whose path has none, such as GraphQL, so the transport can pick its installation. */
+const REPOSITORY_SELECTOR_HEADER = "x-corbits-github-repository";
+
+async function graphql(gh: GithubFetch, repo: string, query: string, variables: Record<string, unknown>): Promise<any> {
+  const res = await json(gh, "/graphql", {
+    method: "POST",
+    body: JSON.stringify({ query, variables }),
+    headers: { "content-type": "application/json", [REPOSITORY_SELECTOR_HEADER]: repo },
+  });
+  if (res.errors?.length) throw new Error(`github graphql: ${res.errors.map((e: { message: string }) => e.message).join("; ")}`);
+  return res.data;
+}
+
+const CONVERT_TO_DRAFT = "mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }";
+
+/** REST cannot turn a pull request back into a draft; only GraphQL can. */
+export async function convertToDraft(gh: GithubFetch, input: { repo: string; nodeId: string }) {
+  const data = await graphql(gh, input.repo, CONVERT_TO_DRAFT, { id: input.nodeId });
+  return { draft: data.convertPullRequestToDraft.pullRequest.isDraft === true };
 }
 
 export type CreateIssueCommentInput = {

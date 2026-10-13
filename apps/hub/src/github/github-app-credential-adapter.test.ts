@@ -153,6 +153,23 @@ describe("GitHub App credential adapter", () => {
     expect(calls.filter((call) => call.includes("/app/installations/202/access_tokens"))).toHaveLength(1);
   });
 
+  test("finds a GraphQL request's installation from the repository it names and strips that header", async () => {
+    const secret = appSecret();
+    const sent: Array<{ path: string; authorization: string | null; repository: string | null }> = [];
+    async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+      const request = toRequest(input, init);
+      const path = new URL(request.url).pathname;
+      sent.push({ path, authorization: request.headers.get("authorization"), repository: request.headers.get("x-corbits-github-repository") });
+      if (path === "/repos/acme/one/installation") return Response.json({ id: 101 });
+      if (path === "/app/installations/101/access_tokens") return Response.json({ token: "token-one", expires_at: tokenExpiry() });
+      if (path === "/graphql") return Response.json({ data: {} });
+      throw new Error(`unexpected request ${request.method} ${path}`);
+    }
+    const adapted = createGithubAppCredentialFetch({ apiOrigin: API, fetch: github });
+    await adapted(`${API}/graphql`, { method: "POST", body: "{}", headers: { authorization: `Bearer ${secret}`, "x-corbits-github-repository": "acme/one" } });
+    expect(sent.at(-1)).toEqual({ path: "/graphql", authorization: "Bearer token-one", repository: null });
+  });
+
   test("resolves an organization installation and refreshes its token once after 401", async () => {
     const secret = appSecret();
     let mints = 0;
