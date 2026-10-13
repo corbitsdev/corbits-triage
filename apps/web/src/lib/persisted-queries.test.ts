@@ -17,7 +17,7 @@ test("the open set, its verdicts and finished logs are kept; running logs and ot
   client.setQueryData(["run-log", "t1", "a", "done"], { runId: "done", anchorRunId: "a", events: [{ type: "RunCompleted" }] });
   client.setQueryData(["run-log", "t1", "a", "live"], { runId: "live", anchorRunId: "a", events: [{ type: "RunStarted" }] });
   client.setQueryData(["handled-pulls", "t1"], {});
-  client.setQueryData(["do-runs", "t1", "o/r", 1], []);
+  client.setQueryData(["hidden-dos", "t1"], []);
   client.setQueryData(["approvals", "t1"], []);
   client.setQueryData(["runs", "t1"], []);
   client.getQueryCache().build(client, { queryKey: ["open-pulls", "t2"] });
@@ -27,7 +27,7 @@ test("the open set, its verdicts and finished logs are kept; running logs and ot
     ["triage-verdicts", "t1"],
     ["run-log", "t1", "a", "done"],
     ["handled-pulls", "t1"],
-    ["do-runs", "t1", "o/r", 1],
+    ["hidden-dos", "t1"],
   ]);
 });
 

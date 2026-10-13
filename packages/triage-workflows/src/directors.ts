@@ -10,7 +10,7 @@ import type {
 } from "@intx/types/runtime";
 import { type } from "arktype";
 import { classificationSources, isFromTriageSender, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
-import type { DoOutcome } from "@corbits/github-tool/do";
+import type { DoInput, DoOutcome } from "@corbits/github-tool/do";
 import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "./logic/checks.js";
@@ -19,6 +19,7 @@ import { asText, isRecord, parseJsonText } from "./logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, roleTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
+import type { ApprovalOutput } from "./actions/approval.js";
 import type { Judgment } from "./actions/evaluate.js";
 import type { Judged } from "./logic/item.js";
 import type { RulesItem } from "./actions/rules.js";
@@ -341,7 +342,7 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
   };
 }
 
-/** Only automated repos mirror: a run parked on approval loses state across restarts, so other verdicts leave `request` for the portal to post. */
+/** Only automated repos mirror; other verdicts leave `request` for the portal to post. */
 function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   let batch = false;
@@ -390,10 +391,10 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   };
 }
 
-/** One automatic Do's outcome; a failed or skipped one stays pending for the portal. */
+/** One Do's outcome; a failed or skipped automatic one is tried again by the next run. */
 export type DoResult = { effectId: string; status: DoOutcome["status"] | "failed" | "skipped"; error?: string };
 
-/** Dos one run writes at most; the rest stay pending for the next run or the portal. */
+/** Dos one run writes at most; the rest wait for the next run. */
 export const MAX_DOS_PER_RUN = 10;
 const NOT_SETTLED = "verdict not settled";
 const OVER_CAP = `more than ${MAX_DOS_PER_RUN} automatic Dos in one run`;
@@ -415,10 +416,13 @@ function refusal({ verdict, step }: AutomaticDo): string | undefined {
   return verdict.headSha !== null && decidesDos(verdict) ? unrunnable(step) : NOT_SETTLED;
 }
 
+function doInput({ verdict, step }: AutomaticDo): DoInput {
+  return { request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha!, kind: step.kind, target: step.target } };
+}
+
 /** The call id is the effect id, so each result names its Do. */
-function doCall({ verdict, step }: AutomaticDo): ToolCall {
-  const args = { request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha, kind: step.kind, target: step.target } };
-  return call("github_execute_do_auto", args, step.effectId);
+function doCall({ request, step }: DoInput): ToolCall {
+  return call("github_execute_do_auto", { request, step }, step.effectId);
 }
 
 function outcome(r: ToolResult): DoResult {
@@ -429,11 +433,11 @@ function outcome(r: ToolResult): DoResult {
   return { effectId: r.callId, status: "failed", error: "github_execute_do_auto result is unreadable" };
 }
 
-/** Writes one Do at a time, so a run never floods a pull request, and replies what it has so far when interrupted. */
+/** Writes one Do at a time, so a run never floods a pull request, and replies what it has so far when interrupted. An approval's input is the one held Do to write. */
 function executeDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   const results: DoResult[] = [];
-  let queue: AutomaticDo[] = [];
+  let queue: DoInput[] = [];
 
   function reply(reason?: string) {
     return caps.reply(JSON.stringify({ dos: results, ...(reason === undefined ? {} : { reason }) }));
@@ -449,11 +453,16 @@ function executeDirector(caps: ReactorCapabilities): ReactorDirector {
     return next();
   }
 
+  function approve(approved: ApprovalOutput & { approved: true }): void {
+    if ("refused" in approved) results.push({ effectId: approved.effectId, status: "skipped", error: approved.refused });
+    else queue.push(approved);
+  }
+
   function plan(dos: AutomaticDo[]): void {
     for (const d of dos) {
       const refused = refusal(d);
       if (refused !== undefined) results.push({ effectId: d.step.effectId, status: "skipped", error: refused });
-      else if (queue.length < MAX_DOS_PER_RUN) queue.push(d);
+      else if (queue.length < MAX_DOS_PER_RUN) queue.push(doInput(d));
       else results.push({ effectId: d.step.effectId, status: "skipped", error: OVER_CAP });
     }
   }
@@ -465,7 +474,8 @@ function executeDirector(caps: ReactorCapabilities): ReactorDirector {
           const input = parseInput(event.message.content);
           if (!input) return reply("execute: input is not JSON");
           queue = [];
-          plan(verdictsOf(input).verdicts.flatMap(automaticDos));
+          if (input.approved === true) approve(input as ApprovalOutput & { approved: true });
+          else plan(verdictsOf(input).verdicts.flatMap(automaticDos));
           return next();
         }
         case "tool.done":

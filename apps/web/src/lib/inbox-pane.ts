@@ -1,6 +1,6 @@
 import { errorText } from "./error-text.ts";
 import type { Outcome } from "./held-actions.ts";
-import type { DoRef, DoRun, GithubPullDetail, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
+import type { GithubPullDetail, HeldDoRef, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import { offersClose, type PendingDo } from "./pending-dos.ts";
 import { inboxAction, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
 
@@ -125,8 +125,8 @@ export function isComposerKind(kind: PaneKind): kind is ComposerKind {
 
 type GithubWrite = (input: PrGithubWriteInput) => Promise<PrGithubWriteResult>;
 
-/** `replySent` records a reply the hub confirmed it wrote, so the row shows it posted until a new verdict; `runDo` runs a pack Do by reference. */
-export type PaneIo = { write: GithubWrite; replySent: (item: PrItem) => void; runDo: (ref: DoRef) => Promise<DoRun> };
+/** `replySent` records a reply the hub confirmed it wrote, so the row shows it posted until a new verdict; `approveDo` approves a held pack Do by reference. */
+export type PaneIo = { write: GithubWrite; replySent: (item: PrItem) => void; approveDo: (ref: HeldDoRef) => Promise<void> };
 
 export type NumberedItem = PrItem & { number: number };
 
@@ -270,16 +270,16 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
   }
 }
 
-/** A pack Do is sent by reference, so the hub runs what the verdict recorded. Its close settles the pull request like the pane's own close. */
+/** A held Do is approved by reference, so pr-triage runs what the verdict recorded. Its close settles the pull request like the pane's own close. */
 export function doWrite(item: NumberedItem, pending: PendingDo, restore: () => void): PaneWrite {
   const closes = pending.kind === "close";
   return {
     settles: closes ? "close" : null,
     restore,
-    pending: closes ? `Closing #${item.number}…` : `${pending.label} on #${item.number}…`,
-    async send({ runDo }) {
-      await runDo(pending.ref);
-      return sent(closes ? `Closed #${item.number}.` : `${pending.label}: done on #${item.number}.`);
+    pending: `Approving ${pending.label} on #${item.number}…`,
+    async send({ approveDo }) {
+      await approveDo(pending.ref);
+      return sent(`Approved ${pending.label} on #${item.number}; Triage will run it.`);
     },
   };
 }

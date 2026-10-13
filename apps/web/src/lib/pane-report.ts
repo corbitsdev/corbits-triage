@@ -1,5 +1,5 @@
 import { citationOf } from "@corbits/triage-contracts";
-import type { CheckResult, DoRun, GithubPullDetail, PrItem, RunFailure } from "./hub-api.ts";
+import type { CheckResult, GithubPullDetail, PrItem, RunFailure } from "./hub-api.ts";
 import { currentHead, hasUncheckedCommits, paneActions, type ActionBlocker, type MenuEntry, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, primaryLabel, waitsOn, type HandledMark } from "./inbox-view.ts";
 import { upperFirst } from "./triage-view.ts";
@@ -65,9 +65,9 @@ function status(tone: StatusTone, text: string): PaneStatus {
 }
 
 /** The App approved the head Triage is looking at, through the pack's approve Do. */
-export function approvedByTriage(item: PrItem, runs: DoRun[]): boolean {
+export function approvedByTriage(item: PrItem): boolean {
   const head = currentHead(item);
-  return head !== null && runs.some((run) => run.kind === "approve" && run.headSha === head && (run.status === "done" || run.status === "satisfied"));
+  return head !== null && head === item.verdictSha && item.actions.some((action) => action.kind === "approve" && (action.status === "done" || action.status === "satisfied"));
 }
 
 /** Merged or closed on GitHub, or by the maintainer from the inbox; nothing more can be written to it. */

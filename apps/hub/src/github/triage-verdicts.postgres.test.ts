@@ -50,7 +50,7 @@ const OBSERVATION: TenantObservation = {
     ])]]),
     runCount: 4,
     verdicts: [],
-    executed: [],
+    approved: [],
   }],
 };
 

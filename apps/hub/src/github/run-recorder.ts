@@ -1,13 +1,10 @@
-// Copies what the live deployments' run logs say into the verdict and Do run
-// tables, as the tenant observer reads them.
-import type { DoRunStore } from "./do-run-store.js";
-import type { ExecutedDo, ObservedRuns } from "./triage-runs.js";
-import type { RecordedVerdict, VerdictRecordStore } from "./verdict-record-store.js";
+// Copies what the live deployments' run logs say into the verdict table, as the
+// tenant observer reads them.
+import type { ObservedRuns } from "./triage-runs.js";
+import { withApproved, type ApprovedDo, type RecordedVerdict, type VerdictRecordStore } from "./verdict-record-store.js";
 
 export type RunRecorderDeps = {
-  verdicts: Pick<VerdictRecordStore, "record">;
-  /** Where the Dos a run executed are recorded, beside those the portal runs. */
-  dos: Pick<DoRunStore, "record">;
+  verdicts: Pick<VerdictRecordStore, "record" | "recordApproved">;
   log: (entry: Record<string, unknown>) => void;
 };
 
@@ -19,27 +16,32 @@ function verdictState(verdict: RecordedVerdict): string {
   return JSON.stringify(verdict);
 }
 
-function doKey(executed: ExecutedDo): string {
-  return `${executed.runId}\n${executed.effectId}`;
+function approvalKey({ repo, number, effectId, status }: ApprovedDo): string {
+  return `${repo}#${number}\n${effectId}\n${status}`;
+}
+
+/** The verdict with the outcomes of the Dos approved on its head, so recording it, or a re-triage of the head, keeps them. */
+function folded(verdict: RecordedVerdict, approved: readonly ApprovedDo[]): RecordedVerdict {
+  const own = approved.filter((done) => done.repo === verdict.repo && done.number === verdict.number);
+  return verdict.detail && own.length > 0 ? { ...verdict, detail: withApproved(verdict.detail, own) } : verdict;
 }
 
 export function createRunRecorder(deps: RunRecorderDeps): RecordRuns {
   /** Verdicts recorded per tenant that its live logs still hold, as recorded; a restart records them again, which changes nothing. */
   const recorded = new Map<string, Set<string>>();
 
-  /** Executed Dos recorded per tenant that its live logs still hold; recording one again changes nothing. */
-  const recordedDos = new Map<string, Set<string>>();
+  /** Approved Dos' outcomes recorded per tenant that its live logs still hold. */
+  const recordedApproved = new Map<string, Set<string>>();
 
   return async function recordRuns(tenantId, runs) {
     const seen = recorded.get(tenantId) ?? new Set<string>();
-    const seenDos = recordedDos.get(tenantId) ?? new Set<string>();
+    const seenApproved = recordedApproved.get(tenantId) ?? new Set<string>();
+    const verdicts = runs.verdicts.map((verdict) => folded(verdict, runs.approved));
     try {
-      await deps.verdicts.record(tenantId, runs.verdicts.filter((verdict) => !seen.has(verdictState(verdict))));
-      for (const { outcome, ...claim } of runs.executed.filter((executed) => !seenDos.has(doKey(executed)))) {
-        await deps.dos.record({ ...claim, tenantId, source: "workflow", principalId: null }, outcome);
-      }
-      recorded.set(tenantId, new Set(runs.verdicts.map(verdictState)));
-      recordedDos.set(tenantId, new Set(runs.executed.map(doKey)));
+      await deps.verdicts.record(tenantId, verdicts.filter((verdict) => !seen.has(verdictState(verdict))));
+      await deps.verdicts.recordApproved(tenantId, runs.approved.filter((done) => !seenApproved.has(approvalKey(done))));
+      recorded.set(tenantId, new Set(verdicts.map(verdictState)));
+      recordedApproved.set(tenantId, new Set(runs.approved.map(approvalKey)));
       return true;
     } catch (err) {
       deps.log({ level: "error", msg: "triage_verdicts_unrecorded", tenantId, error: String(err) });

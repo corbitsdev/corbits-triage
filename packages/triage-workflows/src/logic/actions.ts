@@ -1,10 +1,11 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { missingFrom } from "@corbits/github-reads";
-import { ALL_CHECKS, BUILT_IN_CHECK_NAMES, CHECK_CATALOG, classificationSources, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, type ResolvedTarget, teamSlug } from "@corbits/triage-contracts";
+import { ALL_CHECKS, BUILT_IN_CHECK_NAMES, CHECK_CATALOG, classificationSources, type Action, type ActionKind, type CatalogId, type CheckPack, type CleanupMode, type Do, type RepoRole, type ResolvedTarget, teamSlug } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { authorFailures, type MergeVerdict } from "./render.js";
 import { errorText } from "./extract.js";
+import { unrunnable } from "./execute-do.js";
 
 export type Branch = "yes" | "no" | "unsure" | "always";
 
@@ -32,7 +33,8 @@ export function doEffectId(ref: DoRef): string {
 
 type Step = { id: string; branch: Branch; index: number; kind: ActionKind; automatic: boolean; reason: string };
 
-export type SuggestedDo = Step & { effectId: string; target: ResolvedTarget };
+/** `held` marks a Do the run does not write unattended: it waits for a maintainer's approval mail. */
+export type SuggestedDo = Step & { effectId: string; target: ResolvedTarget; held?: true };
 
 /** A step resolves to a target or is skipped; an action whose checks are off in the pack is skipped whole. */
 export type SuggestedAction = SuggestedDo | (Step & { skipped: true }) | { id: string; skipped: true; reason: string };
@@ -235,6 +237,14 @@ export function heldApprovals(actions: SuggestedAction[], reason: string | undef
     if (!("effectId" in action) || action.kind !== "approve") return action;
     const { id, branch, index, kind, automatic } = action;
     return { id, branch, index, kind, automatic, skipped: true, reason };
+  });
+}
+
+/** Marks each runnable Do the run will not write unattended, so it is held for a maintainer. */
+export function holdDos(actions: SuggestedAction[], cleanupMode: CleanupMode | undefined): SuggestedAction[] {
+  return actions.map(function hold(action): SuggestedAction {
+    if (!("effectId" in action) || (cleanupMode === "automated" && action.automatic) || unrunnable(action) !== undefined) return action;
+    return { ...action, held: true };
   });
 }
 

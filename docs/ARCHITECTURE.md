@@ -88,11 +88,21 @@ one does.
    slice through a second judge map; no call otherwise.
 6. **evaluate**: combines rule results and answers into checks, a verdict and
    each action's branch.
-7. **execute**: runs the automatic Dos on GitHub.
+7. **execute**: runs the automatic Dos on GitHub. Every other Do is held in
+   the verdict (`held: true`) and the run finishes.
 8. **mirror**: writes the triage labels and one marker comment for
    repositories set to automated cleanup.
 
-Rules, routing and evaluation are deterministic `action` steps. Facts,
+A maintainer approves a held Do, or an automatic one the run failed or could
+not write, from the inbox: the hub checks the grants below and mails the
+deployment the Do, its effect id, head and approver. That mail skips triage: an
+`approval` action reads it, trusting only the hub's sender and checking the
+effect id, and execute writes the Do unless GitHub already shows it; a close,
+draft, comment or review is refused once the head has moved. The hub reads the
+approval run's outcome back onto the verdict that held the Do. "Hide for me"
+hides a Do in that browser only; nothing is sent.
+
+Rules, routing, approval and evaluation are deterministic `action` steps. Facts,
 execute and mirror reach GitHub through the GitHub tool's credential, so on
 this Interchange pin they run as directors until actions can reach a bound
 credential. Downstream work on a pull request is its own workflow, never a
@@ -111,7 +121,7 @@ installation tokens at the fetch boundary, so workflow and tool code never
 hold it. Hub routes that read GitHub check the caller's `read` (or `use`)
 grant on the same credential; routes that write to GitHub check `use`. Reads
 (open pull requests, details, previews) use the secret on the caller's
-behalf and never return it; writes are pull request actions, triage and Dos.
+behalf and never return it; writes are pull request actions, triage and approving held Dos.
 Approving a pull request from the portal also checks `approve` on
 `github-review:<owner>/<name>`, the repository name in lowercase; the admin
 role holds `approve` on `github-review:*` from GitHub setup; in workspaces set
@@ -133,8 +143,7 @@ Hub routes that reach GitHub for the portal use the same adapter.
   open head's status (`new`, `queued`, `running`, `triaged`, `failed`,
   `stale`) and attempts.
 - Triage tables, in the `corbits_triage` schema: `verdict` (verdicts per
-  head), `do_run` (Dos run) and
-  `invitation`, applied from `apps/hub/migrations` at hub start in one
+  head, with the outcomes of the Dos their run executed) and `invitation`, applied from `apps/hub/migrations` at hub start in one
   transaction under an advisory lock. Nothing else is stored: the GitHub App
   setup state is a signed token.
 - Webhook replay protection uses the `@corbits/webhooks` table and a

@@ -1,17 +1,11 @@
 import type { ActionKind } from "@corbits/triage-contracts";
-import { strings, type DoRef, type DoRun, type PrItem, type SuggestedAction } from "./hub-api.ts";
+import { strings, type HeldDoRef, type PrItem, type SuggestedAction } from "./hub-api.ts";
 
-/** Keyed by the Do's effect id; `running` while the hub is writing it, and `error` is why its last attempt failed. */
-export type PendingDo = {
-  key: string;
-  label: string;
-  actionId: string;
-  kind: ActionKind;
-  reason: string;
-  ref: DoRef;
-  running: boolean;
-  error: string | null;
-};
+/**
+ * A Do waiting for approval, keyed by its effect id; `sentKey` also names the status it had when approved, so a later failure offers it again.
+ * `error` is why its last run did not write it.
+ */
+export type PendingDo = { key: string; sentKey: string; label: string; actionId: string; kind: ActionKind; reason: string; ref: HeldDoRef; error: string | null };
 
 /** Resolution keeps only team slugs, and only the repository owner's teams can review. */
 function teamName(slug: string, repo: string): string {
@@ -50,30 +44,29 @@ function label(action: SuggestedAction, repo: string): string | null {
   }
 }
 
-/** The verdict's resolved Dos the hub can run, in the order the pack lists them. */
+/** A held Do, or one its run failed or could not write; a written one is done. */
+function awaitsApproval({ held, status }: SuggestedAction): boolean {
+  return status === undefined ? held : status === "failed" || status === "skipped";
+}
+
+/** The verdict's Dos waiting for a maintainer that the hub can run, in the order the pack lists them. */
 function offeredDos(item: PrItem): PendingDo[] {
   const { repo, number, runId } = item;
   if (number === null || runId === null) return [];
   const out: PendingDo[] = [];
   for (const action of item.actions) {
-    const text = label(action, repo);
+    const text = awaitsApproval(action) ? label(action, repo) : null;
     if (text === null) continue;
-    const ref = { runId, repo, number, actionId: action.id, branch: action.branch, index: action.index };
-    out.push({ key: action.effectId, label: text, actionId: action.id, kind: action.kind, reason: action.reason, ref, running: false, error: null });
+    const ref = { runId, repo, number, effectId: action.effectId };
+    const sentKey = `${action.effectId}:${action.status ?? "held"}`;
+    out.push({ key: action.effectId, sentKey, label: text, actionId: action.id, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
   }
   return out;
 }
 
-/** Dos the hub has not settled and that are not held for Undo, with the hub's state of each. */
-export function pendingDos(item: PrItem, runs: DoRun[], held: ReadonlySet<string>): PendingDo[] {
-  const byEffect = new Map(runs.map((run) => [run.effectId, run]));
-  const out: PendingDo[] = [];
-  for (const pending of offeredDos(item)) {
-    const run = byEffect.get(pending.key);
-    if (held.has(pending.key) || run?.status === "done" || run?.status === "satisfied") continue;
-    out.push({ ...pending, running: run?.status === "running", error: run?.status === "failed" ? run.error : null });
-  }
-  return out;
+/** Dos waiting for approval, less those hidden here or sent since the status they show. */
+export function pendingDos(item: PrItem, hidden: ReadonlySet<string>, sent: ReadonlySet<string>): PendingDo[] {
+  return offeredDos(item).filter((pending) => !hidden.has(pending.key) && !sent.has(pending.sentKey));
 }
 
 /** The pack's close stands in for the plain one, so only one Close is offered. */

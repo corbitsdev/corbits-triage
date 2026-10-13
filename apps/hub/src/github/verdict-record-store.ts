@@ -33,6 +33,8 @@ const DetailAction = type({
   "reason?": "string",
   "target?": "Record<string, unknown>",
   "skipped?": "boolean",
+  /** Waiting for a maintainer to approve it. */
+  "held?": "boolean",
   /** Set once the run's execute step ran the Do. */
   "status?": "string",
   "error?": "string",
@@ -88,6 +90,24 @@ export type RecordedVerdict = Omit<typeof verdictRecord.$inferInsert, "tenantId"
 
 export type PullRef = { repo: string; number: number };
 
+/** How a Do a maintainer approved ended; its effect id names it on every verdict of its head that suggests it. */
+export type ApprovedDo = { repo: string; number: number; effectId: string; status: string; error?: string };
+
+const WRITTEN = new Set(["done", "satisfied"]);
+
+/** The verdict with each approved Do's outcome on its action; an approval that wrote it is not undone by one refused later. */
+export function withApproved(detail: VerdictDetail, approved: readonly ApprovedDo[]): VerdictDetail {
+  if (!detail.actions || approved.length === 0) return detail;
+  const actions = detail.actions.map(function outcomeOf(action) {
+    return approved.reduce(function apply(current, { effectId, status, error }) {
+      if (effectId !== current.effectId || WRITTEN.has(current.status ?? "")) return current;
+      const { error: _error, ...rest } = current;
+      return { ...rest, status, ...(error !== undefined && { error }) };
+    }, action);
+  });
+  return { ...detail, actions };
+}
+
 function ofPulls(pulls: readonly PullRef[]): SQL | undefined {
   return or(...pulls.map((pull) => and(eq(verdictRecord.repo, pull.repo), eq(verdictRecord.number, pull.number))));
 }
@@ -118,6 +138,18 @@ export function createVerdictRecordStore(db: DB["db"]) {
           runStatus: sql`coalesce(excluded.run_status, ${verdictRecord.runStatus})`,
         },
       });
+    },
+
+    /** Sets each approved Do's outcome on every recorded verdict of its pull request that suggests it; a verdict not recorded yet gains it when it is. */
+    async recordApproved(tenantId: string, approved: readonly ApprovedDo[]): Promise<void> {
+      for (const done of approved) {
+        const pull = and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, done.repo), eq(verdictRecord.number, done.number));
+        const rows = await db.select({ runId: verdictRecord.runId, detail: verdictRecord.detail }).from(verdictRecord).where(pull);
+        for (const { runId, detail } of rows) {
+          if (!detail?.actions?.some((action) => action.effectId === done.effectId)) continue;
+          await db.update(verdictRecord).set({ detail: withApproved(detail, [done]) }).where(and(pull, eq(verdictRecord.runId, runId)));
+        }
+      }
     },
 
     /** The newest verdict of each of `pulls`; reads only those pull requests' rows. */

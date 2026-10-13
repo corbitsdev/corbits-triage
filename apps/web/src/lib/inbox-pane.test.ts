@@ -103,8 +103,8 @@ describe("paneActions", () => {
     expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
   });
 
-  test("a pack close Do stands in for the menu's plain close", () => {
-    const actions = [{ id: "stale", kind: "close" as const, reason: "Stale.", target: {} }];
+  test("a held pack close Do stands in for the menu's plain close", () => {
+    const actions = [{ id: "stale", branch: "always" as const, index: 0, effectId: "e", kind: "close" as const, reason: "Stale.", target: {}, held: true }];
     expect(paneActions(gate({ actions })).more.map((row) => row.kind)).not.toContain("close");
   });
 
@@ -170,12 +170,12 @@ describe("paneWrite", () => {
     function replySent(sent: PrItem) {
       calls.push({ sent: sent.key });
     }
-    async function runDo(): Promise<never> {
-      throw new Error("a pane write sends no pack Do");
+    async function approveDo(): Promise<never> {
+      throw new Error("a pane write approves no pack Do");
     }
     const pr = item(overrides);
     if (pr.number === null) throw new Error("test item needs a number");
-    const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent, runDo });
+    const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent, approveDo });
     return { calls, outcome };
   }
 

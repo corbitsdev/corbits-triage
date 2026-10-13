@@ -1,8 +1,7 @@
-// A repository's triage over a window of days, from the recorded verdicts and
-// Dos only: no run log or GitHub read, so the portal and the extension can ask
+// A repository's triage over a window of days, from the recorded verdicts
+// only: no run log or GitHub read, so the portal and the extension can ask
 // for it on every view.
 import { type } from "arktype";
-import type { DoRun, DoRunStore } from "./do-run-store.js";
 import { failure, runReadPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 
@@ -39,11 +38,10 @@ export type TriageStats = typeof TriageStats.infer;
 
 export type TriageStatsDeps = PortalCredentialDeps & {
   verdicts: Pick<VerdictRecordStore, "since" | "earliest">;
-  dos: Pick<DoRunStore, "since">;
   now: () => Date;
 };
 
-const EXECUTED = new Set<DoRun["status"]>(["done", "satisfied"]);
+const EXECUTED = new Set(["done", "satisfied"]);
 
 function headKey(verdict: VerdictRecord): string {
   return `${verdict.number}@${verdict.headSha}`;
@@ -80,8 +78,21 @@ function completed(verdict: VerdictRecord): boolean {
   return verdict.runStatus === null || verdict.runStatus === "completed";
 }
 
+type RanDo = { kind: string | undefined; status: string };
+
+/** Each Do a run wrote, found written or failed to write, by effect id, as its verdict recorded it. */
+function ranDos(records: readonly VerdictRecord[]): Map<string, RanDo> {
+  const ran = new Map<string, RanDo>();
+  for (const verdict of records) {
+    for (const { effectId, kind, status } of verdict.detail?.actions ?? []) {
+      if (effectId !== undefined && status !== undefined) ran.set(effectId, { kind, status });
+    }
+  }
+  return ran;
+}
+
 /** Degraded verdicts are left out: they judged nothing; so are those of runs still going or that failed or were cancelled. */
-function aggregate(repo: string, days: number, from: Date, since: Date | null, records: readonly VerdictRecord[], dos: readonly DoRun[]): TriageStats {
+function aggregate(repo: string, days: number, from: Date, since: Date | null, records: readonly VerdictRecord[]): TriageStats {
   const judged = records.filter((verdict) => verdict.degraded === null && completed(verdict));
   const latest = latestPerHead(judged);
   const settled = judged.filter((verdict) => verdict.settled);
@@ -107,11 +118,12 @@ function aggregate(repo: string, days: number, from: Date, since: Date | null, r
       count(actions, actionId, none, "suggested");
     }
   }
-  for (const run of dos) {
-    const actionId = actionOf.get(run.effectId);
+  const ran = ranDos(records);
+  for (const [effectId, { status }] of ran) {
+    const actionId = actionOf.get(effectId);
     if (actionId === undefined) continue;
-    if (EXECUTED.has(run.status)) count(actions, actionId, none, "executed");
-    else if (run.status === "failed") count(actions, actionId, none, "failed");
+    if (EXECUTED.has(status)) count(actions, actionId, none, "executed");
+    else if (status === "failed") count(actions, actionId, none, "failed");
   }
 
   const triagedOn = new Map<string, Set<number>>();
@@ -133,7 +145,7 @@ function aggregate(repo: string, days: number, from: Date, since: Date | null, r
     neededYou: new Set(latest.filter((verdict) => verdict.actor === "maintainer" || verdict.humanGated).map((verdict) => verdict.number)).size,
     checks,
     actions,
-    comments: records.filter((verdict) => verdict.commented).length + dos.filter((run) => run.kind === "comment" && run.status === "done").length,
+    comments: records.filter((verdict) => verdict.commented).length + [...ran.values()].filter((action) => action.kind === "comment" && action.status === "done").length,
     medianTimeToVerdictMs: median(judged.map((verdict) => verdict.verdictAt.getTime() - verdict.startedAt.getTime())),
     daily,
   };
@@ -159,12 +171,8 @@ export function createTriageStats(deps: TriageStatsDeps) {
     if (hit) return Response.json(hit);
 
     const from = windowStart(now, days);
-    const [records, dos, since] = await Promise.all([
-      deps.verdicts.since(tenantId, repo, from),
-      deps.dos.since(tenantId, repo, from),
-      deps.verdicts.earliest(tenantId, repo),
-    ]);
-    const stats = aggregate(repo, days, from, since, records, dos);
+    const [records, since] = await Promise.all([deps.verdicts.since(tenantId, repo, from), deps.verdicts.earliest(tenantId, repo)]);
+    const stats = aggregate(repo, days, from, since, records);
     if (cache.size >= CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
     cache.set(key, { at: now.getTime(), stats });
     return Response.json(stats);

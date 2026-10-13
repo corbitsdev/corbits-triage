@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { CheckResult, DoRun, GithubPullDetail, PrItem } from "./hub-api.ts";
+import type { CheckResult, GithubPullDetail, PrItem, SuggestedAction } from "./hub-api.ts";
 import { paneFacts } from "./inbox-pane.ts";
 import { approvedByTriage, paneBar, paneProblems, paneStatus, passedChecks, type StatusInput } from "./pane-report.ts";
 
@@ -137,14 +137,18 @@ describe("paneStatus", () => {
 });
 
 describe("approvedByTriage", () => {
-  const run = (overrides: Partial<DoRun>): DoRun => ({ effectId: "e", actionId: "a", kind: "approve", headSha: "head-1", status: "done", error: null, updatedAt: "", ...overrides });
+  const approved = (overrides: Partial<SuggestedAction>, pr: Partial<PrItem> = {}) => approvedByTriage(item({
+    ...pr,
+    actions: [{ id: "a", branch: "yes", index: 0, effectId: "e", kind: "approve", reason: "", target: {}, held: false, status: "done", ...overrides }],
+  }));
 
-  test("only the approve Do's settled approval of the current head counts", () => {
-    expect(approvedByTriage(item({}), [run({})])).toBe(true);
-    expect(approvedByTriage(item({}), [run({ status: "satisfied" })])).toBe(true);
-    expect(approvedByTriage(item({ headSha: "head-2" }), [run({})])).toBe(false);
-    expect(approvedByTriage(item({}), [run({ status: "failed" })])).toBe(false);
-    expect(approvedByTriage(item({}), [run({ kind: "labels" })])).toBe(false);
+  test("only the verdict's settled approve Do on the current head counts", () => {
+    expect(approved({})).toBe(true);
+    expect(approved({ status: "satisfied" })).toBe(true);
+    expect(approved({}, { headSha: "head-2" })).toBe(false);
+    expect(approved({ status: "failed" })).toBe(false);
+    expect(approved({ kind: "labels" })).toBe(false);
+    expect(approved({ status: undefined, held: true })).toBe(false);
   });
 });
 

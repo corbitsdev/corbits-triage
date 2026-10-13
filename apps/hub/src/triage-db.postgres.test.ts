@@ -73,7 +73,7 @@ async function withDatabase(name: string, run: (db: Db) => Promise<void>): Promi
   }
 }
 
-test("PostgreSQL: the old host-schema tables move into corbits_triage with their rows, and match a fresh install", async () => {
+test("PostgreSQL: the old host-schema tables move into corbits_triage with their rows, do_run is dropped, and they match a fresh install", async () => {
   let moved: Awaited<ReturnType<typeof shape>> | undefined;
   let fresh: Awaited<ReturnType<typeof shape>> | undefined;
   await withDatabase("move", async function moveOld(db) {
@@ -83,7 +83,6 @@ test("PostgreSQL: the old host-schema tables move into corbits_triage with their
     await migrateTriageTables(db, "public");
     await migrateTriageTables(db, "public");
     expect([...await db.execute(sql`SELECT run_id, run_status FROM corbits_triage.verdict`)]).toEqual([{ run_id: "run_1", run_status: "completed" }]);
-    expect([...await db.execute(sql`SELECT effect_id, status FROM corbits_triage.do_run`)]).toEqual([{ effect_id: "e1", status: "done" }]);
     expect([...await db.execute(sql`SELECT id, email FROM corbits_triage.invitation`)]).toEqual([{ id: "inv_1", email: "ann@move.test" }]);
     moved = await shape(db);
   });
@@ -93,6 +92,6 @@ test("PostgreSQL: the old host-schema tables move into corbits_triage with their
     fresh = await shape(db);
   });
   expect(moved!.leftover).toEqual([]);
-  expect(fresh!.columns).toHaveLength(59);
+  expect(fresh!.columns).toHaveLength(41);
   expect(moved).toEqual(fresh);
 }, 120_000);

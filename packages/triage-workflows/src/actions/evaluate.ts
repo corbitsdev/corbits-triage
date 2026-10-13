@@ -1,7 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { packMergeThreshold } from "@corbits/triage-contracts";
 import { type } from "arktype";
-import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, packApproves } from "../logic/actions.js";
+import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves } from "../logic/actions.js";
 import type { PrFacts } from "../logic/checks.js";
 import { errorText } from "../logic/extract.js";
 import type { Item, Judged } from "../logic/item.js";
@@ -99,7 +99,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const suggested = actionInput ? evaluateActions(actionInput) : [];
     const wanted = actionInput && changesWanted(actionInput);
     const held = approvalHeldBy(rendered.merge.verdict, it.facts.checks);
-    const actions = heldApprovals(suggested, held);
+    const actions = holdDos(heldApprovals(suggested, held), it.cleanupMode);
     const judged = reusable(answered);
     const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
     return { ...verdict, request: toMirrorRequest(verdict) };

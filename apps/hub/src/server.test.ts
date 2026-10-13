@@ -10,7 +10,6 @@ import { formatRunAddress } from "@intx/types";
 import { PreviewResponse } from "./github/pr-preview.js";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
 import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName } from "@corbits/triage-contracts";
-import { doMarker } from "@corbits/github-tool/do";
 import type { ResolvedTarget } from "@corbits/triage-contracts";
 import { doEffectId, type Branch } from "../../../packages/triage-workflows/src/logic/actions.js";
 import { workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
@@ -226,7 +225,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-manifest/callback": ["get"],
     "/api/integrations/github-installations/{tenantId}/sync": ["post"],
     "/api/integrations/github-actions/{tenantId}": ["post"],
-    "/api/integrations/github-dos/{tenantId}": ["post", "get"],
+    "/api/integrations/github-held-dos/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}": ["post"],
     "/api/integrations/github-open-pulls/{tenantId}": ["get"],
     "/api/integrations/github-pull/{tenantId}": ["get"],
@@ -348,7 +347,7 @@ async function connectGithub(origin: string, headers: Record<string, string>, te
   return providerId;
 }
 
-type SeededDo = { id: string; kind: "labels" | "comment" | "agent"; target: ResolvedTarget; index?: number; effectId?: string };
+type SeededDo = { id: string; kind: "labels" | "comment" | "agent"; target: ResolvedTarget; index?: number; effectId?: string; held?: true };
 
 const BRANCH: Branch = "always";
 
@@ -359,7 +358,7 @@ function effectOf(step: SeededDo, index: number, headSha = HEAD): string {
 /** A Do seeded without an index stands for a verdict written before Dos had one. */
 function verdictStep(step: SeededDo, headSha: string) {
   const base = { id: step.id, branch: BRANCH, kind: step.kind, automatic: false, reason: "Always applies.", target: step.target };
-  return step.index === undefined ? base : { ...base, index: step.index, effectId: step.effectId ?? effectOf(step, step.index, headSha) };
+  return step.index === undefined ? base : { ...base, index: step.index, effectId: step.effectId ?? effectOf(step, step.index, headSha), ...(step.held && { held: true }) };
 }
 
 type Db = ReturnType<typeof createDB>["db"];
@@ -407,7 +406,7 @@ async function seedRun(db: Db, dataDir: string, tenantId: string, dos: SeededDo[
   return runId!;
 }
 
-test("a pack Do runs once by reference and is recorded", async () => {
+test("a held Do is approved only as its own workspace's verdict recorded it, and only to a running pr-triage", async () => {
   const github = fakeGithub();
   const dataDir = temporaryDirectory();
   const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
@@ -419,47 +418,23 @@ test("a pack Do runs once by reference and is recorded", async () => {
 
     await connectGithub(origin, headers, tenantId, github.origin);
 
-    const runId = await seedRun(db, dataDir, tenantId, [
-      { id: "label", kind: "labels", target: { labels: ["api"] }, index: 0 },
-      { id: "note", kind: "comment", target: { body: "Thanks" }, index: 0 },
-      { id: "posted", kind: "comment", target: { body: "Already said" }, index: 0 },
-      { id: "agent", kind: "agent", target: { prompt: "Review", tools: [] }, index: 0 },
-      { id: "old", kind: "labels", target: { labels: ["stale"] } },
-      { id: "refused", kind: "labels", target: { labels: ["boom"] }, index: 0 },
-      { id: "forged", kind: "labels", target: { labels: ["api"] }, index: 0, effectId: "0".repeat(64) },
-    ]);
-    const movedRunId = await seedRun(db, dataDir, tenantId, [{ id: "note", kind: "comment", target: { body: "Thanks" }, index: 0 }], "old");
-    const otherRunId = await seedRun(db, dataDir, otherTenantId, [{ id: "label", kind: "labels", target: { labels: ["api"] }, index: 0 }]);
-    github.comments.push({ id: 99, user: APP_BOT, body: `${doMarker(effectOf({ id: "posted", kind: "comment", target: { body: "Already said" } }, 0))}\nAlready said` });
+    const label: SeededDo = { id: "label", kind: "labels", target: { labels: ["api"] }, index: 0, held: true };
+    const forged: SeededDo = { id: "forged", kind: "labels", target: { labels: ["api"] }, index: 0, effectId: "0".repeat(64), held: true };
+    const runId = await seedRun(db, dataDir, tenantId, [label, forged]);
+    const otherRunId = await seedRun(db, dataDir, otherTenantId, [label]);
 
-    const refusal = `GitHub refused to label ${REPO}#8 (HTTP 422).`;
-    async function runDo(actionId: string, run = runId) {
-      const res = await fetch(`${origin}/api/integrations/github-dos/${tenantId}`, {
-        method: "POST", headers, body: JSON.stringify({ runId: run, repo: REPO, number: 8, actionId, branch: "always", index: 0 }),
+    async function approve(effectId: string, run = runId) {
+      const res = await fetch(`${origin}/api/integrations/github-held-dos/${tenantId}`, {
+        method: "POST", headers, body: JSON.stringify({ runId: run, repo: REPO, number: 8, effectId }),
       });
       return { status: res.status, body: await res.json() };
     }
 
-    expect(await runDo("label")).toMatchObject({ status: 200, body: { kind: "labels", status: "done", replayed: false, attempts: 1, source: "portal" } });
-    expect(await runDo("label")).toMatchObject({ status: 200, body: { status: "done", replayed: true } });
-    expect(github.writes.filter((write) => write.path.endsWith("/labels"))).toEqual([{ path: `/repos/${REPO}/issues/8/labels`, body: { labels: ["api"] } }]);
-
-    expect(await runDo("note")).toMatchObject({ status: 200, body: { kind: "comment", status: "done" } });
-    expect(github.writes.at(-1)?.body["body"]).toBe(`${doMarker(effectOf({ id: "note", kind: "comment", target: { body: "Thanks" } }, 0))}\nThanks`);
-    expect(await runDo("posted")).toMatchObject({ status: 200, body: { status: "satisfied", result: { commentId: 99 } } });
-
-    expect(await runDo("label", otherRunId)).toMatchObject({ status: 404, body: { error: { code: "run_not_found" } } });
-    expect(await runDo("agent")).toMatchObject({ status: 409, body: { error: { code: "do_not_runnable" } } });
-    expect(await runDo("old")).toMatchObject({ status: 409, body: { error: { code: "verdict_outdated" } } });
-    expect(await runDo("refused")).toMatchObject({ status: 502, body: { error: { code: "github_failed", message: refusal } } });
-    expect(await runDo("forged")).toMatchObject({ status: 409, body: { error: { code: "effect_mismatch" } } });
-    expect(await runDo("note", movedRunId)).toMatchObject({ status: 409, body: { error: { code: "head_moved" } } });
-
-    const listed = await fetch(`${origin}/api/integrations/github-dos/${tenantId}?repo=${REPO}&number=8`, { headers });
-    expect(listed.status).toBe(200);
-    const { dos } = type({ dos: type({ actionId: "string", status: "string", error: "string | null" }).array() }).assert(await listed.json());
-    expect(Object.fromEntries(dos.map((row) => [row.actionId, row.status]))).toEqual({ label: "done", note: "done", posted: "satisfied", refused: "failed" });
-    expect(dos.find((row) => row.actionId === "refused")?.error).toBe(refusal);
+    expect(await approve(effectOf(label, 0))).toMatchObject({ status: 503, body: { error: { code: "service_not_running" } } });
+    expect(await approve("0".repeat(64))).toMatchObject({ status: 409, body: { error: { code: "effect_mismatch" } } });
+    expect(await approve("1".repeat(64))).toMatchObject({ status: 404, body: { error: { code: "do_not_found" } } });
+    expect(await approve(effectOf(label, 0), otherRunId)).toMatchObject({ status: 404, body: { error: { code: "run_not_found" } } });
+    expect(github.writes).toEqual([]);
   } finally {
     github.stop();
     await close();
@@ -593,18 +568,13 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
     const note: SeededDo = { id: "note", kind: "comment", target: { body: "Thanks" }, index: 0 };
     const ci = (result: string) => ({ check: "ci", kind: "machine", result, reason: "", evidence: [] });
     const started = new Date(Date.now() - 3_600_000);
-    const [, unconfirmed] = await seedDeployment(db, dataDir, tenantId, [
+    await seedDeployment(db, dataDir, tenantId, [
       timedRun(started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good" } }), true),
       timedRun(new Date(started.getTime() + 600_000), 180_000, statsVerdict(8, HEAD, {
-        state: "awaiting-review", actor: "maintainer", checks: [ci("unconfirmed")], actions: [verdictStep(label, HEAD), verdictStep(note, HEAD)],
+        state: "awaiting-review", actor: "maintainer", checks: [ci("unconfirmed")], actions: [{ ...verdictStep(label, HEAD), status: "done" }, verdictStep(note, HEAD)],
       })),
       timedRun(new Date(started.getTime() + 1_200_000), 900_000, statsVerdict(8, HEAD, { state: "stale-unknown", actor: "system", degraded: "error", checks: [ci("fail")] })),
     ], prTriageWorkflow.id);
-
-    const ran = await fetch(`${origin}/api/integrations/github-dos/${tenantId}`, {
-      method: "POST", headers, body: JSON.stringify({ runId: unconfirmed, repo: REPO, number: 8, actionId: "label", branch: "always", index: 0 }),
-    });
-    expect(ran.status).toBe(200);
 
     // Answers are cached for a minute, so the route is asked only once the reconciler recorded every verdict.
     const deadline = Date.now() + 20_000;

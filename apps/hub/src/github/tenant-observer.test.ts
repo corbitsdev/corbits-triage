@@ -18,7 +18,7 @@ test("one read of a tenant's logs at a time, shared by every caller, and reused 
       release = resolve;
     });
     inFlight -= 1;
-    return { byRepo: new Map(), runCount: 0, verdicts: [], executed: [] };
+    return { byRepo: new Map(), runCount: 0, verdicts: [], approved: [] };
   }
   const observer = createTenantObserver({
     liveDeployments: async () => [LIVE],
@@ -89,7 +89,7 @@ test("the version moves when a verdict's detail changes, and again after a read 
         runId: "run_1", repo: "acme/widgets", number: 1, headSha: "sha1", startedAt: new Date(0), verdictAt: new Date(0), settled: true,
         state: "needs-author-update", actor: "author", humanGated: false, degraded: null, checks: [], dos: [], commented: false, detail: { feedback },
       };
-      return { byRepo: new Map(), runCount: 1, verdicts: [verdict], executed: [] };
+      return { byRepo: new Map(), runCount: 1, verdicts: [verdict], approved: [] };
     },
     recordRuns: async () => records,
     versions,

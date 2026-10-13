@@ -58,31 +58,6 @@ CREATE INDEX IF NOT EXISTS "verdict_repo_idx"
 CREATE INDEX IF NOT EXISTS "verdict_pull_idx"
   ON "corbits_triage"."verdict" ("tenant_id", "repo", "number", "verdict_at");
 --> statement-breakpoint
-CREATE TABLE IF NOT EXISTS "corbits_triage"."do_run" (
-  "tenant_id" text NOT NULL REFERENCES "public"."tenant"("id") ON DELETE CASCADE,
-  "effect_id" text NOT NULL,
-  "run_id" text NOT NULL,
-  "repo" text NOT NULL,
-  "number" integer NOT NULL,
-  "head_sha" text NOT NULL,
-  "action_id" text NOT NULL,
-  "branch" text NOT NULL,
-  "do_index" integer NOT NULL,
-  "kind" text NOT NULL,
-  "source" text NOT NULL,
-  "principal_id" text REFERENCES "public"."principal"("id") ON DELETE SET NULL,
-  "status" text NOT NULL CHECK ("status" IN ('running', 'done', 'satisfied', 'failed')),
-  "result" jsonb,
-  "error" text,
-  "attempts" integer NOT NULL,
-  "created_at" timestamptz NOT NULL DEFAULT now(),
-  "updated_at" timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY ("tenant_id", "effect_id")
-);
---> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "do_run_pr_idx"
-  ON "corbits_triage"."do_run" ("tenant_id", "repo", "number", "created_at" DESC);
---> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "corbits_triage"."invitation" (
   "id" text PRIMARY KEY,
   "tenant_id" text NOT NULL REFERENCES "public"."tenant"("id") ON DELETE CASCADE,

@@ -400,7 +400,7 @@ describe("judge on a blocked pull request", () => {
     const files = [{ filename: "src/flag.ts", patch: "@@ -0,0 +1 @@\n+export const flag = true;" }];
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }, files));
     expect(verdict.actions).toEqual([
-      { id: "ask-leads", branch: "no", index: 0, effectId: expect.any(String), kind: "request-review", automatic: true, target: { users: ["dave"], teams: [] }, reason: "Focused change failed." },
+      { id: "ask-leads", branch: "no", index: 0, effectId: expect.any(String), kind: "request-review", automatic: true, target: { users: ["dave"], teams: [] }, reason: "Focused change failed.", held: true },
     ]);
   });
 
@@ -418,7 +418,7 @@ describe("judge on a blocked pull request", () => {
     };
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }), undefined, ["custom-3"]);
     expect(verdict.actions).toEqual([
-      { id: "on-3", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "changelog" }, reason: "Changelog failed." },
+      { id: "on-3", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "changelog" }, reason: "Changelog failed.", held: true },
     ]);
   });
 
