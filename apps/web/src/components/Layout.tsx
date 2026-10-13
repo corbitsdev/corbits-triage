@@ -32,7 +32,7 @@ function WorkspaceItems({ close }: { close: () => void }) {
       ))}
       {snapshot.invitations.map((invitation) => (
         <button key={invitation.tenantId} type="button" role="menuitem" disabled>
-          <span className="ws-option"><b>{invitation.name}</b><small>Invited. An admin needs to let you in.</small></span>
+          <span className="ws-option"><b>{invitation.name}</b><small>Invited. Open the link in your invitation email to join.</small></span>
         </button>
       ))}
       <hr />

@@ -57,26 +57,3 @@ CREATE INDEX IF NOT EXISTS "verdict_repo_idx"
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "verdict_pull_idx"
   ON "corbits_triage"."verdict" ("tenant_id", "repo", "number", "verdict_at");
---> statement-breakpoint
-CREATE TABLE IF NOT EXISTS "corbits_triage"."invitation" (
-  "id" text PRIMARY KEY,
-  "tenant_id" text NOT NULL REFERENCES "public"."tenant"("id") ON DELETE CASCADE,
-  "email" text NOT NULL,
-  "role_id" text NOT NULL REFERENCES "public"."role"("id") ON DELETE CASCADE,
-  "invited_by" text REFERENCES "public"."principal"("id") ON DELETE SET NULL,
-  "token_hash" text NOT NULL UNIQUE,
-  "token" text NOT NULL,
-  "created_at" timestamptz NOT NULL DEFAULT now(),
-  "expires_at" timestamptz NOT NULL,
-  "revoked_at" timestamptz,
-  "accepted_at" timestamptz,
-  "accepted_by" text REFERENCES "public"."user"("id") ON DELETE SET NULL,
-  "emailed_at" timestamptz
-);
---> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "invitation_email_idx"
-  ON "corbits_triage"."invitation" ("email", "tenant_id");
---> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "invitation_open_idx"
-  ON "corbits_triage"."invitation" ("tenant_id", lower("email"))
-  WHERE "accepted_at" IS NULL AND "revoked_at" IS NULL;

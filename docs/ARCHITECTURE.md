@@ -143,9 +143,11 @@ Hub routes that reach GitHub for the portal use the same adapter.
   open head's status (`new`, `queued`, `running`, `triaged`, `failed`,
   `stale`) and attempts.
 - Triage tables, in the `corbits_triage` schema: `verdict` (verdicts per
-  head, with the outcomes of the Dos their run executed) and `invitation`, applied from `apps/hub/migrations` at hub start in one
+  head, with the outcomes of the Dos their run executed), applied from `apps/hub/migrations` at hub start in one
   transaction under an advisory lock. Nothing else is stored: the GitHub App
-  setup state is a signed token.
+  setup state is a signed token, and an invite is a stock invited principal
+  the invitee accepts once signed in with a verified address, by a
+  better-auth magic link when the hub sends email.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 

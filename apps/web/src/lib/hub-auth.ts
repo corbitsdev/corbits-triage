@@ -98,16 +98,16 @@ export async function signOutHub(): Promise<void> {
   }
 }
 
-export type AuthMethods = { google: boolean; emailPassword: boolean };
+export type AuthMethods = { google: boolean; emailPassword: boolean; passwordReset: boolean };
 
 export async function getAuthMethods(): Promise<AuthMethods> {
   const response = await fetch(`${requestOrigin()}/api/integrations/auth-methods`, { credentials: "include" });
   if (!response.ok) throw new ApiError(response.status, "unknown", `Could not load sign-in options (HTTP ${response.status}).`);
   const body = await response.json() as Partial<AuthMethods>;
-  if (typeof body.google !== "boolean" || typeof body.emailPassword !== "boolean") {
+  if (typeof body.google !== "boolean" || typeof body.emailPassword !== "boolean" || typeof body.passwordReset !== "boolean") {
     throw new ApiError(response.status, "unknown", "The hub returned malformed sign-in options.");
   }
-  return { google: body.google, emailPassword: body.emailPassword };
+  return { google: body.google, emailPassword: body.emailPassword, passwordReset: body.passwordReset };
 }
 
 /** Leaves the page for Google; the hub returns the browser to this page, with `?error=` on failure. */
@@ -140,4 +140,31 @@ export async function decideDeviceCode(userCode: string, decision: "approve" | "
     body: JSON.stringify({ userCode }),
   });
   if (!response.ok) throw new ApiError(response.status, "unknown", messageOf(parsed, `Could not ${decision} the device.`));
+}
+
+/** Portal path the hub's password reset email returns to, with `?token=` or `?error=`. */
+export const RESET_PASSWORD_PATH = "/reset-password";
+
+async function postAuth(path: string, body: Record<string, string>, failed: string): Promise<void> {
+  const { response, parsed } = await hubAuth(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new ApiError(response.status, "unknown", messageOf(parsed, failed));
+}
+
+export function requestPasswordReset(email: string): Promise<void> {
+  return postAuth("/request-password-reset", { email, redirectTo: `${window.location.origin}${RESET_PASSWORD_PATH}` }, "Could not send the reset email.");
+}
+
+export function resetPassword(token: string, newPassword: string): Promise<void> {
+  return postAuth("/reset-password", { token, newPassword }, "Could not set the password.");
+}
+
+/** Whether the signed-in account has any way to sign in again: a password or a linked provider. */
+export async function hasSignInMethod(): Promise<boolean> {
+  const { response, parsed } = await hubAuth("/list-accounts", { method: "GET" });
+  if (!response.ok || !Array.isArray(parsed)) throw new ApiError(response.status, "unknown", messageOf(parsed, "Could not read the account."));
+  return parsed.length > 0;
 }

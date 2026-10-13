@@ -15,7 +15,6 @@ import { doEffectId, type Branch } from "../../../packages/triage-workflows/src/
 import { workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
 import { TriageStats } from "./github/triage-stats.js";
 import { verdictRecord } from "./github/verdict-record-store.js";
-import { invitation } from "./invitations/invitation-store.js";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -236,9 +235,9 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/workflow-deploy/{tenantId}": ["post"],
     "/api/integrations/workflow-versions/{tenantId}": ["get"],
     "/api/integrations/invitations/{tenantId}": ["post", "get"],
-    "/api/integrations/invitations/{tenantId}/{invitationId}": ["delete"],
-    "/api/integrations/my-invitations": ["get"],
-    "/api/integrations/my-invitations/accept": ["post"],
+    "/api/integrations/invitations/{tenantId}/{principalId}/resend": ["post"],
+    "/api/integrations/invitations/{tenantId}/{principalId}": ["delete"],
+    "/api/integrations/invite-accept": ["post"],
     "/api/integrations/sessions": ["get"],
     "/api/integrations/sessions/{sessionId}": ["delete"],
   });
@@ -733,122 +732,136 @@ function smtpSink() {
   return { url: `smtp://127.0.0.1:${server.port}`, sent: () => messages.map(parse), stop: () => server.stop(true) };
 }
 
-test("an invite link lets only the invited email join, once, with the invited role", async () => {
-  // Email sign-up is off under an allowlist, so people sign up on an open hub and use the allowlisted one.
-  const openHub = await startHub();
-  const emailOf = (name: string) => `${name}-${crypto.randomUUID().slice(0, 8)}@example.com`;
-  const [ann, bob, cat, dan, dee, eve, bounce] = ["ann", "bob", "cat", "dan", "dee", "eve", "bounce"].map(emailOf) as [string, string, string, string, string, string, string];
-  const owner = await signedIn(openHub);
-  const tenantId = await createTenant(openHub, owner);
-  const portal = "http://portal.test";
+test("an invite joins only its verified invitee, by an emailed magic link or a copied link that signs nobody in", async () => {
   const smtp = smtpSink();
+  const portal = "http://portal.test";
   const output: string[] = [];
-  const origin = await startHub({
-    GOOGLE_CLIENT_ID: "google", GOOGLE_CLIENT_SECRET: "google", AUTH_ALLOWED_EMAILS: "@example.com", PORTAL_ORIGIN: portal,
-    SMTP_URL: smtp.url, EMAIL_FROM: "Triage <triage@example.com>",
-  }, temporaryDirectory(), output);
-  const as = {
-    owner: { ...owner, origin },
-    ann: { ...await signedIn(openHub, ann), origin },
-    bob: { ...await signedIn(openHub, bob), origin },
-    cat: { ...await signedIn(openHub, cat), origin },
-    dee: { ...await signedIn(openHub, dee), origin },
-  };
+  const origin = await startHub({ PORTAL_ORIGIN: portal, SMTP_URL: smtp.url, EMAIL_FROM: "Triage <triage@example.com>" }, temporaryDirectory(), output);
+  const noEmail = await startHub({ PORTAL_ORIGIN: portal });
+  const emailOf = (name: string) => `${name}-${crypto.randomUUID().slice(0, 8)}@example.com`;
+  const [boss, ann, bob, cat, dee, eve, fay, gil, bounce] = ["boss", "ann", "bob", "cat", "dee", "eve", "fay", "gil", "bounce"].map(emailOf) as [string, string, string, string, string, string, string, string, string];
+  const owner = await signedIn(origin, boss);
+  const tenantId = await createTenant(origin, owner);
+  const otherTenantId = await createTenant(origin, owner);
+  const landing = `${portal}/invite/${tenantId}`;
+  const fromEmail = `${landing}?from=email`;
   const { db, close } = createDB({ host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" });
   try {
-    const roles = type({ data: type({ id: "string", name: "string" }).array() }).assert(await (await fetch(`${origin}/api/tenants/${tenantId}/roles`, { headers: as.owner })).json()).data;
-    const roleId = (name: string) => roles.find((role) => role.name === name)!.id;
-    const Created = type({ id: "string", link: "string", emailed: "boolean" });
-    async function invite(headers: Record<string, string>, email: string, role = "member") {
-      const res = await fetch(`${origin}/api/integrations/invitations/${tenantId}`, { method: "POST", headers, body: JSON.stringify({ email, roleId: roleId(role) }) });
+    const roles = type({ data: type({ id: "string", name: "string" }).array() }).assert(await (await fetch(`${origin}/api/tenants/${tenantId}/roles`, { headers: owner })).json()).data;
+    const member = roles.find((role) => role.name === "member")!.id;
+    const Sent = type({ principalId: "string", email: "string", emailed: "boolean", "link?": "string" });
+    async function invite(hub: string, email: string) {
+      const res = await fetch(`${hub}/api/integrations/invitations/${tenantId}`, { method: "POST", headers: { ...owner, origin: hub }, body: JSON.stringify({ email, roleId: member }) });
       return { status: res.status, body: await res.json() };
     }
-    async function accept(headers: Record<string, string>, link: string) {
-      const res = await fetch(`${origin}/api/integrations/my-invitations/accept`, { method: "POST", headers, body: JSON.stringify({ token: link.split("/").at(-1) }) });
+    async function resend(principalId: string) {
+      const res = await fetch(`${origin}/api/integrations/invitations/${tenantId}/${principalId}/resend`, { method: "POST", headers: owner });
       return { status: res.status, body: await res.json() };
     }
-    async function listed(headers: Record<string, string>) {
-      return type({ invitations: type({ id: "string", email: "string", "link?": "string" }).array(), assignableRoleIds: "string[]" })
-        .assert(await (await fetch(`${origin}/api/integrations/invitations/${tenantId}`, { headers })).json());
+    function mailedLinks(email: string, pattern = /http\S+magic-link\/verify\S+/): string[] {
+      return smtp.sent().filter((mail) => mail.headers.to === email).map((mail) => pattern.exec(mail.text)?.[0]).filter((link) => link !== undefined);
     }
-    async function rolesOf(email: string) {
-      const members = type({ data: type({ id: "string", "email?": "string", status: "string", roles: type({ name: "string" }).array() }).array() })
-        .assert(await (await fetch(`${origin}/api/tenants/${tenantId}/principals?kind=user&status=active`, { headers: as.owner })).json()).data;
-      return members.find((member) => member.email === email);
+    let follows = 0;
+    /** Where the magic link redirects, and the session cookie it set; each from its own client, under the per-client rate limit. */
+    async function follow(link: string) {
+      follows += 1;
+      const res = await fetch(link, { redirect: "manual", headers: { "x-forwarded-for": `203.0.113.${follows}` } });
+      const cookie = res.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
+      return { location: res.headers.get("location"), headers: { "content-type": "application/json", origin, cookie } };
+    }
+    async function accept(headers: Record<string, string>, tenant = tenantId, hub = origin) {
+      const res = await fetch(`${hub}/api/integrations/invite-accept`, { method: "POST", headers: { ...headers, origin: hub }, body: JSON.stringify({ tenantId: tenant }) });
+      return { status: res.status, body: await res.json() };
+    }
+    async function statusOf(email: string) {
+      const principals = type({ data: type({ id: "string", "email?": "string", status: "string" }).array() })
+        .assert(await (await fetch(`${origin}/api/tenants/${tenantId}/principals?kind=user`, { headers: owner })).json()).data;
+      return principals.find((principal) => principal.email === email);
+    }
+    async function withdraw(principalId: string) {
+      return (await fetch(`${origin}/api/integrations/invitations/${tenantId}/${principalId}`, { method: "DELETE", headers: owner })).status;
+    }
+    /** Sets a password through the stock reset email, from its own client. */
+    async function resetPassword(email: string, password: string, ip: string) {
+      const headers = { "content-type": "application/json", origin, "x-forwarded-for": ip };
+      const asked = await fetch(`${origin}/api/auth/request-password-reset`, { method: "POST", headers, body: JSON.stringify({ email, redirectTo: `${portal}/reset-password` }) });
+      expect(asked.status).toBe(200);
+      const token = /reset-password\/([^?\s]+)/.exec(mailedLinks(email, /http\S+reset-password\S+/).at(-1)!)![1]!;
+      const reset = await fetch(`${origin}/api/auth/reset-password`, { method: "POST", headers, body: JSON.stringify({ token, newPassword: password }) });
+      expect(reset.status).toBe(200);
+    }
+    async function passwordSignIn(email: string, password: string, ip: string) {
+      return (await fetch(`${origin}/api/auth/sign-in/email`, { method: "POST", headers: { "content-type": "application/json", origin, "x-forwarded-for": ip }, body: JSON.stringify({ email, password }) })).status;
     }
 
-    expect(await invite(as.owner, "someone@outside.test")).toMatchObject({ status: 403 });
-    const first = Created.assert((await invite(as.owner, ann)).body);
-    const second = await invite(as.owner, ann.toUpperCase());
-    expect(second).toMatchObject({ status: 201, body: { emailed: true } });
-    const { id, link } = Created.assert(second.body);
-    expect(link.startsWith(`${portal}/invite/`)).toBe(true);
-    const mails = smtp.sent().filter((mail) => mail.text.includes(link));
-    expect(mails).toHaveLength(1);
-    expect(mails[0]!.headers).toMatchObject({ from: "Triage <triage@example.com>", to: ann, subject: "Join Acme on Corbits Triage" });
-    expect(mails[0]!.headers["content-type"]).toStartWith("text/plain");
-    expect(smtp.sent().filter((mail) => mail.text.includes(first.link))).toHaveLength(1);
-    const emailedAt = async (inviteId: string) => (await db.select({ at: invitation.emailedAt }).from(invitation).where(eq(invitation.id, inviteId)))[0]?.at;
-    expect(await emailedAt(id)).toBeInstanceOf(Date);
-    expect(await accept(as.ann, first.link)).toMatchObject({ status: 410, body: { error: { code: "revoked" } } });
+    expect((await fetch(`${origin}/api/auth/sign-in/magic-link`, { method: "POST", headers: owner, body: JSON.stringify({ email: ann }) })).status).toBe(404);
 
-    const bounced = await invite(as.owner, bounce);
-    expect(bounced).toMatchObject({ status: 502, body: { error: { code: "email_failed" } } });
-    const kept = (await listed(as.owner)).invitations.find((entry) => entry.email === bounce);
-    expect(kept?.link).toBeDefined();
-    expect(await emailedAt(kept!.id)).toBeNull();
-    expect(output.filter((line) => line.includes("invite_email_failed")).map((line) => JSON.parse(line))).toMatchObject([{ invitationId: kept!.id, code: "EENVELOPE" }]);
+    expect(await invite(origin, ann)).toMatchObject({ status: 201, body: { email: ann, emailed: true } });
+    expect(smtp.sent().find((mail) => mail.headers.to === ann)?.headers).toMatchObject({ from: "Triage <triage@example.com>", subject: "Join Acme on Corbits Triage" });
+    expect(await statusOf(ann)).toMatchObject({ status: "invited" });
+    expect(await invite(origin, ann)).toMatchObject({ status: 409 });
+    const annLink = mailedLinks(ann)[0]!;
+    const annIn = await follow(annLink);
+    expect(annIn.location).toBe(fromEmail);
+    expect(await accept(annIn.headers, otherTenantId)).toMatchObject({ status: 404 });
+    expect(await accept(annIn.headers)).toEqual({ status: 200, body: { tenantId } });
+    expect(await statusOf(ann)).toMatchObject({ status: "active" });
+    expect(await follow(annLink)).toMatchObject({ location: `${fromEmail}&error=INVALID_TOKEN` });
+
+    // Signed in only by the magic link, the invitee sets a password through the stock reset.
+    await resetPassword(ann, "password-654321", "198.51.100.211");
+    expect(await passwordSignIn(ann, "password-654321", "198.51.100.201")).toBe(200);
+
+    // A reset proves the mailbox too, so an invitee who sets a password before following the link can accept, and keeps it.
+    expect(await invite(origin, gil)).toMatchObject({ status: 201 });
+    await resetPassword(gil, "password-777777", "198.51.100.212");
+    const gilSignIn = await fetch(`${origin}/api/auth/sign-in/email`, { method: "POST", headers: { "content-type": "application/json", origin, "x-forwarded-for": "198.51.100.213" }, body: JSON.stringify({ email: gil, password: "password-777777" }) });
+    const gilHeaders = { "content-type": "application/json", origin, cookie: gilSignIn.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ") };
+    expect(await accept(gilHeaders)).toEqual({ status: 200, body: { tenantId } });
+    await follow(mailedLinks(gil)[0]!);
+    expect(await passwordSignIn(gil, "password-777777", "198.51.100.214")).toBe(200);
+
+    // Whoever registered an address unverified may not own it, so it is neither invited nor able to accept.
+    const squatter = await signedIn(origin, bob);
+    expect(await invite(origin, bob)).toMatchObject({ status: 409, body: { error: { code: "unverified_email" } } });
+    expect(await accept(squatter)).toMatchObject({ status: 403, body: { error: { code: "unverified_email" } } });
+
+    const catInvite = Sent.assert((await invite(origin, cat)).body);
+    await db.execute(sql`UPDATE verification SET expires_at = now() WHERE value LIKE ${`%${cat}%`}`);
+    expect(await follow(mailedLinks(cat)[0]!)).toMatchObject({ location: `${fromEmail}&error=INVALID_TOKEN` });
+    expect(await statusOf(cat)).toMatchObject({ status: "invited" });
+    expect(await resend(catInvite.principalId)).toMatchObject({ status: 429 });
+    await db.update(schema.principal).set({ updatedAt: new Date(Date.now() - 120_000) }).where(eq(schema.principal.id, catInvite.principalId));
+    expect(await resend(catInvite.principalId)).toMatchObject({ status: 200, body: { email: cat, emailed: true } });
+    const catIn = await follow(mailedLinks(cat)[1]!);
+    expect((await accept(catIn.headers)).status).toBe(200);
+    expect(await resend(catInvite.principalId)).toMatchObject({ status: 404 });
+
+    // Withdrawing frees a new address the invite claimed, so it can still sign up.
+    const eveInvite = Sent.assert((await invite(origin, eve)).body);
+    expect(await withdraw(eveInvite.principalId)).toBe(204);
+    expect(await statusOf(eve)).toBeUndefined();
+    expect(await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, eve))).toEqual([]);
+    await signedIn(origin, eve);
+
+    // Withdrawing does not reset what an address was sent, so inviting and withdrawing in a loop stops.
+    for (let sent = 0; sent < 5; sent++) expect(await withdraw(Sent.assert((await invite(origin, fay)).body).principalId)).toBe(204);
+    expect(await invite(origin, fay)).toMatchObject({ status: 429 });
+
+    // Without email the inviter holds the link, so it signs nobody in and only a verified invitee can accept.
+    expect(await invite(noEmail, emailOf("nobody"))).toMatchObject({ status: 404, body: { error: { message: expect.stringContaining("sign in with Google first") } } });
+    const deeSession = { ...await signedIn(noEmail, dee), origin: noEmail };
+    expect(await invite(noEmail, dee)).toMatchObject({ status: 409 });
+    await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.email, dee));
+    const copied = Sent.assert((await invite(noEmail, dee)).body);
+    expect(copied).toMatchObject({ emailed: false, link: landing });
+    expect(await statusOf(dee)).toMatchObject({ status: "invited" });
+    expect(await accept(deeSession, tenantId, noEmail)).toEqual({ status: 200, body: { tenantId } });
+    expect(await statusOf(dee)).toMatchObject({ status: "active" });
+
+    expect(await invite(origin, bounce)).toMatchObject({ status: 502, body: { error: { code: "email_failed" } } });
+    expect(output.filter((line) => line.includes("invite_email_failed")).map((line) => JSON.parse(line))).toMatchObject([{ code: "EENVELOPE" }]);
     expect(output.join("\n")).not.toContain(bounce);
-    expect(output.join("\n")).not.toContain(smtp.url);
-
-    async function myInvitations() {
-      return (await fetch(`${origin}/api/integrations/my-invitations`, { headers: as.ann })).json();
-    }
-    expect(await myInvitations()).toEqual({ invitations: [] });
-    await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.email, ann));
-    expect(await myInvitations()).toMatchObject({ invitations: [{ tenantId }] });
-
-    const wrong = await accept(as.bob, link);
-    expect(wrong).toMatchObject({ status: 403, body: { error: { message: "This invite is for a different email. Sign in with the invited address." } } });
-    expect(JSON.stringify(wrong.body)).not.toContain(ann);
-    expect(await accept(as.ann, link)).toEqual({ status: 200, body: { tenantId } });
-    expect(await accept(as.ann, link)).toEqual({ status: 200, body: { tenantId } });
-    expect(await accept(as.bob, link)).toMatchObject({ status: 409 });
-    expect(await invite(as.owner, ann)).toMatchObject({ status: 409 });
-    expect(await rolesOf(ann)).toMatchObject({ status: "active", roles: [{ name: "member" }] });
-
-    const admin = Created.assert((await invite(as.owner, cat, "admin")).body);
-    expect((await accept(as.cat, admin.link)).status).toBe(200);
-    expect(await invite(as.cat, bob, "owner")).toMatchObject({ status: 403 });
-    const ownerInvite = Created.assert((await invite(as.owner, dan, "owner")).body);
-    const bobInvite = Created.assert((await invite(as.cat, bob)).body);
-    const catView = await listed(as.cat);
-    expect(catView.assignableRoleIds.toSorted()).toEqual([roleId("admin"), roleId("member")].toSorted());
-    expect(catView.invitations.find((entry) => entry.id === bobInvite.id)?.link).toBe(bobInvite.link);
-    expect(catView.invitations.find((entry) => entry.id === ownerInvite.id)).not.toHaveProperty("link");
-
-    const withdraw = () => fetch(`${origin}/api/integrations/invitations/${tenantId}/${bobInvite.id}`, { method: "DELETE", headers: as.owner });
-    expect((await withdraw()).status).toBe(204);
-    expect((await withdraw()).status).toBe(409);
-    expect(await accept(as.bob, bobInvite.link)).toMatchObject({ status: 410, body: { error: { code: "revoked" } } });
-
-    const expiring = Created.assert((await invite(as.owner, bob)).body);
-    await db.execute(sql`UPDATE corbits_triage.invitation SET expires_at = now() WHERE id = ${expiring.id}`);
-    expect(await accept(as.bob, expiring.link)).toMatchObject({ status: 410, body: { error: { code: "expired" } } });
-
-    const asOwner = Created.assert((await invite(as.owner, dee, "owner")).body);
-    expect((await accept(as.dee, asOwner.link)).status).toBe(200);
-    const deePrincipal = (await rolesOf(dee))!;
-    const deactivate = await fetch(`${origin}/api/tenants/${tenantId}/principals/${deePrincipal.id}`, { method: "PATCH", headers: as.owner, body: JSON.stringify({ status: "deactivated" }) });
-    expect(deactivate.status).toBe(200);
-    const asMember = Created.assert((await invite(as.owner, dee)).body);
-    expect((await accept(as.dee, asMember.link)).status).toBe(200);
-    expect(await rolesOf(dee)).toMatchObject({ status: "active", roles: [{ name: "member" }] });
-    expect((await rolesOf(dee))!.roles).toHaveLength(1);
-
-    const racing = await Promise.all(Array.from({ length: 8 }, () => invite(as.owner, eve)));
-    expect(racing.map((result) => result.status)).toEqual(Array(8).fill(201));
-    expect((await listed(as.owner)).invitations.filter((entry) => entry.email === eve)).toHaveLength(1);
   } finally {
     await close();
     smtp.stop();
