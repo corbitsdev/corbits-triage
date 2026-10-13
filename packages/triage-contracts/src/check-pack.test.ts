@@ -56,6 +56,7 @@ const ACTIONS: Action[] = [
       no: [
         { kind: "comment", target: { body: "Please fix CI and link a ticket." }, automatic: false },
         { kind: "request-changes", target: {}, automatic: true },
+        { kind: "convert-to-draft", target: {}, automatic: false },
       ],
       unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] }, automatic: true }],
     },
