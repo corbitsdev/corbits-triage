@@ -3,8 +3,8 @@
 ## Baseline
 
 - Upstream: <https://github.com/faremeter/interchange>
-- Stock ref: `74c57b39bc9613ab38ae8eab73af743797d589e2`
-- Composite pin: stock `74c57b39` plus the step-env director threading from PR #193, INTR-583 at `44170ebb`, and the local CL-10210 and CL-10211 carries. Do not treat any delta as a new stock pin.
+- Stock ref: `cd02c31330fc1eb90470396ba92fbc950dd31fdd`
+- Composite pin: stock `cd02c313` (upstream main on 2026-10-12) plus the step-env director threading from PR #193, INTR-583 at `44170ebb`, and the local CL-10210 carry. Do not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -19,7 +19,7 @@ patches. Tracked `.env*.example` templates are checked like any other file.
 ### Step-env director threading (upstream PR #193)
 
 Required because `@corbits/triage-workflows` ships its director through its
-own `interchange.directors`. Stock `74c57b39` loads that registry into the
+own `interchange.directors`. Stock `cd02c313` loads that registry into the
 run-child's runtime env, but `createSidecarStepBuildEnv` still hardcodes
 `createDefaultDirectorRegistry()`, so every step naming
 `@corbits/triage-workflows/triage` fails at build with
@@ -45,7 +45,7 @@ registry.
 
 Required because `apps/hub/src/server.ts` registers and selects the
 `corbits-system-one` adapter through `SIDECAR_ADAPTER_MANIFEST`, while stock
-`74c57b39` restricts `ModelProviderPlugin` to its built-in enum. The catalog
+`cd02c313` restricts `ModelProviderPlugin` to its built-in enum. The catalog
 files are byte-identical to upstream commit
 `44170ebbcf819e1f48e0ec4c7a0d9f682635d10d`
 (`Accept operator-registered provider plugins in the model catalog`) on
@@ -79,6 +79,9 @@ fails the dispatch, and that mail and every newer one stay unconsumed. The
 patch makes `dispatchOne` consume a mail whose message id the run log already
 records as a `SignalReceived`, without redelivering it or dropping the run's
 input channel. `hasRecordedSignal` reads the run's event log for that check.
+Stock `cb0bdfb4` stops the child appending a duplicate `SignalReceived`, but
+`dispatchOne` still redelivers the mail and waits for the run to park, which
+a dropped duplicate does not do, so the carry stays.
 
 Allowed files:
 
@@ -90,26 +93,6 @@ Upstream status: to be filed.
 
 Kill date: **2026-11-01**. Remove when the stock pin consumes or skips a
 replayed signal mail the run already recorded.
-
-### Keep a reconnect-cancelled pack push from failing the next write (CL-10211)
-
-Local carry, not upstream. When the sidecar's hub link cycles on reconnect it
-cancels in-flight pack pushes with "Connection lost". The pack-pushing store
-latched that like a receiver rejection and threw it on the deployment's next
-local write before committing, so a write landing between the cancel and the
-reconnect re-drive (in production, `markConsumed` 90 ms later) failed, the
-mail stayed in `processing/`, and the deployment idled. The patch keeps the
-slot dirty for the re-drive instead of throwing when the latched error is the
-disconnect cancel; receiver rejections still surface on the next write.
-
-Allowed files:
-
-- `packages/workflow-host/src/deploy/workflow-run-pack-client.ts`
-
-Upstream status: to be filed.
-
-Kill date: **2026-11-01**. Remove when the stock pin no longer surfaces a
-reconnect-cancelled push as a local write failure.
 
 ## Dropped deltas
 
@@ -126,6 +109,10 @@ reconnect-cancelled push as a local write failure.
   the child instantiates`), which keeps a `credential:` allow whose `{ tool }`
   condition names a factory the child body instantiates. The cap now lives in
   `packages/workflow-deploy/src/child-grant-filter.ts`.
+- CL-10211 (reconnect-cancelled pack push failing the next write): stock
+  `cd02c313` contains `678c336b` (`Keep a disconnected workflow history push
+  pending for recovery`), which leaves a disconnected push due for recovery
+  without poisoning the next write.
 
 ## Reverted historical drift
 

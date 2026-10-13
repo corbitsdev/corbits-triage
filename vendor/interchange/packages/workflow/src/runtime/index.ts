@@ -33,7 +33,22 @@ export {
 } from "./effect-context";
 
 export { runtimeRun, type RuntimeRunOptions } from "./run";
-export { withRunCommitBarrier } from "./commit-chain";
+export {
+  bodyParkedSignals,
+  loopIterationCursor,
+  loopOccurrenceReattach,
+  onTriggerOccurrenceReattach,
+  type LoopIterationCursor,
+  type OccurrenceReattach,
+} from "./run";
+export {
+  bufferedEvents,
+  commitBuffered,
+  dropChain,
+  reloadState,
+  whenRunNextBuffers,
+  withRunCommitBarrier,
+} from "./commit-chain";
 
 export { createSuspendableChildHandle } from "./suspendable-child-handle";
 
@@ -54,7 +69,13 @@ export {
   type DrainController,
 } from "./drain";
 
-export { nextSchedulable, isRunDone, hasFailedStep } from "./dag";
+export {
+  nextSchedulable,
+  isRunDone,
+  hasFailedStep,
+  resumeResidualOf,
+} from "./dag";
+export type { ResumeResidual, StepKindLookup } from "./dag";
 
 export {
   scopedStepId,

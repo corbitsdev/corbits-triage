@@ -80,7 +80,6 @@ export {
 export {
   createHubSessionLookups,
   findRoutableById,
-  parseAgentId,
   resolveRoutableAddress,
   resolveRunIdForSession,
   resolveRunSessionId,
@@ -112,6 +111,8 @@ export {
   type EnsureSidecarResult,
   type SidecarCredentialIdentity,
   type SidecarCredentialResolver,
+  type SidecarCredentials,
+  type SidecarIdentityUse,
   type SidecarOperationFailure,
   type SidecarPluginRegistry,
   type SidecarProvisioner,
@@ -120,8 +121,13 @@ export {
   type SidecarAllocationReconcilerDeps,
   type SidecarReconciliationContext,
 } from "./sidecar-allocation";
+export {
+  createParkedRunClassifier,
+  type ParkedRunClassification,
+  type ParkedRunClassifier,
+  type ParkedRunVerdict,
+} from "./parked-run";
 export { ensureWorkflowDefinitionForAsset } from "./workflow-definition-ensure";
-export { workflowSourceAssetMountPath } from "./workflow-closure-resolution";
 export {
   createReconciliationScheduler,
   DEFAULT_SIDECAR_ALLOCATION_CONCURRENCY,

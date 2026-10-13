@@ -20,7 +20,7 @@ import {
   createNoopCredentialCipher,
   generateKeyPair,
 } from "@intx/crypto";
-import { hexEncode, parseRunAddress } from "@intx/types";
+import { hexEncode } from "@intx/types";
 import { createInMemoryTransport } from "@intx/mail-memory";
 import type { RepoId, RepoStore } from "@intx/hub-sessions";
 import {
@@ -49,14 +49,6 @@ function deriveWorkflowRunRepoId(agentAddress: string): string {
   return agentAddress.replaceAll(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-function parseAgentId(agentAddress: string): string {
-  const parsed = parseRunAddress(agentAddress);
-  if (parsed === null) {
-    throw new Error(`Invalid run address: "${agentAddress}"`);
-  }
-  return parsed.runId;
-}
-
 const resolvedInboundMailPolicy = {
   clean: "admit",
   error: "reject",
@@ -71,12 +63,9 @@ const resolvedInboundMailPolicy = {
 function deployHostBindings() {
   return {
     deriveWorkflowRunRepoId,
-    parseAgentId,
     inertFlatNamespaceStepIds: (args: {
       definition: { readonly stepOrder: readonly string[] };
     }) => args.definition.stepOrder,
-    workflowSourceAssetMountPath: (assetId: string) =>
-      `source-assets/${assetId}/`,
     sourceAssetGitDir: (gitDirRoot: string, assetId: string) =>
       path.join(gitDirRoot, assetId),
     readRegistries: () => new Map(),
@@ -88,6 +77,7 @@ function deployHostBindings() {
     multistepSubprocessSpawner: (): never => {
       throw new Error("workflow child spawner was not provided");
     },
+    createWorkflowCache: () => ({}),
     applyFrozenWorkflowClosure: (): never => {
       throw new Error("frozen closure apply was not provided");
     },
@@ -205,6 +195,7 @@ describe("agent signing-key registration lifecycle on the host transport", () =>
           throw new Error("must not invoke persistHubPublicKey");
         },
         initRepo: async () => undefined,
+        deleteAgentDir: async () => undefined,
       } as unknown as Parameters<
         typeof createSidecarDeployRouter
       >[0]["sessions"],
@@ -218,9 +209,6 @@ describe("agent signing-key registration lifecycle on the host transport", () =>
       } as unknown as Parameters<
         typeof createSidecarDeployRouter
       >[0]["keyStore"],
-      senderKeyCache: {
-        put: async () => undefined,
-      },
       transport,
       repoStore,
       signingKeySeed: keyPair.privateKey,
@@ -228,6 +216,13 @@ describe("agent signing-key registration lifecycle on the host transport", () =>
       createAgentCrypto: createEd25519Crypto,
       assertSourceBuildable: () => undefined,
       registerDeployment: () => undefined,
+      // Like the production hook, removes the run record with the repository.
+      removeRunRepository: (runId) =>
+        fs.rm(path.join(dataDir, "workflow-runs", runId), {
+          recursive: true,
+          force: true,
+        }),
+      removeAgentStateRepository: async () => undefined,
       unregisterDeployment: () => undefined,
       reportDeploymentRefTips: async () => ({}),
       multistepSubprocessSpawner: spawner,
@@ -273,7 +268,9 @@ describe("agent signing-key registration lifecycle on the host transport", () =>
 
     const frame: AgentDeployFrame = {
       type: "agent.deploy",
+      requestId: "deploy-test",
       agentAddress: AGENT_ADDRESS,
+      generation: 1,
       agentId: "keylifecycle-agent",
       hubPublicKey: "hub-pk",
       // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- multi-step branch does not read config
@@ -357,7 +354,9 @@ describe("agent signing-key registration lifecycle on the host transport", () =>
     if (undeploy === undefined) throw new Error("router.undeploy undefined");
     await undeploy({
       type: "agent.undeploy",
+      requestId: "undeploy-test",
       agentAddress: AGENT_ADDRESS,
+      generation: 1,
       reason: "key-lifecycle undeploy",
     });
 

@@ -4,23 +4,32 @@
 // wiring. Its `deliver` commits a `SignalReceived` blob to the run's
 // event log; commit-success is the dedup gate (the state machine's
 // `observedSignalIds` rejects a duplicate `signalId` on the next
-// transition). `awaitNext` consults the state-machine `RunState` for
-// signals that were committed and reduced into `unconsumedSignals`
-// before the awaiter subscribed, then falls back to a per-name
-// `subscribeKind` tail of the run's events ref.
+// transition). `awaitNext` consults the state-machine `RunState`
+// before subscribing. A name awaiter reads the head of
+// `unconsumedSignals`. A correlated awaiter reads
+// `unconsumedByCorrelation` for an item whose signalName matches.
+// Otherwise it waits on a per-slot `subscribeKind` tail.
 //
-// Per-name FIFO across concurrent awaiters: the channel maintains an
-// awaiter queue per signal name. A single `subscribeKind` loop per
-// name pulls events from the substrate; each matching event resolves
-// the head of that queue. The loop starts on first `awaitNext` for a
-// name and tears down when the queue empties or `stop()` is called.
+// Slots do not share a tail. The name slot key is `name\0${name}`
+// and a correlated slot key is `corr\0${correlationId}\0${name}`.
+// Each slot has its own awaiter queue and its own `subscribeKind`
+// loop, started on the first `awaitNext` for that slot and torn
+// down when that queue empties or `stop()` is called. A delivery
+// resolves only the slot whose correlationId equals the event's;
+// both absent selects the name slot.
 //
-// Commit-ordering invariant: `deliver` commits the `SignalReceived`
-// event blob first, then returns. Resolution of an awaiter happens
-// from the `subscribeKind` loop only after the substrate has surfaced
-// the commit. The awaiter is never resolved from inside `deliver`'s
-// call site, so resume-after-crash sees a coherent log: an awaiter
-// that resolved must have a corresponding committed `SignalReceived`.
+// Commit-ordering invariant: `deliver` flushes the run's pending
+// buffer through `runtimeStore`, then commits the `SignalReceived`
+// blob, then returns. The flush runs under the run's commit barrier
+// so a sibling event already validated into the buffer keeps its
+// sequence and the signal takes the next durable sequence. A log that
+// already holds a terminal event is left unchanged, so a delivery that
+// loses the race does not append after it. Resolution
+// of an awaiter happens from the `subscribeKind` loop only after the
+// substrate has surfaced the commit. The awaiter is never resolved
+// from inside `deliver`'s call site, so resume-after-crash sees a
+// coherent log: an awaiter that resolved must have a corresponding
+// committed `SignalReceived`.
 
 import { type } from "arktype";
 
@@ -32,6 +41,10 @@ import type {
 } from "@intx/hub-sessions/substrate";
 import { subscribeKind } from "@intx/hub-sessions/substrate";
 import type { RunState, SignalChannel } from "@intx/workflow";
+import {
+  withRunCommitBarrier,
+  type RepoStore as RuntimeRepoStore,
+} from "@intx/workflow/runtime";
 
 /**
  * Substrate-shape envelope for the `SignalReceived` event blob
@@ -51,6 +64,7 @@ export const SignalReceivedEnvelope = type({
   signalName: "string",
   signalId: "string",
   payload: "unknown",
+  "correlationId?": "string > 0",
 });
 export type SignalReceivedEnvelope = typeof SignalReceivedEnvelope.infer;
 
@@ -63,6 +77,13 @@ export type SignalChannelOpts = {
    * must accept that path layout.
    */
   repoStore: RepoStore;
+  /**
+   * Runtime store that owns this run's commit chain. `deliver` flushes
+   * its pending buffer before the substrate merge numbers the signal.
+   * One store serves every run in the deployment; the barrier selects
+   * the buffer by `runId`.
+   */
+  runtimeStore: RuntimeRepoStore;
   /**
    * Principal the channel presents to the substrate. The substrate
    * gates every operation behind `authorize`; the principal must be
@@ -99,11 +120,21 @@ export type SignalChannelOpts = {
 };
 
 type Awaiter = {
-  resolve: (value: { payload: unknown; signalId: string }) => void;
+  resolve: (value: {
+    payload: unknown;
+    signalId: string;
+    correlationId?: string;
+  }) => void;
   reject: (cause: unknown) => void;
   signal?: AbortSignal;
   onAbort?: () => void;
 };
+
+function slotOf(name: string, correlationId: string | undefined): string {
+  return correlationId === undefined
+    ? `name\0${name}`
+    : `corr\0${correlationId}\0${name}`;
+}
 
 type NameSubscription = {
   abort: AbortController;
@@ -112,7 +143,7 @@ type NameSubscription = {
 
 export type SignalChannelHandle = SignalChannel & {
   /**
-   * Tear down every per-name subscription and reject every pending
+   * Tear down every slot subscription and reject every pending
    * awaiter. Idempotent. After `stop()` the channel holds no
    * substrate watcher handles.
    */
@@ -128,17 +159,27 @@ export function createWorkflowHostSignalChannel(
 
   function peekState(
     name: string,
-  ): { payload: unknown; signalId: string } | null {
+    correlationId: string | undefined,
+  ): { payload: unknown; signalId: string; correlationId?: string } | null {
     const state = opts.readState();
+    if (correlationId !== undefined) {
+      const queued = state.unconsumedByCorrelation.get(correlationId);
+      const head = queued?.find((item) => item.signalName === name);
+      if (head === undefined) return null;
+      return {
+        payload: head.payload,
+        signalId: head.id,
+        correlationId,
+      };
+    }
     const queue = state.unconsumedSignals.get(name);
     if (queue === undefined || queue.length === 0) return null;
     const head = queue[0];
     if (head === undefined) return null;
-    // The state-machine `unconsumedSignals` is drained by the
-    // runtime body's next `SignalAwaited` reduction, not by the
-    // channel. The channel reads the head; the caller commits the
-    // SignalAwaited that consumes it. This separation keeps the
-    // channel free of state-machine mutation responsibilities.
+    // The state-machine name queue is drained by the runtime body's
+    // next name-addressed `SignalAwaited`, not by the channel. The
+    // channel reads the head; the caller commits the SignalAwaited
+    // that consumes it.
     return { payload: head.payload, signalId: head.id };
   }
 
@@ -169,8 +210,12 @@ export function createWorkflowHostSignalChannel(
     return queue.length;
   }
 
-  function startNameSubscription(name: string): void {
-    if (subscriptions.has(name)) return;
+  function startNameSubscription(
+    name: string,
+    correlationId: string | undefined,
+  ): void {
+    const slot = slotOf(name, correlationId);
+    if (subscriptions.has(slot)) return;
     const abort = new AbortController();
     // The teardown must run synchronously *before* the awaiter wakes
     // when this loop drains, otherwise the awaiter's continuation
@@ -181,8 +226,8 @@ export function createWorkflowHostSignalChannel(
     // aborting *before* resolving the awaiter keeps the per-name
     // invariant intact across multi-round resolution cycles.
     const teardown = (): void => {
-      if (subscriptions.get(name)?.abort === abort) {
-        subscriptions.delete(name);
+      if (subscriptions.get(slot)?.abort === abort) {
+        subscriptions.delete(slot);
       }
       abort.abort();
     };
@@ -203,18 +248,18 @@ export function createWorkflowHostSignalChannel(
         for await (const entry of iter) {
           if (stopped) break;
           if (!matchesAwaiter(entry, name)) continue;
+          if (entry.event.correlationId !== correlationId) continue;
           const observed = opts.readState().observedSignalIds;
           if (observed.has(entry.event.signalId)) continue;
-          const next = shiftAwaiter(name);
+          const next = shiftAwaiter(slot);
           if (next === null) {
             // No awaiter left -- the queue was drained between the
             // event landing and this loop reaching it. The reduced
-            // state machine queues the event into
-            // `unconsumedSignals`; the next `awaitNext` for the same
-            // name picks it up via the state-reader path.
+            // state machine keeps the event; the next `awaitNext` for
+            // the same slot picks it up via the state-reader path.
             break;
           }
-          if (awaiterCount(name) === 0) {
+          if (awaiterCount(slot) === 0) {
             // Resolving the last awaiter on this subscription. Tear
             // down before the resolve so any awaitNext call inside
             // the awaiter's continuation installs a fresh
@@ -223,12 +268,18 @@ export function createWorkflowHostSignalChannel(
             next.resolve({
               payload: entry.event.payload,
               signalId: entry.event.signalId,
+              ...(entry.event.correlationId !== undefined
+                ? { correlationId: entry.event.correlationId }
+                : {}),
             });
             return;
           }
           next.resolve({
             payload: entry.event.payload,
             signalId: entry.event.signalId,
+            ...(entry.event.correlationId !== undefined
+              ? { correlationId: entry.event.correlationId }
+              : {}),
           });
         }
       } finally {
@@ -239,7 +290,7 @@ export function createWorkflowHostSignalChannel(
         teardown();
       }
     })();
-    subscriptions.set(name, { abort, done });
+    subscriptions.set(slot, { abort, done });
   }
 
   async function stopSubscription(name: string): Promise<void> {
@@ -253,69 +304,84 @@ export function createWorkflowHostSignalChannel(
   }
 
   return {
-    async deliver(name, payload, signalId) {
+    async deliver(name, payload, signalId, correlationId) {
       if (stopped) {
         throw new Error("signal channel: deliver after stop");
       }
       const id = signalId ?? opts.newId();
       const at = opts.clock().toISOString();
       const prefix = `runs/${opts.runId}/events/`;
-      await opts.repoStore.writeTreePreservingPrefix(
-        opts.principal,
-        opts.repoId,
-        opts.ref,
-        {
-          preservePrefix: prefix,
-          merge: async (existing) => {
-            let maxSeq = -1;
-            let duplicate = false;
-            for (const [filepath, contents] of existing) {
-              const fname = filepath.slice(prefix.length);
-              const match = /^(0|[1-9][0-9]*)\.json$/.exec(fname);
-              if (match === null) continue;
-              const seqStr = match[1];
-              if (seqStr === undefined) continue;
-              const seq = Number.parseInt(seqStr, 10);
-              if (seq > maxSeq) maxSeq = seq;
-              try {
-                const parsed: unknown = JSON.parse(
-                  new TextDecoder().decode(contents),
-                );
-                if (isMatchingSignalId(parsed, id)) {
-                  duplicate = true;
+      await withRunCommitBarrier(
+        { repoStore: opts.runtimeStore },
+        opts.runId,
+        () =>
+          opts.repoStore.writeTreePreservingPrefix(
+            opts.principal,
+            opts.repoId,
+            opts.ref,
+            {
+              preservePrefix: prefix,
+              merge: async (existing) => {
+                let maxSeq = -1;
+                let duplicate = false;
+                let terminal = false;
+                for (const [filepath, contents] of existing) {
+                  const fname = filepath.slice(prefix.length);
+                  const match = /^(0|[1-9][0-9]*)\.json$/.exec(fname);
+                  if (match === null) continue;
+                  const seqStr = match[1];
+                  if (seqStr === undefined) continue;
+                  const seq = Number.parseInt(seqStr, 10);
+                  if (seq > maxSeq) maxSeq = seq;
+                  try {
+                    const parsed: unknown = JSON.parse(
+                      new TextDecoder().decode(contents),
+                    );
+                    if (isMatchingSignalId(parsed, id)) {
+                      duplicate = true;
+                    }
+                    if (isTerminalOnDiskEvent(parsed)) {
+                      terminal = true;
+                    }
+                  } catch {
+                    // A corrupt blob is rejected by validatePush at write
+                    // time. Treat as non-matching here.
+                  }
                 }
-              } catch {
-                // A corrupt blob is rejected by validatePush at write
-                // time. Treat as non-matching here.
-              }
-            }
-            const out: Record<string, string> = {};
-            for (const [filepath, contents] of existing) {
-              out[filepath] = new TextDecoder().decode(contents);
-            }
-            if (duplicate) return out;
-            const nextSeq = maxSeq + 1;
-            // The workflow-run kind handler's `EventEnvelope`
-            // validator requires `seq: number` on every event blob;
-            // the same `nextSeq` we use to mint the filename also
-            // carries into the body so a reader that hydrates the
-            // envelope (state-machine resume, audit reads) sees a
-            // self-describing event without consulting the filename.
-            out[`${prefix}${String(nextSeq)}.json`] = JSON.stringify({
-              type: "SignalReceived",
-              seq: nextSeq,
-              signalName: name,
-              signalId: id,
-              payload,
-              at,
-            });
-            return out;
-          },
-          message: `SignalReceived ${id} (${name}) for run ${opts.runId}`,
-        },
+                const out: Record<string, string> = {};
+                for (const [filepath, contents] of existing) {
+                  out[filepath] = new TextDecoder().decode(contents);
+                }
+                // A repeated signalId and a log that already reached a
+                // terminal event both leave the tree unchanged. Appending
+                // past RunFailed/RunCompleted/RunCancelled would make the
+                // next resume disagree with the terminal result already
+                // reported.
+                if (duplicate || terminal) return out;
+                const nextSeq = maxSeq + 1;
+                // The workflow-run kind handler's `EventEnvelope`
+                // validator requires `seq: number` on every event blob;
+                // the same `nextSeq` we use to mint the filename also
+                // carries into the body so a reader that hydrates the
+                // envelope (state-machine resume, audit reads) sees a
+                // self-describing event without consulting the filename.
+                out[`${prefix}${String(nextSeq)}.json`] = JSON.stringify({
+                  type: "SignalReceived",
+                  seq: nextSeq,
+                  signalName: name,
+                  signalId: id,
+                  payload,
+                  at,
+                  ...(correlationId !== undefined ? { correlationId } : {}),
+                });
+                return out;
+              },
+              message: `SignalReceived ${id} (${name}) for run ${opts.runId}`,
+            },
+          ),
       );
     },
-    async awaitNext(name, signal) {
+    async awaitNext(name, signal, correlationId) {
       if (stopped) {
         throw new Error("signal channel: awaitNext after stop");
       }
@@ -323,43 +389,46 @@ export function createWorkflowHostSignalChannel(
         throw new Error("aborted");
       }
       // Drain the state-machine queue first. A signal that was
-      // committed before the awaiter subscribed lives in
-      // `unconsumedSignals` after log replay.
-      const queued = peekState(name);
+      // committed before the awaiter subscribed lives in the name
+      // queue, or under its correlation, after log replay.
+      const queued = peekState(name, correlationId);
       if (queued !== null) return queued;
 
-      return new Promise<{ payload: unknown; signalId: string }>(
-        (resolve, reject) => {
-          const awaiter: Awaiter = {
-            resolve,
-            reject,
-            ...(signal !== undefined ? { signal } : {}),
-          };
-          if (signal !== undefined) {
-            const onAbort = (): void => {
-              const list = awaiters.get(name);
-              if (list !== undefined) {
-                const idx = list.indexOf(awaiter);
-                if (idx >= 0) list.splice(idx, 1);
-                if (list.length === 0) {
-                  awaiters.delete(name);
-                  void stopSubscription(name);
-                }
+      const slot = slotOf(name, correlationId);
+      return new Promise<{
+        payload: unknown;
+        signalId: string;
+        correlationId?: string;
+      }>((resolve, reject) => {
+        const awaiter: Awaiter = {
+          resolve,
+          reject,
+          ...(signal !== undefined ? { signal } : {}),
+        };
+        if (signal !== undefined) {
+          const onAbort = (): void => {
+            const list = awaiters.get(slot);
+            if (list !== undefined) {
+              const idx = list.indexOf(awaiter);
+              if (idx >= 0) list.splice(idx, 1);
+              if (list.length === 0) {
+                awaiters.delete(slot);
+                void stopSubscription(slot);
               }
-              reject(new Error("aborted"));
-            };
-            awaiter.onAbort = onAbort;
-            signal.addEventListener("abort", onAbort, { once: true });
-          }
-          let list = awaiters.get(name);
-          if (list === undefined) {
-            list = [];
-            awaiters.set(name, list);
-          }
-          list.push(awaiter);
-          startNameSubscription(name);
-        },
-      );
+            }
+            reject(new Error("aborted"));
+          };
+          awaiter.onAbort = onAbort;
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+        let list = awaiters.get(slot);
+        if (list === undefined) {
+          list = [];
+          awaiters.set(slot, list);
+        }
+        list.push(awaiter);
+        startNameSubscription(name, correlationId);
+      });
     },
     async stop() {
       if (stopped) return;
@@ -379,6 +448,14 @@ export function createWorkflowHostSignalChannel(
       }
     },
   };
+}
+
+function isTerminalOnDiskEvent(parsed: unknown): boolean {
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const type = (parsed as { type?: unknown }).type;
+  return (
+    type === "RunCompleted" || type === "RunFailed" || type === "RunCancelled"
+  );
 }
 
 function isMatchingSignalId(parsed: unknown, signalId: string): boolean {

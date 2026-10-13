@@ -36,21 +36,22 @@ import {
 import { evaluate, type SelectorContext } from "./selectors";
 import {
   hasFailedStep,
-  isCrashedInvocationStep,
-  isResumableAwaitingSignalStep,
-  isResumableLoopStep,
-  isResumableOnTriggerStep,
-  isResumableReceivedAwaitSignalStep,
-  isResumableSleepStep,
   isRunDone,
   nextSchedulable,
+  resumeResidualOf,
 } from "./dag";
 import {
   commit as commitDurableToChain,
   commitBuffered as commitBufferedToChain,
   dropChain,
   flushChain,
+  isRepoWriteFailure,
+  flushFailureCause,
+  isRunFlushFailure,
+  markRepoWriteFailure,
+  whenRunFlushFails,
   reloadState as reloadStateInChain,
+  runAfterDiscardingBuffer,
 } from "./commit-chain";
 import type {
   RunResult,
@@ -66,12 +67,17 @@ import {
   assertSpawnDepthWithinLimit,
   resolveMaxChildSpawnDepth,
 } from "./child-depth";
-import { RuntimeResumeUnsupportedError } from "./errors";
-import { loopBodyRunId, scopedStepId, sectionBodyRunId } from "./step-scope";
-import { inlineBodyRef } from "../ontrigger-bodies";
 import {
+  EphemeralResumeSeedError,
+  RuntimeResumeUnsupportedError,
+} from "./errors";
+import { loopBodyRunId, scopedStepId, sectionBodyRunId } from "./step-scope";
+import { inlineBodyRef } from "../inline-body-ref";
+import {
+  applyEvent,
   controlParkKindOf,
   decideTerminalRunFlip,
+  emptyState,
   isTerminalRunPhase,
   resumeFromLog,
   TransitionError,
@@ -171,8 +177,8 @@ export interface RuntimeRunOptions {
  *      otherwise `in-flight` (a `childWorkflow`) is unsupported: the
  *      runtime body has no surface for re-arming the timer scheduler
  *      entry or the inner-map iteration state from the log alone, so it
- *      surfaces as `RuntimeResumeUnsupportedError` and the host
- *      (supervisor) owns the recovery decision.
+ *      throws `RuntimeResumeUnsupportedError`. That throw is recorded as
+ *      `RunFailed`, and the run is terminal.
  */
 export function runtimeRun(
   definition: WorkflowDefinition,
@@ -293,6 +299,12 @@ async function executeRun(
       cancelController,
       options,
     );
+  } catch (cause) {
+    // The body escaped. A nested `commitDurable` would wait on this
+    // settlement forever, so the terminal event is appended directly
+    // once the chain's current link finishes and the pending buffer
+    // is discarded. The buffer is what a folding read just rejected.
+    return await settleThrownBody(env, runId, cause);
   } finally {
     // Always drop the per-runId commit chain entry, even on a thrown
     // body, so long-running processes accumulating many workflows do
@@ -300,6 +312,197 @@ async function executeRun(
     // resume seeding or a stall guard.
     dropChain(runId);
   }
+}
+
+function thrownMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+async function durableState(
+  env: WorkflowRuntimeEnv,
+  runId: string,
+): Promise<RunState> {
+  return resumeFromLog(runId, await env.repoStore.read(runId));
+}
+
+function rethrowOriginal(cause: unknown, failure: unknown): never {
+  throw new Error(thrownMessage(cause), { cause: failure });
+}
+
+/**
+ * Child-cancel cascade plus `RunCancelled`, applied in memory. The
+ * caller appends the batch itself. `commit` from inside the settlement
+ * link waits on that link.
+ */
+function cancellingTerminalEvents(
+  state: RunState,
+  at: string,
+): { events: WorkflowEvent[]; next: RunState } {
+  const events: WorkflowEvent[] = [];
+  let current = state;
+  for (const [childRunId, childState] of state.children) {
+    if (childState.cancelRequested) continue;
+    if (childState.terminalStatus !== undefined) continue;
+    const event: WorkflowEvent = {
+      kind: "ChildCancelRequested",
+      seq: current.lastSeq + 1,
+      at,
+      childRunId,
+    };
+    current = applyEvent(current, event);
+    events.push(event);
+  }
+  const cancelled: WorkflowEvent = {
+    kind: "RunCancelled",
+    seq: current.lastSeq + 1,
+    at,
+  };
+  current = applyEvent(current, cancelled);
+  events.push(cancelled);
+  return { events, next: current };
+}
+
+/**
+ * The log is already terminal. Strict output resolution can still
+ * throw. Discovery skips a terminal log, so that throw would leave
+ * the host without the event. Unreadable outputs are omitted.
+ */
+async function resultFromDurableTerminal(
+  env: WorkflowRuntimeEnv,
+  runId: string,
+  state: RunState,
+): Promise<RunResult> {
+  try {
+    return await buildResultFromLog(env, runId, state);
+  } catch {
+    const events = await env.repoStore.read(runId);
+    const outputs: Record<string, unknown> = {};
+    for (const event of events) {
+      if (event.kind !== "StepCompleted") continue;
+      try {
+        outputs[event.stepId] = await env.blobs.resolveRef(event.output.ref);
+      } catch {
+        // This output is unreadable. Omit it.
+      }
+    }
+    return {
+      runId,
+      terminalStatus: decideTerminalRunFlip(state.phase),
+      outputs,
+      events,
+    };
+  }
+}
+
+async function appendEvents(
+  env: WorkflowRuntimeEnv,
+  runId: string,
+  events: readonly WorkflowEvent[],
+  next: RunState,
+  cause: unknown,
+  settleCancelling = true,
+): Promise<RunResult> {
+  try {
+    await env.repoStore.appendBatch(runId, events);
+  } catch (failure) {
+    const again = await durableState(env, runId);
+    if (isTerminalRunPhase(again.phase)) {
+      return resultFromDurableTerminal(env, runId, again);
+    }
+    // A cancel written on the supervisor store can land while this
+    // append is in flight. The phase is then `cancelling` and nothing
+    // in the body is left to record `RunCancelled`. One attempt does.
+    // That attempt appends with `settleCancelling` false, so a second
+    // failure rejects instead of recursing for as long as the store
+    // keeps failing.
+    if (settleCancelling && again.phase === "cancelling") {
+      return appendCancellingTerminal(env, runId, again, cause);
+    }
+    rethrowOriginal(cause, failure);
+  }
+  return resultFromDurableTerminal(env, runId, next);
+}
+
+async function appendRunFailed(
+  env: WorkflowRuntimeEnv,
+  runId: string,
+  state: RunState,
+  cause: unknown,
+): Promise<RunResult> {
+  const at = env.clock().toISOString();
+  const failed: WorkflowEvent = {
+    kind: "RunFailed",
+    seq: state.lastSeq + 1,
+    at,
+    error: { message: thrownMessage(cause) },
+  };
+  let next: RunState;
+  try {
+    next = applyEvent(state, failed);
+  } catch (failure) {
+    const again = await durableState(env, runId);
+    if (isTerminalRunPhase(again.phase)) {
+      return resultFromDurableTerminal(env, runId, again);
+    }
+    if (again.phase === "cancelling") {
+      return appendCancellingTerminal(env, runId, again, cause);
+    }
+    rethrowOriginal(cause, failure);
+  }
+  return appendEvents(env, runId, [failed], next, cause);
+}
+
+async function appendCancellingTerminal(
+  env: WorkflowRuntimeEnv,
+  runId: string,
+  state: RunState,
+  cause: unknown,
+): Promise<RunResult> {
+  const at = env.clock().toISOString();
+  let built: { events: WorkflowEvent[]; next: RunState };
+  try {
+    built = cancellingTerminalEvents(state, at);
+  } catch (failure) {
+    const again = await durableState(env, runId);
+    if (isTerminalRunPhase(again.phase)) {
+      return resultFromDurableTerminal(env, runId, again);
+    }
+    rethrowOriginal(cause, failure);
+  }
+  return appendEvents(env, runId, built.events, built.next, cause, false);
+}
+
+async function settleThrownBody(
+  env: WorkflowRuntimeEnv,
+  runId: string,
+  cause: unknown,
+): Promise<RunResult> {
+  // The store rejected the write. The durable prefix is what recovery
+  // adopts; appending RunFailed here would hide that crash. A seeded
+  // resume that names blob refs on an ephemeral substrate is the same
+  // kind of refusal: the seed is still runnable once those blobs are
+  // present.
+  if (isRepoWriteFailure(cause) || cause instanceof EphemeralResumeSeedError) {
+    throw cause;
+  }
+  return runAfterDiscardingBuffer(runId, async () => {
+    const state = await durableState(env, runId);
+    if (isTerminalRunPhase(state.phase)) {
+      try {
+        return await buildResultFromLog(env, runId, state);
+      } catch (failure) {
+        // The seed is already terminal, and rebuilding its result failed
+        // (a fresh ephemeral substrate cannot resolve the seed's blob
+        // refs). Surface the error the body threw.
+        rethrowOriginal(cause, failure);
+      }
+    }
+    if (state.phase === "pending") throw cause;
+    if (state.phase === "cancelling") {
+      return appendCancellingTerminal(env, runId, state, cause);
+    }
+    return appendRunFailed(env, runId, state, cause);
+  });
 }
 
 // Intra-segment commit: validates the transition and assigns the seq
@@ -342,9 +545,10 @@ function commitDurable(
 // Called at a suspension boundary AFTER buffering the suspension
 // marker (`SignalAwaited`/`TimerSet`) so the marker -- and everything
 // before it in the segment -- is durable BEFORE the run parks. The
-// out-of-process scheduler tails the durable `TimerSet`; resume after
-// a crash-while-suspended reconstructs the awaiting state from the
-// durable log. A buffered suspension marker that never flushed would
+// host scheduler tails the durable `TimerSet`. A crash-while-suspended
+// reconstructs the awaiting state from that log. `TimerFired`'s
+// sequence is assigned when the timer fires, after anything buffered
+// past this flush. A buffered suspension marker that never flushed would
 // be lost on a park, so this flush is load-bearing, not an
 // optimisation knob.
 async function flush(env: WorkflowRuntimeEnv, runId: string): Promise<void> {
@@ -404,7 +608,14 @@ async function executeRunBody(
       }
       continue;
     }
-    await env.repoStore.append(runId, event);
+    try {
+      await env.repoStore.append(runId, event);
+    } catch (cause) {
+      // Same as a failed flush: settlement must not hide a write the
+      // store rejected.
+      markRepoWriteFailure(cause);
+      throw cause;
+    }
   }
 
   // Seed-contract guard, before any blob resolution. A resume that
@@ -424,9 +635,7 @@ async function executeRunBody(
       e.kind === "StepCompleted" && e.output.ref.startsWith("blob:"),
   );
   if (seedBlobRefs.length > 0 && env.blobs.ephemeral) {
-    throw new Error(
-      `resume requires the BlobSubstrate that recorded the seed log's blob refs (${String(seedBlobRefs.length)} blob output(s) present); the runLocal in-memory substrate is ephemeral and starts empty. Pass the originating env, or use a durable substrate.`,
-    );
+    throw new EphemeralResumeSeedError(seedBlobRefs.length);
   }
 
   // Establish canonical state from the durable log itself, not from the
@@ -472,9 +681,8 @@ async function executeRunBody(
   // it as a terminal `StepFailed`. Every OTHER non-terminal residual --
   // an `in-flight` coordination container (mid-`map`, `childWorkflow`),
   // or an `awaiting-signal`/`awaiting-timer` step -- still surfaces
-  // `RuntimeResumeUnsupportedError`: those have a live re-arming surface
-  // the host owns (rebuild the map state, re-park on a later signal), so
-  // declining honestly is correct there.
+  // `RuntimeResumeUnsupportedError`. The log alone cannot re-arm that
+  // step, so the throw is recorded as `RunFailed`.
   //
   // The pass runs whenever canonical state is `running`, whether the
   // residual arrived via a `resumeFromEvents` seed OR was adopted from a
@@ -507,17 +715,8 @@ async function executeRunBody(
       //     unfired durable timer and re-parks) or left `in-flight` by its
       //     fired timer (runSleep completes it without re-parking -- the
       //     crash-after-TimerFired-before-StepCompleted window).
-      if (
-        isResumableLoopStep(definition, stepId, stepState.phase) ||
-        isResumableAwaitingSignalStep(definition, stepId, stepState.phase) ||
-        isResumableReceivedAwaitSignalStep(
-          definition,
-          stepId,
-          stepState.phase,
-        ) ||
-        isResumableOnTriggerStep(definition, stepId, stepState.phase) ||
-        isResumableSleepStep(definition, stepId, stepState.phase)
-      ) {
+      const residual = resumeResidualOf(definition, stepId, stepState.phase);
+      if (residual === "continue") {
         // The onTrigger container carries no crash-mid-invocation risk (it never
         // self-completes); `runOnTrigger` re-derives its cursor from the log and
         // re-links a body parked mid-approval. Leave it for `nextSchedulable` to
@@ -538,7 +737,7 @@ async function executeRunBody(
       // pre-recovery behavior. Both settlings happen AFTER this loop --
       // committing inline would leave `state` stale and merely relocate the
       // stall to the main loop.
-      if (isCrashedInvocationStep(definition, stepId, stepState.phase)) {
+      if (residual === "crashed-invocation") {
         const parkedOps =
           env.readParkedApprovalOps !== undefined
             ? await env.readParkedApprovalOps({
@@ -572,13 +771,21 @@ async function executeRunBody(
         }
         continue;
       }
-      // Every other non-terminal residual keeps declining: the host owns
-      // the recovery decision (crash, alert, or redeploy).
-      if (
-        stepState.phase === "in-flight" ||
-        stepState.phase === "awaiting-signal" ||
-        stepState.phase === "awaiting-timer"
-      ) {
+      // Every other non-terminal residual still throws. The throw is
+      // recorded as `RunFailed`.
+      if (residual === "unsupported") {
+        // `resumeResidualOf` returns this only for a non-terminal phase.
+        // The constructor's phase is that same set, so a terminal phase
+        // here is a broken guard.
+        if (
+          stepState.phase !== "in-flight" &&
+          stepState.phase !== "awaiting-signal" &&
+          stepState.phase !== "awaiting-timer"
+        ) {
+          throw new Error(
+            `resume residual for step ${stepId} is unsupported in phase ${stepState.phase}`,
+          );
+        }
         throw new RuntimeResumeUnsupportedError(
           stepId,
           stepState.phase,
@@ -784,12 +991,34 @@ async function executeRunBody(
   // this map to abort in-flight cancel-mode steps when drain fires
   // after the step was already scheduled.
   const stepAborts = new Map<string, AbortController>();
+  // A failed flush drops its batch and the step runner rejects with
+  // that same error. The loop below would otherwise treat the
+  // rejection as a settled step and schedule the step again, or wait
+  // forever on a sibling that is already parked. Remember the first
+  // error and rethrow it once every in-flight step has stopped.
+  let repoWriteFailure: unknown;
+  // One waiter for the whole loop. A flush that already failed resolves
+  // it immediately, so the next race observes it without a new registration.
+  const flushFailed = whenRunFlushFails(runId);
+  async function throwRememberedWriteFailure(): Promise<void> {
+    if (repoWriteFailure === undefined) {
+      repoWriteFailure = flushFailureCause(runId);
+    }
+    const cause = repoWriteFailure;
+    if (cause === undefined) return;
+    for (const controller of stepAborts.values()) {
+      if (!controller.signal.aborted) controller.abort();
+    }
+    await Promise.allSettled(stepPromises.values());
+    throw cause;
+  }
 
   // Tick loop: schedule everything ready, await any in-flight to
   // settle, repeat until done. Cancellation aborts every in-flight
   // executor; we still loop to commit `CancelPropagated` and the
   // terminal `RunCancelled`.
   while (!isRunDone(definition, state)) {
+    await throwRememberedWriteFailure();
     if (cancelController.signal.aborted && state.phase !== "cancelling") {
       state = await reloadState(env, runId);
     }
@@ -837,7 +1066,11 @@ async function executeRunBody(
         .then((output) => {
           stepOutputs[primitive.id] = output;
         })
-        .catch(() => {
+        .catch((cause: unknown) => {
+          if (isRunFlushFailure(runId, cause)) {
+            if (repoWriteFailure === undefined) repoWriteFailure = cause;
+            return;
+          }
           // Errors are committed as StepFailed inside the primitive
           // runner; the main loop notices the failed phase on the
           // next state reload.
@@ -880,6 +1113,7 @@ async function executeRunBody(
     }
 
     if (stepPromises.size === 0) {
+      await throwRememberedWriteFailure();
       if (ready.length === 0) {
         throw new Error(
           `workflow ${definition.id} run ${runId} stalled with no schedulable primitives`,
@@ -888,16 +1122,21 @@ async function executeRunBody(
       // Promises were scheduled this tick but already completed
       // synchronously; reload state and continue.
       state = await reloadState(env, runId);
+      await throwRememberedWriteFailure();
       continue;
     }
 
-    // Wait for at least one in-flight primitive to settle. Each
-    // primitive's runner already swallows its own errors into
-    // StepFailed events so the race resolves cleanly.
-    await Promise.race(
-      Array.from(stepPromises.values()).map((p) => p.catch(() => undefined)),
-    );
+    // Wait for at least one in-flight primitive to settle. Step
+    // failures are already `StepFailed`. A parked step never settles,
+    // so the flush waiter is what wakes the loop when an external
+    // writer drops the buffer.
+    await Promise.race([
+      ...Array.from(stepPromises.values()).map((p) => p.catch(() => undefined)),
+      flushFailed,
+    ]);
+    await throwRememberedWriteFailure();
     state = await reloadState(env, runId);
+    await throwRememberedWriteFailure();
     for (const stepId of justSettled) {
       stepPromises.delete(stepId);
     }
@@ -1211,6 +1450,12 @@ async function runPrimitiveSafe(
       maxChildSpawnDepth,
     );
   } catch (cause) {
+    // Only this run's failed flush. A nested run stamps the same
+    // marker on its own append error, and that error rejects the
+    // child. The parent still records this step's failure; rethrowing
+    // the marker here would drop the buffered ChildCompleted and
+    // leave the parent without a terminal event.
+    if (isRunFlushFailure(runId, cause)) throw cause;
     let state = await reloadState(env, runId);
     const stepState = state.steps.get(primitive.id);
     if (!stepState) {
@@ -2031,11 +2276,16 @@ async function runLoop(
     });
   }
 
-  // Replay fully-done iterations (child terminal AND step completed) from
-  // the log to re-derive the cursor, the threaded input, and whether the
-  // loop already reached its outcome before the crash (the post-routing
-  // window). while/carry are pure, so replaying them over recorded inputs
-  // and outputs reproduces the pre-crash decisions.
+  // Replay finished attempts to re-derive the cursor and the threaded input.
+  // A completed attempt (child completed AND scoped step completed) replays
+  // while/carry, which are pure. A tolerated failure has no scoped
+  // StepCompleted: skip it without while/carry, keep the same input, and
+  // count the attempt, so the frontier below is the attempt planLoopResume
+  // must re-link. A terminal attempt the policy will not continue throws
+  // here, before that planner runs and before any drive: planLoopResume
+  // returns undefined for a terminal child, and occurrenceResume is cleared
+  // after the first drive, so driving the terminal attempt would spawn the
+  // later park with no resume token.
   const iterationZeroInput =
     primitive.input !== undefined
       ? evaluate(primitive.input, selectorCtx)
@@ -2045,29 +2295,56 @@ async function runLoop(
   let iteration = 0;
   let terminated = false;
   let outcome: "converged" | "exhausted" = "exhausted";
-  // The output of the most recent iteration, boxed so a legitimately
-  // `undefined` iteration output stays distinguishable from "no iteration
-  // has run yet". The settle path below needs it: the loop breaks the
-  // moment `while` goes false, BEFORE `carry` runs, so `currentInput` is
-  // the converging iteration's input and this is its output.
+  // The output of the most recent COMPLETED attempt, boxed so a legitimately
+  // `undefined` iteration output stays distinguishable from "no attempt has
+  // completed". A tolerated failure does not set this. The settle path
+  // publishes it as `final`, or `null` when every attempt was tolerated.
   let lastIteration: { output: unknown } | undefined;
-  while (isIterationDone(state, runId, primitive.id, iteration)) {
+  const policy = iterationFailurePolicyOf(primitive);
+  while (true) {
     const doneStepId = scopedStepId(primitive.id, iteration);
-    const doneInput = await resolveIterationInput(env, log, doneStepId);
-    const doneOutput = await resolveIterationOutput(env, log, doneStepId);
-    lastIteration = { output: doneOutput };
-    iteration += 1;
-    if (!whileFn(doneOutput, doneInput)) {
-      outcome = "converged";
-      terminated = true;
-      break;
+    const cursor = loopIterationCursor(
+      state,
+      runId,
+      primitive.id,
+      iteration,
+      policy,
+    );
+    if (cursor.kind === "completed") {
+      const doneInput = await resolveIterationInput(env, log, doneStepId);
+      const doneOutput = await resolveIterationOutput(env, log, doneStepId);
+      lastIteration = { output: doneOutput };
+      iteration += 1;
+      if (!whileFn(doneOutput, doneInput)) {
+        outcome = "converged";
+        terminated = true;
+        break;
+      }
+      if (iteration >= primitive.maxIterations) {
+        outcome = "exhausted";
+        terminated = true;
+        break;
+      }
+      currentInput = carryFn(doneOutput, doneInput);
+      continue;
     }
-    if (iteration >= primitive.maxIterations) {
-      outcome = "exhausted";
-      terminated = true;
-      break;
+    if (cursor.kind === "tolerated") {
+      iteration += 1;
+      if (iteration >= primitive.maxIterations) {
+        outcome = "exhausted";
+        terminated = true;
+        break;
+      }
+      continue;
     }
-    currentInput = carryFn(doneOutput, doneInput);
+    if (cursor.kind === "terminal") {
+      // Durable half only. The recovering process's abort signal is not a
+      // reason to reclassify a recorded genuine failure as teardown.
+      throw new Error(
+        `loop ${primitive.id} iteration ${String(iteration)} ended ${cursor.terminalStatus}`,
+      );
+    }
+    break;
   }
 
   // Prefer the resume iteration's own recorded input (an in-flight
@@ -2111,26 +2388,61 @@ async function runLoop(
     // only on the recovered iteration of a crash resume, where it re-links a
     // body parked or mid-relay at the crash; it is cleared after this drive so
     // every later iteration spawns fresh.
-    const { terminalStatus } = await driveSuspendableOccurrence(
-      env,
-      runId,
-      primitive.id,
-      {
-        childRunId,
-        bodyRef,
-        input: currentInput,
-        resume: occurrenceResume,
-        spawnSuspendableChild: spawnLoopIteration,
-        depth,
-        maxChildSpawnDepth,
-        abort,
-      },
-    );
+    const driven = await driveSuspendableOccurrence(env, runId, primitive.id, {
+      childRunId,
+      bodyRef,
+      input: currentInput,
+      resume: occurrenceResume,
+      spawnSuspendableChild: spawnLoopIteration,
+      depth,
+      maxChildSpawnDepth,
+      abort,
+      signalRelayAddressing: "name",
+    });
     occurrenceResume = undefined;
+
+    // Trust the recorded child, not only the drive's return. A child log
+    // that is missing is re-executed, and that fresh terminal can disagree
+    // with a ChildCompleted the parent already recorded. `abortedTeardown`
+    // lives only on the record. `abort.aborted` is this process's live
+    // signal: an abort during the drive's commit/flush has no durable flag
+    // yet, and a tolerate loop must still end rather than continue.
+    const recorded = (await reloadState(env, runId)).children.get(childRunId);
+    const terminalStatus = recorded?.terminalStatus ?? driven.terminalStatus;
+    const abortedTeardown = recorded?.abortedTeardown === true;
+    const tolerated =
+      terminalStatus === "failed" &&
+      !abort.aborted &&
+      !abortedTeardown &&
+      policy === "tolerate";
+    if (terminalStatus !== "completed" && !tolerated) {
+      // A failed or cancelled iteration the policy will not continue is a
+      // real failure, not an exhaustion. Throw so runPrimitiveSafe lands
+      // StepFailed (or CancelPropagated when the run is cancelling) on the
+      // loop node. Throwing skips routeLoopOutcome, so neither branch is
+      // pruned; both the normal dependents and onExhausted then run before
+      // the run settles failed, per the engine's "a failed dependency is
+      // resolved" scheduling (the same as a failed gate). The
+      // mutually-exclusive routing holds only on the success path.
+      throw new Error(
+        `loop ${primitive.id} iteration ${String(i)} ended ${terminalStatus}`,
+      );
+    }
+    if (tolerated) {
+      // Leave the scoped step in-flight. StepFailed would make hasFailedStep
+      // fail the run after a tolerated exhaust, and StepCompleted would make
+      // the replay walk treat the failure as a success.
+      if (i + 1 >= primitive.maxIterations) {
+        outcome = "exhausted";
+        break;
+      }
+      continue;
+    }
 
     // The drive returns only the terminal status; the iteration's step outputs
     // live in the child's durable log, so hydrate them here -- the scoped
-    // StepCompleted records them, and while/carry read them.
+    // StepCompleted records them, and while/carry read them. Only a completed
+    // attempt gets that record. A tolerated failure has no output to carry.
     const output = await hydrateChildOutputs(env, childRunId);
     lastIteration = { output };
 
@@ -2139,20 +2451,6 @@ async function runLoop(
       await emitStepCompletedWithValue(env, runId, stepId, output);
     }
     await flush(env, runId);
-
-    if (terminalStatus !== "completed") {
-      // A failed or cancelled iteration is a real failure, not an
-      // exhaustion. Throw so runPrimitiveSafe lands StepFailed (or
-      // CancelPropagated when the run is cancelling) on the loop node.
-      // Note: throwing skips routeLoopOutcome, so neither branch is
-      // pruned; both the normal dependents and onExhausted then run
-      // before the run settles failed, per the engine's "a failed
-      // dependency is resolved" scheduling (the same as a failed gate).
-      // The mutually-exclusive routing holds only on the success path.
-      throw new Error(
-        `loop ${primitive.id} iteration ${String(i)} ended ${terminalStatus}`,
-      );
-    }
 
     if (!whileFn(output, currentInput)) {
       outcome = "converged";
@@ -2165,13 +2463,14 @@ async function runLoop(
     currentInput = carryFn(output, currentInput);
   }
 
-  if (lastIteration === undefined) {
+  if (iterations === 0) {
     // Unreachable through `loop()`, which rejects a non-positive
-    // maxIterations, so every settle follows at least one iteration --
+    // maxIterations, so every settle follows at least one attempt --
     // replayed or driven. A definition that reached here by another road
-    // has no last iteration to report; fail loud rather than publish a
-    // `final` the loop never produced. Checked BEFORE the route so the
-    // throw cannot leave one branch of the loop's dependents pruned.
+    // has no attempt to report; fail loud rather than publish a record the
+    // loop never produced. Checked BEFORE the route so the throw cannot
+    // leave one branch of the loop's dependents pruned. A positive count
+    // whose every attempt was tolerated is a real exhaust: `final` is null.
     throw new Error(
       `loop ${primitive.id} settled ${outcome} without running an iteration`,
     );
@@ -2181,7 +2480,7 @@ async function runLoop(
     outcome,
     iterations,
     carry: currentInput,
-    final: lastIteration.output,
+    final: lastIteration === undefined ? null : lastIteration.output,
   };
   await emitStepCompletedWithValue(env, runId, primitive.id, output);
   return output;
@@ -2208,6 +2507,14 @@ type SuspendableOccurrenceResume =
   // no `onSignalPark` to surface it -- drive the container relay FRESH over the
   // recovered name instead.
   | { kind: "signal-relay-drive-fresh"; name: string };
+
+/**
+ * How this container addresses a body `awaitSignal` it relays.
+ * `"name"` keeps the name FIFO (a loop that is itself the addressable
+ * run). `"correlation"` mints an id on each fresh relay park so a
+ * delivery for one park cannot satisfy the next.
+ */
+type SignalRelayAddressing = "name" | "correlation";
 
 /**
  * Drive one occurrence's suspendable-child body to terminal, durably: commit
@@ -2239,6 +2546,7 @@ async function driveSuspendableOccurrence(
     depth: number;
     maxChildSpawnDepth: number;
     abort: AbortSignal;
+    signalRelayAddressing: SignalRelayAddressing;
   },
 ): Promise<{ terminalStatus: "completed" | "failed" | "cancelled" }> {
   const {
@@ -2250,6 +2558,7 @@ async function driveSuspendableOccurrence(
     depth,
     maxChildSpawnDepth,
     abort,
+    signalRelayAddressing,
   } = args;
 
   let before = await reloadState(env, runId);
@@ -2324,6 +2633,7 @@ async function driveSuspendableOccurrence(
     // The container's signal-relay await is durable; the re-spawned body
     // re-parks on the name silently, so re-drive the race from the recovered
     // await seq (no re-emit) and continue with the body event it yields.
+    const relayLog = await env.repoStore.read(runId);
     pending = await raceContainerSignalRelay(
       env,
       runId,
@@ -2331,6 +2641,7 @@ async function driveSuspendableOccurrence(
       child,
       resume.name,
       resume.awaitSeq,
+      correlationIdAt(relayLog, resume.awaitSeq),
       abort,
     );
   } else if (resume?.kind === "signal-relay-drive-fresh") {
@@ -2345,6 +2656,7 @@ async function driveSuspendableOccurrence(
       containerStepId,
       child,
       resume.name,
+      signalRelayAddressing,
       abort,
     );
   }
@@ -2392,6 +2704,7 @@ async function driveSuspendableOccurrence(
       containerStepId,
       child,
       bodyEvent.name,
+      signalRelayAddressing,
       abort,
     );
   }
@@ -2638,6 +2951,7 @@ async function runOnTrigger(
         depth,
         maxChildSpawnDepth,
         abort,
+        signalRelayAddressing: "correlation",
       },
     );
 
@@ -2709,42 +3023,39 @@ async function driveContainerSignalRelay(
   containerStepId: string,
   child: SuspendableChildHandle,
   name: string,
+  addressing: SignalRelayAddressing,
   abort: AbortSignal,
 ): Promise<Awaited<ReturnType<SuspendableChildHandle["next"]>>> {
   const state = await reloadState(env, runId);
 
-  // Fail-loud guard on the one residual divergence from the reducer's pairing:
-  // `boundSignalForContainerAwait` is container-scoped and faithful ONLY while
-  // THIS container is the sole step awaiting `name`. If ANY other step is
-  // already awaiting the SAME author name in this parent run -- another
-  // section's signal-relay proxy OR a plain author `awaitSignal` gate (which
-  // reduces with no parkKind) -- the reducer consumes a delivery by
-  // `state.steps` Map-insertion order across ALL steps (see
-  // `handleSignalReceived`), not this container's seq order, so the helper
-  // could mis-bind and relay a payload the reducer delivered to the other
-  // awaiter. Refuse the topology loudly rather than route a signal to the wrong
-  // step. Mirrors `hasForeignSameNameAwaiter` on the plain-gate resume path; a
-  // single section re-awaiting a name sequentially is always one active awaiter
-  // and stays faithful. Parity with the resume guard is why the parkKind is NOT
-  // filtered here -- a plain-gate sibling reduces to `"approval"` and would slip
-  // a signal-relay-only check.
-  for (const [otherStepId, otherStep] of state.steps) {
-    if (
-      otherStepId !== containerStepId &&
-      otherStep.phase === "awaiting-signal" &&
-      otherStep.awaitingSignal?.name === name
-    ) {
-      throw new Error(
-        `onTrigger ${containerStepId} signal-relay: step ${otherStepId} is ` +
-          `already awaiting the same signal name ${name}; two steps ` +
-          `awaiting the same signal name concurrently is not supported`,
-      );
+  // Name mode still assumes this container is the sole name-addressed
+  // awaiter of `name`: the name replay is container-scoped, while the
+  // reducer consumes by `state.steps` insertion order. A correlated park
+  // is not on that queue. Correlation mode addresses by id, so another
+  // step waiting on the same author name is not a conflict.
+  if (addressing === "name") {
+    for (const [otherStepId, otherStep] of state.steps) {
+      if (
+        otherStepId !== containerStepId &&
+        otherStep.phase === "awaiting-signal" &&
+        otherStep.awaitingSignal?.name === name &&
+        otherStep.awaitingSignal.correlationId === undefined
+      ) {
+        throw new Error(
+          `onTrigger ${containerStepId} signal-relay: step ${otherStepId} is ` +
+            `already awaiting the same signal name ${name}; two steps ` +
+            `awaiting the same signal name concurrently is not supported`,
+        );
+      }
     }
   }
 
-  // Emit the container's signal-relay await over the body's author name. The
-  // commit's reducer pass decides (a) vs (b): a signal queued before it
-  // pre-consumes it (in-flight); otherwise the container is left awaiting.
+  // A fresh correlated park mints once. Resume of a park that is still
+  // open reuses the id already on that SignalAwaited and does not call
+  // this path. The body gate stays the author name; the id is only the
+  // address on this container's relay.
+  const correlationId =
+    addressing === "correlation" ? env.newId("corr") : undefined;
   const awaited: WorkflowEvent = {
     kind: "SignalAwaited",
     seq: state.lastSeq + 1,
@@ -2752,6 +3063,7 @@ async function driveContainerSignalRelay(
     stepId: containerStepId,
     signalName: name,
     parkKind: "signal-relay",
+    ...(correlationId !== undefined ? { correlationId } : {}),
   };
   const awaitSeq = awaited.seq;
   await commit(env, runId, awaited);
@@ -2811,6 +3123,7 @@ async function driveContainerSignalRelay(
     child,
     name,
     awaitSeq,
+    correlationId,
     abort,
   );
 }
@@ -2833,6 +3146,7 @@ async function raceContainerSignalRelay(
   child: SuspendableChildHandle,
   name: string,
   awaitSeq: number,
+  correlationId: string | undefined,
   abort: AbortSignal,
 ): Promise<Awaited<ReturnType<SuspendableChildHandle["next"]>>> {
   // `awaitNext` rejects on `raceAbort`; `next()` returns a terminal when the
@@ -2842,12 +3156,24 @@ async function raceContainerSignalRelay(
     raceAbort.abort();
   };
   bridgeAbort(abort, onOuterAbort);
-  const pSignal = env.signalChannel
-    .awaitNext(name, raceAbort.signal)
-    .then((r) => ({ tag: "signal" as const, r }));
+  const waited =
+    correlationId === undefined
+      ? awaitSignalFor(env, runId, containerStepId, name, raceAbort.signal)
+      : awaitSignalFor(
+          env,
+          runId,
+          containerStepId,
+          name,
+          raceAbort.signal,
+          correlationId,
+        );
+  const pSignal = waited.then((r) => ({ tag: "signal" as const, r }));
   const pNext = child.next().then((ev) => ({ tag: "next" as const, ev }));
   let outcome:
-    | { tag: "signal"; r: { payload: unknown; signalId: string } }
+    | {
+        tag: "signal";
+        r: { payload: unknown; signalId: string; correlationId?: string };
+      }
     | { tag: "next"; ev: Awaited<ReturnType<SuspendableChildHandle["next"]>> };
   try {
     outcome = await Promise.race([pSignal, pNext]);
@@ -2862,10 +3188,10 @@ async function raceContainerSignalRelay(
   }
 
   if (outcome.tag === "signal") {
-    // The awaited signal arrived live. Commit its SignalReceived -- mirroring
-    // parkOnSignal's awaiter-commits contract, so the container log carries it
-    // in every host; a production delivery that also committed it dedups by
-    // signalId -- then relay it into the body and take the body's next event.
+    // The awaited signal arrived live. Commit its SignalReceived so a
+    // channel that did not write the blob still records it. A host
+    // delivery already in the log is not appended again. Then relay it
+    // into the body and take the body's next event.
     const before = await reloadState(env, runId);
     const received: WorkflowEvent = {
       kind: "SignalReceived",
@@ -2874,6 +3200,9 @@ async function raceContainerSignalRelay(
       signalName: name,
       signalId: outcome.r.signalId,
       payload: outcome.r.payload,
+      ...(outcome.r.correlationId !== undefined
+        ? { correlationId: outcome.r.correlationId }
+        : {}),
     };
     await commit(env, runId, received);
     await flush(env, runId);
@@ -2902,6 +3231,7 @@ async function raceContainerSignalRelay(
       at: env.clock().toISOString(),
       stepId: containerStepId,
       signalName: name,
+      ...(correlationId !== undefined ? { correlationId } : {}),
     };
     await commit(env, runId, abandoned);
     await flush(env, runId);
@@ -2964,7 +3294,9 @@ type OnTriggerResumePlan =
  * (terminal-is-final). Single source for the default so the steady-state drive
  * loop and the resume planner cannot drift.
  */
-function bodyFailurePolicyOf(primitive: OnTriggerPrimitive): BodyFailurePolicy {
+function bodyFailurePolicyOf(primitive: {
+  readonly onBodyFailure?: BodyFailurePolicy;
+}): BodyFailurePolicy {
   return primitive.onBodyFailure ?? "end";
 }
 
@@ -2978,7 +3310,7 @@ function bodyFailurePolicyOf(primitive: OnTriggerPrimitive): BodyFailurePolicy {
  * drive-fresh on `author`; the onTrigger planner refuses on either, since it has
  * no fresh-relay drive for a body still awaiting a signal.
  */
-function bodyParkedSignals(childState: RunState): {
+export function bodyParkedSignals(childState: RunState): {
   author: string[];
   controlPlane: string[];
 } {
@@ -3085,6 +3417,20 @@ async function planOnTriggerResume(
   primitive: OnTriggerPrimitive,
   state: RunState,
   log: readonly WorkflowEvent[],
+): Promise<OnTriggerResumePlan> {
+  return finishOnTriggerResume(primitive, state, log, (childRunId) =>
+    reloadState(env, childRunId),
+  );
+}
+
+async function finishOnTriggerResume(
+  primitive: {
+    readonly id: string;
+    readonly onBodyFailure?: BodyFailurePolicy;
+  },
+  state: RunState,
+  log: readonly WorkflowEvent[],
+  loadChild: (childRunId: string) => Promise<RunState>,
 ): Promise<OnTriggerResumePlan> {
   const eventIndex = highestSectionEventIndex(
     state.runId,
@@ -3268,7 +3614,7 @@ async function planOnTriggerResume(
   // last case is the one genuine behavior change here, and it is the intended
   // reading of `tolerate` -- a real body failure it is meant to swallow, not a
   // hang or a lost run.
-  const childState = await reloadState(env, childRunId);
+  const childState = await loadChild(childRunId);
   const { author, controlPlane } = bodyParkedSignals(childState);
   const parkedSignals = [...author, ...controlPlane];
   if (parkedSignals.length > 0) {
@@ -3306,6 +3652,24 @@ async function planLoopResume(
   state: RunState,
   log: readonly WorkflowEvent[],
   iteration: number,
+): Promise<SuspendableOccurrenceResume | undefined> {
+  return finishLoopResume(
+    primitive,
+    runId,
+    state,
+    log,
+    iteration,
+    (childRunId) => reloadState(env, childRunId),
+  );
+}
+
+async function finishLoopResume(
+  primitive: { readonly id: string },
+  runId: string,
+  state: RunState,
+  log: readonly WorkflowEvent[],
+  iteration: number,
+  loadChild: (childRunId: string) => Promise<RunState>,
 ): Promise<SuspendableOccurrenceResume | undefined> {
   const childRunId = loopBodyRunId(runId, primitive.id, iteration);
   const child = state.children.get(childRunId);
@@ -3386,7 +3750,7 @@ async function planLoopResume(
   // and drive the container relay FRESH. (On an inconsistent store the child
   // log is gone, so no gate is found and the forward drive re-runs the
   // iteration -- the existing inconsistent-store behavior.)
-  const childState = await reloadState(env, childRunId);
+  const childState = await loadChild(childRunId);
   const { author: authorAwaits } = bodyParkedSignals(childState);
   if (authorAwaits.length > 1) {
     throw new Error(
@@ -3400,6 +3764,113 @@ async function planLoopResume(
     return { kind: "signal-relay-drive-fresh", name: parkedName };
   }
   return undefined;
+}
+
+/**
+ * Whether a crash-recovered container can be re-attached, judged by the same
+ * planners the runtime drives. `rejected` is a planner throw (caught here so
+ * a caller can release instead of letting it escape). `reenter` is a child
+ * the forward drive re-adopts that is not itself a park. A drive-fresh loop
+ * park with a control-plane signal beside the author signal is `rejected`
+ * even though the runtime planner would return the author name: more than
+ * the author gate is waiting, and that is not re-attached.
+ */
+export type OccurrenceReattach =
+  | { readonly kind: "parked"; readonly childRunId?: string }
+  | { readonly kind: "reenter"; readonly childRunId: string }
+  | { readonly kind: "open" }
+  | { readonly kind: "rejected" };
+
+export async function loopOccurrenceReattach(args: {
+  readonly loopId: string;
+  readonly runId: string;
+  readonly iteration: number;
+  readonly state: RunState;
+  readonly log: readonly WorkflowEvent[];
+  readonly childState: RunState;
+}): Promise<OccurrenceReattach> {
+  const childRunId = loopBodyRunId(args.runId, args.loopId, args.iteration);
+  try {
+    const plan = await finishLoopResume(
+      { id: args.loopId },
+      args.runId,
+      args.state,
+      args.log,
+      args.iteration,
+      async () => args.childState,
+    );
+    if (plan === undefined) {
+      const child = args.state.children.get(childRunId);
+      if (child === undefined || child.terminalStatus !== undefined) {
+        return { kind: "open" };
+      }
+      return { kind: "reenter", childRunId };
+    }
+    if (plan.kind === "signal-relay-drive-fresh") {
+      const { author, controlPlane } = bodyParkedSignals(args.childState);
+      if (author.length !== 1 || controlPlane.length > 0) {
+        return { kind: "rejected" };
+      }
+    }
+    return { kind: "parked", childRunId };
+  } catch {
+    return { kind: "rejected" };
+  }
+}
+
+export async function onTriggerOccurrenceReattach(args: {
+  readonly sectionId: string;
+  readonly onBodyFailure?: BodyFailurePolicy;
+  readonly state: RunState;
+  readonly log: readonly WorkflowEvent[];
+  readonly childState: RunState;
+}): Promise<OccurrenceReattach> {
+  try {
+    const plan = await finishOnTriggerResume(
+      {
+        id: args.sectionId,
+        ...(args.onBodyFailure !== undefined
+          ? { onBodyFailure: args.onBodyFailure }
+          : {}),
+      },
+      args.state,
+      args.log,
+      async () => args.childState,
+    );
+    // A recorded body keeps the id the log stored. `sectionBodyRunId`
+    // mints the parent-prefixed form, which is an empty log when the
+    // child was committed as `<sectionId>__<index>`.
+    const recordedChild = (eventIndex: number): string =>
+      recordedSectionBodyRunId(
+        args.state.runId,
+        args.sectionId,
+        eventIndex,
+        args.state.children,
+      );
+    switch (plan.kind) {
+      case "reawait-input":
+        return { kind: "parked" };
+      case "reestablish-approval":
+      case "reestablish-signal-relay":
+      case "relay-grant":
+      case "relay-signal-grant":
+        return {
+          kind: "parked",
+          childRunId: recordedChild(plan.eventIndex),
+        };
+      case "readopt-in-flight-body":
+        return {
+          kind: "reenter",
+          childRunId: recordedChild(plan.eventIndex),
+        };
+      case "fresh":
+      case "advance-with-input":
+      case "terminal-is-final":
+        return { kind: "open" };
+    }
+  } catch {
+    return { kind: "rejected" };
+  }
 }
 
 /**
@@ -3556,9 +4027,9 @@ function recoverDeliveredSignalRelay(
  * the wrong payload.
  *
  * Two reducer behaviors the pairing depends on, both replayed here:
- *   - dedup by `signalId`: a redelivered `SignalReceived` is a no-op in the
- *     reducer (`observedSignalIds`) yet still lands in the log, so the replay
- *     must skip an already-seen id rather than double-advance the FIFO.
+ *   - dedup by `signalId`: the reducer skips an id already in
+ *     `observedSignalIds`. Replay does the same. A second blob is not
+ *     required; a log that already has one still skips that id.
  *   - retire an abandoned awaiter: `SignalAwaitAbandoned` drops the awaiter, so
  *     a later signal queues rather than pairing with the retired await; the
  *     replay pops the container's active waiter on abandon to match. The
@@ -3569,13 +4040,14 @@ function recoverDeliveredSignalRelay(
  * reconstructs the reducer's queue/waiters from `emptyState`, so a windowed
  * suffix would start mid-stream and mis-pair; a non-full log fails loud below.
  *
- * ASSUMPTION: a UNIQUE container awaiter per name in the parent run. The
- * pairing is container-scoped (it filters `SignalAwaited`/`SignalAwaitAbandoned`
- * to `containerStepId`), which matches the reducer ONLY while this container is
- * the sole step awaiting the name. Two sections concurrently awaiting the same
- * name would let the reducer consume by `state.steps` Map-insertion order
- * across all steps; `driveContainerSignalRelay` refuses that topology loudly at
- * the proxy-park, so this helper never sees it.
+ * ASSUMPTION for a name-addressed await: a UNIQUE container awaiter per name
+ * in the parent run. The name replay filters `SignalAwaited` /
+ * `SignalAwaitAbandoned` to `containerStepId` and ignores events that carry
+ * `correlationId`, which matches the reducer only while this container is the
+ * sole name-addressed step awaiting the name. A correlated park is not on
+ * that queue. An await that itself carries `correlationId` binds by that id
+ * instead, and a name mismatch against the park holding the id dedups without
+ * queueing, matching `handleSignalReceived`.
  */
 // Exported for direct unit tests: the reducer-FIFO-replay binding is the
 // correctness crux of the signal-relay pass, and its correction cases (dedup,
@@ -3595,14 +4067,27 @@ export function boundSignalForContainerAwait(
         `mis-pair the reducer's FIFO)`,
     );
   }
+  const correlationId = correlationIdAt(log, awaitSeq);
+  if (correlationId !== undefined) {
+    return bindCorrelatedContainerAwait(
+      log,
+      name,
+      containerStepId,
+      awaitSeq,
+      correlationId,
+    );
+  }
   const queue: { payload: unknown; signalId: string }[] = [];
   const waiters: number[] = [];
   const pairing = new Map<number, { payload: unknown; signalId: string }>();
   const observed = new Set<string>();
   for (const event of log) {
-    if (event.kind === "SignalReceived" && event.signalName === name) {
+    if (event.kind === "SignalReceived") {
       if (observed.has(event.signalId)) continue;
       observed.add(event.signalId);
+      if (event.correlationId !== undefined || event.signalName !== name) {
+        continue;
+      }
       const waiter = waiters.shift();
       if (waiter !== undefined) {
         pairing.set(waiter, {
@@ -3614,6 +4099,7 @@ export function boundSignalForContainerAwait(
       }
     } else if (
       event.kind === "SignalAwaited" &&
+      event.correlationId === undefined &&
       event.signalName === name &&
       event.stepId === containerStepId
     ) {
@@ -3625,6 +4111,7 @@ export function boundSignalForContainerAwait(
       }
     } else if (
       event.kind === "SignalAwaitAbandoned" &&
+      event.correlationId === undefined &&
       event.signalName === name &&
       event.stepId === containerStepId
     ) {
@@ -3632,6 +4119,151 @@ export function boundSignalForContainerAwait(
     }
   }
   return pairing.get(awaitSeq);
+}
+
+function correlationIdAt(
+  log: readonly WorkflowEvent[],
+  awaitSeq: number,
+): string | undefined {
+  for (const event of log) {
+    if (event.kind === "SignalAwaited" && event.seq === awaitSeq) {
+      return event.correlationId;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Bind a container await that carries `correlationId`. Dedup is still
+ * run-wide. A delivery for this id pairs only when `signalName` matches;
+ * a delivery for this id against a park held under a different name is
+ * deduped and not queued. Events for other ids do not enter this queue.
+ */
+function bindCorrelatedContainerAwait(
+  log: readonly WorkflowEvent[],
+  name: string,
+  containerStepId: string,
+  awaitSeq: number,
+  correlationId: string,
+): { payload: unknown; signalId: string } | undefined {
+  const queue: { payload: unknown; signalId: string; signalName: string }[] =
+    [];
+  const waiters: { seq: number; signalName: string; stepId: string }[] = [];
+  const pairing = new Map<number, { payload: unknown; signalId: string }>();
+  const observed = new Set<string>();
+  for (const event of log) {
+    if (event.kind === "SignalReceived") {
+      if (observed.has(event.signalId)) continue;
+      observed.add(event.signalId);
+      if (event.correlationId !== correlationId) continue;
+      const waiterIndex = waiters.findIndex(
+        (waiter) => waiter.signalName === event.signalName,
+      );
+      const waiter = waiterIndex >= 0 ? waiters[waiterIndex] : undefined;
+      if (waiter !== undefined) {
+        waiters.splice(waiterIndex, 1);
+        pairing.set(waiter.seq, {
+          payload: event.payload,
+          signalId: event.signalId,
+        });
+      } else if (waiters.length === 0) {
+        queue.push({
+          payload: event.payload,
+          signalId: event.signalId,
+          signalName: event.signalName,
+        });
+      }
+    } else if (
+      event.kind === "SignalAwaited" &&
+      event.correlationId === correlationId
+    ) {
+      const headIndex = queue.findIndex(
+        (item) => item.signalName === event.signalName,
+      );
+      const head = headIndex >= 0 ? queue[headIndex] : undefined;
+      if (head !== undefined) {
+        queue.splice(headIndex, 1);
+        if (event.stepId === containerStepId && event.signalName === name) {
+          pairing.set(event.seq, {
+            payload: head.payload,
+            signalId: head.signalId,
+          });
+        }
+      } else {
+        waiters.push({
+          seq: event.seq,
+          signalName: event.signalName,
+          stepId: event.stepId,
+        });
+      }
+    } else if (
+      event.kind === "SignalAwaitAbandoned" &&
+      (event.correlationId === undefined ||
+        event.correlationId === correlationId)
+    ) {
+      const waiterIndex = waiters.findIndex(
+        (waiter) =>
+          waiter.stepId === event.stepId &&
+          waiter.signalName === event.signalName,
+      );
+      if (waiterIndex >= 0) waiters.splice(waiterIndex, 1);
+    }
+  }
+  return pairing.get(awaitSeq);
+}
+
+/**
+ * The loop's iteration-failure policy, defaulting an absent field to `"end"`.
+ * One read for the replay walk and the post-drive check so they cannot drift.
+ * Absent stays off the primitive; this is the only place that fills it in.
+ */
+function iterationFailurePolicyOf(primitive: LoopPrimitive): BodyFailurePolicy {
+  return primitive.onIterationFailure ?? "end";
+}
+
+/**
+ * One iteration of the replay walk, without `while` or `carry`. `runLoop`
+ * still threads input on `completed`. A classifier uses the same cursor to
+ * name the frontier child, including a tolerated failure it must skip.
+ */
+export type LoopIterationCursor =
+  | { readonly kind: "completed" }
+  | { readonly kind: "tolerated" }
+  | {
+      readonly kind: "terminal";
+      readonly terminalStatus: "failed" | "cancelled";
+    }
+  | { readonly kind: "frontier" };
+
+export function loopIterationCursor(
+  state: RunState,
+  runId: string,
+  loopId: string,
+  iteration: number,
+  policy: BodyFailurePolicy,
+): LoopIterationCursor {
+  if (isIterationDone(state, runId, loopId, iteration)) {
+    return { kind: "completed" };
+  }
+  const child = state.children.get(loopBodyRunId(runId, loopId, iteration));
+  const step = state.steps.get(scopedStepId(loopId, iteration));
+  if (
+    child?.terminalStatus === "failed" &&
+    child.abortedTeardown !== true &&
+    policy === "tolerate" &&
+    step?.phase !== "completed"
+  ) {
+    return { kind: "tolerated" };
+  }
+  const terminalStatus = child?.terminalStatus;
+  if (
+    terminalStatus === "cancelled" ||
+    (terminalStatus === "failed" &&
+      (child?.abortedTeardown === true || policy !== "tolerate"))
+  ) {
+    return { kind: "terminal", terminalStatus };
+  }
+  return { kind: "frontier" };
 }
 
 function isIterationDone(
@@ -3642,7 +4274,10 @@ function isIterationDone(
 ): boolean {
   const child = state.children.get(loopBodyRunId(runId, loopId, iteration));
   const step = state.steps.get(scopedStepId(loopId, iteration));
-  return child?.terminalStatus !== undefined && step?.phase === "completed";
+  // Completed only. Any other terminal child plus a completed scoped step is
+  // the crash window where StepCompleted landed before the failure throw, and
+  // replaying it as a success would continue a loop that had already failed.
+  return child?.terminalStatus === "completed" && step?.phase === "completed";
 }
 
 function findStepInputRef(
@@ -3804,9 +4439,9 @@ async function waitForTimer(
   // the scheduler-committed `TimerFired`. Flush the buffered segment
   // (the `TimerSet` -- and, on the retry path, the preceding
   // `StepFailed`/`AttemptScheduled`) to durable storage BEFORE
-  // computing `subscribeFromSeq` and subscribing, so the out-of-process
-  // scheduler can tail the durable `TimerSet` and a crash-while-waiting
-  // leaves a resumable pre-suspension log.
+  // computing `subscribeFromSeq` and subscribing, so the scheduler can
+  // tail the durable `TimerSet` and a crash-while-waiting leaves a
+  // resumable pre-suspension log.
   await flush(env, runId);
   const subscribeFromSeq = (await reloadState(env, runId)).lastSeq + 1;
   const ac = new AbortController();
@@ -4196,9 +4831,15 @@ export function reconstructGateOutcome(
   const observed = new Set<string>();
   let awaiting = false;
   for (const event of log) {
-    if (event.kind === "SignalReceived" && event.signalName === signalName) {
+    if (event.kind === "SignalReceived") {
       if (observed.has(event.signalId)) continue;
       observed.add(event.signalId);
+      if (
+        event.correlationId !== undefined ||
+        event.signalName !== signalName
+      ) {
+        continue;
+      }
       if (awaiting) {
         return {
           timedOut: false,
@@ -4209,6 +4850,7 @@ export function reconstructGateOutcome(
       queue.push({ payload: event.payload, signalId: event.signalId });
     } else if (
       event.kind === "SignalAwaited" &&
+      event.correlationId === undefined &&
       event.signalName === signalName &&
       event.stepId === selfStepId
     ) {
@@ -4252,18 +4894,20 @@ function gateTimerId(
 }
 
 /**
- * Whether any `awaitSignal` gate OTHER than `selfStepId` awaited `signalName`
- * anywhere in the run. `reconstructGateOutcome` replays the reducer FIFO scoped
- * to a SINGLE awaiter of the name, so a second same-name awaiter -- even one
- * that already COMPLETED -- breaks that assumption: the log can no longer say
- * which gate consumed which delivery. The in-flight short-circuit refuses that
- * topology rather than risk binding a payload to the wrong gate; only a run
- * where `selfStepId` is the sole awaiter of the name is provably unambiguous. A
- * completed same-name sibling is the case a phase-scoped in-flight count would
- * miss, so the predicate keys on the durable `SignalAwaited` marker, which
- * outlives the sibling's completion.
+ * Whether any name-addressed `awaitSignal` gate OTHER than `selfStepId`
+ * awaited `signalName` anywhere in the run. A `SignalAwaited` that carries
+ * `correlationId` is not on the name queue, so it is not a foreign awaiter.
+ * `reconstructGateOutcome` replays the reducer name FIFO scoped to a SINGLE
+ * name-addressed awaiter of the name, so a second same-name awaiter -- even
+ * one that already COMPLETED -- breaks that assumption: the log can no longer
+ * say which gate consumed which delivery. The in-flight short-circuit refuses
+ * that topology rather than risk binding a payload to the wrong gate; only a
+ * run where `selfStepId` is the sole name-addressed awaiter of the name is
+ * provably unambiguous. A completed same-name sibling is the case a
+ * phase-scoped in-flight count would miss, so the predicate keys on the
+ * durable `SignalAwaited` marker, which outlives the sibling's completion.
  */
-function hasForeignSameNameAwaiter(
+export function hasForeignSameNameAwaiter(
   log: readonly WorkflowEvent[],
   signalName: string,
   selfStepId: string,
@@ -4271,6 +4915,7 @@ function hasForeignSameNameAwaiter(
   for (const event of log) {
     if (
       event.kind === "SignalAwaited" &&
+      event.correlationId === undefined &&
       event.signalName === signalName &&
       event.stepId !== selfStepId
     ) {
@@ -4316,6 +4961,81 @@ function findAwaitedSignalNameForStep(
   const step = state.steps.get(stepId);
   if (step?.phase !== "awaiting-signal") return undefined;
   return step.awaitingSignal?.name;
+}
+
+/**
+ * The signal the reducer gave `stepId`'s latest await on `signalName`, or
+ * `undefined` while that await is unanswered. Folds the log through the reducer
+ * itself, so the binding cannot drift from the run's own state.
+ */
+function signalBoundToAwait(
+  runId: string,
+  log: readonly WorkflowEvent[],
+  stepId: string,
+  signalName: string,
+): { payload: unknown; signalId: string } | undefined {
+  let state = emptyState(runId);
+  let bound: { payload: unknown; signalId: string } | undefined;
+  for (const event of log) {
+    const queued = state.unconsumedSignals.get(signalName)?.[0];
+    const wasAwaiting =
+      findAwaitedSignalNameForStep(state, stepId) === signalName;
+    state = applyEvent(state, event);
+    const awaiting = findAwaitedSignalNameForStep(state, stepId) === signalName;
+    if (
+      event.kind === "SignalAwaited" &&
+      event.stepId === stepId &&
+      event.signalName === signalName
+    ) {
+      bound =
+        awaiting || queued === undefined
+          ? undefined
+          : { payload: queued.payload, signalId: queued.id };
+    } else if (event.kind === "SignalReceived" && wasAwaiting && !awaiting) {
+      bound = { payload: event.payload, signalId: event.signalId };
+    }
+  }
+  return bound;
+}
+
+/**
+ * Wait on the signal channel for the signal answering `stepId`'s await. The
+ * channel only sees signals delivered after `awaitNext` is called, but the
+ * caller read the step as awaiting before that; a signal delivered in between
+ * is already in the log, so it is taken from there.
+ */
+async function awaitSignalFor(
+  env: WorkflowRuntimeEnv,
+  runId: string,
+  stepId: string,
+  signalName: string,
+  abort: AbortSignal,
+  correlationId?: string,
+): Promise<{ payload: unknown; signalId: string; correlationId?: string }> {
+  const wait = new AbortController();
+  const detach = bridgeAbort(abort, () => {
+    wait.abort();
+  });
+  const waiting =
+    correlationId === undefined
+      ? env.signalChannel.awaitNext(signalName, wait.signal)
+      : env.signalChannel.awaitNext(signalName, wait.signal, correlationId);
+  const waitSettled = waiting.then(
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    const log = await env.repoStore.read(runId);
+    const bound = signalBoundToAwait(runId, log, stepId, signalName);
+    if (bound !== undefined) {
+      return correlationId === undefined ? bound : { ...bound, correlationId };
+    }
+    return await waiting;
+  } finally {
+    detach();
+    wait.abort();
+    await waitSettled;
+  }
 }
 
 /**
@@ -4554,11 +5274,11 @@ async function parkOnSignalResult(
   // (and, when a timeout is set, tail the durable log for the
   // scheduler-committed `TimerFired`). Flush the buffered
   // `SignalAwaited` (+ `TimerSet`) to durable storage BEFORE parking so
-  // (a) the out-of-process scheduler can tail the durable `TimerSet`
-  // and arm the timeout, (b) a crash-while-suspended leaves a
-  // complete pre-suspension log that resume reconstructs the
-  // awaiting-signal state from, and (c) the control-plane suspension is
-  // durable in the log before the host is notified below, so the hub is
+  // (a) the scheduler can tail the durable `TimerSet` and arm the
+  // timeout, (b) a crash-while-suspended leaves a complete
+  // pre-suspension log that resume reconstructs the awaiting-signal
+  // state from, and (c) the control-plane suspension is durable in
+  // the log before the host is notified below, so the hub is
   // never told about a correlation the log cannot reconstruct on resume.
   // `subscribeFromSeq` above was computed from the in-memory tip; the
   // flush makes the durable tip match, so the timer-watch subscription
@@ -4643,7 +5363,10 @@ async function parkOnSignalResult(
     })();
   }
   try {
-    const received = await env.signalChannel.awaitNext(
+    const received = await awaitSignalFor(
+      env,
+      runId,
+      opts.stepId,
       opts.signalName,
       combinedAbort.signal,
     );
