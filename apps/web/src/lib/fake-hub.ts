@@ -30,11 +30,9 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
   async function fetch<T>(method: string, path: string, body?: unknown): Promise<T> {
     hub.requests.push(`${method} ${path}`);
     if (method === "GET" && path === "/api/tenants/t") return { id: "t", name: "Tenant", slug: "t", config: hub.config } as T;
-    if (method === "PUT" && path === "/api/integrations/triage-config/t") {
-      const { rev, config } = body as { rev: number; config: Record<string, unknown> };
-      const saved = { ...config, rev: rev + 1 };
-      hub.config = { ...hub.config, corbitsTriage: saved };
-      return { rev: saved.rev, config: saved } as T;
+    if (method === "PATCH" && path === "/api/tenants/t") {
+      hub.config = (body as { config: Record<string, unknown> }).config;
+      return undefined as T;
     }
     if (method === "GET" && path.startsWith("/api/integrations/triage-stats/t?") && hub.stats) return hub.stats as T;
     if (method === "GET" && path.startsWith("/api/tenants/t/artifacts?")) {

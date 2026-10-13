@@ -86,8 +86,8 @@ describe("mergeText", () => {
   });
 
   test("a failing check is named before the threshold", () => {
-    expect(mergeText(merge("not-recommended", 0.6, ["Failed: tests are not added or updated", "Score 0.6 is below the threshold 0.7"])))
-      .toBe("Merge not recommended · tests are not added or updated");
+    expect(mergeText(merge("not-recommended", 0.6, ["Failed: documentation is not updated", "Score 0.6 is below the threshold 0.7"])))
+      .toBe("Merge not recommended · documentation is not updated");
   });
 
   test("a low score alone says how sure Triage must be, not the score", () => {

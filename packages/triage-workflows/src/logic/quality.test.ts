@@ -58,7 +58,7 @@ test("quality preflight sends the pull request, its hunks and the docs, and asks
 });
 
 test("quality preflight splits files in order across requests under the state budget and asks focused about each request's slice", () => {
-  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "tests" as const, group: "code-vs-ci" as const }] };
+  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }] };
   const files = Array.from({ length: 30 }, (_, index) => ({
     path: `src/file${index}.ts`,
     patch: [`@@ -1 +1,40 @@`, `+export const file${index} = 1;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(12)}${line}`)].join("\n"),
@@ -76,7 +76,7 @@ test("quality preflight splits files in order across requests under the state bu
 });
 
 test("quality preflight shows the whole-pull-request question every file of a wide pull request of small files", () => {
-  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }, { id: "tests" as const, group: "code-vs-ci" as const }] };
+  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }] };
   const files = Array.from({ length: 120 }, (_, index) => ({ path: `src/file${index}.ts`, patch: compactHunks(1, index) }));
   const evaluation = prepareQualityEvaluation(facts(files), sources);
   expect(evaluation.requests).toHaveLength(1);
@@ -90,7 +90,7 @@ test("quality preflight does not ask focused when only generated files changed",
 });
 
 test("quality preflight never lets the changed paths crowd out the diff, and says how large metadata over the budget is", () => {
-  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }, { id: "tests" as const, group: "code-vs-ci" as const }] };
+  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }] };
   const files = Array.from({ length: 3_000 }, (_, index) => ({ path: `packages/area-${index % 40}/src/module-${index}/file-${index}.ts`, additions: 1, deletions: 0, patch: compactHunks(1, index) }));
   const evaluation = prepareQualityEvaluation({ ...facts(files), paths: files.map((file) => file.path), docs: { "README.md": "d".repeat(24_000) } }, sources);
   expect(evaluation.judgeError).toBeUndefined();
@@ -130,20 +130,19 @@ test("focused's follow-up asks a failing slice's request again, one question per
 });
 
 test("quality preflight asks whole pull request questions in the first request and file questions with their file, splitting at the question cap", () => {
-  const custom = Array.from({ length: 253 }, (_, index) => ({ id: `custom-${index + 1}`, name: `Check ${index + 1}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
+  const custom = Array.from({ length: 254 }, (_, index) => ({ id: `custom-${index + 1}`, name: `Check ${index + 1}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
   const sources = {
     quality: [
       { id: "focused" as const, group: "pull-request" as const },
       { id: "docs" as const, group: "code-vs-ci" as const },
-      { id: "tests" as const, group: "code-vs-ci" as const },
     ],
     custom,
   };
   const evaluation = prepareQualityEvaluation(facts([{ path: "src/a.ts", patch: compactHunks(2) }, { path: "src/b.ts", patch: compactHunks(2, 2) }]), sources);
   expect(evaluation.judgeError).toBeUndefined();
   const [first, second, ...rest] = evaluation.requests.map((request) => request.questions.map((question) => question.id));
-  expect(first).toEqual([...custom.map((row) => row.id), "tests-file-001", "docs-file-001", "focused-slice-001"]);
-  expect(second).toEqual(["tests-file-002", "docs-file-002", "focused-slice-002"]);
+  expect(first).toEqual([...custom.map((row) => row.id), "docs-file-001", "focused-slice-001"]);
+  expect(second).toEqual(["docs-file-002", "focused-slice-002"]);
   expect(rest).toEqual([]);
   expect(evaluation.requests.every(withinBudget)).toBe(true);
   expect(evaluation.requests[1]!.state.pullRequest.files.map((file) => file.path)).toEqual(["src/b.ts"]);

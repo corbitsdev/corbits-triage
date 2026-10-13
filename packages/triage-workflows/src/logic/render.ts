@@ -266,7 +266,7 @@ function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimi
   }
 
   /**
-   * Docs and tests pass on a changed doc or test file and their questions are answered yes when a file needs one; a
+   * Docs passes on a changed doc file and its questions are answered yes when a file needs docs; a
    * scoped custom check's are answered yes when the item meets its rule. Either fails naming the items that fall short,
    * which any answered item can show, and passes only when every item in scope was read and clears the bar.
    */
@@ -475,11 +475,11 @@ function bounded(lines: string[]): string {
   return `- and ${lines.filter((line) => line.startsWith("- ")).length} more`;
 }
 
-/** Docs and tests name the files that need them; other checks, scoped custom ones included, name what they found. */
+/** Docs names the files that need docs; other checks, scoped custom ones included, name what they found. */
 function failureEvidence(c: CheckResult, repo: string, headSha: string): string {
   if (!c.evidence.length) return "";
   const listed = c.evidence.map((evidence) => evidenceCode(c, evidence, repo, headSha)).join(", ");
-  return c.kind === "model" && (c.check === "docs" || c.check === "tests") ? ` for ${listed}` : `: ${listed}`;
+  return c.kind === "model" && c.check === "docs" ? ` for ${listed}` : `: ${listed}`;
 }
 
 /** The failed checks that are the author's to fix; a maintainer's requested changes are already in front of the author. */

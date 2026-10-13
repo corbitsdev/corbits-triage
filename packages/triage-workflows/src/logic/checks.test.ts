@@ -108,7 +108,7 @@ describe("deriveState check pack", () => {
     });
     expect(result.checks.find((check) => check.check === "paths")?.result).toBe("pass");
     expect(result.sources?.custom).toEqual(pack.custom);
-    expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused", "tests"]);
+    expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused"]);
   });
 });
 

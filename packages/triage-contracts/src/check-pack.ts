@@ -9,10 +9,10 @@ export const CUSTOM_CHECK_CAP = 8;
 export const CHECK_PACK_GROUPS = ["pull-request", "issue", "around", "code-vs-ci"] as const;
 export type CheckPackGroup = (typeof CHECK_PACK_GROUPS)[number];
 
-export const CATALOG_IDS = ["size", "focused", "docs", "issue", "conflicts", "ci", "tests", "paths"] as const;
+export const CATALOG_IDS = ["size", "focused", "docs", "issue", "conflicts", "ci", "paths"] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
-export const QUALITY_CHECK_IDS = ["focused", "docs", "tests"] as const;
+export const QUALITY_CHECK_IDS = ["focused", "docs"] as const;
 export type QualityCheckId = (typeof QUALITY_CHECK_IDS)[number];
 
 export const ISSUE_TRACKERS = ["github", "linear", "either", "off"] as const;
@@ -25,7 +25,6 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   issue: { name: "Linked issue", group: "issue", kind: "machine" },
   conflicts: { name: "Merge conflicts", group: "around", kind: "machine" },
   ci: { name: "CI", group: "code-vs-ci", kind: "machine" },
-  tests: { name: "Tests", group: "code-vs-ci", kind: "quality" },
   paths: { name: "Forbidden paths", group: "code-vs-ci", kind: "machine" },
 };
 
@@ -33,7 +32,7 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
 export const BUILT_IN_CHECK_NAMES: ReadonlyMap<string, string> = new Map([["draft", "Draft"], ["review", "Changes requested"]]);
 
 /** Catalog checks since removed; stored packs and verdicts may still name them. */
-export const RETIRED_CHECK_IDS: ReadonlySet<string> = new Set(["duplicate", "reviewers", "drift"]);
+export const RETIRED_CHECK_IDS: ReadonlySet<string> = new Set(["duplicate", "reviewers", "drift", "tests"]);
 
 export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**"] } as const;
@@ -330,7 +329,6 @@ export function recommendedPack(repo: string): CheckPack {
       issue: { enabled: true, tracker: RECOMMENDED_ISSUE.tracker },
       conflicts: { enabled: true },
       ci: { enabled: true },
-      tests: { enabled: true },
       paths: { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
     },
     actions: [{ id: "approve", when: ["opened", "updated", "checks"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } }],
