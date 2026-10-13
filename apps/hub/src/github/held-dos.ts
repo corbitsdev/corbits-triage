@@ -11,12 +11,12 @@ import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
 import { doEffectId } from "../../../../packages/triage-workflows/src/logic/actions.js";
 import { unrunnable } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
-import { approvalRefused, failure, githubAppGrant, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { approvalRefused, failure, githubAppGrant, type PortalCredentialDeps } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
-import { readJson } from "../read-json.js";
 
 export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
 
@@ -94,11 +94,7 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     return at >= 0 && verdicts.slice(at + 1).some((verdict) => verdict.degraded === null && (verdict.runStatus === null || verdict.runStatus === "completed"));
   }
 
-  return async function approve(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
-    const body = HeldDoBody(await readJson(req));
-    if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
+  return async function approve(body: typeof HeldDoBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const granted = await githubAppGrant(deps, principalId, tenantId, "use");
     if (granted instanceof Response) return granted;
 

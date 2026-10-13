@@ -15,7 +15,6 @@ import type { ObservedRuns } from "./triage-runs.js";
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_state";
 const REPO = "acme/widgets";
-const PORTAL = "https://portal.example";
 const NOW = new Date("2026-10-08T12:00:00Z");
 const LONG_AGO = "2026-10-07T00:00:00.000Z";
 const PACK = { name: checkPackName(REPO), schemaVersion: 1, repo: REPO, checks: [] } as unknown as CheckPack;
@@ -28,19 +27,10 @@ type Deliver = (payload: unknown) => Promise<void>;
 function stubDb() {
   return {
     query: {
-      principal: { async findFirst() { return { id: "member-1" }; } },
       credential: { async findFirst() { return { id: "crd", secret: "sealed" }; } },
       tenant: { async findFirst() { return { domain: "tenant.example", config: CONFIG }; } },
     },
   } as never;
-}
-
-function request(): Request {
-  return new Request(`https://hub.example/api/integrations/github-triage/${TENANT}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: PORTAL, "sec-fetch-site": "same-site" },
-    body: JSON.stringify({ repo: REPO, number: 8 }),
-  });
 }
 
 async function noRuns(): Promise<ObservedRuns> {
@@ -51,9 +41,7 @@ function route(store: TriageStateStore, deliver: Deliver) {
   return createGithubPrTriage({
     db: stubDb(),
     cipher: { async decrypt() { return "{}"; } } as never,
-    getSession: async () => ({ user: { id: "user-1" } }),
     authorize: async () => true,
-    trustedPortalOrigins: [PORTAL],
     pullHead: async () => "abc123",
     readCheckPack: async () => ({ status: "ok", pack: PACK }),
     liveDeployments: async () => [DEPLOYMENT],
@@ -121,7 +109,7 @@ test("PostgreSQL: a click while the reconciler is mailing the same head starts o
     const handle = route(store, async (payload) => { mails.push(payload); });
     await reconciler(store, [8], async (payload) => {
       mails.push(payload);
-      routeStatus = (await handle(request(), TENANT)).status;
+      routeStatus = (await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" })).status;
     })();
     expect(routeStatus).toBe(409);
     expect(mailsFor8(mails)).toBe(1);
@@ -138,12 +126,12 @@ test("PostgreSQL: a failed mail whose first restore is refused still puts the he
       await reconciler(store, [8, 9], async () => {})();
       throw new Error("mail down");
     });
-    const res1 = await handle(request(), TENANT);
+    const res1 = await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" });
     expect(res1.status).toBe(502);
     expect(await res1.json()).toEqual({ error: { code: "hub_unavailable", message: `Could not queue ${REPO}#8: mail down. Try again.` } });
     const rows = (await store.load(TENANT, REPO)).rows;
     expect(rows.find((row) => row.number === 8)).toEqual(FAILED);
     expect(rows.find((row) => row.number === 9)?.status).toBe("queued");
-    expect((await handle(request(), TENANT)).status).toBe(202);
+    expect((await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" })).status).toBe(202);
   });
 }, 120_000);

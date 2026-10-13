@@ -1,16 +1,19 @@
-// Handlers check the session before reading the body, so bodies are described
-// here but validated inside each handler.
 import { type } from "arktype";
 import { Hono, type Context } from "hono";
-import { routePath } from "hono/route";
-import { describeRoute, resolver } from "hono-openapi";
+import { every } from "hono/combine";
+import { createMiddleware } from "hono/factory";
+import { HTTPException } from "hono/http-exception";
+import { describeRoute, resolver, validator } from "hono-openapi";
+import type { DB } from "@intx/db";
+import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
 import { AUTHOR_KINDS, checkPackSchema, repoPolicySchema } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
-import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody } from "../github/manifest.js";
+import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody, validManifestMutationRequest } from "../github/manifest.js";
 import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
+import { failure } from "../github/portal-credential.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
@@ -27,33 +30,44 @@ export const INTEGRATIONS_PREFIX = "/api/integrations/";
 const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
 const packSchemas = { checkPack: checkPackSchema.toJsonSchema(), repoPolicy: repoPolicySchema.toJsonSchema() };
 
-type TenantHandler = (req: Request, tenantId: string) => Promise<Response>;
+export type Member = { tenantId: string; principalId: string };
+export type Caller = { user: SessionUser; session: SessionInfo };
+type MemberHandler = (req: Request, member: Member) => Promise<Response>;
+type BodyHandler<B> = (body: B, member: Member) => Promise<Response>;
+
+export type IntegrationGuards = {
+  db: DB["db"];
+  getSession: GetSession;
+  requireGrant: RequireGrant;
+  trustedPortalOrigins: readonly string[];
+  log: (entry: Record<string, unknown>) => void;
+};
 
 export type IntegrationHandlers = {
   authMethods: { google: boolean; emailPassword: boolean; passwordReset: boolean };
-  manifest: { start: TenantHandler; callback: (req: Request) => Promise<Response> };
-  syncInstallations: TenantHandler;
-  prActions: TenantHandler;
-  heldDos: TenantHandler;
-  prTriage: TenantHandler;
-  openPulls: TenantHandler;
-  prDetails: TenantHandler;
-  prPreview: TenantHandler;
-  triageStats: TenantHandler;
-  triageTimeline: TenantHandler;
-  triageVerdicts: TenantHandler;
-  workflowDeploy: TenantHandler;
-  workflowVersions: TenantHandler;
+  manifest: { start: (req: Request, tenantId: string) => Promise<Response>; callback: (req: Request) => Promise<Response> };
+  syncInstallations: (member: Member) => Promise<Response>;
+  prActions: BodyHandler<typeof ActionBody.infer>;
+  heldDos: BodyHandler<typeof HeldDoBody.infer>;
+  prTriage: BodyHandler<typeof TriageBody.infer>;
+  openPulls: (member: Member) => Promise<Response>;
+  prDetails: MemberHandler;
+  prPreview: (body: typeof PreviewBody.infer, member: Member, signal: AbortSignal) => Promise<Response>;
+  triageStats: MemberHandler;
+  triageTimeline: MemberHandler;
+  triageVerdicts: MemberHandler;
+  workflowDeploy: BodyHandler<typeof DeployBody.infer>;
+  workflowVersions: (member: Member) => Promise<Response>;
   invitations: {
-    create: TenantHandler;
-    roles: TenantHandler;
-    resend: (req: Request, tenantId: string, principalId: string) => Promise<Response>;
-    withdraw: (req: Request, tenantId: string, principalId: string) => Promise<Response>;
-    accept: (req: Request) => Promise<Response>;
+    create: (body: typeof InviteBody.infer, member: Member, req: Request) => Promise<Response>;
+    roles: (member: Member) => Promise<Response>;
+    resend: (req: Request, member: Member, principalId: string) => Promise<Response>;
+    withdraw: (req: Request, member: Member, principalId: string) => Promise<Response>;
+    accept: (body: typeof AcceptBody.infer, user: SessionUser) => Promise<Response>;
   };
   sessions: {
-    list: (req: Request) => Promise<Response>;
-    revoke: (req: Request, sessionId: string) => Promise<Response>;
+    list: (caller: Caller) => Promise<Response>;
+    revoke: (caller: Caller, sessionId: string) => Promise<Response>;
   };
 };
 
@@ -95,13 +109,9 @@ function html(description: string) {
   return { description, content: { "text/html": {} } };
 }
 
-function body(schema: Parameters<typeof resolver>[0]) {
-  return { required: true, content: { "application/json": { schema: resolver(schema) } } };
-}
-
 const failures = {
-  401: json("Not signed in or not a member", Failure),
-  403: json("Not from the portal or not allowed", Failure),
+  401: json("Not signed in", Failure),
+  403: json("Not from the portal, not a member or not allowed", Failure),
   409: json("GitHub, the workspace or the repository is not ready", Failure),
 };
 const invalid = { 400: json("Invalid request", Failure) };
@@ -112,33 +122,46 @@ const manifestFailures = {
   403: json("Untrusted origin or not allowed", ManifestFailure),
 };
 
-// An undecodable tenant id is a 404. Hono's param() hands such an id on
-// undecoded, so the raw segment under :tenantId is decoded here.
-function tenantRoute(handle: TenantHandler) {
-  return function route(c: Context): Promise<Response> | Response {
-    const index = routePath(c).split("/").indexOf(":tenantId");
-    const segment = new URL(c.req.url).pathname.split("/")[index] ?? "";
-    let tenantId: string;
-    try {
-      tenantId = decodeURIComponent(segment);
-    } catch {
-      return Response.json({ error: "not_found" }, { status: 404 });
-    }
-    return handle(c.req.raw, tenantId);
-  };
+// Browsers omit Origin on same-origin GETs, and reads change nothing, so they only need to not be cross-site.
+// A bearer token without a cookie is an agent's device-code session; browsers never attach one on their own.
+function fromPortal(req: Request, trustedOrigins: readonly string[]): boolean {
+  if (req.headers.get("authorization")?.toLowerCase().startsWith("bearer ") && !req.headers.has("cookie")) return true;
+  if (req.method === "GET") return req.headers.get("sec-fetch-site")?.toLowerCase() !== "cross-site";
+  return validManifestMutationRequest(req, new Set([new URL(req.url).origin, ...trustedOrigins]));
 }
 
-function invitationRoute(handle: IntegrationHandlers["invitations"]["resend"]) {
-  return function route(c: Context): Promise<Response> | Response {
-    const principalId = c.req.param("principalId") ?? "";
-    return tenantRoute(function resendInvitation(req, tenantId) {
-      return handle(req, tenantId, principalId);
-    })(c);
-  };
+function refuseInvalid(result: { success: true } | { success: false; error: ReadonlyArray<{ message: string }> }) {
+  if (!result.success) return failure(400, "invalid_request", result.error.map((issue) => issue.message).join("; "));
 }
 
-export function createIntegrationsApp(handlers: IntegrationHandlers) {
-  const app = new Hono();
+function body<S extends Parameters<typeof validator>[1]>(schema: S) {
+  return validator("json", schema, refuseInvalid);
+}
+
+function memberOf(c: Context<TenantEnv>): Member {
+  return { tenantId: c.get("tenant").id, principalId: c.get("principal").id };
+}
+
+function callerOf(c: Context<TenantEnv>): Caller {
+  return { user: c.get("user")!, session: c.get("session")! };
+}
+
+export function createIntegrationsApp(guards: IntegrationGuards, handlers: IntegrationHandlers) {
+  const app = new Hono<TenantEnv>();
+  const portalOnly = createMiddleware(async function portalOnly(c, next) {
+    if (!fromPortal(c.req.raw, guards.trustedPortalOrigins)) return failure(403, "forbidden", "This request did not come from the portal.");
+    await next();
+  });
+  const signedIn = every(portalOnly, createHubContextMiddleware({ getSession: guards.getSession }), requireAuth);
+  const member = every(signedIn, createResolveTenant({ db: guards.db }));
+  const { requireGrant } = guards;
+  // Hono throws on a body that is not JSON; it keeps the hub's error envelope.
+  app.onError(function onError(err) {
+    if (err instanceof HTTPException && err.status === 400) return failure(400, "invalid_request", err.message);
+    if (err instanceof HTTPException) return err.getResponse();
+    guards.log({ level: "error", msg: "integration_route_failed", error: String(err) });
+    return failure(500, "internal", "Internal error.");
+  });
 
   app.get(
     AUTH_METHODS_PATH,
@@ -169,7 +192,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     describeRoute({
       summary: "Start GitHub App manifest setup",
       tags: TAGS,
-      requestBody: body(StartBody),
+      requestBody: { required: true, content: { "application/json": { schema: resolver(StartBody) } } },
       responses: {
         201: json("Manifest and state to post to GitHub", ManifestStart),
         400: json("Invalid request", ManifestFailure),
@@ -177,7 +200,9 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         409: json("Provider missing or replacement not confirmed", ManifestFailure),
       },
     }),
-    tenantRoute(handlers.manifest.start),
+    function manifestStart(c) {
+      return handlers.manifest.start(c.req.raw, c.req.param("tenantId"));
+    },
   );
 
   app.get(
@@ -211,7 +236,10 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       tags: TAGS,
       responses: { 200: json("Installations and repositories found", InstallationsSynced), ...failures, ...githubFailed },
     }),
-    tenantRoute(handlers.syncInstallations),
+    member,
+    function syncInstallations(c) {
+      return handlers.syncInstallations(memberOf(c));
+    },
   );
 
   app.post(
@@ -219,10 +247,13 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     describeRoute({
       summary: "Act on a pull request",
       tags: TAGS,
-      requestBody: body(ActionBody),
       responses: { 200: json("GitHub's answer", type("unknown")), ...invalid, ...failures, ...githubFailed },
     }),
-    tenantRoute(handlers.prActions),
+    member,
+    body(ActionBody),
+    function prActions(c) {
+      return handlers.prActions(c.req.valid("json"), memberOf(c));
+    },
   );
 
   app.post(
@@ -231,7 +262,6 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       summary: "Approve a Do a triage run held, failed or could not run",
       description: "Needs `use` on the GitHub App credential, and the approve grant for an approval. Mails the repository's pr-triage deployment the Do and who approved it; pr-triage writes the Do at most once under its effect id, and a close, draft, comment or review not once the head has moved.",
       tags: TAGS,
-      requestBody: body(HeldDoBody),
       responses: {
         202: json("Sent to pr-triage", HeldDoSent),
         ...invalid,
@@ -242,7 +272,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         503: json("The pr-triage service is not running", Failure),
       },
     }),
-    tenantRoute(handlers.heldDos),
+    member,
+    body(HeldDoBody),
+    function heldDos(c) {
+      return handlers.heldDos(c.req.valid("json"), memberOf(c));
+    },
   );
 
   app.post(
@@ -250,7 +284,6 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     describeRoute({
       summary: "Queue a pull request for triage",
       tags: TAGS,
-      requestBody: body(TriageBody),
       responses: {
         202: json("Queued", TriageQueued),
         ...invalid,
@@ -259,7 +292,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         503: json("The pr-triage service is not running", Failure),
       },
     }),
-    tenantRoute(handlers.prTriage),
+    member,
+    body(TriageBody),
+    function prTriage(c) {
+      return handlers.prTriage(c.req.valid("json"), memberOf(c));
+    },
   );
 
   app.get(
@@ -269,7 +306,10 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       tags: TAGS,
       responses: { 200: json("Open pull requests per repository", OpenPulls), ...failures },
     }),
-    tenantRoute(handlers.openPulls),
+    member,
+    function openPulls(c) {
+      return handlers.openPulls(memberOf(c));
+    },
   );
 
   app.get(
@@ -283,7 +323,10 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       ],
       responses: { 200: json("Files, commits, conversation, issues, checks and reviews", PrDetails), ...invalid, ...failures, ...githubFailed },
     }),
-    tenantRoute(handlers.prDetails),
+    member,
+    function prDetails(c) {
+      return handlers.prDetails(c.req.raw, memberOf(c));
+    },
   );
 
   app.post(
@@ -292,7 +335,6 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       summary: "Preview a pack on an open pull request",
       description: "Evaluates the saved pack, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the checks it answers need it and actions on them list each branch they could take. Candidate roles apply only when the caller may manage the workspace; otherwise the saved roles are used.",
       tags: TAGS,
-      requestBody: body(PreviewBody),
       responses: {
         200: json("Checks, verdict and each action's branch and Dos", PreviewResponse),
         400: json("Invalid request or candidate pack", Failure),
@@ -302,7 +344,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         ...githubFailed,
       },
     }),
-    tenantRoute(handlers.prPreview),
+    member,
+    body(PreviewBody),
+    function prPreview(c) {
+      return handlers.prPreview(c.req.valid("json"), memberOf(c), c.req.raw.signal);
+    },
   );
 
   app.get(
@@ -317,7 +363,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       ],
       responses: { 200: json("Counts, rates and daily triaged pull requests", TriageStats), ...invalid, 401: failures[401], 403: failures[403] },
     }),
-    tenantRoute(handlers.triageStats),
+    member,
+    requireGrant("workflow-run:*", "read"),
+    function triageStats(c) {
+      return handlers.triageStats(c.req.raw, memberOf(c));
+    },
   );
 
   app.get(
@@ -332,7 +382,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       ],
       responses: { 200: json("Verdicts in time order", TriageTimeline), ...invalid, 401: failures[401], 403: failures[403] },
     }),
-    tenantRoute(handlers.triageTimeline),
+    member,
+    requireGrant("workflow-run:*", "read"),
+    function triageTimeline(c) {
+      return handlers.triageTimeline(c.req.raw, memberOf(c));
+    },
   );
 
   app.get(
@@ -355,7 +409,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         409: json("The workspace is not set up yet", Failure),
       },
     }),
-    tenantRoute(handlers.triageVerdicts),
+    member,
+    requireGrant("workflow-run:*", "read"),
+    function triageVerdicts(c) {
+      return handlers.triageVerdicts(c.req.raw, memberOf(c));
+    },
   );
 
   app.post(
@@ -364,7 +422,6 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       summary: "Deploy a workflow published as a tarball in the workspace's package registry",
       description: "The stock deploy route with the package-registry asset as the source and a separate workflow asset as the definition.",
       tags: TAGS,
-      requestBody: body(DeployBody),
       responses: {
         201: json("Workflow deployment accepted for provisioning", WorkflowDeploymentResponse),
         ...invalid,
@@ -376,7 +433,12 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         502: json("Sidecar unavailable", Failure),
       },
     }),
-    tenantRoute(handlers.workflowDeploy),
+    member,
+    requireGrant("workflow:*", "create"),
+    body(DeployBody),
+    function workflowDeploy(c) {
+      return handlers.workflowDeploy(c.req.valid("json"), memberOf(c));
+    },
   );
 
   app.get(
@@ -387,7 +449,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       tags: TAGS,
       responses: { 200: json("Live deployments and their versions", DeployedVersions), 401: failures[401], 403: failures[403] },
     }),
-    tenantRoute(handlers.workflowVersions),
+    member,
+    requireGrant("workflow:*", "read"),
+    function workflowVersions(c) {
+      return handlers.workflowVersions(memberOf(c));
+    },
   );
 
   app.post(
@@ -396,7 +462,6 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       summary: "Invite someone to the workspace by email",
       description: "Needs `principal:*` create, and the caller must hold every permission the role grants (so only an owner invites into a `*:*` role). Creates the stock invited principal through `POST /api/tenants/{tenantId}/members/invite`; the invitee accepts on the portal's `/invite/{tenantId}` page. When the hub sends email, a plain-text better-auth magic link to that page is emailed (a new address gets an unverified user first); it signs the invitee in and verifies the address, works once and expires after 15 minutes. Without email set up on the hub, the page's link is returned to copy; it signs nobody in, and invitees must sign in with Google first. An existing account whose address is not verified cannot be invited. An address may be sent a limited number of invite links per hour.",
       tags: TAGS,
-      requestBody: body(InviteBody),
       responses: {
         201: json("The invited principal and whether its link was emailed", InviteSent),
         ...invalid,
@@ -408,7 +473,12 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         502: json("The invite is saved but its email could not be sent", Failure),
       },
     }),
-    tenantRoute(handlers.invitations.create),
+    member,
+    requireGrant("principal:*", "create"),
+    body(InviteBody),
+    function createInvitation(c) {
+      return handlers.invitations.create(c.req.valid("json"), memberOf(c), c.req.raw);
+    },
   );
 
   app.get(
@@ -419,7 +489,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       tags: TAGS,
       responses: { 200: json("Assignable role ids", InviteRoles), 401: failures[401], 403: failures[403] },
     }),
-    tenantRoute(handlers.invitations.roles),
+    member,
+    requireGrant("principal:*", "create"),
+    function inviteRoles(c) {
+      return handlers.invitations.roles(memberOf(c));
+    },
   );
 
   app.post(
@@ -437,7 +511,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         502: json("The email could not be sent", Failure),
       },
     }),
-    invitationRoute(handlers.invitations.resend),
+    member,
+    requireGrant("principal:*", "create"),
+    function resendInvitation(c) {
+      return handlers.invitations.resend(c.req.raw, memberOf(c), c.req.param("principalId"));
+    },
   );
 
   app.delete(
@@ -453,7 +531,11 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         404: json("No invited principal with this id", Failure),
       },
     }),
-    invitationRoute(handlers.invitations.withdraw),
+    member,
+    requireGrant("principal:*", "create"),
+    function withdrawInvitation(c) {
+      return handlers.invitations.withdraw(c.req.raw, memberOf(c), c.req.param("principalId"));
+    },
   );
 
   app.post(
@@ -462,7 +544,6 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       summary: "Accept the signed-in user's invite to a workspace",
       description: "Activates the signed-in user's invited principal in the workspace. Their address must be verified: an invite's magic link verifies it, and without email set up on the hub, invitees must sign in with Google first. Accepting again answers the same.",
       tags: TAGS,
-      requestBody: body(AcceptBody),
       responses: {
         200: json("The workspace joined", Accepted),
         ...invalid,
@@ -471,8 +552,10 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
         404: json("No invite to this workspace", Failure),
       },
     }),
+    signedIn,
+    body(AcceptBody),
     function acceptInvitation(c) {
-      return handlers.invitations.accept(c.req.raw);
+      return handlers.invitations.accept(c.req.valid("json"), c.get("user")!);
     },
   );
 
@@ -484,8 +567,9 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       tags: TAGS,
       responses: { 200: json("Unexpired sessions, oldest first", SessionList), 401: failures[401], 403: failures[403] },
     }),
+    signedIn,
     function listSessions(c) {
-      return handlers.sessions.list(c.req.raw);
+      return handlers.sessions.list(callerOf(c));
     },
   );
 
@@ -496,8 +580,9 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       tags: TAGS,
       responses: { 204: { description: "Signed out" }, 401: failures[401], 403: failures[403], 404: json("Not one of this user's sessions", Failure) },
     }),
+    signedIn,
     function revokeSession(c) {
-      return handlers.sessions.revoke(c.req.raw, c.req.param("sessionId"));
+      return handlers.sessions.revoke(callerOf(c), c.req.param("sessionId"));
     },
   );
 

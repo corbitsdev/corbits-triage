@@ -523,7 +523,7 @@ test("a pack preview evaluates an open pull request without writing anything", a
     expect(await preview({ repo: REPO, number: 8 }, { ...headers, origin: "https://elsewhere.example" })).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
     const { cookie: _cookie, ...signedOut } = headers;
     expect(await preview({ repo: REPO, number: 8 }, signedOut)).toMatchObject({ status: 401, body: { error: { code: "unauthorized" } } });
-    expect(await preview({ repo: REPO, number: 8 }, await signedIn(origin))).toMatchObject({ status: 401, body: { error: { code: "unauthorized" } } });
+    expect(await preview({ repo: REPO, number: 8 }, await signedIn(origin))).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
   } finally {
     github.stop();
     await close();
@@ -806,6 +806,21 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     expect(await accept(annIn.headers, otherTenantId)).toMatchObject({ status: 404 });
     expect(await accept(annIn.headers)).toEqual({ status: 200, body: { tenantId } });
     expect(await statusOf(ann)).toMatchObject({ status: "active" });
+    // A member without `principal:*` create may not invite, and a signed-in non-member reaches nothing.
+    const invitations = `${origin}/api/integrations/invitations/${tenantId}`;
+    async function refusal(headers: Record<string, string>, method: string, path: string, body?: unknown) {
+      const res = await fetch(`${invitations}${path}`, { method, headers, ...(body !== undefined && { body: JSON.stringify(body) }) });
+      return { status: res.status, body: await res.json() };
+    }
+    const noGrant = { status: 403, body: { error: { code: "forbidden", message: "You do not have permission to perform this action" } } };
+    const annId = (await statusOf(ann))!.id;
+    expect(await refusal(annIn.headers, "GET", "")).toEqual(noGrant);
+    expect(await refusal(annIn.headers, "POST", "", { email: emailOf("zed"), roleId: member })).toEqual(noGrant);
+    expect(await refusal(annIn.headers, "POST", `/${annId}/resend`)).toEqual(noGrant);
+    expect(await refusal(annIn.headers, "DELETE", `/${annId}`)).toEqual(noGrant);
+    expect(await refusal(await signedIn(origin), "GET", "")).toEqual({ status: 403, body: { error: { code: "forbidden", message: "Not a member of this tenant" } } });
+    const malformed = await fetch(invitations, { method: "POST", headers: { ...owner, origin }, body: "{" });
+    expect({ status: malformed.status, body: await malformed.json() }).toMatchObject({ status: 400, body: { error: { code: "invalid_request" } } });
     expect(await follow(annLink)).toMatchObject({ location: `${fromEmail}&error=INVALID_TOKEN` });
 
     // Signed in only by the magic link, the invitee sets a password through the stock reset.

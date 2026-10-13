@@ -2,7 +2,8 @@
 // entry per verdict that changed the head or a check result, with the checks
 // that changed since the judged verdict before it.
 import { type } from "arktype";
-import { failure, runReadPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import type { RecordedCheck, VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_TIMELINE_PATH = "/api/integrations/triage-timeline";
@@ -35,7 +36,7 @@ type TimelineEntry = typeof TimelineEntry.infer;
 export const TriageTimeline = type({ repo: "string", number: "number", entries: TimelineEntry.array() });
 export type TriageTimeline = typeof TriageTimeline.infer;
 
-export type TriageTimelineDeps = PortalCredentialDeps & {
+export type TriageTimelineDeps = {
   verdicts: Pick<VerdictRecordStore, "forPull">;
 };
 
@@ -87,9 +88,7 @@ function timeline(records: readonly VerdictRecord[]): TimelineEntry[] {
 }
 
 export function createTriageTimeline(deps: TriageTimelineDeps) {
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await runReadPrincipal(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  return async function handle(req: Request, { tenantId }: Member): Promise<Response> {
     const url = new URL(req.url);
     const query = TimelineQuery({ repo: url.searchParams.get("repo"), number: url.searchParams.get("number") });
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);

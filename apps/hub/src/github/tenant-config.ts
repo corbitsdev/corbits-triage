@@ -145,7 +145,7 @@ function cloneWithBody(req: Request, body: string): Request {
 
 /** The response refusing PATCH /api/tenants/:id, checked as stock does before the body or tenant is read; undefined when the caller may manage the tenant. */
 export async function tenantManagerRefusal(
-  d: Pick<PortalCredentialDeps, "db" | "getSession" | "authorize">,
+  d: Pick<PortalCredentialDeps, "db" | "authorize"> & { getSession: (headers: Headers) => Promise<{ user: { id: string } } | null> },
   tenantId: string,
   headers: Headers,
 ): Promise<Response | undefined> {

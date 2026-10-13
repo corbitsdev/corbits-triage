@@ -11,7 +11,8 @@ import { schema } from "@intx/db";
 import { PR_TRIAGE_STUCK_RUN_MS } from "@corbits/triage-contracts";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { listRepoPulls, type OpenPullsCache, type OpenPullsRead } from "./open-pulls.js";
-import { appGithubFetch, failure, githubAppCredential, runReadPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import { runKeyNumber, type ObservedRun } from "./reconcile-plan.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
 import type { TenantObservation, TenantObserver, TenantVersions } from "./tenant-observer.js";
@@ -243,9 +244,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     return build(tenantId, [...known, ...recent], live, wanted, names);
   }
 
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await runReadPrincipal(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {
     const query = PullQuery(Object.fromEntries(new URL(req.url).searchParams));
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
     if ((query.repo === undefined) !== (query.number === undefined)) return failure(400, "invalid_request", "Name both repo and number, or neither.");

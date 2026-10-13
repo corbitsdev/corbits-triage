@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { createWorkflowVersions, type WorkflowVersionsDeps } from "./workflow-versions.js";
+import { createInMemoryGrantStore } from "@intx/authz";
+import { guardedApp } from "./integrations/test-app.js";
+import { createWorkflowVersions } from "./workflow-versions.js";
 
 const TENANT_ID = "tenant-1";
 const CREATED_AT = new Date("2026-10-09T12:00:00Z");
@@ -36,28 +38,20 @@ function db() {
   const chain = { from: () => chain, innerJoin: () => chain, where: () => chain, orderBy: async () => ROWS };
   return {
     select: () => chain,
-    query: { principal: { async findFirst() { return { id: "member-1" }; } } },
+    query: {
+      tenant: { async findFirst() { return { id: TENANT_ID }; } },
+      principal: { async findFirst() { return { id: "member-1", status: "active" }; } },
+    },
   } as never;
 }
 
-function handler(authorize: WorkflowVersionsDeps["authorize"] = async () => true) {
-  return createWorkflowVersions({
-    db: db(),
-    cipher: {} as never,
-    getSession: async () => ({ user: { id: "user-1" } }),
-    authorize,
-    trustedPortalOrigins: [],
-    launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId] ?? null) as never },
-  });
-}
-
-function request(): Request {
-  return new Request(`https://hub.example/api/integrations/workflow-versions/${TENANT_ID}`, { headers: { "sec-fetch-site": "same-origin" } });
+function handler() {
+  return createWorkflowVersions({ db: db(), launchSpecs: { get: async (anchorRunId) => (SPECS[anchorRunId] ?? null) as never } });
 }
 
 describe("createWorkflowVersions", () => {
   test("reads each live deployment's workflow and tool versions from its frozen closure", async () => {
-    const res = await handler()(request(), TENANT_ID);
+    const res = await handler()({ tenantId: TENANT_ID, principalId: "member-1" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       deployments: [
@@ -68,12 +62,10 @@ describe("createWorkflowVersions", () => {
   });
 
   test("refuses a member without the workflow read grant with 403", async () => {
-    const authorized: unknown[][] = [];
-    const res = await handler(async (...args) => {
-      authorized.push(args);
-      return false;
-    })(request(), TENANT_ID);
-    expect(res.status).toBe(403);
-    expect(authorized).toEqual([["member-1", TENANT_ID, "workflow:*", "read"]]);
+    const read = { id: "grt_read", resource: "workflow:*", action: "read", effect: "allow", origin: "system", conditions: null, expiresAt: null, roleId: null, principalId: "member-1" } as const;
+    for (const [grants, status] of [[[], 403], [[read], 200]] as const) {
+      const app = guardedApp(db(), async () => ({ user: { id: "user-1" } }) as never, createInMemoryGrantStore([...grants]), { workflowVersions: handler() });
+      expect((await app.request(`/api/integrations/workflow-versions/${TENANT_ID}`)).status).toBe(status);
+    }
   });
 });

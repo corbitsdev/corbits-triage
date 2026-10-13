@@ -2,7 +2,8 @@
 // only: no run log or GitHub read, so the portal and the extension can ask
 // for it on every view.
 import { type } from "arktype";
-import { failure, runReadPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_STATS_PATH = "/api/integrations/triage-stats";
@@ -36,7 +37,7 @@ export const TriageStats = type({
 });
 export type TriageStats = typeof TriageStats.infer;
 
-export type TriageStatsDeps = PortalCredentialDeps & {
+export type TriageStatsDeps = {
   verdicts: Pick<VerdictRecordStore, "since" | "earliest">;
   now: () => Date;
 };
@@ -159,9 +160,7 @@ export function createTriageStats(deps: TriageStatsDeps) {
     return cache.get(key)?.stats;
   }
 
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await runReadPrincipal(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  return async function handle(req: Request, { tenantId }: Member): Promise<Response> {
     const query = StatsQuery(Object.fromEntries(new URL(req.url).searchParams));
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
     const { repo, days = DEFAULT_DAYS } = query;

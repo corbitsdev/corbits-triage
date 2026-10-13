@@ -2,7 +2,6 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { migrateTriageTables } from "../triage-db.js";
 import { createTriageTimeline, TriageTimeline } from "./triage-timeline.js";
@@ -25,14 +24,6 @@ function verdict(runId: string, headSha: string, at: number, checks: RecordedVer
   };
 }
 
-async function signedInSession() {
-  return { user: { id: "usr_timeline" }, session: { id: "ses_timeline" } };
-}
-
-async function allow(): Promise<boolean> {
-  return true;
-}
-
 test("PostgreSQL: a pull request's timeline scores each new outcome and names the checks that changed", async () => {
   const database = `corbits_timeline_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
@@ -48,7 +39,6 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
       { id: TENANT, name: "Timeline", slug: "timeline", domain: "timeline.test" },
       { id: OTHER_TENANT, name: "Other", slug: "timeline-other", domain: "timeline-other.test" },
     ]);
-    await db.insert(schema.principal).values({ id: "prn_timeline", tenantId: TENANT, kind: "user", refId: "usr_timeline", status: "active" });
 
     const verdicts = createVerdictRecordStore(db);
     const failing = [{ check: "ci", result: "fail" }, { check: "linked", result: "unconfirmed" }];
@@ -62,11 +52,9 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
     ]);
     await verdicts.record(OTHER_TENANT, [verdict("run_7", "eee", 50, [])]);
 
-    const timeline = createTriageTimeline({
-      db, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)), getSession: signedInSession, authorize: allow, trustedPortalOrigins: [], verdicts,
-    });
+    const timeline = createTriageTimeline({ verdicts });
     async function get(query: string): Promise<Response> {
-      return timeline(new Request(`http://hub.test/api/integrations/triage-timeline/${TENANT}?${query}`, { headers: { "sec-fetch-site": "same-origin" } }), TENANT);
+      return timeline(new Request(`http://hub.test/api/integrations/triage-timeline/${TENANT}?${query}`), { tenantId: TENANT, principalId: "prn_timeline" });
     }
 
     const res = await get(`repo=${REPO}&number=8`);

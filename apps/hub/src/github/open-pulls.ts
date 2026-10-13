@@ -5,7 +5,8 @@ import { schema } from "@intx/db";
 import { authorAssociation, authorKindOf, type AuthorKind } from "@corbits/triage-contracts";
 import { listOpenPrs, type GithubFetch } from "@corbits/github-reads";
 import { createGithubAppCredentialFetch, INSTALLATION_SELECTOR_HEADER } from "./github-app-credential-adapter.js";
-import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
 
 export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
@@ -85,9 +86,7 @@ const RELIST_MS = 10_000;
 export function createGithubOpenPulls(deps: PortalCredentialDeps & { githubApiOrigin: string; cache: OpenPullsCache }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
-  return async function openPulls(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  return async function openPulls({ tenantId, principalId }: Member): Promise<Response> {
     const appJson = await githubAppCredential(deps, principalId, tenantId, "read");
     if (appJson instanceof Response) return appJson;
     const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
