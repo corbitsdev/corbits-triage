@@ -140,6 +140,8 @@ describe("check pack contract", () => {
       [{ ...MODELS[2], options: ["small", "small "] }, "Custom check custom-3 options must not repeat a value."],
       [{ ...MODELS[2], failOn: ["medium"] }, "Custom check custom-3 failOn must be among options."],
       [{ ...CUSTOM[0], when: ["migrations/**"] }, "Custom check custom-1 when needs a file or hunk scope."],
+      [{ ...RULES[0], globs: ["a".repeat(201)] }, "Custom check custom-1 globs must be globs of at most 200 characters."],
+      [{ ...RULES[0], globs: Array.from({ length: 51 }, (_, i) => `dir${i}/**`) }, "Custom check custom-1 globs must list at most 50 globs."],
       [{ ...MODELS[3], scope: "repo" }, "Custom check custom-4 scope must be one of"],
       [{ ...MODELS[1], scope: "file" }, "Custom check custom-2 scope and when apply only to is-true checks."],
     ];
