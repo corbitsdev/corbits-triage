@@ -9,9 +9,6 @@ function Icon({ className, children, size }: IconProps & { children: React.React
   );
 }
 
-export function ShieldIcon() {
-  return <Icon><path d="M8 1.5 2.5 3.5v4c0 3.2 2.3 5.8 5.5 7 3.2-1.2 5.5-3.8 5.5-7v-4z" /></Icon>;
-}
 export function SearchIcon() {
   return <Icon><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3.5 3.5" /></Icon>;
 }

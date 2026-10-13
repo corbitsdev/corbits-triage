@@ -103,6 +103,20 @@ Two different numbers come out of the answers:
   - Focused reads every line of every patch it has. Its only unread files are those whose patch it does not have whole: GitHub left it out, the pull request's 270,000-char budget was spent, or the file passed 65,536 chars. Any unread file leaves focused unconfirmed, listing them, unless another slice already fails it.
   - Binary files and pure renames have no lines and are never unread.
 
+## Reused answers
+
+A re-check of a head the judge already answered, such as after a merge moved
+the base branch, does not ask the model again for an unchanged request. Each
+verdict keeps the answers it got, keyed by a SHA-256 of the judge's system
+prompt and the exact request (`judgeKey`, `logic/quality.ts`). The reconciler
+carries them in its catch-up mail only to a deployment on the same workflow
+version and decision-model offering, and the facts step accepts them only from
+the hub's own triage sender. Rules sends the judge only requests no carried
+answer matches; changed content or docs are asked again.
+
+Only well-formed answers clear of the unsure band are kept, up to 16 KB per
+verdict (`MAX_JUDGED_BYTES`, `actions/evaluate.ts`); the rest are asked again.
+
 ## Cost per pull request
 
 Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 105 KB), not measurements:

@@ -1,5 +1,5 @@
 import { itemText, type CheckItem, type CheckOutput } from "@corbits/triage-contracts";
-import { resolveInlineRef, type HubApproval, type MergeVerdict, type PrItem, type RunLog } from "./hub-api.ts";
+import { type HubApproval, type MergeVerdict, type PrItem } from "./hub-api.ts";
 
 function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -181,51 +181,6 @@ export function argsText(args: Record<string, unknown> | null | undefined): Arra
     if (formatted !== null) pairs.push([argLabel(key), formatted]);
   }
   return pairs;
-}
-
-type Ev = RunLog["events"][number];
-
-function eventBody(event: Ev): Record<string, unknown> {
-  return obj((event as { body?: unknown }).body);
-}
-
-const SCOPED_STEP = /^(.+)\[\d+\]$/;
-
-/** N/M: completed scoped iterations (`step[i]`) over the input array length of the first mapped step. */
-export function runCoverage(events: Ev[]): { done: number; total: number } {
-  const totals = new Map<string, number>();
-  const done = new Map<string, Set<string>>();
-  for (const event of events) {
-    const body = eventBody(event);
-    const stepId = body.stepId;
-    if (typeof stepId !== "string") continue;
-    const scoped = SCOPED_STEP.exec(stepId);
-    if (scoped && (event.type === "StepCompleted" || event.type === "StepFailed")) {
-      done.set(scoped[1], (done.get(scoped[1]) ?? new Set()).add(stepId));
-    } else if (!scoped && event.type === "StepStarted") {
-      const input = resolveInlineRef(obj(body.input).ref);
-      if (Array.isArray(input) && !totals.has(stepId)) totals.set(stepId, input.length);
-    }
-  }
-  for (const [stepId, total] of totals) {
-    if (done.has(stepId)) return { done: done.get(stepId)!.size, total };
-  }
-  return { done: 0, total: 0 };
-}
-
-function eventTime(event: Ev): number {
-  const at = obj(event).at ?? eventBody(event).at ?? eventBody(event).timestamp;
-  return typeof at === "string" || typeof at === "number" ? new Date(at).getTime() : NaN;
-}
-
-export function runLatencyMs(events: Ev[]): number | null {
-  const times = events.map(eventTime).filter((t) => !Number.isNaN(t));
-  return times.length < 2 ? null : Math.max(...times) - Math.min(...times);
-}
-
-export function formatLatency(ms: number | null): string {
-  if (ms === null) return "n/a";
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
 export function priorityRank(priority: string | null): number {

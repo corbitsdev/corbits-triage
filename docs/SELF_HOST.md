@@ -28,7 +28,7 @@ lists the same set.
 | Variable | Value |
 | --- | --- |
 | `DATABASE_URL` | `postgres://` or `postgresql://` URL. Add `?sslmode=require` when reached over the public internet. |
-| `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`, `PRINCIPAL_KEY_ENCRYPTION_KEY`, `SIDECAR_CREDENTIAL_ENCRYPTION_KEY` | Four different 32-byte hex values: `openssl rand -hex 32` each. Keep them stable: they sign sessions and encrypt stored credentials. |
+| `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION_KEY`, `PRINCIPAL_KEY_ENCRYPTION_KEY`, `SIDECAR_CREDENTIAL_ENCRYPTION_KEY` | Four different 32-byte hex values: `openssl rand -hex 32` each. Keep them stable: they sign sessions and GitHub App setup state, and encrypt stored credentials. |
 | `BETTER_AUTH_BASE_URL` | The public URL users open, for example `https://triage.example.com`. |
 | `PORT` | Port the hub listens on. The image does not set it; use 3000 to match its `EXPOSE`. |
 | `HUB_DATA_DIR` | Run history, workflow sources and sidecar state. A persistent volume. |
@@ -74,7 +74,7 @@ All optional; the defaults suit most installs.
 | `TRIAGE_MAX_IN_FLIGHT` | 5 | Heads a tenant may have queued or running at once. Higher trades throughput for a bigger pack each rotation has to receive. |
 | `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
 | `TRIAGE_ROTATE_AFTER_RUNS` | 15 | Runs a `pr-triage` deployment's log may hold before the hub deploys a fresh copy. |
-| `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run; at most four times this after the first. Must stay below 150000. |
+| `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run; at most four times this after the first. A new commit or a newly opened pull request waits only 3 seconds (or this, if shorter). Must stay below 150000. |
 
 ### Hub and sidecars
 
@@ -101,14 +101,14 @@ where marked. Durations are whole numbers ending in `s`, `m`, `h` or `d`.
 | `HUB_DISCONNECT_QUEUE_TTL_MS` | 900000 (hub default) |
 | `HUB_MAIL_ACK_RETRY_INTERVAL_MS` | 30000 (hub default) |
 | `HUB_MAIL_ACK_MAX_RETRIES` | 10 (hub default) |
-
-The three hub defaults are above stock because triage mail is routed: only the
-router's acknowledgement retries keep it alive while a pack receive holds the
-connection queue for minutes.
 | `WORKFLOW_DEFAULT_MAX_LIFETIME` | `7d` (above zero) |
 | `WORKFLOW_DEFAULT_RETENTION_COMPLETED` | `30m` |
 | `WORKFLOW_DEFAULT_RETENTION_FAILED` | `24h` |
 | `WORKFLOW_DEFAULT_RETENTION_CANCELLED` | `1h` |
+
+The three hub defaults are above stock because triage mail is routed: only the
+router's acknowledgement retries keep it alive while a pack receive holds the
+connection queue for minutes.
 
 ## Set up in the portal
 
@@ -129,12 +129,12 @@ connection queue for minutes.
      Installation, Installation repositories.
 3. **Choose repositories on GitHub**. The hub records them from GitHub's
    installation events, with triage off; nothing runs yet.
-4. **Add the decision model** (during onboarding, or Settings → Decision
-   model). Pick TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API
-   key, or **Add my own provider** with a System One–compatible base URL
-   (requests go to it + `/systemone`), model and key. The key goes to the
-   hub's vault. Saving deploys `pr-triage` and `pr-triage-historical`, and
-   always redeploys them; triage is not live until then.
+4. **Add the decision model** (during onboarding, or Settings → Model). Pick
+   TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API key, or **Add
+   my own provider** with a System One–compatible base URL (requests go to
+   it + `/systemone`), model and key. The key goes to the hub's vault. Every
+   save deploys `pr-triage` and `pr-triage-historical` afresh; triage is not
+   live until then.
 5. **Turn on triage.** Open a repository under Repositories. Adjust its checks
    (**Reset to recommended** restores the defaults) and actions (**Start from
    recommended**), turn on **Triage pull requests in this repository**, and
