@@ -230,7 +230,7 @@ describe("check pack contract", () => {
     }
     expect(() => readCheckPack({ ...emptyPack(REPO), schemaVersion: 2 })).toThrow("schemaVersion must be 1.");
     expect(() => readCheckPack({ ...emptyPack(REPO), actions: [{ ...BASE, checks: ["custom-9"] }] })).toThrow(
-      "Action a checks custom-9 must be a catalog check or a custom check in this pack.",
+      "Action a checks custom-9 must be a catalog check, the draft check or a custom check in this pack.",
     );
   });
 
