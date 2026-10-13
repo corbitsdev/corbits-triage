@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
+import { readCappedBody } from "../read-json.js";
+import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 
 export const CONFIG_KEY = "corbitsTriage";
 
@@ -141,17 +143,32 @@ function cloneWithBody(req: Request, body: string): Request {
   return new Request(req.url, { method: req.method, headers, body });
 }
 
+/** The response refusing PATCH /api/tenants/:id, checked as stock does before the body or tenant is read; undefined when the caller may manage the tenant. */
+export async function tenantManagerRefusal(
+  d: Pick<PortalCredentialDeps, "db" | "getSession" | "authorize">,
+  tenantId: string,
+  headers: Headers,
+): Promise<Response | undefined> {
+  const session = await d.getSession(headers);
+  if (!session) return failure(401, "unauthorized", "Authentication required");
+  const principalId = await memberPrincipal(d.db, tenantId, session.user.id);
+  if (principalId === undefined) return failure(403, "forbidden", "Not a member of this tenant");
+  if (await d.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage")) return undefined;
+  return failure(403, "forbidden", "You do not have permission to manage this tenant");
+}
+
 /**
  * CAS for portal PATCH /api/tenants/:id that carries `config.corbitsTriage`.
  * Matching rev ⇒ rewrite body to current+1 and let stock.fetch do the write.
- * Stale rev ⇒ 409 `{ error: "config_conflict" }`. Authz is still stock's.
+ * Stale rev ⇒ 409 `{ error: "config_conflict" }`. Over 1 MB ⇒ 413.
  */
 export async function prepareCorbitsTriagePatch(
   db: DB["db"],
   tenantId: string,
   req: Request,
 ): Promise<Request | Response> {
-  const raw = await req.text();
+  const raw = await readCappedBody(req);
+  if (raw === null) return failure(413, "payload_too_large", "Request body too large");
   let parsed: unknown;
   try {
     parsed = raw.length === 0 ? {} : JSON.parse(raw);
