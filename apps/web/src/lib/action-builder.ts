@@ -1,6 +1,7 @@
 import {
   type AuthorKind,
   type AuthorWho,
+  customRuleId,
   readCheckPack,
   type Action,
   type ActionKind,
@@ -88,7 +89,7 @@ const PARAMS: Record<RuleKind | ModelShape, readonly (keyof CheckParams)[]> = {
 };
 
 /** Highest plus one rather than lowest unused, so a gap left by a removed row is never refilled. */
-function nextId(prefix: "action" | "custom", ids: string[]): string {
+function nextId(prefix: "action", ids: string[]): string {
   const numbered = new RegExp(`^${prefix}-(\\d+)$`);
   const taken = ids.flatMap((id) => {
     const match = numbered.exec(id);
@@ -161,8 +162,8 @@ export function buildAction(form: ActionForm, pack: CheckPack, id = nextId("acti
   return read.actions.find((row) => row.id === id)!;
 }
 
-export function nextCustomId(pack: CheckPack): string {
-  return nextId("custom", pack.custom.map((row) => row.id));
+export function nextCustomId(pack: CheckPack, name: string): string {
+  return customRuleId(name, pack.custom.map((row) => row.id));
 }
 
 /**
@@ -184,7 +185,7 @@ export function checkFormOfKind(kind: CheckKind): CheckForm {
 }
 
 /** Builds the next custom check of `pack`, or replaces check `id` in place, keeping only its rule's or shape's parameters. */
-export function buildCustomCheck(form: CheckForm, pack: CheckPack, id = nextCustomId(pack)): CustomCheck | Refusal {
+export function buildCustomCheck(form: CheckForm, pack: CheckPack, id = nextCustomId(pack, form.name)): CustomCheck | Refusal {
   const check = customCheckOf(form, id);
   const read = validated({ ...pack, custom: placed<{ id: string }>(pack.custom, check) }, pack.repo);
   if ("reason" in read) return read;

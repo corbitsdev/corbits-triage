@@ -17,7 +17,6 @@ import { bestDraft, pageActions } from "../src/page-actions.ts";
 import { defaultLocalPack } from "../src/local-pack.ts";
 import { prFromUrl, prKey, type PrRef } from "../src/pr.ts";
 import { runLocal } from "../src/local-run.ts";
-import { checkLabel } from "../src/summary.ts";
 import type { TriageView } from "../src/view.ts";
 
 // The service worker's extension API, as the evaluated functions below use it.
@@ -411,7 +410,7 @@ try {
   const cardText = await card.innerText();
   const topFailing = failing.checks.find((check) => check.result === "fail" && !check.gate);
   console.log(`hover card: "${cardText.split("\n").slice(0, 3).join(" / ")}"`);
-  if (!cardText.includes(failing.verdict.nextAction) || (topFailing && !cardText.includes(checkLabel(topFailing)))) process.exitCode = 1;
+  if (!cardText.includes(failing.verdict.nextAction) || (topFailing && !cardText.includes(topFailing.name))) process.exitCode = 1;
   await page.mouse.move(0, 0);
   await card.waitFor({ state: "hidden" });
   await chip.focus();
@@ -506,23 +505,22 @@ try {
     if (fetched) process.exitCode = 1;
     return view;
   }
-  await clickSwitch(panel, "Size");
-  let managed = await rescored("size switched off", failing);
-  if (managed.checks.some((check) => check.check === "size")) process.exitCode = 1;
-  await clickSwitch(panel, "Size");
-  managed = await rescored("size switched on", managed);
+  await clickSwitch(panel, "Max files changed");
+  let managed = await rescored("max files changed switched off", failing);
+  if (managed.checks.some((check) => check.check === "max-files-changed")) process.exitCode = 1;
+  await clickSwitch(panel, "Max files changed");
+  managed = await rescored("max files changed switched on", managed);
   await clickInPanel(panel, "Edit the limits");
   await fillInPanel(panel, "Most files", "1000");
-  await fillInPanel(panel, "Most changed lines", "100000");
   await shootPanel(panel, "panel-checks-edit");
   await clickInPanel(panel, "Save limits");
-  managed = await rescored("size limits raised", managed);
-  if (managed.checks.find((check) => check.check === "size")?.result !== "pass") process.exitCode = 1;
-  await clickInPanel(panel, "Add a check");
+  managed = await rescored("files limit raised", managed);
+  if (managed.checks.find((check) => check.check === "max-files-changed")?.result !== "pass") process.exitCode = 1;
+  await clickInPanel(panel, "Add a rule");
   await clickInPanel(panel, "Use Title matches a pattern");
   await fillInPanel(panel, "Title must match", "^(feat|fix|refactor|chore|docs|test)\\(");
   await shootPanel(panel, "panel-checks-add");
-  await clickInPanel(panel, "Add check");
+  await clickInPanel(panel, "Add rule");
   managed = await rescored("title rule added", managed);
   const titleRule = managed.checks.find((check) => check.name === "Title matches a pattern");
   console.log(`added rule check: ${titleRule ? `${titleRule.result}, ${titleRule.reason}` : "MISSING"}`);
@@ -530,7 +528,7 @@ try {
   await panelShows(panel, "the changed scope", '.scope[data-changed="true"]');
   await shootPanel(panel, "panel-checks-changed");
   await clickInPanel(panel, "Reset to defaults");
-  await clickInPanel(panel, "Confirm: reset every check");
+  await clickInPanel(panel, "Confirm: reset every rule");
   managed = await rescored("defaults restored", managed);
   const restored = Bun.deepEquals(comparable(managed), comparable(failing), true);
   console.log(`defaults restored: ${restored ? "same verdict as the first run" : "DIFFERS from the first run"}`);

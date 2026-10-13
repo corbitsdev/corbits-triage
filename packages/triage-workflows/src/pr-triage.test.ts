@@ -16,7 +16,7 @@ import { workflow as historical } from "./pr-triage-historical.js";
 const REPO = "acme/widgets";
 const HELLO: Action = { id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", target: { body: "hi" } }] } };
 const APPROVE: Action = { id: "approve", when: ["opened", "updated"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", target: {} }] } };
-const REQUEST_CHANGES: Action = { id: "ci-gate", when: "every", checks: ["ci"], branches: { no: [{ kind: "request-changes", target: {} }] } };
+const REQUEST_CHANGES: Action = { id: "ci-gate", when: "every", checks: ["ci-green"], branches: { no: [{ kind: "request-changes", target: {} }] } };
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 type Recorded = { method: string; path: string };
@@ -375,7 +375,7 @@ describe("pr-triage body", () => {
   function approving() {
     const github = fakeGithub();
     github.pr.ci = "success";
-    return { github, pack: { ...emptyPack(REPO), checks: { conflicts: { enabled: true } }, actions: [APPROVE] } };
+    return { github, pack: { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true } }, actions: [APPROVE] } };
   }
 
   function appReads(github: ReturnType<typeof fakeGithub>): number {
@@ -406,7 +406,7 @@ describe("pr-triage body", () => {
 
   test("passing the action's checks does not approve a pull request not ready to merge", async () => {
     const { github, pack } = approving();
-    const forbidden = { ...pack, checks: { ...pack.checks, paths: { enabled: true, forbiddenGlobs: ["src/**"] } }, actions: [{ ...APPROVE, checks: ["conflicts" as const] }] };
+    const forbidden = { ...pack, checks: { ...pack.checks, "no-forbidden-paths": { enabled: true, forbiddenGlobs: ["src/**"] } }, actions: [{ ...APPROVE, checks: ["no-merge-conflicts" as const] }] };
     const { dos, verdict } = await triage(forbidden, { github });
     expect((verdict as Verdict).merge.verdict).toBe("not-recommended");
     expect((verdict as Verdict).actions).toEqual([expect.objectContaining({ kind: "approve", skipped: true, reason: "The pull request is not ready to merge." })]);
@@ -440,7 +440,7 @@ describe("pr-triage body", () => {
   function requesting() {
     const github = fakeGithub();
     github.pr.ci = "failure";
-    return { github, pack: { ...emptyPack(REPO), checks: { ci: { enabled: true } }, actions: [REQUEST_CHANGES] } };
+    return { github, pack: { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: [REQUEST_CHANGES] } };
   }
 
   test("failing CI requests changes on the head once; a later head with CI fixed takes the request back", async () => {
@@ -473,7 +473,7 @@ describe("pr-triage body", () => {
     github.pr.head = "def";
     github.pr.draft = true;
     github.reviews.push({ id: 7, user: APP, state: "APPROVED", commit_id: "abc", body: "" });
-    await triage({ ...pack, checks: { conflicts: { enabled: true } } }, { github });
+    await triage({ ...pack, checks: { "no-merge-conflicts": { enabled: true } } }, { github });
     expect(github.reviews).toEqual([expect.objectContaining({ id: 7, state: "APPROVED" })]);
     expect(github.requests.filter((r) => r.method === "PUT")).toEqual([]);
   });
@@ -481,7 +481,7 @@ describe("pr-triage body", () => {
   test("a pack without an approve Do never asks for the App", async () => {
     const github = fakeGithub();
     github.pr.draft = true;
-    await triage({ ...emptyPack(REPO), checks: { conflicts: { enabled: true } } }, { github });
+    await triage({ ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true } } }, { github });
     expect(appReads(github)).toBe(0);
   });
 

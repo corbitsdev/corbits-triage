@@ -450,8 +450,8 @@ function comments(): Record<"yes" | "no" | "unsure", Array<{ kind: "comment"; ta
 
 const SAVED_PACK = {
   ...emptyPack(REPO),
-  checks: { ci: { enabled: true } },
-  actions: [{ id: "tag", when: "every", checks: ["ci"], branches: { yes: [{ kind: "labels", target: { from: "list", labels: ["checked"] } }] } }],
+  checks: { "ci-green": { enabled: true } },
+  actions: [{ id: "tag", when: "every", checks: ["ci-green"], branches: { yes: [{ kind: "labels", target: { from: "list", labels: ["checked"] } }] } }],
 };
 
 const JUDGED_PACK = {
@@ -460,7 +460,7 @@ const JUDGED_PACK = {
   custom: [{ id: "custom-1", name: "Explains why", group: "pull-request", kind: "model", shape: "is-true", claim: "The description says why." }],
   actions: [
     { id: "judged", when: "every", checks: ["custom-1"], branches: comments() },
-    { id: "judged-and-sized", when: "every", checks: ["size", "custom-1"], branches: comments() },
+    { id: "judged-and-sized", when: "every", checks: ["max-files-changed", "custom-1"], branches: comments() },
   ],
 };
 
@@ -491,11 +491,11 @@ test("a pack preview evaluates an open pull request without writing anything", a
 
     const rule = await previewed({ repo: REPO, number: 8 });
     expect(rule).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-needed" });
-    expect(rule.checks).toContainEqual({ check: "ci", name: "CI", kind: "machine", result: "pass", reason: "checks are success", evidence: [], output: { kind: "values", values: { status: "passing" } } });
+    expect(rule.checks).toContainEqual({ check: "ci-green", name: "CI green", kind: "machine", result: "pass", reason: "checks are success", evidence: [], output: { kind: "values", values: { status: "passing" } } });
     const target = { labels: ["checked"] };
     expect(rule.actions).toEqual([{
-      id: "tag", status: "decided", branch: "yes", reason: "CI passed.",
-      dos: [{ id: "tag", branch: "yes", index: 0, kind: "labels", reason: "CI passed.", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: "tag", branch: "yes", index: 0, kind: "labels", target }) }],
+      id: "tag", status: "decided", branch: "yes", reason: "CI green passed.",
+      dos: [{ id: "tag", branch: "yes", index: 0, kind: "labels", reason: "CI green passed.", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: "tag", branch: "yes", index: 0, kind: "labels", target }) }],
     }]);
     expect(rule.verdict).not.toHaveProperty("request");
     expect(rule.verdict.merge).toEqual({ verdict: "ready", score: null, threshold: 0.7, reasons: [] });
@@ -565,10 +565,10 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
 
     const label: SeededDo = { id: "label", kind: "labels", target: { labels: ["api"] }, index: 0 };
     const note: SeededDo = { id: "note", kind: "comment", target: { body: "Thanks" }, index: 0 };
-    const ci = (result: string) => ({ check: "ci", kind: "machine", result, reason: "", evidence: [] });
+    const ci = (result: string, check = "ci-green") => ({ check, kind: "machine", result, reason: "", evidence: [] });
     const started = new Date(Date.now() - 3_600_000);
     await seedDeployment(db, dataDir, tenantId, [
-      timedRun(started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good" } }), true),
+      timedRun(started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass", "ci")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good" } }), true),
       timedRun(new Date(started.getTime() + 600_000), 180_000, statsVerdict(8, HEAD, {
         state: "awaiting-review", actor: "maintainer", checks: [ci("unconfirmed")], actions: [{ ...verdictStep(label, HEAD), status: "done" }, verdictStep(note, HEAD)],
       })),
@@ -599,7 +599,7 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
       triaged: 1,
       verdicts: { "ready-monitoring": 1, "awaiting-review": 1 },
       neededYou: 1,
-      checks: { ci: { pass: 1, fail: 0, unconfirmed: 1 } },
+      checks: { "ci-green": { pass: 1, fail: 0, unconfirmed: 1 } },
       actions: { label: { suggested: 1, executed: 1, failed: 0 }, note: { suggested: 1, executed: 0, failed: 0 } },
       comments: 1,
       medianTimeToVerdictMs: 120_000,

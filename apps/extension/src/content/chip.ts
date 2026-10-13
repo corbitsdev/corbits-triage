@@ -2,7 +2,7 @@ import { clock } from "../clock.ts";
 import { send } from "../messages.ts";
 import type { PrRef } from "../pr.ts";
 import type { RunState } from "../storage.ts";
-import { checkLabel, checkReason, shownChecks, summaryMarkdown } from "../summary.ts";
+import { checkReason, shownChecks, summaryMarkdown } from "../summary.ts";
 import { nextStep, stateName, toneOf, type Tone, type TriageView } from "../view.ts";
 import { errorText } from "../error-text.ts";
 
@@ -124,7 +124,7 @@ export function scoreChip(): Chip {
         const list = element("ul", "card-checks");
         for (const check of failing.slice(0, TOP_FAILING)) {
           const item = element("li", "");
-          item.append(element("b", "", `${checkLabel(check)}:`), document.createTextNode(` ${checkReason(check)}`));
+          item.append(element("b", "", `${check.name}:`), document.createTextNode(` ${checkReason(check)}`));
           list.append(item);
         }
         if (failing.length > TOP_FAILING) list.append(element("li", "card-more", `and ${failing.length - TOP_FAILING} more failing`));

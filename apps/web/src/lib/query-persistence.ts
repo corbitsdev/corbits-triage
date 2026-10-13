@@ -12,7 +12,7 @@ import { isPersistedQuery } from "./persisted-queries.ts";
 const PERSISTED_QUERIES_KEY = "corbits.queries";
 const PERSISTED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** Changed whenever a persisted query's shape changes, so older caches are dropped rather than read as the new shape. */
-const PERSISTED_SHAPE = "principal-run-lists";
+const PERSISTED_SHAPE = "renamed-rule-ids";
 
 export type SessionState = { kind: "unknown" } | { kind: "signed-out" } | { kind: "signed-in"; userId: string };
 

@@ -83,8 +83,8 @@ export default function ActionsList({ draft, stats, disabled, edit, problem }: A
         <EmptyState
           title="No actions yet"
           description={unset
-            ? "Actions label, assign, request review, comment or approve when the checks you pick pass, fail or are unsure. The recommended action approves each pull request once every check passes and CI is green. Settings, under Access, says which Dos triage runs on its own."
-            : "Actions label, assign, request review, comment or approve when the checks you pick pass, fail or are unsure."}
+            ? "Actions label, assign, request review, comment or approve when the rules you pick pass, fail or are unsure. The recommended action approves each pull request once every rule passes and CI is green. Settings, under Access, says which Dos triage runs on its own."
+            : "Actions label, assign, request review, comment or approve when the rules you pick pass, fail or are unsure."}
           action={unset ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={startFromRecommended}>Start from recommended</Button> : null}
         />
       ) : null}

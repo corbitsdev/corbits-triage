@@ -3,6 +3,7 @@ import {
   CATALOG_IDS,
   catalogCheckEnabled,
   customCheckEnabled,
+  customRuleId,
   isCatalogId,
   packMergeThreshold,
   readCheckPack,
@@ -57,15 +58,37 @@ export function toPack(draft: RepoDraft): CheckPack {
   return readCheckPack(draft.pack);
 }
 
+/** A rule added since the last save takes its id from the name it is saved with; a saved rule keeps its id when renamed. */
+export function namedNewRules(pack: CheckPack, saved: CheckPack): CheckPack {
+  const kept = new Set(saved.custom.map((row) => row.id));
+  const taken = [...kept];
+  const renamed = new Map<string, string>();
+  for (const row of pack.custom) {
+    if (kept.has(row.id)) continue;
+    const id = customRuleId(row.name, taken);
+    taken.push(id);
+    renamed.set(row.id, id);
+  }
+  function current(id: string): string {
+    return renamed.get(id) ?? id;
+  }
+  return {
+    ...pack,
+    custom: pack.custom.map((row) => ({ ...row, id: current(row.id) })),
+    actions: pack.actions.map((action) => ({ ...action, checks: action.checks.map(current) })),
+  };
+}
+
 function withPack(draft: RepoDraft, pack: Partial<CheckPack>): RepoDraft {
   return { ...draft, pack: { ...draft.pack, ...pack } };
 }
 
 /** What a catalog check the pack lacks reads as, switched off; switching it on writes these values. */
 const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>> = {
-  size: RECOMMENDED_SIZE,
-  issue: RECOMMENDED_ISSUE,
-  paths: { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
+  "max-files-changed": { maxFiles: RECOMMENDED_SIZE.maxFiles },
+  "max-lines-changed": { maxLines: RECOMMENDED_SIZE.maxLines },
+  "linked-issue": RECOMMENDED_ISSUE,
+  "no-forbidden-paths": { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
 };
 
 /** A catalog check's value as stored, or the default it reads as. */
@@ -102,7 +125,7 @@ export function upsertCustom(draft: RepoDraft, check: CustomCheck): RepoDraft {
 export function checkOn(pack: CheckPack, id: CheckRef): boolean {
   if (BUILT_IN_CHECK_NAMES.has(id)) return true;
   if (!isCatalogId(id)) return pack.custom.some((row) => row.id === id && customCheckEnabled(row));
-  return catalogCheckEnabled(pack, id) && !(id === "issue" && pack.checks.issue?.tracker === "off");
+  return catalogCheckEnabled(pack, id) && !(id === "linked-issue" && pack.checks["linked-issue"]?.tracker === "off");
 }
 
 /** Off is stored as `enabled: false`; back on drops the flag, which the contract reads as on. */
@@ -118,7 +141,7 @@ export function setCustomEnabled(draft: RepoDraft, id: string, enabled: boolean)
 /** Also drops the check from every action; refused when an action would be left with branches but no checks. */
 export function removeCustom(draft: RepoDraft, id: string): RepoDraft | Refused {
   const emptied = draft.pack.actions.find((action) => action.checks.length === 1 && action.checks[0] === id);
-  if (emptied) return { reason: `Action ${emptied.id} checks only ${id}. Give it another check or remove the action first.` };
+  if (emptied) return { reason: `Action ${emptied.id} checks only ${id}. Give it another rule or remove the action first.` };
   return withPack(draft, {
     custom: draft.pack.custom.filter((row) => row.id !== id),
     actions: draft.pack.actions.map((action) => (action.checks.some((ref) => ref === id) ? { ...action, checks: action.checks.filter((ref) => ref !== id) } : action)),
@@ -204,10 +227,10 @@ function idAt(message: string, label: string, rows: Array<{ id: string }>): stri
 function whereOf(message: string, pack: CheckPack): DraftWhere {
   const action = idAt(message, "Action", pack.actions);
   if (action !== undefined) return { section: "actions", id: action };
-  const custom = idAt(message, "Custom check", pack.custom);
+  const custom = idAt(message, "Custom rule", pack.custom);
   if (custom !== undefined) return { section: "custom", id: custom };
   if (message.startsWith("Merge score threshold ")) return { section: "merge" };
-  if (message.startsWith("Custom check ") || message.startsWith("Check pack must have at most")) return { section: "custom" };
+  if (message.startsWith("Custom rule ") || message.startsWith("Policy must have at most")) return { section: "custom" };
   return { section: "pack" };
 }
 
@@ -235,6 +258,6 @@ export function validate(draft: RepoDraft): DraftProblem | null {
     if (role !== undefined) return { reason: `Action ${action.id} targets role ${role}, which this repository does not define.`, where: { section: "actions", id: action.id } };
   }
   const anyCheck = CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
-  if (draft.policy.enabled && !anyCheck) return { reason: "Switch on a check before turning triage on.", where: { section: "triage" } };
+  if (draft.policy.enabled && !anyCheck) return { reason: "Switch on a rule before turning triage on.", where: { section: "triage" } };
   return null;
 }

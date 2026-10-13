@@ -2,7 +2,7 @@
 
 Corbits Triage triages GitHub pull requests. For every pull request on a
 repository with triage on, it gathers facts from GitHub, runs the
-repository's checks, reaches a verdict, and suggests or runs the actions the
+repository's rules, reaches a verdict, and suggests or runs the actions the
 repository defines.
 
 Nothing runs by default. Installing the GitHub App records repositories with
@@ -17,7 +17,7 @@ wakes the actions that run when it is opened.
 - **Maintainers** use the portal: verdicts, reasons and suggested actions
   for each open pull request.
 - **Teams** share a workspace. Admins invite teammates by email; roles in a
-  repository's policy name GitHub users or teams for assignment and review.
+  repository's settings name GitHub users or teams for assignment and review.
 - **Authors** see only what the repository's actions write on GitHub: labels,
   review requests, assignees and comments.
 
@@ -25,14 +25,14 @@ wakes the actions that run when it is opened.
 
 - **Inbox**: open pull requests across repositories with triage on, in three views:
   Needs you, All open and First-timers. Each opens a reading pane: one status
-  line, the problems (failed checks, unsure answers, checks that could not
+  line, the problems (failed rules, unsure answers, rules that could not
   run), the description, and folded rows for the linked issue, the changed
-  files and the checks that passed. A bar at the bottom offers the next step
+  files and the rules that passed. A bar at the bottom offers the next step
   for that state (merge, request changes, comment, reply, approve, close,
-  triage again); the rest and the pack's Dos are under More. Merging from the
+  triage again); the rest and the policy's Dos are under More. Merging from the
   portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
-- **Repositories**: per repository, its checks, its actions, its roles, the
+- **Repositories**: per repository, its rules, its actions, its roles, the
   merge score threshold,
   a preview against an open pull request, recent stats, the triage switch and
   **Triage open pull requests again**.
@@ -43,10 +43,10 @@ The portal shows the score and the reasons. Evidence for a file or a change
 cites its changed lines (`src/router.ts:40-58`) and links them at the commit
 that was judged. GitHub sees only the actions.
 
-## Checks
+## Rules
 
-A check answers one question about a pull request: pass, fail, or unconfirmed.
-Each check says how it is evaluated. There are three kinds; two exist today.
+A rule answers one question about a pull request: pass, fail, or unconfirmed.
+Each rule says how it is evaluated. There are three kinds; two exist today.
 
 | Kind | Evaluates | Cost | Use it for |
 | --- | --- | --- | --- |
@@ -54,15 +54,16 @@ Each check says how it is evaluated. There are three kinds; two exist today.
 | Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs. |
 | Agent | Planned, not built. | | |
 
-### Rules
+### Rules over GitHub data
 
-Deterministic: the same pull request and pack give the same result. A rule is
+Deterministic: the same pull request and policy give the same result. A rule is
 unconfirmed only when GitHub has not computed what it needs yet, such as
 mergeability or CI.
 
-Built in: Size, Linked issue, Merge conflicts, CI, Forbidden paths. Two run on
-every pull request without a switch: a draft is never ready, and a requested
-change waits on the author.
+Built in: Max files changed, Max lines changed, Linked issue, No merge
+conflicts, CI green, No forbidden paths. Two run on every pull request without
+a switch: Not a draft (a draft is never ready) and No changes requested (a
+requested change waits on the author).
 
 Custom rules: paths unchanged, paths changed together, title pattern, branch
 pattern, required label, diff excludes a pattern, minimum approvals, and
@@ -82,49 +83,49 @@ a choice, never free text:
 
 Score and Choose are each asked as one yes or no question.
 
-Built in: Focused change (each change is classified against the primary
+Built in: Focused (each change is classified against the primary
 change) and Docs (each changed file is asked whether it needs docs;
-changing a doc file satisfies the check).
+changing a doc file satisfies the rule).
 
-Answers are probabilities, and each check decides only clear of a band
+Answers are probabilities, and each rule decides only clear of a band
 around a coin flip:
 
 - **Is true, Score, Choose, Docs**: yes at 0.7 or above, no at 0.3 or
-  below. Docs asks per file; one file that needs docs fails the check.
-- **Focused change**: a change is unrelated at 0.6 or above for unrelated,
+  below. Docs asks per file; one file that needs docs fails the rule.
+- **Focused**: a change is unrelated at 0.6 or above for unrelated,
   and part of the change at 0.6 or above for the other choices combined.
 
 Anything inside the band, a missing answer, or a failed model call leaves the
-check unconfirmed rather than guessed. A repository whose checks are all rules
+rule unconfirmed rather than guessed. A repository whose rules are all over GitHub data
 never calls the model.
 
 The model reads the pull request and the repository's docs from its default
-branch. Custom checks also get the repository's contribution rules
+branch. Custom rules also get the repository's contribution rules
 (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING`, the pull request template) and are
 judged by them. How questions are asked, budgets, cost and measured accuracy
 are in [DECISION_MODEL.md](DECISION_MODEL.md).
 
 ## Actions
 
-An action is **When → Checks → Yes / No / Unsure → Dos**:
+An action is **When → Rules → Yes / No / Unsure → Dos**:
 
 - **When**: every event, or chosen ones (opened, updated, ready, commented,
   reviewed, approved, checks, closed, merged and so on). Catching up runs
   every action.
-- **Checks**: the checks whose combined verdict picks the branch. Any
-  unconfirmed check makes it Unsure. With no checks, the action always runs.
+- **Rules**: the rules whose combined verdict picks the branch. Any
+  unconfirmed rule makes it Unsure. With no rules, the action always runs.
 - **Dos**: labels, assign, request review, comment, approve, request changes,
   close, agent. Settings → Access holds one grid, Do kind by role: a role's
   people may approve held Dos of the kinds it holds, and Dos of the kinds
   Triage holds run on GitHub during triage; the rest wait in the Inbox for a
   click. New workspaces automate nothing.
 
-Close never runs on its own on Unsure or without checks, nor does an agent
-without checks. Triage posts its reply when it holds Comment and its labels
+Close never runs on its own on Unsure or without rules, nor does an agent
+without rules. Triage posts its reply when it holds Comment and its labels
 when it holds Labels. Approve runs only for a head that is
 ready to merge with CI green; where Triage posts, a later head that may not be
 approved has the approve Do's approvals dismissed. Approvals made from the Inbox are never dismissed.
-Request changes lists only the failed checks the author must fix, once per
+Request changes lists only the failed rules the author must fix, once per
 head; the automatic mirror dismisses it once none still fails.
 
 ## Triage over time
@@ -139,6 +140,6 @@ model's earlier answers for anything unchanged. See
 
 ## Not finished
 
-- Agent checks and agent Dos: the pack format accepts agent Dos, but they
+- Agent rules and agent Dos: the policy format accepts agent Dos, but they
   cannot run yet.
 - Sidecars run on the hub's own machine; there is no remote provisioner yet.

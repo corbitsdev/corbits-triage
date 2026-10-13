@@ -35,7 +35,7 @@ function checksLabel(row: RepoRow, state: PackState | undefined): string {
   if (!state || state.pending) return "";
   if (state.error) return "Could not read";
   if (state.found?.kind === "corrupt") return "Unreadable";
-  return state.found ? `${plural(enabledCheckCount(state.found.pack), "check")} on` : "Not set up";
+  return state.found ? `${plural(enabledCheckCount(state.found.pack), "rule")} on` : "Not set up";
 }
 
 function ownersLabel(owners: string[]): string {
@@ -179,7 +179,7 @@ export default function Repositories() {
                     <th className="c-name">Repository</th>
                     <th className="c-n">Open</th>
                     <th className="c-n">Needs you</th>
-                    <th className="c-checks">Checks</th>
+                    <th className="c-checks">Rules</th>
                     <th className="c-own">Owners</th>
                     <th className="c-act">Last activity</th>
                     <th className="c-health">Health</th>
@@ -187,7 +187,7 @@ export default function Repositories() {
                 </thead>
                 <tbody>{rows.map(renderRow)}</tbody>
               </table>
-              <p className="rt-note">Triage sees the repositories its GitHub app is installed on, in {listed(accounts)}. Open one to change its triage and checks.</p>
+              <p className="rt-note">Triage sees the repositories its GitHub app is installed on, in {listed(accounts)}. Open one to change its triage and rules.</p>
             </>
           )}
         </main>

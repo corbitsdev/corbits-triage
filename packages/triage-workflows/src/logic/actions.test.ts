@@ -23,8 +23,8 @@ const facts: PrFacts = {
 };
 
 const checks: ActionInput["checks"] = [
-  { check: "ci", kind: "machine", result: "pass", reason: "", evidence: [] },
-  { check: "size", kind: "machine", result: "fail", reason: "", evidence: [] },
+  { check: "ci-green", kind: "machine", result: "pass", reason: "", evidence: [] },
+  { check: "max-files-changed", kind: "machine", result: "fail", reason: "", evidence: [] },
   { check: "focused", kind: "model", result: "unconfirmed", reason: "", evidence: [] },
 ];
 
@@ -50,35 +50,35 @@ function always(dos: Do[]): Action {
 
 describe("evaluateActions", () => {
   test.each<[string, Action, string[]]>([
-    ["all pass picks yes", branching(["opened"], ["ci"]), ["yes"]],
-    ["any fail picks no", branching(["opened"], ["ci", "size", "focused"]), ["no"]],
-    ["unconfirmed picks unsure", branching(["opened"], ["ci", "focused"]), ["unsure"]],
+    ["all pass picks yes", branching(["opened"], ["ci-green"]), ["yes"]],
+    ["any fail picks no", branching(["opened"], ["ci-green", "max-files-changed", "focused"]), ["no"]],
+    ["unconfirmed picks unsure", branching(["opened"], ["ci-green", "focused"]), ["unsure"]],
     ["no checks runs always", always([say("always")]), ["always"]],
-    ["an event not in when does nothing", branching(["updated"], ["ci"]), []],
-    ["every always matches", branching("every", ["ci"]), ["yes"]],
+    ["an event not in when does nothing", branching(["updated"], ["ci-green"]), []],
+    ["every always matches", branching("every", ["ci-green"]), ["yes"]],
   ])("%s", (_, action, bodies) => {
     expect(targets(run([action])).map((t) => (t && "body" in t ? t.body : null))).toEqual(bodies);
   });
 
   test("wakes when its When names any of the run's events", () => {
-    const woken = evaluateActions({ facts: { ...facts, events: ["updated", "checks"] }, checks, pack: { ...emptyPack("acme/widgets"), actions: [branching(["checks"], ["ci"])] }, roles: {} });
+    const woken = evaluateActions({ facts: { ...facts, events: ["updated", "checks"] }, checks, pack: { ...emptyPack("acme/widgets"), actions: [branching(["checks"], ["ci-green"])] }, roles: {} });
     expect(woken.map((a) => a.branch)).toEqual(["yes"]);
   });
 
   test("names the checks behind the branch", () => {
-    expect(run([branching(["opened"], ["ci", "size"])])).toEqual([
-      { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", target: { body: "no" }, reason: "Size failed." },
+    expect(run([branching(["opened"], ["ci-green", "max-files-changed"])])).toEqual([
+      { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", target: { body: "no" }, reason: "Max files changed failed." },
     ]);
   });
 
   test("skips an action whose custom check is switched off", () => {
     const pack = { ...emptyPack("acme/widgets"), custom: [{ id: "custom-1", name: "Vendor", group: "code-vs-ci" as const, enabled: false, kind: "rule" as const, rule: "paths-unchanged" as const, globs: ["vendor/**"] }], actions: [branching(["opened"], ["custom-1"])] };
     const { checks: ran } = deriveState(facts, undefined, pack);
-    expect(evaluateActions({ facts, checks: ran, pack, roles: {} })).toEqual([{ id: "a", skipped: true, reason: "Vendor is off in this pack." }]);
+    expect(evaluateActions({ facts, checks: ran, pack, roles: {} })).toEqual([{ id: "a", skipped: true, reason: "Vendor is off in this policy." }]);
   });
 
   test("skips an action whose check is off in the pack", () => {
-    expect(run([branching(["opened"], ["ci", "docs"])])).toEqual([{ id: "a", skipped: true, reason: "Docs is off in this pack." }]);
+    expect(run([branching(["opened"], ["ci-green", "docs"])])).toEqual([{ id: "a", skipped: true, reason: "Docs is off in this policy." }]);
   });
 
   test.each<[string, Do, unknown[]]>([
@@ -108,7 +108,7 @@ describe("evaluateActions", () => {
     const effectId = expect.any(String);
     expect(run([always(dos)], { leads: { users: ["dave", "octocat"], teams: ["@acme/core"] } })).toEqual([
       { ...base, index: 0, effectId, kind: "request-review", target: { users: ["dave"], teams: ["core"] }, reason: "Always applies." },
-      { ...base, index: 1, kind: "request-review", skipped: true, reason: "Role ghost is not defined in the repository policy." },
+      { ...base, index: 1, kind: "request-review", skipped: true, reason: "Role ghost is not defined in the repository settings." },
       { ...base, index: 2, kind: "request-review", skipped: true, reason: "No reviewer is left once the author is excluded." },
       { ...base, index: 3, effectId, kind: "assign", target: { users: ["octocat"] }, reason: "Always applies." },
       { ...base, index: 4, kind: "assign", skipped: true, reason: "Assignees must be users and this target names none." },

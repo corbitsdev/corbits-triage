@@ -45,10 +45,12 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
     await verdicts.record(TENANT, [
       verdict("run_1", "aaa", 0, failing),
       verdict("run_2", "aaa", 5, failing),
-      verdict("run_3", "bbb", 10, [{ check: "ci", result: "fail" }], { degraded: "error", state: "stale-unknown", actor: "system" }),
-      verdict("run_4", "ccc", 20, [{ check: "ci", result: "pass" }, { check: "linked", result: "unconfirmed" }], { settled: false }),
-      verdict("run_5", "ccc", 30, [{ check: "ci", result: "pass" }, { check: "linked", result: "pass" }], { state: "ready-monitoring", actor: "author" }),
+      verdict("run_3", "bbb", 10, [{ check: "ci-green", result: "fail" }], { degraded: "error", state: "stale-unknown", actor: "system" }),
+      verdict("run_4", "ccc", 20, [{ check: "ci-green", result: "pass" }, { check: "linked", result: "unconfirmed" }], { settled: false }),
+      verdict("run_5", "ccc", 30, [{ check: "ci-green", result: "pass" }, { check: "linked", result: "pass" }], { state: "ready-monitoring", actor: "author" }),
       verdict("run_6", "ddd", 40, [], { repo: "acme/gadgets" }),
+      verdict("run_8", "fff", 60, [{ check: "size", result: "fail" }], { number: 9, detail: { checks: [{ check: "size", kind: "machine", result: "fail", evidence: ["40 files (max 30)"] }] } }),
+      verdict("run_9", "ggg", 70, [{ check: "max-files-changed", result: "pass" }, { check: "max-lines-changed", result: "pass" }], { number: 9 }),
     ]);
     await verdicts.record(OTHER_TENANT, [verdict("run_7", "eee", 50, [])]);
 
@@ -66,13 +68,17 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
       entries: [
         { ...judged, at: minutes(0).toISOString(), runId: "run_1", headSha: "aaa", readiness: 25, changed: [] },
         { at: minutes(10).toISOString(), runId: "run_3", headSha: "bbb", state: "stale-unknown", actor: "system", settled: true, degraded: "error", readiness: null, changed: [] },
-        { ...judged, at: minutes(20).toISOString(), runId: "run_4", headSha: "ccc", settled: false, readiness: 75, changed: [{ check: "ci", from: "fail", to: "pass" }] },
+        { ...judged, at: minutes(20).toISOString(), runId: "run_4", headSha: "ccc", settled: false, readiness: 75, changed: [{ check: "ci-green", from: "fail", to: "pass" }] },
         {
           ...judged, at: minutes(30).toISOString(), runId: "run_5", headSha: "ccc", state: "ready-monitoring", actor: "author", readiness: 100,
           changed: [{ check: "linked", from: "unconfirmed", to: "pass" }],
         },
       ],
     });
+
+    // An old size row compares as the limit its evidence names.
+    const resized = TriageTimeline.assert(await (await get(`repo=${REPO}&number=9`)).json());
+    expect(resized.entries.map((entry) => entry.changed)).toEqual([[], [{ check: "max-files-changed", from: "fail", to: "pass" }, { check: "max-lines-changed", from: null, to: "pass" }]]);
 
     expect((await get(`repo=${REPO}&number=0`)).status).toBe(400);
     expect((await get(`repo=${REPO}&number=2147483648`)).status).toBe(400);

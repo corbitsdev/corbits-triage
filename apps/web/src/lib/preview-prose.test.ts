@@ -21,7 +21,7 @@ function preview(actions: PreviewAction[]): PullPreview {
     judge: "not-run",
     verdict: { state: "needs-human", priority: "p2", labels: [], owner: "", humanGated: true, confidence: "unknown", degraded: null, reason: "needs the judge", nextAction: "", actor: "maintainer", feedback: "Thanks!\n\nPlease add tests." },
     checks: [
-      { check: "size", name: "Size", kind: "machine", result: "pass", reason: "", evidence: [], output: { kind: "values", values: { files: 33, lines: 2104 } } },
+      { check: "max-files-changed", name: "Max files changed", kind: "machine", result: "pass", reason: "", evidence: [], output: { kind: "values", values: { files: 33 } } },
       { check: "custom-1", name: "No vendor changes", kind: "machine", result: "fail", reason: "", evidence: [], output: { kind: "values", values: { holds: false } } },
       { check: "custom-2", name: "Clear intent", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [], output: { kind: "could-not-check", reason: "needs the judge" } },
     ],
@@ -58,14 +58,14 @@ test.each<[string, PreviewAction[], Pick<ReturnType<typeof previewProse>, "actio
   ],
   [
     "skipped",
-    [{ id: "action-4", status: "skipped", reason: "Size is off in this pack." }],
-    { actions: [{ id: "action-4", label: "Action 4", status: "skipped", reason: "Size is off in this pack." }], notWoken: null },
+    [{ id: "action-4", status: "skipped", reason: "Max files changed is off in this policy." }],
+    { actions: [{ id: "action-4", label: "Action 4", status: "skipped", reason: "Max files changed is off in this policy." }], notWoken: null },
   ],
 ])("%s actions read as the panel's prose", (_, actions, want) => {
   const prose = previewProse(preview(actions), pack);
   expect({ actions: prose.actions, notWoken: prose.notWoken }).toEqual(want);
   expect(prose.checks).toEqual([
-    { result: "pass", label: "Passed", names: ["Size (33 files, 2,104 lines)"] },
+    { result: "pass", label: "Passed", names: ["Max files changed (33 files)"] },
     { result: "fail", label: "Failed", names: ["No vendor changes (does not hold)"] },
     { result: "needs-judge", label: "Needs the judge", names: ["Clear intent"] },
   ]);

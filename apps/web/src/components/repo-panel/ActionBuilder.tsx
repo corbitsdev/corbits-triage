@@ -46,8 +46,8 @@ export default function ActionBuilder({ action, draft, stats, disabled, edit, on
 
   function addCheck(check: CustomCheck) {
     edit((current) => upsertCustom(current, check));
-    set({ checks: [...form.checks, check.id as CheckRef] });
-    setCreated([...created, check.id as CheckRef]);
+    set({ checks: [...form.checks, check.id] });
+    setCreated([...created, check.id]);
     setCreating(false);
   }
 
@@ -81,7 +81,7 @@ export default function ActionBuilder({ action, draft, stats, disabled, edit, on
     <div className="builder" role="group" aria-label={action ? `Edit ${action.id}` : "New action"}>
       <div className="blk"><span className="bl">When</span><WhenPicker when={form.when} disabled={disabled} onChange={(when) => set({ when })} /></div>
       <div className="blk">
-        <span className="bl">Checks</span>
+        <span className="bl">Rules</span>
         <CheckPicker checks={form.checks} draft={draft} stats={stats} disabled={disabled} onChange={(checks) => set({ checks })} onNewCheck={() => setCreating(true)} />
       </div>
       {creating ? <CheckGallery draft={draft} disabled={disabled} onAdd={addCheck} onCancel={() => setCreating(false)} /> : null}

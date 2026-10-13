@@ -39,7 +39,7 @@ export function Onboarding() {
       {step === "intro" ? (
         <section className="onboarding-step" ref={stepRef}>
           <h1 tabIndex={-1}>Triage scores the pull request in front of you</h1>
-          <p>Its score, what to do next and the checks behind it, read from GitHub as you.</p>
+          <p>Its score, what to do next and the rules behind it, read from GitHub as you.</p>
           <div className="row">
             <Button onClick={next}>Get started</Button>
           </div>

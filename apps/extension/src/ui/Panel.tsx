@@ -15,7 +15,7 @@ import { useStorageItem } from "./use-storage.ts";
 
 type Screen = { kind: "main" } | { kind: "settings" } | { kind: "checks"; repo: string };
 
-const SCREEN_TITLES: Record<Screen["kind"], string | null> = { main: null, settings: "Settings", checks: "Checks" };
+const SCREEN_TITLES: Record<Screen["kind"], string | null> = { main: null, settings: "Settings", checks: "Rules" };
 
 /** The full-tab workspace, on the pull request the panel shows. */
 async function expand(pr: PrRef | undefined) {

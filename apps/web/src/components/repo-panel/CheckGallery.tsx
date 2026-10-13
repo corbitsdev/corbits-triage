@@ -33,14 +33,14 @@ export default function CheckGallery({ draft, disabled, onAdd, onCancel }: Check
   }
 
   return (
-    <div className="gallery" role="group" aria-label="New check">
+    <div className="gallery" role="group" aria-label="New rule">
       <CheckFields form={form} roles={Object.keys(draft.policy.roles)} disabled={disabled} onChange={change} />
       {touched && "reason" in built ? <p className="reason">{shownReason(built.reason, draft.pack)}</p> : null}
       <div className="pfoot">
         <button type="button" className="linkish" onClick={() => setForm(null)}>Back</button>
         <span className="sp" />
         <button type="button" className="linkish" onClick={onCancel}>Cancel</button>
-        <Button type="button" variant="outline" size="sm" disabled={disabled || (touched && "reason" in built)} onClick={add}>Add check</Button>
+        <Button type="button" variant="outline" size="sm" disabled={disabled || (touched && "reason" in built)} onClick={add}>Add rule</Button>
       </div>
     </div>
   );

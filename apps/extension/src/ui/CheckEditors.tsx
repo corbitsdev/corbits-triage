@@ -6,7 +6,7 @@ import { withCatalogParams, withCustomCheck, type CustomForm } from "../pack-edi
 import { ISSUE_TRACKER_NAMES } from "../prose.ts";
 
 /** The catalog checks whose limits the pack lets a person set. */
-export const EDITABLE_CATALOG: readonly CatalogId[] = ["size", "paths", "issue"];
+export const EDITABLE_CATALOG: readonly CatalogId[] = ["max-files-changed", "max-lines-changed", "no-forbidden-paths", "linked-issue"];
 
 function linesOf(text: string): string[] {
   return text.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -66,18 +66,19 @@ export function CatalogEditor({ id, pack, onSave, onCancel }: CatalogEditorProps
 
   function params(): Partial<CatalogCheck> | string {
     switch (id) {
-      case "size": {
+      case "max-files-changed": {
         const files = wholeNumber(maxFiles, 1, "Files");
-        const lines = wholeNumber(maxLines, 1, "Lines");
-        if (typeof files === "string") return files;
-        if (typeof lines === "string") return lines;
-        return { maxFiles: files, maxLines: lines };
+        return typeof files === "string" ? files : { maxFiles: files };
       }
-      case "paths": {
+      case "max-lines-changed": {
+        const lines = wholeNumber(maxLines, 1, "Lines");
+        return typeof lines === "string" ? lines : { maxLines: lines };
+      }
+      case "no-forbidden-paths": {
         const list = linesOf(globs);
         return list.length ? { forbiddenGlobs: list } : "List at least one path.";
       }
-      case "issue":
+      case "linked-issue":
         return { tracker };
       default:
         return {};
@@ -96,18 +97,18 @@ export function CatalogEditor({ id, pack, onSave, onCancel }: CatalogEditorProps
 
   return (
     <form className="editor" ref={formRef} onSubmit={save} aria-label="Check limits">
-      {id === "size" ? (
-        <div className="field-pair">
-          <Field label="Most files">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={maxFiles} onChange={(event) => setMaxFiles(event.target.value)} />}</Field>
-          <Field label="Most changed lines">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={maxLines} onChange={(event) => setMaxLines(event.target.value)} />}</Field>
-        </div>
+      {id === "max-files-changed" ? (
+        <Field label="Most files">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={maxFiles} onChange={(event) => setMaxFiles(event.target.value)} />}</Field>
       ) : null}
-      {id === "paths" ? (
+      {id === "max-lines-changed" ? (
+        <Field label="Most changed lines">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={maxLines} onChange={(event) => setMaxLines(event.target.value)} />}</Field>
+      ) : null}
+      {id === "no-forbidden-paths" ? (
         <Field label="Paths that must not change" hint="One per line. * matches within a folder, ** across folders.">
           {(fid, hid) => <Textarea id={fid} aria-describedby={hid} className="mono" rows={3} value={globs} onChange={(event) => setGlobs(event.target.value)} />}
         </Field>
       ) : null}
-      {id === "issue" ? (
+      {id === "linked-issue" ? (
         <Field label="Issue tracker">
           {(fid) => (
             <Select id={fid} value={tracker} onChange={(event) => setTracker(event.target.value as IssueTracker)}>
@@ -152,7 +153,7 @@ function textOf(form: CustomForm | undefined, name: string): CustomText {
 
 function formOf(variant: CustomVariant, text: CustomText): CustomForm | string {
   const name = text.name.trim();
-  if (!name) return "Give the check a name.";
+  if (!name) return "Give the rule a name.";
   if (variant.kind === "model") {
     const { kind, shape } = variant;
     switch (shape) {
@@ -221,13 +222,13 @@ export function CustomEditor({ variant, pack, id, form, defaultName, onSave, onC
     const next = formOf(variant, text);
     if (typeof next === "string") return setError(next);
     const changed = withCustomCheck(pack, next, id);
-    if ("reason" in changed) return setError(changed.reason.replace(/^Custom check custom-\d+ /, ""));
+    if ("reason" in changed) return setError(changed.reason.replace(/^Custom rule \S+ /, ""));
     setError(null);
     await onSave(changed.pack, changed.id);
   }
 
   return (
-    <form className="editor" ref={formRef} onSubmit={save} aria-label={id ? "Edit check" : "New check"}>
+    <form className="editor" ref={formRef} onSubmit={save} aria-label={id ? "Edit rule" : "New rule"}>
       <Field label="Name">{(fid) => <Input id={fid} value={text.name} onChange={set("name")} />}</Field>
       {rule === "paths-unchanged" ? <Field label="Fail if any of these change" hint={GLOBS_HINT}>{(fid, hid) => <Textarea id={fid} aria-describedby={hid} className="mono" rows={3} value={text.globs} onChange={set("globs")} />}</Field> : null}
       {rule === "paths-together" ? (
@@ -243,7 +244,7 @@ export function CustomEditor({ variant, pack, id, form, defaultName, onSave, onC
       ) : null}
       {rule === "label-required" ? <Field label="Require the label">{(fid) => <Input id={fid} value={text.label} onChange={set("label")} />}</Field> : null}
       {rule === "min-approvals" ? <Field label="Require at least this many approvals">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={text.count} onChange={set("count")} />}</Field> : null}
-      {shape === "is-true" ? <Field label="Is it true that…" hint="The decision model answers yes or no; no fails the check.">{(fid, hid) => <Textarea id={fid} aria-describedby={hid} rows={2} value={text.claim} onChange={set("claim")} />}</Field> : null}
+      {shape === "is-true" ? <Field label="Is it true that…" hint="The decision model answers yes or no; no fails the rule.">{(fid, hid) => <Textarea id={fid} aria-describedby={hid} rows={2} value={text.claim} onChange={set("claim")} />}</Field> : null}
       {shape === "score" ? (
         <div className="field-pair">
           <Field label="What to score from 0 to 10">{(fid) => <Input id={fid} value={text.subject} onChange={set("subject")} />}</Field>
@@ -257,7 +258,7 @@ export function CustomEditor({ variant, pack, id, form, defaultName, onSave, onC
           {linesOf(text.options).map((option) => <Checkbox key={option} checked={text.failOn.includes(option)} onCheckedChange={failOn(option)} label={option} />)}
         </>
       ) : null}
-      <EditorFoot error={error} saveLabel={id ? "Save check" : "Add check"} onCancel={onCancel} />
+      <EditorFoot error={error} saveLabel={id ? "Save rule" : "Add rule"} onCancel={onCancel} />
     </form>
   );
 }

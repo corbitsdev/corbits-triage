@@ -178,9 +178,9 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.get(
     PACK_SCHEMA_PATH,
     describeRoute({
-      summary: "JSON Schemas of the check pack and repository policy",
+      summary: "JSON Schemas of the policy and repository settings",
       tags: TAGS,
-      responses: { 200: json("Check pack and repository policy JSON Schemas", PackSchemas) },
+      responses: { 200: json("Policy and repository settings JSON Schemas", PackSchemas) },
     }),
     function packSchema() {
       return Response.json(packSchemas);
@@ -332,15 +332,15 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.post(
     `${GITHUB_PR_PREVIEW_PATH}/:tenantId`,
     describeRoute({
-      summary: "Preview a pack on an open pull request",
-      description: "Evaluates the saved pack, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the checks it answers need it and actions on them list each branch they could take. Candidate roles apply only when the caller may manage the workspace; otherwise the saved roles are used.",
+      summary: "Preview a policy on an open pull request",
+      description: "Evaluates the saved policy, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the rules it answers need it and actions on them list each branch they could take. Candidate roles apply only when the caller may manage the workspace; otherwise the saved roles are used.",
       tags: TAGS,
       responses: {
-        200: json("Checks, verdict and each action's branch and Dos", PreviewResponse),
-        400: json("Invalid request or candidate pack", Failure),
+        200: json("Rules, verdict and each action's branch and Dos", PreviewResponse),
+        400: json("Invalid request or candidate policy", Failure),
         ...failures,
         404: json("Pull request not found", Failure),
-        409: json("GitHub, the workspace or the repository is not ready, the pack is unreadable or the pull request is not open", Failure),
+        409: json("GitHub, the workspace or the repository is not ready, the policy is unreadable or the pull request is not open", Failure),
         ...githubFailed,
       },
     }),
@@ -374,7 +374,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${TRIAGE_TIMELINE_PATH}/:tenantId`,
     describeRoute({
       summary: "Readiness history of a pull request",
-      description: "Needs `workflow-run:*` read. From the recorded verdicts only, oldest first. A verdict with the same head, settled and degraded state and check results as the one before it is left out. Each scores its checks (pass 1, unconfirmed half, fail 0, out of 100) and lists the checks whose result changed since the previous judged verdict; degraded verdicts score nothing.",
+      description: "Needs `workflow-run:*` read. From the recorded verdicts only, oldest first. A verdict with the same head, settled and degraded state and rule results as the one before it is left out. Each scores its rules (pass 1, unconfirmed half, fail 0, out of 100) and lists the rules whose result changed since the previous judged verdict; degraded verdicts score nothing.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },

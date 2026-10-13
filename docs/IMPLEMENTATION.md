@@ -81,7 +81,7 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
 - `github-tool`: the mirror write (marker-comment upsert), Dos and the sidecar
   tool bundles.
 - `github-write-tool`: build wrapper for the write bundle.
-- `triage-contracts`: check pack schema, repository policy, triage state,
+- `triage-contracts`: policy schema, repository settings, triage state,
   verdict labels, trigger mail and shared types.
 - `openai-null-delta`: inference adapter fix for null stream deltas.
 - `common`: dependency-free helpers shared across apps and packages.

@@ -1,6 +1,6 @@
 // Preview: runs the real triage logic (deriveState, the quality questions,
 // renderVerdict) on a repository's open pull requests, read live through `gh`,
-// with the recommended check pack. Questions go to System One only when
+// with the recommended policy. Questions go to System One only when
 // AI_GATEWAY_API_KEY (Vercel AI Gateway) or TYPESAFE_API_KEY is exported;
 // otherwise items that need the decision model show as unavailable.
 //

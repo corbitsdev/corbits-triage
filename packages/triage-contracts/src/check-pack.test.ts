@@ -4,6 +4,7 @@ import {
   applyRecommended,
   catalogCheckEnabled,
   checkPackSchema,
+  customRuleId,
   emptyPack,
   packMergeThreshold,
   parseCheckPack,
@@ -50,7 +51,7 @@ const ACTIONS: Action[] = [
   {
     id: "review-ready",
     when: ["opened", "ready"],
-    checks: ["ci", "custom-1"],
+    checks: ["ci-green", "custom-1"],
     branches: {
       yes: [{ kind: "request-review", target: { to: "role", role: "maintainers" } }],
       no: [
@@ -69,7 +70,7 @@ const ACTIONS: Action[] = [
 ];
 
 const COMMENT = { kind: "comment", target: { body: "Thanks!" } };
-const BASE = { id: "a", when: ["opened"], checks: ["ci"], branches: { yes: [COMMENT] } };
+const BASE = { id: "a", when: ["opened"], checks: ["ci-green"], branches: { yes: [COMMENT] } };
 
 describe("check pack contract", () => {
   test("add one catalog check; unknown ids ignored; absent keys empty", () => {
@@ -78,19 +79,19 @@ describe("check pack contract", () => {
       schemaVersion: 1,
       repo: REPO,
       checks: {
-        conflicts: { enabled: true },
+        "no-merge-conflicts": { enabled: true },
         notACheck: { enabled: true },
-        size: { enabled: false, maxFiles: 10, maxLines: 100 },
+        "max-files-changed": { enabled: false, maxFiles: 10, maxLines: 100 },
       },
     });
     expect(parsed?.checks).toEqual({
-      conflicts: { enabled: true },
-      size: { enabled: false, maxFiles: 10, maxLines: 100 },
+      "no-merge-conflicts": { enabled: true },
+      "max-files-changed": { enabled: false, maxFiles: 10 },
     });
     expect(parsed?.custom).toEqual([]);
-    expect(catalogCheckEnabled(parsed!, "conflicts")).toBe(true);
-    expect(catalogCheckEnabled(parsed!, "size")).toBe(false);
-    expect(catalogCheckEnabled(parsed!, "ci")).toBe(false);
+    expect(catalogCheckEnabled(parsed!, "no-merge-conflicts")).toBe(true);
+    expect(catalogCheckEnabled(parsed!, "max-files-changed")).toBe(false);
+    expect(catalogCheckEnabled(parsed!, "ci-green")).toBe(false);
   });
 
   test("a stored pack naming removed checks loads without them", () => {
@@ -102,16 +103,72 @@ describe("check pack contract", () => {
         reviewers: { enabled: true },
         drift: { enabled: true, maxBehindBy: 50 },
         tests: { enabled: true },
-        issue: { enabled: true, tracker: "github", requireLabel: true, label: "linked" },
+        "linked-issue": { enabled: true, tracker: "github", requireLabel: true, label: "linked" },
       },
       actions: [
-        { ...BASE, checks: ["drift", "ci", "reviewers", "tests"] },
-        { ...BASE, id: "b", checks: ["draft", "duplicate"] },
+        { ...BASE, checks: ["drift", "ci-green", "reviewers", "tests"] },
+        { ...BASE, id: "b", checks: ["not-a-draft", "duplicate"] },
         { ...BASE, id: "c", checks: ["duplicate"] },
       ],
     });
-    expect(read.checks).toEqual({ issue: { enabled: true, tracker: "github" } });
-    expect(read.actions).toEqual([{ ...BASE, checks: ["ci"] }, { ...BASE, id: "b", checks: ["draft"] }]);
+    expect(read.checks).toEqual({ "linked-issue": { enabled: true, tracker: "github" } });
+    expect(read.actions).toEqual([BASE, { ...BASE, id: "b", checks: ["not-a-draft"] }]);
+  });
+
+  test("a stored policy with the old rule ids reads as the rules that replaced them; a row under its new id wins", () => {
+    const read = readCheckPack({
+      ...emptyPack(REPO),
+      checks: {
+        size: { enabled: true, maxFiles: 20, maxLines: 500 },
+        issue: { enabled: true, tracker: "linear" },
+        conflicts: { enabled: false },
+        ci: { enabled: true },
+        "ci-green": { enabled: false },
+        paths: { enabled: true, forbiddenGlobs: ["vendor/**"] },
+      },
+      custom: CUSTOM,
+      actions: [{ ...BASE, checks: ["size", "issue", "conflicts", "ci", "paths", "draft", "custom-1"] }],
+    });
+    expect(read.checks).toEqual({
+      "max-files-changed": { enabled: true, maxFiles: 20 },
+      "max-lines-changed": { enabled: true, maxLines: 500 },
+      "linked-issue": { enabled: true, tracker: "linear" },
+      "no-merge-conflicts": { enabled: false },
+      "ci-green": { enabled: false },
+      "no-forbidden-paths": { enabled: true, forbiddenGlobs: ["vendor/**"] },
+    });
+    expect(read.custom).toEqual(CUSTOM);
+    expect(read.actions[0]!.checks).toEqual(["max-files-changed", "max-lines-changed", "linked-issue", "no-merge-conflicts", "ci-green", "no-forbidden-paths", "not-a-draft", "custom-1"]);
+    expect(readCheckPack(JSON.stringify(read))).toEqual(read);
+    expect(readCheckPack({ ...emptyPack(REPO), checks: { size: { enabled: true, maxFiles: 20 } } }).checks).toEqual({
+      "max-files-changed": { enabled: true, maxFiles: 20 },
+      "max-lines-changed": { enabled: false },
+    });
+  });
+
+  test("a custom rule's id never reads as a judge question's id", () => {
+    for (const [name, id] of [["Docs sync", "rule-docs-sync"], ["Focused slice 001", "rule-focused-slice-001-rule"], ["Config file 1", "config-file-1-rule"], ["Schema hunk", "schema-hunk-rule"], ["Lockfile", "lockfile"]]) {
+      expect(customRuleId(name!, [])).toBe(id!);
+    }
+    expect(customRuleId("Schema hunk", ["schema-hunk-rule"])).toBe("schema-hunk-rule-2");
+    for (const id of ["docs-file-001", "focused-slice-001", "ticket-file-001", "ticket-hunk-001-002", "ticket-slice-2"]) {
+      expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...CUSTOM[0]!, id }] })).toThrow(`Custom rule ${id} id must not start with docs- or focused- or end in -file, -hunk or -slice and numbers.`);
+    }
+  });
+
+  test("a custom rule's id is its name in lowercase words, numbered past taken and built-in ids", () => {
+    expect(customRuleId("Ticket in the title!", [])).toBe("ticket-in-the-title");
+    expect(customRuleId("Ticket in the title", ["ticket-in-the-title", "ticket-in-the-title-2"])).toBe("ticket-in-the-title-3");
+    expect(customRuleId("CI", [])).toBe("ci-2");
+    expect(customRuleId("Focused", [])).toBe("rule-focused");
+    expect(customRuleId("Ticket", ["ticket-4"])).toBe("ticket-5");
+    expect(customRuleId("…", [])).toBe("rule");
+    const named = { ...CUSTOM[0]!, id: customRuleId("Ticket", []) };
+    expect(readCheckPack({ ...emptyPack(REPO), custom: [named], actions: [{ ...BASE, checks: [named.id] }] }).custom).toEqual([named]);
+    expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "ci-green" }] })).toThrow("Custom rule ci-green id must not be a built-in rule's id.");
+    expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "size" }] })).toThrow("Custom rule size id must not be a built-in rule's id.");
+    expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "state" }] })).toThrow("Custom rule state id must not be a built-in rule's id.");
+    expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "Ticket" }] })).toThrow("Custom rule Ticket id must be at most 64 lowercase letters, digits and single hyphens.");
   });
 
   test("a stored pack naming removed Dos loads without them", () => {
@@ -164,23 +221,23 @@ describe("check pack contract", () => {
     const read = readCheckPack({ ...emptyPack(REPO), custom: [{ ...RULES[0], enabled: true }, { ...RULES[1], enabled: false }] });
     expect(read.custom).toEqual([RULES[0], { ...RULES[1], enabled: false }]);
     expect(checkPackSchema({ ...emptyPack(REPO), custom: [{ ...RULES[1], enabled: false }] })).not.toBeInstanceOf(type.errors);
-    expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...RULES[0], enabled: "no" }] })).toThrow("Custom check custom-1 enabled must be true or false.");
+    expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...RULES[0], enabled: "no" }] })).toThrow("Custom rule custom-1 enabled must be true or false.");
   });
 
   test("an invalid typed custom check rejects the pack with its reason", () => {
     const rejected: Array<[unknown, string]> = [
-      [{ ...RULES[2], pattern: "(" }, "Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
-      [{ ...RULES[2], pattern: "a".repeat(201) }, "Custom check custom-3 pattern must be at most 200 characters."],
-      [{ ...RULES[2], pattern: "(?<=a)b" }, "Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
-      [{ ...RULES[2], pattern: "(a)\\1" }, "Custom check custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
-      [{ ...RULES[2], rule: "title-matches" }, "Custom check custom-3 rule must be one of"],
-      [{ ...MODELS[2], options: ["small", "small "] }, "Custom check custom-3 options must not repeat a value."],
-      [{ ...MODELS[2], failOn: ["medium"] }, "Custom check custom-3 failOn must be among options."],
-      [{ ...CUSTOM[0], when: ["migrations/**"] }, "Custom check custom-1 when needs a file or hunk scope."],
-      [{ ...RULES[0], globs: ["a".repeat(201)] }, "Custom check custom-1 globs must be globs of at most 200 characters."],
-      [{ ...RULES[0], globs: Array.from({ length: 51 }, (_, i) => `dir${i}/**`) }, "Custom check custom-1 globs must list at most 50 globs."],
-      [{ ...MODELS[3], scope: "repo" }, "Custom check custom-4 scope must be one of"],
-      [{ ...MODELS[1], scope: "file" }, "Custom check custom-2 scope and when apply only to is-true checks."],
+      [{ ...RULES[2], pattern: "(" }, "Custom rule custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
+      [{ ...RULES[2], pattern: "a".repeat(201) }, "Custom rule custom-3 pattern must be at most 200 characters."],
+      [{ ...RULES[2], pattern: "(?<=a)b" }, "Custom rule custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
+      [{ ...RULES[2], pattern: "(a)\\1" }, "Custom rule custom-3 pattern must be a valid regular expression without lookaround or backreferences"],
+      [{ ...RULES[2], rule: "title-matches" }, "Custom rule custom-3 rule must be one of"],
+      [{ ...MODELS[2], options: ["small", "small "] }, "Custom rule custom-3 options must not repeat a value."],
+      [{ ...MODELS[2], failOn: ["medium"] }, "Custom rule custom-3 failOn must be among options."],
+      [{ ...CUSTOM[0], when: ["migrations/**"] }, "Custom rule custom-1 when needs a file or hunk scope."],
+      [{ ...RULES[0], globs: ["a".repeat(201)] }, "Custom rule custom-1 globs must be globs of at most 200 characters."],
+      [{ ...RULES[0], globs: Array.from({ length: 51 }, (_, i) => `dir${i}/**`) }, "Custom rule custom-1 globs must list at most 50 globs."],
+      [{ ...MODELS[3], scope: "repo" }, "Custom rule custom-4 scope must be one of"],
+      [{ ...MODELS[1], scope: "file" }, "Custom rule custom-2 scope and when apply only to is-true checks."],
     ];
     for (const [row, reason] of rejected) {
       expect(() => readCheckPack({ ...emptyPack(REPO), custom: [row] })).toThrow(reason);
@@ -194,7 +251,7 @@ describe("check pack contract", () => {
 
   test("more custom checks than the cap reject the pack", () => {
     const custom = [...RULES, ...MODELS].map((row, i) => ({ ...row, id: `custom-${i + 1}` }));
-    expect(() => readCheckPack({ ...emptyPack(REPO), custom })).toThrow("Check pack must have at most 8 custom checks.");
+    expect(() => readCheckPack({ ...emptyPack(REPO), custom })).toThrow("Policy must have at most 8 custom rules.");
   });
 
   test("a blank legacy row is dropped and cannot be referenced", () => {
@@ -249,7 +306,7 @@ describe("check pack contract", () => {
     }
     expect(() => readCheckPack({ ...emptyPack(REPO), schemaVersion: 2 })).toThrow("schemaVersion must be 1.");
     expect(() => readCheckPack({ ...emptyPack(REPO), actions: [{ ...BASE, checks: ["custom-9"] }] })).toThrow(
-      "Action a checks custom-9 must be a catalog check, the draft check or a custom check in this pack.",
+      "Action a checks custom-9 must be a built-in rule, the not-a-draft rule or a custom rule in this policy.",
     );
   });
 
@@ -268,7 +325,7 @@ describe("check pack contract", () => {
       custom: CUSTOM,
     };
     const next = applyRecommended(started);
-    expect(next.checks.size?.enabled).toBe(true);
+    expect(next.checks["max-files-changed"]?.enabled).toBe(true);
     expect(next.custom).toEqual(started.custom);
   });
 });

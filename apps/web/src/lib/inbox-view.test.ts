@@ -139,7 +139,7 @@ describe("waitsOn", () => {
 });
 
 describe("requested changes", () => {
-  const review = { check: "review", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: [], gate: false } as const;
+  const review = { check: "no-changes-requested", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: [], gate: false } as const;
   const reviewed = item({ state: "needs-author-update", comment: "", checks: [review] });
 
   const entries = (pr: PrItem): OpenItem[] => [{ item: pr, handled: null }];

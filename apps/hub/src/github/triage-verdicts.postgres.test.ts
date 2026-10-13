@@ -28,12 +28,12 @@ function minutes(n: number): Date {
   return new Date(NOW + n * 60_000);
 }
 
-const DETAIL = { priority: "P1", nextAction: "Review it", feedback: "Looks good.", evidence: ["Looks good."], checks: [{ check: "ci", kind: "machine", result: "pass" }], facts: { title: "Add widgets", mergeable: true } };
+const DETAIL = { priority: "P1", nextAction: "Review it", feedback: "Looks good.", evidence: ["Looks good."], checks: [{ check: "ci-green", kind: "machine", result: "pass" }], facts: { title: "Add widgets", mergeable: true } };
 
 function verdict(runId: string, number: number, at: number, fields: Partial<RecordedVerdict> = {}): RecordedVerdict {
   return {
     runId, repo: REPO, number, headSha: `sha_${runId}`, startedAt: minutes(at - 1), verdictAt: minutes(at), settled: true,
-    state: "awaiting-review", actor: "maintainer", humanGated: false, degraded: null, checks: [{ check: "ci", result: "pass" }], dos: [], commented: false, ...fields,
+    state: "awaiting-review", actor: "maintainer", humanGated: false, degraded: null, checks: [{ check: "ci-green", result: "pass" }], dos: [], commented: false, ...fields,
   };
 }
 
@@ -146,7 +146,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       activityAt: minutes(4).toISOString(),
       verdict: {
         runId: "run_3", at: minutes(10).toISOString(), headSha: "sha_run_3", settled: true, state: "awaiting-review", actor: "maintainer",
-        humanGated: false, degraded: null, commented: false, checks: [{ check: "ci", result: "pass" }], detail: DETAIL,
+        humanGated: false, degraded: null, commented: false, checks: [{ check: "ci-green", result: "pass" }], detail: DETAIL,
       },
       run: { runId: "run_3", startedAt: minutes(9).toISOString(), status: "failed" },
     });

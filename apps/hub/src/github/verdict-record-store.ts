@@ -40,6 +40,11 @@ export type RecordedVerdict = Omit<typeof verdictRecord.$inferInsert, "tenantId"
 
 export type PullRef = { repo: string; number: number };
 
+/** A recorded row's evidence, from the verdict's detail when it kept one. */
+export function evidenceOf(verdict: Pick<VerdictRecord, "detail">, check: string): string[] | undefined {
+  return verdict.detail?.checks?.find((row) => row.check === check)?.evidence;
+}
+
 /** How a Do a maintainer approved ended; its effect id names it on every verdict of its head that suggests it. */
 export type ApprovedDo = { repo: string; number: number; effectId: string; status: string; error?: string };
 

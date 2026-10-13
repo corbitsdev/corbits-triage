@@ -13,7 +13,7 @@ import { draftPolicy, transportRepoPackStore, type RepoPackStore } from "./repo-
 import { repoStatsQuery, useRepoStats } from "./repo-stats.ts";
 
 const REPO = "o/r";
-const ACTION: Action = { id: "small", when: "every", checks: ["size"], branches: { yes: [{ kind: "comment", target: { body: "hi" } }] } };
+const ACTION: Action = { id: "small", when: "every", checks: ["max-files-changed"], branches: { yes: [{ kind: "comment", target: { body: "hi" } }] } };
 const DRAFT = fromPack({ ...emptyPack(REPO), actions: [ACTION] }, draftPolicy(repoPolicy(undefined)));
 const STATS: TriageStats = {
   repo: REPO,
@@ -22,7 +22,7 @@ const STATS: TriageStats = {
   triaged: 5,
   verdicts: { ready: 3, blocked: 2 },
   neededYou: 2,
-  checks: { size: { pass: 3, fail: 1, unconfirmed: 0 } },
+  checks: { "max-files-changed": { pass: 3, fail: 1, unconfirmed: 0 } },
   actions: { small: { suggested: 2, executed: 1, failed: 0 } },
   comments: 4,
   medianTimeToVerdictMs: 4_320_000,

@@ -116,7 +116,7 @@ describe("facts director policy", () => {
       result: { callId: "checks:8", content: { checks: [] } },
     } as ReactorInboundEvent);
     const { items } = await rules({ reply: replies[0] }, ctx, signal);
-    expect(items[0]!.det.findings.map((finding) => finding.check)).not.toContain("draft");
+    expect(items[0]!.det.findings.map((finding) => finding.check)).not.toContain("not-a-draft");
     expect(items[0]!.facts.paths).toEqual(["src/current.ts", "legacy.ts"]);
     expect(items[0]!.facts.files).toEqual([
       {
@@ -338,8 +338,8 @@ describe("judge on a blocked pull request", () => {
   test("a coalesced run wakes an action on any event it carries, not only the latest", async () => {
     const checkPack = {
       ...emptyPack("acme/widgets"),
-      checks: { ci: { enabled: true } },
-      actions: [{ id: "greet", when: ["opened"], checks: ["ci"], branches: { yes: [{ kind: "comment", target: { body: "Welcome" } }] } }],
+      checks: { "ci-green": { enabled: true } },
+      actions: [{ id: "greet", when: ["opened"], checks: ["ci-green"], branches: { yes: [{ kind: "comment", target: { body: "Welcome" } }] } }],
     };
     const latest = { checkPack, event: "check_run", action: "completed" };
     async function actionIds(setup: Record<string, unknown>): Promise<string[]> {
@@ -375,7 +375,7 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual([]);
     expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, humanGated: false, feedback, actor: "maintainer", nextAction: "Review once marked ready" });
     expect(verdict.merge.reasons).toEqual(["Failed: pull request is a draft"]);
-    expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } });
+    expect(verdict.checks.find((c) => c.check === "not-a-draft")).toEqual({ check: "not-a-draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } });
     expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: feedback });
   });
 
@@ -395,7 +395,7 @@ describe("judge on a blocked pull request", () => {
     const files = [{ filename: "src/flag.ts", patch: "@@ -0,0 +1 @@\n+export const flag = true;" }];
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }, files));
     expect(verdict.actions).toEqual([
-      { id: "ask-leads", branch: "no", index: 0, effectId: expect.any(String), kind: "request-review", target: { users: ["dave"], teams: [] }, reason: "Focused change failed.", held: true },
+      { id: "ask-leads", branch: "no", index: 0, effectId: expect.any(String), kind: "request-review", target: { users: ["dave"], teams: [] }, reason: "Focused failed.", held: true },
     ]);
   });
 

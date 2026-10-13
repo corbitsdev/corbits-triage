@@ -23,18 +23,18 @@ const shots = resolve(import.meta.dir, "../.output/e2e");
 const quietShots = resolve(import.meta.dir, "../.output/e2e/placements");
 const owner = repo.split("/")[0]!;
 
-// Every kind of action on the size check failing, beside the default pack's comment Dos.
+// Every kind of action on the max files changed rule failing, beside the default policy's comment Dos.
 const base = defaultLocalPack(repo);
-// Size limits of one file and one line, so any pull request with more fails the size check these actions follow.
+// A limit of one file, so any pull request with more fails the rule these actions follow.
 const pack: CheckPack = {
   ...base,
-  checks: { ...base.checks, size: { enabled: true, maxFiles: 1, maxLines: 1 } },
+  checks: { ...base.checks, "max-files-changed": { enabled: true, maxFiles: 1 } },
   actions: [
     ...base.actions,
     {
       id: "too-large",
       when: "every",
-      checks: ["size"],
+      checks: ["max-files-changed"],
       branches: {
         no: [
           { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
