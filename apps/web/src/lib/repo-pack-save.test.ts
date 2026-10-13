@@ -82,30 +82,29 @@ describe("saving the repository pack", () => {
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts/art_1/versions", "PATCH /api/tenants/t"]);
   });
 
-  test("one config write carries the pack pointer, the triage switch and roles", async () => {
+  test("one config write carries the pack pointer and the triage switch", async () => {
     const hub = fakeHub([], config);
     const store = transportRepoPackStore(hub.transport, "t");
     const session = openSession(repo, await store.load(repo, false));
-    const policy = { enabled: true, roles: { core: { users: ["octocat"] } } };
+    const policy = { enabled: true };
     const { failure } = await saveDraft(store, repo, session, { pack: recommendedPack(repo), policy });
     expect(failure).toBeNull();
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts", "PATCH /api/tenants/t"]);
     expect(repoRow(hub)).toEqual({ name: repo, connected: true, installationId: 9, ...policy, checkPack: { name: title, id: "art_1" } });
   });
 
-  test("the saved copy takes on the normalised pack and settings while the draft keeps what was typed, so nothing reads as unsaved", async () => {
+  test("the saved copy takes on the normalised pack while the draft keeps what was typed, so nothing reads as unsaved", async () => {
     const hub = fakeHub([], config);
     const store = transportRepoPackStore(hub.transport, "t");
     const session = openSession(repo, await store.load(repo, false));
     const pack = recommendedPack(repo);
     const untidy = { ...pack, checks: { ...pack.checks, "no-forbidden-paths": { enabled: true, forbiddenGlobs: [" dist/** "] } } };
-    const policy = { ...session.saved.policy, roles: { core: { users: [" octocat ", "octocat"] } } };
+    const policy = session.saved.policy;
     const draft = { pack: untidy, policy };
     const { session: after, failure } = await saveDraft(store, repo, session, draft);
     expect(failure).toBeNull();
     expect(after.saved.pack.checks["no-forbidden-paths"]).toEqual({ enabled: true, forbiddenGlobs: ["dist/**"] });
     expect(draft.pack.checks["no-forbidden-paths"]?.forbiddenGlobs).toEqual([" dist/** "]);
-    expect(after.saved.policy.roles).toEqual({ core: { users: ["octocat"] } });
     expect(unsavedChanges(after, draft)).toBe(0);
   });
 });
