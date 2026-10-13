@@ -1,9 +1,6 @@
+import { asRecord } from "@corbits/common";
 import { itemText, type CheckItem, type CheckOutput } from "@corbits/triage-contracts";
 import { type HubApproval, type MergeVerdict, type PrItem } from "./hub-api.ts";
-
-function obj(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
 
 export { relativeTime } from "./duration.ts";
 
@@ -111,7 +108,7 @@ export function upperFirst(text: string): string {
 }
 
 export function approvalHeadline(approval: HubApproval): string {
-  const args = obj(approval.toolArguments);
+  const args = asRecord(approval.toolArguments) ?? {};
   const repo = typeof args.repo === "string" ? args.repo : null;
   const number = typeof args.number === "number" ? `#${args.number}` : null;
   const target = [repo, number].filter(Boolean).join("");
@@ -176,7 +173,7 @@ function formatArgEntry([key, value]: [string, unknown]): string | null {
 
 export function argsText(args: Record<string, unknown> | null | undefined): Array<[string, string]> {
   const pairs: Array<[string, string]> = [];
-  for (const [key, value] of Object.entries(obj(args))) {
+  for (const [key, value] of Object.entries(asRecord(args) ?? {})) {
     const formatted = formatArgValue(key, value);
     if (formatted !== null) pairs.push([argLabel(key), formatted]);
   }

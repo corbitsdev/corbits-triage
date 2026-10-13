@@ -1,5 +1,6 @@
 import { Fragment, useState } from "react";
 import { Button } from "@corbits/react-ui";
+import { errorText } from "@corbits/common";
 import type { HubApproval } from "../lib/hub-api.ts";
 import { approvalHeadline, argsText, relativeTime } from "../lib/triage-view.ts";
 
@@ -22,7 +23,7 @@ export function ApprovalCard({ approval, disabled, onDecide, approveLabel = "App
     try {
       await onDecide(approval.id, decision);
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const message = errorText(cause);
       setError(`Could not ${decision === "once" ? "approve" : "reject"} this request. ${message} Try again.`);
     } finally {
       setBusy(null);

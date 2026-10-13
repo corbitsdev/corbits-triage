@@ -15,6 +15,7 @@
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { checkPackName, repoPolicy, triageEventOf, type CheckPack, type RepoPolicy } from "@corbits/triage-contracts";
+import { asRecord, isRecord } from "@corbits/common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
 import { baseMoveOf, normalize, type BaseMove } from "./normalize.js";
@@ -173,10 +174,6 @@ async function resolvedPack(
 ): Promise<CheckPack | null> {
   const read = await readCheckPack(tenantId, repo);
   return read.status === "ok" ? read.pack : null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
 function installationFields(payload: Record<string, unknown>): InstallationFields | undefined {
@@ -410,8 +407,8 @@ export function createBridgeHandler(d: BridgeDeps) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       return json(400, { error: "invalid_json" });
     }
-    if (INSTALL_EVENTS.has(event) && payload && typeof payload === "object" && !Array.isArray(payload)) {
-      return handleInstallEvent(d, log, loaded, delivery, event, payload as Record<string, unknown>);
+    if (INSTALL_EVENTS.has(event) && isRecord(payload)) {
+      return handleInstallEvent(d, log, loaded, delivery, event, payload);
     }
     const moved = baseMoveOf(event, payload as Record<string, unknown>);
     if (moved) return handleBaseMove(d, log, loaded, delivery, event, moved);

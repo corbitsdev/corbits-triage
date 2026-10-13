@@ -3,7 +3,7 @@ import { type } from "arktype";
 import { APPROVE_DO_KIND, DoBranch, isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
 import { parseDoInput, type DoInput } from "@corbits/github-tool";
 import { doEffectId } from "../logic/actions.js";
-import { errorText, isRecord } from "../logic/extract.js";
+import { errorText, isRecord } from "@corbits/common";
 
 export type ApprovalOutput = { approved: false } | ({ approved: true; principalId: string } & DoInput) | { approved: true; effectId: string; refused: string };
 

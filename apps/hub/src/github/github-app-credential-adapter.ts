@@ -1,9 +1,9 @@
 import { createHash, createSign } from "node:crypto";
 import { type } from "arktype";
+import { INSTALLATION_SELECTOR_HEADER } from "@corbits/github-reads";
 
 export const DEFAULT_GITHUB_API_ORIGIN = "https://api.github.com";
 const REFRESH_MARGIN_MS = 5 * 60_000;
-export const INSTALLATION_SELECTOR_HEADER = "x-corbits-github-installation-id";
 
 const GithubAppCredential = type({
   appId: "string > 0",

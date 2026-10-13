@@ -11,6 +11,7 @@
   "main": "./src/index.ts",
   "dependencies": {
     "@corbits/triage-contracts": "workspace:*",
+    "arktype": "catalog:",
     "minimatch": "^10.2.6"
   },
   "description": "GitHub REST read helpers and types"

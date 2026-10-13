@@ -9,6 +9,7 @@ import { ACTION_KINDS, APPROVE_DO_KIND, DoBranch, repoPolicy, type ResolvedTarge
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
+import { errorText } from "@corbits/common";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { unrunnable } from "@corbits/triage-workflows/logic/execute-do";
 import { approvalRefused, failure, githubAppGrant, type PortalCredentialDeps } from "./portal-credential.js";
@@ -125,7 +126,7 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
       deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
       const unroutable = isRunTriggerUnroutable(err);
-      return failure(unroutable ? 503 : 502, unroutable ? "service_not_running" : "hub_unavailable", `Could not send the approval: ${err instanceof Error ? err.message : String(err)}. Try again.`);
+      return failure(unroutable ? 503 : 502, unroutable ? "service_not_running" : "hub_unavailable", `Could not send the approval: ${errorText(err)}. Try again.`);
     }
     deps.log({ level: "info", msg: "held_do_approved", ...logged });
     return Response.json({ status: "sent" }, { status: 202 });

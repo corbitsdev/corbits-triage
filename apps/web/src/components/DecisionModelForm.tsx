@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@corbits/react-ui";
+import { errorText } from "@corbits/common";
 import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "@corbits/triage-contracts";
 import { usePortal } from "../lib/portal.tsx";
 
@@ -31,7 +32,7 @@ export function DecisionModelForm() {
       });
       setApiKey("");
     } catch (cause) {
-      setError(`Could not save the decision model. ${cause instanceof Error ? cause.message : String(cause)}`);
+      setError(`Could not save the decision model. ${errorText(cause)}`);
     } finally {
       setSaving(false);
     }

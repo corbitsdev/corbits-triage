@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Switch } from "@corbits/react-ui";
-import { errorText } from "../../lib/error-text.ts";
+import { errorText } from "@corbits/common";
 import type { DraftPolicy } from "../../lib/pack-draft.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import type { RepoPack } from "../../lib/repo-pack.ts";

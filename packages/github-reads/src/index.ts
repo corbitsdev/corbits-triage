@@ -1,9 +1,12 @@
+import { type } from "arktype";
 import { minimatch } from "minimatch";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
 
 /** Authenticated fetch pinned to the GitHub API origin; takes a path. */
 export type GithubFetch = (path: string, init?: RequestInit) => Promise<Response>;
+
+export const INSTALLATION_SELECTOR_HEADER = "x-corbits-github-installation-id";
 
 export const TRIAGE_COMMENT_MARKER = "<!-- corbits-triage -->";
 // Also matches the earlier per-head `<!-- corbits-triage:repo#n@sha -->` marker, so those comments are edited rather than duplicated.
@@ -49,11 +52,21 @@ export async function jsonAll<T = unknown>(gh: GithubFetch, path: string, { init
   return rows;
 }
 
+// Enterprise accounts carry a slug instead of a login.
+const Installation = type({
+  id: "number.integer > 0",
+  account: type({ "login?": "string", "slug?": "string" }).or("null"),
+  html_url: "string",
+  repository_selection: "'all' | 'selected'",
+  suspended_at: "string | null",
+});
+
 export type GithubInstallation = {
   id: number;
-  account: string;
+  account: string | undefined;
   htmlUrl: string;
   selection: "all" | "selected";
+  suspended: boolean;
 };
 
 export async function getApp(gh: GithubFetch): Promise<{ slug: string }> {
@@ -63,21 +76,20 @@ export async function getApp(gh: GithubFetch): Promise<{ slug: string }> {
 }
 
 export async function listInstallations(gh: GithubFetch): Promise<GithubInstallation[]> {
-  const rows = await jsonAll<Record<string, unknown>>(gh, "/app/installations?per_page=100");
-  return rows.map((row) => {
-    const account = row.account as Record<string, unknown> | undefined;
-    if (!Number.isSafeInteger(row.id) || typeof account?.login !== "string" || typeof row.html_url !== "string" ||
-      (row.repository_selection !== "all" && row.repository_selection !== "selected")) {
-      throw new Error("github returned an invalid installation");
-    }
-    return { id: row.id as number, account: account.login, htmlUrl: row.html_url, selection: row.repository_selection };
-  });
+  const rows = Installation.array().assert(await jsonAll(gh, "/app/installations?per_page=100"));
+  return rows.map((row) => ({
+    id: row.id,
+    account: row.account?.login ?? row.account?.slug,
+    htmlUrl: row.html_url,
+    selection: row.repository_selection,
+    suspended: row.suspended_at !== null,
+  }));
 }
 
 export async function listInstallationRepositories(gh: GithubFetch, installationId: number): Promise<string[]> {
   if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new Error("installationId must be a positive integer");
   const repositories = await jsonAll(gh, "/installation/repositories?per_page=100", {
-    init: { headers: { "x-corbits-github-installation-id": String(installationId) } },
+    init: { headers: { [INSTALLATION_SELECTOR_HEADER]: String(installationId) } },
     items: (page) => (page as { repositories?: Array<{ full_name?: unknown }> } | null)?.repositories as Array<{ full_name?: unknown }>,
   });
   return repositories.map((repository) => {

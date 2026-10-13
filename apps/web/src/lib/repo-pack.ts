@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { errorText } from "@corbits/common";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { emptyPack, repoPolicy } from "@corbits/triage-contracts";
 import { writeCheckPack } from "./check-pack.ts";
@@ -10,10 +11,6 @@ import { shownReason } from "./pack-prose.ts";
 import { usePortal, useSignOutWhenRejected } from "./portal.tsx";
 import { openSession, saveDraft, type PackSession } from "./repo-pack-save.ts";
 import { draftPolicy, packArtifact, transportRepoPackStore, type RepoPackStore } from "./repo-pack-store.ts";
-
-function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
 
 /** The hub store, reading packs through the query cache the repositories table shares. */
 function hubRepoPackStore(queryClient: QueryClient, tenantId: string): RepoPackStore {
@@ -100,7 +97,7 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
       } catch (cause) {
         if (cancelled) return;
         signOutWhenRejected(cause);
-        setError(`Could not load the check pack. ${messageOf(cause)}`);
+        setError(`Could not load the check pack. ${errorText(cause)}`);
         setStatus("failed");
       }
     }
@@ -114,7 +111,7 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
     try {
       await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
     } catch (cause) {
-      setError(`Triage enabled. Could not start triage of open pull requests. ${messageOf(cause)}`);
+      setError(`Triage enabled. Could not start triage of open pull requests. ${errorText(cause)}`);
     }
   }
 
@@ -139,7 +136,7 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
       await refreshNow();
     } catch (cause) {
       signOutWhenRejected(cause);
-      setError(`Saved, but could not refresh. ${messageOf(cause)}`);
+      setError(`Saved, but could not refresh. ${errorText(cause)}`);
     }
   }
 

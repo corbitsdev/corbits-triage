@@ -1,3 +1,5 @@
+import { asRecord } from "@corbits/common";
+
 export const TRIAGE_STATE_KIND = "corbits.triage.state";
 export const TRIAGE_STATE_SCHEMA_VERSION = 1;
 
@@ -39,10 +41,6 @@ const STATUS_SET = new Set<string>(PR_TRIAGE_STATUSES);
 
 export function triageStateName(repo: string): string {
   return `triage-state/${repo}`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
 function optionalString(value: unknown): string | undefined {

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@intx/hub-client";
+import { errorText } from "@corbits/common";
 import type { InviteSent } from "@corbits/triage-contracts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { createInvitation, inviteRoles, listInvited, resendInvitation, withdrawInvitation, type HubPrincipal } from "../lib/hub-api.ts";
@@ -10,10 +11,6 @@ import { INVITATIONS_QUERY_KEY, usePortal, useSignOutWhenRejected } from "../lib
 import { useRoles } from "../lib/tenant-entities.ts";
 
 const DEFAULT_ROLE = "member";
-
-function message(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
 
 function roleLabel(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
@@ -58,7 +55,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
     try {
       await run();
     } catch (cause: unknown) {
-      setError(message(cause));
+      setError(errorText(cause));
     } finally {
       setPending(null);
       refresh();
@@ -85,7 +82,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
       await navigator.clipboard.writeText(shown.url);
       notify(`Link for ${shown.email} copied.`);
     } catch (cause: unknown) {
-      setError(`Could not copy the link. ${message(cause)}`);
+      setError(`Could not copy the link. ${errorText(cause)}`);
     }
   }
 

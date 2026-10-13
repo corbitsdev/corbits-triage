@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { errorText } from "@corbits/common";
 import { getHubSession, signInHub, signOutHub, signUpHub, type HubUser } from "./hub-auth.ts";
 import { hubConfigured } from "./hub-origin.ts";
 import { announceSignOut, onSignOutElsewhere } from "./sign-out-channel.ts";
@@ -37,7 +38,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const value = await getHubSession();
         if (!cancelled) setSession(value?.user ?? null);
       } catch (cause: unknown) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+        if (!cancelled) setError(errorText(cause));
       } finally {
         if (!cancelled) setReady(true);
       }

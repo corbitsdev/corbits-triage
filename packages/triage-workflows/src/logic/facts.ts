@@ -3,7 +3,7 @@ import { authorAssociation, authorKindOf, teamSlug, tierOf, type CheckPack, type
 import type { RulesItem } from "../actions/rules.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
-import { isRecord } from "./extract.js";
+import { isRecord } from "@corbits/common";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";
 
 export type RepoDocs = Required<Pick<PrFacts, "docs" | "rules">>;

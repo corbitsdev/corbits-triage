@@ -1,4 +1,5 @@
-import { isRecord, parseJsonText } from "./extract.js";
+import { isRecord } from "@corbits/common";
+import { parseJsonText } from "./extract.js";
 
 /** A step() output is `{ reply, turn }` with the JSON in `reply`; an action output is the object itself. */
 export function stepJson(output: unknown): Record<string, unknown> | undefined {

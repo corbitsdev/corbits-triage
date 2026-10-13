@@ -66,6 +66,7 @@ import { hexEncode } from "@intx/types";
 import { MAX_SIDECAR_FRAME_BYTES } from "@intx/types/sidecar";
 import { upgradeWebSocket, websocket } from "hono/bun";
 import { setup, getLogger } from "@intx/log";
+import { errorText } from "@corbits/common";
 import type { DatabaseConfig, InterchangeSettings } from "./env.js";
 import { createHubAuth, type HubAuthConfig } from "./auth.js";
 
@@ -369,7 +370,7 @@ export async function createInterchangeHub({
       log.error("Failed to handle the disconnect of allocation {allocationId} generation {generation}: {error}", {
         allocationId: target.allocationId,
         generation: target.generation,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorText(err),
       });
     }
   }

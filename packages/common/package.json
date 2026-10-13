@@ -1,0 +1,13 @@
+{
+  "name": "@corbits/common",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "module": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "main": "./src/index.ts",
+  "description": "Helpers shared across Corbits Triage packages"
+}

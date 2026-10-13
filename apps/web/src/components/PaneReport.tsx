@@ -2,12 +2,12 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
 import { Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
-import { BUILT_IN_CHECK_NAMES, type CheckPack } from "@corbits/triage-contracts";
+import { BUILT_IN_CHECK_NAMES, isCatalogId, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
-import { errorText } from "../lib/error-text.ts";
+import { errorText } from "@corbits/common";
 import { linearIssues } from "../lib/linked-issue.ts";
-import { checkLabel, isCatalogId } from "../lib/pack-prose.ts";
+import { checkLabel } from "../lib/pack-prose.ts";
 import { passedChecks, type PaneStatus, type Problem, type Severity } from "../lib/pane-report.ts";
 import { checkMeasuredText, prHref } from "../lib/triage-view.ts";
 import { CitedEvidence } from "./CitedEvidence.tsx";

@@ -4,6 +4,7 @@
 import { type } from "arktype";
 import { TriageStats } from "@corbits/triage-contracts";
 import { failure } from "./portal-credential.js";
+import { runKey } from "./reconcile-plan.js";
 import type { Member } from "../integrations/app.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 
@@ -26,13 +27,9 @@ export type TriageStatsDeps = {
 
 const EXECUTED = new Set(["done", "satisfied"]);
 
-function headKey(verdict: VerdictRecord): string {
-  return `${verdict.number}@${verdict.headSha}`;
-}
-
 /** The newest verdict of each head; `verdicts` is oldest first. */
 function latestPerHead(verdicts: readonly VerdictRecord[]): VerdictRecord[] {
-  return [...new Map(verdicts.map((verdict) => [headKey(verdict), verdict])).values()];
+  return [...new Map(verdicts.map((verdict) => [runKey(verdict.number, verdict.headSha), verdict])).values()];
 }
 
 function median(values: number[]): number | null {
