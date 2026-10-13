@@ -1,4 +1,4 @@
-import { skipToken, useIsFetching, useQuery } from "@tanstack/react-query";
+import { skipToken, useIsFetching, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiError, type Transport } from "@intx/hub-client";
 import {
   evaluateAccess,
@@ -100,12 +100,12 @@ export function useDeployedWorkflows(): TenantSection<DeployedWorkflow> {
   return useTenantSection(DEPLOYED_WORKFLOWS_QUERY_KEY, listDeployedWorkflows, DIRECTORY_REFRESH_MS);
 }
 
-/** Whether the signed-in member may do `action` on `resource`; false until the hub answers. */
-export function useAllowed(resource: string, action: string): boolean {
+/** The hub's answer to whether the signed-in member may do `action` on `resource`. */
+export function useAccess(resource: string, action: string): UseQueryResult<boolean> {
   const { snapshot } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
   const workspace = snapshot?.workspace;
-  const query = useQuery({
+  return useQuery({
     queryKey: [ALLOWED_QUERY_KEY, workspace?.tenantId, workspace?.principalId, resource, action],
     queryFn: workspace === undefined ? skipToken : async function readAllowed() {
       try {
@@ -117,5 +117,9 @@ export function useAllowed(resource: string, action: string): boolean {
     },
     staleTime: DIRECTORY_REFRESH_MS,
   });
-  return query.data === true;
+}
+
+/** Whether the signed-in member may do `action` on `resource`; false until the hub answers. */
+export function useAllowed(resource: string, action: string): boolean {
+  return useAccess(resource, action).data === true;
 }
