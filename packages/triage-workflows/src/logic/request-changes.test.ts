@@ -60,7 +60,7 @@ async function reviewFacts(rows: unknown[]): Promise<Partial<PrFacts>> {
   const reviews = await getReviews(gh, "acme/widgets", 8, async function login() {
     return APP;
   });
-  const { changesRequested, reviewAnswered, triageRequested } = buildFacts("acme/widgets", 8, { author: "octocat", branch: "a", sha: "def" }, [], reviews, [], [], DEFAULT_REPO_POLICY);
+  const { changesRequested, reviewAnswered, triageRequested } = buildFacts("acme/widgets", 8, { author: "octocat", branch: "a", sha: "def" }, [], reviews, [], DEFAULT_REPO_POLICY);
   return { changesRequested, reviewAnswered, triageRequested };
 }
 
