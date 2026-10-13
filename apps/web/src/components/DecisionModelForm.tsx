@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Button } from "@corbits/react-ui";
 import { DECISION_MODEL_PRESETS, presetFor, type DecisionModelPreset } from "../lib/decision-models.ts";
 import { usePortal } from "../lib/portal.tsx";
 
@@ -53,6 +54,6 @@ export function DecisionModelForm() {
     </>}
     <label>{preset.keyLabel}<input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} disabled={disabled} autoComplete="off" /><small>Stored in the hub's credential vault. You won't see it again.</small></label>
     {error && <p role="alert" className="error">{error}</p>}
-    <div className="task-actions"><button type="submit" className="btn primary" disabled={disabled || !apiKey.trim() || (custom && (!endpoint.trim() || !model.trim()))}>{saving ? "Saving…" : "Save decision model"}</button></div>
+    <div className="task-actions"><Button type="submit" disabled={disabled || !apiKey.trim() || (custom && (!endpoint.trim() || !model.trim()))}>{saving ? "Saving…" : "Save decision model"}</Button></div>
   </form>;
 }

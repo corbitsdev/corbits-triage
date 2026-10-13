@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { StatGrid, StatGridItem } from "@corbits/react-ui";
+import { StatGrid, StatGridItem, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
 import { useQuery } from "@tanstack/react-query";
 import type { PrItem } from "../lib/hub-api.ts";
 import { titleText } from "../lib/inbox-pane.ts";
@@ -90,17 +90,17 @@ function Stuck({ stuck }: { stuck: PrItem[] }) {
 function RepoWeek({ store, repo }: { store: RepoPackStore | null; repo: string }) {
   const { data: stats, isError } = useQuery(repoStatsQuery(store, repo, WEEK_DAYS));
   return (
-    <tr>
-      <th scope="row">{repo}</th>
+    <TableRow>
+      <TableHead scope="row">{repo}</TableHead>
       {stats ? (
         <>
-          <td>{stats.triaged}</td>
-          <td>{stats.neededYou}</td>
-          <td>{actedOn(stats)}</td>
-          <td>{medianText(stats.medianTimeToVerdictMs)}</td>
+          <TableCell>{stats.triaged}</TableCell>
+          <TableCell>{stats.neededYou}</TableCell>
+          <TableCell>{actedOn(stats)}</TableCell>
+          <TableCell>{medianText(stats.medianTimeToVerdictMs)}</TableCell>
         </>
-      ) : <td colSpan={4} className="note">{isError ? "Could not load this repository's numbers." : "Loading…"}</td>}
-    </tr>
+      ) : <TableCell colSpan={4} className="note">{isError ? "Could not load this repository's numbers." : "Loading…"}</TableCell>}
+    </TableRow>
   );
 }
 
@@ -112,14 +112,12 @@ function ThisWeek() {
     <section aria-labelledby="pulse-week">
       <h2 id="pulse-week">This week, per repository</h2>
       {repos.length === 0 ? <p className="empty-line">No repository has triage on.</p> : (
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr><th scope="col">Repository</th><th scope="col">Triaged</th><th scope="col">Needed you</th><th scope="col">Acted on</th><th scope="col">Median to verdict</th></tr>
-            </thead>
-            <tbody>{repos.map((repo) => <RepoWeek key={repo} store={store} repo={repo} />)}</tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow><TableHead scope="col">Repository</TableHead><TableHead scope="col">Triaged</TableHead><TableHead scope="col">Needed you</TableHead><TableHead scope="col">Acted on</TableHead><TableHead scope="col">Median to verdict</TableHead></TableRow>
+          </TableHeader>
+          <TableBody>{repos.map((repo) => <RepoWeek key={repo} store={store} repo={repo} />)}</TableBody>
+        </Table>
       )}
     </section>
   );

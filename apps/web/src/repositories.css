@@ -2,7 +2,7 @@
 .repos { min-width: 0; min-height: 0; padding: 12px 12px 12px 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .repos .panel.rl { container: rl / inline-size; gap: 0; }
 .repos .lh-top .sp { flex: 1; }
-.repos .lh-top .btn { align-self: center; }
+.repos .lh-top [data-slot="button"] { align-self: center; }
 .repos .rt { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: auto; }
 .repos .rt th { font-size: 12px; font-weight: 700; text-align: left; padding: 12px 10px 8px; border-bottom: 1px solid var(--rule); white-space: nowrap; position: sticky; top: 0; background: var(--white); }
 .repos .rt td { padding: 0 10px; height: 44px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
@@ -33,10 +33,7 @@
 .repos .rp .ph { display: grid; gap: 8px; }
 .repos .rp .crumb { display: flex; gap: 4px; align-items: center; min-width: 0; }
 .repos .rp .crumb .sp { flex: 1; }
-.repos .rp .crumb .btn { flex: none; }
 .repos .rp .rp-t { font-size: 22px; font-weight: 700; line-height: 1.2; margin: 0; letter-spacing: -0.015em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none; }
-.repos .btn-sm { min-height: 0; }
-.repos .btn.icon { width: 30px; padding: 0; }
 /* Every item leads with its separator and the row starts one separator early, so a wrapped line never starts with one. */
 .repos .byline { display: flex; flex-wrap: wrap; align-items: center; margin-left: -17px; clip-path: inset(0 0 0 17px); font-size: 13px; }
 .repos .byline > * { display: inline-flex; align-items: center; white-space: nowrap; }
@@ -89,7 +86,6 @@
 .repos .act { border-bottom: 1px solid var(--rule); }
 .repos .act > .sentence { border-bottom: 0; align-items: flex-start; }
 .repos .prose { flex: 1; min-width: 0; margin: 0; line-height: 1.6; white-space: normal; overflow-wrap: anywhere; }
-.repos .act .btn { flex: none; }
 .repos .rp .reason { margin: 4px 0 8px; font-size: 13px; font-weight: 600; }
 .repos .rp .hint { margin: 0; font-size: 12px; }
 .repos .rp .strip { margin-top: 28px; }

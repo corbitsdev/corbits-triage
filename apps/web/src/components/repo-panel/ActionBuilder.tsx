@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@corbits/react-ui";
 import type { Action, ActionCheckRef, CheckRef, CustomCheck } from "@corbits/triage-contracts";
 import { actionFormOf, buildAction, type ActionForm } from "../../lib/action-builder.ts";
 import type { TriageStats } from "../../lib/hub-api.ts";
@@ -90,7 +91,7 @@ export default function ActionBuilder({ action, draft, stats, disabled, edit, on
       ))}
       {touched && "reason" in built ? <p className="reason">{shownReason(built.reason, draft.pack)}</p> : null}
       <div className="bfoot">
-        <button type="button" className="btn btn-sm" disabled={disabled || (touched && "reason" in built)} onClick={done}>{action ? "Save action" : "Add action"}</button>
+        <Button type="button" variant="outline" size="sm" disabled={disabled || (touched && "reason" in built)} onClick={done}>{action ? "Save action" : "Add action"}</Button>
         <button type="button" className="linkish" onClick={cancel}>Cancel</button>
         {onRemove ? <span className="end"><button type="button" className="linkish" disabled={disabled} onClick={remove}>Remove action</button></span> : null}
       </div>

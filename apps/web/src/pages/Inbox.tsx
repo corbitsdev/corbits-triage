@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { Badge, EmptyState, type BadgeTone } from "@corbits/react-ui";
+import { Badge, Button, EmptyState, type BadgeTone } from "@corbits/react-ui";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { AuthorKind } from "@corbits/triage-contracts";
 import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
@@ -198,7 +198,7 @@ function FeedbackEditor({ item, draft, replyRef, onChange, onKeyDown, onCancel }
         {draft.edited ? <span className="tag" style={{ margin: 0 }}>Edited</span> : null}
         <span className="sp" />
         {item.labels.length > 0 ? <span>Labels {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)}</span> : null}
-        <button type="button" className="btn btn-quiet btn-sm" onClick={onCancel}>Done</button>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>Done</Button>
       </div>
     </div>
   );
@@ -224,8 +224,8 @@ function ComposerForm({ composer, busy, readOnly, onChange, onCancel, onSubmit }
         aria-label={copy.label}
       />
       <div className="foot">
-        <button type="submit" className="btn btn-sm" disabled={busy || readOnly}>{copy.submit}</button>
-        <button type="button" className="btn btn-quiet btn-sm" disabled={busy} onClick={onCancel}>Cancel</button>
+        <Button type="submit" variant="outline" size="sm" disabled={busy || readOnly}>{copy.submit}</Button>
+        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCancel}>Cancel</Button>
       </div>
     </form>
   );
@@ -273,15 +273,15 @@ function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo, o
   return (
     <div className="bar bar3">
       {primary === null ? null : (
-        <button type="button" className="btn btn-primary" disabled={primary.blocker !== null} onClick={() => onRun(primary.kind)}>
+        <Button type="button" disabled={primary.blocker !== null} onClick={() => onRun(primary.kind)}>
           {primary.kind === "reply" && draft?.edited ? "Send edited feedback" : primary.label}
           {primary.detail === null ? null : <span className="det">{primary.detail}</span>}
-        </button>
+        </Button>
       )}
-      {secondary.map((entry, index) => <button key={entry.kind} type="button" className={index === 1 ? "btn btn-quiet sec2" : "btn btn-quiet"} onClick={() => onRun(entry.kind)}>{entry.label}</button>)}
+      {secondary.map((entry, index) => <Button key={entry.kind} type="button" variant="ghost" className={index === 1 ? "sec2" : undefined} onClick={() => onRun(entry.kind)}>{entry.label}</Button>)}
       <span className="sp" />
       <div className="menu-wrap" ref={menuRef}>
-        <button type="button" className="btn btn-quiet" aria-haspopup="menu" aria-expanded={menu} disabled={running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>
+        <Button type="button" variant="ghost" aria-haspopup="menu" aria-expanded={menu} disabled={running} onClick={() => setMenu(!menu)}>More <DownIcon /></Button>
         {menu ? (
           <div className="menu up" role="menu">
             {narrowOnly === undefined ? null : <button type="button" role="menuitem" className="m-only" onClick={() => choose(() => onRun(narrowOnly.kind))}>{narrowOnly.label}</button>}
@@ -410,7 +410,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
 
   return (
     <section ref={sectionRef} className="panel pane" aria-label="Selected pull request" tabIndex={-1}>
-      <button type="button" className="btn btn-quiet btn-sm pane-back" onClick={onBack}>Back to {listTitle}</button>
+      <Button type="button" variant="ghost" size="sm" className="pane-back" onClick={onBack}>Back to {listTitle}</Button>
       <div className="scroll">
         <div className="pane-in r3">
           <header className="ph">
@@ -418,7 +418,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
               <Link className="mono repo-link" to={`/repositories/${item.repo}`} title="Repository settings">{item.repo}</Link>
               {item.number === null ? null : <span className="mono">#{item.number}</span>}
               <span className="sp" />
-              {github === null ? null : <a className="btn btn-quiet btn-sm" href={github} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a>}
+              {github === null ? null : <Button asChild variant="ghost" size="sm"><a href={github} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a></Button>}
             </div>
             <h2 className="title">{titleText(facts.title)}</h2>
             <Byline item={item} author={facts.author} detail={pull.data} />
@@ -471,10 +471,10 @@ function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyL
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
   if (noRepos) {
-    return <div className="zero"><h2>No repositories yet</h2><p>Choose the repositories Triage should read.</p><Link className="btn btn-sm" to="/repositories">Choose repositories on GitHub</Link></div>;
+    return <div className="zero"><h2>No repositories yet</h2><p>Choose the repositories Triage should read.</p><Button asChild variant="outline" size="sm"><Link to="/repositories">Choose repositories on GitHub</Link></Button></div>;
   }
   if (filtered) {
-    return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><button type="button" className="btn btn-sm" onClick={onClear}>Clear filters</button></div>;
+    return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><Button type="button" variant="outline" size="sm" onClick={onClear}>Clear filters</Button></div>;
   }
   if (view === "all-open") return <NoneOpen title="No open pull requests" />;
   if (view === "first-timers") return <NoneOpen title="No first-timers" />;

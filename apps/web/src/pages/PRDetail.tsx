@@ -1,4 +1,6 @@
-import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { Badge, Button } from "@corbits/react-ui";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, GitCommitVertical, Info, MessageSquare, type LucideIcon } from "lucide-react";
@@ -38,7 +40,7 @@ function IssueList({ issues, pending, error }: { issues: GithubPullDetail["issue
     <ul>
       {issues.map((issue) => (
         <li key={issue.number}>
-          <a href={issue.url} target="_blank" rel="noreferrer">#{issue.number} {issue.title}</a> <span className="state-chip">{issue.state}</span>
+          <a href={issue.url} target="_blank" rel="noreferrer">#{issue.number} {issue.title}</a> <Badge>{issue.state}</Badge>
         </li>
       ))}
     </ul>
@@ -152,7 +154,7 @@ function About({ item }: { item: PrItem }) {
           </p>
           <div className="brief-chips">
             {checks.map((job) => (
-              <span className="state-chip" key={job.name}>{job.name} · {job.status}</span>
+              <Badge key={job.name} className="verbatim">{job.name} · {job.status}</Badge>
             ))}
           </div>
           </>
@@ -170,7 +172,7 @@ function About({ item }: { item: PrItem }) {
         <CheckList repo={item.repo} sha={item.verdictSha} checks={item.checks} fallback={item.evidence} />
         {item.labels.length > 0 && (
           <div className="row wrap">
-            {item.labels.map((label) => <span key={label} className="badge">{label}</span>)}
+            {item.labels.map((label) => <Badge key={label} className="verbatim">{label}</Badge>)}
           </div>
         )}
       </section>
@@ -236,13 +238,13 @@ function RecommendedComment({ item, posted, onPosted, onDismiss }: {
       <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={5} aria-label="Recommended comment" />
       {item.labels.length > 0 ? (
         <div className="chips" aria-label="Recommended labels">
-          {item.labels.map((label) => <span className="chip" key={label}>{label}</span>)}
+          {item.labels.map((label) => <Badge key={label} className="verbatim">{label}</Badge>)}
         </div>
       ) : null}
       {error && <p role="alert" className="error">{error}</p>}
       <div className="pr-actions-row">
-        <button type="button" className="btn primary" disabled={busy} onClick={() => void post()}>Post</button>
-        <button type="button" className="btn" disabled={busy} onClick={onDismiss}>Dismiss</button>
+        <Button type="button" disabled={busy} onClick={() => void post()}>Post</Button>
+        <Button type="button" variant="outline" disabled={busy} onClick={onDismiss}>Dismiss</Button>
       </div>
     </section>
   );
@@ -285,7 +287,6 @@ export default function PRDetail() {
     recommended && item?.number && !closed && !readOnly && repoRecord?.cleanupMode !== "automated" && handled[handledKey] !== "dismissed",
   );
   const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
-  const moreRef = useRef<HTMLDetailsElement>(null);
   const dos = usePendingDos(item);
   const approvePackDo = useApproveDo();
   const heldDoKeys = useHeldDoKeys();
@@ -306,7 +307,6 @@ export default function PRDetail() {
 
   async function requestWrite(kind: "comment" | "approve" | "changes" | "merge" | "close") {
     if (!item || item.number === null) return;
-    moreRef.current?.removeAttribute("open");
     if (kind === "comment" || kind === "approve" || kind === "changes") {
       setComposer({ kind, body: composer?.kind === kind ? composer.body : "" });
       return;
@@ -388,7 +388,7 @@ export default function PRDetail() {
     return (
       <div className="main-shell">
         <header className="topbar pr-topbar">
-          <Link className="btn ghost" to="/inbox">Back</Link>
+          <Button asChild variant="ghost"><Link to="/inbox">Back</Link></Button>
           <h1 tabIndex={-1}>{approvalHeadline(approval)}</h1>
         </header>
         <main id="main" className="scroller">
@@ -404,7 +404,7 @@ export default function PRDetail() {
     return (
       <div className="main-shell">
         <header className="topbar pr-topbar">
-          <Link className="btn ghost" to="/inbox">Back</Link>
+          <Button asChild variant="ghost"><Link to="/inbox">Back</Link></Button>
           <h1 tabIndex={-1}>Pull request</h1>
         </header>
         <main id="main" className="scroller">
@@ -456,7 +456,7 @@ export default function PRDetail() {
     <>
       <div className="main-shell">
         <header className="topbar pr-topbar action-bar">
-          <Link className="btn ghost" to="/inbox">Back</Link>
+          <Button asChild variant="ghost"><Link to="/inbox">Back</Link></Button>
           <div className="pr-id">
             <p className="pr-id-line">
               <span className="mono pr-repo">{item.repo}</span>
@@ -464,9 +464,9 @@ export default function PRDetail() {
             </p>
             <div className="pr-id-row">
               <span className={`pri ${(item.priority ?? "").toLowerCase()}`}>{item.priority ?? "—"}</span>
-              <span className="state-chip">{QUEUE_STATE_LABEL[item.state]}</span>
-              {closed ? <span className="state-chip">{pull.data?.pr.merged ? "Merged" : "Closed"}</span>
-                : mergeable === null ? null : <span className="state-chip">{mergeable ? "Mergeable" : "Not mergeable"}</span>}
+              <Badge>{QUEUE_STATE_LABEL[item.state]}</Badge>
+              {closed ? <Badge>{pull.data?.pr.merged ? "Merged" : "Closed"}</Badge>
+                : mergeable === null ? null : <Badge>{mergeable ? "Mergeable" : "Not mergeable"}</Badge>}
               <MergeChip merge={item.merge} />
               {github ? <a className="ghost-link" href={github} target="_blank" rel="noreferrer">View on GitHub</a> : null}
             </div>
@@ -475,22 +475,22 @@ export default function PRDetail() {
             <div className="pr-actions-row">
               {pending ? (
                 <>
-                  {closed ? null : <button type="button" className={`btn${gated ? " primary" : ""}`} disabled={busy || readOnly} onClick={() => void act("once")}>Confirm</button>}
-                  <button type="button" className="btn" disabled={busy || readOnly} onClick={() => void act("deny")}>Dismiss</button>
+                  {closed ? null : <Button type="button" variant={gated ? "primary" : "outline"} disabled={busy || readOnly} onClick={() => void act("once")}>Confirm</Button>}
+                  <Button type="button" variant="outline" disabled={busy || readOnly} onClick={() => void act("deny")}>Dismiss</Button>
                 </>
               ) : null}
               {closed ? null : (
                 <>
-                  <button type="button" className="btn" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</button>
-                  <button type="button" className={`btn${canMerge && !gated ? " primary" : ""}`} disabled={!item.number || !canMerge || busy || readOnly} onClick={() => void requestWrite("merge")}>Merge</button>
-                  <details className="more-menu" ref={moreRef}>
-                    <summary className="btn" aria-label="More actions">More</summary>
-                    <div className="more-menu-list" role="menu">
-                      <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("approve")}>Approve</button>
-                      <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("changes")}>Request changes</button>
-                      {offersClose(item) ? null : <button type="button" role="menuitem" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("close")}>Close pull request</button>}
-                    </div>
-                  </details>
+                  <Button type="button" variant="outline" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</Button>
+                  <Button type="button" variant={canMerge && !gated ? "primary" : "outline"} disabled={!item.number || !canMerge || busy || readOnly} onClick={() => void requestWrite("merge")}>Merge</Button>
+                  <Menu>
+                    <MenuTrigger asChild><Button type="button" variant="outline" aria-label="More actions">More</Button></MenuTrigger>
+                    <MenuContent align="end">
+                      <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("approve")}>Approve</MenuItem>
+                      <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("changes")}>Request changes</MenuItem>
+                      {offersClose(item) ? null : <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("close")}>Close pull request</MenuItem>}
+                    </MenuContent>
+                  </Menu>
                 </>
               )}
             </div>
@@ -506,8 +506,8 @@ export default function PRDetail() {
               rows={3}
             />
             <div className="pr-actions-row">
-              <button type="submit" className="btn primary" disabled={busy || readOnly}>Send</button>
-              <button type="button" className="btn" disabled={busy} onClick={() => setComposer(null)}>Cancel</button>
+              <Button type="submit" disabled={busy || readOnly}>Send</Button>
+              <Button type="button" variant="outline" disabled={busy} onClick={() => setComposer(null)}>Cancel</Button>
             </div>
           </form>
         ) : null}

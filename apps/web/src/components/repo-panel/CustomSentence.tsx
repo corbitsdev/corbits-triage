@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Switch } from "@corbits/react-ui";
+import { Button, Switch } from "@corbits/react-ui";
 import { customCheckEnabled, type CustomCheck } from "@corbits/triage-contracts";
 import { checkFormOf, customCheckOf, type CheckForm } from "../../lib/action-builder.ts";
 import { removeCustom, setCustomEnabled, upsertCustom, type RepoDraft } from "../../lib/pack-draft.ts";
@@ -47,7 +47,7 @@ export default function CustomSentence({ check, draft, disabled, edit, reason, s
       </span>
       {check.kind === "model" ? <EvalBadge evaluation="model" /> : null}
       <Switch className="sw" checked={customCheckEnabled(check)} onCheckedChange={(enabled) => edit((current) => setCustomEnabled(current, check.id, enabled))} label={check.name} disabled={disabled} />
-      <button type="button" className="btn btn-quiet btn-sm icon" aria-label={`Remove ${check.name}`} disabled={disabled} onClick={remove}><CloseIcon /></button>
+      <Button type="button" variant="ghost" size="icon" aria-label={`Remove ${check.name}`} disabled={disabled} onClick={remove}><CloseIcon /></Button>
     </div>
   );
 }

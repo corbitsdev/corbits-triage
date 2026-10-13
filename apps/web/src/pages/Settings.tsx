@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs } from "@corbits/react-ui";
 import { useNavigate, useParams } from "react-router-dom";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { runCredentialAction, uniqueSecretDisplayNames } from "../lib/credential-actions.ts";
@@ -29,14 +30,6 @@ import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decisio
 const TABS = ["Triage", "GitHub", "Integrations", "Model", "Access", "Account"] as const;
 type SettingsTab = (typeof TABS)[number];
 
-function tabId(tab: SettingsTab): string {
-  return `settings-tab-${tab.toLowerCase()}`;
-}
-
-function panelId(tab: SettingsTab): string {
-  return `settings-panel-${tab.toLowerCase()}`;
-}
-
 function sentenceCase(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return trimmed;
@@ -64,23 +57,23 @@ function GrantRow({
   onRemove: () => Promise<void>;
 }) {
   return (
-    <tr>
-      <td>{who}</td>
-      <td>
+    <TableRow>
+      <TableCell>{who}</TableCell>
+      <TableCell>
         {permission.label}
         {permission.resource && <span className="mono muted small-text"> {permission.resource}</span>}
-      </td>
-      <td>{sentenceCase(grant.effect)}</td>
-      <td>
+      </TableCell>
+      <TableCell>{sentenceCase(grant.effect)}</TableCell>
+      <TableCell>
         {canRemoveGrant(grant) ? (
-          <button type="button" className="btn ghost" disabled={readOnly || pending} onClick={() => void onRemove()}>
+          <Button type="button" variant="ghost" disabled={readOnly || pending} onClick={() => void onRemove()}>
             {pending ? "Removing…" : "Remove"}
-          </button>
+          </Button>
         ) : (
           <span className="muted small-text">Built-in</span>
         )}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -168,31 +161,29 @@ function AccessRules({
       {denied && <DeniedNotice section="access rules" />}
       {!denied && !loading && grants.length === 0 && <p className="muted">No access rules.</p>}
       {!denied && grants.length > 0 && (
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Who</th>
-                <th>Permission</th>
-                <th>Effect</th>
-                <th><span className="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {grants.map((grant) => (
-                <GrantRow
-                  key={grant.id}
-                  grant={grant}
-                  who={grantWhoLabel(grant, people, roles)}
-                  permission={describePermission(grant, permissions)}
-                  readOnly={readOnly || !canRemove}
-                  pending={removingId === grant.id}
-                  onRemove={() => remove(grant)}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Who</TableHead>
+              <TableHead>Permission</TableHead>
+              <TableHead>Effect</TableHead>
+              <TableHead><span className="sr-only">Actions</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {grants.map((grant) => (
+              <GrantRow
+                key={grant.id}
+                grant={grant}
+                who={grantWhoLabel(grant, people, roles)}
+                permission={describePermission(grant, permissions)}
+                readOnly={readOnly || !canRemove}
+                pending={removingId === grant.id}
+                onRemove={() => remove(grant)}
+              />
+            ))}
+          </TableBody>
+        </Table>
       )}
       {!denied && (
         <form onSubmit={(event) => void submit(event)}>
@@ -243,9 +234,9 @@ function AccessRules({
               <option value="deny">Deny</option>
             </select>
           </label>
-          <button type="submit" className="btn primary" disabled={locked || !who || !permissionIndex || (other && (!resource.trim() || !action.trim()))}>
+          <Button type="submit" disabled={locked || !who || !permissionIndex || (other && (!resource.trim() || !action.trim()))}>
             {adding ? "Adding…" : "Add rule"}
-          </button>
+          </Button>
         </form>
       )}
     </div>
@@ -297,33 +288,33 @@ function RoleRow({
 
   if (name !== null) {
     return (
-      <tr>
-        <td colSpan={2}>
+      <TableRow>
+        <TableCell colSpan={2}>
           <form className="row wrap" onSubmit={(event) => void save(event)}>
             <input aria-label="Role name" value={name} onChange={(event) => setName(event.target.value)} disabled={pending} autoFocus />
-            <button type="submit" className="btn primary" disabled={pending || !name.trim()}>{pending ? "Saving…" : "Save"}</button>
-            <button type="button" className="btn ghost" disabled={pending} onClick={() => setName(null)}>Cancel</button>
+            <Button type="submit" disabled={pending || !name.trim()}>{pending ? "Saving…" : "Save"}</Button>
+            <Button type="button" variant="ghost" disabled={pending} onClick={() => setName(null)}>Cancel</Button>
           </form>
-        </td>
-      </tr>
+        </TableCell>
+      </TableRow>
     );
   }
   return (
-    <tr>
-      <td>{role.name}</td>
-      <td>
+    <TableRow>
+      <TableCell>{role.name}</TableCell>
+      <TableCell>
         {role.isSystem ? (
           <span className="muted small-text">Built-in</span>
         ) : (
           <div className="row wrap">
-            <button type="button" className="btn ghost" aria-label={`Rename ${role.name}`} disabled={readOnly || pending} onClick={() => setName(role.name)}>Rename</button>
-            <button type="button" className="btn ghost" aria-label={`Remove ${role.name}`} disabled={readOnly || pending} onClick={() => void remove()}>
+            <Button type="button" variant="ghost" aria-label={`Rename ${role.name}`} disabled={readOnly || pending} onClick={() => setName(role.name)}>Rename</Button>
+            <Button type="button" variant="ghost" aria-label={`Remove ${role.name}`} disabled={readOnly || pending} onClick={() => void remove()}>
               {pending ? "Removing…" : "Remove"}
-            </button>
+            </Button>
           </div>
         )}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -373,21 +364,19 @@ function Roles({
       <p className="field-help">Give a role access rules below. A role takes effect once it is assigned to people.</p>
       {denied && <DeniedNotice section="roles" />}
       {!denied && !loading && roles.length > 0 && (
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th><span className="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {roles.map((role) => (
-                <RoleRow key={role.id} role={role} readOnly={readOnly || !canManage} renameRole={renameRole} removeRole={removeRole} onError={onError} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Role</TableHead>
+              <TableHead><span className="sr-only">Actions</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {roles.map((role) => (
+              <RoleRow key={role.id} role={role} readOnly={readOnly || !canManage} renameRole={renameRole} removeRole={removeRole} onError={onError} />
+            ))}
+          </TableBody>
+        </Table>
       )}
       {!denied && (
         <form onSubmit={(event) => void submit(event)}>
@@ -395,9 +384,9 @@ function Roles({
             New role
             <input value={name} onChange={(event) => setName(event.target.value)} disabled={readOnly || adding || !canCreate} />
           </label>
-          <button type="submit" className="btn primary" disabled={readOnly || adding || !canCreate || !name.trim()}>
+          <Button type="submit" disabled={readOnly || adding || !canCreate || !name.trim()}>
             {adding ? "Adding…" : "Add role"}
-          </button>
+          </Button>
         </form>
       )}
     </div>
@@ -489,17 +478,14 @@ function CredentialRow({
     <>
       <div className="install-row">
         <strong>{displayName}</strong>
-        <span className={`status-badge${active ? " status-ok" : ""}`}>
-          <span aria-hidden="true" />
-          {sentenceCase(credential.status)}
-        </span>
+        <Badge tone={active ? "success" : "neutral"}>{sentenceCase(credential.status)}</Badge>
         <div className="row wrap">
-          <button type="button" className="btn" aria-label={`Update secret for ${displayName}`} disabled={readOnly || pending !== null || (editing && !secret)} onClick={updateSecret}>
+          <Button type="button" variant="outline" aria-label={`Update secret for ${displayName}`} disabled={readOnly || pending !== null || (editing && !secret)} onClick={updateSecret}>
             {pending === "rotate" ? "Updating…" : "Update secret"}
-          </button>
-          <button type="button" className="btn ghost" aria-label={`Remove ${displayName}`} disabled={readOnly || pending !== null} onClick={() => void act("revoke")}>
+          </Button>
+          <Button type="button" variant="ghost" aria-label={`Remove ${displayName}`} disabled={readOnly || pending !== null} onClick={() => void act("revoke")}>
             {pending === "revoke" ? "Removing…" : "Remove"}
-          </button>
+          </Button>
         </div>
       </div>
       {editing && (
@@ -566,6 +552,122 @@ export default function Settings() {
     }
   }
 
+  function selectTab(item: SettingsTab) {
+    navigate(item === "Triage" ? "/settings" : `/settings/${item.toLowerCase()}`, { replace: true });
+  }
+
+  function settingsPanel(panel: SettingsTab): ReactNode {
+    switch (panel) {
+      case "Triage":
+        return <DeployedVersions section={deployed} />;
+      case "GitHub":
+        return (
+          <div className="panel settings-panel" aria-label="GitHub">
+            <h2>Connected App</h2>
+            <dl className="facts">
+              <div><dt>Status</dt><dd>{githubReady ? "Connected" : "Not connected"}</dd></div>
+              <div><dt>Installs</dt><dd>{repos.length} repositories</dd></div>
+            </dl>
+            <h2>Webhook</h2>
+            <div className="hook-url"><code>{webhookUrl}</code></div>
+            {canManageGithub && (
+              <>
+                <Button type="button" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</Button>
+                <p className="field-help">GitHub’s installer. New repos come back here for check setup.</p>
+              </>
+            )}
+            {deniedRepos && <DeniedNotice section="repositories" />}
+            {repos.length === 0 && !deniedRepos && <p className="muted">No repositories configured.</p>}
+            {repos.map((repo) => (
+              <div key={repo.name} className="install-row">
+                <strong className="mono">{repo.name}</strong>
+                <Badge tone={repo.connected ? "success" : "neutral"}>{repo.connected ? "Connected" : "Not connected"}</Badge>
+              </div>
+            ))}
+          </div>
+        );
+      case "Integrations":
+        return (
+          <section className="integration">
+            <h2>GitHub</h2>
+            <Badge tone="success">Live</Badge>
+            <p>{githubReady ? `Installed. ${repos.length} repositories.` : "Not connected yet."}</p>
+          </section>
+        );
+      case "Model":
+        return (
+          <section className="panel settings-panel" aria-label="Decision model">
+            <h2>Decision model</h2>
+            <p className="field-help">{DECISION_MODEL_INTRO}</p>
+            {deniedCredentials && <DeniedNotice section="credentials" />}
+            <p className="muted small-text">{modelStored ? "API key stored. Save again to replace it." : "No decision model connected."}</p>
+            <DecisionModelForm />
+          </section>
+        );
+      case "Access":
+        return (
+          <>
+            <InvitePeople onSetupPage={false} />
+            <Roles
+              roles={roles.rows}
+              loading={roles.loading || roles.unavailable}
+              denied={roles.denied}
+              readOnly={readOnly}
+              canCreate={canCreateRoles}
+              canManage={canManageRoles}
+              addRole={addRole}
+              renameRole={renameRole}
+              removeRole={removeRole}
+              onError={setError}
+            />
+            <AccessRules
+              grants={grants.rows}
+              people={principals.rows}
+              roles={roles.rows}
+              permissions={permissions}
+              canAdd={canCreateGrants}
+              canRemove={canManageGrants}
+              loading={[grants, principals, roles].some((section) => section.loading || section.unavailable)}
+              denied={grants.denied || principals.denied || roles.denied}
+              readOnly={readOnly}
+              addGrant={addGrant}
+              removeGrant={removeGrant}
+              onError={setError}
+            />
+          </>
+        );
+      case "Account":
+        return (
+          <div className="panel settings-panel" aria-label="Account">
+            <h2>{session?.email ?? "Signed in"}</h2>
+            <p className="muted">Signed in to this app.</p>
+            <Button type="button" variant="outline" onClick={() => void signOut()}>Sign out</Button>
+            {tab === "Account" && <SignedInDevices />}
+            {credentials.length > 0 && (
+              <div>
+                {credentials.map((credential) => (
+                  <CredentialRow
+                    key={credential.id}
+                    credential={credential}
+                    displayName={secretNames.get(credential.id) ?? credential.name}
+                    readOnly={readOnly}
+                    replaceSecret={replaceSecret}
+                    revoke={revoke}
+                    onError={setError}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+    }
+  }
+
+  // Every panel stays mounted under the one tabpanel, so a half-typed key, invite or rule survives a tab switch.
+  function allPanels(active: SettingsTab): ReactNode {
+    return TABS.map((item) => <div key={item} hidden={item !== active}>{settingsPanel(item)}</div>);
+  }
+
   return (
     <div className="main-shell">
       <div className="workspace">
@@ -575,122 +677,13 @@ export default function Settings() {
               <h1>Settings</h1>
             </div>
           </div>
-          <div className="segmented" role="tablist" aria-label="Settings sections">
-            {TABS.map((item) => (
-              <button
-                key={item}
-                id={tabId(item)}
-                role="tab"
-                aria-selected={tab === item}
-                aria-controls={panelId(item)}
-                type="button"
-                className={tab === item ? "active" : ""}
-                onClick={() => navigate(item === "Triage" ? "/settings" : `/settings/${item.toLowerCase()}`)}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
         </header>
         <main id="main" className="scroller">
           <div className="content-wide">
             {error && <p role="alert" className="error">{error}</p>}
-            <div role="tabpanel" id={panelId("Triage")} aria-labelledby={tabId("Triage")} hidden={tab !== "Triage"}>
-              <DeployedVersions section={deployed} />
-            </div>
-            <div role="tabpanel" id={panelId("GitHub")} aria-labelledby={tabId("GitHub")} hidden={tab !== "GitHub"}>
-              <div className="panel settings-panel" aria-label="GitHub">
-                <h2>Connected App</h2>
-                <dl className="facts">
-                  <div><dt>Status</dt><dd>{githubReady ? "Connected" : "Not connected"}</dd></div>
-                  <div><dt>Installs</dt><dd>{repos.length} repositories</dd></div>
-                </dl>
-                <h2>Webhook</h2>
-                <div className="hook-url"><code>{webhookUrl}</code></div>
-                {canManageGithub && (
-                  <>
-                    <button type="button" className="btn primary" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</button>
-                    <p className="field-help">GitHub’s installer. New repos come back here for check setup.</p>
-                  </>
-                )}
-                {deniedRepos && <DeniedNotice section="repositories" />}
-                {repos.length === 0 && !deniedRepos && <p className="muted">No repositories configured.</p>}
-                {repos.map((repo) => (
-                  <div key={repo.name} className="install-row">
-                    <strong className="mono">{repo.name}</strong>
-                    <span className={`status-badge${repo.connected ? " status-ok" : ""}`}><span aria-hidden="true" />{repo.connected ? "Connected" : "Not connected"}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div role="tabpanel" id={panelId("Integrations")} aria-labelledby={tabId("Integrations")} hidden={tab !== "Integrations"}>
-              <section className="integration">
-                <h2>GitHub</h2>
-                <p className="live-mark"><i />Live</p>
-                <p>{githubReady ? `Installed. ${repos.length} repositories.` : "Not connected yet."}</p>
-              </section>
-            </div>
-            <div role="tabpanel" id={panelId("Model")} aria-labelledby={tabId("Model")} hidden={tab !== "Model"}>
-              <section className="panel settings-panel" aria-label="Decision model">
-                <h2>Decision model</h2>
-                <p className="field-help">{DECISION_MODEL_INTRO}</p>
-                {deniedCredentials && <DeniedNotice section="credentials" />}
-                <p className="muted small-text">{modelStored ? "API key stored. Save again to replace it." : "No decision model connected."}</p>
-                <DecisionModelForm />
-              </section>
-            </div>
-            <div role="tabpanel" id={panelId("Access")} aria-labelledby={tabId("Access")} hidden={tab !== "Access"}>
-              <InvitePeople onSetupPage={false} />
-              <Roles
-                roles={roles.rows}
-                loading={roles.loading || roles.unavailable}
-                denied={roles.denied}
-                readOnly={readOnly}
-                canCreate={canCreateRoles}
-                canManage={canManageRoles}
-                addRole={addRole}
-                renameRole={renameRole}
-                removeRole={removeRole}
-                onError={setError}
-              />
-              <AccessRules
-                grants={grants.rows}
-                people={principals.rows}
-                roles={roles.rows}
-                permissions={permissions}
-                canAdd={canCreateGrants}
-                canRemove={canManageGrants}
-                loading={[grants, principals, roles].some((section) => section.loading || section.unavailable)}
-                denied={grants.denied || principals.denied || roles.denied}
-                readOnly={readOnly}
-                addGrant={addGrant}
-                removeGrant={removeGrant}
-                onError={setError}
-              />
-            </div>
-            <div role="tabpanel" id={panelId("Account")} aria-labelledby={tabId("Account")} hidden={tab !== "Account"}>
-              <div className="panel settings-panel" aria-label="Account">
-                <h2>{session?.email ?? "Signed in"}</h2>
-                <p className="muted">Signed in to this app.</p>
-                <button type="button" className="btn" onClick={() => void signOut()}>Sign out</button>
-                {tab === "Account" && <SignedInDevices />}
-                {credentials.length > 0 && (
-                  <div>
-                    {credentials.map((credential) => (
-                      <CredentialRow
-                        key={credential.id}
-                        credential={credential}
-                        displayName={secretNames.get(credential.id) ?? credential.name}
-                        readOnly={readOnly}
-                        replaceSecret={replaceSecret}
-                        revoke={revoke}
-                        onError={setError}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            <Tabs className="settings-tabs" tabs={TABS.map((item) => ({ id: item, label: item }))} active={tab} onChange={selectTab} label="Settings sections">
+              {allPanels}
+            </Tabs>
           </div>
         </main>
       </div>

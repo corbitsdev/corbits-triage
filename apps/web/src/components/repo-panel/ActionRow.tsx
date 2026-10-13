@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { ALL_CHECKS, type Action, type Do } from "@corbits/triage-contracts";
 import type { TriageStats } from "../../lib/hub-api.ts";
@@ -35,9 +36,9 @@ export default function ActionRow({ action, index, count, draft, stats, disabled
             <span key={branch} className="outcome"> <b>{BRANCH_NAMES[branch]}:</b> {sentence(dos.map(doText).join(", then "))}</span>
           ))}
         </p>
-        <button type="button" className="btn btn-quiet btn-sm" disabled={disabled} onClick={onEdit}>Edit</button>
+        <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={onEdit}>Edit</Button>
         <Menu>
-          <MenuTrigger asChild><button type="button" className="btn btn-quiet btn-sm icon" aria-label={`More for ${action.id}`} disabled={disabled}>⋯</button></MenuTrigger>
+          <MenuTrigger asChild><Button type="button" variant="ghost" size="icon" aria-label={`More for ${action.id}`} disabled={disabled}>⋯</Button></MenuTrigger>
           <MenuContent align="end">
             <MenuItem disabled={index === 0} onSelect={() => onMove(index - 1)}>Move up</MenuItem>
             <MenuItem disabled={index === count - 1} onSelect={() => onMove(index + 1)}>Move down</MenuItem>

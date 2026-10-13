@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { EmptyState } from "@corbits/react-ui";
+import { Button, EmptyState } from "@corbits/react-ui";
 import { recommendedPack, type Action } from "@corbits/triage-contracts";
 import type { TriageStats } from "../../lib/hub-api.ts";
 import { moveAction, removeAction, upsertAction, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
@@ -86,10 +86,10 @@ export default function ActionsList({ draft, stats, disabled, edit, problem }: A
           description={unset
             ? "Actions label, assign, request review, comment or approve when the checks you pick pass, fail or are unsure. The recommended action approves each pull request automatically once every check passes and CI is green."
             : "Actions label, assign, request review, comment or approve when the checks you pick pass, fail or are unsure."}
-          action={unset ? <button type="button" className="btn btn-sm" disabled={disabled} onClick={startFromRecommended}>Start from recommended</button> : null}
+          action={unset ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={startFromRecommended}>Start from recommended</Button> : null}
         />
       ) : null}
-      {editing === null ? <div className="more"><button type="button" className="btn btn-sm" disabled={disabled} onClick={() => setEditing(NEW)}>New action</button></div> : null}
+      {editing === null ? <div className="more"><Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => setEditing(NEW)}>New action</Button></div> : null}
     </section>
   );
 }

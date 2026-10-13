@@ -15,7 +15,7 @@ interface SessionContextValue {
   session: HubUser | null;
   error: string;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, name?: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -61,8 +61,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setError("");
   }, []);
 
-  const signUp = useCallback(async function signUp(email: string, password: string) {
-    const user = await signUpHub({ email, password });
+  const signUp = useCallback(async function signUp(email: string, password: string, name?: string) {
+    const user = await signUpHub({ email, password, name });
     setSession(user);
     setError("");
   }, []);

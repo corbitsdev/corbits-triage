@@ -26,7 +26,7 @@
   font-size: 15px;
   line-height: 1.5;
 }
-.shell .ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ic { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .shell .mono { font-family: var(--mono); font-size: 0.86em; }
 .shell kbd { font: 700 10px var(--mono); border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--white); line-height: 16px; display: inline-block; min-width: 16px; text-align: center; }
 
@@ -54,32 +54,21 @@
 .shell .menu-wrap { position: relative; }
 .shell .menu { position: absolute; z-index: 30; min-width: 230px; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12); padding: 6px; }
 .shell .menu.up { bottom: calc(100% + 6px); right: 0; }
-.shell .menu.me-menu { left: 0; right: 0; min-width: 0; }
 .shell .menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; background: none; border-radius: var(--r-sm); font: 500 13px var(--font); color: inherit; cursor: pointer; text-align: left; }
-.shell .menu.me-menu button { white-space: nowrap; padding: 7px 8px; gap: 8px; }
 .shell .menu button:hover { background: var(--fill-hover); }
 .shell .menu button[disabled] { opacity: 0.45; cursor: not-allowed; }
 .shell .menu button kbd { margin-left: auto; }
 .shell .menu hr { border: 0; border-top: 1px solid var(--rule); margin: 6px 0; }
-.shell .menu small { display: block; font-size: 11px; font-weight: 400; }
-.shell .menu .ws-option { min-width: 0; flex: 1; }
-.shell .menu .ws-option b, .shell .menu .ws-option small { display: block; overflow: hidden; text-overflow: ellipsis; }
+.me-menu { width: var(--radix-dropdown-menu-trigger-width); }
+.ws-option { min-width: 0; flex: 1; }
+.ws-option b, .ws-option small { display: block; overflow: hidden; text-overflow: ellipsis; }
+.ws-option small { font-size: 11px; font-weight: 400; }
 
 /* Other pages keep their own markup inside one inset panel */
 .shell > .stage { margin: 12px 12px 12px 0; border: 1px solid var(--rule); border-radius: var(--r-lg); background: var(--white); }
 
-/* Shared by the inbox and the repositories table. Buttons and panels are scoped to those two because other pages still use the older .btn and .panel. */
+/* Shared by the inbox and the repositories table. Panels are scoped to those two because other pages still use the older .panel. */
 :is(.inbox, .repos) .panel { background: var(--white); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
-:is(.inbox, .repos) .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 38px; padding: 0 16px; border-radius: var(--r-md); font: 600 14px/1 var(--font); color: var(--ink); text-decoration: none; background: var(--white); border: 1px solid var(--rule-strong); cursor: pointer; }
-:is(.inbox, .repos) .btn:hover { background: var(--fill); }
-:is(.inbox, .repos) .btn-primary { background: var(--orange); border-color: var(--orange); }
-:is(.inbox, .repos) .btn-primary:hover { background: #dd7a20; }
-:is(.inbox, .repos) .btn-quiet { border-color: transparent; background: transparent; }
-:is(.inbox, .repos) .btn-quiet:hover { background: var(--fill-hover); }
-:is(.inbox, .repos) .btn-sm { height: 30px; padding: 0 12px; font-size: 13px; border-radius: var(--r-sm); }
-:is(.inbox, .repos) .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
-:is(.inbox, .repos) .btn kbd { margin-left: 2px; }
-:is(.inbox, .repos) .btn-primary kbd { background: rgba(255, 255, 255, 0.55); border-color: rgba(0, 0, 0, 0.25); }
 :is(.inbox, .repos) .scroll { flex: 1; min-height: 0; overflow: auto; }
 :is(.inbox, .repos) .lh { padding: 16px 16px 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--rule); }
 :is(.inbox, .repos) .lh-top { display: flex; align-items: baseline; gap: 10px; }
@@ -110,10 +99,9 @@
 .pulse .plist b { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pulse .plist .mono { font-size: 11px; }
 .pulse .note { font: 700 12px var(--mono); white-space: nowrap; }
-.pulse .table-scroll { overflow-x: auto; }
-.pulse table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pulse table { font-size: 13px; }
 .pulse th, .pulse td { padding: 9px 12px 9px 0; border-top: 1px solid var(--rule); text-align: right; white-space: nowrap; }
-.pulse th:first-child { text-align: left; font-weight: 600; }
+.pulse th:first-child { text-align: left; font-weight: 600; color: inherit; }
 .pulse thead th { border-top: 0; font-size: 12px; font-weight: 700; }
 .pulse td { font-family: var(--mono); }
 .pulse td.note { text-align: left; font-family: var(--font); font-weight: 400; }
@@ -145,20 +133,17 @@
 .inbox .pill b { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 13px; }
 .inbox .pill:hover b { background: var(--white); }
 
-/* Filter popover: facets on the left, the chosen facet's values on the right */
+/* Filter popover: facet tabs above the chosen facet's values */
 .inbox .tools .menu-wrap { position: static; }
-.inbox .pop { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12); display: grid; grid-template-columns: 140px minmax(0, 1fr); overflow: hidden; }
-.inbox .pop .facets { border-right: 1px solid var(--rule); padding: 6px; background: var(--paper); display: grid; align-content: start; gap: 1px; }
-.inbox .pop .facets button { display: flex; justify-content: space-between; width: 100%; border: 0; background: none; padding: 7px 10px; border-radius: var(--r-sm); font: 500 13px var(--font); color: inherit; cursor: pointer; text-align: left; }
-.inbox .pop .facets button.on { background: var(--white); font-weight: 700; box-shadow: 0 0 0 1px var(--rule); }
-.inbox .pop .facets b { font: 700 11px var(--mono); }
+.inbox .pop { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12); overflow: hidden; }
+.inbox .pop .facets { gap: 0; padding: 6px 6px 0; }
 .inbox .pop .vals { padding: 6px; display: grid; align-content: start; gap: 1px; max-height: 320px; overflow: auto; }
 .inbox .pop .vals label { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px; border-radius: var(--r-sm); font-size: 13px; cursor: pointer; }
 .inbox .pop .vals label:hover { background: var(--fill); }
 .inbox .pop .vals .l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox .pop .vals .c { margin-left: auto; font: 400 11px var(--mono); }
 .inbox .pop input[type="checkbox"] { accent-color: var(--ink); width: 15px; height: 15px; min-height: 0; margin: 0; flex: none; }
-.inbox .pop .pfoot { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--rule); font-size: 12px; }
+.inbox .pop .pfoot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--rule); font-size: 12px; }
 .inbox .filter-scrim { display: none; }
 
 /* Rows */
@@ -194,7 +179,6 @@
 .inbox .crumb .tag, .inbox .byline .tag { margin: 0; }
 .inbox .repo-link { text-decoration: none; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
 .inbox .repo-link:hover { text-decoration: underline; text-underline-offset: 2px; }
-.inbox .crumb .btn { flex: none; }
 .inbox .pane-in h2.title { font-size: 26px; line-height: 1.2; margin: 0; letter-spacing: -0.015em; }
 .inbox .byline { display: flex; align-items: center; font-size: 13px; white-space: nowrap; min-width: 0; }
 .inbox .byline > * { flex: none; }
@@ -255,8 +239,8 @@
 .inbox .md blockquote { padding-left: 12px; border-left: 2px solid var(--rule); }
 .inbox .md table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 13px; }
 .inbox .md :is(td, th) { padding: 4px 8px; border: 1px solid var(--rule); }
-.inbox .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
-.inbox .tbl td { padding: 7px 8px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+.inbox .tbl { font-size: 13px; }
+.inbox .tbl td { padding: 7px 8px; vertical-align: top; }
 .inbox .tbl td:first-child { padding-left: 0; }
 .inbox .tbl .r { text-align: right; white-space: nowrap; }
 .inbox .tbl .path { font-size: 12px; overflow-wrap: anywhere; }
@@ -271,9 +255,8 @@
 .inbox .error { font-size: 13px; margin: 12px 0 0; }
 .inbox .bar { display: flex; gap: 8px; align-items: center; padding: 12px 32px; white-space: nowrap; border-top: 1px solid var(--rule); background: var(--white); }
 .inbox .bar .sp { flex: 1; }
-.inbox .bar .btn { flex: none; white-space: nowrap; }
-.inbox .bar .btn .det { font-weight: 400; }
-.inbox .bar .btn-primary .det::before { content: "· "; }
+.inbox .bar .det { font-weight: 400; }
+.inbox .bar .det::before { content: "· "; }
 .inbox .bar .menu .m-only { display: none; }
 .inbox .pane-back { display: none; }
 .inbox .pane:focus { outline: none; }
@@ -295,14 +278,13 @@
   .inbox.has-selection .panel.list, .inbox:not(.has-selection) .panel.pane { display: none; }
   .inbox .pane-back { display: inline-flex; margin: 12px 0 0 24px; }
   .inbox .bar { padding: 12px 16px; gap: 4px; }
-  .inbox .bar .btn-quiet { padding: 0 10px; }
   .inbox .bar .sec2 { display: none; }
   .inbox .bar .menu .m-only { display: flex; }
-  .inbox .bar .btn .det { display: none; }
+  .inbox .bar .det { display: none; }
   .inbox .st3 { font-size: 19px; }
 }
 
-/* On a phone the mobile nav replaces the rail, search gets its own line, the filter popover is a bottom sheet with the facets as tabs across the top, and toasts span the width above the mobile nav. */
+/* On a phone the mobile nav replaces the rail, search gets its own line, the filter popover is a bottom sheet, and toasts span the width above the mobile nav. */
 @media (max-width: 720px) {
   .shell .rail { display: none; }
   .pulse { padding: 24px 16px 100px; gap: 28px; }
@@ -311,9 +293,9 @@
   .inbox .search { flex-basis: 100%; }
   .inbox .row.open-row .merge-chip { display: none; }
   .inbox .filter-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.24); }
-  .inbox .pop { position: fixed; top: auto; bottom: 0; max-height: 80dvh; border-radius: var(--r-lg) var(--r-lg) 0 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
-  .inbox .pop .facets { border-right: 0; border-bottom: 1px solid var(--rule); grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 8px; }
-  .inbox .pop .facets button { justify-content: center; gap: 6px; padding: 9px 4px; }
+  .inbox .pop { position: fixed; top: auto; bottom: 0; max-height: 80dvh; border-radius: var(--r-lg) var(--r-lg) 0 0; display: flex; flex-direction: column; }
+  .inbox .pop .facets { flex: 1; min-height: 0; }
+  .inbox .pop .facets > [role="tabpanel"] { overflow: auto; min-height: 0; }
   .inbox .pop .vals { max-height: none; padding: 8px; }
   .inbox .pop .vals label { padding: 11px 10px; font-size: 14px; }
   .inbox .pop .pfoot { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }

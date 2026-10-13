@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Button } from "@corbits/react-ui";
 import type { CheckPack } from "@corbits/triage-contracts";
 import { errorText } from "../../lib/error-text.ts";
 import { previewPull, type PullPreview } from "../../lib/hub-api.ts";
@@ -83,7 +84,7 @@ export default function PreviewRow({ repo, draft }: { repo: string; draft: RepoD
       <form className="sentence" onSubmit={(event) => void preview(event)}>
         <span className="txt">Run this draft on a pull request<small>Unsaved edits included. Nothing is written to GitHub and the judge is not run.</small></span>
         {renderPicker()}
-        <button type="submit" className="btn btn-sm" disabled={tenantId === undefined || running || !Number.isInteger(number) || number < 1}>{running ? "Previewing…" : "Preview"}</button>
+        <Button type="submit" variant="outline" size="sm" disabled={tenantId === undefined || running || !Number.isInteger(number) || number < 1}>{running ? "Previewing…" : "Preview"}</Button>
       </form>
       {error ? <p role="alert" className="error">{error}</p> : null}
       {previewed ? <Result {...previewed} /> : null}
