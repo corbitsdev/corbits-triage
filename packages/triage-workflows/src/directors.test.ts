@@ -372,13 +372,11 @@ describe("judge on a blocked pull request", () => {
     expect(unsettledBy(verdict)).toEqual({});
   });
 
-  test("a stored author rule and agent Do no longer run, and every verdict says so", async () => {
-    const outsiders = { id: "maintainers-only", name: "Maintainers only", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] };
-    const agent = { kind: "agent", target: { prompt: "Fix it", tools: [] } };
-    const checkPack = { ...recommendedPack("acme/widgets"), custom: [outsiders], actions: { ...defaultActions(), fail: [agent] } };
-    const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code), undefined, []);
-    expect(verdict.checks.map((c) => c.check)).not.toContain("maintainers-only");
-    expect(verdict.reasons).toEqual(expect.arrayContaining(["author rule Maintainers only no longer runs", "Fail step 1 (agent) no longer runs"]));
+  test("a stored step for a repository role no longer runs, and every verdict says so", async () => {
+    const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), fail: [{ do: "request-review", target: { to: "role", role: "leads" } }] } };
+    const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code));
+    expect(verdict.actions).toEqual([]);
+    expect(verdict.reasons).toContain("Fail step 1 (request-review role leads) no longer runs");
   });
 
   test.each<[string, unknown[]]>([
@@ -401,10 +399,9 @@ describe("judge on a blocked pull request", () => {
     expect(verdict.actions).toEqual([]);
   });
 
-  test("runs the fail list, resolved through the policy's roles, with the failed judged rule as its reason", async () => {
-    const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), fail: [{ do: "request-review", target: { to: "role", role: "leads" } }] } };
-    const policy = { enabled: true, roles: { leads: { users: ["dave"] } } };
-    const { asked, verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }, code));
+  test("runs the fail list with the failed judged rule as its reason", async () => {
+    const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), fail: [{ do: "request-review", target: { to: "users", users: ["dave"] } }] } };
+    const { asked, verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code));
     expect(asked).toEqual(["docs-file-001", "focused", "focused-file-001", "verdict"]);
     expect(verdict.actions).toEqual([
       { list: "fail", index: 0, effectId: expect.any(String), kind: "request-review", target: { users: ["dave"], teams: [] }, reason: "mixes unrelated changes: src/flag.ts", held: true },

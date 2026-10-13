@@ -172,7 +172,6 @@
       "dependencies": {
         "@corbits/common": "workspace:*",
         "arktype": "catalog:",
-        "re2js": "2.8.6",
       },
       "devDependencies": {
         "@intx/mime": "workspace:*",

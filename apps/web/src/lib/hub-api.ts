@@ -8,7 +8,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo, errorText } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, repoPolicy, readCheckPack, checkPackName, legacyCheckPack, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, repoPolicy, readCheckPack, checkPackName, legacyCheckPack, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -396,12 +396,12 @@ export async function saveRepoSettings(
   transport: Transport,
   tenantId: string,
   repo: string,
-  settings: Pick<RepoPolicy, "enabled" | "roles">,
+  settings: Pick<RepoPolicy, "enabled">,
   linked: boolean,
 ): Promise<void> {
   const clean = validateRepo(repo);
-  const { enabled, roles } = settings;
-  const next = { enabled, roles, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
+  const { enabled } = settings;
+  const next = { enabled, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
   await patchAppConfig(transport, tenantId, function applySettings(current) {
     const repos = current.repos ?? [];
     if (!repos.some((row) => rowName(row) === clean)) throw new Error("Repository not found.");
@@ -1150,11 +1150,11 @@ export type PullPreview = {
   actions: PreviewActions;
 };
 
-/** Evaluates `pack` and `roles`, saved or not, against one open pull request; the hub writes nothing and does not run the judge. */
+/** Evaluates `pack`, saved or not, against one open pull request; the hub writes nothing and does not run the judge. */
 export async function previewPull(
   transport: Transport,
   tenantId: string,
-  input: { repo: string; number: number; pack: CheckPack; roles: Record<string, RepoRole> },
+  input: { repo: string; number: number; pack: CheckPack },
 ): Promise<PullPreview> {
   const repo = validateRepo(input.repo);
   if (!Number.isInteger(input.number) || input.number < 1) throw new Error("Pull request number must be a positive integer.");

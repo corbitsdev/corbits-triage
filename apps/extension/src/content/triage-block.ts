@@ -207,7 +207,7 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
       return link;
     }
     const applied = state.applied[action.id];
-    const settles = action.kind !== "edit-body" && action.kind !== "edit-title";
+    const settles = action.kind !== "edit-body";
     const done = applied?.state === "done" && settles;
     const button = node("button", "tb-act");
     button.type = "button";

@@ -11,7 +11,7 @@ import { catalogSentence, CHECK_KINDS, customSentence, type CheckKind } from "..
 import { localPacks, runStates, systemOne, views } from "../storage.ts";
 import { stateName } from "../view.ts";
 import { errorText } from "../error-text.ts";
-import { CatalogEditor, CustomEditor, EDITABLE_CATALOG, type CustomVariant } from "./CheckEditors.tsx";
+import { CatalogEditor, CustomEditor, EDITABLE_CATALOG } from "./CheckEditors.tsx";
 import { useStorageItem } from "./use-storage.ts";
 
 type Row = { id: string; on: boolean; sentence: string; model: boolean; custom: CustomCheck | undefined };
@@ -22,11 +22,6 @@ function rowsOf(pack: CheckPack): Row[] {
     const custom = pack.custom.find((c) => c.id === id)!;
     return { id, on, sentence: customSentence(custom), model: custom.kind === "model", custom };
   });
-}
-
-/** The editor a custom check opens with. */
-function variantOf(check: CustomCheck): CustomVariant {
-  return check.kind === "model" ? { kind: "model", shape: check.shape } : { kind: "rule", rule: check.rule };
 }
 
 function EvalBadge({ model }: { model: boolean }) {
@@ -59,8 +54,7 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
 
   const custom = row.custom;
   const label = custom?.name ?? CHECK_CATALOG[row.id as CatalogId].name;
-  const variant = custom ? variantOf(custom) : undefined;
-  const editable = isCatalogId(row.id) ? EDITABLE_CATALOG.includes(row.id) : variant !== undefined;
+  const editable = isCatalogId(row.id) ? EDITABLE_CATALOG.includes(row.id) : custom !== undefined;
 
   async function toggle(on: boolean) {
     await onSave((current) => withCheck(current, row.id, on), `${label} is ${on ? "on" : "off"}.`);
@@ -101,18 +95,14 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
         {custom ? <ConfirmButton size="sm" variant="ghost" confirmLabel={`Confirm: remove ${custom.name}`} onConfirm={remove}>Remove the rule</ConfirmButton> : null}
       </div>
       {editing && isCatalogId(row.id) ? <CatalogEditor id={row.id as CatalogId} pack={pack} onSave={saveEdit} onCancel={stopEdit} /> : null}
-      {editing && custom && variant ? (
-        <CustomEditor variant={variant} pack={pack} id={custom.id} form={customFormOf(custom)} defaultName={custom.name} onSave={saveEdit} onCancel={stopEdit} />
+      {editing && custom ? (
+        <CustomEditor shape={custom.shape} pack={pack} id={custom.id} form={customFormOf(custom)} defaultName={custom.name} onSave={saveEdit} onCancel={stopEdit} />
       ) : null}
     </li>
   );
 }
 
-function variantOfKind(kind: CheckKind): CustomVariant {
-  return kind.evaluation === "rule" ? { kind: "rule", rule: kind.rule } : { kind: "model", shape: kind.shape };
-}
-
-/** The portal's new-check gallery: every rule kind and model shape, then that kind's editor. */
+/** The portal's new-check gallery: every model shape, then that shape's editor. */
 function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<CheckKind | null>(null);
@@ -150,7 +140,7 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
     return (
       <div className="add-check">
         <p className="manage-name">{kind.title}</p>
-        <CustomEditor variant={variantOfKind(kind)} pack={pack} defaultName={kind.title.replace(/…$/, "")} onSave={add} onCancel={cancel} />
+        <CustomEditor shape={kind.shape} pack={pack} defaultName={kind.title.replace(/…$/, "")} onSave={add} onCancel={cancel} />
       </div>
     );
   }
@@ -162,7 +152,7 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
             <button type="button" className="gallery-item" aria-label={`Use ${each.title}`} onClick={() => setKind(each)}>
               <b>{each.title}</b>
               <span>{each.line}</span>
-              <EvalBadge model={each.evaluation === "model"} />
+              <EvalBadge model />
             </button>
           </li>
         ))}

@@ -26,13 +26,14 @@ export function alwaysHeld(list: VerdictWord, kind: ActionKind): boolean {
   return (list === "unsure" && kind === "close") || (list !== "pass" && kind === "merge");
 }
 
-/** `unlabel` names labels the step owns that are on the pull request and no longer apply, which it removes. */
+/** `unlabel` names labels the step owns that are on the pull request and no longer apply, which it removes; `ciOptional` lets a merge go ahead on a head with no CI. */
 export type ResolvedTarget =
   | { labels: string[]; unlabel?: string[] }
   | { users: string[] }
   | { users: string[]; teams: string[] }
   | { body: string }
   | Record<string, never>
+  | { ciOptional: true }
   | { unresolved: "codeowners" };
 
 /** Agent Dos and labels derived from the type or paths were removed; verdicts recorded before may still hold one. */

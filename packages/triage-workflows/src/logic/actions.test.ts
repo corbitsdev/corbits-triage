@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { defaultActions, emptyPack, type Step, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
-import { doEffectId, evaluateActions, holdDos, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
+import { doEffectId, evaluateActions, heldApprovals, holdDos, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
 import type { PrFacts } from "./checks.js";
 
 const facts: PrFacts = {
@@ -22,9 +22,9 @@ const facts: PrFacts = {
   events: ["opened"],
 };
 
-function run(lists: Partial<PolicyActions>, verdict: VerdictWord = "pass", roles: ActionInput["roles"] = {}, events = facts.events) {
+function run(lists: Partial<PolicyActions>, verdict: VerdictWord = "pass", events = facts.events) {
   const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), ...lists } };
-  return evaluateActions({ facts: { ...facts, events }, checks: [], verdict, reason: "passes the repository's policy", pack, roles });
+  return evaluateActions({ facts: { ...facts, events }, checks: [], verdict, reason: "passes the repository's policy", pack });
 }
 
 function targets(steps: SuggestedAction[]) {
@@ -46,7 +46,7 @@ describe("evaluateActions", () => {
     ["any of the run's events wakes it", "pass", ["checks"], ["updated", "checks"], ["pass"]],
     ["catch-up wakes it whatever it names", "pass", ["updated"], ["catch-up"], ["pass"]],
   ])("%s", (_, verdict, when, events, bodies) => {
-    expect(targets(run({ ...SAYS, when }, verdict, {}, events)).map((t) => (t && "body" in t ? t.body : null))).toEqual(bodies);
+    expect(targets(run({ ...SAYS, when }, verdict, events)).map((t) => (t && "body" in t ? t.body : null))).toEqual(bodies);
   });
 
   test.each<[string, Step, unknown[]]>([
@@ -66,20 +66,18 @@ describe("evaluateActions", () => {
 
   test("resolves people targets and skips the ones that cannot apply", () => {
     const dos: Step[] = [
-      { do: "request-review", target: { to: "role", role: "leads" } },
-      { do: "request-review", target: { to: "role", role: "ghost" } },
+      { do: "request-review", target: { to: "teams", teams: ["@acme/core", "other/x"] } },
       { do: "request-review", target: { to: "users", users: ["octocat"] } },
       { do: "assign", target: { to: "author" } },
       { do: "assign", target: { to: "teams", teams: ["core"] } },
     ];
     const reason = "passes the repository's policy";
     const effectId = expect.any(String);
-    expect(run({ pass: dos }, "pass", { leads: { users: ["dave", "octocat"], teams: ["@acme/core"] } })).toEqual([
-      { list: "pass", index: 0, effectId, kind: "request-review", target: { users: ["dave"], teams: ["core"] }, reason },
-      { list: "pass", index: 1, kind: "request-review", skipped: true, reason: "Role ghost is not defined in the repository settings." },
-      { list: "pass", index: 2, kind: "request-review", skipped: true, reason: "No reviewer is left once the author is excluded." },
-      { list: "pass", index: 3, effectId, kind: "assign", target: { users: ["octocat"] }, reason },
-      { list: "pass", index: 4, kind: "assign", skipped: true, reason: "Assignees must be users and this target names none." },
+    expect(run({ pass: dos })).toEqual([
+      { list: "pass", index: 0, kind: "request-review", skipped: true, reason: "Team other/x is not in acme." },
+      { list: "pass", index: 1, kind: "request-review", skipped: true, reason: "No reviewer is left once the author is excluded." },
+      { list: "pass", index: 2, effectId, kind: "assign", target: { users: ["octocat"] }, reason },
+      { list: "pass", index: 3, kind: "assign", skipped: true, reason: "Assignees must be users and this target names none." },
     ]);
   });
 
@@ -109,7 +107,7 @@ describe("evaluateActions", () => {
       { ...say("unknown team"), for: { team: "acme/ops" } },
     ] satisfies Step[] } };
     const author = { ...facts, authorKind: "outside" as const, authorTeams: ["acme/core"], authorTeamsUnknown: ["acme/ops"] };
-    const ran = evaluateActions({ facts: author, checks: [], verdict: "pass", reason: "passes", pack, roles: {} });
+    const ran = evaluateActions({ facts: author, checks: [], verdict: "pass", reason: "passes", pack });
     expect(ran.map((action) => ("skipped" in action ? action.reason : action.index))).toEqual([
       "Not run: the author is outside, not one of maintainers.",
       1,
@@ -117,18 +115,32 @@ describe("evaluateActions", () => {
       3,
       "Not run: membership of acme/ops is not known.",
     ]);
-    const unknownKind = evaluateActions({ facts, checks: [], verdict: "pass", reason: "passes", pack, roles: {} });
+    const unknownKind = evaluateActions({ facts, checks: [], verdict: "pass", reason: "passes", pack });
     expect(unknownKind[0]).toMatchObject({ skipped: true, reason: "Not run: the author's kind is not known, so it cannot tell whether they are maintainers." });
   });
 
-  test("derived labels name the verdict and each failed rule, and take back the ones that no longer apply", () => {
-    const labelled = { ...facts, labels: ["api", "Triage: Needs changes", "triage: fail", "rule: docs", "rule: focused"] };
-    const failed = { check: "focused", kind: "model" as const, result: "fail" as const, reason: "mixes", evidence: [], output: { kind: "not-applicable" as const } };
+  test("derived labels name the verdict and each failed rule, and take back only their own that no longer apply", () => {
+    const labelled = { ...facts, labels: ["api", "Triage: Needs changes", "triage: fail", "rule: docs", "rule: focused", "rule: deploy-freeze"] };
+    function failed(check: string) {
+      return { check, kind: "model" as const, result: "fail" as const, reason: "failed", evidence: [], output: { kind: "not-applicable" as const } };
+    }
     const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [{ do: "labels", target: { from: "verdict" } }, { do: "labels", target: { from: "rules" } }] satisfies Step[] } };
-    expect(targets(evaluateActions({ facts: labelled, checks: [failed], verdict: "pass", reason: "passes", pack, roles: {} }))).toEqual([
+    expect(targets(evaluateActions({ facts: labelled, checks: [failed("focused"), failed("no-changes-requested")], verdict: "pass", reason: "passes", pack }))).toEqual([
       { labels: ["triage: pass"], unlabel: ["Triage: Needs changes", "triage: fail"] },
       { labels: ["rule: focused"], unlabel: ["rule: docs"] },
     ]);
+  });
+
+  test("a merge is held with the real CI state until CI passes, and goes ahead without CI only when the policy does not require CI green", () => {
+    function merge(ci: PrFacts["checks"], ciGreen: boolean) {
+      const pack = { ...emptyPack("acme/widgets"), checks: { "ci-green": { enabled: ciGreen } }, actions: { ...defaultActions(), pass: [{ do: "merge" }] satisfies Step[] } };
+      return heldApprovals(evaluateActions({ facts: { ...facts, checks: ci }, checks: [], verdict: "pass", reason: "passes", pack }), undefined, ci)[0];
+    }
+    expect(merge("pending", false)).toMatchObject({ effectId: expect.any(String), held: true, reason: "CI is pending on this head." });
+    expect(merge("none", true)).toMatchObject({ held: true, reason: "This head has no CI, and the policy requires CI green." });
+    expect(merge("none", false)).toMatchObject({ target: { ciOptional: true }, reason: "passes" });
+    expect(merge("none", false)).not.toHaveProperty("held");
+    expect(merge("success", true)).not.toHaveProperty("held");
   });
 
   test("a Do inserted earlier by a pack edit does not take the id of the Do that held its index", () => {

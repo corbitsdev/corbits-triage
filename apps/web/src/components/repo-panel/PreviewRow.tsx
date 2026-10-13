@@ -42,11 +42,11 @@ export default function PreviewRow({ repo, draft }: { repo: string; draft: RepoD
   async function preview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (tenantId === undefined) return;
-    const { pack, policy } = draft;
+    const { pack } = draft;
     setRunning(true);
     setError("");
     try {
-      setPreviewed(await previewPull(createHubTransport(), tenantId, { repo, number, pack, roles: policy.roles }));
+      setPreviewed(await previewPull(createHubTransport(), tenantId, { repo, number, pack }));
     } catch (cause) {
       setPreviewed(null);
       setError(`Could not preview. ${errorText(cause)}`);

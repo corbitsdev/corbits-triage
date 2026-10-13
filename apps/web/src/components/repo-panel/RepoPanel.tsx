@@ -12,7 +12,6 @@ import ActionsSection from "./ActionsSection.tsx";
 import ChecksSection from "./ChecksSection.tsx";
 import PreviewRow from "./PreviewRow.tsx";
 import RepoByline from "./RepoByline.tsx";
-import RolesEditor from "./RolesEditor.tsx";
 import SaveBar from "./SaveBar.tsx";
 import TriageStrip from "./TriageStrip.tsx";
 import TriageSwitches from "./TriageSwitches.tsx";
@@ -33,7 +32,7 @@ function anchorOf(problem: DraftProblem): string {
   }
 }
 
-/** A repository's triage, rules, verdict, actions and roles, edited as one draft and saved through the store. */
+/** A repository's triage, rules, verdict and actions, edited as one draft and saved through the store. */
 export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanelProps) {
   const { readOnly, snapshot } = usePortal();
   const settings = useRepoPack(store, repo.name);
@@ -81,7 +80,6 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
         <ChecksSection draft={draft} saved={settings.saved.pack} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />
         <VerdictSection draft={draft} />
         <ActionsSection repo={repo.name} draft={draft} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />
-        <RolesEditor roles={draft.policy.roles} actions={draft.pack.actions} disabled={disabled} edit={settings.edit} />
         <PreviewRow repo={repo.name} draft={draft} />
         <TriageStrip stats={stats} />
       </>

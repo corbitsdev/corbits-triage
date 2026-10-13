@@ -14,7 +14,6 @@ const NEW_DO: Step = { do: "labels", target: { from: "list", labels: [] } };
 type VerdictListProps = {
   list: VerdictWord;
   dos: Step[];
-  roles: string[];
   /** Whether triage runs a Do of this kind without asking; undefined while its grants are unknown. */
   alone: ((kind: ActionKind) => boolean) | undefined;
   fired: { suggested: number; executed: number } | undefined;
@@ -25,7 +24,7 @@ type VerdictListProps = {
 };
 
 /** The Dos that run on one verdict; Unsure starts collapsed. */
-export default function VerdictList({ list, dos, roles, alone, fired, disabled, reason, onChange }: VerdictListProps) {
+export default function VerdictList({ list, dos, alone, fired, disabled, reason, onChange }: VerdictListProps) {
   function note(kind: StepKind): string | undefined {
     if (alone === undefined || kind === "nothing") return undefined;
     return alone(kind) && !alwaysHeld(list, kind) ? "Runs alone" : "Waits for you";
@@ -38,7 +37,6 @@ export default function VerdictList({ list, dos, roles, alone, fired, disabled, 
         <DoEditor
           key={index}
           step={doFormOf(step)}
-          roles={roles}
           note={note(step.do)}
           disabled={disabled}
           onChange={(form) => onChange(dos.map((item, i) => (i === index ? buildDo(form) : item)))}

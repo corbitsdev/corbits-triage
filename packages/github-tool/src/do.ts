@@ -2,12 +2,16 @@ import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/tri
 import { type } from "arktype";
 import {
   codeownersForPr,
+  getChecks,
   getReviews,
+  latestDecisive,
   listIssueComments,
+  mergeableCi,
   missingFrom,
   readPr,
   REQUEST_CHANGES_DO_MARKER,
   reviewedOnHead,
+  summarizeChecks,
   type AppLogin,
   type GithubFetch,
 } from "@corbits/github-reads";
@@ -47,7 +51,7 @@ const Target = type({ labels: "string[]", "unlabel?": "string[]" })
   .or({ users: "string[]", "teams?": "string[]" })
   .or({ body: "string" })
   .or({ unresolved: "'codeowners'" })
-  .or({ "+": "reject" });
+  .or({ "+": "reject", "ciOptional?": "true" });
 
 /** A Do as a caller hands it over the wire. */
 export const DoArgs = type({
@@ -137,10 +141,15 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (posted) return { status: "satisfied", result: { commentId: posted.id } };
       return { status: "done", result: await createIssueComment(gh, { repo, number, body: `${marker}\n${target.body}` }) };
     }
+    // CI and reviews are read again here because a held merge can be approved long after its verdict; branch protection stays the backstop.
     case "merge": {
       const pr = await readPr(gh, repo, number);
       if (pr.merged === true) return { status: "satisfied", result: { merged: true } };
       onHead(pr.sha, request, step);
+      const ci = summarizeChecks(await getChecks(gh, repo, step.headSha));
+      if (!mergeableCi(ci, "ciOptional" in target)) throw new DoNotRunnableError(`CI is ${ci} on ${step.headSha}`);
+      const requested = [...latestDecisive(await getReviews(gh, repo, number))].filter(([, state]) => state === "CHANGES_REQUESTED").map(([login]) => login);
+      if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
       return { status: "done", result: await mergePr(gh, { repo, number, sha: step.headSha }) };
     }
     default:

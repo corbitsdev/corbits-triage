@@ -17,7 +17,6 @@ import {
 } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import { globMatch } from "./glob.js";
-import { evaluateRuleChecks } from "./rule-checks.js";
 
 export interface PrFileFacts {
   path: string;
@@ -255,11 +254,6 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
         kind: "values",
         values: { linkedIssue: ref !== null },
       });
-    }
-    if (pack) {
-      const custom = evaluateRuleChecks(facts, classificationSources(pack).rules);
-      findings.push(...custom.findings);
-      checks.push(...custom.checks);
     }
   }
 
