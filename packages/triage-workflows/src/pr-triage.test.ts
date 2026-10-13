@@ -104,7 +104,7 @@ const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrant
 
 type SystemOne = { questions: Array<{ id: string; instructions: string }>; state: { repository: { docs: Record<string, string>; rules?: Record<string, string> } } };
 
-/** Calls the pull request and each slice of it a separate change, says no change meets a custom rule, and answers every other question yes, so each asked file is a separate change and needs docs and tests. */
+/** Calls the pull request and each slice of it a separate change, says no change meets a custom rule, and answers every other question yes, so each asked file is a separate change and needs docs. */
 function judgeText({ questions }: SystemOne) {
   function answer({ id }: { id: string }) {
     if (id.startsWith("custom-")) return { id, type: "noul", noul: 0.1 };
@@ -201,36 +201,32 @@ describe("pr-triage body", () => {
     expect(read).toBeGreaterThan(REPO_DOCS_MAX_BYTES - 3);
     expect(read).toBeLessThanOrEqual(REPO_DOCS_MAX_BYTES);
     expect(rest).toEqual({});
-    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "fail"], ["tests", "fail"]]);
+    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "fail"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toEqual(["src/flag.ts"]);
-    expect((verdict as Verdict).checks.find((c) => c.check === "tests")?.evidence).toEqual(["src/flag.ts"]);
+    expect((verdict as Verdict).checks.find((c) => c.check === "docs")?.evidence).toEqual(["src/flag.ts"]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => c.output)).toEqual([
       { kind: "score", score: expect.closeTo(20), passAt: 60, items: ["src/flag.ts"] },
       { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["src/flag.ts"] },
-      { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["src/flag.ts"] },
     ]);
   });
 
-  test("a file list past the tool-result cap still shows the judge its docs and test changes", async () => {
+  test("a file list past the tool-result cap still shows the judge its docs changes", async () => {
     const sources = Array.from({ length: 150 }, (_, index) => ({ ...FLAG, filename: `src/modules/feature-${index}/index.ts` }));
-    const files = [...sources, { ...FLAG, filename: "docs/flag.md" }, { ...FLAG, filename: "src/flag.test.ts" }];
+    const files = [...sources, { ...FLAG, filename: "docs/flag.md" }];
     expect(JSON.stringify(files).length).toBeGreaterThan(10_000);
     const pack = emptyPack(REPO);
-    const { judged, verdict } = await triage({ ...pack, checks: { docs: { enabled: true }, tests: { enabled: true } } }, { files });
+    const { judged, verdict } = await triage({ ...pack, checks: { docs: { enabled: true } } }, { files });
     expect(judged.flatMap((call) => call.questions)).toEqual([]);
-    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["docs", "pass"], ["tests", "pass"]]);
-    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => c.output)).toEqual([
-      { kind: "met", items: ["docs/flag.md"] },
-      { kind: "met", items: ["src/flag.test.ts"] },
-    ]);
+    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["docs", "pass"]]);
+    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => c.output)).toEqual([{ kind: "met", items: ["docs/flag.md"] }]);
   });
 
-  test("a deleted test does not cover the change and a pure rename asks nothing", async () => {
-    const removed = { filename: "src/old.test.ts", status: "removed", additions: 0, deletions: 1, patch: "@@ -1 +0,0 @@\n-test();" };
+  test("a deleted doc does not cover the change, and a test file or a pure rename asks nothing", async () => {
+    const removed = { filename: "docs/old.md", status: "removed", additions: 0, deletions: 1, patch: "@@ -1 +0,0 @@\n-Old." };
     const renamed = { filename: "src/moved.ts", previous_filename: "src/kept.ts", status: "renamed", additions: 0, deletions: 0 };
-    const { judged, verdict } = await triage({ ...emptyPack(REPO), checks: { tests: { enabled: true } } }, { files: [FLAG, removed, renamed] });
-    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["tests-file-001"]);
-    expect((verdict as Verdict).checks.find((c) => c.check === "tests")).toMatchObject({ result: "fail", evidence: ["src/flag.ts"] });
+    const { judged, verdict } = await triage({ ...emptyPack(REPO), checks: { docs: { enabled: true } } }, { files: [FLAG, removed, renamed, { ...FLAG, filename: "src/flag.test.ts" }] });
+    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["docs-file-001"]);
+    expect((verdict as Verdict).checks.find((c) => c.check === "docs")).toMatchObject({ result: "fail", evidence: ["src/flag.ts"] });
   });
 
   test("a pull request past the decision model budget is judged in several calls on every model check", async () => {
@@ -240,10 +236,10 @@ describe("pr-triage body", () => {
       patch: ["@@ -0,0 +1,41 @@", `+export const feature${index} = true;`, ...Array.from({ length: 40 }, (_, line) => `+// ${"evidence ".repeat(6)}${line}`)].join("\n"),
     }));
     expect(sources.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(MAX_SYSTEM_ONE_STATE_BYTES);
-    const files = [...sources, { ...FLAG, filename: "docs/flag.md" }, { ...FLAG, filename: "src/flag.test.ts" }];
+    const files = [...sources, { ...FLAG, filename: "docs/flag.md" }];
     const { path, verdict } = await triage(recommendedPack(REPO), { files });
     expect(path.invoked.filter((agent) => agent === "triage-judge").length).toBeGreaterThanOrEqual(2);
-    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"], ["tests", "pass"]]);
+    expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"]]);
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toHaveLength(3);
   });
 

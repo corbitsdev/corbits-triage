@@ -1,15 +1,14 @@
 import type { Case } from "@corbits/evals";
-import { isDocPath, isTestPath } from "../../packages/triage-contracts/src/paths.js";
+import { isDocPath } from "../../packages/triage-contracts/src/paths.js";
 
 type Outcome = "pass" | "fail";
 
-export const MODEL_CHECKS = ["tests", "docs", "focused"] as const;
+export const MODEL_CHECKS = ["docs", "focused"] as const;
 export type ModelCheck = typeof MODEL_CHECKS[number];
 export type Expected = Record<ModelCheck, Outcome>;
 
 /** What a reviewer decided about a merged pull request; snapshot.ts derives each case's expectations from it. */
 export interface Label {
-  needsTests: boolean;
   needsDocs: boolean;
   note: string;
 }
@@ -51,7 +50,7 @@ export type StoredSnapshot = Omit<Snapshot, "docs"> & { docs: Record<string, str
 /** Which snapshot a case reads, and what it removes or adds. */
 export interface CaseInput {
   pull: number;
-  drop?: "tests" | "docs";
+  drop?: "docs";
   mix?: number;
   /** The mix's title and body describe both pull requests. */
   described?: true;
@@ -59,8 +58,8 @@ export interface CaseInput {
 
 export type JudgeCase = Case<CaseInput, Expected> & { name: string };
 
-/** Commit subjects that mention what a variant removed, which a real pull request without it would not have. */
-const MENTIONS: Record<NonNullable<CaseInput["drop"]>, RegExp> = { tests: /\btest/i, docs: /\b(docs?|readme|documentation)\b/i };
+/** Commit subjects that mention the docs a variant removed, which a real pull request without them would not have. */
+const MENTIONS_DOCS = /\b(docs?|readme|documentation)\b/i;
 
 /** The snapshot a case describes: files dropped or merged in, with text that would contradict the variant removed. */
 export function variant(base: Snapshot, input: CaseInput, other?: Snapshot): Snapshot {
@@ -70,7 +69,5 @@ export function variant(base: Snapshot, input: CaseInput, other?: Snapshot): Sna
     return input.described ? { ...mixed, title: `${base.title}; also ${other.title}`, body: `${base.body}\n\nAlso: ${other.body}` } : mixed;
   }
   if (input.drop === undefined) return base;
-  const drop = input.drop === "tests" ? isTestPath : isDocPath;
-  const mentions = MENTIONS[input.drop];
-  return { ...base, body: "", commits: base.commits.filter((commit) => !mentions.test(commit)), files: base.files.filter((file) => !drop(file.filename)) };
+  return { ...base, body: "", commits: base.commits.filter((commit) => !MENTIONS_DOCS.test(commit)), files: base.files.filter((file) => !isDocPath(file.filename)) };
 }

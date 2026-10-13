@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
 import { readCappedBody } from "../read-json.js";
@@ -52,13 +52,13 @@ export function triageNs(config: unknown): CorbitsTriageNs {
   return asRecord(ns) ?? {};
 }
 
-export function nsRev(ns: CorbitsTriageNs): number {
+function nsRev(ns: CorbitsTriageNs): number {
   return typeof ns.rev === "number" ? ns.rev : 0;
 }
 
 /**
  * Rewrites `tenant.config.corbitsTriage` under a row lock; undefined when the
- * tenant is missing. Bumps `rev` so a concurrent portal save can 409 instead
+ * tenant is missing. Bumps `rev` so a concurrent portal PATCH can 409 instead
  * of clobbering install writes. A patch returning undefined writes nothing.
  */
 export async function patchCorbitsTriage(
@@ -137,42 +137,6 @@ export async function migrateRepoEnabledFlag(db: DB["db"]): Promise<void> {
   }
 }
 
-/** The triage namespace as stored, or undefined when the tenant is missing. */
-async function loadCorbitsTriage(db: DB["db"], tenantId: string): Promise<CorbitsTriageNs | undefined> {
-  const [row] = await db.select({ config: schema.tenant.config }).from(schema.tenant).where(eq(schema.tenant.id, tenantId));
-  return row && triageNs(row.config);
-}
-
-export type CorbitsTriageSave = { saved: boolean; ns: CorbitsTriageNs };
-
-/**
- * Replaces `tenant.config.corbitsTriage` with `ns` at `rev + 1` in one
- * conditional update that matches only while the stored rev is still `rev`.
- * A miss reports the stored namespace unsaved; undefined when the tenant is missing.
- */
-export async function saveCorbitsTriage(
-  db: DB["db"],
-  tenantId: string,
-  rev: number,
-  ns: CorbitsTriageNs,
-): Promise<CorbitsTriageSave | undefined> {
-  const next = { ...ns, rev: rev + 1 };
-  const [row] = await db.update(schema.tenant)
-    .set({
-      config: sql`jsonb_set(coalesce(${schema.tenant.config}, '{}'::jsonb), ${`{${CONFIG_KEY}}`}::text[], ${JSON.stringify(next)}::jsonb)`,
-      updatedAt: new Date(),
-    })
-    .where(and(
-      eq(schema.tenant.id, tenantId),
-      // A missing or non-numeric rev counts as 0, as nsRev reads it.
-      sql`(case when jsonb_typeof(${schema.tenant.config} #> ${`{${CONFIG_KEY},rev}`}::text[]) = 'number' then ${schema.tenant.config} #> ${`{${CONFIG_KEY},rev}`}::text[] else '0'::jsonb end) = ${JSON.stringify(rev)}::jsonb`,
-    ))
-    .returning({ id: schema.tenant.id });
-  if (row) return { saved: true, ns: next };
-  const current = await loadCorbitsTriage(db, tenantId);
-  return current && { saved: false, ns: current };
-}
-
 function cloneWithBody(req: Request, body: string): Request {
   const headers = new Headers(req.headers);
   headers.delete("content-length");
@@ -194,11 +158,15 @@ export async function tenantManagerRefusal(
 }
 
 /**
- * Stock PATCH /api/tenants/:id writes config unconditionally, so a body that
- * carries `config.corbitsTriage` is refused (400) in favour of the triage-config
- * route; any other body is passed on. Over 1 MB ⇒ 413.
+ * CAS for portal PATCH /api/tenants/:id that carries `config.corbitsTriage`.
+ * Matching rev ⇒ rewrite body to current+1 and let stock.fetch do the write.
+ * Stale rev ⇒ 409 `{ error: "config_conflict" }`. Over 1 MB ⇒ 413.
  */
-export async function guardTenantPatch(req: Request): Promise<Request | Response> {
+export async function prepareCorbitsTriagePatch(
+  db: DB["db"],
+  tenantId: string,
+  req: Request,
+): Promise<Request | Response> {
   const raw = await readCappedBody(req);
   if (raw === null) return failure(413, "payload_too_large", "Request body too large");
   let parsed: unknown;
@@ -207,10 +175,25 @@ export async function guardTenantPatch(req: Request): Promise<Request | Response
   } catch {
     return cloneWithBody(req, raw);
   }
-  if (asRecord(asRecord(parsed)?.["config"])?.[CONFIG_KEY] !== undefined) {
-    return failure(400, "invalid_request", `Save ${CONFIG_KEY} through PUT /api/integrations/triage-config/:tenantId.`);
+  const body = asRecord(parsed);
+  const config = asRecord(body?.["config"]);
+  const incomingNs = asRecord(config?.[CONFIG_KEY]);
+  if (!body || !config || !incomingNs) return cloneWithBody(req, raw);
+
+  const incomingRev = incomingNs["rev"] ?? 0;
+  const outcome = await db.transaction(async function compareRev(tx) {
+    const [row] = await tx.select().from(schema.tenant).where(eq(schema.tenant.id, tenantId)).for("update");
+    const currentRev = nsRev(triageNs(row?.config));
+    if (incomingRev !== currentRev) return { conflict: true as const };
+    return { conflict: false as const, nextRev: currentRev + 1 };
+  });
+  if (outcome.conflict) {
+    return Response.json({ error: "config_conflict" }, { status: 409 });
   }
-  return cloneWithBody(req, raw);
+  return cloneWithBody(req, JSON.stringify({
+    ...body,
+    config: { ...config, [CONFIG_KEY]: { ...incomingNs, rev: outcome.nextRev } },
+  }));
 }
 
 /** Repositories new to the config are recorded disabled: nothing runs until a user enables one. */

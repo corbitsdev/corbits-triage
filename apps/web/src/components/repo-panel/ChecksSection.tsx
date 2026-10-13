@@ -26,7 +26,6 @@ const SENTENCES: Record<CatalogId, string> = {
   ci: "CI must pass before merge",
   paths: "Never accept changes to forbidden paths",
   focused: "Check the change is focused on one thing",
-  tests: "Check tests are added for code changes",
   docs: "Check docs are updated when behavior changes",
 };
 

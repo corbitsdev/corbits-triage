@@ -271,9 +271,9 @@ describe("judge on a blocked pull request", () => {
     return reply;
   }
 
-  /** No file needs docs or tests; focused is more than one thing when it is failing; every other question is a noul pass or fail. */
+  /** No file needs docs; focused is more than one thing when it is failing; every other question is a noul pass or fail. */
   function answer(id: string, failing: string[]) {
-    if (/^(docs|tests)-file-/.test(id)) return { id, type: "noul", noul: 0.1 };
+    if (/^docs-file-/.test(id)) return { id, type: "noul", noul: 0.1 };
     if (id !== "focused") return { id, type: "noul", noul: failing.includes(id) ? 0.1 : 0.9 };
     const choice = failing.includes("focused") ? "more_than_one_thing" : "one_thing";
     const probabilities = { one_thing: 0.2, more_than_one_thing: 0.2, cant_tell: 0.1, [choice]: 0.7 };
@@ -359,12 +359,11 @@ describe("judge on a blocked pull request", () => {
 
   test("a CI-blocked pull request records the model's answers but stays driven by CI", async () => {
     const { asked, verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true, false, {}, code), undefined, []);
-    expect(asked).toEqual(["tests-file-001", "docs-file-001", "focused"]);
+    expect(asked).toEqual(["docs-file-001", "focused"]);
     expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", nextAction: "Fix failing CI: build" });
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
       { check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 70, passAt: 60, items: [] } },
       { check: "docs", kind: "model", result: "pass", reason: "documentation is up to date", evidence: [], output: { kind: "score", score: 90, passAt: 70, items: ["src/flag.ts"] } },
-      { check: "tests", kind: "model", result: "pass", reason: "tests cover the change", evidence: [], output: { kind: "score", score: 90, passAt: 70, items: ["src/flag.ts"] } },
     ]);
   });
 
@@ -372,7 +371,7 @@ describe("judge on a blocked pull request", () => {
     const { verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true, false, {}, code), "upstream 503");
     expect(verdict).toMatchObject({ state: "blocked", degraded: null, mirror: true });
     expect(verdict.checks.some((c) => c.kind === "machine" && c.result === "unconfirmed")).toBe(false);
-    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["decision model unavailable", "decision model unavailable", "decision model unavailable"]);
+    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["decision model unavailable", "decision model unavailable"]);
   });
 
   test("a clean draft awaits review with an informational draft check, asks nothing of the author and is red", async () => {
@@ -427,7 +426,7 @@ describe("judge on a blocked pull request", () => {
     const { asked, verdict } = await judgeAndEvaluate(await facts([], null, false, {}, code));
     expect(asked).toEqual([]);
     expect(verdict.state).toBe("stale-unknown");
-    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["not asked", "not asked", "not asked"]);
+    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["not asked", "not asked"]);
   });
 });
 
@@ -538,19 +537,19 @@ describe("focused judge input", () => {
     expect(verdicts[0]!.checks.filter((c) => c.kind === "model")).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "decision model unavailable", evidence: [], output: { kind: "could-not-check", reason: "decision model unavailable" } }]);
   });
 
-  test("an evaluation whose metadata alone is over the budget skips the judge and leaves focused and tests to a maintainer without accusation", async () => {
+  test("an evaluation whose metadata alone is over the budget skips the judge and leaves focused and docs to a maintainer without accusation", async () => {
     const files = Array.from({ length: 200 }, (_, index) => ({ path: `src/${"nested/".repeat(80)}${index}.ts` }));
-    const withTests = { ...pack, checks: { ...pack.checks, tests: { enabled: true } } };
-    const ruled = await rules({ items: [{ facts: { ...prFacts(files), paths: files.map((file) => file.path) }, pack: withTests }], batch: false }, ctx, signal);
+    const withDocs = { ...pack, checks: { ...pack.checks, docs: { enabled: true } } };
+    const ruled = await rules({ items: [{ facts: { ...prFacts(files), paths: files.map((file) => file.path) }, pack: withDocs }], batch: false }, ctx, signal);
     expect(ruled.needsJudgment).toBe(false);
     const tooLarge = "pull request too large for the decision model (112 KB)";
     expect(ruled.items[0]).toMatchObject({ judgeError: tooLarge, judgeLimitExceeded: true });
 
     const verdict = await evaluate(ruled, ctx, signal) as Verdict;
-    expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: "Not yet confirmed, a maintainer will check:\n- makes one focused change\n- tests cover the change", reason: tooLarge });
+    expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: "Not yet confirmed, a maintainer will check:\n- makes one focused change\n- documentation is up to date", reason: tooLarge });
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
       { check: "focused", kind: "model", result: "unconfirmed", reason: tooLarge, evidence: [], output: { kind: "could-not-check", reason: tooLarge } },
-      { check: "tests", kind: "model", result: "unconfirmed", reason: tooLarge, evidence: [], output: { kind: "could-not-check", reason: tooLarge } },
+      { check: "docs", kind: "model", result: "unconfirmed", reason: tooLarge, evidence: [], output: { kind: "could-not-check", reason: tooLarge } },
     ]);
   });
 });

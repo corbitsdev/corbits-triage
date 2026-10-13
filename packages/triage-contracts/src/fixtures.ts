@@ -27,7 +27,6 @@ function makeRecord(i: number): PRRecord {
     draft: i % 13 === 0,
     conflicts: i % 11 === 0,
     checks: i % 9 !== 0,
-    tests: i % 5 !== 0,
     duplicate: Number(((i * 17 % 100) / 100).toFixed(2)),
     spam: Number(((i * 7 % 100) / 100).toFixed(2)),
     confidence: Number((0.35 + ((i * 13) % 65) / 100).toFixed(2)),

@@ -24,7 +24,7 @@ const facts: PrFacts = {
 
 const checks: ActionInput["checks"] = [
   { check: "ci", kind: "machine", result: "pass", reason: "", evidence: [] },
-  { check: "tests", kind: "model", result: "fail", reason: "", evidence: [] },
+  { check: "size", kind: "machine", result: "fail", reason: "", evidence: [] },
   { check: "focused", kind: "model", result: "unconfirmed", reason: "", evidence: [] },
 ];
 
@@ -51,7 +51,7 @@ function always(dos: Do[]): Action {
 describe("evaluateActions", () => {
   test.each<[string, Action, string[]]>([
     ["all pass picks yes", branching(["opened"], ["ci"]), ["yes"]],
-    ["any fail picks no", branching(["opened"], ["ci", "tests", "focused"]), ["no"]],
+    ["any fail picks no", branching(["opened"], ["ci", "size", "focused"]), ["no"]],
     ["unconfirmed picks unsure", branching(["opened"], ["ci", "focused"]), ["unsure"]],
     ["no checks runs always", always([say("always")]), ["always"]],
     ["an event not in when does nothing", branching(["updated"], ["ci"]), []],
@@ -66,8 +66,8 @@ describe("evaluateActions", () => {
   });
 
   test("names the checks behind the branch", () => {
-    expect(run([branching(["opened"], ["ci", "tests"])])).toEqual([
-      { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "no" }, reason: "Tests failed." },
+    expect(run([branching(["opened"], ["ci", "size"])])).toEqual([
+      { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "no" }, reason: "Size failed." },
     ]);
   });
 

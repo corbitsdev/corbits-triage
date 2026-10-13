@@ -49,7 +49,7 @@ function check(overrides: Partial<CheckResult>): CheckResult {
   return { check: "size", kind: "machine", result: "pass", reason: null, evidence: [], output: null, gate: false, ...overrides };
 }
 
-const FAIL = check({ check: "tests", kind: "model", result: "fail", reason: "the new retry path has no test", evidence: ["retry.rs:40-49"], output: { kind: "score", score: 20, passAt: 70, items: [{ path: "retry.rs", added: { start: 40, end: 49 } }] } });
+const FAIL = check({ check: "docs", kind: "model", result: "fail", reason: "the new retry path is not documented", evidence: ["retry.rs:40-49"], output: { kind: "score", score: 20, passAt: 70, items: [{ path: "retry.rs", added: { start: 40, end: 49 } }] } });
 const UNSURE = check({ check: "focused", kind: "model", result: "unconfirmed", reason: "not sure the old job can go", output: { kind: "score", score: 50, passAt: 70, items: [] } });
 const CANT = check({ check: "conflicts", result: "unconfirmed", reason: "mergeability not yet computed", output: { kind: "could-not-check", reason: "mergeability not yet computed" } });
 
@@ -74,8 +74,8 @@ describe("paneProblems", () => {
     const gate = check({ check: "custom-1", result: "fail", gate: true });
     const size = check({ check: "size", result: "fail", reason: "pull request is over the size limits", evidence: ["31 files (max 30)"], output: { kind: "values", values: { files: 31 } } });
     const problems = paneProblems([CANT, check({}), UNSURE, gate, FAIL, size]);
-    expect(problems.map((problem) => [problem.check.check, problem.severity])).toEqual([["tests", "fail"], ["size", "fail"], ["focused", "unsure"], ["conflicts", "cant"]]);
-    expect(problems[0]).toMatchObject({ text: "The new retry path has no test", cited: ["retry.rs:40-49"], notes: [] });
+    expect(problems.map((problem) => [problem.check.check, problem.severity])).toEqual([["docs", "fail"], ["size", "fail"], ["focused", "unsure"], ["conflicts", "cant"]]);
+    expect(problems[0]).toMatchObject({ text: "The new retry path is not documented", cited: ["retry.rs:40-49"], notes: [] });
     expect(problems[1]).toMatchObject({ cited: [], notes: ["31 files (max 30)"] });
   });
 

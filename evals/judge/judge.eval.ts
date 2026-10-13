@@ -85,7 +85,7 @@ async function judgeChunk({ state, questions }: JudgeChunk): Promise<{ judge: st
 }
 
 function pack(repo: string): CheckPack {
-  return { ...emptyPack(repo), checks: { focused: { enabled: true }, docs: { enabled: true }, tests: { enabled: true } } };
+  return { ...emptyPack(repo), checks: { focused: { enabled: true }, docs: { enabled: true } } };
 }
 
 async function judge(input: CaseInput): Promise<Outcomes> {
@@ -136,9 +136,9 @@ try {
     run: judge,
     cases: `${here}cases.jsonl`,
     checks: Object.fromEntries(MODEL_CHECKS.map((check) => [check, answered(check)])),
-    // Focused decided every case in each measured run; two misses leave room for answers near the band edge. Docs missed 9
-    // and 10 of the 76 cases in the recorded runs, and main's code (`45f34e6`) missed 10 of the first 72.
-    allow: { tests: 3, docs: 11, focused: 2 },
+    // Focused decided every case in each measured run; two misses leave room for answers near the band edge. Docs missed 5
+    // of the 49 cases, all unsure, in the first run after the tests check was removed.
+    allow: { docs: 7, focused: 2 },
     about: { model: ENDPOINT.model },
     concurrency: 2,
     timeout: "10m",

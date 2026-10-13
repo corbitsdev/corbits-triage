@@ -27,7 +27,6 @@ export interface PRRecord {
   checks: boolean;
   duplicate: number;
   spam: number;
-  tests: boolean;
   confidence: number;
   lines: number;
   path: string;

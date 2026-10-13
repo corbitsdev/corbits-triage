@@ -102,10 +102,11 @@ describe("check pack contract", () => {
         duplicate: { enabled: true },
         reviewers: { enabled: true },
         drift: { enabled: true, maxBehindBy: 50 },
+        tests: { enabled: true },
         issue: { enabled: true, tracker: "github", requireLabel: true, label: "linked" },
       },
       actions: [
-        { ...BASE, checks: ["drift", "ci", "reviewers"] },
+        { ...BASE, checks: ["drift", "ci", "reviewers", "tests"] },
         { ...BASE, id: "b", checks: ["draft", "duplicate"] },
         { ...BASE, id: "c", checks: ["duplicate"] },
       ],

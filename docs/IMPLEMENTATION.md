@@ -21,7 +21,6 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/integrations/app.ts` | The `/api/integrations/*` routes and their OpenAPI descriptions. |
 | `src/invitations/` | Team invitations and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
-| `src/triage-config.ts`, `src/github/tenant-config.ts` | Saves `corbitsTriage` only while the stored `rev` is the one the save started from (409 with the stored settings otherwise); stock tenant PATCH may not write it. |
 | `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`, pull request events → coalescer. |

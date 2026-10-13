@@ -57,20 +57,16 @@ function focusedFileQuestion(file: number): string {
   return `Is the change in \`pullRequest.files[${file}]\` a separate change from the one the pull request's title and body describe?`;
 }
 
-// Docs and tests are decided per file and combined in code: changing a doc or test file passes them, otherwise each file
-// gets one direct question. Jev answers conditional questions ("if X, does it Y?") backwards, so none is asked.
-type FileCheck = "docs" | "tests";
+/**
+ * Docs is decided per file and combined in code: changing a doc file passes it, otherwise each file gets this direct
+ * question, answered yes when the file needs the docs updated. Jev answers conditional questions ("if X, does it Y?")
+ * backwards, so none is asked.
+ */
+function docsQuestion(file: number): string {
+  return `Does the change in \`pullRequest.files[${file}]\` make a statement in \`repository.docs\` wrong or incomplete, or add setup, configuration, permissions, or commands that \`repository.docs\` must describe?`;
+}
 
-/** Each question is answered yes when the file needs what the check asks for. */
-const FILE_QUESTIONS: Record<FileCheck, (file: number) => string> = {
-  tests: (file) => `Does the change in \`pullRequest.files[${file}]\` change runtime behavior, meaning code that runs, as opposed to tests, docs, comments, formatting, or styling?`,
-  docs: (file) => `Does the change in \`pullRequest.files[${file}]\` make a statement in \`repository.docs\` wrong or incomplete, or add setup, configuration, permissions, or commands that \`repository.docs\` must describe?`,
-};
-
-/** The file kind that satisfies the check by being changed. */
-const SATISFIES: Record<FileCheck, (path: string) => boolean> = { tests: isTestPath, docs: isDocPath };
-
-/** Only a change outside tests and docs can need either. */
+/** Only a change outside tests and docs can need docs. */
 function isAsked(path: string): boolean {
   return !isTestPath(path) && !isDocPath(path);
 }
@@ -103,7 +99,7 @@ function ruleText(row: ScopedCheck): string {
   return row.claim.replace(/[.!?]+$/, "");
 }
 
-/** How a per-file check is decided for one pull request: docs, tests, or a file or hunk scoped custom check. */
+/** How a per-file check is decided for one pull request: docs or a file or hunk scoped custom check. */
 export interface FilePlan {
   /** Changed files that satisfy the check; any one passes it without asking. */
   changed: string[];
@@ -127,19 +123,16 @@ interface FileQuestion {
 const FAILURES: Record<QualityCheckId, string> = {
   focused: "mixes unrelated changes",
   docs: "documentation is not updated",
-  tests: "tests are not added or updated",
 };
 
 const ACTIONS: Record<QualityCheckId, string> = {
   focused: "Split out unrelated changes",
   docs: "Update the documentation",
-  tests: "Add or update tests",
 };
 
 const PASSES: Record<QualityCheckId, string> = {
   focused: "makes one focused change",
   docs: "documentation is up to date",
-  tests: "tests cover the change",
 };
 
 const MAX_BODY = 4000;
@@ -359,12 +352,11 @@ function cutLine(line: string, room: number): string[] {
 export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicResult["sources"]): QualityEvaluation {
   const files = judgedFiles(facts);
   if (!sources) return { plan: {}, requests: [] };
-  const enabled = new Set(sources.quality.map((source) => source.id));
   const plan: QualityPlan = {};
-  for (const check of ["tests", "docs"] as const) {
-    // Deleting a test or doc does not cover a change.
-    const changed = (facts.files ?? []).filter((file) => file.status !== "removed" && SATISFIES[check](file.path));
-    if (enabled.has(check)) plan[check] = { changed: changed.map((file) => file.path), asked: {}, unread: [] };
+  if (sources.quality.some((source) => source.id === "docs")) {
+    // Deleting a doc does not cover a change.
+    const changed = (facts.files ?? []).filter((file) => file.status !== "removed" && isDocPath(file.path));
+    plan.docs = { changed: changed.map((file) => file.path), asked: {}, unread: [] };
   }
   const focused: FocusedPlan | undefined = isFocused(sources) ? { slices: {}, unread: [], parts: {} } : undefined;
   const scoped = sources.custom.filter(isScoped);
@@ -409,15 +401,14 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     add(file, bytes);
   }
 
-  /** The checks a rule has not already passed that ask about this file. */
-  function fileChecks(path: string): FileCheck[] {
-    if (!isAsked(path)) return [];
-    return (["tests", "docs"] as const).filter((check) => plan[check]?.changed.length === 0);
+  /** Whether docs, not already passed by a changed doc, asks about this file. */
+  function asksDocs(path: string): boolean {
+    return isAsked(path) && plan.docs?.changed.length === 0;
   }
 
   /** Every question about the file at `position` whose leading `read` hunks the request holds; a patch without hunk headers is cited as its file. */
   function fileQuestions(path: string, position: number, read: number, cited: CheckItem[]): FileQuestion[] {
-    const out: FileQuestion[] = fileChecks(path).map((check) => ({ check, id: fileQuestionId(check, position), item: path, instructions: FILE_QUESTIONS[check] }));
+    const out: FileQuestion[] = asksDocs(path) ? [{ check: "docs", id: fileQuestionId("docs", position), item: path, instructions: docsQuestion }] : [];
     for (const row of scoped) {
       if (!inScope(row, path)) continue;
       if (row.scope === "file") {
@@ -464,7 +455,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
       const unchanged = file.additions === 0 && file.deletions === 0;
       if (!unchanged) {
         if (focused && hunks.length === 0) focused.unread.push(file.path);
-        for (const check of fileChecks(file.path)) plan[check]!.unread.push(file.path);
+        if (asksDocs(file.path)) plan.docs!.unread.push(file.path);
         for (const row of scoped) if (inScope(row, file.path)) plan[row.id]!.unread.push(file.path);
       }
       if (focused && hunks.length > 0) addRest(read, 0);
@@ -481,7 +472,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
       makeRoom(fitted, bytes);
       questions.push({ id: question.id, type: "boolean", instructions: question.instructions(chunk.length - 1) });
       plan[question.check]!.asked[question.id] = question.item;
-      if (question.check !== "tests" && question.check !== "docs") asksCustom = true;
+      if (question.check !== "docs") asksCustom = true;
     }
     if (focused && fitted.hunks.length < hunks.length) addRest(read, fitted.hunks.length);
   }
