@@ -3,7 +3,8 @@ import {
   CATALOG_IDS,
   catalogCheckEnabled,
   customCheckEnabled,
-  customRuleId,
+  defaultActions,
+  emptyPack,
   isCatalogId,
   readCheckPack,
   RECOMMENDED_ISSUE,
@@ -17,7 +18,6 @@ import {
   type CustomCheck,
   type Step,
   type PolicyActions,
-  type PolicyEvent,
   type RepoPolicy,
   type VerdictWord,
 } from "@corbits/triage-contracts";
@@ -56,20 +56,6 @@ export function toPack(draft: RepoDraft): CheckPack {
   return readCheckPack(draft.pack);
 }
 
-/** A rule added since the last save takes its id from the name it is saved with; a saved rule keeps its id when renamed. */
-export function namedNewRules(pack: CheckPack, saved: CheckPack): CheckPack {
-  const kept = new Set(saved.custom.map((row) => row.id));
-  const taken = [...kept];
-  const renamed = new Map<string, string>();
-  for (const row of pack.custom) {
-    if (kept.has(row.id)) continue;
-    const id = customRuleId(row.name, taken);
-    taken.push(id);
-    renamed.set(row.id, id);
-  }
-  return { ...pack, custom: pack.custom.map((row) => ({ ...row, id: renamed.get(row.id) ?? row.id })) };
-}
-
 function withPack(draft: RepoDraft, pack: Partial<CheckPack>): RepoDraft {
   return { ...draft, pack: { ...draft.pack, ...pack } };
 }
@@ -104,14 +90,6 @@ export function setCatalogCheck(draft: RepoDraft, saved: CheckPack, id: CatalogI
   return withPack(draft, { checks: { ...draft.pack.checks, [id]: next } });
 }
 
-function upsert<T extends { id: string }>(rows: T[], row: T): T[] {
-  return rows.some((item) => item.id === row.id) ? rows.map((item) => (item.id === row.id ? row : item)) : [...rows, row];
-}
-
-export function upsertCustom(draft: RepoDraft, check: CustomCheck): RepoDraft {
-  return withPack(draft, { custom: upsert(draft.pack.custom, check) });
-}
-
 /** Whether a check is in the verdict; a saved tracker of "off" leaves the issue check doing nothing, so it reads as off. */
 export function checkOn(pack: CheckPack, id: CheckRef): boolean {
   if (BUILT_IN_CHECK_NAMES.has(id)) return true;
@@ -137,12 +115,8 @@ function withActions(draft: RepoDraft, actions: Partial<PolicyActions>): RepoDra
   return withPack(draft, { actions: { ...draft.pack.actions, ...actions } });
 }
 
-export function setWhen(draft: RepoDraft, when: PolicyEvent[]): RepoDraft {
-  return withActions(draft, { when });
-}
-
-export function setList(draft: RepoDraft, list: VerdictWord, dos: Step[]): RepoDraft {
-  return withActions(draft, { [list]: dos });
+export function setList(draft: RepoDraft, list: VerdictWord, steps: Step[]): RepoDraft {
+  return withActions(draft, { [list]: steps });
 }
 
 function changedIds<T extends { id: string }>(saved: T[], draft: T[]): number {
@@ -160,10 +134,6 @@ export function packChanges(saved: CheckPack, draft: CheckPack): number {
 /** One change when the triage switch differs. */
 export function policyChanges(saved: DraftPolicy, draft: DraftPolicy): number {
   return Number(saved.enabled !== draft.enabled);
-}
-
-export function changeCount(saved: RepoDraft, draft: RepoDraft): number {
-  return packChanges(saved.pack, draft.pack) + policyChanges(saved.policy, draft.policy);
 }
 
 function longestFirst(a: [string, string], b: [string, string]): number {
@@ -186,11 +156,52 @@ function whereOf(message: string, pack: CheckPack): DraftWhere {
   return { section: "pack" };
 }
 
-/** Why the draft cannot be saved, in the contract's words, and where that belongs; null when it can. */
-export function validate(draft: RepoDraft): DraftProblem | null {
+function contractProblem(raw: unknown): string | null {
+  try {
+    readCheckPack(raw);
+    return null;
+  } catch (cause) {
+    if (!(cause instanceof Error)) throw cause;
+    return cause.message;
+  }
+}
+
+/** Why one step cannot be saved yet, in the contract's words; null when it can. */
+export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step): string | null {
+  return contractProblem({ ...emptyPack(draft.pack.repo), actions: { ...defaultActions(), [list]: [step] } });
+}
+
+/** Why one custom rule cannot be saved yet, in the contract's words; null when it can. */
+export function customProblem(draft: RepoDraft, row: CustomCheck): string | null {
+  return contractProblem({ ...emptyPack(draft.pack.repo), custom: [row] });
+}
+
+function catalogReadable(pack: CheckPack, id: CatalogId, row: CatalogCheck): boolean {
+  const counts = [row.maxFiles, row.maxLines].every((count) => count === undefined || (Number.isInteger(count) && count >= 1));
+  return counts && contractProblem({ ...emptyPack(pack.repo), checks: { [id]: row } }) === null;
+}
+
+/**
+ * What of the draft can be saved now: an unfinished step or rule waits in the draft until it is filled, and a built-in
+ * rule mid-edit keeps its saved value, so one half-typed row never holds back the rest.
+ */
+export function savable(draft: RepoDraft, saved: CheckPack): RepoDraft {
+  const pack = draft.pack;
+  const checks = Object.fromEntries(CATALOG_IDS.flatMap((id) => {
+    const row = pack.checks[id];
+    const kept = row && catalogReadable(pack, id, row) ? row : saved.checks[id];
+    return kept ? [[id, kept]] : [];
+  }));
+  const lists = Object.fromEntries(VERDICTS.map((list) => [list, pack.actions[list].filter((step) => stepProblem(draft, list, step) === null)]));
+  const custom = pack.custom.filter((row) => customProblem(draft, row) === null);
+  return { ...draft, pack: { ...pack, checks, custom, actions: { ...pack.actions, ...lists } } };
+}
+
+/** Why what can be saved still cannot be, in the contract's words, and where that belongs; null when it can. */
+export function validate(draft: RepoDraft, saved: CheckPack): DraftProblem | null {
   let pack: CheckPack;
   try {
-    pack = toPack(draft);
+    pack = toPack(savable(draft, saved));
   } catch (cause) {
     if (!(cause instanceof Error)) throw cause;
     return { reason: cause.message, where: whereOf(cause.message, draft.pack) };

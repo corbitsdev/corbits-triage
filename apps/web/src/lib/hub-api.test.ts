@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
-import { defaultActions, recommendedPack, stockTriggerMail } from "@corbits/triage-contracts";
+import { stockTriggerMail } from "@corbits/triage-contracts";
 import {
   createGrant,
   deleteGrant,
@@ -10,7 +10,6 @@ import {
   githubAppSecret,
   GITHUB_HOOK_CREDENTIAL_NAME,
   portalConnected,
-  previewPull,
   projectQueue,
   reposFromConfig,
   removeRepository,
@@ -648,18 +647,4 @@ describe("pending maintainer write approvals", () => {
     const [item] = queue([merge]);
     expect(item).toMatchObject({ pendingApprovalId: "merge", needsHuman: true });
   });
-});
-
-test("a preview posts the draft pack, so unsaved edits are previewed", async () => {
-  const sent: Array<{ method: string; path: string; body: unknown }> = [];
-  const transport: Transport = {
-    async fetch(method, path, body) {
-      sent.push({ method, path, body });
-      return {} as never;
-    },
-    subscribe: () => () => {},
-  };
-  const pack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), unsure: [{ do: "close" as const }] } };
-  await previewPull(transport, "tenant", { repo: "acme/widgets", number: 12, pack });
-  expect(sent).toEqual([{ method: "POST", path: "/api/integrations/github-preview/tenant", body: { repo: "acme/widgets", number: 12, pack } }]);
 });

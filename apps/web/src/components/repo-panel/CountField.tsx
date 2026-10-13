@@ -10,7 +10,7 @@ function parse(text: string): number {
 export default function CountField({ value, label, min, max, disabled, onChange }: CountFieldProps) {
   const [text, setText] = useState(value === undefined ? "" : String(value));
 
-  // Discard and reload change the value from outside; typing keeps what was typed.
+  // A reload or another writer changes the value from outside; typing keeps what was typed.
   useEffect(function syncFromDraft() {
     setText((current) => (Object.is(parse(current), value) || value === undefined ? current : String(value)));
   }, [value]);

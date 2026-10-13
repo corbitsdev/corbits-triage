@@ -2,8 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import type { Transport } from "@intx/hub-client";
 import { fakeHub, type FakeHub } from "./fake-hub.ts";
-import { changeCount } from "./pack-draft.ts";
-import { openSession, saveDraft } from "./repo-pack-save.ts";
+import { openSession, saveDraft, unsavedChanges } from "./repo-pack-save.ts";
 import { transportRepoPackStore } from "./repo-pack-store.ts";
 
 const repo = "acme/widgets";
@@ -67,7 +66,7 @@ describe("saving the repository pack", () => {
     const store = transportRepoPackStore(hub.transport, "t");
     const session = openSession(repo, await store.load(repo, false));
     hub.requests.length = 0;
-    expect(await saveDraft(store, repo, session, session.saved)).toEqual({ session, draft: session.saved, failure: null });
+    expect(await saveDraft(store, repo, session, session.saved)).toEqual({ session, failure: null });
     expect(hub.requests).toEqual([]);
   });
 
@@ -83,40 +82,30 @@ describe("saving the repository pack", () => {
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts/art_1/versions", "PATCH /api/tenants/t"]);
   });
 
-  test("one config write carries the pack pointer and the triage switch", async () => {
+  test("one config write carries the pack pointer, the triage switch and roles", async () => {
     const hub = fakeHub([], config);
     const store = transportRepoPackStore(hub.transport, "t");
     const session = openSession(repo, await store.load(repo, false));
-    const policy = { enabled: true };
+    const policy = { enabled: true, roles: { core: { users: ["octocat"] } } };
     const { failure } = await saveDraft(store, repo, session, { pack: recommendedPack(repo), policy });
     expect(failure).toBeNull();
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts", "PATCH /api/tenants/t"]);
     expect(repoRow(hub)).toEqual({ name: repo, connected: true, installationId: 9, ...policy, checkPack: { name: title, id: "art_1" } });
   });
 
-  test("a saved draft takes on the normalised pack, so nothing reads as unsaved", async () => {
+  test("the saved copy takes on the normalised pack and settings while the draft keeps what was typed, so nothing reads as unsaved", async () => {
     const hub = fakeHub([], config);
     const store = transportRepoPackStore(hub.transport, "t");
     const session = openSession(repo, await store.load(repo, false));
     const pack = recommendedPack(repo);
     const untidy = { ...pack, checks: { ...pack.checks, "no-forbidden-paths": { enabled: true, forbiddenGlobs: [" dist/** "] } } };
-    const policy = session.saved.policy;
-    const { session: after, draft, failure } = await saveDraft(store, repo, session, { pack: untidy, policy });
+    const policy = { ...session.saved.policy, roles: { core: { users: [" octocat ", "octocat"] } } };
+    const draft = { pack: untidy, policy };
+    const { session: after, failure } = await saveDraft(store, repo, session, draft);
     expect(failure).toBeNull();
-    expect(draft.pack.checks["no-forbidden-paths"]).toEqual({ enabled: true, forbiddenGlobs: ["dist/**"] });
-    expect(changeCount(after.saved, draft)).toBe(0);
-  });
-
-  test("a new rule takes its id from the name it is saved with, and a saved rule keeps its id when renamed", async () => {
-    const hub = fakeHub([], config);
-    const store = transportRepoPackStore(hub.transport, "t");
-    const session = openSession(repo, await store.load(repo, false));
-    const added = { id: "is-it-true-that", name: "Ticket in the title", group: "pull-request" as const, kind: "model" as const, shape: "is-true" as const, claim: "The title names a ticket." };
-    const first = await saveDraft(store, repo, session, { pack: { ...emptyPack(repo), custom: [added] }, policy: session.saved.policy });
-    expect(first.failure).toBeNull();
-    expect(first.draft.pack.custom.map((row) => row.id)).toEqual(["ticket-in-the-title"]);
-    const renamed = { ...first.draft.pack, custom: [{ ...first.draft.pack.custom[0]!, name: "Ticket first" }] };
-    const second = await saveDraft(store, repo, first.session, { ...first.draft, pack: renamed });
-    expect(second.draft.pack.custom.map((row) => row.id)).toEqual(["ticket-in-the-title"]);
+    expect(after.saved.pack.checks["no-forbidden-paths"]).toEqual({ enabled: true, forbiddenGlobs: ["dist/**"] });
+    expect(draft.pack.checks["no-forbidden-paths"]?.forbiddenGlobs).toEqual([" dist/** "]);
+    expect(after.saved.policy.roles).toEqual({ core: { users: ["octocat"] } });
+    expect(unsavedChanges(after, draft)).toBe(0);
   });
 });

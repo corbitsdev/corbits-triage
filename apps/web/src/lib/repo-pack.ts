@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "@corbits/common";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { emptyPack, repoPolicy } from "@corbits/triage-contracts";
@@ -6,10 +6,11 @@ import { writeCheckPack } from "./check-pack.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import { loadRepoPolicy } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
-import { changeCount, fromPack, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
+import { createAutosave, type Autosave, type AutosaveState, type DraftUpdate } from "./pack-autosave.ts";
+import { fromPack, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
 import { usePortal, useSignOutWhenRejected } from "./portal.tsx";
-import { openSession, saveDraft, type PackSession } from "./repo-pack-save.ts";
+import { openSession, unsavedChanges, type PackSession } from "./repo-pack-save.ts";
 import { draftPolicy, packArtifact, transportRepoPackStore, type RepoPackStore } from "./repo-pack-store.ts";
 
 /** The hub store, reading packs through the query cache the repositories table shares. */
@@ -48,123 +49,107 @@ function emptySession(repo: string): PackSession {
   return { loaded: null, corrupt: null, saved: fromPack(emptyPack(repo), draftPolicy(repoPolicy(undefined))), unlinked: false };
 }
 
+/** Typing settles for this long before the draft is saved. */
+const SAVE_AFTER_MS = 500;
+
+export type SaveState = "saved" | "saving" | "not-saved";
+
 export type RepoPack = {
   status: "loading" | "ready" | "failed";
   draft: RepoDraft;
   saved: RepoDraft;
-  changes: number;
-  /** The checks were written but the repository does not point at them yet; Save redoes the link. */
-  unlinked: boolean;
-  /** Why the draft cannot be saved as it stands, and where. */
+  save: SaveState;
+  /** Why what can be saved still cannot be, and where. */
   problem: DraftProblem | null;
-  /** Why the newest artifact for the repository is not a check pack; saving replaces it in place. */
+  /** Why the newest artifact for the repository is not a check pack; the next save replaces it in place. */
   corrupt: string | null;
-  /** The pack changed on the hub since it was loaded; only a reload can save again. */
-  stale: boolean;
-  saving: boolean;
   error: string;
-  edit: (update: (draft: RepoDraft) => RepoDraft) => void;
-  save: () => Promise<void>;
-  discard: () => void;
+  edit: (update: DraftUpdate) => void;
+  /** Saves now; also how a failed save is tried again. */
+  flush: () => void;
   reload: () => void;
 };
 
-/** Loads a repository's pack and settings from the store and saves the panel's edits back through it. */
+/** Loads a repository's pack and settings and saves each edit shortly after it is made. */
 export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack {
-  const { refreshNow, runBacklog, notify } = usePortal();
+  const { refreshNow, runBacklog } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
-  const [session, setSession] = useState<PackSession>(() => emptySession(repo));
-  const [draft, setDraft] = useState<RepoDraft>(session.saved);
+  const [state, setState] = useState<AutosaveState | null>(null);
   const [status, setStatus] = useState<RepoPack["status"]>("loading");
-  const [stale, setStale] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [afterError, setAfterError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const autosave = useRef<Autosave | null>(null);
+  const hooks = useRef({ refreshNow, runBacklog, signOutWhenRejected });
+  hooks.current = { refreshNow, runBacklog, signOutWhenRejected };
+
+  /** Turning triage on starts triage of the open pull requests; every save refreshes the portal. */
+  async function afterSave(before: PackSession, after: PackSession) {
+    setAfterError("");
+    try {
+      if (!before.saved.policy.enabled && after.saved.policy.enabled) await hooks.current.runBacklog(repo, "Triage enabled. Triaging open pull requests.");
+      await hooks.current.refreshNow();
+    } catch (cause) {
+      hooks.current.signOutWhenRejected(cause);
+      setAfterError(`Saved, but ${errorText(cause)}`);
+    }
+  }
 
   useEffect(function loadPack() {
     let cancelled = false;
     setStatus("loading");
-    setError("");
-    setStale(false);
+    setLoadError("");
     if (!store) return;
     async function load(from: RepoPackStore) {
       try {
-        const next = openSession(repo, await from.load(repo, attempt > 0));
+        const session = openSession(repo, await from.load(repo, attempt > 0));
         if (cancelled) return;
-        setSession(next);
-        setDraft(next.saved);
+        autosave.current = createAutosave({ store: from, repo, session, delayMs: SAVE_AFTER_MS, changed: setState, saved: afterSave });
+        setState(autosave.current.state());
         setStatus("ready");
       } catch (cause) {
         if (cancelled) return;
-        signOutWhenRejected(cause);
-        setError(`Could not load the policy. ${errorText(cause)}`);
+        hooks.current.signOutWhenRejected(cause);
+        setLoadError(`Could not load the policy. ${errorText(cause)}`);
         setStatus("failed");
       }
     }
     void load(store);
-    return function cancel() {
+    return function saveWhatIsWaiting() {
       cancelled = true;
+      const pending = autosave.current;
+      autosave.current = null;
+      if (pending?.state().waiting) void pending.flush();
     };
   }, [store, repo, attempt]);
 
-  async function startTriage() {
-    try {
-      await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
-    } catch (cause) {
-      setError(`Triage enabled. Could not start triage of open pull requests. ${errorText(cause)}`);
-    }
+  useEffect(function signOutOnRejectedSave() {
+    if (state?.failure) hooks.current.signOutWhenRejected(state.failure);
+  }, [state?.failure]);
+
+  const session = state?.session ?? emptySession(repo);
+  const draft = state?.draft ?? session.saved;
+  const found = validate(draft, session.saved.pack);
+  const problem = found && { ...found, reason: shownReason(found.reason, draft.pack) };
+  const error = loadError || state?.error || afterError;
+
+  function save(): SaveState {
+    if (state?.saving) return "saving";
+    if (problem || state?.error) return "not-saved";
+    return state?.waiting || unsavedChanges(session, draft) > 0 ? "saving" : "saved";
   }
 
-  async function save() {
-    if (!store || problem) return;
-    setSaving(true);
-    setError("");
-    setStale(false);
-    const { session: next, draft: shown, failure } = await saveDraft(store, repo, session, draft);
-    setSession(next);
-    setDraft(shown);
-    setSaving(false);
-    if (failure) {
-      signOutWhenRejected(failure.cause);
-      setStale(failure.stale);
-      setError(failure.message);
-      return;
-    }
-    notify("Saved. Applies to the next pull request.");
-    if (!session.saved.policy.enabled && draft.policy.enabled) await startTriage();
-    try {
-      await refreshNow();
-    } catch (cause) {
-      signOutWhenRejected(cause);
-      setError(`Saved, but could not refresh. ${errorText(cause)}`);
-    }
+  function edit(update: DraftUpdate) {
+    autosave.current?.edit(update);
   }
 
-  function discard() {
-    setDraft(session.saved);
+  function flush() {
+    void autosave.current?.flush();
   }
 
   function reload() {
     setAttempt((count) => count + 1);
   }
 
-  const found = validate(draft);
-  const problem = found && { ...found, reason: shownReason(found.reason, draft.pack) };
-
-  return {
-    status,
-    draft,
-    saved: session.saved,
-    changes: changeCount(session.saved, draft),
-    unlinked: session.unlinked,
-    problem,
-    corrupt: session.corrupt,
-    stale,
-    saving,
-    error,
-    edit: setDraft,
-    save,
-    discard,
-    reload,
-  };
+  return { status, draft, saved: session.saved, save: save(), problem, corrupt: session.corrupt, error, edit, flush, reload };
 }
