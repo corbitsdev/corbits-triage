@@ -81,5 +81,5 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
 - **"No decision model offering found"**: save Settings → Model.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
-- **New PRs never reach triage**: the hub logs `stale_deployment` when the tenant has no live `pr-triage` deployment. Reload the portal to redeploy.
-- **Portal shows `HTTP 404` on Set up checks**: the hub process is older than the code. Restart `bun run dev`.
+- **New PRs never reach triage**: the hub logs `stale_deployment` when the tenant has no live `pr-triage` deployment. Reload the portal, or wait about two minutes for the hub to redeploy it.
+- **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.

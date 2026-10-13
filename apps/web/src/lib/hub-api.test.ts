@@ -12,7 +12,6 @@ import {
   portalConnected,
   previewPull,
   projectQueue,
-  queueRows,
   reposFromConfig,
   removeRepository,
   saveInference,
@@ -104,32 +103,15 @@ describe("check rows", () => {
 });
 
 describe("needs-human queue sources", () => {
-  test("includes pending approvals and awaited signals while human-gated PRs remain projected", () => {
-    const approvals = [approval("mirror")];
-    const waiting: RunLog = {
-      runId: "run-waiting",
-      anchorRunId: "run-waiting",
-      events: [{ seq: 4, type: "SignalAwaited", body: { signalName: "maintainer" } }],
-    };
-
+  test("human-gated PRs remain projected while an approval is pending", () => {
+    const approvals = [approval("mirror", false)];
     expect(queue(approvals).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
-    expect(queueRows([decidedLog, waiting], approvals, true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
   });
 });
 
 describe("All-view queue sources", () => {
   test("does not surface listener deployments as pull requests when the project queue is empty", () => {
     expect(projectQueue([], [], undefined)).toEqual([]);
-    expect(queueRows([], [], false)).toEqual([]);
-  });
-
-  test("needs-human still lists pending approvals and awaited signals", () => {
-    const waiting: RunLog = {
-      runId: "run-waiting",
-      anchorRunId: "run-waiting",
-      events: [{ seq: 4, type: "SignalAwaited", body: { signalName: "maintainer" } }],
-    };
-    expect(queueRows([waiting], [approval("mirror")], true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
   });
 });
 

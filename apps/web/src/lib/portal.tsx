@@ -134,12 +134,9 @@ export function isFinishedRunLogQuery(query: Query): boolean {
   return query.queryKey[0] === RUN_LOG_QUERY_KEY && isRunLog(query.state.data) && isTerminalRunEvents(query.state.data.events);
 }
 
-/** Marks a query whose data never changes once read, so a refresh keeps it. */
-export const UNCHANGING_QUERY_META = { unchanging: true };
-
-/** A refresh rereads everything except finished run logs and queries marked unchanging. */
+/** A refresh rereads everything except finished run logs. */
 function canChange(query: Query): boolean {
-  return !isFinishedRunLogQuery(query) && query.meta?.unchanging !== true;
+  return !isFinishedRunLogQuery(query);
 }
 
 export async function invalidateChangeable(queryClient: QueryClient, queryKeys: ReadonlyArray<readonly unknown[]>): Promise<void> {

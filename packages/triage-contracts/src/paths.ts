@@ -27,10 +27,6 @@ export function contributionRuleRank(path: string): number | undefined {
   return rank === -1 ? undefined : rank;
 }
 
-export function isContributionRulePath(path: string): boolean {
-  return contributionRuleRank(path) !== undefined;
-}
-
 /** Lockfiles, which say nothing a reviewer judges. */
 export function isGeneratedPath(path: string): boolean {
   return GENERATED_PATH.test(path);

@@ -41,10 +41,6 @@ export function triageStateName(repo: string): string {
   return `triage-state/${repo}`;
 }
 
-export function prTriageKey(repo: string, number: number, headSha: string): string {
-  return `${repo}#${number}@${headSha}`;
-}
-
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }

@@ -1,6 +1,5 @@
 import {
   ApiError,
-  findAwaitingSignal,
   listWorkflowDeployments,
   readWorkflowRunEvents,
   triggerWorkflowRun,
@@ -155,13 +154,6 @@ export type RunLog = {
   runId: string;
   anchorRunId: string;
   events: WorkflowRunEvent[];
-};
-
-export type Awaiting = {
-  runId: string;
-  anchorRunId: string;
-  seq: number;
-  signalName: string;
 };
 
 export type SectionDenied = {
@@ -608,15 +600,8 @@ export async function ensureWorkspace(transport: Transport, chosen: string | nul
   return createWorkspace(transport);
 }
 
-/** Stock /api/hooks mount path shared with the hub (apps/hub). */
-export const HOOK_MOUNT_PATH = "/api/hooks";
-
 /** Workflow the app-level hook credential targets (metadata.webhook.workflow). */
 export const HOOK_WORKFLOW = "pr-triage";
-
-export function hookCredential(credentials: HubCredential[]): HubCredential | undefined {
-  return credentials.find((row) => row.name === GITHUB_HOOK_CREDENTIAL_NAME);
-}
 
 export function legacyHookCredentials(credentials: HubCredential[]): HubCredential[] {
   return credentials.filter((row) => row.name.startsWith(`${GITHUB_HOOK_CREDENTIAL_NAME}:`));
@@ -624,11 +609,6 @@ export function legacyHookCredentials(credentials: HubCredential[]): HubCredenti
 
 export function legacyGithubCredentials(credentials: HubCredential[]): HubCredential[] {
   return credentials.filter((row) => row.name.startsWith(`${GITHUB_CREDENTIAL_NAME}:`));
-}
-
-/** Path (append to the hub origin) GitHub posts to for this hook credential. */
-export function hookPath(credentialId: string): string {
-  return `${HOOK_MOUNT_PATH}/${requireId(credentialId, "Hook credential id")}`;
 }
 
 function credentialIdempotencyKey(providerId: string, name: string): string {
@@ -1533,54 +1513,6 @@ export function portalConnected(snapshot: PortalSnapshot): boolean {
   return hasActiveGithubCredential(snapshot.credentials);
 }
 
-export type QueueRow = {
-  id: string;
-  title: string;
-  meta: string;
-  href: string;
-};
-
-function toolLabel(approval: HubApproval): string {
-  const definition = approval.toolDefinition;
-  if (!definition || typeof definition !== "object") return "approval";
-  const name = (definition as Record<string, unknown>)["name"];
-  return typeof name === "string" && name.length > 0 ? name : "approval";
-}
-
-function isPendingStatus(status: unknown): boolean {
-  return typeof status === "string" && status.toLowerCase() === "pending";
-}
-
-/** Needs-review rows from pending approvals and awaited signals. All view never lists hub runs. */
-export function awaitingOf(logs: RunLog[]): Awaiting[] {
-  const awaiting: Awaiting[] = [];
-  for (const log of logs) {
-    const signal = findAwaitingSignal(log.events);
-    if (!signal) continue;
-    awaiting.push({ runId: log.runId, anchorRunId: log.anchorRunId, seq: signal.seq, signalName: signal.signalName });
-  }
-  return awaiting;
-}
-
-export function queueRows(logs: RunLog[], approvals: HubApproval[], needsHuman: boolean): QueueRow[] {
-  if (!needsHuman) return [];
-  const pending = approvals
-    .filter((row) => isPendingStatus(row.status))
-    .map((row) => ({
-      id: row.id,
-      title: toolLabel(row),
-      meta: `${row.runId} · pending`,
-      href: `/triage/pr/${row.id}`,
-    }));
-  const signals = awaitingOf(logs).map((row) => ({
-    id: `${row.runId}:${row.signalName}`,
-    title: row.signalName,
-    meta: `${row.runId} · seq ${row.seq}`,
-    href: `/inbox`,
-  }));
-  return [...pending, ...signals];
-}
-
 export type QueueState =
   | "needs-decision"
   | "awaiting-review"
@@ -1589,16 +1521,6 @@ export type QueueState =
   | "ready"
   | "stale"
   | "new";
-
-export const QUEUE_STATE_ORDER: QueueState[] = [
-  "needs-decision",
-  "awaiting-review",
-  "needs-author-update",
-  "blocked",
-  "ready",
-  "stale",
-  "new",
-];
 
 export const QUEUE_STATE_LABEL: Record<QueueState, string> = {
   "needs-decision": "Needs decision",
@@ -1758,18 +1680,6 @@ export function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : [];
 }
 
-const INLINE_PREFIX = "inline:";
-
-/** Parses an `inline:<json>` ref. Blob refs (outputs over 1 MiB) are not resolvable here. */
-export function resolveInlineRef(ref: unknown): unknown {
-  if (typeof ref !== "string" || !ref.startsWith(INLINE_PREFIX)) return null;
-  try {
-    return JSON.parse(ref.slice(INLINE_PREFIX.length));
-  } catch {
-    return null;
-  }
-}
-
 const TRIAGE_TO_QUEUE: Record<string, QueueState> = {
   "needs-decision": "needs-decision",
   "awaiting-review": "awaiting-review",
@@ -1779,22 +1689,8 @@ const TRIAGE_TO_QUEUE: Record<string, QueueState> = {
   "stale-unknown": "stale",
 };
 
-function unwrapStepOutput(output: unknown): unknown {
-  const record = obj(output);
-  if (!Object.hasOwn(record, "reply")) return output;
-  const reply = record.reply;
-  if (typeof reply !== "string") return reply;
-  try {
-    return JSON.parse(reply);
-  } catch {
-    return {};
-  }
-}
-
-function evidenceOf(det: unknown): string[] {
-  const d = obj(det);
-  const findings = Array.isArray(d.findings) ? d.findings.map((f) => obj(f).reason) : [];
-  return [...new Set([...findings, d.reason].filter((r): r is string => typeof r === "string" && r.length > 0))];
+function isPendingStatus(status: unknown): boolean {
+  return typeof status === "string" && status.toLowerCase() === "pending";
 }
 
 function isGithubWriteApproval(approval: HubApproval): boolean {
@@ -1949,72 +1845,3 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
   }
 }
 
-function priorityRank(priority: string | null): number {
-  return priority ? Number(priority.slice(1)) : 4;
-}
-
-export function groupQueue(items: PrItem[]): Array<{ state: QueueState; items: PrItem[] }> {
-  return QUEUE_STATE_ORDER.map((state) => ({
-    state,
-    items: items.filter((i) => i.state === state).sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority)),
-  })).filter((g) => g.items.length > 0);
-}
-
-export type AuditEntry = {
-  id: string;
-  source: "run" | "approval";
-  actor: string;
-  at: string | null;
-  summary: string;
-};
-
-export function auditSummary(event: WorkflowRunEvent): string {
-  const body = obj(event.body);
-  if (event.type === "SignalAwaited" && body.parkKind === "approval") return `Approval requested at ${body.stepId}`;
-  if (event.type === "SignalReceived") {
-    const outcome = obj(body.payload).outcome;
-    return typeof outcome === "string" ? `Approval ${outcome}` : `Signal ${String(body.signalName)}`;
-  }
-  if (event.type !== "StepCompleted" || typeof body.stepId !== "string") return event.type;
-  const output = obj(unwrapStepOutput(resolveInlineRef(obj(body.output).ref)));
-  const items = Array.isArray(output.items) ? output.items.length : null;
-  const detail =
-    typeof output.state === "string"
-      ? `${output.state}${typeof output.priority === "string" ? ` ${output.priority}` : ""}`
-      : items !== null
-        ? `${items} items`
-        : evidenceOf(output.det)[0];
-  return detail ? `${event.type} ${body.stepId}: ${detail}` : `${event.type} ${body.stepId}`;
-}
-
-export function auditTimeline(logs: RunLog[], approvals: HubApproval[]): AuditEntry[] {
-  const entries: AuditEntry[] = [];
-  const received = new Set<string>();
-  for (const log of logs) {
-    for (const event of log.events) {
-      if (event.type === "SignalReceived") {
-        const key = `${obj(event.body).signalName}:${obj(event.body).signalId}`;
-        if (received.has(key)) continue;
-        received.add(key);
-      }
-      const at = obj(event).at ?? obj(event.body).at;
-      entries.push({
-        id: `${log.runId}:${event.seq}`,
-        source: "run",
-        actor: log.runId,
-        at: typeof at === "string" ? at : null,
-        summary: auditSummary(event),
-      });
-    }
-  }
-  for (const a of approvals) {
-    entries.push({
-      id: a.id,
-      source: "approval",
-      actor: a.runId,
-      at: a.resolvedAt ?? a.createdAt ?? null,
-      summary: `${toolLabel(a)} ${a.status}${a.scope ? ` (${a.scope})` : ""}`,
-    });
-  }
-  return entries.sort((x, y) => (y.at ?? "").localeCompare(x.at ?? ""));
-}

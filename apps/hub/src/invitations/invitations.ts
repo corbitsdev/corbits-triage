@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { type } from "arktype";
 import { and, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
-import { createPrincipalStore, schema, type DB, type PrincipalKeyStore } from "@intx/db";
+import { createPrincipalStore, schema, type PrincipalKeyStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { isEmailAllowed } from "../auth.js";
 import { readJson } from "../read-json.js";
