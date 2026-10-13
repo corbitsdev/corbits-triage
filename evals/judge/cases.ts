@@ -19,6 +19,8 @@ export interface Labels {
   pulls: Record<string, Label>;
   /** Pull requests whose files are merged into one unfocused pull request, the first giving the title and body. */
   mixes: Array<[number, number]>;
+  /** Mixes whose title and body describe both pull requests, as an author bundling two changes would. */
+  describedMixes: Array<[number, number]>;
 }
 
 /** A file row as GitHub's pull request files API returns it. */
@@ -51,6 +53,8 @@ export interface CaseInput {
   pull: number;
   drop?: "tests" | "docs";
   mix?: number;
+  /** The mix's title and body describe both pull requests. */
+  described?: true;
 }
 
 export type JudgeCase = Case<CaseInput, Expected> & { name: string };
@@ -62,7 +66,8 @@ const MENTIONS: Record<NonNullable<CaseInput["drop"]>, RegExp> = { tests: /\btes
 export function variant(base: Snapshot, input: CaseInput, other?: Snapshot): Snapshot {
   if (input.mix !== undefined) {
     if (!other) throw new Error(`case ${input.pull}+${input.mix} needs #${input.mix}`);
-    return { ...base, files: [...base.files, ...other.files], commits: [...base.commits, ...other.commits] };
+    const mixed = { ...base, files: [...base.files, ...other.files], commits: [...base.commits, ...other.commits] };
+    return input.described ? { ...mixed, title: `${base.title}; also ${other.title}`, body: `${base.body}\n\nAlso: ${other.body}` } : mixed;
   }
   if (input.drop === undefined) return base;
   const drop = input.drop === "tests" ? isTestPath : isDocPath;

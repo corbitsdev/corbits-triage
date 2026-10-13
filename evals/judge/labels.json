@@ -145,6 +145,31 @@
       "needsTests": true,
       "needsDocs": false,
       "note": ""
+    },
+    "186": {
+      "needsTests": true,
+      "needsDocs": true,
+      "note": "setup state change documented"
+    },
+    "187": {
+      "needsTests": true,
+      "needsDocs": true,
+      "note": "schema change documented"
+    },
+    "188": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": ""
+    },
+    "190": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": "one feature across many layers"
+    },
+    "191": {
+      "needsTests": true,
+      "needsDocs": false,
+      "note": "one feature across many layers"
     }
   },
   "mixes": [
@@ -167,6 +192,32 @@
     [
       148,
       45
+    ],
+    [
+      190,
+      186
+    ],
+    [
+      187,
+      188
+    ]
+  ],
+  "describedMixes": [
+    [
+      155,
+      139
+    ],
+    [
+      137,
+      151
+    ],
+    [
+      113,
+      125
+    ],
+    [
+      190,
+      186
     ]
   ]
 }

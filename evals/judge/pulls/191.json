@@ -1,0 +1,153 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 191,
+ "title": "feat(triage): let a policy convert a pull request to draft",
+ "body": "Closes [CL-XXXX](https://linear.app/abklabs/issue/CL-XXXX)\n\n## What changed\n\n- New Do kind in the pack schema and parser (additive): `convert-to-draft`, with an empty target.\n- Executor calls GraphQL `convertPullRequestToDraft` by the pull request's node id. It is satisfied when already a draft, or when the issue timeline shows the App converted it after the head arrived (its `committed` event, or a `head_ref_force_pushed` to it); a head the timeline does not show is converted. Refused once the head moves, like close. No extra grant.\n- GitHub App transport: a `/graphql` request names its repository in an `x-corbits-github-repository` header, used to find the installation and stripped before sending.\n- Editor, prose and pending Dos list it as \"Convert the pull request to draft\".\n\n## Verification\n\n- `bun run check`\n- `bun run test`: 706 pass, 0 fail\n- New tests: converted once per head even after the author marks it ready; timeline arrival by commit and by force-push, and a head the timeline does not show; head-moved refusal; schema and parser accept the kind; transport resolves a GraphQL request's installation from the repository header.",
+ "author": "TheGreatAxios",
+ "commits": [
+  "feat(triage): let a policy convert a pull request to draft"
+ ],
+ "files": [
+  {
+   "filename": "apps/hub/src/github/github-app-credential-adapter.test.ts",
+   "status": "modified",
+   "additions": 17,
+   "deletions": 0,
+   "patch": "@@ -154,6 +154,23 @@ describe(\"GitHub App credential adapter\", () => {\n     expect(calls.filter((call) => call.includes(\"/app/installations/202/access_tokens\"))).toHaveLength(1);\n   });\n \n+  test(\"finds a GraphQL request's installation from the repository it names and strips that header\", async () => {\n+    const secret = appSecret();\n+    const sent: Array<{ path: string; authorization: string | null; repository: string | null }> = [];\n+    async function github(input: string | URL | Request, init?: RequestInit): Promise<Response> {\n+      const request = toRequest(input, init);\n+      const path = new URL(request.url).pathname;\n+      sent.push({ path, authorization: request.headers.get(\"authorization\"), repository: request.headers.get(\"x-corbits-github-repository\") });\n+      if (path === \"/repos/acme/one/installation\") return Response.json({ id: 101 });\n+      if (path === \"/app/installations/101/access_tokens\") return Response.json({ token: \"token-one\", expires_at: tokenExpiry() });\n+      if (path === \"/graphql\") return Response.json({ data: {} });\n+      throw new Error(`unexpected request ${request.method} ${path}`);\n+    }\n+    const adapted = createGithubAppCredentialFetch({ apiOrigin: API, fetch: github });\n+    await adapted(`${API}/graphql`, { method: \"POST\", body: \"{}\", headers: { authorization: `Bearer ${secret}`, \"x-corbits-github-repository\": \"acme/one\" } });\n+    expect(sent.at(-1)).toEqual({ path: \"/graphql\", authorization: \"Bearer token-one\", repository: null });\n+  });\n+\n   test(\"resolves an organization installation and refreshes its token once after 401\", async () => {\n     const secret = appSecret();\n     let mints = 0;"
+  },
+  {
+   "filename": "apps/hub/src/github/github-app-credential-adapter.ts",
+   "status": "modified",
+   "additions": 6,
+   "deletions": 1,
+   "patch": "@@ -4,6 +4,8 @@ import { type } from \"arktype\";\n export const DEFAULT_GITHUB_API_ORIGIN = \"https://api.github.com\";\n const REFRESH_MARGIN_MS = 5 * 60_000;\n export const INSTALLATION_SELECTOR_HEADER = \"x-corbits-github-installation-id\";\n+// Names the repository of a request whose path has none, such as GraphQL, so its installation can be discovered.\n+const REPOSITORY_SELECTOR_HEADER = \"x-corbits-github-repository\";\n \n const GithubAppCredential = type({\n   appId: \"string > 0\",\n@@ -207,8 +209,10 @@ export function createGithubAppCredentialFetch({\n       return fetchImpl(forwarded);\n     }\n     const selected = original.headers.get(INSTALLATION_SELECTOR_HEADER);\n+    const repository = original.headers.get(REPOSITORY_SELECTOR_HEADER);\n+    const target = repository === null ? url : new URL(`/repos/${repository}`, apiOrigin);\n     const installationId = selected === null\n-      ? await discoverInstallation(credential, url)\n+      ? await discoverInstallation(credential, target)\n       : Number(selected);\n     if (!Number.isSafeInteger(installationId) || installationId <= 0) {\n       throw new Error(\"GitHub installation selector must be a positive safe integer\");\n@@ -225,6 +229,7 @@ export function createGithubAppCredentialFetch({\n         redirect: \"manual\",\n       });\n       request.headers.delete(INSTALLATION_SELECTOR_HEADER);\n+      request.headers.delete(REPOSITORY_SELECTOR_HEADER);\n       request.headers.set(\"authorization\", `Bearer ${token}`);\n       return fetchImpl(request);\n     }"
+  },
+  {
+   "filename": "apps/hub/src/github/github-refusal.ts",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 0,
+   "patch": "@@ -10,6 +10,7 @@ export const GITHUB_VERB = {\n   review: \"review\",\n   approve: \"approve\",\n   \"request-changes\": \"request changes on\",\n+  \"convert-to-draft\": \"convert to draft\",\n   merge: \"merge\",\n   close: \"close\",\n } as const;"
+  },
+  {
+   "filename": "apps/web/src/components/repo-panel/DoEditor.tsx",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 0,
+   "patch": "@@ -73,6 +73,7 @@ export default function DoEditor({ step, branch, roles, disabled, onChange, onRe\n         return <textarea className=\"val w body\" aria-label=\"Agent prompt\" rows={2} disabled={disabled} value={step.prompt ?? \"\"} onChange={(event) => set({ prompt: event.target.value })} />;\n       case \"approve\":\n       case \"request-changes\":\n+      case \"convert-to-draft\":\n       case \"close\":\n         return null;\n     }"
+  },
+  {
+   "filename": "apps/web/src/lib/action-builder.ts",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 0,
+   "patch": "@@ -122,6 +122,7 @@ function doTarget(form: DoForm): Record<string, unknown> {\n       return { body: form.body };\n     case \"approve\":\n     case \"request-changes\":\n+    case \"convert-to-draft\":\n     case \"close\":\n       return {};\n     case \"agent\":"
+  },
+  {
+   "filename": "apps/web/src/lib/pack-prose.ts",
+   "status": "modified",
+   "additions": 4,
+   "deletions": 0,
+   "patch": "@@ -41,6 +41,7 @@ export const DO_NAMES: Record<ActionKind, string> = {\n   comment: \"Comment\",\n   approve: \"Approve\",\n   \"request-changes\": \"Request changes on the pull request\",\n+  \"convert-to-draft\": \"Convert the pull request to draft\",\n   close: \"Close\",\n   agent: \"Run an agent\",\n };\n@@ -53,6 +54,7 @@ export const DONE_DO_NAMES: Record<ActionKind, string> = {\n   comment: \"Posted comment\",\n   approve: \"Approved the pull request\",\n   \"request-changes\": \"Requested changes on the pull request\",\n+  \"convert-to-draft\": \"Converted the pull request to draft\",\n   close: \"Closed the pull request\",\n   agent: \"Ran an agent\",\n };\n@@ -159,6 +161,8 @@ function doAction(step: Do): string {\n       return \"approve the pull request\";\n     case \"request-changes\":\n       return \"request changes on the pull request\";\n+    case \"convert-to-draft\":\n+      return \"convert the pull request to draft\";\n     case \"close\":\n       return \"close it\";\n     case \"agent\":"
+  },
+  {
+   "filename": "apps/web/src/lib/pending-dos.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 0,
+   "patch": "@@ -41,6 +41,8 @@ function label(action: SuggestedAction, repo: string): string | null {\n       return \"Approve\";\n     case \"request-changes\":\n       return \"Request changes\";\n+    case \"convert-to-draft\":\n+      return \"Convert to draft\";\n     case \"close\":\n       return \"Close\";\n     case \"agent\":"
+  },
+  {
+   "filename": "apps/web/src/lib/preview-prose.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 0,
+   "patch": "@@ -60,6 +60,8 @@ function resolvedAction(step: PreviewDo, target: Record<string, unknown>, repo:\n       return \"approve the pull request\";\n     case \"request-changes\":\n       return \"request changes on the pull request\";\n+    case \"convert-to-draft\":\n+      return \"convert the pull request to draft\";\n     case \"close\":\n       return \"close it\";\n     case \"agent\":"
+  },
+  {
+   "filename": "packages/github-tool/src/do.test.ts",
+   "status": "modified",
+   "additions": 31,
+   "deletions": 3,
+   "patch": "@@ -3,15 +3,17 @@ import { APPROVE_DO_MARKER, appLogin, REQUEST_CHANGES_DO_MARKER, type GithubFetc\n import { DoNotRunnableError, doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from \"./do\";\n \n type FakeComment = { id: number; user: { login: string; type: string }; body: string };\n+type TimelineEvent = { event: string; sha?: string; commit_id?: string; actor?: { login: string } };\n type FakeReview = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body?: string };\n \n const APP = { login: \"corbits-triage[bot]\", type: \"Bot\" };\n \n /** GitHub holding pull request 8, reviewed by `reviews` and with `approvals` on it, applying writes so a second run sees the first. */\n-function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[] } = {}) {\n-  const pr = { state: \"open\", head: { sha: \"abc\" }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };\n+function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; timeline?: TimelineEvent[] } = {}) {\n+  const pr = { node_id: \"PR_8\", state: \"open\", draft: false, head: { sha: \"abc\" }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };\n   const comments = seed.comments ?? [];\n   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: \"User\" }, state: \"APPROVED\", commit_id: \"abc\" })), ...(seed.approvals ?? [])];\n+  const timeline = seed.timeline ?? [{ event: \"committed\", sha: \"abc\" }];\n   const writes: Array<{ method: string; path: string; body: unknown }> = [];\n   async function gh(path: string, init?: RequestInit): Promise<Response> {\n     const method = init?.method ?? \"GET\";\n@@ -21,12 +23,18 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s\n       if (method === \"PATCH\") pr.state = body.state;\n       return Response.json(pr);\n     }\n+    if (path === \"/graphql\") {\n+      pr.draft = body.variables.id === pr.node_id;\n+      timeline.push({ event: \"convert_to_draft\", actor: { login: APP.login } });\n+      return Response.json({ data: { convertPullRequestToDraft: { pullRequest: { isDraft: pr.draft } } } });\n+    }\n     if (path === \"/app\") return Response.json({ slug: \"corbits-triage\" });\n     if (path.endsWith(\"/pulls/8/reviews\")) {\n       reviews.push({ id: reviews.length + 100, user: APP, state: body.event === \"APPROVE\" ? \"APPROVED\" : \"CHANGES_REQUESTED\", commit_id: body.commit_id, body: body.body });\n       return Response.json(reviews.at(-1));\n     }\n     if (path.includes(\"/pulls/8/reviews?\")) return Response.json(reviews);\n+    if (path.includes(\"/issues/8/timeline?\")) return Response.json(timeline);\n     if (path.endsWith(\"/dismissals\")) {\n       const review = reviews.find((r) => path.includes(`/reviews/${r.id}/`))!;\n       review.state = \"DISMISSED\";\n@@ -47,7 +55,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s\n     }\n     throw new Error(`unexpected ${method} ${path}`);\n   }\n-  return { gh: gh satisfies GithubFetch, writes };\n+  return { gh: gh satisfies GithubFetch, writes, pr };\n }\n \n function step(kind: DoStep[\"kind\"], target: ResolvedTarget): DoStep {\n@@ -129,6 +137,25 @@ describe(\"executeDo\", () => {\n     ]);\n   });\n \n+  test(\"a pull request is converted to draft once per head, even after the author marks that head ready\", async () => {\n+    const { gh, writes, pr } = fakeGithub();\n+    expect(await run(gh, step(\"convert-to-draft\", {}))).toEqual({ status: \"done\", result: { draft: true } });\n+    pr.draft = false;\n+    expect(await run(gh, step(\"convert-to-draft\", {}))).toMatchObject({ status: \"satisfied\" });\n+    expect(writes).toEqual([expect.objectContaining({ method: \"POST\", path: \"/graphql\", body: expect.objectContaining({ variables: { id: \"PR_8\" } }) })]);\n+  });\n+\n+  const DRAFTED = { event: \"convert_to_draft\", actor: { login: APP.login } };\n+  test.each<[string, TimelineEvent[], number]>([\n+    [\"a conversion before a force-push to the head does not count\", [{ event: \"committed\", sha: \"old\" }, DRAFTED, { event: \"head_ref_force_pushed\", commit_id: \"abc\" }], 1],\n+    [\"a conversion after a force-push to the head counts\", [{ event: \"head_ref_force_pushed\", commit_id: \"abc\" }, DRAFTED], 0],\n+    [\"a head the timeline does not show is converted once\", [{ event: \"committed\", sha: \"old\" }, DRAFTED, { event: \"ready_for_review\" }], 1],\n+  ])(\"%s\", async (_, timeline, conversions) => {\n+    const { gh, writes } = fakeGithub({ timeline });\n+    await run(gh, step(\"convert-to-draft\", {}));\n+    expect(writes.filter((w) => w.path === \"/graphql\")).toHaveLength(conversions);\n+  });\n+\n   test.each<[string, FakeReview]>([\n     [\"an approval of this head from the inbox\", { id: 3, user: APP, state: \"APPROVED\", commit_id: \"abc\" }],\n     [\"an approval of this head a person dismissed\", { id: 3, user: APP, state: \"DISMISSED\", commit_id: \"abc\" }],\n@@ -151,6 +178,7 @@ describe(\"executeDo\", () => {\n     [\"a close\", step(\"close\", {})],\n     [\"an approval\", step(\"approve\", {})],\n     [\"a request for changes\", step(\"request-changes\", { body: \"Triage requests changes:\\n- CI: CI failed\" })],\n+    [\"a conversion to draft\", step(\"convert-to-draft\", {})],\n   ])(\"%s is not written once the pull request has moved on\", async (_, task) => {\n     const { gh, writes } = fakeGithub();\n     await expect(run(gh, { ...task, headSha: \"older\" })).rejects.toBeInstanceOf(HeadMovedError);"
+  },
+  {
+   "filename": "packages/github-tool/src/do.ts",
+   "status": "modified",
+   "additions": 11,
+   "deletions": 1,
+   "patch": "@@ -7,8 +7,10 @@ import {\n   approvalOnHead,\n   changesRequestedOnHead,\n   codeownersForPr,\n+  convertToDraft,\n   createIssueComment,\n   createReview,\n+  draftedOnHead,\n   getReviews,\n   listIssueComments,\n   missingFrom,\n@@ -74,7 +76,7 @@ export const DERIVED_LABELS_DO = \"labels derived from the pull request cannot ru\n \n type People = { users: string[]; teams: string[] };\n \n-/** A close, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */\n+/** A close, draft, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */\n function onHead(sha: string, { repo, number }: MirrorInput, step: DoStep): void {\n   if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);\n }\n@@ -128,6 +130,14 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log\n       const body = `${REQUEST_CHANGES_DO_MARKER}\\n${target.body}`;\n       return { status: \"done\", result: await createReview(gh, { repo, number, body, event: \"REQUEST_CHANGES\", commitId: step.headSha }) };\n     }\n+    case \"convert-to-draft\": {\n+      const pr = await readPr(gh, repo, number);\n+      onHead(pr.sha, request, step);\n+      if (pr.draft) return { status: \"satisfied\", result: { draft: true } };\n+      // Marking this head ready again is the author's answer, so it is not converted twice.\n+      if (await draftedOnHead(gh, { repo, number, sha: step.headSha, login: await login() })) return { status: \"satisfied\", result: { draftedOnHead: true } };\n+      return { status: \"done\", result: await convertToDraft(gh, { repo, nodeId: pr.nodeId }) };\n+    }\n     case \"close\": {\n       const pr = await readPr(gh, repo, number);\n       onHead(pr.sha, request, step);"
+  },
+  {
+   "filename": "packages/github-tool/src/github.ts",
+   "status": "modified",
+   "additions": 36,
+   "deletions": 0,
+   "patch": "@@ -160,6 +160,7 @@ const MERGEABLE_BACKOFF_MS = 1500;\n function prFields(p: any) {\n   return {\n     number: p.number,\n+    nodeId: p.node_id,\n     title: p.title,\n     body: p.body,\n     state: p.state,\n@@ -732,6 +733,41 @@ export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: st\n   return dismissDoReviews(gh, input, \"CHANGES_REQUESTED\", REQUEST_CHANGES_DO_MARKER, \"Nothing triage asked to change still fails, so this request no longer stands.\");\n }\n \n+type TimelineEvent = { event?: string; sha?: string; commit_id?: string; actor?: { login?: string } };\n+\n+/**\n+ * Whether `login` already converted the pull request to draft since `sha` became its head, so marking that head ready is not undone.\n+ * The timeline is oldest first; the head arrives as its commit or a force-push to it. A head the timeline does not show is not converted\n+ * yet, as drafting it once is better than never.\n+ */\n+export async function draftedOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<boolean> {\n+  const timeline = await jsonAll<TimelineEvent>(gh, `/repos/${input.repo}/issues/${input.number}/timeline?per_page=100`);\n+  const landed = timeline.findLastIndex((e) => (e.event === \"committed\" && e.sha === input.sha) || (e.event === \"head_ref_force_pushed\" && e.commit_id === input.sha));\n+  if (landed < 0) return false;\n+  return timeline.slice(landed + 1).some((e) => e.event === \"convert_to_draft\" && e.actor?.login === input.login);\n+}\n+\n+/** Names the repository of a request whose path has none, such as GraphQL, so the transport can pick its installation. */\n+const REPOSITORY_SELECTOR_HEADER = \"x-corbits-github-repository\";\n+\n+async function graphql(gh: GithubFetch, repo: string, query: string, variables: Record<string, unknown>): Promise<any> {\n+  const res = await json(gh, \"/graphql\", {\n+    method: \"POST\",\n+    body: JSON.stringify({ query, variables }),\n+    headers: { \"content-type\": \"application/json\", [REPOSITORY_SELECTOR_HEADER]: repo },\n+  });\n+  if (res.errors?.length) throw new Error(`github graphql: ${res.errors.map((e: { message: string }) => e.message).join(\"; \")}`);\n+  return res.data;\n+}\n+\n+const CONVERT_TO_DRAFT = \"mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }\";\n+\n+/** REST cannot turn a pull request back into a draft; only GraphQL can. */\n+export async function convertToDraft(gh: GithubFetch, input: { repo: string; nodeId: string }) {\n+  const data = await graphql(gh, input.repo, CONVERT_TO_DRAFT, { id: input.nodeId });\n+  return { draft: data.convertPullRequestToDraft.pullRequest.isDraft === true };\n+}\n+\n export type CreateIssueCommentInput = {\n   repo: string;\n   number: number;"
+  },
+  {
+   "filename": "packages/github-tool/src/sidecar-bundle.ts",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 1,
+   "patch": "@@ -131,7 +131,7 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [\n   {\n     name: \"github_execute_do_auto\",\n     description:\n-      \"Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, approve, request changes, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close, comment or review is refused once the pull request has moved past headSha; a review is pinned to headSha and satisfied when this App already made it there. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.\",\n+      \"Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, approve, request changes, convert to draft, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close, draft, comment or review is refused once the pull request has moved past headSha; a review is pinned to headSha and satisfied when this App already made it there, and a conversion to draft is satisfied when this App already converted headSha. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.\",\n     inputSchema: obj({ request: MIRROR_INPUT, step: obj({ effectId: str, headSha: str, kind: str, target: { type: \"object\" } }) }),\n   },\n   {"
+  },
+  {
+   "filename": "packages/triage-contracts/src/check-pack.test.ts",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 0,
+   "patch": "@@ -56,6 +56,7 @@ const ACTIONS: Action[] = [\n       no: [\n         { kind: \"comment\", target: { body: \"Please fix CI and link a ticket.\" }, automatic: false },\n         { kind: \"request-changes\", target: {}, automatic: true },\n+        { kind: \"convert-to-draft\", target: {}, automatic: false },\n       ],\n       unsure: [{ kind: \"labels\", target: { from: \"list\", labels: [\"needs-triage\"] }, automatic: true }],\n     },"
+  },
+  {
+   "filename": "packages/triage-contracts/src/check-pack.ts",
+   "status": "modified",
+   "additions": 4,
+   "deletions": 2,
+   "patch": "@@ -141,7 +141,7 @@ const SCORE_MAX = 10;\n const PATTERN_MAX = 200;\n const CUSTOM_ID = /^custom-\\d+$/;\n \n-export const ACTION_KINDS = [\"labels\", \"assign\", \"request-review\", \"comment\", \"approve\", \"request-changes\", \"close\", \"agent\"] as const;\n+export const ACTION_KINDS = [\"labels\", \"assign\", \"request-review\", \"comment\", \"approve\", \"request-changes\", \"convert-to-draft\", \"close\", \"agent\"] as const;\n export type ActionKind = (typeof ACTION_KINDS)[number];\n \n export const TRIAGE_EVENTS = [\n@@ -187,6 +187,7 @@ export type Do = { automatic: boolean } & (\n   | { kind: \"comment\"; target: CommentTarget }\n   | { kind: \"approve\"; target: CloseTarget }\n   | { kind: \"request-changes\"; target: CloseTarget }\n+  | { kind: \"convert-to-draft\"; target: CloseTarget }\n   | { kind: \"close\"; target: CloseTarget }\n   | { kind: \"agent\"; target: AgentTarget }\n );\n@@ -236,7 +237,7 @@ const DoSchema = type({\n   .or({ kind: \"'assign'\", automatic: \"boolean\", target: ReviewTargetSchema.or({ \"+\": \"reject\", to: \"'author'\" }) })\n   .or({ kind: \"'request-review'\", automatic: \"boolean\", target: ReviewTargetSchema })\n   .or({ kind: \"'comment'\", automatic: \"boolean\", target: { \"+\": \"reject\", body: Text } })\n-  .or({ kind: \"'approve' | 'request-changes' | 'close'\", automatic: \"boolean\", target: { \"+\": \"reject\" } })\n+  .or({ kind: \"'approve' | 'request-changes' | 'convert-to-draft' | 'close'\", automatic: \"boolean\", target: { \"+\": \"reject\" } })\n   .or({ kind: \"'agent'\", automatic: \"boolean\", target: { \"+\": \"reject\", prompt: Text, tools: Text.array() } });\n \n const ActionSchema = type({\n@@ -607,6 +608,7 @@ function parseDo(raw: unknown, where: string): Do {\n     }\n     case \"approve\":\n     case \"request-changes\":\n+    case \"convert-to-draft\":\n     case \"close\":\n       exactKeys(target, [], at);\n       return { kind, automatic, target: {} };"
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/actions.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 0,
+   "patch": "@@ -141,6 +141,7 @@ function resolve(task: Do, action: Action, input: ActionInput): ResolvedTarget {\n       return { body: changesBody(action, input) };\n     case \"comment\":\n     case \"approve\":\n+    case \"convert-to-draft\":\n     case \"close\":\n     case \"agent\":\n       return task.target;\n@@ -158,6 +159,8 @@ function satisfied(kind: ActionKind, target: ResolvedTarget, facts: PrFacts): bo\n     // Resolution already dropped everyone requested or reviewed on this head.\n     case \"request-review\":\n       return \"teams\" in target && target.users.length === 0 && target.teams.length === 0;\n+    case \"convert-to-draft\":\n+      return facts.draft;\n     case \"close\":\n       return facts.state === \"closed\";\n     // No effect id records a posted comment or agent run yet, so these always stand; facts do not say which review is the App's."
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "README.md": "264134d0eef334c6",
+  "docs/ARCHITECTURE.md": "5d3599f74896e75c",
+  "docs/DECISION_MODEL.md": "95c30e836b53d58f",
+  "docs/DEPLOY.md": "22c69f310b9af8e1",
+  "docs/DEV.md": "5301a81f5341edd3",
+  "docs/IMPLEMENTATION.md": "403c880a866b7685",
+  "docs/PRODUCT.md": "de9866c11068467f",
+  "docs/SELF_HOST.md": "c0825f72a63e7770",
+  "evals/judge/docs/0b9cfac95c4d9555.md": "0b9cfac95c4d9555",
+  "evals/judge/docs/0e6fca0bdde3f8c4.md": "0e6fca0bdde3f8c4",
+  "evals/judge/docs/0ff6d526ecff2520.md": "0ff6d526ecff2520",
+  "evals/judge/docs/11d689902ba74717.md": "11d689902ba74717",
+  "evals/judge/docs/16b70c8e9a0c7ad2.md": "16b70c8e9a0c7ad2",
+  "evals/judge/docs/32e8cf1b0871d11b.md": "32e8cf1b0871d11b",
+  "evals/judge/docs/333969c8ae5b643e.md": "333969c8ae5b643e",
+  "evals/judge/docs/3a6d4817fc1a2c77.md": "3a6d4817fc1a2c77",
+  "evals/judge/docs/5042475f214ea8f1.md": "5042475f214ea8f1",
+  "evals/judge/docs/596c16f9919dbfac.md": "596c16f9919dbfac",
+  "evals/judge/docs/654b9436101871ad.md": "654b9436101871ad",
+  "evals/judge/docs/65a3d72f44c34d2e.md": "65a3d72f44c34d2e",
+  "evals/judge/docs/65a667f3bbd10128.md": "65a667f3bbd10128",
+  "evals/judge/docs/6e08cc260f165fe0.md": "6e08cc260f165fe0",
+  "evals/judge/docs/731298e55211ea3f.md": "731298e55211ea3f",
+  "evals/judge/docs/8c882a14db43d2bd.md": "8c882a14db43d2bd",
+  "evals/judge/docs/b1f8eee84f0d44d4.md": "b1f8eee84f0d44d4",
+  "evals/judge/docs/c027120322ca660b.md": "c027120322ca660b",
+  "evals/judge/docs/defc559c6786e8c8.md": "defc559c6786e8c8",
+  "evals/judge/docs/e5e18fade19f3d3f.md": "e5e18fade19f3d3f",
+  "evals/judge/docs/f28451d963dd011b.md": "f28451d963dd011b",
+  "evals/judge/docs/f62c2cf472aac466.md": "f62c2cf472aac466",
+  "packages/triage-contracts/README.md": "59715dd2619d9a0a"
+ }
+}

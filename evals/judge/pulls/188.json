@@ -1,0 +1,98 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 188,
+ "title": "fix(github-tool): version the published tool by its contents",
+ "body": "Closes [CL-XXXX](https://linear.app/abklabs/issue/CL-XXXX)\n\n## What changed\n\n- `packTool` publishes the GitHub tool as `<package.json version>-sha-<8 hex>`, hashed over its manifest and bundle, instead of the hand-set package.json version. A tool change no longer collides with an already-published version.\n- The hashing moved into a shared `contentVersion` helper in `tooling/pack-tarball.ts`, used by both the tool and the workflows.\n- Workflow manifests depend on the packed tool's version, so a tool change also changes the workflow versions and the portal redeploys them.\n\n## Verification\n\n- `bun run check`, `bun run test` (690 pass).\n- Packed twice: identical filenames (`@corbits-github-tool-0.7.2-sha-3ffe4ff5.tgz`, workflows `0.1.0-sha-d6d73747` / `0.1.0-sha-ac77366f`); the pr-triage manifest depends on `0.7.2-sha-3ffe4ff5`.\n- Added an export to the tool and repacked: tool became `0.7.2-sha-a18d5f6e` and both workflow versions changed, so a registry holding `0.7.2` gets a new tarball and `ensureWorkflows` redeploys.",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(github-tool): version the published tool by its contents",
+  "fix(web): say a republished version means the build was not reproducible"
+ ],
+ "files": [
+  {
+   "filename": "apps/web/scripts/build-workflows.test.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 1,
+   "patch": "@@ -18,14 +18,16 @@ test(\"packs each workflow deterministically, importing the GitHub tool instead o\n   const second = await packWorkflows(path.join(scratch, \"b\"));\n   expect(second).toEqual(first);\n \n+  const packedTool = first.find((entry) => entry.name === tool.name);\n+  if (!packedTool) throw new Error(`${tool.name} was not packed`);\n   for (const workflow of WORKFLOW_PACKAGES) {\n     const packed = first.find((entry) => entry.name === workflow.packageName);\n     if (!packed) throw new Error(`${workflow.packageName} was not packed`);\n     const extracted = path.join(scratch, \"extracted\", workflow.name);\n     await mkdir(extracted, { recursive: true });\n     await tar.x({ file: path.join(scratch, \"a\", packed.filename), cwd: extracted });\n     const manifest = JSON.parse(await readFile(path.join(extracted, \"package/package.json\"), \"utf8\"));\n-    expect(manifest.dependencies).toEqual({ [tool.name]: tool.version });\n+    expect(manifest.dependencies).toEqual({ [tool.name]: packedTool.version });\n     const bundle = await readFile(path.join(extracted, \"package\", workflow.entry), \"utf8\");\n     const imports = new Bun.Transpiler({ loader: \"js\" }).scanImports(bundle).map((entry) => entry.path);\n     expect(imports).toContain(tool.name);"
+  },
+  {
+   "filename": "apps/web/scripts/build-workflows.ts",
+   "status": "modified",
+   "additions": 8,
+   "deletions": 14,
+   "patch": "@@ -1,12 +1,11 @@\n // Packs each workflow as a tarball into public/packages/ beside the GitHub tool it depends on,\n // so the portal can publish them to the hub.\n-import { createHash } from \"node:crypto\";\n import { mkdtemp, readFile, rm } from \"node:fs/promises\";\n import { tmpdir } from \"node:os\";\n import { join, resolve } from \"node:path\";\n import { buildEntry, packTool } from \"../../../packages/github-tool/build.ts\";\n import tool from \"../../../packages/github-tool/package.json\";\n-import { packPackage, type PackedTarball } from \"../../../tooling/pack-tarball.ts\";\n+import { contentVersion, packPackage, type PackedTarball } from \"../../../tooling/pack-tarball.ts\";\n import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowPackage } from \"../src/lib/workflow-packages.ts\";\n \n const WORKFLOW_SRC = resolve(import.meta.dir, \"../../../packages/triage-workflows\");\n@@ -51,7 +50,7 @@ function assertOnlyToolImports(workflow: WorkflowPackage, code: string): void {\n   }\n }\n \n-async function packWorkflow(workflow: WorkflowPackage, outDir: string): Promise<PackedTarball> {\n+async function packWorkflow(workflow: WorkflowPackage, toolVersion: string, outDir: string): Promise<PackedTarball> {\n   const stage = await mkdtemp(join(tmpdir(), `${workflow.name}-`));\n   try {\n     await bundle(workflow, stage);\n@@ -62,18 +61,12 @@ async function packWorkflow(workflow: WorkflowPackage, outDir: string): Promise<\n     };\n     const manifest = {\n       type: \"module\",\n-      dependencies: { [tool.name]: tool.version },\n+      dependencies: { [tool.name]: toolVersion },\n       interchange: interchangeEntries(workflow),\n       files: [workflow.entry.slice(2), DIRECTORS, ACTIONS, \"package.json\"],\n     };\n-    const hash = createHash(\"sha256\").update(JSON.stringify({ name: workflow.packageName, ...manifest }));\n-    for (const file of Object.values(files)) {\n-      const bytes = await readFile(file);\n-      assertOnlyToolImports(workflow, bytes.toString(\"utf8\"));\n-      hash.update(bytes);\n-    }\n-    // Content-hashed so the same package always gets the same version; `sha-` keeps it valid semver.\n-    const version = `0.1.0-sha-${hash.digest(\"hex\").slice(0, 8)}`;\n+    for (const file of Object.values(files)) assertOnlyToolImports(workflow, await readFile(file, \"utf8\"));\n+    const version = await contentVersion(\"0.1.0\", { name: workflow.packageName, ...manifest }, files);\n     return await packPackage({ name: workflow.packageName, version, ...manifest }, files, outDir);\n   } finally {\n     await rm(stage, { recursive: true, force: true });\n@@ -92,8 +85,9 @@ async function packGithubTool(outDir: string): Promise<PackedTarball> {\n /** Packs the GitHub tool and every workflow into `outDir`, with an index.json listing them. */\n export async function packWorkflows(outDir: string): Promise<PackageIndexEntry[]> {\n   await rm(outDir, { recursive: true, force: true });\n-  const packed = [await packGithubTool(outDir)];\n-  for (const workflow of WORKFLOW_PACKAGES) packed.push(await packWorkflow(workflow, outDir));\n+  const packedTool = await packGithubTool(outDir);\n+  const packed = [packedTool];\n+  for (const workflow of WORKFLOW_PACKAGES) packed.push(await packWorkflow(workflow, packedTool.version, outDir));\n   const index = packed.map(({ name, version, filename, integrity }) => ({ name, version, filename, integrity }));\n   await Bun.write(join(outDir, \"index.json\"), `${JSON.stringify(index, null, 2)}\\n`);\n   return index;"
+  },
+  {
+   "filename": "apps/web/src/lib/workflow-deploy.test.ts",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 1,
+   "patch": "@@ -154,7 +154,7 @@ describe(\"ensureWorkflows\", () => {\n   test(\"refuses to republish a version whose bytes changed, before publishing or deploying anything\", async () => {\n     const hub = fakeHub({ [INDEX[2]!.filename]: \"sha512-other\" });\n     await expect(ensureWorkflows(hub.transport, \"t\", OFFERINGS, false, hub.fetchRaw))\n-      .rejects.toThrow(\"@corbits/pr-triage-historical-workflow@0.1.0-sha-bbbbbbbb is already published with different contents. Bump its version.\");\n+      .rejects.toThrow(\"@corbits/pr-triage-historical-workflow@0.1.0-sha-bbbbbbbb is already published with different contents; this build did not pack reproducibly.\");\n     expect(puts(hub.requests)).toEqual([]);\n     expect(hub.deployed).toEqual([]);\n   });"
+  },
+  {
+   "filename": "apps/web/src/lib/workflow-deploy.ts",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 1,
+   "patch": "@@ -74,7 +74,7 @@ async function publishPackages(\n     const existing = listed.find((tarball) => tarball.filename === entry.filename);\n     if (!existing) missing.push(entry);\n     else if (existing.integrity !== entry.integrity) {\n-      throw new Error(`${entry.name}@${entry.version} is already published with different contents. Bump its version.`);\n+      throw new Error(`${entry.name}@${entry.version} is already published with different contents; this build did not pack reproducibly.`);\n     }\n   }\n   for (const entry of missing) {"
+  },
+  {
+   "filename": "packages/github-tool/build.test.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 0,
+   "patch": "@@ -6,6 +6,7 @@ import { pathToFileURL } from \"node:url\";\n import * as tar from \"tar\";\n \n import { buildEntry, packTool } from \"./build\";\n+import pkg from \"./package.json\";\n \n const scratch = await mkdtemp(path.join(tmpdir(), \"github-tool-pack-\"));\n afterAll(async function cleanup() {\n@@ -16,6 +17,7 @@ test(\"packs a byte-identical, self-contained tool tarball that loads under Node\"\n   const first = await packTool(await buildEntry(path.join(scratch, \"a/index.js\")), path.join(scratch, \"a\"));\n   const second = await packTool(await buildEntry(path.join(scratch, \"b/index.js\")), path.join(scratch, \"b\"));\n   expect(second.integrity).toBe(first.integrity);\n+  expect(first.version).toMatch(new RegExp(`^${pkg.version}-sha-[0-9a-f]{8}$`));\n \n   const extracted = path.join(scratch, \"extracted\");\n   await mkdir(extracted);"
+  },
+  {
+   "filename": "packages/github-tool/build.ts",
+   "status": "modified",
+   "additions": 5,
+   "deletions": 5,
+   "patch": "@@ -1,6 +1,6 @@\n import path from \"node:path\";\n \n-import { packPackage, type PackedTarball } from \"../../tooling/pack-tarball.ts\";\n+import { contentVersion, packPackage, type PackedTarball } from \"../../tooling/pack-tarball.ts\";\n import pkg from \"./package.json\";\n \n const PACKAGE_DIR = import.meta.dir;\n@@ -22,10 +22,8 @@ export async function buildEntry(outFile = path.join(PACKAGE_DIR, ENTRY)): Promi\n   return outFile;\n }\n \n-export function packTool(entryFile: string, outDir: string): Promise<PackedTarball> {\n+export async function packTool(entryFile: string, outDir: string): Promise<PackedTarball> {\n   const manifest = {\n-    name: pkg.name,\n-    version: pkg.version,\n     description: pkg.description,\n     license: pkg.license,\n     type: \"module\",\n@@ -34,7 +32,9 @@ export function packTool(entryFile: string, outDir: string): Promise<PackedTarba\n     files: [\"dist\", \"package.json\"],\n     interchange: { ...pkg.interchange, tools: ENTRY },\n   };\n-  return packPackage(manifest, { [ENTRY]: entryFile }, outDir);\n+  const files = { [ENTRY]: entryFile };\n+  const version = await contentVersion(pkg.version, { name: pkg.name, ...manifest }, files);\n+  return packPackage({ name: pkg.name, version, ...manifest }, files, outDir);\n }\n \n if (import.meta.main) {"
+  },
+  {
+   "filename": "tooling/pack-tarball.ts",
+   "status": "modified",
+   "additions": 12,
+   "deletions": 0,
+   "patch": "@@ -26,6 +26,18 @@ async function listSorted(cwd: string, rel: string): Promise<string[]> {\n   return out;\n }\n \n+// Same manifest and files always give the same version and changed ones a new version, since a published\n+// version is never overwritten; `sha-` keeps it valid semver.\n+export async function contentVersion(\n+  base: string,\n+  manifest: Record<string, unknown>,\n+  files: Record<string, string>,\n+): Promise<string> {\n+  const hash = createHash(\"sha256\").update(JSON.stringify(manifest));\n+  for (const file of Object.values(files)) hash.update(await fs.readFile(file));\n+  return `${base}-sha-${hash.digest(\"hex\").slice(0, 8)}`;\n+}\n+\n // Same input must give the same integrity, so the hub can refuse a republished version with different bytes.\n // `files` maps a path inside the package to the source file copied there.\n export async function packPackage("
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "README.md": "264134d0eef334c6",
+  "docs/ARCHITECTURE.md": "5d3599f74896e75c",
+  "docs/DECISION_MODEL.md": "95c30e836b53d58f",
+  "docs/DEPLOY.md": "22c69f310b9af8e1",
+  "docs/DEV.md": "5301a81f5341edd3",
+  "docs/IMPLEMENTATION.md": "403c880a866b7685",
+  "docs/PRODUCT.md": "de9866c11068467f",
+  "docs/SELF_HOST.md": "c0825f72a63e7770",
+  "evals/judge/docs/0b9cfac95c4d9555.md": "0b9cfac95c4d9555",
+  "evals/judge/docs/0e6fca0bdde3f8c4.md": "0e6fca0bdde3f8c4",
+  "evals/judge/docs/0ff6d526ecff2520.md": "0ff6d526ecff2520",
+  "evals/judge/docs/11d689902ba74717.md": "11d689902ba74717",
+  "evals/judge/docs/16b70c8e9a0c7ad2.md": "16b70c8e9a0c7ad2",
+  "evals/judge/docs/32e8cf1b0871d11b.md": "32e8cf1b0871d11b",
+  "evals/judge/docs/333969c8ae5b643e.md": "333969c8ae5b643e",
+  "evals/judge/docs/3a6d4817fc1a2c77.md": "3a6d4817fc1a2c77",
+  "evals/judge/docs/5042475f214ea8f1.md": "5042475f214ea8f1",
+  "evals/judge/docs/596c16f9919dbfac.md": "596c16f9919dbfac",
+  "evals/judge/docs/654b9436101871ad.md": "654b9436101871ad",
+  "evals/judge/docs/65a3d72f44c34d2e.md": "65a3d72f44c34d2e",
+  "evals/judge/docs/65a667f3bbd10128.md": "65a667f3bbd10128",
+  "evals/judge/docs/6e08cc260f165fe0.md": "6e08cc260f165fe0",
+  "evals/judge/docs/731298e55211ea3f.md": "731298e55211ea3f",
+  "evals/judge/docs/8c882a14db43d2bd.md": "8c882a14db43d2bd",
+  "evals/judge/docs/b1f8eee84f0d44d4.md": "b1f8eee84f0d44d4",
+  "evals/judge/docs/c027120322ca660b.md": "c027120322ca660b",
+  "evals/judge/docs/defc559c6786e8c8.md": "defc559c6786e8c8",
+  "evals/judge/docs/e5e18fade19f3d3f.md": "e5e18fade19f3d3f",
+  "evals/judge/docs/f28451d963dd011b.md": "f28451d963dd011b",
+  "evals/judge/docs/f62c2cf472aac466.md": "f62c2cf472aac466",
+  "packages/triage-contracts/README.md": "59715dd2619d9a0a"
+ }
+}
