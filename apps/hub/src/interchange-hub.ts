@@ -54,6 +54,7 @@ import {
   DEFAULT_SIDECAR_ALLOCATION_CONCURRENCY,
   pushCredentialReconcile,
   WORKSPACE_BUILTINS_REGISTRY,
+  type AllocatedSidecarTarget,
   type SidecarLookups,
   type SidecarProvisioner,
   type SidecarProvisionerChooser,
@@ -299,20 +300,18 @@ export async function createInterchangeHub({
   const sidecarAllocationStore = createSidecarAllocationStore(db);
   const runReader = createWorkflowRunReader(agentRepoStore.repoStore);
   const launchSpecs = createWorkflowRunLaunchSpecStore(db);
-  const classifyParkedRun = createParkedRunClassifier({
-    runReader,
-    addressForAnchor: async (anchorRunId) => {
-      const row = await db.query.workflowRun.findFirst({
-        where: (run, { eq }) => eq(run.id, anchorRunId),
-        columns: { address: true },
-      });
-      return row?.address ?? null;
-    },
-    projectionForAnchor: async (anchorRunId) => {
-      const spec = await launchSpecs.get(anchorRunId);
-      return spec?.frozenApprovalBundle.projection ?? null;
-    },
-  });
+  async function addressForAnchor(anchorRunId: string): Promise<string | null> {
+    const row = await db.query.workflowRun.findFirst({
+      where: (run, { eq }) => eq(run.id, anchorRunId),
+      columns: { address: true },
+    });
+    return row?.address ?? null;
+  }
+  async function projectionForAnchor(anchorRunId: string) {
+    const spec = await launchSpecs.get(anchorRunId);
+    return spec?.frozenApprovalBundle.projection ?? null;
+  }
+  const classifyParkedRun = createParkedRunClassifier({ runReader, addressForAnchor, projectionForAnchor });
   const workflowLifecycleService = createWorkflowLifecycleService({
     db,
     runReader,
@@ -362,23 +361,19 @@ export async function createInterchangeHub({
 
   await workflowAllocationService.initialize?.();
   await sidecarAllocationReconciler.initialize();
-  sidecarRouter.events.on("sidecar.disconnect", async ({ allocated }) => {
-    await Promise.all(
-      allocated.map((target) =>
-        sidecarAllocationReconciler
-          .handleDisconnect(target)
-          .catch((err: unknown) => {
-            log.error(
-              "Failed to handle the disconnect of allocation {allocationId} generation {generation}: {error}",
-              {
-                allocationId: target.allocationId,
-                generation: target.generation,
-                error: err instanceof Error ? err.message : String(err),
-              },
-            );
-          }),
-      ),
-    );
+  async function handleDisconnect(target: AllocatedSidecarTarget): Promise<void> {
+    try {
+      await sidecarAllocationReconciler.handleDisconnect(target);
+    } catch (err: unknown) {
+      log.error("Failed to handle the disconnect of allocation {allocationId} generation {generation}: {error}", {
+        allocationId: target.allocationId,
+        generation: target.generation,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  sidecarRouter.events.on("sidecar.disconnect", async function onSidecarDisconnect({ allocated }) {
+    await Promise.all(allocated.map(handleDisconnect));
   });
   sidecarRouter.events.on("sidecar.allocated.connected", (allocated) =>
     sidecarAllocationReconciler.handleConnected(allocated),
