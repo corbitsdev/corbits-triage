@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
-  "module": "src/pr-triage.ts",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
   "interchange": {
     "workflow": "./src/pr-triage.ts",
     "directors": "./src/directors.ts",
@@ -17,7 +19,6 @@
   "dependencies": {
     "@corbits/github-reads": "workspace:*",
     "@corbits/github-tool": "workspace:*",
-    "@corbits/rule-packs": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/workflow": "workspace:*",

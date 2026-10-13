@@ -17,9 +17,9 @@ import { createTriageReconciler } from "./triage-reconciler.js";
 import { markBaseMoved } from "./triage-queue.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
-import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
-import { evaluate, rules } from "../../../../packages/triage-workflows/src/actions/index.js";
-import type { Verdict } from "../../../../packages/triage-workflows/src/logic/render.js";
+import { triageDirectorFactory } from "@corbits/triage-workflows/directors";
+import { evaluate, rules } from "@corbits/triage-workflows/actions/index";
+import type { Verdict } from "@corbits/triage-workflows/logic/render";
 
 const REPO = "acme/widgets";
 const DOMAIN = "acme.test";

@@ -8,7 +8,7 @@ type CredentialActions = {
   revoke: (credentialId: string) => Promise<void>;
 };
 
-export function secretDisplayName(storedName: string): string {
+function secretDisplayName(storedName: string): string {
   const name = storedName.trim();
   if (name === "github-hook" || name.startsWith("github-hook:")) return "Webhook";
   if (name === "github" || name.startsWith("github:")) return "GitHub App";

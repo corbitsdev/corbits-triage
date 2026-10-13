@@ -20,7 +20,7 @@ import { TriageStateConflictError, type TriageStateStore } from "./triage-state-
 export type CoalesceWindow = { quietMs: number; maxWaitMs: number; burstMs: number };
 
 /** Schedules `fire` after `ms`; the returned function cancels it. */
-export type SetTimer = (fire: () => Promise<void>, ms: number) => () => void;
+type SetTimer = (fire: () => Promise<void>, ms: number) => () => void;
 
 export type CoalescedEvent = {
   tenantId: string;

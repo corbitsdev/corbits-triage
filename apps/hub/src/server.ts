@@ -77,9 +77,9 @@ import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
 import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManagerRefusal } from "./github/tenant-config.js";
-import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
-import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "../../../packages/triage-workflows/src/pr-triage-historical.js";
-import { githubRead, githubWrite } from "../../../packages/github-tool/src/index.js";
+import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage";
+import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
+import { githubRead, githubWrite } from "@corbits/github-tool";
 
 const EXPECTED_DEPLOYMENT_SET = {
   workflows: [

@@ -43,10 +43,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@corbits/system-one": "0.3.1",
-    "@intx/hub-client": "workspace:*",
-    "@intx/inference": "workspace:*",
-    "@intx/types": "workspace:*"
+    "@corbits/system-one": "0.3.1"
   },
   "overrides": {
     "arktype": "2.2.7"

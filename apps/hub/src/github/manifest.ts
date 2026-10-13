@@ -18,9 +18,9 @@ type AuthorizeCredential = (principalId: string, tenantId: string, resource: str
 
 export const GITHUB_MANIFEST_PATH = "/api/integrations/github-manifest";
 export const GITHUB_MANIFEST_CALLBACK_PATH = `${GITHUB_MANIFEST_PATH}/callback`;
-export const GITHUB_MANIFEST_MAX_AGE_MS = 10 * 60_000;
+const GITHUB_MANIFEST_MAX_AGE_MS = 10 * 60_000;
 
-export const GITHUB_APP_PERMISSIONS = {
+const GITHUB_APP_PERMISSIONS = {
   checks: "read",
   contents: "write",
   issues: "write",
@@ -29,7 +29,7 @@ export const GITHUB_APP_PERMISSIONS = {
   pull_requests: "write",
 } as const;
 
-export const GITHUB_APP_EVENTS = [
+const GITHUB_APP_EVENTS = [
   "pull_request",
   "pull_request_review",
   "issue_comment",
@@ -51,7 +51,7 @@ export type GithubAppManifest = {
   setup_on_update: true;
 };
 
-export function buildGithubAppManifest(portalOrigin: string, hookUrl: string, callbackUrl: string): GithubAppManifest {
+function buildGithubAppManifest(portalOrigin: string, hookUrl: string, callbackUrl: string): GithubAppManifest {
   return {
     name: "Corbits Triage",
     url: portalOrigin,
@@ -67,7 +67,7 @@ export function buildGithubAppManifest(portalOrigin: string, hookUrl: string, ca
   };
 }
 
-export function manifestSecurityHeaders(): Record<string, string> {
+function manifestSecurityHeaders(): Record<string, string> {
   return {
     "Content-Security-Policy": "default-src 'none'; base-uri 'none'; form-action https://github.com; frame-ancestors 'none'",
     "Referrer-Policy": "no-referrer",

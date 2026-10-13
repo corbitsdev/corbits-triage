@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useRef } from "react";
 
-export type GithubReturnSyncState = {
+type GithubReturnSyncState = {
   awaitingReturn: boolean;
 };
 
-export function armGithubReturnSync(): GithubReturnSyncState {
+function armGithubReturnSync(): GithubReturnSyncState {
   return { awaitingReturn: true };
 }
 
-export function consumeGithubReturnSync(): GithubReturnSyncState {
+function consumeGithubReturnSync(): GithubReturnSyncState {
   return { awaitingReturn: false };
 }
 
-export function shouldSyncAfterGithubReturn(input: {
+function shouldSyncAfterGithubReturn(input: {
   awaitingReturn: boolean;
   visible: boolean;
 }): boolean {

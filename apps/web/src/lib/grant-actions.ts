@@ -37,7 +37,7 @@ function trimOrNull(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function looksLikeId(value: string): boolean {
+function looksLikeId(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed || trimmed.includes("@") || trimmed.includes(" ")) return false;
   return ID_PATTERN.test(trimmed);
@@ -73,7 +73,7 @@ export function createGrantBody(input: CreateGrantInput): CreateGrantBody {
   throw new Error("Choose a person or a role, not both.");
 }
 
-export function parseWhoSelection(value: string): { principalId?: string; roleId?: string } {
+function parseWhoSelection(value: string): { principalId?: string; roleId?: string } {
   const trimmed = value.trim();
   if (trimmed.startsWith("person:")) {
     const principalId = trimmed.slice("person:".length).trim();

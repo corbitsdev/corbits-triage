@@ -3,14 +3,9 @@ import type { ToolDefinition } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 
 import {
-  addAssignees,
   appLogin,
   authorTeams,
   codeownersForPr,
-  createIssueComment,
-  createReview,
-  dismissDoApprovals,
-  dismissDoChangeRequests,
   getChecks,
   getApp,
   getPr,
@@ -22,12 +17,19 @@ import {
   listPrFilesPage,
   listInstallations,
   listInstallationRepositories,
-  mergePr,
-  mirror,
   readRepoDocsPage,
-  requestReviewers,
   type AppLogin,
   type GithubFetch,
+} from "@corbits/github-reads";
+import {
+  addAssignees,
+  createIssueComment,
+  createReview,
+  dismissDoApprovals,
+  dismissDoChangeRequests,
+  mergePr,
+  mirror,
+  requestReviewers,
 } from "./github";
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
 

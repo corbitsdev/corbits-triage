@@ -15,7 +15,7 @@ export const GITHUB_VERB = {
 } as const;
 
 /** A GitHub failure as a sentence; the transport line (method, path, status) is for logs only. */
-export function githubRefusal(what: string, err: unknown): string {
+function githubRefusal(what: string, err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   const status = /-> (\d{3})$/.exec(message)?.[1];
   return `GitHub refused to ${what}${status ? ` (HTTP ${status})` : `: ${message}`}.`;

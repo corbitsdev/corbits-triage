@@ -7,7 +7,7 @@ import { usePortal } from "./portal.tsx";
 import { useApprovals, useApprovalsFirstLoad } from "./tenant-entities.ts";
 import { usePullTriage, useTriageVerdicts } from "./triage-verdicts.ts";
 
-export const OPEN_PULLS_QUERY_KEY = "open-pulls";
+const OPEN_PULLS_QUERY_KEY = "open-pulls";
 
 const NO_PULLS: PullTriage[] = [];
 
@@ -62,7 +62,7 @@ export function useMarkReplySent(): (item: PrItem) => void {
  * What was done to a pull request from the inbox, against the author activity and head it answered; newer activity or another head brings it back.
  * `headSha` is null when the head was unknown at the time. A string or null is an entry stored before kinds were recorded: the verdict run it answered.
  */
-export type HandledEntry = { kind: HandledKind; activityAt: string | null; headSha: string | null };
+type HandledEntry = { kind: HandledKind; activityAt: string | null; headSha: string | null };
 
 export type Handled = Record<string, HandledEntry | string | null>;
 
@@ -141,7 +141,7 @@ function isOtherHead(entry: HandledEntry, item: PrItem): boolean {
 }
 
 /** The mark that keeps a pull request handled, while no author activity or push came after the entry. */
-export function handledMark(handled: Handled, item: PrItem): HandledMark | null {
+function handledMark(handled: Handled, item: PrItem): HandledMark | null {
   if (!Object.hasOwn(handled, item.key)) return null;
   const entry = handled[item.key];
   if (entry === null || typeof entry === "string") return entry === item.runId ? { kind: null } : null;
@@ -210,7 +210,7 @@ export function useHandledPulls(): HandledPulls {
 }
 
 /** Every open pull request, and with `pulls` the ones the pull request page read on its own, open or not. */
-export function usePullRequestItems(pulls: PullTriage[] = NO_PULLS): PrItem[] {
+function usePullRequestItems(pulls: PullTriage[] = NO_PULLS): PrItem[] {
   const verdicts = useTriageVerdicts();
   const approvals = useApprovals();
   const { data } = useOpenPulls();

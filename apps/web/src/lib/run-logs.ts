@@ -41,7 +41,7 @@ function isEnded(log: RunLog | undefined): boolean {
   return log !== undefined && isTerminalRunEvents(log.events);
 }
 
-export function runLogQuery(transport: Transport, tenantId: string, ref: RunRef) {
+function runLogQuery(transport: Transport, tenantId: string, ref: RunRef) {
   return queryOptions({
     queryKey: [RUN_LOG_QUERY_KEY, tenantId, ref.anchorRunId, ref.runId],
     queryFn: () => readLog(transport, tenantId, ref),

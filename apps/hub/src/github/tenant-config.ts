@@ -4,7 +4,7 @@ import { repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
 import { readCappedBody } from "../read-json.js";
 import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 
-export const CONFIG_KEY = "corbitsTriage";
+const CONFIG_KEY = "corbitsTriage";
 
 export type RepoRecord = {
   name: string;

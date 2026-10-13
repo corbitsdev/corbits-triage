@@ -15,7 +15,7 @@ import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore
 
 export type ReconcileTenant = { id: string; domain: string; config: unknown };
 
-export type DeploymentRotation = {
+type DeploymentRotation = {
   /** Runs a deployment's log may hold before it is replaced by a fresh copy. */
   afterRuns: number;
   redeploy: (tenantId: string, anchorRunId: string) => Promise<Redeployed>;

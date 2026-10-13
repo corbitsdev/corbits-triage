@@ -13,8 +13,6 @@
     "@corbits/cron": "0.2.1",
     "@corbits/github-reads": "workspace:*",
     "@corbits/github-tool": "workspace:*",
-    "@corbits/github-write-tool": "workspace:*",
-    "@corbits/rule-packs": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@corbits/triage-workflows": "workspace:*",
     "@corbits/webhooks": "0.3.0",

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { githubWrite } from "./sidecar-bundle.js";
-import { mergePr, mirror, upsertTriageComment, type GithubFetch } from "./github.js";
+import { type GithubFetch } from "@corbits/github-reads";
+import { mergePr, mirror, upsertTriageComment } from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
 

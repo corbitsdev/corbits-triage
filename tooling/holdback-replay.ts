@@ -1,5 +1,5 @@
 // Holdback replay: scores every @corbits/triage-contracts fixture through the
-// real deterministic pipeline (triage-workflows deriveState + rule-packs
+// real deterministic pipeline (triage-workflows deriveState + triage-contracts
 // render, via tooling/facts.ts) with wall-clock latency measured per PR.
 //
 // A misroute is an auto-ready verdict (ready-monitoring, not human-gated)

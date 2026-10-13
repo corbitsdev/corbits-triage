@@ -5,7 +5,7 @@ import { usePortal } from "./portal.tsx";
 
 const PR_TIMELINE_QUERY_KEY = "triage-timeline";
 
-export function prTimelineQuery(tenantId: string | undefined, repo: string, number: number | null) {
+function prTimelineQuery(tenantId: string | undefined, repo: string, number: number | null) {
   const queryFn = tenantId === undefined || number === null ? skipToken : async function loadTimeline() {
     return loadTriageTimeline(createHubTransport(), tenantId, repo, number);
   };

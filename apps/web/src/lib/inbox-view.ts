@@ -4,9 +4,9 @@ import { priorityRank } from "./triage-view.ts";
 
 export type InboxAction = "decide" | "review" | "unblock" | "merge" | "failed";
 
-export const INBOX_ACTION_ORDER: InboxAction[] = ["decide", "review", "unblock", "merge", "failed"];
+const INBOX_ACTION_ORDER: InboxAction[] = ["decide", "review", "unblock", "merge", "failed"];
 
-export const INBOX_ACTION_LABEL: Record<InboxAction, string> = {
+const INBOX_ACTION_LABEL: Record<InboxAction, string> = {
   decide: "Decide",
   review: "Review",
   unblock: "Unblock",
@@ -14,7 +14,7 @@ export const INBOX_ACTION_LABEL: Record<InboxAction, string> = {
   failed: "Failed",
 };
 
-export const INBOX_STATUS_LABEL: Record<QueueState, string> = {
+const INBOX_STATUS_LABEL: Record<QueueState, string> = {
   "needs-decision": "Needs your decision",
   "awaiting-review": "Waiting for review",
   "needs-author-update": "Waiting on author",
@@ -185,14 +185,14 @@ function waitingSince(item: PrItem): number {
 }
 
 /** Priority first, then humans first, then whoever has waited longest. */
-export function compareInboxItems(a: PrItem, b: PrItem): number {
+function compareInboxItems(a: PrItem, b: PrItem): number {
   const byPriority = priorityRank(a.priority) - priorityRank(b.priority);
   if (byPriority !== 0) return byPriority;
   if (a.needsHuman !== b.needsHuman) return a.needsHuman ? -1 : 1;
   return waitingSince(a) - waitingSince(b);
 }
 
-export type InboxGroup = { action: InboxAction; label: string; items: PrItem[] };
+type InboxGroup = { action: InboxAction; label: string; items: PrItem[] };
 
 /** `awaiting` counts the pull requests with no verdict and no failed run in repositories that can be triaged; they are not rows. */
 export type InboxView = { groups: InboxGroup[]; awaiting: number };

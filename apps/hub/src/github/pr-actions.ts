@@ -14,7 +14,7 @@ import {
   upsertTriageComment,
 } from "@corbits/github-tool/github";
 import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
-import { TRIAGE_LABELS } from "@corbits/rule-packs";
+import { TRIAGE_LABELS } from "@corbits/triage-contracts";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, approvalRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
