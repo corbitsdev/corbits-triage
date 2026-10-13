@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@corbits/react-ui";
 import { useLocation } from "react-router-dom";
 import { acceptInvitation } from "../lib/hub-api.ts";
 import { getAuthMethods, hasSignInMethod } from "../lib/hub-auth.ts";
@@ -16,7 +17,7 @@ const SIGN_IN_FIRST = "Sign in as the invited address, then open the link again.
  */
 export function AcceptInvite({ tenantId }: { tenantId: string }) {
   const { session } = useSession();
-  const { notify } = usePortal();
+  const { warn } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();
   const params = new URLSearchParams(useLocation().search);
   const linkFailed = params.has("error");
@@ -33,13 +34,13 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
       await acceptInvitation(createHubTransport(), tenantId);
       // An invite's magic link is the only sign-in such an account has had.
       if (!(await hasSignInMethod()) && (await getAuthMethods()).passwordReset) {
-        notify("No password is set on this account. Use Reset password on the sign-in page to set one.");
+        warn("No password is set on this account. Use Reset password on the sign-in page to set one.");
       }
       await openWorkspace(tenantId, "/inbox");
     } catch (cause: unknown) {
       setRefusal(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [notify, openWorkspace, tenantId]);
+  }, [openWorkspace, tenantId, warn]);
 
   useEffect(function acceptFromEmail() {
     if (session && fromEmail && !linkFailed) void accept();
@@ -52,7 +53,7 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
         <section className="onboarding centered-setup" aria-label="Invite">
           <h1>Could not join</h1>
           <p role="alert" className="error">{message}</p>
-          <a className="btn" href="/">Go to Corbits Triage</a>
+          <Button asChild variant="outline"><a href="/">Go to Corbits Triage</a></Button>
         </section>
       </div>
     );
@@ -63,7 +64,7 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
         <section className="onboarding centered-setup" aria-label="Invite">
           <h1>Join the workspace</h1>
           <p className="muted">You were invited to a Corbits Triage workspace.</p>
-          <button type="button" className="btn primary" onClick={() => void accept()}>Join</button>
+          <Button type="button" onClick={() => void accept()}>Join</Button>
         </section>
       </div>
     );

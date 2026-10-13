@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Button } from "@corbits/react-ui";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import HealthMark from "../components/repo-panel/HealthMark.tsx";
@@ -157,10 +158,10 @@ export default function Repositories() {
             <h1>Repositories</h1>
             {snapshot && <span className="n">{repos.length}</span>}
             <span className="sp" />
-            <button type="button" className="btn btn-sm" disabled={readOnly || denied || opening || !snapshot} onClick={() => void manageOnGithub()}>
+            <Button type="button" variant="outline" size="sm" disabled={readOnly || denied || opening || !snapshot} onClick={() => void manageOnGithub()}>
               {opening ? "Opening GitHub…" : "Manage repositories on GitHub"}
               <ExternalLink size={13} strokeWidth={1.6} aria-hidden="true" />
-            </button>
+            </Button>
           </div>
         </div>
         <main id="main" className="scroll">

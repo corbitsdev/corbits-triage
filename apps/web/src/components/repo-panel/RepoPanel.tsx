@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { StatusDot } from "@corbits/react-ui";
+import { Button, StatusDot } from "@corbits/react-ui";
 import { packMergeThreshold } from "@corbits/triage-contracts";
 import type { RepoRecord } from "../../lib/hub-api.ts";
 import { setMergeThreshold, type DraftProblem } from "../../lib/pack-draft.ts";
@@ -77,7 +77,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
 
   function renderBody() {
     if (settings.status === "loading") return <div className="loading-indicator"><StatusDot label="Loading" live tone="emphasis" /></div>;
-    if (settings.status === "failed") return <div className="rs"><button type="button" className="btn btn-sm" onClick={settings.reload}>Retry</button></div>;
+    if (settings.status === "failed") return <div className="rs"><Button type="button" variant="outline" size="sm" onClick={settings.reload}>Retry</Button></div>;
     const where = problem?.where;
     return (
       <>
@@ -101,8 +101,8 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
             <div className="crumb">
               <h2 className="title rp-t" id="rp-title" title={repo.name} tabIndex={-1} ref={headingRef}>{repo.name}</h2>
               <span className="sp" />
-              <a className="btn btn-quiet btn-sm" href={`https://github.com/${repo.name}`} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a>
-              <button type="button" className="btn btn-quiet btn-sm icon" aria-label="Close repository settings" onClick={onClose}><CloseIcon /></button>
+              <Button asChild variant="ghost" size="sm"><a href={`https://github.com/${repo.name}`} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a></Button>
+              <Button type="button" variant="ghost" size="icon" aria-label="Close repository settings" onClick={onClose}><CloseIcon /></Button>
             </div>
             {live ? <RepoByline row={row} /> : null}
           </header>

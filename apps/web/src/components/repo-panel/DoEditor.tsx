@@ -1,4 +1,4 @@
-import { Switch } from "@corbits/react-ui";
+import { Button, Switch } from "@corbits/react-ui";
 import { ACTION_KINDS, type ActionKind, type LabelsTarget, type PeopleTarget } from "@corbits/triage-contracts";
 import type { DoForm } from "../../lib/action-builder.ts";
 import { DO_NAMES, MANUAL_ONLY, type Branch } from "../../lib/pack-prose.ts";
@@ -91,7 +91,7 @@ export default function DoEditor({ step, branch, roles, disabled, onChange, onRe
         Automatic
         <Switch className="sw" checked={step.automatic && !manual} onCheckedChange={(automatic) => set({ automatic })} label="Automatic" disabled={disabled || manual} />
       </span>
-      <button type="button" className="btn btn-quiet btn-sm icon" aria-label="Remove this Do" disabled={disabled} onClick={onRemove}><CloseIcon /></button>
+      <Button type="button" variant="ghost" size="icon" aria-label="Remove this Do" disabled={disabled} onClick={onRemove}><CloseIcon /></Button>
     </div>
   );
 }

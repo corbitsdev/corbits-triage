@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { Badge, Button, StatusDot } from "@corbits/react-ui";
 import { useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
@@ -215,7 +216,7 @@ export default function Connect() {
 
   function renderInstallRow(repo: RepoRecord) {
     const catchingUp = isRepoCatchingUp(logs, runs.rows, triaged, repo.name);
-    return <div key={repo.name} className="install-row"><strong className="mono">{repo.name}</strong><span className={`status-badge${catchingUp ? "" : " status-ok"}`}><span aria-hidden="true" />{catchingUp ? "Catching up open pull requests…" : "Connected"}</span></div>;
+    return <div key={repo.name} className="install-row"><strong className="mono">{repo.name}</strong>{catchingUp ? <span className="catching-up"><StatusDot label="In progress" live tone="emphasis" />Catching up open pull requests…</span> : <Badge tone="success">Connected</Badge>}</div>;
   }
 
   const phase = step === "create" ? 0 : step === "model" ? 2 : 1;
@@ -234,22 +235,22 @@ export default function Connect() {
   function renderCreateBody() {
     return <>
       {busy
-        ? <div className="setup-waiting" role="status"><span className="activity-dot" aria-hidden="true" /><div><strong>Opening GitHub…</strong><p>GitHub will confirm a prefilled App. The private key stays on the hub and is never shown here.</p></div></div>
+        ? <div className="setup-waiting" role="status"><StatusDot label="Working" live tone="emphasis" /><div><strong>Opening GitHub…</strong><p>GitHub will confirm a prefilled App. The private key stays on the hub and is never shown here.</p></div></div>
         : <p>GitHub will confirm a prefilled App. The private key stays on the hub and is never shown here.</p>}
       {error && <p role="alert" className="error">{error}</p>}
-      <div className="task-actions"><button type="button" className="btn primary" disabled={busy} onClick={() => void startManifest()}>{busy ? "Opening GitHub…" : "Create GitHub App"}</button></div>
+      <div className="task-actions"><Button type="button" disabled={busy} onClick={() => void startManifest()}>{busy ? "Opening GitHub…" : "Create GitHub App"}</Button></div>
       <details className="setup-help">
         <summary>Connect an existing GitHub App instead</summary>
         <p>Use the numeric App ID and private key from the App's General settings.</p>
         <div className="connection-fields">
           <label>App ID<input inputMode="numeric" value={appId} onChange={(event) => setAppId(event.target.value)} autoComplete="off" /><small className="muted">Use the App ID, not the Client ID.</small></label>
           <label>App slug<input value={appSlug} onChange={(event) => setAppSlug(event.target.value)} autoComplete="off" /><small className="muted">{"From the App’s public URL, github.com/apps/{slug}."}</small></label>
-          <div className="pem-field full-span"><span className="field-label">Private key</span><input className="sr-only" id="existing-app-pem" type="file" accept=".pem" onChange={(event) => void loadPem(event.target.files?.[0])} />{privateKey ? <div className="file-loaded"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>{pemName || "Pasted private key"}</strong><small>Ready</small></div><label className="btn" htmlFor="existing-app-pem">Replace</label><button type="button" className="btn ghost" onClick={clearPrivateKey}>Remove</button></div> : <label className="file-picker" htmlFor="existing-app-pem"><Upload strokeWidth={1.7} aria-hidden="true" /><span><strong>Choose .pem file</strong><small>Downloaded from GitHub App settings</small></span></label>}<details><summary>Paste key instead</summary><textarea aria-label="Private key" value={privateKey} onChange={pastePrivateKey} autoComplete="off" /></details></div>
-          <label className="full-span">Webhook secret<div className="secret-input"><input type="password" value={webhookSecret} onChange={editWebhookSecret} autoComplete="new-password" /><button type="button" className="btn" aria-label="Generate and copy webhook secret" title="Generate and copy webhook secret" onClick={() => void generateAndCopyWebhookSecret()}><Sparkles strokeWidth={1.7} aria-hidden="true" /></button></div><small className="muted">Use the same secret in the GitHub App webhook settings.</small>{secretNotice && <small className="secret-notice" role="status">{secretNotice}</small>}</label>
-          <div className="webhook-url-field full-span"><span className="field-label">Webhook URL</span><div className="copy-field"><input aria-label="Webhook URL" readOnly value={webhookUrl} onFocus={(event) => event.currentTarget.select()} /><button type="button" className="btn" onClick={() => void copyWebhookUrl()}>Copy</button></div>{webhookUrlNotice && <small role="status" className="secret-notice">{webhookUrlNotice}</small>}</div>
+          <div className="pem-field full-span"><span className="field-label">Private key</span><input className="sr-only" id="existing-app-pem" type="file" accept=".pem" onChange={(event) => void loadPem(event.target.files?.[0])} />{privateKey ? <div className="file-loaded"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>{pemName || "Pasted private key"}</strong><small>Ready</small></div><Button asChild variant="outline"><label htmlFor="existing-app-pem">Replace</label></Button><Button type="button" variant="ghost" onClick={clearPrivateKey}>Remove</Button></div> : <label className="file-picker" htmlFor="existing-app-pem"><Upload strokeWidth={1.7} aria-hidden="true" /><span><strong>Choose .pem file</strong><small>Downloaded from GitHub App settings</small></span></label>}<details><summary>Paste key instead</summary><textarea aria-label="Private key" value={privateKey} onChange={pastePrivateKey} autoComplete="off" /></details></div>
+          <label className="full-span">Webhook secret<div className="secret-input"><input type="password" value={webhookSecret} onChange={editWebhookSecret} autoComplete="new-password" /><Button type="button" variant="outline" size="icon" aria-label="Generate and copy webhook secret" title="Generate and copy webhook secret" onClick={() => void generateAndCopyWebhookSecret()}><Sparkles strokeWidth={1.7} aria-hidden="true" /></Button></div><small className="muted">Use the same secret in the GitHub App webhook settings.</small>{secretNotice && <small className="secret-notice" role="status">{secretNotice}</small>}</label>
+          <div className="webhook-url-field full-span"><span className="field-label">Webhook URL</span><div className="copy-field"><input aria-label="Webhook URL" readOnly value={webhookUrl} onFocus={(event) => event.currentTarget.select()} /><Button type="button" variant="outline" onClick={() => void copyWebhookUrl()}>Copy</Button></div>{webhookUrlNotice && <small role="status" className="secret-notice">{webhookUrlNotice}</small>}</div>
           <details className="setup-help full-span"><summary>GitHub App settings</summary><p>Grant read access to Checks and Metadata and read/write access to Contents, Issues and Pull requests. Set the active webhook URL to the value above, use the same secret, and subscribe to Pull request, Pull request review, Issue comment, Check run, Installation, and Installation repositories events. Set the Setup URL to <code>{`${window.location.origin}/`}</code> and check “Redirect on update” so GitHub returns you here after choosing repositories.</p></details>
         </div>
-        <div className="task-actions"><button type="button" className="btn primary" disabled={busy || !appId.trim() || !appSlug.trim() || !privateKey.trim() || !webhookSecret.trim()} onClick={() => void saveManual()}>{busy ? "Connecting…" : "Connect GitHub App"}</button></div>
+        <div className="task-actions"><Button type="button" disabled={busy || !appId.trim() || !appSlug.trim() || !privateKey.trim() || !webhookSecret.trim()} onClick={() => void saveManual()}>{busy ? "Connecting…" : "Connect GitHub App"}</Button></div>
       </details>
     </>;
   }
@@ -261,18 +262,18 @@ export default function Connect() {
       {error && <p role="alert" className="error">{error}</p>}
       {syncError && <p role="alert" className="error">{syncError}</p>}
       <div className="task-actions">
-        <button type="button" className="btn primary" onClick={() => void chooseRepositories()}>Choose repositories on GitHub</button>
-        {syncError && <button type="button" className="btn" disabled={sync.isFetching} onClick={() => void sync.refetch()}>Try again</button>}
+        <Button type="button" onClick={() => void chooseRepositories()}>Choose repositories on GitHub</Button>
+        {syncError && <Button type="button" variant="outline" disabled={sync.isFetching} onClick={() => void sync.refetch()}>Try again</Button>}
       </div>
     </> : <>
-      {sync.isFetching && <div className="setup-waiting" role="status"><span className="activity-dot" aria-hidden="true" /><div><strong>Reading your repositories from GitHub…</strong></div></div>}
+      {sync.isFetching && <div className="setup-waiting" role="status"><StatusDot label="Working" live tone="emphasis" /><div><strong>Reading your repositories from GitHub…</strong></div></div>}
       {error && <p role="alert" className="error">{error}</p>}
       {syncError && <p role="alert" className="error">{syncError}</p>}
       {repos.length > 0 && <div className="repository-list">{repos.map(renderInstallRow)}</div>}
       <div className="task-actions">
-        {repos.length > 0 && <button type="button" className="btn primary" onClick={() => setStep("model")}>Next: add decision model</button>}
-        <button type="button" className="btn" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</button>
-        {syncError && <button type="button" className="btn" disabled={sync.isFetching} onClick={() => void sync.refetch()}>Try again</button>}
+        {repos.length > 0 && <Button type="button" onClick={() => setStep("model")}>Next: add decision model</Button>}
+        <Button type="button" variant="outline" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</Button>
+        {syncError && <Button type="button" variant="outline" disabled={sync.isFetching} onClick={() => void sync.refetch()}>Try again</Button>}
       </div>
     </>;
   }
@@ -285,8 +286,8 @@ export default function Connect() {
         : <DecisionModelForm />}
       {modelStored && !liveReady && <p role="status" className="muted">{githubReady ? "Waiting for the first triage run." : "Waiting for GitHub to deliver a webhook."}</p>}
       <div className="task-actions">
-        {modelStored && <button type="button" className="btn primary" disabled={!liveReady} onClick={() => navigate("/inbox")}>Open triage</button>}
-        <button type="button" className="btn ghost" onClick={() => setStep("select")}>Back to repositories</button>
+        {modelStored && <Button type="button" disabled={!liveReady} onClick={() => navigate("/inbox")}>Open triage</Button>}
+        <Button type="button" variant="ghost" onClick={() => setStep("select")}>Back to repositories</Button>
       </div>
     </>;
   }

@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { Button } from "@corbits/react-ui";
 import type { HubApproval } from "../lib/hub-api.ts";
 import { approvalHeadline, argsText, relativeTime } from "../lib/triage-view.ts";
 
@@ -50,12 +51,12 @@ export function ApprovalCard({ approval, disabled, onDecide, approveLabel = "App
         </p>
       )}
       <div className="row wrap approval-actions">
-        <button type="button" className="small primary" disabled={disabled || busy !== null} onClick={() => void run("once")}>
+        <Button type="button" size="sm" disabled={disabled || busy !== null} onClick={() => void run("once")}>
           {busy === "once" ? "Approving…" : approveLabel}
-        </button>
-        <button type="button" className="small" disabled={disabled || busy !== null} onClick={() => void run("deny")}>
+        </Button>
+        <Button type="button" variant="outline" size="sm" disabled={disabled || busy !== null} onClick={() => void run("deny")}>
           {busy === "deny" ? "Rejecting…" : rejectLabel}
-        </button>
+        </Button>
       </div>
     </article>
   );

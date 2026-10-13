@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@corbits/react-ui";
 import { useQuery } from "@tanstack/react-query";
 import { listSessions, revokeSession, type HubSessionRow } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
@@ -35,7 +36,7 @@ export function SignedInDevices() {
       {query.data.map((session) => (
         <div key={session.id} className="row">
           <span>{session.isCurrent ? "This browser" : session.userAgent ?? "Unknown device"} · since {new Date(session.createdAt).toLocaleString()}</span>
-          {!session.isCurrent && <button type="button" className="btn" disabled={pending !== null} onClick={() => void revoke(session)}>Sign out</button>}
+          {!session.isCurrent && <Button type="button" variant="outline" disabled={pending !== null} onClick={() => void revoke(session)}>Sign out</Button>}
         </div>
       ))}
       {error && <p role="alert" className="field-error">{error}</p>}

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@corbits/react-ui";
 import type { CustomCheck } from "@corbits/triage-contracts";
 import { buildCustomCheck, checkFormOfKind, type CheckForm } from "../../lib/action-builder.ts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
@@ -39,7 +40,7 @@ export default function CheckGallery({ draft, disabled, onAdd, onCancel }: Check
         <button type="button" className="linkish" onClick={() => setForm(null)}>Back</button>
         <span className="sp" />
         <button type="button" className="linkish" onClick={onCancel}>Cancel</button>
-        <button type="button" className="btn btn-sm" disabled={disabled || (touched && "reason" in built)} onClick={add}>Add check</button>
+        <Button type="button" variant="outline" size="sm" disabled={disabled || (touched && "reason" in built)} onClick={add}>Add check</Button>
       </div>
     </div>
   );

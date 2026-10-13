@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Button } from "@corbits/react-ui";
 import { useLocation } from "react-router-dom";
 import { resetPassword } from "../lib/hub-auth.ts";
 
@@ -35,11 +36,11 @@ export function ResetPassword() {
               New password
               <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required disabled={pending} />
             </label>
-            <button type="submit" className="btn primary" disabled={pending || !password}>{pending ? "Saving…" : "Set password"}</button>
+            <Button type="submit" disabled={pending || !password}>{pending ? "Saving…" : "Set password"}</Button>
           </form>
         )}
         {error && <p role="alert" className="error">{error}</p>}
-        <a className="btn" href="/">Go to sign in</a>
+        <Button asChild variant="outline"><a href="/">Go to sign in</a></Button>
       </section>
     </div>
   );
