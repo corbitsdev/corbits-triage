@@ -21,7 +21,7 @@ Triage reaches the model through Interchange inference. The agents name the tena
 | OpenCode Zen | `https://opencode.ai/zen/v1` | `jev-1.13` |
 | Custom | any | any |
 
-The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that infers: a `map` over the rules step's chunks, one System One call per chunk (`triage-steps.ts`, `directors.ts`). The request body is `{ state, questions, model }`; no system prompt reaches the model.
+The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that infers: a `map` over the rules step's chunks, one System One call per chunk, then a second `map` over focused's follow-up chunks, which is empty unless focused failed (`triage-steps.ts`, `directors.ts`). The request body is `{ state, questions, model }`; no system prompt reaches the model.
 
 ## Why Triage uses it
 
@@ -34,14 +34,18 @@ The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that inf
 
 Questions are built in `packages/triage-workflows/src/logic/quality.ts`. Every request's state holds:
 
-- the pull request's title, body (up to 4,000 chars), up to 50 commit messages and up to 200 changed paths, lockfiles included;
+- the pull request's title, body (up to 4,000 chars), up to 50 commit messages and up to 200 changed paths, lockfiles included. When focused is asked, every path is listed instead while the list fits 8 KB; past that, the first 200 paths come with `pullRequest.directories`, every changed file counted by directory (files and changed lines) at the deepest level that fits 8 KB;
 - the judged files that fit the request, each patch split into hunks. Lockfiles (`bun.lock`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum` and similar) keep their path but their patch is never sent;
 - the repository's docs (`repository.docs`, markdown by path), see [budgets](#budgets-and-limits);
 - in requests that ask a custom check, the repository's contribution rules (`repository.rules`), taken out of `repository.docs` so each file is sent once. Custom questions say to judge by them.
 
 Questions point into the state by path, such as `` `pullRequest.files[3].hunks[0]` ``, rather than copying it.
 
-- **Focused**: one Choice per hunk (a change candidate, `logic/candidates.ts`) with options `primary_or_supporting`, `unrelated`, `movement_or_superseded`, `ambiguous`, each with a written criterion.
+- **Focused**: one Choice per request that holds files, so every file read is judged. The code, tests, docs, types and wiring one change needs across files count as one purpose.
+  - When the diff fits one request, it asks about the whole pull request: `one_thing`, `more_than_one_thing` or `cant_tell`.
+  - Otherwise each request asks whether its slice of the diff serves the pull request's main purpose or would belong in its own pull request, even if the title or body mentions it: `serves_purpose`, `separate_change` or `cant_tell`. Asking the slice question of a one-request diff too measured worse (70 of 72 against 72), and without "even if the title or body mentions it" it passed a mix whose description named both halves.
+  - A pull request with no lines to read, such as one that changes only lockfiles, is not asked; focused does not apply.
+  - Only when focused fails, each failing slice's request is sent again with one Noul per file it holds, at most 30 in all: "is the change in this file a separate change from the one the title and body describe?". Those answers never decide focused; they name the files to split out.
 - **Docs and tests**: path rules decide in code first. Changing (not removing) any doc file passes docs, and any test file passes tests, with no question asked.
   - A doc file is `*.md` or `*.mdx` outside `vendor/`, `node_modules/`, `dist/` and `build/`, legal notices excluded.
   - A test file is under `test/`, `tests/` or `__tests__/`, or named `*.test.*` or `*.spec.*` with a JS or TS extension (`[cm]?[jt]sx?`). Other conventions, such as Go's `_test.go` or Python's `test_*.py` outside a `tests/` directory, are not recognised today.
@@ -68,12 +72,12 @@ Rules learned while tuning, which match TypeSafe's [jagged edges](https://docs.t
 From `logic/render.ts`:
 
 - **Noul**: P ≥ 0.7 decides yes, P ≤ 0.3 decides no; anything between is unconfirmed ("not enough evidence to decide") and asks a maintainer to confirm.
-- **Focused**: a candidate is unrelated when `unrelated` holds ≥ 0.6, part of the change when `primary_or_supporting + movement_or_superseded` holds ≥ 0.6, and unresolved otherwise. Any unrelated candidate fails focused; otherwise any unresolved one leaves it unconfirmed.
+- **Focused**: any slice with `more_than_one_thing` or `separate_change` ≥ 0.6 fails it. Otherwise an unread file leaves it unconfirmed, every slice with `one_thing` or `serves_purpose` ≥ 0.6 passes it, and anything else is unconfirmed. A failure names up to 3 files whose separate-change Noul is ≥ 0.7, most likely first; when none is, it fails without naming files.
 
 Two different numbers come out of the answers:
 
-- **Check score** (`packages/triage-contracts/src/check-output.ts`): per model check, 0–100 and unrounded, how likely the check is fine, with `passAt` 70 (docs, tests, custom) or 60 (focused). It clears `passAt` exactly when the check passes. Docs and tests score 1 − P(needs one) of the weakest file; custom checks P(meets the rule); focused the lowest related share. A check with no score reports `met`, `not-applicable` or `could-not-check` with a reason.
-- **Merge score**: per pull request, 0–1, the weakest confidence among decided answers. For a Noul that is max(P, 1 − P); for failing docs or tests, P(falls short) of the worst file; for focused, the larger of the unrelated and related shares. The pack's merge threshold applies to it. It measures how sure the model was, not how likely the pull request is fine.
+- **Check score** (`packages/triage-contracts/src/check-output.ts`): per model check, 0–100 and unrounded, how likely the check is fine, with `passAt` 70 (docs, tests, custom) or 60 (focused). It clears `passAt` exactly when the check passes. Docs and tests score 1 − P(needs one) of the weakest file; custom checks P(meets the rule); focused the least P(`one_thing` or `serves_purpose`) over its slices. A check with no score reports `met`, `not-applicable` or `could-not-check` with a reason.
+- **Merge score**: per pull request, 0–1, the weakest confidence among decided answers. For a Noul that is max(P, 1 − P); for failing docs or tests, P(falls short) of the worst file; for focused, the most separate slice's P(separate) when it fails and the least serving slice's P(serves) when it passes. The pack's merge threshold applies to it. It measures how sure the model was, not how likely the pull request is fine.
 
 ## Budgets and limits
 
@@ -88,15 +92,15 @@ Two different numbers come out of the answers:
 | Patch read per file | 65,536 chars | `MAX_PATCH_INPUT_CHARS` |
 | Patch read per pull request | 270,000 chars | `MAX_PATCH_CHARS` |
 | GitHub tool page | 9,000 chars | `PR_FILES_PAGE_CHARS` |
-| Focused candidates | first 100 files, 200 candidates | `logic/candidates.ts` |
 
 - **Docs.** Docs are read from the default branch in this order: root `README`, then `docs/`, then other root markdown, then nested markdown, each in path order. Reading stops at 24,000 bytes; a doc that crosses the cap is cut and later docs are not seen. The same docs are in every request's state.
 - **Contribution rules.** Read under their own 8,000-byte budget, in this order: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING` and `PULL_REQUEST_TEMPLATE` at the root, then `CONTRIBUTING` and `PULL_REQUEST_TEMPLATE` in `.github/` (including `PULL_REQUEST_TEMPLATE/`), then the same two in `docs/`. An `AGENTS.md` or `CLAUDE.md` inside a package stays an ordinary doc. Only requests that ask a custom check carry them and give up room for them; requests that ask only built-in checks are unchanged.
-- **Request splitting.** Files fill each request's state in order up to the budget left after metadata and docs. A file too large for one request keeps its leading hunks. Each request asks only about the files it holds; whole-PR questions go in the first. If the title, body, commits, paths and docs alone exceed the budget, nothing is asked and the model checks stay unconfirmed ("pull request too large for the decision model").
+- **Request splitting.** Files fill each request's state in order up to the budget left after metadata and docs. A file too large for one request keeps its leading hunks there for every check, and focused reads its remaining hunks in the next requests; a hunk too large for any request is cut at line ends across several. Each request asks only about the files it holds; whole-PR questions go in the first, and focused asks in each. If the title, body, commits, path list and docs alone exceed the budget, nothing is asked and the model checks stay unconfirmed ("pull request too large for the decision model (N KB)", the size of that metadata).
 - **Oversized patches.** A patch larger than one tool page is read across pages and joined. Reading stops at 65,536 chars for a file, which is then marked cut. Once the pull request's 270,000-char budget is spent, later files are listed without patches.
 - **Unread files.** A file with lines changed but no patch to read (GitHub left it out, the per-PR budget was spent, or not even its first hunk fits a request) is unread, and a check that would ask about it stays unconfirmed. Treatment differs by check:
   - Docs and tests ask about a cut file from the hunks that were read; it is not unread for them. A changed doc or test file passes them by rule regardless.
-  - Focused and scoped custom checks treat a cut file as unread. Focused also lists files past the first 100, or past 200 candidates, as unread.
+  - Scoped custom checks treat a cut file as unread.
+  - Focused reads every line of every patch it has. Its only unread files are those whose patch it does not have whole: GitHub left it out, the pull request's 270,000-char budget was spent, or the file passed 65,536 chars. Any unread file leaves focused unconfirmed, listing them, unless another slice already fails it.
   - Binary files and pure renames have no lines and are never unread.
 
 ## Cost per pull request
@@ -106,14 +110,16 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 - A small pull request: one request. With 24 KB of docs and a few KB of diff that is about 9k tokens, about $0.0004.
 - One full request: at most 64k tokens, about $0.0027.
 - The largest pull request Triage reads: the 270,000-char patch budget fills about four to five requests when the docs take their full 24 KB, at most about $0.015. Hunk-scoped custom checks add one question per hunk, uncapped, so wide diffs can need more requests.
+- Focused asks one question in each request that holds files. It adds requests only for slices no other check needs: the rest of a file too large for one request, or files no other check asks about. On the judge eval the largest pull requests (#46, #119, #157, #158) take 2 calls each. With 24 KB of docs and small patches, a pull request of 200 files takes 2 requests, 500 files 4, 1,000 files 8 and 3,000 files 24, under 66 KB of state each.
+- A failed focused check sends each failing slice's request again with its file questions: one extra request per failing slice, the same state re-sent whole. On the judge eval's mixes that is one or two extra requests of 34–83 KB each, about $0.0004–0.0011 apiece.
 
 ## Measured accuracy
 
-`evals/judge` replays frozen, labelled pull requests of this repository through the production steps (file paging, rules, one call per chunk, evaluate) against OpenCode Zen `jev-1.13`, with focused, docs and tests enabled.
+`evals/judge` replays frozen, labelled pull requests of this repository through the production steps (file paging, rules, one call per chunk, focused's follow-up calls, evaluate) against OpenCode Zen `jev-1.13`, with focused, docs and tests enabled.
 
 - **Cases**: 76 in `cases.jsonl`. These are 34 pull requests labelled in `labels.json` (needs tests, needs docs), 31 variants with their tests or docs removed (body and matching commit messages dropped too), 7 mixes of two unrelated pull requests that focused must fail, and 4 of those mixes again with a title and body describing both halves (`describedMixes`). #190 and #191 are one feature each spread across hub, portal, contracts and workflows, which focused must pass.
-- **Allowed misses**: tests 3, docs 10, focused 11 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
-- **Recent results**, misses as reported in commit messages and pull requests, out of 58 cases up to `45f34e6` and out of 72 on the row that says so:
+- **Allowed misses**: tests 3, docs 11, focused 2 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
+- **Recent results**, misses as reported in commit messages and pull requests, out of 58 cases up to `45f34e6`, out of 72 on the row that says so, and out of 76 after:
 
 | Commit | Date | tests | docs | focused |
 | --- | --- | --- | --- | --- |
@@ -121,6 +127,8 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 | `4c7fead`, run 1 | 2026-10-11 | 2 | 5 | 1 |
 | `4c7fead`, run 2 | 2026-10-11 | 2 | 6 | 1 |
 | `45f34e6`, 72 cases | 2026-10-12 | 2 | 10 | 4 |
+| #192, run 1 | 2026-10-12 | 2 | 9 | 0 |
+| #192, run 2 | 2026-10-12 | 2 | 10 | 0 |
 
 These cover one repository's pull requests. Custom checks and other repositories are unmeasured.
 
@@ -151,7 +159,7 @@ The eval covers focused, docs and tests only.
 
 ## Known limits
 
-- **No citations.** Jev cannot point at evidence. Code chooses it: the hunk a Choice was asked about, or the files whose Noul crossed the band.
+- **No citations.** Jev cannot point at evidence or name parts in text. Code chooses it: the files whose Noul crossed the band.
 - **Not deterministic.** Answers vary slightly between runs, so a case near the band edge can flip between pass, fail and unsure. That is why the eval allows a few misses.
 - **No injection guard.** Pull request text and docs are untrusted input in the state. Jev does not treat state as hostile by default, and Triage has no prompt-injection check today.
 - **English.** TypeSafe reports its best accuracy in English; other languages are handled less well.

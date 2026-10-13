@@ -5,15 +5,17 @@ import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, packAppr
 import type { PrFacts } from "../logic/checks.js";
 import { errorText } from "../logic/extract.js";
 import type { Item, Judged } from "../logic/item.js";
-import { judgeKey, prepareQualityEvaluation, type JudgeRequest } from "../logic/quality.js";
-import { degradedVerdict, isReusableReply, parseAnswers, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type Verdict } from "../logic/render.js";
+import { focusedPartRequests, judgeKey, prepareQualityEvaluation, type FocusedParts, type FocusedPlan, type JudgeRequest } from "../logic/quality.js";
+import { degradedVerdict, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 
-/** The rules items, merged with the judge map's per-chunk outputs, in chunk order, when the judge ran. */
-interface EvaluateInput {
+/** The rules items, merged with the judge maps' per-chunk outputs, in chunk order, when the judge ran. */
+export interface EvaluateInput {
   items: Item[];
   batch: boolean;
   judge?: { output: unknown[] };
+  /** Focused's follow-up file questions, asked only for items whose first answers failed it. */
+  judgeParts?: { output: unknown[] };
 }
 
 /** The judge's answer for one chunk, or for one item once its chunks are merged; empty when it was not asked. */
@@ -22,7 +24,7 @@ export type Judgment = Pick<Item, "judge" | "judgeError">;
 export type EvaluateOutput = Verdict | { items: Verdict[]; summary: BacklogSummary };
 
 // Items are unchecked so a malformed one degrades its own verdict instead of failing the batch.
-const Input = type({ items: "object[]", batch: "boolean", "judge?": { output: "unknown[]" } });
+export const Input = type({ items: "object[]", batch: "boolean", "judge?": { output: "unknown[]" }, "judgeParts?": { output: "unknown[]" } });
 
 /** A facts failure or malformed input reaches this step without facts: the verdict then names no head and is degraded. */
 function stamp(facts: PrFacts | undefined) {
@@ -42,7 +44,7 @@ function judgmentOf(replies: unknown[]): Judgment {
 }
 
 /** The item's reply to each of its requests by `judgeKey`: an earlier run's answer where it has one, else the next of `replies`. */
-function repliesTo(it: Item, requests: JudgeRequest[], replies: unknown[]): Array<[string, unknown]> {
+export function repliesTo(it: Item, requests: JudgeRequest[], replies: unknown[]): Array<[string, unknown]> {
   return requests.map(function replyTo(request): [string, unknown] {
     const key = judgeKey(request);
     const carried = it.judged?.[key];
@@ -69,19 +71,29 @@ function reusable(answered: Array<[string, unknown]>): Judged {
   return judged;
 }
 
-/** Takes the item's own chunk replies off the front of `replies`; requests an earlier run answered took none. */
-function verdictOf(it: Item, replies: unknown[]): Verdict {
+/** Focused's follow-up requests about the slices its first answers call a separate change, if any. */
+export function partsOf(focused: FocusedPlan | undefined, requests: JudgeRequest[], answered: Array<[string, unknown]>): FocusedParts | undefined {
+  const { judge } = judgmentOf(answered.map(([, reply]) => reply));
+  const failing = focused && judge !== undefined ? separateSlices(parseAnswers(judge), focused) : [];
+  return failing.length > 0 ? focusedPartRequests(requests, failing) : undefined;
+}
+
+/** Takes the item's own chunk replies off the front of `replies` and `partReplies`; requests an earlier run answered took none. */
+function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdict {
   if (it.error !== undefined) {
     const verdict = { ...stamp(undefined), ...degradedVerdict(it.error, packMergeThreshold(it.pack)), cleanupMode: it.cleanupMode, actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
   }
   try {
     // Rules recorded this same pure split as the judge's chunks, less the requests an earlier run answered.
-    const { candidates, plan, requests } = prepareQualityEvaluation(it.facts, it.det.sources);
-    const answered = it.det.needsJudgment ? repliesTo(it, requests, replies) : [];
+    const { plan, focused: asked, requests } = prepareQualityEvaluation(it.facts, it.det.sources);
+    const first = it.det.needsJudgment ? repliesTo(it, requests, replies) : [];
+    const parts = partsOf(asked, requests, first);
+    const answered = parts ? [...first, ...repliesTo(it, parts.requests, partReplies)] : first;
+    const focused = parts && asked ? { ...asked, parts: parts.asked } : asked;
     const { judge, judgeError } = it.det.needsJudgment ? { ...it, ...judgmentOf(answered.map(([, reply]) => reply)) } : it;
     const answers = judge !== undefined ? parseAnswers(judge) : null;
-    const rendered = renderVerdict({ author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, candidates, plan, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, threshold: packMergeThreshold(it.pack) });
+    const rendered = renderVerdict({ author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, plan, focused, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, threshold: packMergeThreshold(it.pack) });
     // A degraded verdict is incomplete, so nothing is suggested from it.
     const actionInput = it.pack && rendered.degraded === null ? { facts: it.facts, checks: rendered.checks, pack: it.pack, roles: it.roles ?? {} } : undefined;
     const suggested = actionInput ? evaluateActions(actionInput) : [];
@@ -100,8 +112,9 @@ function verdictOf(it: Item, replies: unknown[]): Verdict {
 export async function evaluate(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<EvaluateOutput> {
   const parsed = Input(input);
   if (parsed instanceof type.errors) throw new Error(`evaluate: invalid input: ${parsed.summary}`);
-  const { items, batch, judge } = parsed as EvaluateInput;
+  const { items, batch, judge, judgeParts } = parsed as EvaluateInput;
   const replies = [...(judge?.output ?? [])];
-  const verdicts = items.map((it) => verdictOf(it, replies));
+  const partReplies = [...(judgeParts?.output ?? [])];
+  const verdicts = items.map((it) => verdictOf(it, replies, partReplies));
   return batch ? { items: verdicts, summary: summarize(verdicts) } : verdicts[0]!;
 }

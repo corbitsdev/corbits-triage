@@ -104,12 +104,13 @@ const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrant
 
 type SystemOne = { questions: Array<{ id: string; instructions: string }>; state: { repository: { docs: Record<string, string>; rules?: Record<string, string> } } };
 
-/** Calls every focused candidate unrelated, says no change meets a custom rule, and answers every other question yes, so each asked file needs docs and tests. */
+/** Calls the pull request and each slice of it a separate change, says no change meets a custom rule, and answers every other question yes, so each asked file is a separate change and needs docs and tests. */
 function judgeText({ questions }: SystemOne) {
   function answer({ id }: { id: string }) {
     if (id.startsWith("custom-")) return { id, type: "noul", noul: 0.1 };
-    if (!id.startsWith("focused-candidate-")) return { id, type: "noul", noul: 0.9 };
-    return { id, type: "choice", choice: "unrelated", probabilities: { primary_or_supporting: 0.1, unrelated: 0.7, movement_or_superseded: 0.1, ambiguous: 0.1 }, confidence: 0.9 };
+    if (/^focused-slice-\d+$/.test(id)) return { id, type: "choice", choice: "separate_change", probabilities: { serves_purpose: 0.2, separate_change: 0.7, cant_tell: 0.1 }, confidence: 0.9 };
+    if (id !== "focused") return { id, type: "noul", noul: 0.9 };
+    return { id, type: "choice", choice: "more_than_one_thing", probabilities: { one_thing: 0.2, more_than_one_thing: 0.7, cant_tell: 0.1 }, confidence: 0.9 };
   }
   return questions.map((q) => JSON.stringify(answer(q))).join("");
 }
@@ -152,7 +153,8 @@ function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], ju
 }
 
 const RULES_PATH = { invoked: ["triage-facts", "triage-execute", "triage-mirror"], mirrors: ["mirrorRules"] };
-const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
+// `judgeText` fails focused, so the judge is called again for its file questions.
+const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
 
 type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; cleanupMode?: string; github?: ReturnType<typeof fakeGithub> };
 
@@ -189,7 +191,8 @@ describe("pr-triage body", () => {
   test("model checks run the judge on the repository's own docs and the verdict records its answers", async () => {
     const { path, judged, verdict } = await triage(recommendedPack(REPO));
     expect(path).toEqual(JUDGE_PATH);
-    expect(judged).toHaveLength(1);
+    expect(judged).toHaveLength(2);
+    expect(judged[1]!.questions.map((question) => question.id)).toEqual(["focused-file-001"]);
     expect(judged[0]!.state.repository).not.toHaveProperty("rules");
     const { "README.md": readme, "docs/guide.md": guide, ...rest } = judged[0]!.state.repository.docs;
     expect(readme).toBe(README);
@@ -199,10 +202,10 @@ describe("pr-triage body", () => {
     expect(read).toBeLessThanOrEqual(REPO_DOCS_MAX_BYTES);
     expect(rest).toEqual({});
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "fail"], ["tests", "fail"]]);
-    expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toEqual(["flag — src/flag.ts"]);
+    expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toEqual(["src/flag.ts"]);
     expect((verdict as Verdict).checks.find((c) => c.check === "tests")?.evidence).toEqual(["src/flag.ts"]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => c.output)).toEqual([
-      { kind: "score", score: 20, passAt: 60, items: ["flag — src/flag.ts"] },
+      { kind: "score", score: expect.closeTo(20), passAt: 60, items: ["src/flag.ts"] },
       { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["src/flag.ts"] },
       { kind: "score", score: expect.closeTo(10), passAt: 70, items: ["src/flag.ts"] },
     ]);
@@ -241,7 +244,7 @@ describe("pr-triage body", () => {
     const { path, verdict } = await triage(recommendedPack(REPO), { files });
     expect(path.invoked.filter((agent) => agent === "triage-judge").length).toBeGreaterThanOrEqual(2);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"], ["tests", "pass"]]);
-    expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toHaveLength(files.length);
+    expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.evidence).toHaveLength(3);
   });
 
   test("a scoped custom check fails naming the migration or change that breaks it and does not apply without one", async () => {

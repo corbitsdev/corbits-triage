@@ -44,7 +44,7 @@ export function unsettledBy(verdict: VerdictFields, headSha?: string): Unsettled
 
 /** A model check a skipped or over-budget judge left unanswered: the verdict still stands, so the head settles, but its branches were not decided. */
 function modelUnanswered(checks: Array<Record<string, unknown>>): boolean {
-  return checks.some((check) => check["kind"] === "model" && check["result"] === "unconfirmed" && (check["reason"] === NEEDS_JUDGE_REASON || check["reason"] === QUALITY_EVALUATION_LIMIT_ERROR));
+  return checks.some((check) => check["kind"] === "model" && check["result"] === "unconfirmed" && (check["reason"] === NEEDS_JUDGE_REASON || String(check["reason"]).startsWith(QUALITY_EVALUATION_LIMIT_ERROR)));
 }
 
 /** Dos run unattended only on a verdict that settles its head with every model check answered. */
