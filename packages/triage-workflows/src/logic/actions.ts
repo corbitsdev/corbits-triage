@@ -143,7 +143,6 @@ function resolve(task: Do, action: Action, input: ActionInput): ResolvedTarget {
       return { body: changesBody(action, input) };
     case "comment":
     case "approve":
-    case "convert-to-draft":
     case "close":
     case "agent":
       return task.target;
@@ -161,8 +160,6 @@ function satisfied(kind: ActionKind, target: ResolvedTarget, facts: PrFacts): bo
     // Resolution already dropped everyone requested or reviewed on this head.
     case "request-review":
       return "teams" in target && target.users.length === 0 && target.teams.length === 0;
-    case "convert-to-draft":
-      return facts.draft;
     case "close":
       return facts.state === "closed";
     // No effect id records a posted comment or agent run yet, so these always stand; facts do not say which head the App's review is on.

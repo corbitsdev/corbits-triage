@@ -221,8 +221,6 @@ type HarnessOptions = {
   rotation?: RotationRecord;
   /** Whether any two deployments run the same workflow source; false by default. */
   sameSource?: boolean;
-  /** The repositories' triage-drafts setting; unset keeps the default. */
-  triageDrafts?: boolean;
   /** Every repository's check pack; an empty pack by default. */
   pack?: CheckPack;
 };
@@ -231,7 +229,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
   const repos = Array.isArray(prs) ? { [REPO]: prs } : prs;
   const records = { rotation: options.rotation };
   function tenant() {
-    const ns = { repos: Object.keys(repos).map((name) => ({ name, connected: true, enabled: true, ...(options.triageDrafts !== undefined && { triageDrafts: options.triageDrafts }) })), ...(records.rotation && { rotation: records.rotation }) };
+    const ns = { repos: Object.keys(repos).map((name) => ({ name, connected: true, enabled: true })), ...(records.rotation && { rotation: records.rotation }) };
     return { id: TENANT_ID, domain: DOMAIN, config: { corbitsTriage: ns } };
   }
   const { reader, reads, latestOf } = fakeReader(logs);
@@ -428,14 +426,10 @@ describe("triage reconciler", () => {
     ]);
   });
 
-  test("draft heads are queued only while the repository triages drafts", async () => {
-    const prs = [{ ...head(1), draft: true }, head(2)];
-    const off = harness({ [repoKey(LIVE.runId)]: {} }, prs, { triageDrafts: false });
-    await off.reconcile();
-    expect(mailedNumbers(off.delivered)).toEqual([2]);
-    const on = harness({ [repoKey(LIVE.runId)]: {} }, prs);
-    await on.reconcile();
-    expect(mailedNumbers(on.delivered)).toEqual([1, 2]);
+  test("draft heads are not queued", async () => {
+    const { reconcile, delivered } = harness({ [repoKey(LIVE.runId)]: {} }, [{ ...head(1), draft: true }, head(2)]);
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([2]);
   });
 
   test("a degraded verdict is queued again and a clean one settles the head", async () => {

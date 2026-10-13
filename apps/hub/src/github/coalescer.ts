@@ -9,7 +9,7 @@
 // even on a head already queued: a queued row does not say whether its run
 // has read facts yet. The window map lives in process: the hub runs as one
 // replica.
-import type { CheckPack, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
+import type { CheckPack, PrTriageRow, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { PrMail } from "./normalize.js";
 import type { RepoRecord } from "./tenant-config.js";
@@ -68,6 +68,12 @@ const STARTING_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_fo
 
 function startsTriage({ mail }: CoalescedEvent): boolean {
   return mail.event === "pull_request" && mail.action !== null && STARTING_ACTIONS.has(mail.action);
+}
+
+/** A pull request marked ready before any run triaged it was opened as a draft, so its opening wakes now too. */
+function eventsOf(input: CoalescedEvent, rows: readonly PrTriageRow[]): TriageEvent[] {
+  const untriaged = input.event === "ready" && !rows.some((row) => row.number === input.number && row.runId !== undefined);
+  return untriaged ? ["ready", "opened"] : [input.event];
 }
 
 async function settled(work: Promise<unknown>): Promise<void> {
@@ -177,7 +183,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       open.head = head;
     }
     open.latest = input;
-    if (!open.events.includes(input.event)) open.events.push(input.event);
+    for (const event of eventsOf(input, open.remembered.rows)) if (!open.events.includes(event)) open.events.push(event);
     if (open.starting) return "coalesced";
     open.starting = startsTriage(input);
     open.cancelQuiet();
@@ -192,11 +198,12 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     const open = windows.get(key);
     if (open) return join(key, open, input);
     const head = headOf(input, newest.get(key) ?? input.headSha);
+    const remembered = await queue(head);
     windows.set(key, {
       latest: input,
       head,
-      remembered: await queue(head),
-      events: [input.event],
+      remembered,
+      events: eventsOf(input, remembered.rows),
       starting,
       cancelQuiet: timer(key, starting ? deps.window.burstMs : deps.window.quietMs),
       cancelDeadline: timer(key, deps.window.maxWaitMs),

@@ -55,6 +55,7 @@ function memoryStore(rows: PrTriageRow[] = []) {
 const PULL_REQUEST: Record<string, [string, string]> = {
   opened: ["pull_request", "opened"],
   updated: ["pull_request", "synchronize"],
+  ready: ["pull_request", "ready_for_review"],
   checks: ["check_run", "completed"],
   commented: ["issue_comment", "created"],
   approved: ["pull_request_review", "submitted"],
@@ -132,6 +133,18 @@ for (const start of ["opened", "updated"] as const) {
     expect(mails.slice(1)).toEqual([expect.objectContaining({ headSha: "sha2", events: ["checks", "approved"] })]);
   });
 }
+
+test("a pull request marked ready before any run also wakes its opening actions; one triaged before does not", async () => {
+  const fresh = harness();
+  await fresh.coalescer.accept(delivery("ready", "sha1"));
+  await fresh.clock.advance(WINDOW.burstMs);
+  expect(fresh.mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["ready", "opened"] })]);
+  const ran: PrTriageRow = { number: 8, headSha: "sha0", status: "triaged", runId: "run_1", attempts: 0, firstSeenAt: "2026-10-09T11:00:00.000Z", updatedAt: "2026-10-09T11:00:00.000Z" };
+  const triaged = harness([ran]);
+  await triaged.coalescer.accept(delivery("ready", "sha1"));
+  await triaged.clock.advance(WINDOW.burstMs);
+  expect(triaged.mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["ready"] })]);
+});
 
 test("pushes inside the burst give one mail on the latest head, closing at the first burst", async () => {
   const { clock, mails, coalescer } = harness();

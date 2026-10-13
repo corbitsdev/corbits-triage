@@ -131,10 +131,10 @@ type Sent = CoalescedEvent;
 
 function ignoreLog(): void {}
 
-function openHeadsOf(drafts: number[]): BridgeDeps["openHeadsFor"] {
-  return async function openHeadsFor() {
-    return async function openHeads() {
-      return [7, 8].map((number) => ({ number, headSha: `sha${number}`, updatedAt: "2026-10-07T00:00:00.000Z", draft: drafts.includes(number) }));
+function openHeadOf(drafts: number[]): BridgeDeps["openHeadFor"] {
+  return async function openHeadFor() {
+    return async function openHead(_record, number) {
+      return { headSha: `sha${number}`, draft: drafts.includes(number) };
     };
   };
 }
@@ -159,7 +159,7 @@ function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Rec
     coalescer: { accept },
     log: ignoreLog,
     readCheckPack: packsFor(["octocat/hello"]),
-    openHeadsFor: openHeadsOf([]),
+    openHeadFor: openHeadOf([]),
     recheckOpenPulls,
     ...overrides,
   });
@@ -401,24 +401,35 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("a draft is 202 ignored while its repo skips drafts, read from the event or else from GitHub", async () => {
-    const skipping = { corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: true, triageDrafts: false }] } };
+  test("a draft is 202 ignored, read from the event or else from GitHub, and triaged once marked ready", async () => {
+    const stored = { corbitsTriage: { repos: [{ name: "octocat/hello", connected: true, enabled: true, triageDrafts: true }] } };
     const pr = JSON.parse(prPayload);
     const draftOpened = JSON.stringify({ ...pr, pull_request: { ...pr.pull_request, draft: true } });
+    const markedReady = JSON.stringify({ ...pr, action: "ready_for_review", pull_request: { ...pr.pull_request, draft: false } });
     const checkRun = JSON.stringify({
       action: "completed",
       repository: { full_name: "octocat/hello" },
       check_run: { head_sha: "sha7", pull_requests: [{ number: 7, head: { sha: "sha7" } }] },
     });
     const sent: Sent[] = [];
-    const db = stubDb([hookRow()], skipping);
-    const drafts = bridge({ db, sent, openHeadsFor: openHeadsOf([7]) });
+    const db = stubDb([hookRow()], stored);
+    const drafts = bridge({ db, sent, openHeadFor: openHeadOf([7]) });
     expect(await (await drafts(githubRequest(draftOpened, { delivery: "d1" }), TARGET)).json()).toEqual({ status: "ignored" });
     expect(await (await drafts(githubRequest(checkRun, { delivery: "d2", event: "check_run" }), TARGET)).json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
-    const ready = bridge({ db, sent, openHeadsFor: openHeadsOf([]) });
-    expect(await (await ready(githubRequest(checkRun, { delivery: "d3", event: "check_run" }), TARGET)).json()).toEqual({ status: "queued" });
-    expect(sent).toHaveLength(1);
+    const ready = bridge({ db, sent, openHeadFor: openHeadOf([]) });
+    expect(await (await ready(githubRequest(markedReady, { delivery: "d3" }), TARGET)).json()).toEqual({ status: "queued" });
+    expect(await (await ready(githubRequest(checkRun, { delivery: "d4", event: "check_run" }), TARGET)).json()).toEqual({ status: "queued" });
+    expect(sent.map(({ event, headSha }) => [event, headSha])).toEqual([["ready", "abc"], ["checks", "sha7"]]);
+  });
+
+  test("a conversion to draft is triaged once, so the verdict stops offering the pull request as ready", async () => {
+    const sent: Sent[] = [];
+    const pr = JSON.parse(prPayload);
+    const converted = JSON.stringify({ ...pr, action: "converted_to_draft", pull_request: { ...pr.pull_request, draft: true } });
+    const handle = bridge({ sent, openHeadFor: openHeadOf([7]) });
+    expect(await (await handle(githubRequest(converted, { delivery: "d1" }), TARGET)).json()).toEqual({ status: "queued" });
+    expect(sent.map(({ event, headSha }) => [event, headSha])).toEqual([["drafted", "abc"]]);
   });
 
   test("a repo without a check pack is needs-setup and does not mail", async () => {

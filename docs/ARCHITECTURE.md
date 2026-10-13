@@ -98,7 +98,7 @@ not write, from the inbox: the hub checks the grants below and mails the
 deployment the Do, its effect id, head and approver. That mail skips triage: an
 `approval` action reads it, trusting only the hub's sender and checking the
 effect id, and execute writes the Do unless GitHub already shows it; a close,
-draft, comment or review is refused once the head has moved. The hub reads the
+comment or review is refused once the head has moved. The hub reads the
 approval run's outcome back onto the verdict that held the Do. "Hide for me"
 hides a Do in that browser only; nothing is sent.
 

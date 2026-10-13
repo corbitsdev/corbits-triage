@@ -12,7 +12,6 @@ describe("repoPolicy", () => {
     expect(repoPolicy({ cleanupMode: "automated", checks: { ci: false } })).toEqual({
       cleanupMode: "automated",
       enabled: false,
-      triageDrafts: true,
       checks: {
         ci: false,
         conflicts: true,
@@ -36,7 +35,6 @@ describe("repoPolicy", () => {
     })).toEqual({
       cleanupMode: "human-approved",
       enabled: false,
-      triageDrafts: false,
       checks: {
         ci: true,
         conflicts: false,

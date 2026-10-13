@@ -71,7 +71,7 @@ import { createGithubPrTriage } from "./github/pr-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
-import { createPullHeadReader, createTenantHeadChecks, createTenantOpenHeads } from "./github/tenant-open-heads.js";
+import { createPullHeadReader, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
@@ -409,7 +409,7 @@ const bridge = createBridgeHandler({
   cache: new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` }),
   coalescer,
   readCheckPack,
-  openHeadsFor: tenantOpenHeads,
+  openHeadFor: createTenantOpenHead({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
   recheckOpenPulls,
 });
 

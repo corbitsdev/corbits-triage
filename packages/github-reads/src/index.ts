@@ -152,7 +152,6 @@ const MERGEABLE_BACKOFF_MS = 1500;
 function prFields(p: any) {
   return {
     number: p.number,
-    nodeId: p.node_id,
     title: p.title,
     body: p.body,
     state: p.state,
@@ -650,18 +649,4 @@ export async function codeownersForPr(gh: GithubFetch, repo: string, number: num
   const owners = codeownersFor(rules, files.map((file) => file.path));
   const author = lowercase(pr.user?.login ?? "");
   return { users: owners.users.filter((user) => lowercase(user) !== author), teams: owners.teams };
-}
-
-type TimelineEvent = { event?: string; sha?: string; commit_id?: string; actor?: { login?: string } };
-
-/**
- * Whether `login` already converted the pull request to draft since `sha` became its head, so marking that head ready is not undone.
- * The timeline is oldest first; the head arrives as its commit or a force-push to it. A head the timeline does not show is not converted
- * yet, as drafting it once is better than never.
- */
-export async function draftedOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<boolean> {
-  const timeline = await jsonAll<TimelineEvent>(gh, `/repos/${input.repo}/issues/${input.number}/timeline?per_page=100`);
-  const landed = timeline.findLastIndex((e) => (e.event === "committed" && e.sha === input.sha) || (e.event === "head_ref_force_pushed" && e.commit_id === input.sha));
-  if (landed < 0) return false;
-  return timeline.slice(landed + 1).some((e) => e.event === "convert_to_draft" && e.actor?.login === input.login);
 }

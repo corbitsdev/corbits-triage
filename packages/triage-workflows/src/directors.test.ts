@@ -132,24 +132,20 @@ describe("facts director policy", () => {
     ]);
   });
 
-  test("a backlog skips drafts while the repository skips them", async () => {
-    async function fetched(triageDrafts: boolean): Promise<string[]> {
-      const calls: ToolCall[][] = [];
-      const caps = {
-        executeTools(next: ToolCall[]) { calls.push(next); return { type: "execute_tools", calls: next }; },
-        reply(content: string) { return { type: "reply", content }; },
-      } as unknown as ReactorCapabilities;
-      const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
-      const policy = { enabled: true, triageDrafts };
-      const start = { kind: "backlog", repo: "acme/widgets", policy, checkPack: emptyPack("acme/widgets") };
-      await director.decide({ type: "message.received", message: { content: JSON.stringify(start) } } as ReactorInboundEvent, {} as ReactorState, caps);
-      const listed = { prs: [{ number: 7, title: "WIP", draft: true }, { number: 8, title: "Fix", draft: false }] };
-      const done = { type: "tool.done", result: { callId: "github_list_open_prs", content: listed } };
-      await director.decide(done as ReactorInboundEvent, {} as ReactorState, caps);
-      return (calls[1] ?? []).map((call) => call.id);
-    }
-    expect(await fetched(false)).toEqual(["pr:8", "reviews:8", "comments:8", "commits:8", "files:8:0"]);
-    expect((await fetched(true)).filter((id) => id.startsWith("pr:"))).toEqual(["pr:7", "pr:8"]);
+  test("a backlog skips drafts, even under a stored policy that once triaged them", async () => {
+    const calls: ToolCall[][] = [];
+    const caps = {
+      executeTools(next: ToolCall[]) { calls.push(next); return { type: "execute_tools", calls: next }; },
+      reply(content: string) { return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const director = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
+    const policy = { enabled: true, triageDrafts: true };
+    const start = { kind: "backlog", repo: "acme/widgets", policy, checkPack: emptyPack("acme/widgets") };
+    await director.decide({ type: "message.received", message: { content: JSON.stringify(start) } } as ReactorInboundEvent, {} as ReactorState, caps);
+    const listed = { prs: [{ number: 7, title: "WIP", draft: true }, { number: 8, title: "Fix", draft: false }] };
+    const done = { type: "tool.done", result: { callId: "github_list_open_prs", content: listed } };
+    await director.decide(done as ReactorInboundEvent, {} as ReactorState, caps);
+    expect(calls[1]?.map((call) => call.id)).toEqual(["pr:8", "reviews:8", "comments:8", "commits:8", "files:8:0"]);
   });
 
   test("a disabled repository replies an error item without fetching", async () => {
