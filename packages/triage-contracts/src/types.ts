@@ -24,9 +24,7 @@ export interface PRRecord {
   state: "open" | "closed";
   draft: boolean;
   conflicts: boolean;
-  drift: boolean;
   checks: boolean;
-  reviewers: boolean;
   duplicate: number;
   spam: number;
   tests: boolean;

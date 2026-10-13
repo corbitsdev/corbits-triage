@@ -1,4 +1,4 @@
-import { RECOMMENDED_DRIFT, type CheckPack } from "@corbits/triage-contracts";
+import type { CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult } from "./hub-api.ts";
 
 const COUNT = new Intl.NumberFormat("en-US");
@@ -16,8 +16,6 @@ export function checkLimitText(pack: CheckPack | null, check: Pick<CheckResult, 
       ];
       return limits.length === 0 ? null : `limit ${limits.join(" / ")}`;
     }
-    case "drift": return `limit ${COUNT.format(pack.checks.drift?.maxBehindBy ?? RECOMMENDED_DRIFT.maxBehindBy)} commits behind`;
-    case "reviewers": return "needs 1 reviewer";
   }
   const custom = pack.custom.find((row) => row.id === check.check);
   return custom?.kind === "rule" && custom.rule === "min-approvals" ? `needs ${custom.count} approvals` : null;

@@ -154,7 +154,7 @@ export function paneBar(gate: PaneGate, base: string | null, author: string | nu
     .map((kind) => rest.find((entry) => entry.kind === kind && entry.blocker === null))
     .filter((entry) => entry !== undefined)
     .slice(0, MAX_SECONDARY)
-    .map((entry) => (entry.kind === "close" && !gate.item.canClose ? { ...entry, label: "Close" } : entry));
+    .map((entry) => (entry.kind === "close" ? { ...entry, label: "Close" } : entry));
   const kinds = new Set(secondary.map((entry) => entry.kind));
   return { primary, secondary, more: rest.filter((entry) => !kinds.has(entry.kind)) };
 }

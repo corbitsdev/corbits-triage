@@ -102,7 +102,7 @@ async function judge(input: CaseInput): Promise<Outcomes> {
     files,
     authorTeams: null,
   };
-  const item = assembleItem(pr.number, data, { repo: pr.repo, openPrs: [], policy: DEFAULT_REPO_POLICY, pack: pack(pr.repo), events: ["opened"], docs: await readDocs(gh, pr.repo) });
+  const item = assembleItem(pr.number, data, { repo: pr.repo, policy: DEFAULT_REPO_POLICY, pack: pack(pr.repo), events: ["opened"], docs: await readDocs(gh, pr.repo) });
   const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, AbortSignal.timeout(1_000));
   const output = await Promise.all(ruled.chunks.map(judgeChunk));
   const verdict = await evaluateStep({ items: ruled.items, batch: false, judge: { output } }, NO_EFFECTS, AbortSignal.timeout(1_000)) as Verdict;

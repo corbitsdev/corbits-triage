@@ -1,10 +1,10 @@
 import {
+  BUILT_IN_CHECK_NAMES,
   CATALOG_IDS,
   catalogCheckEnabled,
   customCheckEnabled,
   packMergeThreshold,
   readCheckPack,
-  RECOMMENDED_DRIFT,
   RECOMMENDED_ISSUE,
   RECOMMENDED_PATHS,
   RECOMMENDED_SIZE,
@@ -65,7 +65,6 @@ function withPack(draft: RepoDraft, pack: Partial<CheckPack>): RepoDraft {
 export const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>> = {
   size: RECOMMENDED_SIZE,
   issue: RECOMMENDED_ISSUE,
-  drift: RECOMMENDED_DRIFT,
   paths: { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
 };
 
@@ -101,6 +100,7 @@ export function upsertCustom(draft: RepoDraft, check: CustomCheck): RepoDraft {
 
 /** Whether a check is in the verdict; a saved tracker of "off" leaves the issue check doing nothing, so it reads as off. */
 export function checkOn(pack: CheckPack, id: CheckRef): boolean {
+  if (BUILT_IN_CHECK_NAMES.has(id)) return true;
   if (!isCatalogId(id)) return pack.custom.some((row) => row.id === id && customCheckEnabled(row));
   return catalogCheckEnabled(pack, id) && !(id === "issue" && pack.checks.issue?.tracker === "off");
 }

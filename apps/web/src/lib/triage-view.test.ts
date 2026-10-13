@@ -3,7 +3,7 @@ import type { CheckOutput } from "@corbits/triage-contracts";
 import type { HubApproval, MergeVerdict, PrItem } from "./hub-api.ts";
 import { approvalHeadline, checkValueText, findPrItem, mergeText } from "./triage-view.ts";
 
-function approval(close: boolean): HubApproval {
+function approval(): HubApproval {
   return {
     id: "approval-1",
     runId: "run-1",
@@ -11,7 +11,7 @@ function approval(close: boolean): HubApproval {
     status: "pending",
     scope: null,
     toolDefinition: { name: "github_mirror" },
-    toolArguments: { repo: "acme/widgets", number: 8, close },
+    toolArguments: { repo: "acme/widgets", number: 8 },
     correlationId: "approval-1",
   };
 }
@@ -45,8 +45,6 @@ function item(repo: string, number: number): PrItem {
     runId: `run-${repo}`,
     waitingSince: null,
     updatedAt: null,
-    canClose: true,
-    pendingClose: false,
     posted: false,
     running: false,
     failure: null,
@@ -56,14 +54,8 @@ function item(repo: string, number: number): PrItem {
 }
 
 describe("approvalHeadline", () => {
-  test("states explicitly that approving close:true closes the pull request", () => {
-    expect(approvalHeadline(approval(true))).toBe(
-      "An agent wants to post a triage comment and labels, then close acme/widgets#8",
-    );
-  });
-
-  test("does not claim an ordinary mirror approval closes the pull request", () => {
-    expect(approvalHeadline(approval(false))).toBe(
+  test("names the pull request a mirror approval writes to", () => {
+    expect(approvalHeadline(approval())).toBe(
       "An agent wants to post a triage comment and labels on acme/widgets#8",
     );
   });
@@ -124,8 +116,6 @@ describe("checkValueText", () => {
     expect(value({ kind: "score", score: 10, passAt: 70, items: [{ path: "src/router.ts", added: { start: 40, end: 58 } }, { path: "src/router.ts", removed: { path: "src/router.ts", start: 12, end: 13 } }] })).toBe("10 / 70 (src/router.ts:40-58, src/router.ts (removed lines 12–13))");
     expect(value({ kind: "values", values: { files: 33, lines: 2104 } })).toBe("33 files, 2,104 lines");
     expect(value({ kind: "values", values: { status: "pending" } })).toBe("CI pending");
-    expect(value({ kind: "values", values: { behindBy: 12 } })).toBe("behind by 12");
-    expect(value({ kind: "values", values: { isDuplicate: true, duplicateOf: 7 } })).toBe("duplicate of #7");
     expect(value({ kind: "values", values: { holds: false, approvals: 1 } })).toBe("does not hold, 1 approval");
     expect(value({ kind: "met", items: ["src/a.test.ts"] }, "", ["src/a.test.ts"])).toBe("met");
     expect(value({ kind: "not-applicable" })).toBe("not applicable");

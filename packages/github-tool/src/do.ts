@@ -37,7 +37,7 @@ export class HeadMovedError extends DoNotRunnableError {}
 export type DoStep = { effectId: string; headSha: string; kind: ActionKind; target: ResolvedTarget };
 
 /** `request` is the verdict's own mirror request: it names the pull request, and a close sends its labels and comment as the pane's Close does. */
-export type DoInput = { request: MirrorInput; step: DoStep };
+export type DoInput = { request: Omit<MirrorInput, "close">; step: DoStep };
 
 /** `satisfied` means GitHub already had the state, so nothing was written. */
 export type DoOutcome = { status: "done" | "satisfied"; result: unknown };
@@ -56,7 +56,7 @@ const Target = type({ labels: "string[]" })
 
 /** A Do as a caller hands it over the wire. */
 export const DoArgs = type({
-  request: { repo: "string", number: "number.integer > 0", labels: "string[]", "owned?": "string[]", comment: "string", close: "boolean" },
+  request: { repo: "string", number: "number.integer > 0", labels: "string[]", "owned?": "string[]", comment: "string" },
   step: { effectId: "string > 0", headSha: "string > 0", kind: type.enumerated(...ACTION_KINDS), target: Target },
 });
 
@@ -73,7 +73,7 @@ export const DERIVED_LABELS_DO = "labels derived from the pull request cannot ru
 type People = { users: string[]; teams: string[] };
 
 /** A close, comment or approval reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
-function onHead(sha: string, { repo, number }: MirrorInput, step: DoStep): void {
+function onHead(sha: string, { repo, number }: DoInput["request"], step: DoStep): void {
   if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);
 }
 

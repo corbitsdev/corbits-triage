@@ -45,7 +45,7 @@ const policy = { ...DEFAULT_REPO_POLICY, roles: { maintainers: { users: ["octoca
 
 const packs: Record<string, CheckPack> = {
   recommended: recommendedPack(repo),
-  "no optional catalog keys": pack({ checks: { size: { enabled: true }, issue: { enabled: false }, drift: { enabled: true }, paths: { enabled: true } } }),
+  "no optional catalog keys": pack({ checks: { size: { enabled: true }, issue: { enabled: false }, paths: { enabled: true } } }),
   "every action form and Do target": pack({ checks: recommendedPack(repo).checks, custom, actions }),
 };
 

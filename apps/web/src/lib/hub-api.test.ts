@@ -30,7 +30,7 @@ import {
   type RunLog,
 } from "./hub-api.ts";
 
-const duplicateLog: RunLog = {
+const decidedLog: RunLog = {
   runId: "run-triage",
   anchorRunId: "run-triage",
   events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } }],
@@ -48,18 +48,18 @@ function pull(number: number, fields: Partial<PullTriage> = {}): PullTriage {
   return { repo: "acme/widgets", number, activityAt: null, verdict: null, run: null, ...fields };
 }
 
-const duplicate = pull(8, {
-  verdict: verdict("run-triage", "needs-decision", { labels: ["needs-decision"], feedback: "Duplicate of #7", nextAction: "Confirm duplicate or withdraw", duplicate: true }, { humanGated: true }),
+const decided = pull(8, {
+  verdict: verdict("run-triage", "needs-decision", { labels: ["needs-decision"], feedback: "Needs a decision.", nextAction: "Decide" }, { humanGated: true }),
 });
 
-const approval = (id: string, close: boolean): HubApproval => ({
+const approval = (id: string): HubApproval => ({
   id,
-  runId: close ? "run-close" : "run-triage",
-  anchorRunId: close ? "run-close" : "run-triage",
+  runId: "run-triage",
+  anchorRunId: "run-triage",
   status: "pending",
   scope: null,
   toolDefinition: { name: "github_mirror" },
-  toolArguments: { repo: "acme/widgets", number: 8, labels: ["needs-decision"], comment: "Duplicate of #7", close },
+  toolArguments: { repo: "acme/widgets", number: 8, labels: ["needs-decision"], comment: "Needs a decision." },
   correlationId: id,
 });
 
@@ -73,41 +73,39 @@ const snapshot = (): PortalSnapshot => ({
   denied: { repos: false, credentials: false },
 });
 
-const queue = (approvals: HubApproval[], pulls: PullTriage[] = [duplicate], openPulls?: Parameters<typeof projectQueue>[2]) =>
+const queue = (approvals: HubApproval[], pulls: PullTriage[] = [decided], openPulls?: Parameters<typeof projectQueue>[2]) =>
   projectQueue(pulls, approvals, openPulls);
 
-describe("duplicate close projection", () => {
-  test("starts open and exposes a human close action even when the ordinary mirror approval has close:false", () => {
-    const [item] = queue([approval("mirror", false)]);
-    expect(item).toMatchObject({ canClose: true, pendingApprovalId: "mirror", pendingClose: false });
-  });
-
-  test("prefers the human-created close approval carrying close:true", () => {
-    const [item] = queue([approval("mirror", false), approval("close", true)]);
-    expect(item).toMatchObject({ canClose: true, pendingApprovalId: "close", pendingClose: true });
-  });
-
-  test("a rejected close approval leaves the duplicate open", () => {
-    const rejected = { ...approval("close", true), status: "denied" };
-    const [item] = queue([approval("mirror", false), rejected]);
-    expect(item).toMatchObject({ canClose: true, pendingApprovalId: "mirror", pendingClose: false });
+describe("approval projection", () => {
+  test("a pending mirror approval needs a human", () => {
+    const [item] = queue([approval("mirror")]);
+    expect(item).toMatchObject({ pendingApprovalId: "mirror", needsHuman: true });
   });
 
   test("a pull request that is no longer open is closed and needs no human", () => {
-    const [item] = queue([approval("mirror", false)], [duplicate], { repos: [{ repo: "acme/widgets", prs: [] }] });
+    const [item] = queue([approval("mirror")], [decided], { repos: [{ repo: "acme/widgets", prs: [] }] });
     expect(item).toMatchObject({ closed: true, needsHuman: false });
   });
 
   test("keeps the canonical pull request href when an approval is pending", () => {
-    const [item] = queue([approval("mirror", false)]);
+    const [item] = queue([approval("mirror")]);
     expect(item?.href).toBe("/triage/pr/acme/widgets/8");
     expect(item?.runId).toBe("run-triage");
   });
 });
 
+describe("check rows", () => {
+  test("a verdict's rows for checks since removed are left out", () => {
+    const rows = [{ check: "duplicate", kind: "machine", result: "pass", evidence: [] }, { check: "ci", kind: "machine", result: "pass", evidence: [] }];
+    const recorded = [{ check: "drift", result: "pass" }, { check: "ci", result: "pass" }];
+    const items = projectQueue([pull(8, { verdict: verdict("run-8", "ready", { checks: rows }) }), pull(9, { verdict: verdict("run-9", "ready", null, { checks: recorded }) })], [], undefined);
+    expect(items.map((item) => item.checks.map((c) => c.check))).toEqual([["ci"], ["ci"]]);
+  });
+});
+
 describe("needs-human queue sources", () => {
   test("includes pending approvals and awaited signals while human-gated PRs remain projected", () => {
-    const approvals = [approval("mirror", false)];
+    const approvals = [approval("mirror")];
     const waiting: RunLog = {
       runId: "run-waiting",
       anchorRunId: "run-waiting",
@@ -115,7 +113,7 @@ describe("needs-human queue sources", () => {
     };
 
     expect(queue(approvals).filter((item) => item.needsHuman).map((item) => item.key)).toEqual(["acme/widgets#8"]);
-    expect(queueRows([duplicateLog, waiting], approvals, true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
+    expect(queueRows([decidedLog, waiting], approvals, true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
   });
 });
 
@@ -131,7 +129,7 @@ describe("All-view queue sources", () => {
       anchorRunId: "run-waiting",
       events: [{ seq: 4, type: "SignalAwaited", body: { signalName: "maintainer" } }],
     };
-    expect(queueRows([waiting], [approval("mirror", false)], true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
+    expect(queueRows([waiting], [approval("mirror")], true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
   });
 });
 
@@ -164,10 +162,10 @@ describe("projectQueue from the hub's verdicts", () => {
   test("a pull request's run in flight, ended early or not read yet shows, with or without a previous verdict", () => {
     const run = (status: "running" | "stuck" | "failed") => ({ runId: `run-${status}`, startedAt: "2026-10-01T01:30:00.000Z", status });
     const pulls = [
-      pull(8, { verdict: duplicate.verdict, run: run("running"), activityAt: "2026-10-01T01:30:00.000Z" }),
+      pull(8, { verdict: decided.verdict, run: run("running"), activityAt: "2026-10-01T01:30:00.000Z" }),
       pull(9, { run: run("stuck") }),
       pull(10, { run: run("failed") }),
-      pull(11, { verdict: duplicate.verdict, run: { status: "unknown" } }),
+      pull(11, { verdict: decided.verdict, run: { status: "unknown" } }),
     ];
     expect(projectQueue(pulls, [], openPulls).map(({ key, state, running, failure, activityAt }) => ({ key, state, running, failure, activityAt }))).toEqual([
       { key: "acme/widgets#8", state: "needs-decision", running: true, failure: null, activityAt: "2026-10-01T01:30:00.000Z" },
@@ -571,12 +569,8 @@ describe("repository policy config", () => {
       cleanupMode: "human-approved",
       enabled: false,
       checks: {
-        draft: true,
         ci: true,
-        duplicate: true,
         conflicts: true,
-        reviewers: false,
-        drift: true,
       },
     })]);
   });
@@ -753,7 +747,7 @@ describe("pending maintainer write approvals", () => {
       correlationId: "merge",
     };
     const [item] = queue([merge]);
-    expect(item).toMatchObject({ pendingApprovalId: "merge", pendingClose: false, needsHuman: true });
+    expect(item).toMatchObject({ pendingApprovalId: "merge", needsHuman: true });
   });
 });
 

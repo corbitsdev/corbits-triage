@@ -49,7 +49,7 @@ function step(kind: DoStep["kind"], target: ResolvedTarget): DoStep {
   return { effectId: "e1", headSha: "abc", kind, target };
 }
 
-const REQUEST = { repo: "acme/widgets", number: 8, labels: ["triage:blocked"], owned: ["triage:blocked"], comment: "Blocked", close: false };
+const REQUEST = { repo: "acme/widgets", number: 8, labels: ["triage:blocked"], owned: ["triage:blocked"], comment: "Blocked" };
 
 function run(gh: GithubFetch, task: DoStep) {
   return executeDo(gh, { request: REQUEST, step: task }, function login() {

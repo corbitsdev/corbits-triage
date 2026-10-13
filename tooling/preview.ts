@@ -28,13 +28,11 @@ function ghOne<T>(path: string): T {
   return JSON.parse(out.stdout.toString()) as T;
 }
 
-type Pull = { number: number; title: string };
-
-function factsFor(n: number, openPrs: Pull[]): PrFacts {
+function factsFor(n: number): PrFacts {
   const p = ghOne<any>(`repos/${repo}/pulls/${n}`);
   const pr: PrData = {
     title: p.title, body: p.body, author: p.user?.login, authorAssociation: p.author_association, sha: p.head?.sha, branch: p.head.ref, state: p.state, draft: p.draft,
-    mergeable: p.mergeable, requestedReviewers: (p.requested_reviewers?.length ?? 0) + (p.requested_teams?.length ?? 0),
+    mergeable: p.mergeable,
     reviewers: [...(p.requested_reviewers ?? []).map((u: any) => u.login), ...(p.requested_teams ?? []).map((t: any) => t.slug)],
     additions: p.additions, deletions: p.deletions, changedFiles: p.changed_files,
   };
@@ -50,7 +48,7 @@ function factsFor(n: number, openPrs: Pull[]): PrFacts {
   }));
   const paths = files.map((file) => file.path);
   const commits = gh<any[]>(`repos/${repo}/pulls/${n}/commits`).map((c) => String(c.commit.message).split("\n", 1)[0]!);
-  return { ...buildFacts(repo, n, pr, checks, reviews, [], openPrs, DEFAULT_REPO_POLICY), paths, files, commits };
+  return { ...buildFacts(repo, n, pr, checks, reviews, [], DEFAULT_REPO_POLICY), paths, files, commits };
 }
 
 const endpoint = process.env.AI_GATEWAY_API_KEY ? { kind: "gateway" as const } : { kind: "official" as const };
@@ -81,10 +79,10 @@ export async function previewJudge(
 }
 
 if (import.meta.main) {
-  const open = gh<Pull[]>(`repos/${repo}/pulls?state=open&per_page=100`).map(({ number, title }) => ({ number, title }));
+  const open = gh<Array<{ number: number }>>(`repos/${repo}/pulls?state=open&per_page=100`);
   const rows = [];
   for (const { number } of open.sort((a, b) => a.number - b.number)) {
-    const facts = factsFor(number, open);
+    const facts = factsFor(number);
     const det = deriveState(facts, undefined, pack);
     const evaluation = previewEvaluation(facts, det);
     const v = renderVerdict({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, candidates: evaluation.candidates, plan: evaluation.plan, reviewers: facts.reviewers, threshold: packMergeThreshold(pack), ...(await previewJudge(det, evaluation)) });

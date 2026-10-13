@@ -52,8 +52,6 @@ function offeredDos(item: PrItem): PendingDo[] {
   if (number === null || runId === null) return [];
   const out: PendingDo[] = [];
   for (const action of item.actions) {
-    // A flagged duplicate already offers its own close, with the reply and labels.
-    if (action.kind === "close" && item.canClose) continue;
     const text = label(action, repo);
     if (text === null) continue;
     const ref = { runId, repo, number, actionId: action.id, branch: action.branch, index: action.index };

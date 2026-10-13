@@ -20,7 +20,6 @@ import {
   draftText,
   hasNumber,
   isComposerKind,
-  needsConfirm,
   openComposer,
   paneFacts,
   paneWrite,
@@ -47,7 +46,6 @@ import {
   firstTimers,
   groupInbox,
   groupOpen,
-  hasDraftComment,
   inboxAction,
   inboxStatus,
   inNeedsYou,
@@ -238,31 +236,6 @@ function modalOpen(): boolean {
   return document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]') !== null;
 }
 
-function ConfirmDuplicate({ item, onCancel, onConfirm }: { item: NumberedItem; onCancel: () => void; onConfirm: () => void }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const confirmRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(function openAsModal() {
-    dialogRef.current?.showModal();
-    confirmRef.current?.focus();
-  }, []);
-
-  return (
-    <dialog ref={dialogRef} className="dialog" aria-labelledby="confirm-duplicate" onClose={onCancel}>
-      <h2 id="confirm-duplicate">Close #{item.number} as a duplicate?</h2>
-      <p>
-        Triage {hasDraftComment(item.comment) ? "posts the suggested reply, " : null}
-        {item.labels.length > 0 ? <>adds {item.labels.map((label) => <span key={label} className="lbl">{label}</span>)} and </> : null}
-        closes it on GitHub. You can reopen it there.
-      </p>
-      <div className="acts">
-        <button type="button" className="btn btn-quiet" onClick={() => dialogRef.current?.close()}>Cancel</button>
-        <button ref={confirmRef} type="button" className="btn btn-primary" onClick={onConfirm}>Close as duplicate</button>
-      </div>
-    </dialog>
-  );
-}
-
 type PaneProps = {
   item: PrItem;
   /** What the maintainer did to it while it is still open; null in Needs you. */
@@ -336,7 +309,6 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
   const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
   const [composer, setComposer] = useState<Composer | null>(restored === null ? null : restored.composer);
-  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -410,10 +382,6 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
       void startTriage(item);
       return;
     }
-    if (needsConfirm(kind, item)) {
-      setConfirming(true);
-      return;
-    }
     hold(kind, reply);
   }
 
@@ -470,7 +438,6 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
           {error === null ? null : <p role="alert" className="error">{error}</p>}
           {done === null ? null : <p role="status" className="note">{done}</p>}
           <ReportRows item={item} pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} pack={pack} />
-          {confirming && hasNumber(item) ? <ConfirmDuplicate item={item} onCancel={() => setConfirming(false)} onConfirm={() => hold("close", reply)} /> : null}
         </div>
       </div>
       {ended ? null : <BottomBar
