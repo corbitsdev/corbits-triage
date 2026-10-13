@@ -6,7 +6,7 @@
 //
 //   bun tooling/preview.ts [owner/repo]
 import { evaluate } from "@corbits/system-one";
-import { DEFAULT_REPO_POLICY, packMergeThreshold, recommendedPack } from "../packages/triage-contracts/src/index.js";
+import { DEFAULT_REPO_POLICY, recommendedPack } from "../packages/triage-contracts/src/index.js";
 import { deriveState, type DeterministicResult, type PrFacts, type PrFileFacts } from "../packages/triage-workflows/src/logic/checks.js";
 import type { Review } from "../packages/github-reads/src/index.js";
 import { buildFacts, type CheckRun, type PrData } from "../packages/triage-workflows/src/logic/facts.js";
@@ -85,14 +85,14 @@ if (import.meta.main) {
     const facts = factsFor(number);
     const det = deriveState(facts, undefined, pack);
     const evaluation = previewEvaluation(facts, det);
-    const v = renderVerdict({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, plan: evaluation.plan, focused: evaluation.focused, reviewers: facts.reviewers, threshold: packMergeThreshold(pack), ...(await previewJudge(det, evaluation)) });
+    const v = renderVerdict({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, plan: evaluation.plan, focused: evaluation.focused, reviewers: facts.reviewers, ...(await previewJudge(det, evaluation)) });
     rows.push({
       pr: `#${number}`,
       title: facts.title.slice(0, 40),
       state: v.state,
       priority: v.priority,
       model: det.needsJudgment ? "asked" : "-",
-      score: v.confidence === "unknown" ? "-" : v.confidence,
+      verdict: v.verdict,
       failing: v.checks.filter((c) => c.result === "fail").map((c) => c.check).join(", "),
       next: `${v.actor}: ${v.nextAction}`,
       comment: v.feedback ? v.feedback.replaceAll("\n", " | ") : "none",

@@ -5,7 +5,10 @@ type Outcome = "pass" | "fail";
 
 export const MODEL_CHECKS = ["docs", "focused"] as const;
 export type ModelCheck = typeof MODEL_CHECKS[number];
-export type Expected = Record<ModelCheck, Outcome>;
+/** Each judged rule's answer, and the verdict question's. */
+export const SCORED = [...MODEL_CHECKS, "verdict"] as const;
+export type Scored = typeof SCORED[number];
+export type Expected = Record<Scored, Outcome>;
 
 /** What a reviewer decided about a merged pull request; snapshot.ts derives each case's expectations from it. */
 interface Label {

@@ -19,10 +19,10 @@ const RECIPIENTS: Array<{ value: PeopleTarget["to"]; label: string }> = [
   { value: "author", label: "the author" },
 ];
 
-type DoEditorProps = { step: DoForm; roles: string[]; disabled: boolean; onChange: (step: DoForm) => void; onRemove: () => void };
+type DoEditorProps = { step: DoForm; roles: string[]; note?: string; disabled: boolean; onChange: (step: DoForm) => void; onRemove: () => void };
 
-/** One Do: its kind and its target. */
-export default function DoEditor({ step, roles, disabled, onChange, onRemove }: DoEditorProps) {
+/** One Do: its kind, its target and whether it runs alone. */
+export default function DoEditor({ step, roles, note, disabled, onChange, onRemove }: DoEditorProps) {
   // Agent Dos cannot run yet, so they are offered only to keep one that is already stored.
   const kinds = ACTION_KINDS.filter((kind) => kind !== "agent" || step.kind === "agent");
   const recipients = RECIPIENTS.filter((option) => option.value !== "author" || step.kind === "assign");
@@ -84,6 +84,7 @@ export default function DoEditor({ step, roles, disabled, onChange, onRemove }: 
           {kinds.map((kind) => <option key={kind} value={kind}>{DO_NAMES[kind]}</option>)}
         </select>
         {target()}
+        {note ? <small>{note}</small> : null}
       </span>
       <Button type="button" variant="ghost" size="icon" aria-label="Remove this Do" disabled={disabled} onClick={onRemove}><CloseIcon /></Button>
     </div>

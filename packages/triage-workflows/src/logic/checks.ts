@@ -90,7 +90,7 @@ export interface CheckResult {
   reason: string;
   evidence: string[];
   output: CheckOutput;
-  /** Decides an action's branch without being a defect: never a step, a comment line, a merge reason or a retry. */
+  /** Says who the author is without being a defect: never a hard failure, a step, a comment line or a retry. */
   gate?: true;
 }
 
@@ -134,9 +134,17 @@ function finish(findings: Finding[], checks: CheckResult[], facts: PrFacts, pack
     reason: parked ? "pull request is a draft" : top?.reason ?? "all deterministic rules passed",
     findings,
     checks,
-    needsJudgment: facts.state === "open" && state !== "stale-unknown" && hasModelChecks(sources),
+    needsJudgment: sources !== undefined && facts.state === "open" && !facts.draft && hardFailures(checks).length === 0,
     ...(sources ? { sources } : {}),
   };
+}
+
+type RuleOutcome = Pick<CheckResult, "check" | "kind" | "result" | "gate">;
+
+/** Hard rules that failed, which decide the verdict without the decision model; none on a draft, which is not decided at all, and an author gate is not a defect. */
+export function hardFailures<T extends RuleOutcome>(checks: readonly T[]): T[] {
+  const failed = checks.filter((c) => c.kind === "machine" && c.result === "fail" && !c.gate);
+  return failed.some((c) => c.check === NOT_A_DRAFT) ? [] : failed;
 }
 
 export function hasModelChecks(sources: DeterministicResult["sources"]): boolean {

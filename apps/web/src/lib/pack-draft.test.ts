@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CATALOG_IDS, catalogCheckEnabled, classificationSources, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type Action, type CheckPack, type CustomCheck, type Do } from "@corbits/triage-contracts";
-import { changeCount, fromPack, removeCustom, setCatalogCheck, setCustomEnabled, setMergeThreshold, toPack, upsertAction, validate } from "./pack-draft.ts";
+import { CATALOG_IDS, catalogCheckEnabled, classificationSources, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type Do, type PolicyActions } from "@corbits/triage-contracts";
+import { changeCount, fromPack, setCatalogCheck, setCustomEnabled, setList, setWhen, toPack, validate } from "./pack-draft.ts";
 
 const repo = "acme/widgets";
 
@@ -30,12 +30,7 @@ const everyDo: Do[] = [
   { kind: "agent", target: { prompt: "Fix the lint errors.", tools: ["github"] } },
 ];
 
-const actions: Action[] = [
-  { id: "action-1", when: "every", checks: [], branches: { always: [{ kind: "comment", target: { body: "Welcome." } }] } },
-  { id: "action-2", when: ["opened", "updated"], checks: ["max-files-changed"], branches: { yes: [{ kind: "labels", target: { from: "type" } }] } },
-  { id: "action-3", when: "every", checks: ["ci-green", "custom-8"], branches: { yes: everyDo, no: everyDo, unsure: everyDo.filter((step) => step.kind !== "close") } },
-  { id: "action-4", when: ["ready", "reviewed"], checks: ["custom-8"], branches: { yes: everyDo, no: [], unsure: [{ kind: "close", target: {} }] } },
-];
+const actions: PolicyActions = { when: ["opened", "ready"], pass: everyDo, fail: everyDo, unsure: [{ kind: "close", target: {} }] };
 
 function pack(overrides: Partial<CheckPack>): CheckPack {
   return { ...emptyPack(repo), ...overrides };
@@ -46,7 +41,7 @@ const policy = { ...DEFAULT_REPO_POLICY, roles: { maintainers: { users: ["octoca
 const packs: Record<string, CheckPack> = {
   recommended: recommendedPack(repo),
   "no optional catalog keys": pack({ checks: { "max-files-changed": { enabled: true }, "linked-issue": { enabled: false }, "no-forbidden-paths": { enabled: true } } }),
-  "every action form and Do target": pack({ checks: recommendedPack(repo).checks, custom, actions }),
+  "every Do target": pack({ checks: recommendedPack(repo).checks, custom, actions }),
 };
 
 describe("pack draft", () => {
@@ -70,31 +65,12 @@ describe("pack draft", () => {
     }
   });
 
-  test("editing one action is one change", () => {
-    const saved = fromPack(packs["every action form and Do target"]!, policy);
-    const edited = upsertAction(saved, { ...actions[1]!, when: ["opened"] });
-    expect(changeCount(saved, edited)).toBe(1);
-  });
-
-  test("the merge threshold round trips through the pack, and setting the default back leaves it absent", () => {
-    const stored = recommendedPack(repo);
-    const saved = fromPack(stored, policy);
-    const edited = setMergeThreshold(saved, stored, 0.85);
-    expect(changeCount(saved, edited)).toBe(1);
-    expect(readCheckPack(JSON.stringify(toPack(edited))).mergeThreshold).toBe(0.85);
-    expect(setMergeThreshold(edited, stored, 0.7).pack).toEqual(stored);
-    expect(validate(setMergeThreshold(saved, stored, 1.5))).toEqual({ reason: "Merge score threshold must be between 0 and 1.", where: { section: "merge" } });
-  });
-
-  test("removing a custom check detaches it from actions, and refuses when that leaves branches with no checks", () => {
-    const saved = fromPack(pack({ custom, actions: [actions[0]!, actions[2]!] }), policy);
-    const removed = removeCustom(saved, "custom-8");
-    if ("reason" in removed) throw new Error(removed.reason);
-    expect(removed.pack.custom.map((row) => row.id)).not.toContain("custom-8");
-    expect(removed.pack.actions[1]!.checks).toEqual(["ci-green"]);
-    expect(validate(removed)).toBeNull();
-    const only = fromPack(pack({ custom, actions: [actions[3]!] }), policy);
-    expect(removeCustom(only, "custom-8")).toEqual({ reason: "Action action-4 checks only custom-8. Give it another rule or remove the action first." });
+  test("the policy's when and each verdict list are one change apiece, and a list naming an undefined role is refused there", () => {
+    const saved = fromPack(packs["every Do target"]!, policy);
+    expect(changeCount(saved, setWhen(saved, ["opened"]))).toBe(1);
+    expect(changeCount(saved, setList(setList(saved, "pass", []), "fail", []))).toBe(2);
+    const ghost = setList(saved, "unsure", [{ kind: "request-review", target: { to: "role", role: "ghost" } }]);
+    expect(validate(ghost)).toEqual({ reason: "Actions unsure targets role ghost, which this repository does not define.", where: { section: "actions", list: "unsure" } });
   });
 
   test("switching a custom check off keeps it in the pack but out of evaluation, and back on restores the saved row", () => {

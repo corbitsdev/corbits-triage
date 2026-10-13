@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { PR_TRIAGE_STUCK_RUN_MS, TriageVerdicts } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, TriageVerdicts, type VerdictWord } from "@corbits/triage-contracts";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { listRepoPulls, type OpenPullsCache, type OpenPullsRead } from "./open-pulls.js";
 import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
@@ -94,10 +94,18 @@ function runOf(live: ObservedRun | undefined, now: Date, ready: boolean): Run | 
   return { runId, startedAt, status: stuck ? "stuck" : "running" };
 }
 
+const STATE_VERDICTS: Record<string, VerdictWord> = { "ready-monitoring": "pass", blocked: "fail", "needs-decision": "fail", "needs-author-update": "fail" };
+
+/** A verdict recorded before verdicts were words reads from its state: degraded or anything else is unsure. */
+function wordOf({ state, degraded, detail }: VerdictRecord): VerdictWord {
+  if (detail?.verdict !== undefined) return detail.verdict;
+  return degraded === null ? STATE_VERDICTS[state] ?? "unsure" : "unsure";
+}
+
 function verdictOf(latest: VerdictRecord | undefined): Pull["verdict"] {
   if (!latest) return null;
   const { runId, verdictAt, headSha, settled, state, actor, humanGated, degraded, commented, checks, detail } = latest;
-  return { runId, at: verdictAt.toISOString(), headSha, settled, state, actor, humanGated, degraded, commented, checks, detail };
+  return { runId, at: verdictAt.toISOString(), headSha, verdict: wordOf(latest), settled, state, actor, humanGated, degraded, commented, checks, detail };
 }
 
 function newest(times: ReadonlyArray<string | undefined>): string | null {

@@ -3,37 +3,23 @@ import {
   CHECK_CATALOG,
   checkName,
   isCatalogId,
-  TRIAGE_EVENTS,
-  type Action,
   type ActionKind,
   type CheckPack,
   type CheckRef,
-  type Do,
   type ModelShape,
-  type PeopleTarget,
+  type PolicyEvent,
   type RuleKind,
+  type VerdictWord,
 } from "@corbits/triage-contracts";
-import type { ActionEvent } from "./action-builder.ts";
 
 export type Evaluation = "rule" | "model";
 
-export const ACTION_EVENTS = TRIAGE_EVENTS.filter((event): event is ActionEvent => event !== "catch-up");
-
-export const EVENT_NAMES: Record<ActionEvent, string> = {
+export const EVENT_NAMES: Record<PolicyEvent, string> = {
   opened: "opened",
   updated: "updated",
-  ready: "ready for review",
-  drafted: "converted to draft",
-  commented: "commented on",
-  reviewed: "reviewed",
-  approved: "approved",
-  "changes-requested": "changes requested",
   checks: "checks finished",
-  closed: "closed",
-  merged: "merged",
+  ready: "ready for review",
 };
-
-export const ALL_CHECKS_NAME = "all rules";
 
 export const DO_NAMES: Record<ActionKind, string> = {
   labels: "Add labels",
@@ -46,10 +32,6 @@ export const DO_NAMES: Record<ActionKind, string> = {
   agent: "Run an agent",
 };
 
-export type Branch = "yes" | "no" | "unsure" | "always";
-
-export const BRANCH_NAMES: Record<Branch, string> = { yes: "Yes", no: "No", unsure: "Unsure", always: "Always" };
-
 export type CheckKind = { evaluation: "rule"; rule: RuleKind; title: string; line: string } | { evaluation: "model"; shape: ModelShape; title: string; line: string };
 
 export const CHECK_KINDS: CheckKind[] = [
@@ -60,7 +42,7 @@ export const CHECK_KINDS: CheckKind[] = [
   { evaluation: "rule", rule: "label-required", title: "Label required", line: "A label must be on the pull request." },
   { evaluation: "rule", rule: "diff-excludes", title: "Diff must not contain", line: "Added lines must not match a regular expression." },
   { evaluation: "rule", rule: "min-approvals", title: "Minimum approvals", line: "At least this many approvals." },
-  { evaluation: "rule", rule: "author", title: "Author is", line: "Who opened it: named people, a role, or a kind of contributor. Gates actions; never asks anything of the author." },
+  { evaluation: "rule", rule: "author", title: "Author is", line: "Who opened it: named people, a role, or a kind of contributor. Informs the verdict; never fails it or asks anything of the author." },
   { evaluation: "model", shape: "is-true", title: "Is it true that…", line: "Fails when the answer is no." },
   { evaluation: "model", shape: "score", title: "Score from 0 to 10", line: "Fails below the minimum." },
   { evaluation: "model", shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },
@@ -84,11 +66,6 @@ export function listed(words: string[], joiner: "and" | "or"): string {
   return `${words.slice(0, -1).join(", ")} ${joiner} ${words.at(-1)}`;
 }
 
-export function whenText(when: Action["when"]): string {
-  if (when === "every") return "On every event";
-  return `When ${listed(when.filter((event): event is ActionEvent => event !== "catch-up").map((event) => EVENT_NAMES[event]), "or")}`;
-}
-
 /** Ends with a full stop unless a quoted comment already ends the sentence. */
 export function sentence(text: string): string {
   return /[.!?]”$/.test(text) ? text : `${text}.`;
@@ -98,68 +75,19 @@ export function quoted(text: string): string {
   return `“${text}”`;
 }
 
-function people(target: PeopleTarget): string {
-  switch (target.to) {
-    case "users":
-      return listed(target.users.map((user) => `@${user}`), "and");
-    case "teams":
-      return listed(target.teams, "and");
-    case "role":
-      return `role ${target.role}`;
-    case "codeowners":
-      return "CODEOWNERS";
-    case "author":
-      return "the author";
-  }
-}
-
-export function doText(step: Do): string {
-  switch (step.kind) {
-    case "labels":
-      if (step.target.from === "type") return "label it by type";
-      if (step.target.from === "paths") return "label it by paths";
-      return `add ${step.target.labels.length === 1 ? "the label" : "the labels"} ${listed(step.target.labels, "and")}`;
-    case "assign":
-      return `assign ${people(step.target)}`;
-    case "request-review":
-      return `request review from ${people(step.target)}`;
-    case "comment":
-      return `comment ${quoted(step.target.body)}`;
-    case "approve":
-      return "approve the pull request";
-    case "request-changes":
-      return "request changes on the pull request";
-    case "close":
-      return "close it";
-    case "agent":
-      return `ask an agent ${quoted(step.target.prompt)}`;
-  }
-}
-
-/** An action by its place in the list; an id the pack does not hold yet is the action being built. */
-export function actionLabel(pack: CheckPack, id: string): string {
-  const index = pack.actions.findIndex((row) => row.id === id);
-  return index < 0 ? "This action" : `Action ${index + 1}`;
-}
+export const LIST_NAMES: Record<VerdictWord, string> = { pass: "On Pass", fail: "On Fail", unsure: "On Unsure" };
 
 /**
- * A contract or draft message as the panel shows it: actions by their place in the list, custom rules by name.
- * An id the policy does not hold yet is the action or rule being built.
+ * A contract or draft message as the panel shows it, verdict lists and custom rules by name; an id the policy does
+ * not hold yet is the rule being built.
  */
 export function shownReason(reason: string, pack: CheckPack): string {
-  function action(_: string, id: string): string {
-    return actionLabel(pack, id);
-  }
   function namedRule(_: string, id: string): string {
     const rule = pack.custom.find((row) => row.id === id);
     return rule ? `Rule ${quoted(rule.name)}` : "This rule";
   }
-  function referenced(_: string, only: string | undefined, id: string): string {
-    const found = pack.custom.find((row) => row.id === id);
-    return `checks${only ?? ""} ${found ? quoted(found.name) : id}`;
+  function list(_: string, word: VerdictWord): string {
+    return LIST_NAMES[word];
   }
-  return reason
-    .replace(/\bAction (action-\d+)\b/g, action)
-    .replace(/\bCustom rule ([a-z0-9]+(?:-[a-z0-9]+)*)\b/g, namedRule)
-    .replace(/\bchecks( only)? ([a-z0-9]+(?:-[a-z0-9]+)*)\b/g, referenced);
+  return reason.replace(/^Actions when\b/, "When").replace(/^Actions (pass|fail|unsure)\b/, list).replace(/\bCustom rule ([a-z0-9]+(?:-[a-z0-9]+)*)\b/g, namedRule);
 }

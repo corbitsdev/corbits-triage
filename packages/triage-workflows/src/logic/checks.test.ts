@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
-import { evaluateActions } from "./actions.ts";
 import { deriveState, REVIEW_ANSWERED_REASON, type PrFacts } from "./checks.ts";
 
 const noisy: PrFacts = {
@@ -271,7 +270,6 @@ describe("a policy stored with the old rule ids", () => {
   test("loads and evaluates as the same policy written with the new ids", () => {
     const old = readCheckPack(JSON.stringify(stored(OLD)));
     const current = readCheckPack({ ...stored(NEW), checks: { ...stored(NEW).checks, "max-files-changed": { enabled: true, maxFiles: 5 }, "max-lines-changed": { enabled: true, maxLines: 100 } } });
-    current.actions[0]!.checks.splice(1, 0, "max-lines-changed");
     expect(old).toEqual(current);
     const facts: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success", changedFiles: 9, additions: 40, deletions: 0, paths: ["src/a.ts", "bun.lock"], body: "Fixes #12", events: ["opened"] };
     const ran = deriveState(facts, undefined, old);
@@ -279,6 +277,5 @@ describe("a policy stored with the old rule ids", () => {
     expect(Object.fromEntries(ran.checks.map((check) => [check.check, check.result]))).toEqual({
       "not-a-draft": "pass", "ci-green": "pass", "no-changes-requested": "pass", "no-merge-conflicts": "pass", "max-files-changed": "fail", "max-lines-changed": "pass", "no-forbidden-paths": "pass", "linked-issue": "pass", "custom-1": "fail",
     });
-    expect(evaluateActions({ facts, checks: ran.checks, pack: old, roles: {} }).map((action) => "branch" in action && action.branch)).toEqual(["no", "yes"]);
   });
 });

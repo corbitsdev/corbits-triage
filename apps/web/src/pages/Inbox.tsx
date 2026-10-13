@@ -10,7 +10,7 @@ import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
 import type { PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
-import { MergeChip } from "../components/MergeChip.tsx";
+import { VerdictChip } from "../components/VerdictChip.tsx";
 import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
 import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, type PaneBar } from "../lib/pane-report.ts";
 import {
@@ -149,7 +149,7 @@ function OpenRow({ view, entry, selected, search }: Omit<RowProps, "item"> & { v
       <span className={dotClass(item, inboxAction(item))} />
       <span className="tw"><AuthorTag kind={item.authorKind} /><b>{titleText(item.title)}</b><span className="why">{rowWhy(item) ?? inboxStatus(item)}</span></span>
       <span className="age">{ageText(item.waitingSince)}</span>
-      <MergeChip merge={item.merge} compact className="merge-chip" />
+      <VerdictChip item={item} className="merge-chip" />
       <Badge tone={WAITS_ON_TONE[waits]}>{WAITS_ON_LABEL[waits]}</Badge>
       {posted === null ? null : <span className="act done">{posted}</span>}
     </Link>

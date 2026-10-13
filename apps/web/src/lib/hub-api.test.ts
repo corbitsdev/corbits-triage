@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
-import { recommendedPack, stockTriggerMail } from "@corbits/triage-contracts";
+import { defaultActions, recommendedPack, stockTriggerMail } from "@corbits/triage-contracts";
 import {
   createGrant,
   deleteGrant,
@@ -37,7 +37,7 @@ const decidedLog: RunLog = {
 /** A verdict as the hub's triage-verdicts route answers it. */
 function verdict(runId: string, state: string, detail: Record<string, unknown> | null, fields: Partial<PullVerdict> = {}): PullVerdict {
   return {
-    runId, at: "2026-10-01T01:00:00.000Z", headSha: "abc", settled: true, state, actor: "maintainer", humanGated: false,
+    runId, at: "2026-10-01T01:00:00.000Z", headSha: "abc", verdict: "unsure", settled: true, state, actor: "maintainer", humanGated: false,
     degraded: null, commented: false, checks: [], detail, ...fields,
   };
 }
@@ -135,21 +135,20 @@ describe("projectQueue from the hub's verdicts", () => {
   const openPulls = { repos: [{ repo: "acme/widgets", prs: [pr(8), pr(9), pr(10)] }] };
 
   test("a verdict shows its own fields and the facts it read; one recorded before the hub kept them shows its state, checks and GitHub's title", () => {
-    const merge = { verdict: "not-recommended", score: 0.62, threshold: 0.7, reasons: ["Score 0.62 is below the threshold 0.7"] };
     const output = { kind: "score", score: 20, passAt: 60, items: ["Alpha — src/alpha.ts"] };
     const check = { check: "focused", kind: "model", result: "fail", reason: "mixes unrelated changes", evidence: ["Alpha — src/alpha.ts"], output };
     const detail = {
-      headSha: "abc123", priority: "P1", score: 0.62, merge, reason: "Mixes two changes.", evidence: ["Mixes two changes."], checks: [check], labels: ["triage:split"], feedback: "Please split this.",
+      headSha: "abc123", priority: "P1", verdict: "fail", score: 0.1, reasons: ["mixes unrelated changes: Alpha — src/alpha.ts"], reason: "Mixes two changes.", evidence: ["Mixes two changes."], checks: [check], labels: ["triage:split"], feedback: "Please split this.",
       facts: { title: "Add widgets", author: "ann", draft: false, mergeable: true, checks: "pending" },
     };
-    const items = projectQueue([pull(8, { verdict: verdict("run-8", "needs-author-update", detail, { commented: true }) }), pull(9, { verdict: verdict("run-9", "needs-decision", null, { humanGated: true, checks: [{ check: "ci-green", result: "fail" }] }) })], [], openPulls);
+    const items = projectQueue([pull(8, { verdict: verdict("run-8", "needs-author-update", detail, { verdict: "fail", commented: true }) }), pull(9, { verdict: verdict("run-9", "needs-decision", null, { humanGated: true, checks: [{ check: "ci-green", result: "fail" }] }) })], [], openPulls);
     expect(items).toEqual([
       expect.objectContaining({
-        key: "acme/widgets#8", state: "needs-author-update", priority: "P1", confidence: 0.62, merge, evidence: ["Mixes two changes."], checks: [{ ...check, gate: false }],
+        key: "acme/widgets#8", state: "needs-author-update", priority: "P1", verdict: "fail", score: 0.1, reasons: ["mixes unrelated changes: Alpha — src/alpha.ts"], evidence: ["Mixes two changes."], checks: [{ ...check, gate: false }],
         labels: ["triage:split"], comment: "Please split this.", verdictSha: "abc123", posted: true, title: "Add widgets", author: "ann", mergeable: true, ci: "pending", sha: "abc", runId: "run-8",
       }),
       expect.objectContaining({
-        key: "acme/widgets#9", state: "needs-decision", needsHuman: true, verdictSha: null, merge: null, comment: null, title: "PR 9", author: "ada",
+        key: "acme/widgets#9", state: "needs-decision", needsHuman: true, verdictSha: null, verdict: "unsure", score: null, reasons: [], comment: null, title: "PR 9", author: "ada",
         checks: [{ check: "ci-green", kind: null, result: "fail", reason: null, evidence: [], output: null, gate: false }],
       }),
       expect.objectContaining({ key: "acme/widgets#10", state: "new" }),
@@ -710,7 +709,7 @@ test("a preview posts the draft pack and roles, so unsaved edits are previewed",
     },
     subscribe: () => () => {},
   };
-  const pack = { ...recommendedPack("acme/widgets"), actions: [{ id: "action-1", when: "every" as const, checks: [], branches: { always: [{ kind: "close" as const, target: {} }] } }] };
+  const pack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), unsure: [{ kind: "close" as const, target: {} }] } };
   const roles = { maintainers: { users: ["ada"] } };
   await previewPull(transport, "tenant", { repo: "acme/widgets", number: 12, pack, roles });
   expect(sent).toEqual([{ method: "POST", path: "/api/integrations/github-preview/tenant", body: { repo: "acme/widgets", number: 12, pack, roles } }]);

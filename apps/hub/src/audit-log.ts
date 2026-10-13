@@ -76,7 +76,7 @@ function verdictEntries(rows: readonly VerdictRecord[]): Entry[] {
       const outcome = DO_OUTCOMES[action.status ?? ""];
       if (outcome === undefined || action.held || action.effectId === undefined || ran.has(action.effectId)) continue;
       ran.add(action.effectId);
-      entries.push({ at: verdict.verdictAt, actor: TRIAGE, action: `${outcome} ${action.kind ?? "Do"}`, target, detail: action.error ?? `action ${action.id}` });
+      entries.push({ at: verdict.verdictAt, actor: TRIAGE, action: `${outcome} ${action.kind ?? "Do"}`, target, detail: action.error ?? (action.list === undefined ? "" : `on ${action.list}`) });
     }
   }
   return entries;

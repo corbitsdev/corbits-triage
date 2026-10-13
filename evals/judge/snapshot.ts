@@ -65,8 +65,10 @@ function snapshot(number: number): Snapshot {
   };
 }
 
+/** The verdict fails when any judged rule is expected to fail. */
 function expected(pr: Snapshot, needsDocs: boolean, focused: Expected["focused"]): Expected {
-  return { docs: needsDocs && !pr.files.some((file) => isDocPath(file.filename)) ? "fail" : "pass", focused };
+  const docs = needsDocs && !pr.files.some((file) => isDocPath(file.filename)) ? "fail" : "pass";
+  return { docs, focused, verdict: docs === "fail" || focused === "fail" ? "fail" : "pass" };
 }
 
 /** Writes each doc once under its content hash and points the snapshot at it. */

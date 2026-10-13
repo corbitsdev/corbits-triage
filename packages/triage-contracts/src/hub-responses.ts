@@ -1,5 +1,8 @@
 // What the hub's own integration routes answer; the hub describes its routes with these and the portal parses them.
 import { type } from "arktype";
+import { VERDICTS } from "./check-pack.js";
+
+const VerdictWord = type.enumerated(...VERDICTS);
 
 const DetailCheck = type({
   "+": "delete",
@@ -15,8 +18,8 @@ const DetailCheck = type({
 
 const DetailAction = type({
   "+": "delete",
-  id: "string",
-  "branch?": "string",
+  /** The verdict's list the Do is on. */
+  "list?": VerdictWord,
   "index?": "number",
   "effectId?": "string",
   "kind?": "string",
@@ -38,8 +41,11 @@ export const VerdictDetail = type({
   "priority?": "string | null",
   "owner?": "string | null",
   "nextAction?": "string",
+  "verdict?": VerdictWord,
+  /** How likely the pull request passes its policy, as the verdict question answered. */
   "score?": "number | null",
-  "merge?": { "+": "delete", verdict: "string", score: "number | null", threshold: "number", reasons: "string[]" },
+  /** The failed hard rules, then the judged rules that failed or were not confirmed. */
+  "reasons?": "string[]",
   "reason?": "string",
   /** The verdict's reason, or the rules step's findings when it names none. */
   "evidence?": "string[]",
@@ -57,6 +63,8 @@ const Verdict = type({
   runId: "string",
   at: "string",
   headSha: "string",
+  /** Read from the state of verdicts recorded before verdicts were words. */
+  verdict: VerdictWord,
   settled: "boolean",
   state: "string",
   actor: "string",
@@ -110,6 +118,7 @@ export const TriageStats = type({
   verdicts: "Record<string, number>",
   neededYou: "number",
   checks: type({ "[string]": CheckStats }),
+  /** By the verdict's list the Dos were on. */
   actions: type({ "[string]": ActionStats }),
   comments: "number",
   medianTimeToVerdictMs: "number | null",

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { dehydrate, hydrate, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { emptyPack, repoPolicy, type Action, type TriageStats } from "@corbits/triage-contracts";
-import ActionRow from "../components/repo-panel/ActionRow.tsx";
+import { defaultActions, emptyPack, repoPolicy, type TriageStats } from "@corbits/triage-contracts";
+import VerdictList from "../components/repo-panel/VerdictList.tsx";
 import ChecksSection from "../components/repo-panel/ChecksSection.tsx";
 import TriageStrip from "../components/repo-panel/TriageStrip.tsx";
 import { fakeHub } from "./fake-hub.ts";
@@ -13,8 +13,7 @@ import { draftPolicy, transportRepoPackStore, type RepoPackStore } from "./repo-
 import { repoStatsQuery, useRepoStats } from "./repo-stats.ts";
 
 const REPO = "o/r";
-const ACTION: Action = { id: "small", when: "every", checks: ["max-files-changed"], branches: { yes: [{ kind: "comment", target: { body: "hi" } }] } };
-const DRAFT = fromPack({ ...emptyPack(REPO), actions: [ACTION] }, draftPolicy(repoPolicy(undefined)));
+const DRAFT = fromPack({ ...emptyPack(REPO), actions: { ...defaultActions(), pass: [{ kind: "comment", target: { body: "hi" } }] } }, draftPolicy(repoPolicy(undefined)));
 const STATS: TriageStats = {
   repo: REPO,
   days: 7,
@@ -23,7 +22,7 @@ const STATS: TriageStats = {
   verdicts: { ready: 3, blocked: 2 },
   neededYou: 2,
   checks: { "max-files-changed": { pass: 3, fail: 1, unconfirmed: 0 } },
-  actions: { small: { suggested: 2, executed: 1, failed: 0 } },
+  actions: { pass: { suggested: 2, executed: 1, failed: 0 } },
   comments: 4,
   medianTimeToVerdictMs: 4_320_000,
   daily: [0, 1, 0, 2, 0, 0, 2].map((triaged, i) => ({ date: `2026-10-0${i + 1}`, triaged })),
@@ -36,7 +35,7 @@ function Panel({ store }: { store: RepoPackStore }) {
   return createElement(Fragment, null,
     createElement(TriageStrip, { stats }),
     createElement(ChecksSection, { draft: DRAFT, saved: DRAFT.pack, stats, disabled: false, edit: noop, problem: null }),
-    createElement(ActionRow, { action: ACTION, index: 0, count: 1, draft: DRAFT, stats, disabled: false, onEdit: noop, onRemove: noop, onMove: noop }),
+    createElement(VerdictList, { list: "pass", dos: DRAFT.pack.actions.pass, roles: [], alone: undefined, fired: stats?.actions.pass, disabled: false, onChange: noop }),
   );
 }
 
@@ -48,7 +47,7 @@ function statsRequests(requests: string[]): string[] {
   return requests.filter((request) => request.includes("/triage-stats/"));
 }
 
-test("the strip, the checks and the action row read one request", async () => {
+test("the strip, the rules and the pass list read one request", async () => {
   const hub = fakeHub();
   hub.stats = STATS;
   const store = transportRepoPackStore(hub.transport, "t");

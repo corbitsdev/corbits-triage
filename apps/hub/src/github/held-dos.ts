@@ -5,7 +5,7 @@
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
-import { ACTION_KINDS, APPROVE_DO_KIND, DoBranch, repoPolicy, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, APPROVE_DO_KIND, DoList, repoPolicy, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -25,8 +25,7 @@ export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/
 export const HeldDoSent = type({ status: "'sent'" });
 
 const StepBase = type({
-  id: "string",
-  branch: DoBranch,
+  list: DoList,
   index: "number.integer >= 0",
   kind: type.enumerated(...ACTION_KINDS),
   effectId: "string",
@@ -51,8 +50,7 @@ type Approval = {
   kind: typeof APPROVE_DO_KIND;
   runId: string;
   principalId: string;
-  actionId: string;
-  branch: typeof DoBranch.infer;
+  list: typeof DoList.infer;
   index: number;
   request: typeof MirrorRequest.infer;
   step: { effectId: string; headSha: string; kind: ActionKind; target: ResolvedTarget };
@@ -70,12 +68,12 @@ function heldDo(verdict: Record<string, unknown>, body: Body, principalId: strin
   const headSha = verdict["headSha"];
   if (request instanceof type.errors || typeof headSha !== "string") return failure(409, "verdict_outdated", "Run triage again.");
   const target = step.target as ResolvedTarget;
-  const effectId = doEffectId({ repo: body.repo, number: body.number, headSha, actionId: step.id, branch: step.branch, index: step.index, kind: step.kind, target });
+  const effectId = doEffectId({ repo: body.repo, number: body.number, headSha, list: step.list, index: step.index, kind: step.kind, target });
   if (effectId !== step.effectId) return failure(409, "effect_mismatch", "The verdict's effect id does not match this Do.");
-  const { id: actionId, branch, index, kind } = step;
+  const { list, index, kind } = step;
   const refused = unrunnable({ kind, target });
   if (refused) return failure(409, "do_not_runnable", refused);
-  return { kind: APPROVE_DO_KIND, runId: body.runId, principalId, actionId, branch, index, request, step: { effectId, headSha, kind, target } };
+  return { kind: APPROVE_DO_KIND, runId: body.runId, principalId, list, index, request, step: { effectId, headSha, kind, target } };
 }
 
 export function createGithubHeldDos(deps: GithubHeldDosDeps) {

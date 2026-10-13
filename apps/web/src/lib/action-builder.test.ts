@@ -1,15 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { CUSTOM_CHECK_CAP, recommendedPack, type CustomCheck, type Do } from "@corbits/triage-contracts";
-import { actionFormOf, buildAction, buildCustomCheck, checkFormOf, type ActionEvent, type ActionForm, type CheckForm, type DoForm } from "./action-builder.ts";
+import { buildCustomCheck, buildDo, checkFormOf, doFormOf, type CheckForm, type DoForm } from "./action-builder.ts";
 
 const pack = recommendedPack("acme/widgets");
 const comment: DoForm = { kind: "comment", body: "Thanks!", labels: ["stale"], prompt: "unused" };
 const commented: Do = { kind: "comment", target: { body: "Thanks!" } };
-const close: DoForm = { kind: "close" };
-
-function form(overrides: Partial<ActionForm>): ActionForm {
-  return { when: "every", checks: [], yes: [], no: [], unsure: [], always: [], ...overrides };
-}
 
 const targets: Array<[DoForm, Do]> = [
   [{ kind: "labels", from: "list", labels: ["bug"], to: "users" }, { kind: "labels", target: { from: "list", labels: ["bug"] } }],
@@ -25,42 +20,12 @@ const targets: Array<[DoForm, Do]> = [
   [{ kind: "agent", prompt: "Fix CI" }, { kind: "agent", target: { prompt: "Fix CI", tools: [] } }],
 ];
 
-describe("buildAction", () => {
-  test("every Do target keeps exactly the contract keys", () => {
-    const built = buildAction(form({ checks: ["ci-green"], yes: targets.map(([step]) => step) }), pack);
-    expect(built).toEqual({ id: "action-1", when: "every", checks: ["ci-green"], branches: { yes: targets.map(([, expected]) => expected) } });
-  });
-
-  test("no checks gives always, ignoring branch lists", () => {
-    const built = buildAction(form({ when: ["opened", "ready"], always: [comment], yes: [comment] }), pack);
-    expect(built).toEqual({ id: "action-1", when: ["opened", "ready"], checks: [], branches: { always: [commented] } });
-  });
-
-  test("checks keep only the branches that have Dos, under the next free id", () => {
-    const existing = { ...pack, actions: [{ id: "action-3", when: "every" as const, checks: [], branches: { always: [commented] } }] };
-    const built = buildAction(form({ checks: ["ci-green", "max-files-changed"], no: [close], unsure: [comment], always: [comment] }), existing);
-    expect(built).toEqual({
-      id: "action-4",
-      when: "every",
-      checks: ["ci-green", "max-files-changed"],
-      branches: { no: [{ kind: "close", target: {} }], unsure: [commented] },
-    });
-  });
-
-  test("an edited action is rebuilt under its own id", () => {
-    const first = { id: "action-1", when: ["opened" as const], checks: ["ci-green" as const], branches: { yes: [commented], unsure: [{ kind: "close" as const, target: {} }] } };
-    const second = { id: "action-2", when: "every" as const, checks: [], branches: { always: [commented] } };
-    const existing = { ...pack, actions: [first, second] };
-    expect(buildAction(actionFormOf(first), existing, "action-1")).toEqual(first);
-    expect(buildAction({ ...actionFormOf(first), checks: [], always: [comment] }, existing, "action-1")).toEqual({ id: "action-1", when: ["opened"], checks: [], branches: { always: [commented] } });
-  });
-
-  test("refusals carry the readCheckPack reason", () => {
-    expect(buildAction(form({}), pack)).toEqual({ reason: "Action action-1 branches always must not be empty." });
-    expect(buildAction(form({ checks: ["ci-green"], always: [comment] }), pack)).toEqual({ reason: "Action action-1 branches must set at least one step." });
-    expect(buildAction(form({ when: ["opened", "catch-up"] as ActionEvent[], always: [comment] }), pack)).toEqual({
-      reason: "Action action-1 when must not list catch-up; catch-up runs every action.",
-    });
+describe("buildDo", () => {
+  test("every Do target keeps exactly the contract keys, and a stored Do edits back to itself", () => {
+    for (const [step, expected] of targets) {
+      expect(buildDo(step)).toEqual(expected);
+      expect(buildDo(doFormOf(expected))).toEqual(expected);
+    }
   });
 });
 

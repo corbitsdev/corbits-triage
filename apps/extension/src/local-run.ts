@@ -1,6 +1,7 @@
 import { getChecks, getReviews, listIssueComments, listPrCommits, listPrFilesPage, readPr, readRepoDocsPage, repoDocs, type GithubFetch, type RepoDocsPage, type Review } from "@corbits/github-reads";
 import { classificationSources, NO_CHANGES_REQUESTED, QUALITY_CHECK_IDS, repoPolicy, type CheckPack, type CustomCheck, type RuleCustomCheck } from "@corbits/triage-contracts";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
+import { parts } from "@corbits/triage-workflows/actions/parts";
 import { rules } from "@corbits/triage-workflows/actions/rules";
 import { checkName } from "@corbits/triage-contracts";
 import type { SuggestedAction, SuggestedDo } from "@corbits/triage-workflows/logic/actions";
@@ -8,7 +9,7 @@ import { hasModelChecks, type CheckResult, type PrFileFacts } from "@corbits/tri
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, type FilesCursor, type ListedFiles, type RepoDocs } from "@corbits/triage-workflows/logic/facts";
 import type { Judged } from "@corbits/triage-workflows/logic/item";
 import { previewActions } from "@corbits/triage-workflows/logic/preview";
-import type { Verdict } from "@corbits/triage-workflows/logic/render";
+import { commentTitle, NEEDS_JUDGE_REASON, NOTHING_TO_CHANGE, type Verdict } from "@corbits/triage-workflows/logic/render";
 import type { PrRef } from "./pr.ts";
 import { suggest } from "./suggest.ts";
 import { askChunk, type SystemOneSettings } from "./system-one.ts";
@@ -120,7 +121,7 @@ function feeds(pack: CheckPack): Record<Read, (c: CheckResult) => boolean> {
   };
 }
 
-/** Each check a failed read fed, unconfirmed with why; the merge verdict then cannot be ready. */
+/** Each check a failed read fed, unconfirmed with why; the verdict then cannot pass, and suggests nothing. */
 function unconfirmedBy(failed: Record<Read, string | undefined>, pack: CheckPack, verdict: Verdict): Verdict {
   const fed = feeds(pack);
   const reasons = new Map<string, string>();
@@ -130,8 +131,9 @@ function unconfirmedBy(failed: Record<Read, string | undefined>, pack: CheckPack
   }
   if (!reasons.size) return verdict;
   const checks = verdict.checks.map((c) => (reasons.has(c.check) ? { ...c, result: "unconfirmed" as const, reason: reasons.get(c.check)!, evidence: [], output: { kind: "could-not-check" as const, reason: reasons.get(c.check)! } } : c));
-  const merge = { ...verdict.merge, verdict: "not-recommended" as const, reasons: [...verdict.merge.reasons, ...[...new Set(reasons.values())].map((why) => `Not confirmed: ${why}`)] };
-  return { ...verdict, checks, merge };
+  const notConfirmed = [...new Set(reasons.values())].map((why) => `Not confirmed: ${why}`);
+  const unsure = verdict.verdict === "pass" && { verdict: "unsure" as const, actions: [], feedback: verdict.feedback.replace(commentTitle("pass"), commentTitle("unsure")).replace(NOTHING_TO_CHANGE, "") };
+  return { ...verdict, checks, reasons: [...verdict.reasons, ...notConfirmed], ...unsure };
 }
 
 const NO_DOCS: RepoDocs = { docs: {}, rules: {} };
@@ -175,18 +177,18 @@ export async function runLocal({ repo, number }: PrRef, { gh, pack: packed, syst
   const signal = new AbortController().signal;
   const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, signal);
   const ruledItem = ruled.items[0]!;
-  const ask = ruled.needsJudgment && systemOne !== undefined;
-  // Answered by the decision model, now or by an earlier run's answers to the same requests.
+  // Answered by the decision model, now or by an earlier run's answers to the same requests; without one the verdict waits on it.
   const answered = systemOne !== undefined && ruledItem.det.needsJudgment;
-  const replies = ask ? await Promise.all(ruled.chunks.map((chunk) => askChunk(chunk, systemOne))) : [];
-  const verdict = unconfirmedBy(failed, pack, await evaluate({ items: [ruledItem], batch: false, ...(ask ? { judge: { output: replies } } : {}) }, NO_EFFECTS, signal) as Verdict);
+  const first = { items: [systemOne === undefined && ruled.needsJudgment ? { ...ruledItem, judgeSkipped: true as const } : ruledItem], batch: false };
+  const asked = systemOne !== undefined && ruled.needsJudgment ? { ...first, judge: { output: await Promise.all(ruled.chunks.map((chunk) => askChunk(chunk, systemOne))) } } : first;
+  const { chunks } = systemOne !== undefined ? await parts(asked, NO_EFFECTS, signal) : { chunks: [] };
+  const second = chunks.length > 0 ? { ...asked, judgeParts: { output: await Promise.all(chunks.map((chunk) => askChunk(chunk, systemOne!))) } } : asked;
+  const verdict = unconfirmedBy(failed, pack, await evaluate(second, NO_EFFECTS, signal) as Verdict);
 
-  // Unanswered, an action's branch can still change with the answers, so only the ones decided either way suggest anything.
-  const previews = answered || verdict.degraded !== null ? [] : previewActions({ facts: ruledItem.facts, checks: verdict.checks, pack, roles: policy.roles });
-  const dos = answered
-    ? verdict.actions.filter(isDo)
-    : previews.flatMap((preview) => (preview.status === "decided" ? preview.dos.filter(isDo) : []));
-  const { state, reason, nextAction, actor, feedback, score, merge, degraded } = verdict;
+  const waits = verdict.reason === NEEDS_JUDGE_REASON ? "waits-on-judge" as const : verdict.actions;
+  const preview = previewActions({ facts: ruledItem.facts, checks: verdict.checks, verdict: verdict.verdict, reason: verdict.reason, pack, roles: policy.roles }, waits);
+  const dos = preview.status === "decided" ? preview.dos.filter(isDo) : [];
+  const { state, reason, nextAction, actor, feedback, verdict: word, score, reasons, degraded } = verdict;
   const named = verdict.checks.map((c) => ({ ...c, name: checkName(pack, c.check) }));
   const failing = new Set(named.filter((c) => c.result === "fail").map((c) => c.check));
   const jobs = failing.has("ci-green") && pr.sha ? await withoutSuggestion(jobPages(gh, repo, pr.sha), {}, "the failing jobs' pages") : {};
@@ -200,11 +202,11 @@ export async function runLocal({ repo, number }: PrRef, { gh, pack: packed, syst
     // Not run: the pack's model checks were left out, with no decision model to ask.
     judge: answered ? "asked" : modelChecks && !systemOne ? "not-run" : "not-needed",
     ...(verdict.judged ? { judged: verdict.judged } : {}),
-    verdict: { state, reason, nextAction, actor, feedback, score, merge, degraded },
+    verdict: { state, reason, nextAction, actor, feedback, verdict: word, score, reasons, degraded },
     readiness: readinessOf(verdict.checks, degraded),
     checks: named,
     dos,
-    waitingOnJudge: previews.filter((preview) => preview.status === "waits-on-judge").length,
+    waitingOnJudge: preview.status === "waits-on-judge" ? preview.lists.reduce((count, list) => count + list.dos.length, 0) : 0,
     suggested,
     notes,
     draft: ruledItem.facts.draft,

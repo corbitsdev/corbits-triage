@@ -5,20 +5,22 @@ import {
   customCheckEnabled,
   customRuleId,
   isCatalogId,
-  packMergeThreshold,
   readCheckPack,
   RECOMMENDED_ISSUE,
   RECOMMENDED_PATHS,
   RECOMMENDED_SIZE,
-  type Action,
+  VERDICTS,
   type CatalogCheck,
   type CatalogId,
   type CheckPack,
   type CheckRef,
   type CustomCheck,
   type Do,
+  type PolicyActions,
+  type PolicyEvent,
   type RepoPolicy,
   type RepoRole,
+  type VerdictWord,
 } from "@corbits/triage-contracts";
 
 export type DraftPolicy = Pick<RepoPolicy, "enabled" | "roles">;
@@ -28,15 +30,12 @@ export type RepoDraft = { pack: CheckPack; policy: DraftPolicy };
 
 /** Where in the panel a validation reason belongs. */
 type DraftWhere =
-  | { section: "actions"; id: string }
+  | { section: "actions"; list?: VerdictWord }
   | { section: "custom"; id?: string }
   | { section: "triage" }
-  | { section: "merge" }
   | { section: "pack" };
 
 export type DraftProblem = { reason: string; where: DraftWhere };
-
-export type Refused = { reason: string };
 
 function same(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -69,14 +68,7 @@ export function namedNewRules(pack: CheckPack, saved: CheckPack): CheckPack {
     taken.push(id);
     renamed.set(row.id, id);
   }
-  function current(id: string): string {
-    return renamed.get(id) ?? id;
-  }
-  return {
-    ...pack,
-    custom: pack.custom.map((row) => ({ ...row, id: current(row.id) })),
-    actions: pack.actions.map((action) => ({ ...action, checks: action.checks.map(current) })),
-  };
+  return { ...pack, custom: pack.custom.map((row) => ({ ...row, id: renamed.get(row.id) ?? row.id })) };
 }
 
 function withPack(draft: RepoDraft, pack: Partial<CheckPack>): RepoDraft {
@@ -138,39 +130,20 @@ export function setCustomEnabled(draft: RepoDraft, id: string, enabled: boolean)
   return withPack(draft, { custom: draft.pack.custom.map(toggled) });
 }
 
-/** Also drops the check from every action; refused when an action would be left with branches but no checks. */
-export function removeCustom(draft: RepoDraft, id: string): RepoDraft | Refused {
-  const emptied = draft.pack.actions.find((action) => action.checks.length === 1 && action.checks[0] === id);
-  if (emptied) return { reason: `Action ${emptied.id} checks only ${id}. Give it another rule or remove the action first.` };
-  return withPack(draft, {
-    custom: draft.pack.custom.filter((row) => row.id !== id),
-    actions: draft.pack.actions.map((action) => (action.checks.some((ref) => ref === id) ? { ...action, checks: action.checks.filter((ref) => ref !== id) } : action)),
-  });
+export function removeCustom(draft: RepoDraft, id: string): RepoDraft {
+  return withPack(draft, { custom: draft.pack.custom.filter((row) => row.id !== id) });
 }
 
-/** A threshold the saved pack lacks goes back to absent once it equals the default again. */
-export function setMergeThreshold(draft: RepoDraft, saved: CheckPack, value: number): RepoDraft {
-  if (saved.mergeThreshold === undefined && value === packMergeThreshold(undefined)) {
-    const { mergeThreshold: _dropped, ...pack } = draft.pack;
-    return { ...draft, pack };
-  }
-  return withPack(draft, { mergeThreshold: value });
+function withActions(draft: RepoDraft, actions: Partial<PolicyActions>): RepoDraft {
+  return withPack(draft, { actions: { ...draft.pack.actions, ...actions } });
 }
 
-export function upsertAction(draft: RepoDraft, action: Action): RepoDraft {
-  return withPack(draft, { actions: upsert(draft.pack.actions, action) });
+export function setWhen(draft: RepoDraft, when: PolicyEvent[]): RepoDraft {
+  return withActions(draft, { when });
 }
 
-export function removeAction(draft: RepoDraft, id: string): RepoDraft {
-  return withPack(draft, { actions: draft.pack.actions.filter((action) => action.id !== id) });
-}
-
-export function moveAction(draft: RepoDraft, id: string, to: number): RepoDraft {
-  const moving = draft.pack.actions.find((action) => action.id === id);
-  if (!moving) return draft;
-  const rest = draft.pack.actions.filter((action) => action.id !== id);
-  const at = Math.max(0, Math.min(to, rest.length));
-  return withPack(draft, { actions: [...rest.slice(0, at), moving, ...rest.slice(at)] });
+export function setList(draft: RepoDraft, list: VerdictWord, dos: Do[]): RepoDraft {
+  return withActions(draft, { [list]: dos });
 }
 
 export function setRole(draft: RepoDraft, name: string, role: RepoRole): RepoDraft {
@@ -187,20 +160,11 @@ function changedIds<T extends { id: string }>(saved: T[], draft: T[]): number {
   return [...ids].filter((id) => !same(saved.find((row) => row.id === id), draft.find((row) => row.id === id))).length;
 }
 
-function reordered(saved: Action[], draft: Action[]): boolean {
-  const kept = new Set(draft.map((action) => action.id));
-  const before = saved.map((action) => action.id).filter((id) => kept.has(id));
-  const after = draft.map((action) => action.id).filter((id) => before.includes(id));
-  return !same(before, after);
-}
-
-/** One change per catalog check, custom check and action that differs, plus one each for a reorder of the actions and a new merge threshold. */
+/** One change per catalog check and custom check that differs, plus one each for the policy's when and each verdict list that differs. */
 export function packChanges(saved: CheckPack, draft: CheckPack): number {
-  return Number(!Object.is(saved.mergeThreshold, draft.mergeThreshold))
-    + CATALOG_IDS.filter((id) => !same(saved.checks[id], draft.checks[id])).length
+  return CATALOG_IDS.filter((id) => !same(saved.checks[id], draft.checks[id])).length
     + changedIds(saved.custom, draft.custom)
-    + changedIds(saved.actions, draft.actions)
-    + Number(reordered(saved.actions, draft.actions));
+    + (["when", ...VERDICTS] as const).filter((key) => !same(saved.actions[key], draft.actions[key])).length;
 }
 
 /** One change per policy switch and per role that differs. */
@@ -225,23 +189,18 @@ function idAt(message: string, label: string, rows: Array<{ id: string }>): stri
 }
 
 function whereOf(message: string, pack: CheckPack): DraftWhere {
-  const action = idAt(message, "Action", pack.actions);
-  if (action !== undefined) return { section: "actions", id: action };
+  const list = VERDICTS.find((word) => message.startsWith(`Actions ${word} `));
+  if (list !== undefined) return { section: "actions", list };
+  if (message.startsWith("Actions")) return { section: "actions" };
   const custom = idAt(message, "Custom rule", pack.custom);
   if (custom !== undefined) return { section: "custom", id: custom };
-  if (message.startsWith("Merge score threshold ")) return { section: "merge" };
   if (message.startsWith("Custom rule ") || message.startsWith("Policy must have at most")) return { section: "custom" };
   return { section: "pack" };
 }
 
-/** Role names the action's Dos assign or request review from. */
-export function rolesUsed(action: Action): string[] {
-  const dos: Do[] = Object.values(action.branches).flat();
+/** Role names the Dos assign or request review from. */
+export function rolesUsed(dos: Do[]): string[] {
   return dos.flatMap((step) => ((step.kind === "assign" || step.kind === "request-review") && step.target.to === "role" ? [step.target.role] : []));
-}
-
-function missingRole(action: Action, roles: DraftPolicy["roles"]): string | undefined {
-  return rolesUsed(action).find((role) => !Object.hasOwn(roles, role));
 }
 
 /** Why the draft cannot be saved, in the contract's words, and where that belongs; null when it can. */
@@ -253,9 +212,9 @@ export function validate(draft: RepoDraft): DraftProblem | null {
     if (!(cause instanceof Error)) throw cause;
     return { reason: cause.message, where: whereOf(cause.message, draft.pack) };
   }
-  for (const action of pack.actions) {
-    const role = missingRole(action, draft.policy.roles);
-    if (role !== undefined) return { reason: `Action ${action.id} targets role ${role}, which this repository does not define.`, where: { section: "actions", id: action.id } };
+  for (const list of VERDICTS) {
+    const role = rolesUsed(pack.actions[list]).find((name) => !Object.hasOwn(draft.policy.roles, name));
+    if (role !== undefined) return { reason: `Actions ${list} targets role ${role}, which this repository does not define.`, where: { section: "actions", list } };
   }
   const anyCheck = CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
   if (draft.policy.enabled && !anyCheck) return { reason: "Switch on a rule before turning triage on.", where: { section: "triage" } };

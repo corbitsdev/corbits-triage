@@ -31,7 +31,7 @@ const SENTENCES: Record<CatalogId, string> = {
 
 type ChecksSectionProps = { draft: RepoDraft; saved: CheckPack; stats: TriageStats | undefined; disabled: boolean; edit: RepoPack["edit"]; problem: DraftProblem | null };
 
-/** Every check, built in or the repository's own, as one sentence with its values inline, switched on or off for the verdict. */
+/** Every rule, built in or the repository's own, as one sentence with its values inline, switched on or off for the verdict. */
 export default function ChecksSection({ draft, saved, stats, disabled, edit, problem }: ChecksSectionProps) {
   const pack = draft.pack;
   const on = [...CATALOG_IDS, ...pack.custom.map((row) => row.id)].filter((id) => checkOn(pack, id)).length;

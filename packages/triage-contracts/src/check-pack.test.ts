@@ -5,14 +5,14 @@ import {
   catalogCheckEnabled,
   checkPackSchema,
   customRuleId,
+  defaultActions,
   emptyPack,
-  packMergeThreshold,
   parseCheckPack,
   readCheckPack,
   recommendedPack,
-  type Action,
   type CheckPack,
   type CustomCheck,
+  type PolicyActions,
 } from "./check-pack.ts";
 
 const REPO = "acme/payments-api";
@@ -47,30 +47,14 @@ const MODELS: CustomCheck[] = [
   { id: "custom-3", name: "Size", group: "pull-request", kind: "model", shape: "choose", options: ["small", "large"], failOn: ["large"] },
   { id: "custom-4", name: "Reversible", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "The migration can be rolled back.", scope: "file", when: ["migrations/**"] },
 ];
-const ACTIONS: Action[] = [
-  {
-    id: "review-ready",
-    when: ["opened", "ready"],
-    checks: ["ci-green", "custom-1"],
-    branches: {
-      yes: [{ kind: "request-review", target: { to: "role", role: "maintainers" } }],
-      no: [
-        { kind: "comment", target: { body: "Please fix CI and link a ticket." } },
-        { kind: "request-changes", target: {} },
-      ],
-      unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] } }],
-    },
-  },
-  {
-    id: "label-type",
-    when: "every",
-    checks: [],
-    branches: { always: [{ kind: "labels", target: { from: "type" } }] },
-  },
-];
-
-const COMMENT = { kind: "comment", target: { body: "Thanks!" } };
-const BASE = { id: "a", when: ["opened"], checks: ["ci-green"], branches: { yes: [COMMENT] } };
+const COMMENT = { kind: "comment", target: { body: "Thanks!" } } as const;
+const REVIEW = { kind: "request-review", target: { to: "role", role: "maintainers" } } as const;
+const ACTIONS: PolicyActions = {
+  when: ["opened", "ready"],
+  pass: [REVIEW],
+  fail: [COMMENT, { kind: "request-changes", target: {} }],
+  unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] } }],
+};
 
 describe("check pack contract", () => {
   test("add one catalog check; unknown ids ignored; absent keys empty", () => {
@@ -105,14 +89,8 @@ describe("check pack contract", () => {
         tests: { enabled: true },
         "linked-issue": { enabled: true, tracker: "github", requireLabel: true, label: "linked" },
       },
-      actions: [
-        { ...BASE, checks: ["drift", "ci-green", "reviewers", "tests"] },
-        { ...BASE, id: "b", checks: ["not-a-draft", "duplicate"] },
-        { ...BASE, id: "c", checks: ["duplicate"] },
-      ],
     });
     expect(read.checks).toEqual({ "linked-issue": { enabled: true, tracker: "github" } });
-    expect(read.actions).toEqual([BASE, { ...BASE, id: "b", checks: ["not-a-draft"] }]);
   });
 
   test("a stored policy with the old rule ids reads as the rules that replaced them; a row under its new id wins", () => {
@@ -127,7 +105,6 @@ describe("check pack contract", () => {
         paths: { enabled: true, forbiddenGlobs: ["vendor/**"] },
       },
       custom: CUSTOM,
-      actions: [{ ...BASE, checks: ["size", "issue", "conflicts", "ci", "paths", "draft", "custom-1"] }],
     });
     expect(read.checks).toEqual({
       "max-files-changed": { enabled: true, maxFiles: 20 },
@@ -138,7 +115,6 @@ describe("check pack contract", () => {
       "no-forbidden-paths": { enabled: true, forbiddenGlobs: ["vendor/**"] },
     });
     expect(read.custom).toEqual(CUSTOM);
-    expect(read.actions[0]!.checks).toEqual(["max-files-changed", "max-lines-changed", "linked-issue", "no-merge-conflicts", "ci-green", "no-forbidden-paths", "not-a-draft", "custom-1"]);
     expect(readCheckPack(JSON.stringify(read))).toEqual(read);
     expect(readCheckPack({ ...emptyPack(REPO), checks: { size: { enabled: true, maxFiles: 20 } } }).checks).toEqual({
       "max-files-changed": { enabled: true, maxFiles: 20 },
@@ -164,24 +140,42 @@ describe("check pack contract", () => {
     expect(customRuleId("Ticket", ["ticket-4"])).toBe("ticket-5");
     expect(customRuleId("…", [])).toBe("rule");
     const named = { ...CUSTOM[0]!, id: customRuleId("Ticket", []) };
-    expect(readCheckPack({ ...emptyPack(REPO), custom: [named], actions: [{ ...BASE, checks: [named.id] }] }).custom).toEqual([named]);
+    expect(readCheckPack({ ...emptyPack(REPO), custom: [named] }).custom).toEqual([named]);
     expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "ci-green" }] })).toThrow("Custom rule ci-green id must not be a built-in rule's id.");
     expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "size" }] })).toThrow("Custom rule size id must not be a built-in rule's id.");
     expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "state" }] })).toThrow("Custom rule state id must not be a built-in rule's id.");
     expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "Ticket" }] })).toThrow("Custom rule Ticket id must be at most 64 lowercase letters, digits and single hyphens.");
   });
 
-  test("a stored pack naming removed Dos loads without them", () => {
+  test("legacy actions collapse into one policy: branches join their verdict's list, always joins all three, when is the union", () => {
     const DRAFT = { kind: "convert-to-draft", target: {}, automatic: true };
+    const LABEL = { kind: "labels", target: { from: "type" } };
     const read = readCheckPack({
       ...emptyPack(REPO),
+      mergeThreshold: 0.85,
       actions: [
-        { ...BASE, branches: { yes: [COMMENT], no: [DRAFT] } },
-        { ...BASE, id: "b", branches: { no: [DRAFT] } },
-        { ...BASE, id: "c", checks: [], branches: { always: [DRAFT] } },
+        { id: "a", when: ["opened"], checks: ["ci", "custom-9"], branches: { yes: [{ ...COMMENT, automatic: true }], no: [DRAFT, REVIEW], unsure: [REVIEW] } },
+        { id: "b", when: ["ready", "commented"], checks: ["draft"], branches: { no: [{ target: { role: "maintainers", to: "role" }, kind: "request-review" }] } },
+        { id: "c", when: ["opened"], checks: [], branches: { always: [LABEL] } },
       ],
     });
-    expect(read.actions).toEqual([{ ...BASE, branches: { yes: [COMMENT], no: [] } }]);
+    expect(read.actions).toEqual({ when: ["opened", "ready"], pass: [COMMENT, LABEL], fail: [REVIEW, LABEL], unsure: [REVIEW, LABEL] });
+    expect(read).not.toHaveProperty("mergeThreshold");
+  });
+
+  test("a legacy action woken by no event a policy names is dropped, not widened", () => {
+    const actions = [
+      { id: "on-merge", when: ["merged", "closed"], checks: [], branches: { always: [COMMENT] } },
+      { id: "on-review", when: ["commented", "reviewed", "approved", "changes-requested"], checks: ["ci"], branches: { no: [REVIEW] } },
+    ];
+    expect(readCheckPack({ ...emptyPack(REPO), actions }).actions).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [], fail: [], unsure: [] });
+  });
+
+  test("a legacy close or agent without checks stays held on Unsure and never joins Pass or Fail", () => {
+    const AGENT = { kind: "agent", target: { prompt: "Fix it", tools: [] } };
+    const CLOSE = { kind: "close", target: {} };
+    const read = readCheckPack({ ...emptyPack(REPO), actions: [{ id: "a", when: "every", checks: [], branches: { always: [CLOSE, AGENT, COMMENT] } }] });
+    expect(read.actions).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [COMMENT], fail: [COMMENT], unsure: [CLOSE, AGENT, COMMENT] });
   });
 
   test("legacy custom round-trip; blanks dropped; last duplicate id wins", () => {
@@ -254,10 +248,9 @@ describe("check pack contract", () => {
     expect(() => readCheckPack({ ...emptyPack(REPO), custom })).toThrow("Policy must have at most 8 custom rules.");
   });
 
-  test("a blank legacy row is dropped and cannot be referenced", () => {
+  test("a blank legacy row is dropped", () => {
     const blank = { id: "custom-1", name: "Ticket", group: "pull-request", instruction: " " };
     expect(parseCheckPack({ ...emptyPack(REPO), custom: [blank] })?.custom).toEqual([]);
-    expect(parseCheckPack({ ...emptyPack(REPO), custom: [blank], actions: [{ ...BASE, checks: ["custom-1"] }] })).toBeNull();
   });
 
   test("corrupt kind, schema, or json is not a pack", () => {
@@ -267,27 +260,23 @@ describe("check pack contract", () => {
     expect(parseCheckPack({ kind: "corbits.triage.check-pack", schemaVersion: 1, repo: "nope" })).toBeNull();
   });
 
-  test("actions round-trip; legacy pack without actions parses with none", () => {
+  test("actions round-trip, repeated Dos run once, a pack without actions runs nothing, and only a new pack asks a person on unsure", () => {
     expect(parseCheckPack({ ...emptyPack(REPO), custom: CUSTOM, actions: ACTIONS })?.actions).toEqual(ACTIONS);
-    expect(parseCheckPack({ kind: "corbits.triage.check-pack", schemaVersion: 1, repo: REPO })?.actions).toEqual([]);
+    expect(parseCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, fail: [COMMENT, COMMENT] } })?.actions.fail).toEqual([COMMENT]);
+    expect(parseCheckPack({ kind: "corbits.triage.check-pack", schemaVersion: 1, repo: REPO })?.actions).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [], fail: [], unsure: [] });
+    expect(emptyPack(REPO).actions).toEqual(defaultActions());
+    expect(defaultActions()).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [], fail: [], unsure: [{ kind: "request-review", target: { to: "codeowners" } }] });
   });
 
-  test("invalid actions reject the pack", () => {
-    const rejected = [
-      { ...BASE, when: ["pushed"] },
-      { ...BASE, when: ["catch-up"] },
-      { ...BASE, checks: ["custom-9"] },
-      { ...BASE, branches: {} },
-      { ...BASE, branches: { always: [COMMENT] } },
-      { ...BASE, checks: [] },
+  test("invalid actions reject the pack with their reason", () => {
+    const rejected: Array<[unknown, string]> = [
+      [{ ...ACTIONS, when: ["commented"] }, "Actions when must be one of opened, updated, checks, ready."],
+      [{ ...ACTIONS, when: [] }, "Actions when must be a non-empty list."],
+      [{ ...ACTIONS, unsure: undefined }, "Actions must set exactly when, pass, fail, unsure."],
+      [{ ...ACTIONS, pass: [{ kind: "comment", target: {} }] }, "Actions pass 1 target must set exactly body."],
+      [[{ id: "a", when: "every", checks: [], branches: { maybe: [COMMENT] } }], "Action a branches must set only yes, no, unsure or always."],
     ];
-    expect(parseCheckPack({ ...emptyPack(REPO), actions: [BASE] })?.actions).toHaveLength(1);
-    for (const action of rejected) expect(parseCheckPack({ ...emptyPack(REPO), actions: [action] })).toBeNull();
-  });
-
-  test("a pack stored with the legacy automatic flag loads without it", () => {
-    const stored = { ...emptyPack(REPO), actions: [{ ...BASE, branches: { yes: [{ ...COMMENT, automatic: true }] } }] };
-    expect(readCheckPack(stored).actions[0]!.branches).toEqual({ yes: [COMMENT] });
+    for (const [actions, reason] of rejected) expect(() => readCheckPack({ ...emptyPack(REPO), actions })).toThrow(reason);
   });
 
   test("the schema accepts what the parser reads, and a rejection says why", () => {
@@ -297,26 +286,15 @@ describe("check pack contract", () => {
       { ...emptyPack(REPO), custom: RULES },
       { ...emptyPack(REPO), custom: MODELS },
       { ...emptyPack(REPO), custom: AUTHORS },
-      { ...emptyPack(REPO), actions: [BASE] },
+      { ...emptyPack(REPO), actions: [{ id: "a", when: "every", checks: ["ci"], branches: { yes: [COMMENT] } }] },
       recommendedPack(REPO),
     ];
     for (const pack of accepted) {
       expect(checkPackSchema(pack)).not.toBeInstanceOf(type.errors);
       expect(parseCheckPack(pack)).not.toBeNull();
     }
+    expect(checkPackSchema({ ...emptyPack(REPO), actions: { ...ACTIONS, always: [] } })).toBeInstanceOf(type.errors);
     expect(() => readCheckPack({ ...emptyPack(REPO), schemaVersion: 2 })).toThrow("schemaVersion must be 1.");
-    expect(() => readCheckPack({ ...emptyPack(REPO), actions: [{ ...BASE, checks: ["custom-9"] }] })).toThrow(
-      "Action a checks custom-9 must be a built-in rule, the not-a-draft rule or a custom rule in this policy.",
-    );
-  });
-
-  test("an absent merge threshold reads 0.7; one out of range rejects the pack", () => {
-    expect(packMergeThreshold(readCheckPack(emptyPack(REPO)))).toBe(0.7);
-    expect(packMergeThreshold(readCheckPack({ ...emptyPack(REPO), mergeThreshold: 0.85 }))).toBe(0.85);
-    for (const mergeThreshold of [-0.1, 1.1, "0.8"]) {
-      expect(() => readCheckPack({ ...emptyPack(REPO), mergeThreshold })).toThrow("Merge score threshold must be between 0 and 1.");
-      expect(checkPackSchema({ ...emptyPack(REPO), mergeThreshold })).toBeInstanceOf(type.errors);
-    }
   });
 
   test("Use recommended keeps existing custom", () => {

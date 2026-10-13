@@ -2,15 +2,15 @@
 
 Corbits Triage triages GitHub pull requests. For every pull request on a
 repository with triage on, it gathers facts from GitHub, runs the
-repository's rules, reaches a verdict, and suggests or runs the actions the
-repository defines.
+repository's rules, decides Pass, Fail or Unsure, and suggests or runs the
+actions the repository's policy lists for that verdict.
 
 Nothing runs by default. Installing the GitHub App records repositories with
 triage off; a repository is triaged only after someone turns on **Triage pull
 requests in this repository** and saves. Draft pull requests are skipped
 until they are marked ready for review, except for one run when one is
 converted to draft. A pull request marked ready before any triage run also
-wakes the actions that run when it is opened.
+wakes the policy as if it were opened.
 
 ## Who it is for
 
@@ -32,14 +32,13 @@ wakes the actions that run when it is opened.
   triage again); the rest and the policy's Dos are under More. Merging from the
   portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
-- **Repositories**: per repository, its rules, its actions, its roles, the
-  merge score threshold,
-  a preview against an open pull request, recent stats, the triage switch and
-  **Triage open pull requests again**.
+- **Repositories**: per repository, its rules, how the verdict is decided,
+  its actions, its roles, a preview against an open pull request, recent
+  stats, the triage switch and **Triage open pull requests again**.
 - **Settings**: the deployed workflow versions, the GitHub App, the decision
   model, invitations, workspace roles and access rules, and the account.
 
-The portal shows the score and the reasons. Evidence for a file or a change
+The portal shows the verdict, its score and the reasons. Evidence for a file or a change
 cites its changed lines (`src/router.ts:40-58`) and links them at the commit
 that was judged. GitHub sees only the actions.
 
@@ -105,28 +104,49 @@ branch. Custom rules also get the repository's contribution rules
 judged by them. How questions are asked, budgets, cost and measured accuracy
 are in [DECISION_MODEL.md](DECISION_MODEL.md).
 
+## Verdict
+
+Each pull request head gets one verdict: **Pass**, **Fail** or **Unsure**.
+
+- A hard rule (every rule above, built in or custom, except author) that fails
+  decides **Fail** without calling the model; the reasons list the failed rules.
+- Otherwise one decision model question decides: does this pull request pass
+  this repository's policy? It reads every enabled rule with its result and
+  evidence, the judged rules' answers with their probabilities, and the pull
+  request's title, body, commits, paths and as much of its diff as fits one
+  request. **Pass** at 0.7 or above for pass, **Fail** at 0.7 or above for
+  fail, **Unsure** otherwise. The score shown is the probability of pass.
+- A draft or closed pull request is not decided. A model that does not answer
+  leaves the verdict Unsure and Triage re-checks it.
+
+Triage posts one comment per head: the verdict, the reasons (failed hard rules
+first, then judged rules with their evidence), and what Triage did or what
+waits on a maintainer.
+
 ## Actions
 
-An action is **When → Rules → Yes / No / Unsure → Dos**:
+The policy holds one **When** and three lists of Dos: **On Pass**, **On Fail**
+and **On Unsure**. The verdict picks the list.
 
-- **When**: every event, or chosen ones (opened, updated, ready, commented,
-  reviewed, approved, checks, closed, merged and so on). Catching up runs
-  every action.
-- **Rules**: the rules whose combined verdict picks the branch. Any
-  unconfirmed rule makes it Unsure. With no rules, the action always runs.
+- **When**: opened, updated, checks, ready; all four by default. Catching up
+  runs the policy whatever it names.
+- **On Unsure** asks CODEOWNERS for review by default.
 - **Dos**: labels, assign, request review, comment, approve, request changes,
   close, agent. Settings → Access holds one grid, Do kind by role: a role's
   people may approve held Dos of the kinds it holds, and Dos of the kinds
   Triage holds run on GitHub during triage; the rest wait in the Inbox for a
   click. New workspaces automate nothing.
 
-Close never runs on its own on Unsure or without rules, nor does an agent
-without rules. Triage posts its reply when it holds Comment and its labels
-when it holds Labels. Approve runs only for a head that is
-ready to merge with CI green; where Triage posts, a later head that may not be
+Close and agent Dos never run on their own on Unsure. Triage posts its comment
+when it holds Comment and its labels when it holds Labels. Approve runs only
+on a Pass with CI green; where Triage posts, a later head that may not be
 approved has the approve Do's approvals dismissed. Approvals made from the Inbox are never dismissed.
-Request changes lists only the failed rules the author must fix, once per
-head; the automatic mirror dismisses it once none still fails.
+Request changes lists the failed rules the author must fix, once per head; the
+automatic mirror dismisses it once none still fails.
+
+Policies saved before verdicts read as one policy: each action's yes Dos join On
+Pass, no Dos On Fail, unsure Dos On Unsure and Dos without rules all three, except close and agent, which join On Unsure only; an action woken by no event the policy names is dropped;
+repeated Dos run once and When is every action's together.
 
 ## Triage over time
 

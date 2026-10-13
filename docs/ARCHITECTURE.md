@@ -79,15 +79,19 @@ one does.
 
 1. **facts**: reads the pull requests, their files, reviews, CI, the
    repository's docs and its contribution rules from GitHub.
-2. **rules**: runs the rules over GitHub data and builds the decision-model questions.
+2. **rules**: runs the hard rules and, unless one failed or the pull request
+   is a draft or closed, builds the judged rules' questions; with none left
+   to ask, it builds the verdict question instead.
 3. **route**: skips the judge when no question needs asking.
 4. **judge**: one System One call per request of questions that no carried
    answer matches. The only step that infers; see
    [DECISION_MODEL.md](DECISION_MODEL.md).
-5. **parts**: only when focused fails, one question per file of each failing
-   slice through a second judge map; no call otherwise.
-6. **evaluate**: combines rule results and answers into rules' results, a verdict and
-   each action's branch.
+5. **parts**: reads the first answers and asks, through a second judge map,
+   one question per file of each slice that failed focused and the verdict
+   question over every rule's result.
+6. **evaluate**: decides the verdict: Fail on a failed hard rule, otherwise
+   Pass, Fail or Unsure from the verdict question. It renders the one comment
+   and resolves the verdict's list of Dos when the policy's When is woken.
 7. **execute**: runs the Dos whose kind the `pr-triage` role holds on GitHub.
    Every other Do is held in the verdict (`held: true`) and the run finishes.
 8. **mirror**: writes the triage labels when the `pr-triage` role holds the
@@ -95,8 +99,8 @@ one does.
 
 The hub reads which kinds the `pr-triage` system role is granted, `invoke` on
 `triage-do:<kind>:<owner>/<name>`, and mails them with each trigger; the run
-trusts them only from the hub's sender. Close on an Unsure verdict, and close
-or an agent from an action without rules, are always held. At start the hub
+trusts them only from the hub's sender. Close and agent Dos on an Unsure
+verdict are always held. At start the hub
 grants the role comment and labels on each repository still set to post
 automatically, then drops that setting. A person holding the same grant approves a held Do, or one the run failed or could
 not write, from the inbox: the hub checks the grants below and mails the
@@ -131,7 +135,7 @@ A pull request action from the portal that is a Do kind (comment, labels,
 assign, request review, approve, request changes, close) also checks `invoke`
 on `triage-do:<kind>:<owner>/<name>`, the repository name in lowercase; the
 admin role holds `triage-do:*` from GitHub setup, and owners hold every grant. In a run, the repository's policy decides when to
-approve, and only a head ready to merge with CI green is approved, from the
+approve, and only a head that passes with CI green is approved, from the
 newest verdict. Where triage mirrors and its policy approves, a settled head
 that may not be approved dismisses the approvals the approve Do made; one
 dismissed on a head is not made again on it. Where it does not mirror, its

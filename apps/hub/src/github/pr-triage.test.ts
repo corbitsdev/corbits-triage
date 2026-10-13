@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkPackName, emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { checkPackName, emptyPack, readCheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { DeploymentNotReadyError } from "./deployment.js";
 import { createGithubPrTriage, type GithubPrTriageDeps } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
@@ -109,8 +109,8 @@ describe("createGithubPrTriage", () => {
       prNumber: 8,
       headSha: "abc123",
       policy: { enabled: true, checkPack: { name: checkPackName(REPO) } },
-      checkPack: PACK,
     });
+    expect(readCheckPack((s.delivered[0]!.payload as { checkPack: unknown }).checkPack)).toEqual(PACK);
     const at = NOW.toISOString();
     expect(s.saved).toEqual([[{ number: 8, headSha: "abc123", status: "queued", attempts: 0, firstSeenAt: at, queuedAt: at, updatedAt: at }]]);
   });

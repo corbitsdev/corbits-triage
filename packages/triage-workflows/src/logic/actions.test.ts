@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { alwaysHeld, emptyPack, type Action, type CheckRef, type Do } from "@corbits/triage-contracts";
+import { alwaysHeld, defaultActions, emptyPack, type Do, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
 import { doEffectId, evaluateActions, holdDos, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
-import { deriveState, type PrFacts } from "./checks.js";
+import type { PrFacts } from "./checks.js";
 
 const facts: PrFacts = {
   repo: "acme/widgets",
@@ -22,14 +22,9 @@ const facts: PrFacts = {
   events: ["opened"],
 };
 
-const checks: ActionInput["checks"] = [
-  { check: "ci-green", kind: "machine", result: "pass", reason: "", evidence: [] },
-  { check: "max-files-changed", kind: "machine", result: "fail", reason: "", evidence: [] },
-  { check: "focused", kind: "model", result: "unconfirmed", reason: "", evidence: [] },
-];
-
-function run(actions: Action[], roles: ActionInput["roles"] = {}) {
-  return evaluateActions({ facts, checks, pack: { ...emptyPack("acme/widgets"), actions }, roles });
+function run(lists: Partial<PolicyActions>, verdict: VerdictWord = "pass", roles: ActionInput["roles"] = {}, events = facts.events) {
+  const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), ...lists } };
+  return evaluateActions({ facts: { ...facts, events }, checks: [], verdict, reason: "passes the repository's policy", pack, roles });
 }
 
 function targets(steps: SuggestedAction[]) {
@@ -40,45 +35,18 @@ function say(body: string): Do {
   return { kind: "comment", target: { body } };
 }
 
-function branching(when: Action["when"], refs: CheckRef[]): Action {
-  return { id: "a", when, checks: refs, branches: { yes: [say("yes")], no: [say("no")], unsure: [say("unsure")] } };
-}
-
-function always(dos: Do[]): Action {
-  return { id: "a", when: "every", checks: [], branches: { always: dos } };
-}
+const SAYS = { pass: [say("pass")], fail: [say("fail")], unsure: [say("unsure")] };
 
 describe("evaluateActions", () => {
-  test.each<[string, Action, string[]]>([
-    ["all pass picks yes", branching(["opened"], ["ci-green"]), ["yes"]],
-    ["any fail picks no", branching(["opened"], ["ci-green", "max-files-changed", "focused"]), ["no"]],
-    ["unconfirmed picks unsure", branching(["opened"], ["ci-green", "focused"]), ["unsure"]],
-    ["no checks runs always", always([say("always")]), ["always"]],
-    ["an event not in when does nothing", branching(["updated"], ["ci-green"]), []],
-    ["every always matches", branching("every", ["ci-green"]), ["yes"]],
-  ])("%s", (_, action, bodies) => {
-    expect(targets(run([action])).map((t) => (t && "body" in t ? t.body : null))).toEqual(bodies);
-  });
-
-  test("wakes when its When names any of the run's events", () => {
-    const woken = evaluateActions({ facts: { ...facts, events: ["updated", "checks"] }, checks, pack: { ...emptyPack("acme/widgets"), actions: [branching(["checks"], ["ci-green"])] }, roles: {} });
-    expect(woken.map((a) => a.branch)).toEqual(["yes"]);
-  });
-
-  test("names the checks behind the branch", () => {
-    expect(run([branching(["opened"], ["ci-green", "max-files-changed"])])).toEqual([
-      { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", target: { body: "no" }, reason: "Max files changed failed." },
-    ]);
-  });
-
-  test("skips an action whose custom check is switched off", () => {
-    const pack = { ...emptyPack("acme/widgets"), custom: [{ id: "custom-1", name: "Vendor", group: "code-vs-ci" as const, enabled: false, kind: "rule" as const, rule: "paths-unchanged" as const, globs: ["vendor/**"] }], actions: [branching(["opened"], ["custom-1"])] };
-    const { checks: ran } = deriveState(facts, undefined, pack);
-    expect(evaluateActions({ facts, checks: ran, pack, roles: {} })).toEqual([{ id: "a", skipped: true, reason: "Vendor is off in this policy." }]);
-  });
-
-  test("skips an action whose check is off in the pack", () => {
-    expect(run([branching(["opened"], ["ci-green", "docs"])])).toEqual([{ id: "a", skipped: true, reason: "Docs is off in this policy." }]);
+  test.each<[string, VerdictWord, PolicyActions["when"], ActionInput["facts"]["events"], string[]]>([
+    ["a pass runs the pass list", "pass", ["opened"], ["opened"], ["pass"]],
+    ["a fail runs the fail list", "fail", ["opened"], ["opened"], ["fail"]],
+    ["an unsure verdict runs the unsure list", "unsure", ["opened"], ["opened"], ["unsure"]],
+    ["an event the policy does not name runs nothing", "pass", ["updated"], ["opened"], []],
+    ["any of the run's events wakes it", "pass", ["checks"], ["updated", "checks"], ["pass"]],
+    ["catch-up wakes it whatever it names", "pass", ["updated"], ["catch-up"], ["pass"]],
+  ])("%s", (_, verdict, when, events, bodies) => {
+    expect(targets(run({ ...SAYS, when }, verdict, {}, events)).map((t) => (t && "body" in t ? t.body : null))).toEqual(bodies);
   });
 
   test.each<[string, Do, unknown[]]>([
@@ -93,7 +61,7 @@ describe("evaluateActions", () => {
     ["a review request already satisfied is omitted", { kind: "request-review", target: { to: "users", users: ["alice", "bob"] } }, []],
     ["closing an open pull request stands", { kind: "close", target: {} }, [{}]],
   ])("%s", (_, task, expected) => {
-    expect(targets(run([always([task])]))).toEqual(expected);
+    expect(targets(run({ pass: [task] }))).toEqual(expected);
   });
 
   test("resolves people targets and skips the ones that cannot apply", () => {
@@ -104,46 +72,48 @@ describe("evaluateActions", () => {
       { kind: "assign", target: { to: "author" } },
       { kind: "assign", target: { to: "teams", teams: ["core"] } },
     ];
-    const base = { id: "a", branch: "always" } as const;
+    const reason = "passes the repository's policy";
     const effectId = expect.any(String);
-    expect(run([always(dos)], { leads: { users: ["dave", "octocat"], teams: ["@acme/core"] } })).toEqual([
-      { ...base, index: 0, effectId, kind: "request-review", target: { users: ["dave"], teams: ["core"] }, reason: "Always applies." },
-      { ...base, index: 1, kind: "request-review", skipped: true, reason: "Role ghost is not defined in the repository settings." },
-      { ...base, index: 2, kind: "request-review", skipped: true, reason: "No reviewer is left once the author is excluded." },
-      { ...base, index: 3, effectId, kind: "assign", target: { users: ["octocat"] }, reason: "Always applies." },
-      { ...base, index: 4, kind: "assign", skipped: true, reason: "Assignees must be users and this target names none." },
+    expect(run({ pass: dos }, "pass", { leads: { users: ["dave", "octocat"], teams: ["@acme/core"] } })).toEqual([
+      { list: "pass", index: 0, effectId, kind: "request-review", target: { users: ["dave"], teams: ["core"] }, reason },
+      { list: "pass", index: 1, kind: "request-review", skipped: true, reason: "Role ghost is not defined in the repository settings." },
+      { list: "pass", index: 2, kind: "request-review", skipped: true, reason: "No reviewer is left once the author is excluded." },
+      { list: "pass", index: 3, effectId, kind: "assign", target: { users: ["octocat"] }, reason },
+      { list: "pass", index: 4, kind: "assign", skipped: true, reason: "Assignees must be users and this target names none." },
     ]);
   });
 
   test("an effect id is stable across hash implementations", () => {
     // Effect ids are stored idempotency keys; this value was produced with node:crypto.
-    const ref = { repo: "o/r", number: 8, headSha: "abc123", actionId: "tag\ud800", branch: "yes", index: 0, kind: "comment", target: { body: "xy é🚀" } } as const;
-    expect(doEffectId(ref)).toBe("fedf9f56631a9cbfed3995eb60019f5799a81b771a2e670df7d5c70a70979dac");
+    const ref = { repo: "o/r", number: 8, headSha: "abc123", list: "pass", index: 0, kind: "comment", target: { body: "xy é🚀" } } as const;
+    expect(doEffectId(ref)).toBe("7e611cf1aaf437e896b5f4aa1aca8b51f80a15ceb9883911e353cae40cd6fa8f");
   });
 
   test("a step keeps its index when steps before it are satisfied or skipped", () => {
-    const behind = run([always([
+    const behind = run({ pass: [
       { kind: "labels", target: { from: "list", labels: ["api"] } },
       { kind: "assign", target: { to: "teams", teams: ["core"] } },
       say("hello"),
-    ])]);
-    const ref = { repo: "acme/widgets", number: 8, headSha: "abc", actionId: "a", branch: "always", index: 2, kind: "comment", target: { body: "hello" } } as const;
+    ] });
+    const ref = { repo: "acme/widgets", number: 8, headSha: "abc", list: "pass", index: 2, kind: "comment", target: { body: "hello" } } as const;
     expect(behind).toEqual([expect.objectContaining({ kind: "assign", index: 1, skipped: true }), expect.objectContaining({ kind: "comment", index: 2, effectId: doEffectId(ref) })]);
   });
 
   test("a Do inserted earlier by a pack edit does not take the id of the Do that held its index", () => {
-    const [before] = run([always([say("hello")])]) as SuggestedDo[];
-    const [inserted, moved] = run([always([{ kind: "labels", target: { from: "list", labels: ["search"] } }, say("hello")])]) as SuggestedDo[];
+    const [before] = run({ pass: [say("hello")] }) as SuggestedDo[];
+    const [inserted, moved] = run({ pass: [{ kind: "labels", target: { from: "list", labels: ["search"] } }, say("hello")] }) as SuggestedDo[];
     expect(inserted!.effectId).not.toBe(before!.effectId);
     expect(moved!.effectId).not.toBe(before!.effectId);
   });
 });
 
 describe("holdDos", () => {
-  test("close on unsure, and close or an agent without checks, are held though the pr-triage role holds them; elsewhere they run", () => {
-    const close = (branch: SuggestedDo["branch"]): SuggestedDo => ({ id: "c", branch, index: 0, kind: "close", reason: "", effectId: `e-${branch}`, target: {} });
-    expect(holdDos([close("unsure"), close("always"), close("no")], ["close"]).map((action) => "held" in action)).toEqual([true, true, false]);
-    expect(alwaysHeld("always", "agent")).toBe(true);
-    expect(alwaysHeld("yes", "agent")).toBe(false);
+  test("close or an agent on unsure is held though the pr-triage role holds it; on fail it runs", () => {
+    function step(list: VerdictWord, kind: "close" | "agent"): SuggestedDo {
+      return { list, index: 0, kind, reason: "", effectId: `e-${list}-${kind}`, target: kind === "close" ? {} : { prompt: "fix", tools: [] } };
+    }
+    expect(holdDos([step("unsure", "close"), step("fail", "close")], ["close"]).map((action) => "held" in action)).toEqual([true, false]);
+    expect(alwaysHeld("unsure", "agent")).toBe(true);
+    expect(alwaysHeld("fail", "agent")).toBe(false);
   });
 });
