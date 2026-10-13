@@ -18,7 +18,7 @@ export function AcceptInvite({ token }: { token: string }) {
     async function accept() {
       const transport = createHubTransport();
       try {
-        await openWorkspace(await acceptInvitation(transport, token));
+        await openWorkspace(await acceptInvitation(transport, token), "/inbox");
       } catch (cause: unknown) {
         const message = cause instanceof Error ? cause.message : String(cause);
         let workspaceId: string | null = null;

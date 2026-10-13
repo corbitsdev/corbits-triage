@@ -17,6 +17,7 @@ import { describePermission, permissionCatalog, type Permission } from "../lib/p
 import { activeGithubCredential, currentDeployment, githubAppSlugFromCredentials, hasActiveGithubCredential, type DeployedWorkflow, type HubCredential, type HubGrant, type HubPrincipal, type HubRole } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useGithubReturnSync } from "../lib/github-return-sync.ts";
+import { useGithubManageAccess } from "../lib/github-sync.ts";
 import { useAllowed, useDeployedWorkflows, useGrants, usePrincipals, useRoles, type TenantSection } from "../lib/tenant-entities.ts";
 import { WORKFLOW_PACKAGES } from "../lib/workflow-packages.ts";
 import { useSession } from "../lib/session.tsx";
@@ -533,6 +534,7 @@ export default function Settings() {
   const canManageRoles = useAllowed("role:*", "manage");
   const canCreateGrants = useAllowed("grant:*", "create");
   const canManageGrants = useAllowed("grant:*", "manage");
+  const canManageGithub = useGithubManageAccess().data === true;
   const permissions = permissionCatalog(activeGithubCredential(credentials)?.id ?? null);
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   async function syncAfterGithub() {
@@ -604,8 +606,12 @@ export default function Settings() {
                 </dl>
                 <h2>Webhook</h2>
                 <div className="hook-url"><code>{webhookUrl}</code></div>
-                <button type="button" className="btn primary" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</button>
-                <p className="field-help">GitHub’s installer. New repos come back here for check setup.</p>
+                {canManageGithub && (
+                  <>
+                    <button type="button" className="btn primary" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</button>
+                    <p className="field-help">GitHub’s installer. New repos come back here for check setup.</p>
+                  </>
+                )}
                 {deniedRepos && <DeniedNotice section="repositories" />}
                 {repos.length === 0 && !deniedRepos && <p className="muted">No repositories configured.</p>}
                 {repos.map((repo) => (

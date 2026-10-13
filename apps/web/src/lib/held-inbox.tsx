@@ -138,14 +138,14 @@ export function useSignOutAfterSending(): () => Promise<void> {
 }
 
 /** Sends what is held against the open workspace before another one opens. */
-export function useOpenWorkspaceAfterSending(): (tenantId: string) => Promise<void> {
+export function useOpenWorkspaceAfterSending(): (tenantId: string, path?: string) => Promise<void> {
   const { flush } = useHeldInbox();
   const { openWorkspace } = usePortal();
   const navigate = useNavigate();
-  return useCallback(async function openWorkspaceAfterSending(tenantId: string) {
+  return useCallback(async function openWorkspaceAfterSending(tenantId: string, path = "/") {
     await flush();
     openWorkspace(tenantId);
-    navigate("/");
+    navigate(path);
   }, [flush, navigate, openWorkspace]);
 }
 
