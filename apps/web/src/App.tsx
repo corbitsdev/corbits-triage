@@ -20,6 +20,7 @@ import { Device, DEVICE_PATH } from "./pages/Device.tsx";
 import { ResetPassword } from "./pages/ResetPassword.tsx";
 import { RESET_PASSWORD_PATH } from "./lib/hub-auth.ts";
 import { Welcome } from "./pages/Welcome.tsx";
+import Audit from "./pages/Audit.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
 import Pulse from "./pages/Pulse.tsx";
@@ -170,7 +171,7 @@ function Gate() {
         <Route path="/triage/*" element={<InboxRedirect />} />
         <Route path="/queue/*" element={<InboxRedirect />} />
         <Route path="/approvals" element={<InboxRedirect />} />
-        <Route path="/audit" element={<InboxRedirect />} />
+        <Route path="/audit" element={<Audit />} />
         <Route path="/runs/*" element={<InboxRedirect />} />
         <Route path="/repositories/:owner?/:repo?" element={<Repositories />} />
         <Route path="/settings" element={<Settings />} />

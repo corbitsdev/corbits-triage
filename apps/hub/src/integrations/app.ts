@@ -6,8 +6,9 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import type { DB } from "@intx/db";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AUTHOR_KINDS, checkPackSchema, DeployedVersions, InviteRoles, InviteSent, repoPolicySchema, SessionList, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, checkPackSchema, DeployedVersions, InviteRoles, InviteSent, repoPolicySchema, SessionList, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
+import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
 import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
@@ -56,6 +57,7 @@ export type IntegrationHandlers = {
   triageStats: MemberHandler;
   triageTimeline: MemberHandler;
   triageVerdicts: MemberHandler;
+  audit: MemberHandler;
   workflowDeploy: BodyHandler<typeof DeployBody.infer>;
   workflowVersions: (member: Member) => Promise<Response>;
   invitations: {
@@ -413,6 +415,26 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     requireGrant("workflow-run:*", "read"),
     function triageVerdicts(c) {
       return handlers.triageVerdicts(c.req.raw, memberOf(c));
+    },
+  );
+
+  app.get(
+    `${AUDIT_PATH}/:tenantId`,
+    describeRoute({
+      summary: "What the workspace recorded, newest first",
+      description: "Needs `workflow-run:*` read. Reads only what is already stored: recorded verdicts and the Dos their runs ran (at the verdict's time; no separate time is recorded), held Do approvals from the run logs of the workflow's runs without a verdict, check pack versions, members and invites, grants, and workflow deployments and how they ended. Withdrawn invites and removed grants leave no row, so they are not listed. `actor` is the person's email or principal id, `Triage` for the workflow, `hub` for a deployment the hub failed or replaced, or `unknown` where the store does not say. With `repo`, only that repository's verdicts, Dos, approvals and checks.",
+      tags: TAGS,
+      parameters: [
+        { in: "query", name: "repo", required: false, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
+        { in: "query", name: "since", required: false, schema: { type: "string", format: "date-time" } },
+        { in: "query", name: "limit", required: false, schema: { type: "integer", minimum: 1, maximum: 500, default: 100 } },
+      ],
+      responses: { 200: json("Recorded events, newest first", AuditLog), ...invalid, 401: failures[401], 403: failures[403] },
+    }),
+    member,
+    requireGrant("workflow-run:*", "read"),
+    function audit(c) {
+      return handlers.audit(c.req.raw, memberOf(c));
     },
   );
 

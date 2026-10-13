@@ -62,6 +62,7 @@ import { createSessions } from "./sessions.js";
 import { migrateTriageTables } from "./triage-db.js";
 import { createTriageStats } from "./github/triage-stats.js";
 import { createTriageTimeline } from "./github/triage-timeline.js";
+import { createAuditLog } from "./audit-log.js";
 import { createRunRecorder } from "./github/run-recorder.js";
 import { createRecordPass, createTenantObserver, createTenantVersions } from "./github/tenant-observer.js";
 import { createTriageVerdicts } from "./github/triage-verdicts.js";
@@ -477,6 +478,14 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     openPulls: openPullsCache,
     githubApiOrigin: githubOrigin,
     now,
+  }),
+  audit: createAuditLog({
+    db: composition.db,
+    artifacts: composition.db,
+    runReader: composition.runReader,
+    sameSource: deploymentRotation.sameSource,
+    authorize: authorizePortal,
+    workflow: prTriageWorkflow.id,
   }),
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),

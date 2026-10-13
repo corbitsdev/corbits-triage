@@ -143,3 +143,9 @@ export const DeployedVersions = type({
   }).array(),
 });
 export type DeployedVersions = typeof DeployedVersions.infer;
+
+/** One thing the workspace recorded; `actor` is a person's email or principal id, `Triage` for the workflow, `hub` for the hub itself, or `unknown`. */
+export const AuditEntry = type({ time: "string", actor: "string", action: "string", target: "string", detail: "string" });
+export type AuditEntry = typeof AuditEntry.infer;
+export const AuditLog = type({ entries: AuditEntry.array() });
+export type AuditLog = typeof AuditLog.infer;
