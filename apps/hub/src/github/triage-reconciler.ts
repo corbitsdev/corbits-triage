@@ -8,7 +8,7 @@ import type { CheckPackRead } from "./check-pack-store.js";
 import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { repoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
-import { newestLive, type LiveDeployment, type Redeployed } from "./deployment.js";
+import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
@@ -30,6 +30,8 @@ export type TriageReconcilerDeps = {
   tenants: () => Promise<ReconcileTenant[]>;
   /** The tenant's live pr-triage deployments, newest first: the portal's and the copies the hub deploys to replace them. */
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
+  /** The tenant's newest `limit` pr-triage deployments, live or ended, newest first. */
+  latestDeployments: (tenantId: string, limit: number) => Promise<DeploymentRecord[]>;
   rotation: DeploymentRotation;
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
   /** Reads and records the live deployments' runs, shared with the recording loop. */
@@ -49,8 +51,18 @@ type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: Ope
 type LoadedRepo = EnabledRepo & { pack: CheckPack; prs: OpenPr[]; stored: LoadedTriageState };
 type Failure = { repo: string; error: unknown };
 
-/** `retry` asks for another pass soon: a deployment was not routable yet. */
+/** `retry` asks for another pass soon: a deployment was not routable yet, or is being redeployed. */
 export type ReconcileOutcome = { retry: boolean };
+
+/** A failed deployment is left this long first, so a portal visit can bring one back. */
+const HEAL_AFTER_MS = 2 * 60_000;
+/** Failed deployments of one source in a row, within `HEAL_CAP_WINDOW_MS`, after which no more copies are made. */
+const HEAL_CAP = 3;
+const HEAL_CAP_WINDOW_MS = 60 * 60_000;
+
+function failedByInterchange(deployment: DeploymentRecord): deployment is DeploymentRecord & { endedAt: Date } {
+  return deployment.status === "failed" && !deployment.cancelling && deployment.endedAt !== null;
+}
 
 function enabledRepos(config: unknown): EnabledRepo[] {
   return repoRecords(triageNs(config)).flatMap(function enabled(record) {
@@ -272,7 +284,50 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     return settle(tenant.id, record, after, runningOn, now);
   }
 
-  /** True when a delivery failed: the deployment was not routable yet, so the pass is worth repeating soon. */
+  /** Whether the newest `HEAL_CAP` deployments all failed within the window, from the same source. */
+  async function healCapped(latest: readonly DeploymentRecord[], now: number): Promise<boolean> {
+    if (latest.length < HEAL_CAP) return false;
+    if (!latest.every((deployment) => failedByInterchange(deployment) && now - deployment.endedAt.getTime() < HEAL_CAP_WINDOW_MS)) return false;
+    for (const older of latest.slice(1)) {
+      if (!await deps.rotation.sameSource(latest[0]!.runId, older.runId)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * With no live deployment, the newest one is deployed again from its launch
+   * spec when Interchange failed it, rather than someone cancelling it. True
+   * when a pass soon is worth it: the failure is still recent, or a copy was
+   * just made and its sidecar is starting.
+   */
+  async function heal(tenantId: string): Promise<boolean> {
+    const latest = await deps.latestDeployments(tenantId, HEAL_CAP);
+    const failed = latest[0];
+    if (failed === undefined || !failedByInterchange(failed)) return false;
+    const now = deps.now().getTime();
+    if (now - failed.endedAt.getTime() < HEAL_AFTER_MS) return true;
+    if (await healCapped(latest, now)) {
+      deps.log({ level: "warn", msg: "triage_heal_capped", tenantId, deployment: failed.runId });
+      return false;
+    }
+    // The portal may have deployed while this pass read; a copy of the old source would then outrank it.
+    if ((await deps.liveDeployments(tenantId)).length > 0) return true;
+    let redeployed: Redeployed;
+    try {
+      redeployed = await deps.rotation.redeploy(tenantId, failed.runId);
+    } catch (error) {
+      deps.log({ level: "warn", msg: "triage_heal_skipped", tenantId, deployment: failed.runId, reason: String(error) });
+      return false;
+    }
+    if (redeployed.status === "skipped") {
+      deps.log({ level: "warn", msg: "triage_heal_skipped", tenantId, deployment: failed.runId, reason: redeployed.reason });
+      return false;
+    }
+    deps.log({ level: "info", msg: "triage_deployment_healed", tenantId, deployment: failed.runId, replacedBy: redeployed.runId });
+    return true;
+  }
+
+  /** True when the pass is worth repeating soon: a delivery failed because the deployment was not routable yet, or a failed one is being redeployed. */
   async function reconcileTenant(tenant: ReconcileTenant): Promise<boolean> {
     const repos = enabledRepos(tenant.config);
     if (repos.length === 0) return false;
@@ -280,7 +335,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const { deployments, observed } = await deps.observeTenant(tenant.id, tenant.domain);
     if (deployments.length === 0) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
-      return false;
+      return heal(tenant.id);
     }
     const openHeads = await deps.openHeadsFor(tenant.id);
     if (!openHeads) {

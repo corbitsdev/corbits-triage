@@ -276,6 +276,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       return [tenant()];
     },
     liveDeployments,
+    latestDeployments: async () => [],
     rotation: {
       afterRuns: options.rotateAfterRuns ?? 1_000,
       async redeploy(_tenantId, anchorRunId) {
