@@ -100,7 +100,7 @@ export interface RenderInput {
   /** How the per-file checks are asked and which files they could not read. */
   plan?: QualityPlan;
   /** How focused is asked, from the same evaluation as `plan`; undefined when it does not apply. */
-  focused: FocusedPlan | undefined;
+  focused?: FocusedPlan;
   judgeError?: string;
   judgeLimitExceeded?: true;
   judgeSkipped?: true;
@@ -182,7 +182,8 @@ function sides({ probabilities }: ChoiceAnswer): { serves: number; separate: num
 }
 
 /** The focused slices whose answers call them a separate change, for the follow-up file questions. */
-export function separateSlices({ decisions }: ParsedAnswers, focused: FocusedPlan): string[] {
+export function separateSlices({ decisions, malformed }: ParsedAnswers, focused: FocusedPlan): string[] {
+  if (malformed) return [];
   return Object.keys(focused.slices).filter(function separate(id) {
     const answer = decisions[id];
     return answer?.type === "choice" && sides(answer).separate >= FOCUSED_DECIDES;

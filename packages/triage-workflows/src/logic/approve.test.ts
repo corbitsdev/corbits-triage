@@ -36,7 +36,7 @@ const pack: CheckPack = {
 function suggested(using: CheckPack, over: Partial<PrFacts> = {}) {
   const pr = { ...facts, ...over };
   const det = deriveState(pr, undefined, using);
-  const rendered = renderVerdict({ author: pr.author, repo: pr.repo, headSha: pr.headSha, det, answers: null, focused: undefined, threshold: 0 });
+  const rendered = renderVerdict({ author: pr.author, repo: pr.repo, headSha: pr.headSha, det, answers: null, threshold: 0 });
   return heldApprovals(evaluateActions({ facts: pr, checks: rendered.checks, pack: using, roles: {} }), approvalHeldBy(rendered.merge.verdict, pr.checks));
 }
 
