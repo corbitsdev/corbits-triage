@@ -443,11 +443,10 @@ function say(body: string) {
   return [{ do: "comment", target: { body } }];
 }
 
-// Stored before verdicts were words, so the preview reads it as one policy whose pass list labels.
 const SAVED_PACK = {
   ...emptyPack(REPO),
   checks: { "ci-green": { enabled: true } },
-  actions: [{ id: "tag", when: "every", checks: ["ci-green"], branches: { yes: [{ kind: "labels", target: { from: "list", labels: ["checked"] } }] } }],
+  actions: { when: ["opened", "updated", "checks", "ready"], pass: [{ do: "labels", target: { from: "list", labels: ["checked"] } }], fail: [], unsure: [] },
 };
 
 const JUDGED_PACK = {

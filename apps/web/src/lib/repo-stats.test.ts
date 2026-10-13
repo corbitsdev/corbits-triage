@@ -35,7 +35,7 @@ function Panel({ store }: { store: RepoPackStore }) {
   return createElement(Fragment, null,
     createElement(TriageStrip, { stats }),
     createElement(ChecksSection, { draft: DRAFT, saved: DRAFT.pack, stats, disabled: false, edit: noop, problem: null }),
-    createElement(VerdictList, { list: "pass", dos: DRAFT.pack.actions.pass, roles: [], alone: undefined, fired: stats?.actions.pass, disabled: false, onChange: noop }),
+    createElement(VerdictList, { list: "pass", dos: DRAFT.pack.actions.pass, alone: undefined, fired: stats?.actions.pass, disabled: false, onChange: noop }),
   );
 }
 

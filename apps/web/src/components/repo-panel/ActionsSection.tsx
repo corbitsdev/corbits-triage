@@ -34,7 +34,6 @@ export default function ActionsSection({ repo, draft, stats, disabled, edit, pro
           key={list}
           list={list}
           dos={actions[list]}
-          roles={Object.keys(draft.policy.roles)}
           alone={known ? alone : undefined}
           fired={stats?.actions[list]}
           disabled={disabled}

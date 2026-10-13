@@ -558,7 +558,6 @@ describe("repository policy config", () => {
 
     await saveRepoSettings(transport, "tenant", "acme/one", {
       enabled: false,
-      roles: {},
     }, false);
 
     expect(config.other).toBe(1);
@@ -569,7 +568,6 @@ describe("repository policy config", () => {
       connected: true,
       installationId: 9,
       enabled: false,
-      roles: {},
     });
     expect(ns.repos[0]).not.toHaveProperty("checkPack");
     expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, installationId: 3 });
@@ -700,7 +698,7 @@ describe("pending maintainer write approvals", () => {
   });
 });
 
-test("a preview posts the draft pack and roles, so unsaved edits are previewed", async () => {
+test("a preview posts the draft pack, so unsaved edits are previewed", async () => {
   const sent: Array<{ method: string; path: string; body: unknown }> = [];
   const transport: Transport = {
     async fetch(method, path, body) {
@@ -709,8 +707,7 @@ test("a preview posts the draft pack and roles, so unsaved edits are previewed",
     },
     subscribe: () => () => {},
   };
-  const pack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), unsure: [{ kind: "close" as const, target: {} }] } };
-  const roles = { maintainers: { users: ["ada"] } };
-  await previewPull(transport, "tenant", { repo: "acme/widgets", number: 12, pack, roles });
-  expect(sent).toEqual([{ method: "POST", path: "/api/integrations/github-preview/tenant", body: { repo: "acme/widgets", number: 12, pack, roles } }]);
+  const pack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), unsure: [{ do: "close" as const }] } };
+  await previewPull(transport, "tenant", { repo: "acme/widgets", number: 12, pack });
+  expect(sent).toEqual([{ method: "POST", path: "/api/integrations/github-preview/tenant", body: { repo: "acme/widgets", number: 12, pack } }]);
 });

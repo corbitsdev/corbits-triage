@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { appLogin, authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-reads";
-import { CheckOutputSchema, checkName, checkPackSchema, emptyPack, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { CheckOutputSchema, checkName, checkPackSchema, emptyPack, readCheckPack, repoPolicy, TRIAGE_EVENTS, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { rules, type RulesItem } from "@corbits/triage-workflows/actions/rules";
@@ -27,7 +27,6 @@ export const PreviewBody = type({
   repo: /^[\w.-]+\/[\w.-]+$/,
   number: "number.integer > 0",
   "pack?": checkPackSchema,
-  "roles?": repoPolicySchema.get("roles"),
   "event?": type.enumerated(...TRIAGE_EVENTS),
 });
 
@@ -185,10 +184,10 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
       pack = stored.pack;
     }
     const manager = await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage");
-    const policy = repoPolicy(body.roles !== undefined && manager ? { ...record, roles: body.roles } : record);
+    const policy = repoPolicy(record);
     const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId);
 
-    // A candidate pack's steps name the teams whose membership is read from GitHub, so only those who may save roles can try them.
+    // A candidate pack's steps name the teams whose membership is read from GitHub, so only those who may manage the workspace can try them.
     const trusted = candidate === undefined || manager ? pack : emptyPack(repo);
     // The preview never asks the judge, so it reads no docs.
     const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: { docs: {}, rules: {} } }, trusted);
@@ -205,7 +204,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
       result: c.kind === "model" && c.reason === NEEDS_JUDGE_REASON ? "needs-judge" as const : c.result,
     }));
     const waits = reason === NEEDS_JUDGE_REASON ? "waits-on-judge" as const : verdict.actions;
-    const actions = previewActions({ facts: judged.facts, checks: verdict.checks, verdict: word, reason, pack, roles: policy.roles }, waits);
+    const actions = previewActions({ facts: judged.facts, checks: verdict.checks, verdict: word, reason, pack }, waits);
     return Response.json({
       repo,
       number,

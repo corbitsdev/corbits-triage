@@ -171,7 +171,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }),
     });
-    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, roles: it.roles ?? {} } : undefined;
+    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack } : undefined;
     // A degraded verdict is incomplete, and a draft or closed pull request is not decided, so nothing is suggested from either.
     const decided = rendered.degraded === null && (it.det.needsJudgment || rendered.verdict === "fail");
     const suggested = actionInput && decided ? evaluateActions(actionInput) : [];

@@ -32,7 +32,7 @@ function people(target: Record<string, unknown>, repo: string): string {
   return listed([...strings(target.users).map((user) => `@${user}`), ...strings(target.teams).map((slug) => `@${owner}/${slug}`)], "and");
 }
 
-/** A Do as the hub resolved it: roles are people by now, and Dos already true on the pull request are left out. */
+/** A Do as the hub resolved it: Dos already true on the pull request are left out. */
 function resolvedDoText(step: PreviewDo, repo: string): string {
   if (step.skipped) return `skip ${DO_NAMES[step.kind].toLowerCase()} (${step.reason.replace(/\.$/, "")})`;
   return resolvedAction(step, step.target ?? {}, repo);

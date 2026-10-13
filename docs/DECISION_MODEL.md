@@ -67,7 +67,7 @@ Rules learned while tuning, which match TypeSafe's [jagged edges](https://docs.t
 - **One judgment per question.** Split "and" conditions into separate questions and combine them in code.
 - **Phrase it so yes means yes.** Negated or inverted questions do worse.
 - **Choice leans toward the first option.** Reorder options and check the answer holds.
-- **Keep counting, math, dates and paths in code.** Rules over GitHub data cover size, paths, titles and labels.
+- **Keep counting, math, dates and paths in code.** Built-in rules over GitHub data cover size, paths, issues, conflicts and CI.
 - **Irrelevant state costs accuracy.** TypeSafe reports accuracy falling as unrelated content grows.
 
 ## The unsure band and pass marks
@@ -156,13 +156,13 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 | definition on the local runner (CL-10638), run 1 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
 | definition on the local runner (CL-10638), run 2 | 2026-10-13 | 7, all unsure | 0 | 2, none unsure |
 | definition on the local runner (CL-10638), run 3 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
-| author rules removed from the verdict question (CL-10611) | 2026-10-13 | 5 | 0 | 2, none unsure |
+| author rules removed from the verdict question (CL-10611) | 2026-10-13 | 5 | 0 | 2 (186-no-docs, 187-no-docs), none unsure |
 
 These cover one repository's pull requests. Custom rules and other repositories are unmeasured.
 
 ## Adding a decision-model rule
 
-1. **Prefer a rule.** If GitHub data decides it, use a rule over GitHub data: `paths-unchanged`, `paths-together`, `title-pattern`, `branch-pattern`, `label-required`, `diff-excludes` or `min-approvals`. Who opened the pull request is a step's `for`, not a rule.
+1. **Prefer a built-in rule.** If GitHub data decides it, a built-in rule over GitHub data (size, linked issue, conflicts, CI, forbidden paths) costs no model call. Who opened the pull request is a step's `for`, not a rule.
 2. **Write the question** by the rules above.
 3. **Add it to the repository's policy.** Use the rules section of the repository panel in the portal, or write the policy through the hub's stock artifact route: the artifact titled `check-pack/<owner>/<repo>` under `/api/tenants/{tenantId}/artifacts`, with each save a new version. A file-scoped rule in `custom`:
 

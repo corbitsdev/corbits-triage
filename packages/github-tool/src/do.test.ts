@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { appLogin, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
 import { APPROVE_DO_MARKER } from "./github";
-import { DoNotRunnableError, doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from "./do";
+import { doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from "./do";
 
 type FakeComment = { id: number; user: { login: string; type: string }; body: string };
 type FakeReview = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body?: string };
@@ -9,7 +9,7 @@ type FakeReview = { id: number; user: { login: string; type: string }; state: st
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 /** GitHub holding pull request 8, reviewed by `reviews` and with `approvals` on it, applying writes so a second run sees the first. */
-function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[] } = {}) {
+function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[] } = {}) {
   const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc" }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc" })), ...(seed.approvals ?? [])];
@@ -28,6 +28,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
       return Response.json(reviews.at(-1));
     }
     if (path.includes("/pulls/8/reviews?")) return Response.json(reviews);
+    if (path.includes("/commits/abc/check-runs?")) return Response.json({ check_runs: seed.checkRuns ?? [{ name: "build", status: "completed", conclusion: "success" }] });
     if (path.endsWith("/dismissals")) {
       const review = reviews.find((r) => path.includes(`/reviews/${r.id}/`))!;
       review.state = "DISMISSED";
@@ -104,6 +105,16 @@ describe("executeDo", () => {
     expect(await run(gh, step("merge", {}))).toMatchObject({ status: "done", result: { merged: true } });
     expect(await run(gh, step("merge", {}))).toMatchObject({ status: "satisfied" });
     expect(writes).toEqual([{ method: "PUT", path: "/repos/acme/widgets/pulls/8/merge", body: { sha: "abc" } }]);
+  });
+
+  test("a merge reads CI and reviews again, and refuses unless CI passed, or there is none and the policy allows it, with no changes requested", async () => {
+    const pending = fakeGithub({ checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
+    await expect(run(pending.gh, step("merge", {}))).rejects.toThrow("CI is pending on abc");
+    await expect(run(fakeGithub({ checkRuns: [] }).gh, step("merge", {}))).rejects.toThrow("CI is none on abc");
+    expect(await run(fakeGithub({ checkRuns: [] }).gh, step("merge", { ciOptional: true }))).toMatchObject({ status: "done" });
+    const changes = fakeGithub({ approvals: [{ id: 9, user: { login: "maya", type: "User" }, state: "CHANGES_REQUESTED", commit_id: "abc" }] });
+    await expect(run(changes.gh, step("merge", {}))).rejects.toThrow("changes are requested by maya");
+    expect([...pending.writes, ...changes.writes]).toEqual([]);
   });
 
   test("a reviewer requested or reviewed on this head is not asked again", async () => {

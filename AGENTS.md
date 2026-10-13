@@ -16,7 +16,7 @@
 
 ## How triage is built
 
-- The policy artifact drives everything. A repository's rules, roles and actions live in its policy, stored through the stock tenant artifact route. The workflow reads the policy and derives what to check and what to do; nothing repository-specific is written into workflow code.
+- The policy artifact drives everything. A repository's rules and actions live in its policy, stored through the stock tenant artifact route. The workflow reads the policy and derives what to check and what to do; nothing repository-specific is written into workflow code.
 - The workflow is deterministic. pr-triage is stock primitives: `onTrigger` for mail, `action` for every deterministic step (facts, rules, evaluation, execution, dispatch), `loop` or `childWorkflow` for repetition. An agent exists only where inference happens, which is the judge step for decision-model rules. Never wrap a deterministic step in `defineAgent`.
 - Every external effect is idempotent under its effect id, GitHub writes included. Whether a Do kind runs on its own in a repository is decided in the hub, from the grants of the workspace's `pr-triage` role (`triage-do:<kind>:<owner/name>`), and rides in the trigger mail. The worker holds one tool grant to write Dos, because an action cannot reach a bound credential on the pinned Interchange.
 - Downstream work is another workflow. Reviewing, fixing or de-slopping a pull request is a workflow of its own, started by mail or a signal from a Do. It is never a step inside pr-triage.

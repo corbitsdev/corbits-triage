@@ -54,13 +54,12 @@ export const APPROVE_DO_KIND = "approve-do";
 function legacyDo(step: Step) {
   if (step.for !== undefined || step.do === "merge" || step.do === "nothing") return [];
   if (step.do === "labels" && (step.target.from === "verdict" || step.target.from === "rules")) return [];
-  // Built before grants, those deployments require each Do to say it is not automatic.
-  return [{ kind: step.do, target: "target" in step ? step.target : {}, automatic: false }];
+  return [{ kind: step.do, target: "target" in step ? step.target : {} }];
 }
 
 /** A score row as deployments built before levels read it: `min` on 0 to 10 at its `failBelow`, or 0, which never fails. */
 function legacyCustom(row: CustomCheck) {
-  if (row.kind !== "model" || row.shape !== "score") return row;
+  if (row.shape !== "score") return row;
   const { levels, failBelow, ...rest } = row;
   const at = failBelow === undefined ? 0 : levels.indexOf(failBelow);
   return { ...rest, min: Math.round((at * 10) / (levels.length - 1)) };
@@ -68,13 +67,10 @@ function legacyCustom(row: CustomCheck) {
 
 /**
  * The pack as deployments built before steps read it, mailed as `checkPack` beside the pack itself as `pack`, which
- * they never read: one action on every check whose yes, no and unsure branches are the Pass, Fail and Unsure lists of
- * the steps they can run.
+ * they never read: each list holds the Dos of the steps they can run as the policy means.
  */
 export function legacyCheckPack(pack: CheckPack) {
-  const { when } = pack.actions;
   const [pass, fail, unsure] = VERDICTS.map((list) => pack.actions[list].flatMap(legacyDo));
-  const empty = pass!.length + fail!.length + unsure!.length === 0;
   const { dropped: _dropped, ...rest } = pack;
-  return { ...rest, custom: pack.custom.map(legacyCustom), actions: empty ? [] : [{ id: "policy", when, checks: ["all"], branches: { yes: pass, no: fail, unsure } }] };
+  return { ...rest, custom: pack.custom.map(legacyCustom), actions: { when: pack.actions.when, pass, fail, unsure } };
 }

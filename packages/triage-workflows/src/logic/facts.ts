@@ -1,4 +1,4 @@
-import { reviewedOnHead, type IssueComment, type Review } from "@corbits/github-reads";
+import { checkFailed, latestDecisive, reviewedOnHead, summarizeChecks, type CheckRun, type IssueComment, type Review } from "@corbits/github-reads";
 import { authorAssociation, authorKindOf, stepTeams, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
@@ -26,33 +26,7 @@ export interface PrData {
   labels?: string[];
   assignees?: string[];
 }
-export interface CheckRun {
-  name?: string;
-  status?: string;
-  conclusion?: string | null;
-}
-
-const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required"]);
-
-function failed(run: CheckRun): boolean {
-  return run.conclusion !== undefined && run.conclusion !== null && FAILED.has(run.conclusion);
-}
-
-export function summarizeChecks(runs: CheckRun[]): PrFacts["checks"] {
-  if (!runs.length) return "none";
-  if (runs.some(failed)) return "failure";
-  if (runs.some((r) => r.status !== "completed")) return "pending";
-  return "success";
-}
-
-/** Each reviewer's latest decisive review state, by login; triage's own requests for changes are its verdict, not a reviewer's. */
-function latestDecisive(reviews: Review[]): Map<string, string> {
-  const latest = new Map<string, string>();
-  for (const r of reviews) {
-    if (r.reviewer && r.state && r.state !== "COMMENTED" && r.state !== "PENDING" && !r.triageRequest) latest.set(r.reviewer, r.state);
-  }
-  return latest;
-}
+export type { CheckRun };
 
 function reviewersWith(latest: Map<string, string>, state: string): string[] {
   return [...latest].flatMap(([login, s]) => (s === state ? [login] : []));
@@ -95,7 +69,7 @@ export function buildFacts(
     draft: pr.draft === true,
     mergeable: pr.mergeable ?? null,
     checks: summarizeChecks(checks),
-    failingChecks: checks.filter(failed).flatMap((r) => (r.name ? [r.name] : [])),
+    failingChecks: checks.filter(checkFailed).flatMap((r) => (r.name ? [r.name] : [])),
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,
@@ -239,5 +213,5 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
   const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, events, ...docs, ...membership(data.authorTeams, pack, repo) };
-  return { facts, pack, roles: policy.roles };
+  return { facts, pack };
 }

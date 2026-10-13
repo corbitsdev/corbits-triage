@@ -33,7 +33,7 @@ wakes the policy as if it were opened.
   portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
 - **Repositories**: per repository, its rules, how the verdict is decided,
-  its actions, its roles, a preview against an open pull request, recent
+  its actions, a preview against an open pull request, recent
   stats, the triage switch and **Triage open pull requests again**.
 - **Settings**: the deployed workflow versions, the GitHub App, the decision
   model, invitations, workspace roles and access rules, and the account.
@@ -49,7 +49,7 @@ Each rule says how it is evaluated, in one of two kinds.
 
 | Kind | Evaluates | Cost | Use it for |
 | --- | --- | --- | --- |
-| Rule | GitHub data only: files, diff, title, branch, labels, reviews, CI. No inference. | GitHub API calls. | Anything GitHub already knows. |
+| Rule | GitHub data only: files, size, linked issue, mergeability, reviews, CI. No inference. Built in only. | GitHub API calls. | Anything GitHub already knows. |
 | Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs. |
 
 ### Rules over GitHub data
@@ -63,12 +63,8 @@ conflicts, CI green, No forbidden paths. Two run on every pull request without
 a switch: Not a draft (a draft is never ready) and No changes requested (a
 requested change waits on the author).
 
-Custom rules: paths unchanged, paths changed together, title pattern, branch
-pattern, required label, diff excludes a pattern and minimum approvals. The
-portal no longer offers them, but stored policies may hold them, so they still
-run. Author rules were removed: who opened the pull request is a step's
-**for** (see [Actions](#actions)). A stored author rule is left out, and every
-verdict's reasons say so.
+Custom rules are decision-model rules only (below). Who opened the pull request
+is a step's **for** (see [Actions](#actions)), not a rule.
 
 ### Decision models
 
@@ -181,10 +177,15 @@ In the policy artifact, `for` may be left out for anyone:
 ```
 
 Close never runs on its own on Unsure, and merge never runs on its own on
-anything but Pass. Triage posts its comment when it holds Comment and its
-verdict label when it holds Labels. Approve runs only on a Pass with CI green,
-and merge only on a head whose CI passed; where Triage posts, a later head that
-may not be approved has the approve Do's approvals dismissed. Approvals made
+anything but Pass; a person holding the merge grant may still approve a held
+merge from a Fail or Unsure list. Triage posts its comment when it holds Comment
+and its verdict label when it holds Labels. Approve runs only on a Pass with CI
+green. A merge waits, held with CI's state, until CI passes on the head, or runs
+with no CI only when the policy does not require CI green; when it writes, it
+reads CI and reviews again and refuses while CI has not passed or anyone has
+requested changes. The repository's branch protection stays the backstop.
+Where Triage posts, a later head that may not be approved has the approve Do's
+approvals dismissed. Approvals made
 from the Inbox are never dismissed. Request changes lists the failed rules the
 author must fix, once per head; the automatic mirror dismisses it once none
 still fails.
@@ -197,27 +198,23 @@ them and react through their own webhooks. Their names are stable:
 | Label | When |
 | --- | --- |
 | `triage: pass`, `triage: fail`, `triage: unsure` | The head's verdict. One at a time. |
-| `rule: <rule id>` | A rule that failed on the head, such as `rule: docs` or `rule: ci-green`. |
+| `rule: <rule id>` | A built-in or custom rule that failed on the head, such as `rule: docs` or `rule: ci-green`. Not a draft and No changes requested get none. |
 
 A labels step written `{ "from": "verdict" }` sets the verdict label and
 `{ "from": "rules" }` one label per failed rule; each takes back its own labels
-that no longer apply. Triage's automatic mirror writes the verdict label too
+that no longer apply. A `rule: …` label naming no rule of the policy is the
+repository's own and is never taken back. Triage's automatic mirror writes the verdict label too
 when it holds Labels. Labels earlier versions set (`Triage: Needs changes`,
 `Triage: Needs review`, `Triage: Ready to merge` and the `triage:…` state
 labels) are taken back the next time a head is triaged.
 
 ### Stored policies
 
-Policies saved before steps still read. A list of Dos reads as steps for anyone.
-Agent Dos, labels derived from the type or paths, and author rules no longer run: reading leaves them out, and every
-verdict's reasons name what was left out. A score stored as a minimum on 0 to
-10 reads as levels poor, fair, good and great, failing below the level at the
-same share of the scale (`min` 0 never fails; otherwise fail below the level
-at `round(min × 3 / 10)`, at least fair).
-
-Policies saved before verdicts read as one policy: each action's yes Dos join On
-Pass, no Dos On Fail, unsure Dos On Unsure and Dos without rules all three, except close, which joins On Unsure only; an action woken by no event the policy names is dropped;
-repeated Dos run once and When is every action's together.
+A policy saved before verdicts with no actions (`"actions": []`) reads as empty
+lists. Any other shape from before steps, and any custom rule over GitHub data,
+makes the policy unreadable with a message saying what to remove. Repository
+roles were removed: a step whose target is a role is left out, and every
+verdict's reasons name it.
 
 ## Triage over time
 

@@ -10,7 +10,7 @@ import type { TriageView } from "./view.ts";
  * Something the person applies on GitHub's page, signed in as themselves: a suggested Do, or a step a failing check
  * points to. `values` are the labels, logins or team slugs it adds; a comment carries its `body`, posted only when the
  * person asks, never on its own. `edit-body` opens the description's editor with `body` added to its end,
- * `edit-title` opens the title's editor beside `hint`, `link` opens `href`, and `ready` marks a draft ready for review.
+ * `link` opens `href`, and `ready` marks a draft ready for review.
  */
 /** The Do kinds GitHub's page lets the person apply as themselves; the others run only from the hub. */
 const PAGE_DO_KINDS = ["labels", "assign", "request-review", "comment", "close"] as const satisfies readonly ActionKind[];
@@ -22,13 +22,12 @@ function onPage(kind: ActionKind): kind is PageDoKind {
 
 export type PageAction = {
   id: string;
-  kind: PageDoKind | "edit-body" | "edit-title" | "link" | "ready";
+  kind: PageDoKind | "edit-body" | "link" | "ready";
   title: string;
   why: string;
   values: string[];
   teams: string[];
   body?: string;
-  hint?: string;
   href?: string;
   /** Applied on its own when the person turned that on for the repository. */
   auto: boolean;

@@ -8,7 +8,6 @@ import {
   type CheckRef,
   type ModelShape,
   type PolicyEvent,
-  type RuleKind,
   type VerdictWord,
 } from "@corbits/triage-contracts";
 
@@ -33,16 +32,9 @@ export const DO_NAMES: Record<StepKind, string> = {
   nothing: "Do nothing",
 };
 
-export type CheckKind = { evaluation: "rule"; rule: RuleKind; title: string; line: string } | { evaluation: "model"; shape: ModelShape; title: string; line: string };
+export type CheckKind = { evaluation: "model"; shape: ModelShape; title: string; line: string };
 
 export const CHECK_KINDS: CheckKind[] = [
-  { evaluation: "rule", rule: "paths-unchanged", title: "Paths must not change", line: "Fails when any listed path is touched." },
-  { evaluation: "rule", rule: "paths-together", title: "Paths must change together", line: "When one set of paths changes, another must too." },
-  { evaluation: "rule", rule: "title-pattern", title: "Title matches a pattern", line: "The title must match a regular expression." },
-  { evaluation: "rule", rule: "branch-pattern", title: "Branch matches a pattern", line: "The head branch must match a regular expression." },
-  { evaluation: "rule", rule: "label-required", title: "Label required", line: "A label must be on the pull request." },
-  { evaluation: "rule", rule: "diff-excludes", title: "Diff must not contain", line: "Added lines must not match a regular expression." },
-  { evaluation: "rule", rule: "min-approvals", title: "Minimum approvals", line: "At least this many approvals." },
   { evaluation: "model", shape: "is-true", title: "Is it true that…", line: "Fails when the answer is no." },
   { evaluation: "model", shape: "score", title: "Score", line: "Picks one of its levels; fails only below the level you pick." },
   { evaluation: "model", shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },
@@ -58,7 +50,7 @@ export function checkLabel(pack: CheckPack | null, id: string): string | null {
 
 export function evaluationOf(pack: CheckPack, id: CheckRef): Evaluation {
   if (isCatalogId(id)) return CHECK_CATALOG[id].kind === "machine" ? "rule" : "model";
-  return pack.custom.find((row) => row.id === id)?.kind ?? "rule";
+  return pack.custom.some((row) => row.id === id) ? "model" : "rule";
 }
 
 export function listed(words: string[], joiner: "and" | "or"): string {
@@ -78,7 +70,7 @@ export function quoted(text: string): string {
 export const LIST_NAMES: Record<VerdictWord, string> = { pass: "On Pass", fail: "On Fail", unsure: "On Unsure" };
 
 /**
- * A contract or draft message as the panel shows it, verdict lists and custom rules by name; an id the policy does
+ * A contract or draft message as the panel shows it, custom rules by name; an id the policy does
  * not hold yet is the rule being built.
  */
 export function shownReason(reason: string, pack: CheckPack): string {
@@ -86,8 +78,5 @@ export function shownReason(reason: string, pack: CheckPack): string {
     const rule = pack.custom.find((row) => row.id === id);
     return rule ? `Rule ${quoted(rule.name)}` : "This rule";
   }
-  function list(_: string, word: VerdictWord): string {
-    return LIST_NAMES[word];
-  }
-  return reason.replace(/^Actions when\b/, "When").replace(/^Actions (pass|fail|unsure)\b/, list).replace(/\bCustom rule ([a-z0-9]+(?:-[a-z0-9]+)*)\b/g, namedRule);
+  return reason.replace(/^Actions when\b/, "When").replace(/\bCustom rule ([a-z0-9]+(?:-[a-z0-9]+)*)\b/g, namedRule);
 }

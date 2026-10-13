@@ -3,7 +3,6 @@
 // The description is the first comment on the Conversation tab.
 const BODY_COMMENT = ".js-command-palette-pull-body";
 const BODY_FIELD = 'textarea[name="pull_request[body]"]';
-const TITLE_FIELD = 'input[name="pull_request[title]"], input#issue_title';
 const LABEL_PICKER = 'form[aria-label="Select labels"]';
 
 export const SIGN_IN = "Sign in to GitHub with write access to this repository to apply it.";
@@ -23,23 +22,10 @@ export function openBodyField(): HTMLTextAreaElement | undefined {
   return shown(field) ? field : undefined;
 }
 
-/** The title's editor while it is open. */
-export function openTitleField(): HTMLInputElement | undefined {
-  const field = document.querySelector<HTMLInputElement>(TITLE_FIELD);
-  return shown(field) ? field : undefined;
-}
-
 /** Opens the description's editor with GitHub's own Edit, there only for someone allowed to edit it. */
 export function editBody(): void {
   if (openBodyField()) return;
   const edit = document.querySelector(BODY_COMMENT)?.querySelector<HTMLButtonElement>(".js-comment-edit-button");
-  if (!edit) throw new Error(`Open the Conversation tab. ${SIGN_IN}`);
-  edit.click();
-}
-
-export function editTitle(): void {
-  if (openTitleField()) return;
-  const edit = document.querySelector<HTMLButtonElement>(".js-title-edit-button");
   if (!edit) throw new Error(`Open the Conversation tab. ${SIGN_IN}`);
   edit.click();
 }

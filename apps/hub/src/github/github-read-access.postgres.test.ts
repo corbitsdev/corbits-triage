@@ -158,7 +158,7 @@ test("PostgreSQL: pull request details serve only repositories connected to the 
   expect(await res.json()).toMatchObject({ error: { code: "repo_not_connected" } });
 });
 
-test("PostgreSQL: only a member who may save roles reads the teams a candidate pack's steps are for, so a reader cannot probe team membership", async () => {
+test("PostgreSQL: only a member who may manage the workspace reads the teams a candidate pack's steps are for, so a reader cannot probe team membership", async () => {
   const membership = "GET /orgs/acme/teams/secret/memberships/octocat";
   requested.length = 0;
   const reader = await prPreview(probe(), member("usr_member"), AbortSignal.timeout(30_000));

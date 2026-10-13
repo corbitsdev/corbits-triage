@@ -40,7 +40,6 @@ from `apps/extension`:
 ```sh
 bun e2e/navigation.ts [owner/repo]
 bun --conditions=intx-src e2e/page-actions.ts <owner/repo> <number>
-bun --conditions=intx-src e2e/page-ready.ts <owner/repo> <number> <github token>
 bun --conditions=intx-src e2e/post-comment.ts <owner/repo> <number> <github token>
 bun --conditions=intx-src e2e/injection.ts <owner/repo> <number> <github token>
 ```

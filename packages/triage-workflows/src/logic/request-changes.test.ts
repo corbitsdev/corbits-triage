@@ -37,7 +37,7 @@ function input(over: Partial<PrFacts>, using = pack) {
   const pr = { ...facts, ...over };
   const det = deriveState(pr, undefined, using);
   const rendered = renderVerdict({ author: pr.author, repo: pr.repo, headSha: pr.headSha, det, answers: null, choice: { pass: 0.9, fail: 0.05, cant_tell: 0.05 } });
-  return { rendered, input: { facts: pr, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: using, roles: {} } };
+  return { rendered, input: { facts: pr, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: using } };
 }
 
 function suggested(over: Partial<PrFacts>, using = pack) {

@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, checkName, classificationSources, RULE_LABEL_PREFIX, ruleLabel, stepForAuthor, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckPack, type RepoRole, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { mergeableCi, missingFrom } from "@corbits/github-reads";
+import { alwaysHeld, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, ruleLabel, stepForAuthor, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckPack, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { authorFailures } from "./render.js";
 import { errorText } from "@corbits/common";
@@ -45,7 +45,6 @@ export interface ActionInput {
   /** Why the verdict is what it is, recorded on each Do. */
   reason: string;
   pack: CheckPack;
-  roles: Record<string, RepoRole>;
 }
 
 /** Catch-up runs the policy's actions whatever woke it. */
@@ -63,7 +62,7 @@ function ownTeam(team: string, repo: string): string {
 
 type People = { users: string[]; teams: string[] } | { unresolved: "codeowners" };
 
-function people(step: Extract<Step, { do: "assign" | "request-review" }>, { facts, roles }: ActionInput): People {
+function people(step: Extract<Step, { do: "assign" | "request-review" }>, { facts }: ActionInput): People {
   const t = step.target;
   switch (t.to) {
     case "users":
@@ -74,11 +73,6 @@ function people(step: Extract<Step, { do: "assign" | "request-review" }>, { fact
       return { users: [facts.author], teams: [] };
     case "codeowners":
       return { unresolved: "codeowners" };
-    case "role": {
-      const role = roles[t.role];
-      if (!role) throw new Error(`role ${t.role} is not defined in the repository settings`);
-      return { users: role.users ?? [], teams: (role.teams ?? []).map((team) => ownTeam(team, facts.repo)) };
-    }
   }
 }
 
@@ -107,8 +101,16 @@ function ownsVerdictLabel(label: string): boolean {
   return OWNED_LABELS.has(label.toLowerCase());
 }
 
-function ownsRuleLabel(label: string): boolean {
-  return label.toLowerCase().startsWith(RULE_LABEL_PREFIX);
+/**
+ * The rule labels a labels step writes, and the only `rule: …` labels it takes back: those of the built-in rules and
+ * the policy's own. A repository's other `rule: …` labels are its own. Not a draft and no changes requested say where
+ * the pull request stands, not what to fix, so they get none.
+ */
+function ruleLabels({ checks, pack, facts }: ActionInput): ResolvedTarget {
+  const ids = new Set<string>([...CATALOG_IDS, ...pack.custom.map((row) => row.id)]);
+  const owned = new Set([...ids].map((id) => ruleLabel(id).toLowerCase()));
+  const wanted = checks.filter((c) => c.result === "fail" && ids.has(c.check)).map((c) => ruleLabel(c.check));
+  return derivedLabels(wanted, (label) => owned.has(label.toLowerCase()), facts);
 }
 
 function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): ResolvedTarget {
@@ -117,7 +119,7 @@ function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): Re
       const { target } = step;
       if (target.from === "list") return { labels: target.labels };
       if (target.from === "verdict") return derivedLabels([verdictLabel(input.verdict)], ownsVerdictLabel, input.facts);
-      return derivedLabels(input.checks.filter((c) => c.result === "fail").map((c) => ruleLabel(c.check)), ownsRuleLabel, input.facts);
+      return ruleLabels(input);
     }
     case "assign": {
       const resolved = people(step, input);
@@ -137,8 +139,9 @@ function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): Re
       return { body: changesBody(input) };
     case "comment":
       return step.target;
-    case "approve":
     case "merge":
+      return catalogCheckEnabled(input.pack, "ci-green") ? {} : { ciOptional: true };
+    case "approve":
     case "close":
       return {};
   }
@@ -226,14 +229,21 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
   return changesFor(input).length > 0;
 }
 
-/** Approve Dos are skipped for `approval`, when the head may not be approved, and merge Dos until CI has passed on it. */
+function ciText(ci: PrFacts["checks"]): string {
+  return ci === "none" ? "This head has no CI, and the policy requires CI green." : `CI is ${ci} on this head.`;
+}
+
+/**
+ * Approve Dos are skipped for `approval`, when the head may not be approved. A merge Do whose CI has not passed is
+ * held with why, so a person can still approve it once CI is green; the merge reads CI again before it writes.
+ */
 export function heldApprovals(actions: SuggestedAction[], approval: string | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
-  const merge = ci === "success" ? undefined : "CI has not passed on this head.";
   return actions.map(function held(action): SuggestedAction {
-    const reason = action.kind === "approve" ? approval : action.kind === "merge" ? merge : undefined;
-    if (!("effectId" in action) || reason === undefined) return action;
+    if (!("effectId" in action)) return action;
+    if (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: ciText(ci) };
+    if (action.kind !== "approve" || approval === undefined) return action;
     const { list, index, kind } = action;
-    return { list, index, kind, skipped: true, reason };
+    return { list, index, kind, skipped: true, reason: approval };
   });
 }
 

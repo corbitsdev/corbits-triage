@@ -32,16 +32,3 @@ export function seedNote(onUndo: () => void): SeedNote {
 
   return { element, render };
 }
-
-/** A title rule's pattern beside GitHub's open title editor; Triage cannot write a title for the person, so it says what fits. */
-export function titleHint(): { element: HTMLElement; render(pattern: string | undefined): void } {
-  const element = document.createElement("p");
-  element.className = "seed-note";
-  function render(pattern: string | undefined) {
-    element.hidden = pattern === undefined;
-    const code = document.createElement("code");
-    code.textContent = pattern ?? "";
-    element.replaceChildren("Triage: the title must match ", code);
-  }
-  return { element, render };
-}

@@ -8,7 +8,6 @@ const DECIDES_AT = 70;
 /** How each pull request is decided; read only, since only the rules above change it. */
 export default function VerdictSection({ draft }: { draft: RepoDraft }) {
   const pack = draft.pack;
-  // Requested changes always run.
   const hard = [...CATALOG_IDS, ...pack.custom.map((row) => row.id as CheckRef)]
     .filter((id) => checkOn(pack, id) && evaluationOf(pack, id) === "rule")
     .map((id) => checkName(pack, id))

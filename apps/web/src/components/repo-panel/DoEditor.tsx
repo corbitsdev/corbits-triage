@@ -13,16 +13,15 @@ const LABEL_SOURCES: Array<{ value: LabelsTarget["from"]; label: string }> = [
 
 const RECIPIENTS: Array<{ value: PeopleTarget["to"]; label: string }> = [
   { value: "codeowners", label: "CODEOWNERS" },
-  { value: "role", label: "a role" },
   { value: "users", label: "people" },
   { value: "teams", label: "teams" },
   { value: "author", label: "the author" },
 ];
 
-type DoEditorProps = { step: DoForm; roles: string[]; note?: string; disabled: boolean; onChange: (step: DoForm) => void; onRemove: () => void };
+type DoEditorProps = { step: DoForm; note?: string; disabled: boolean; onChange: (step: DoForm) => void; onRemove: () => void };
 
 /** One step: what it does, its target and whether it runs alone. */
-export default function DoEditor({ step, roles, note, disabled, onChange, onRemove }: DoEditorProps) {
+export default function DoEditor({ step, note, disabled, onChange, onRemove }: DoEditorProps) {
   const recipients = RECIPIENTS.filter((option) => option.value !== "author" || step.kind === "assign");
 
   function set(patch: Partial<DoForm>) {
@@ -54,12 +53,6 @@ export default function DoEditor({ step, roles, note, disabled, onChange, onRemo
             <select className="val" aria-label={step.kind === "assign" ? "Assign to" : "Request review from"} disabled={disabled} value={step.to} onChange={(event) => set({ to: event.target.value as PeopleTarget["to"] })}>
               {recipients.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
-            {step.to === "role" ? (
-              <select className="val" aria-label="Role" disabled={disabled} value={step.role ?? ""} onChange={(event) => set({ role: event.target.value })}>
-                <option value="" disabled>Pick a role</option>
-                {[...new Set([...roles, ...(step.role ? [step.role] : [])])].map((role) => <option key={role} value={role}>{role}</option>)}
-              </select>
-            ) : null}
             {step.to === "users" ? <TokenList values={step.users ?? []} noun="person" placeholder="login" disabled={disabled} onChange={(users) => set({ users })} /> : null}
             {step.to === "teams" ? <TokenList values={step.teams ?? []} noun="team" placeholder="@org/team" disabled={disabled} onChange={(teams) => set({ teams })} /> : null}
           </>

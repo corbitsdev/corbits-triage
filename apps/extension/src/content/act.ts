@@ -3,7 +3,7 @@ import type { PageAction } from "../page-actions.ts";
 import { prFromUrl, prKey, type PrRef } from "../pr.ts";
 import { actionKey } from "../storage.ts";
 import { findCommentBox, setBox } from "./comment-box.ts";
-import { editBody, editTitle, markReady, openBodyField, SIGN_IN } from "./editors.ts";
+import { editBody, markReady, openBodyField, SIGN_IN } from "./editors.ts";
 import { untilPageShows } from "./page-ready.ts";
 import type { Seeder } from "./seeds.ts";
 
@@ -160,9 +160,6 @@ export async function applyAction(pr: PrRef, action: PageAction, seeds: Seeder, 
       editBody();
       await until(openBodyField, EDITOR_WAIT_MS, "GitHub's description editor did not open.");
       seeds.appendBody(actionKey(pr, action.id), action.title, action.body ?? "", true);
-      return;
-    case "edit-title":
-      editTitle();
       return;
     case "ready":
       markReady();

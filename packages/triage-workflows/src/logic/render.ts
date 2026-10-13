@@ -1,4 +1,4 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type Rendered, type RuleCustomCheck, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type Rendered, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { SuggestedAction } from "./actions.js";
 import { hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
@@ -8,8 +8,8 @@ import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, isScoped, p
 
 type NoulAnswer = { type: "noul"; noul: number };
 type ChoiceAnswer = { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number };
-/** `probabilities` are keyed by level index, worst first. */
-type ScoreAnswer = { type: "score"; score: number; probabilities: Record<string, number>; confidence: number };
+/** `legend` names the level each key of `probabilities` stands for. */
+type ScoreAnswer = { type: "score"; score: number; legend: Record<string, string>; probabilities: Record<string, number>; confidence: number };
 type ModelAnswer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
 
 export interface ParsedAnswers {
@@ -77,16 +77,22 @@ function parseDecision(value: Record<string, unknown>): { id: string; answer: Mo
   }
   if (value.type === "score") {
     if (!exactKeys(value, ["id", "type", "score", "legend", "probabilities", "confidence"]) || !probability(value.confidence) || !isRecord(value.probabilities) || !isRecord(value.legend)) return null;
-    const levels = Object.keys(value.legend).length;
-    const indexes = Array.from({ length: levels }, (_, index) => String(index));
-    const { score } = value;
-    if (!exactKeys(value.legend, indexes) || !distribution(value.probabilities, indexes) || typeof score !== "number" || !(score >= 0 && score <= levels - 1)) return null;
-    return { id: value.id, answer: { type: "score", score, probabilities: value.probabilities, confidence: value.confidence } };
+    const { score, legend } = value;
+    const keys = Object.keys(legend);
+    if (!keys.every((key) => typeof legend[key] === "string") || !distribution(value.probabilities, keys) || typeof score !== "number" || !(score >= 0 && score <= keys.length - 1)) return null;
+    return { id: value.id, answer: { type: "score", score, legend: legend as Record<string, string>, probabilities: value.probabilities, confidence: value.confidence } };
   }
   if (value.type !== "choice" || !exactKeys(value, ["id", "type", "choice", "probabilities", "confidence"]) || !probability(value.confidence) || !isRecord(value.probabilities)) return null;
   const { probabilities, choice } = value;
   if (typeof choice !== "string" || !(choice in probabilities) || !distribution(probabilities, Object.keys(probabilities))) return null;
   return { id: value.id, answer: { type: "choice", choice, probabilities, confidence: value.confidence } };
+}
+
+/** A score answer's probabilities by the level its legend names, when those are exactly `levels`. */
+function levelsOver(answer: ModelAnswer | undefined, levels: readonly string[]): Record<string, number> | undefined {
+  if (answer?.type !== "score") return undefined;
+  const byLevel = Object.fromEntries(Object.entries(answer.legend).map(([key, level]) => [level, answer.probabilities[key]!]));
+  return exactKeys(byLevel, [...levels]) && Object.keys(answer.legend).length === levels.length ? byLevel : undefined;
 }
 
 /** The answer's probabilities when they are over exactly `options`. */
@@ -375,7 +381,7 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
     const answer = invalid ? undefined : parsed.decisions[id];
     const noul = answer?.type === "noul" ? answer.noul : undefined;
     if (row.shape === "is-true" && noul !== undefined) push(id, band(noul, true), scored(noul, PASS_AT, []));
-    else if (row.shape === "score" && answer?.type === "score" && Object.keys(answer.probabilities).length === row.levels.length) scoreCheck(row, answer);
+    else if (row.shape === "score" && levelsOver(answer, row.levels)) scoreCheck(row, levelsOver(answer, row.levels)!);
     else if (row.shape === "choose" && choiceOver(answer, row.options)) chooseCheck(row, choiceOver(answer, row.options)!);
     else {
       anyUnanswered = true;
@@ -388,19 +394,17 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
    * The likeliest level is the rule's answer. It fails only below `failBelow`, by how likely the level is below it on
    * the unsure band, and without `failBelow` it always passes.
    */
-  function scoreCheck(row: Extract<ModelCustomCheck, { shape: "score" }>, answer: ScoreAnswer) {
-    const indexes = row.levels.map((_, index) => String(index));
-    const level = row.levels[Number(likeliest(answer.probabilities, indexes))]!;
+  function scoreCheck(row: Extract<CustomCheck, { shape: "score" }>, byLevel: Record<string, number>) {
+    const level = likeliest(byLevel, row.levels);
     const output: CheckOutput = { kind: "level", level, levels: row.levels, ...(row.failBelow && { failBelow: row.failBelow }) };
     const reason = `rated ${level} for ${row.subject}`;
     if (!row.failBelow) return push(row.id, { result: "pass" }, output, [level], reason);
-    const at = row.levels.indexOf(row.failBelow);
-    const below = indexes.slice(0, at).reduce((total, index) => total + answer.probabilities[index]!, 0);
+    const below = row.levels.slice(0, row.levels.indexOf(row.failBelow)).reduce((total, name) => total + byLevel[name]!, 0);
     push(row.id, band(1 - below, true), output, [level], reason);
   }
 
   /** The likeliest option is the rule's answer; it fails by how likely the answer is one of `failOn`, on the unsure band. */
-  function chooseCheck(row: Extract<ModelCustomCheck, { shape: "choose" }>, probabilities: Record<string, number>) {
+  function chooseCheck(row: Extract<CustomCheck, { shape: "choose" }>, probabilities: Record<string, number>) {
     const chosen = likeliest(probabilities, row.options);
     const failing = row.failOn.reduce((total, option) => total + probabilities[option]!, 0);
     push(row.id, band(1 - failing, true), { kind: "values", values: { chosen } }, [chosen], `best described as ${chosen}`);
@@ -428,28 +432,9 @@ function failedStep(c: CheckResult, sources: Sources): Step {
         : { actor: "author", action: `Address requested changes from ${reviewers}` };
     }
     case "focused": return { actor: "author", action: c.evidence.length ? `Split out unrelated change: ${c.evidence.join("; ")}` : "Split out unrelated changes" };
-    default: {
-      const rule = sources?.rules.find((r) => r.id === c.check);
-      if (rule) return ruleStep(rule, c);
-      return { actor: "author", action: c.kind === "model" && sources ? actionText(c.check, sources) : `Fix ${c.check}` };
-    }
+    default: return { actor: "author", action: c.kind === "model" && sources ? actionText(c.check, sources) : `Fix ${c.check}` };
   }
 }
-
-/** Labels and approvals are the maintainer's; everything else names what the author changes. */
-function ruleStep(rule: RuleCustomCheck, c: CheckResult): Step {
-  const where = c.evidence.map(inlineCode).join(", ");
-  switch (rule.rule) {
-    case "paths-unchanged": return { actor: "author", action: `Revert changes under ${where}` };
-    case "paths-together": return { actor: "author", action: `Also change ${rule.requires.map(inlineCode).join(", ")}` };
-    case "title-pattern": return { actor: "author", action: `Retitle to match ${inlineCode(rule.pattern)}` };
-    case "branch-pattern": return { actor: "author", action: `Rename the branch to match ${inlineCode(rule.pattern)}` };
-    case "diff-excludes": return { actor: "author", action: `Remove the excluded content at ${where}` };
-    case "label-required": return { actor: "maintainer", action: `Add label ${inlineCode(rule.label)}` };
-    case "min-approvals": return { actor: "maintainer", action: `Approve (${where})` };
-  }
-}
-
 
 function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
   if (c.check === "no-merge-conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
