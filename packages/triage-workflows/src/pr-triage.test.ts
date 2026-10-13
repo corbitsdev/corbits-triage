@@ -4,20 +4,20 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
-import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, type ActionKind, type CheckPack, type CustomCheck, type Do, type PolicyActions } from "@corbits/triage-contracts";
+import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory, type DoResult } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
-import type { Verdict } from "./logic/render.js";
+import { RULES_PASS_REASON, type Verdict } from "./logic/render.js";
 import { workflow } from "./pr-triage.js";
 import { workflow as historical } from "./pr-triage-historical.js";
 
 const REPO = "acme/widgets";
-const HI: Do[] = [{ kind: "comment", target: { body: "hi" } }];
+const HI: Step[] = [{ do: "comment", target: { body: "hi" } }];
 const HELLO: PolicyActions = { ...defaultActions(), pass: HI, fail: HI, unsure: HI };
-const APPROVE: PolicyActions = { ...defaultActions(), when: ["opened", "updated"], pass: [{ kind: "approve", target: {} }] };
-const REQUEST_CHANGES: PolicyActions = { ...defaultActions(), fail: [{ kind: "request-changes", target: {} }] };
+const APPROVE: PolicyActions = { ...defaultActions(), when: ["opened", "updated"], pass: [{ do: "approve" }] };
+const REQUEST_CHANGES: PolicyActions = { ...defaultActions(), fail: [{ do: "request-changes" }] };
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 type Recorded = { method: string; path: string };
@@ -231,23 +231,18 @@ describe("pr-triage body", () => {
     expect(path).toEqual(RULES_PATH);
     expect(verdict).toMatchObject({ verdict: "fail", score: null, reasons: ["required checks are failing: build"], degraded: null, actions: [{ list: "fail", kind: "comment", target: { body: "hi" } }] });
     expect((verdict as Verdict).checks.find((c) => c.check === "docs")).toMatchObject({ result: "unconfirmed", reason: "not asked" });
-    expect((verdict as Verdict).request.labels).toEqual(["Triage: Needs changes"]);
+    expect((verdict as Verdict).request.labels).toEqual(["triage: fail"]);
     expect((verdict as Verdict).request.comment).toBe("**Triage: Fail**\n\n@octocat, please address the following:\n- required checks are failing: `build`\n\nTriage will comment.");
     expect(requests).toContainEqual({ method: "POST", path: `/repos/${REPO}/issues/8/labels` });
     expect(requests.filter((r) => r.method === "DELETE")).toEqual([{ method: "DELETE", path: `/repos/${REPO}/issues/8/labels/triage%3Aawaiting-review` }]);
   });
 
-  test("with no hard rule failed the verdict question decides and its list runs", async () => {
+  test("without a decision-model rule, every rule passing decides Pass without the model and its list runs", async () => {
     const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO });
-    expect(path).toEqual(VERDICT_PATH);
-    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["verdict"]]);
-    expect(judged[0]!.state.policy!.rules).toEqual([
-      { name: "Not a draft", judged: false, result: "pass", reason: "pull request is not a draft", evidence: [] },
-      { name: "CI green", judged: false, result: "pass", reason: "checks are none", evidence: [] },
-      { name: "No changes requested", judged: false, result: "pass", reason: "no changes requested", evidence: [] },
-    ]);
-    expect(verdict).toMatchObject({ verdict: "pass", score: 0.85, reasons: [], actions: [{ list: "pass", kind: "comment" }] });
-    expect((verdict as Verdict).request.labels).toEqual(["Triage: Ready to merge"]);
+    expect(path).toEqual(RULES_PATH);
+    expect(judged).toEqual([]);
+    expect(verdict).toMatchObject({ verdict: "pass", score: null, reason: RULES_PASS_REASON, reasons: [], actions: [{ list: "pass", kind: "comment" }] });
+    expect((verdict as Verdict).request.labels).toEqual(["triage: pass"]);
   });
 
   test("model checks run the judge on the repository's own docs and the verdict records its answers", async () => {

@@ -27,9 +27,9 @@ export function catalogSentence(id: CatalogId, pack: CheckPack): string {
 export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
 
 /** A kind of check a person can add, as the portal's new-check gallery names it. */
-export type CheckKind = ({ evaluation: "rule"; rule: Exclude<RuleKind, "author"> } | { evaluation: "model"; shape: ModelShape }) & { title: string; line: string };
+export type CheckKind = ({ evaluation: "rule"; rule: RuleKind } | { evaluation: "model"; shape: ModelShape }) & { title: string; line: string };
 
-/** The portal's gallery, less Author is: it only gates actions, and local mode has no action editor. */
+/** The portal's gallery. */
 export const CHECK_KINDS: CheckKind[] = [
   { evaluation: "rule", rule: "paths-unchanged", title: "Paths must not change", line: "Fails when any listed path is touched." },
   { evaluation: "rule", rule: "paths-together", title: "Paths must change together", line: "When one set of paths changes, another must too." },
@@ -39,7 +39,7 @@ export const CHECK_KINDS: CheckKind[] = [
   { evaluation: "rule", rule: "diff-excludes", title: "Diff must not contain", line: "Added lines must not match a regular expression." },
   { evaluation: "rule", rule: "min-approvals", title: "Minimum approvals", line: "At least this many approvals." },
   { evaluation: "model", shape: "is-true", title: "Is it true that…", line: "Fails when the answer is no." },
-  { evaluation: "model", shape: "score", title: "Score from 0 to 10", line: "Fails below the minimum." },
+  { evaluation: "model", shape: "score", title: "Score", line: "Picks one of its levels; fails only below the level you pick." },
   { evaluation: "model", shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },
 ];
 
@@ -48,7 +48,7 @@ export function customSentence(check: CustomCheck): string {
   if (check.kind === "model") {
     switch (check.shape) {
       case "is-true": return `Is it true that ${check.claim}?`;
-      case "score": return `Score ${check.subject} from 0 to 10, pass at ${check.min} or above.`;
+      case "score": return `Score ${check.subject} as ${check.levels.join(", ")}${check.failBelow ? `, fail below ${check.failBelow}` : ""}.`;
       case "choose": return `Which of ${check.options.join(", ")} is it? Fail on ${check.failOn.join(", ")}.`;
     }
   }
@@ -64,7 +64,6 @@ export function customSentence(check: CustomCheck): string {
       if (check.pattern === DEBUG_LEFTOVERS) return "Added lines must not leave a debugger, a focused test or a console.log behind";
       return `Added lines must not match ${check.pattern}`;
     case "min-approvals": return `Require at least ${check.count} approvals`;
-    case "author": return "Author is a given person, role or kind of contributor";
   }
 }
 
@@ -110,8 +109,8 @@ const DO_LABELS: Record<ActionKind, (target: Target, repo: string) => string | n
   close() {
     return "Close this pull request";
   },
-  agent() {
-    return "Run an agent on this pull request";
+  merge() {
+    return "Merge this pull request";
   },
 };
 

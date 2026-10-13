@@ -11,14 +11,23 @@ interface BooleanQualityQuestion {
   instructions: string;
 }
 
+/** A custom choose rule's options need no description, so theirs are null. */
 interface ChoiceQualityQuestion {
   id: string;
   type: "choice";
   instructions: string;
-  criteria: Record<FocusedChoice, string> | Record<SliceChoice, string> | Record<VerdictChoice, string>;
+  criteria: Record<FocusedChoice, string> | Record<SliceChoice, string> | Record<VerdictChoice, string> | Record<string, null>;
 }
 
-export type QualityQuestion = BooleanQualityQuestion | ChoiceQualityQuestion;
+/** Ordered levels, worst first; the answer is a position across them. */
+interface ScoreQualityQuestion {
+  id: string;
+  type: "score";
+  instructions: string;
+  criteria: string[];
+}
+
+export type QualityQuestion = BooleanQualityQuestion | ChoiceQualityQuestion | ScoreQualityQuestion;
 
 export const FOCUSED_CHOICES = ["one_thing", "more_than_one_thing", "cant_tell"] as const;
 export type FocusedChoice = typeof FOCUSED_CHOICES[number];
@@ -33,7 +42,7 @@ export type VerdictChoice = typeof VERDICT_CHOICES[number];
 export const VERDICT_QUESTION: ChoiceQualityQuestion = {
   id: "verdict",
   type: "choice",
-  instructions: "Does this pull request pass this repository's policy? `policy.rules` lists every rule the repository enabled with its result and evidence; a judged rule's `pass` is how likely it passes. Judge by those results and by the pull request's title, body, commits, changed paths and the diff in `pullRequest.files`. A rule other than an author rule whose result is fail means the pull request fails, unless the pull request plainly shows the rule does not apply to it. An author rule (`author: true`) only says who opened the pull request and never fails it.",
+  instructions: "Does this pull request pass this repository's policy? `policy.rules` lists every rule the repository enabled with its result and evidence; a judged rule's `pass` is how likely it passes. Judge by those results and by the pull request's title, body, commits, changed paths and the diff in `pullRequest.files`. A rule whose result is fail means the pull request fails, unless the pull request plainly shows the rule does not apply to it.",
   criteria: {
     pass: "No rule fails, anything unconfirmed is minor, and nothing in the pull request breaks the policy.",
     fail: "A rule fails, or the pull request clearly breaks the policy in a way its rules describe.",
@@ -176,23 +185,15 @@ function judgedFiles(facts: PrFacts) {
 // Custom checks are the repository's own rules, so their requests carry its contribution rules and say where they are.
 const AGAINST_RULES = "Judge it by the pull request and the repository's contribution rules in `repository.rules`.";
 
-/** Every shape is asked as one direct question a yes answer passes. */
-function customInstructions(row: ModelCustomCheck): string {
-  return `${customQuestion(row)} ${AGAINST_RULES}`;
-}
-
-function customQuestion(row: ModelCustomCheck): string {
+/** An is-true rule is one yes/no question, a score rule one Score question over its levels, a choose rule one Choice over its options. */
+function customQuestion(row: ModelCustomCheck): QualityQuestion {
   switch (row.shape) {
     case "is-true":
-      return `${row.name}: ${row.claim}`;
+      return { id: row.id, type: "boolean", instructions: `${row.name}: ${row.claim} ${AGAINST_RULES}` };
     case "score":
-      return `${row.name}: Does the pull request reach at least ${row.min} out of 10 for ${row.subject}?`;
-    case "choose": {
-      const passing = row.options.filter((option) => !row.failOn.includes(option));
-      const failing = row.failOn.join(" or ");
-      if (passing.length === 0) return `${row.name}: Is the pull request best described as something other than ${failing}?`;
-      return `${row.name}: Is the pull request best described as ${passing.join(" or ")}, rather than ${failing}?`;
-    }
+      return { id: row.id, type: "score", instructions: `${row.name}: Which level, worst first, best describes the pull request for ${row.subject}? ${AGAINST_RULES}`, criteria: row.levels };
+    case "choose":
+      return { id: row.id, type: "choice", instructions: `${row.name}: Which option best describes the pull request? ${AGAINST_RULES}`, criteria: Object.fromEntries(row.options.map((option) => [option, null])) };
   }
 }
 
@@ -201,7 +202,7 @@ function isFocused(sources: NonNullable<DeterministicResult["sources"]>): boolea
 }
 
 function customQuestions(sources: NonNullable<DeterministicResult["sources"]>): QualityQuestion[] {
-  return sources.custom.filter((row) => !isScoped(row)).map((row) => ({ id: row.id, type: "boolean" as const, instructions: customInstructions(row) }));
+  return sources.custom.filter((row) => !isScoped(row)).map(customQuestion);
 }
 
 /** Every question id an evaluation asks; `render` refuses answers to anything else. */
@@ -293,9 +294,8 @@ function jsonBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
-/** A rule as the verdict question reads it: a hard rule's result, or a judged rule's answer with how likely it passes. */
-/** `author` marks an author rule, which says who opened the pull request and never fails it. */
-export type PolicyRule = { name: string; judged: boolean; author?: true; result: "pass" | "fail" | "unconfirmed"; reason: string; evidence: string[]; pass?: number };
+/** A rule as the verdict question reads it: a hard rule's result, or a judged rule's answer with how likely it passes and, for a score rule, the level it was given. */
+export type PolicyRule = { name: string; judged: boolean; result: "pass" | "fail" | "unconfirmed"; reason: string; evidence: string[]; pass?: number; level?: string };
 
 export type VerdictState = {
   pullRequest: JudgeState["pullRequest"];

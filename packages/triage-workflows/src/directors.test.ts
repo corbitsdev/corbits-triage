@@ -352,7 +352,7 @@ describe("judge on a blocked pull request", () => {
   });
 
   test("a coalesced run wakes the policy on any event it carries, not only the latest", async () => {
-    const checkPack = { ...emptyPack("acme/widgets"), checks: { "ci-green": { enabled: true } }, actions: { ...defaultActions(), when: ["opened"], pass: [{ kind: "comment", target: { body: "Welcome" } }] } };
+    const checkPack = { ...emptyPack("acme/widgets"), checks: { "ci-green": { enabled: true } }, actions: { ...defaultActions(), when: ["opened"], pass: [{ do: "comment", target: { body: "Welcome" } }] } };
     const latest = { checkPack, event: "check_run", action: "completed" };
     async function lists(setup: Record<string, unknown>): Promise<string[]> {
       const { verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "success" }], true, false, setup), undefined, []);
@@ -372,14 +372,13 @@ describe("judge on a blocked pull request", () => {
     expect(unsettledBy(verdict)).toEqual({});
   });
 
-  test("a failed author rule with every other rule passing still asks the verdict question, marking the rule as one about the author", async () => {
+  test("a stored author rule and agent Do no longer run, and every verdict says so", async () => {
     const outsiders = { id: "maintainers-only", name: "Maintainers only", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] };
-    const checkPack = { ...recommendedPack("acme/widgets"), custom: [outsiders] };
-    const { asked, requests } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code), undefined, []);
-    expect(asked).toContain("verdict");
-    const rules = requests.find((request) => request.providerOptions.systemOne.questions.some((question) => question.id === "verdict"))!.providerOptions.systemOne.state.policy.rules as Array<{ name: string; result: string; author?: true }>;
-    expect(rules.filter((rule) => rule.result === "fail")).toEqual([expect.objectContaining({ name: "Maintainers only", author: true })]);
-    expect(rules.filter((rule) => rule.author)).toHaveLength(1);
+    const agent = { kind: "agent", target: { prompt: "Fix it", tools: [] } };
+    const checkPack = { ...recommendedPack("acme/widgets"), custom: [outsiders], actions: { ...defaultActions(), fail: [agent] } };
+    const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code), undefined, []);
+    expect(verdict.checks.map((c) => c.check)).not.toContain("maintainers-only");
+    expect(verdict.reasons).toEqual(expect.arrayContaining(["author rule Maintainers only no longer runs", "Fail step 1 (agent) no longer runs"]));
   });
 
   test.each<[string, unknown[]]>([
@@ -395,7 +394,7 @@ describe("judge on a blocked pull request", () => {
   });
 
   test("a degraded verdict suggests no actions", async () => {
-    const hi = [{ kind: "comment", target: { body: "hi" } }];
+    const hi = [{ do: "comment", target: { body: "hi" } }];
     const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), pass: hi, fail: hi, unsure: hi } };
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code), "upstream 503");
     expect(verdict.degraded).toBe("inference-outage");
@@ -403,7 +402,7 @@ describe("judge on a blocked pull request", () => {
   });
 
   test("runs the fail list, resolved through the policy's roles, with the failed judged rule as its reason", async () => {
-    const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), fail: [{ kind: "request-review", target: { to: "role", role: "leads" } }] } };
+    const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), fail: [{ do: "request-review", target: { to: "role", role: "leads" } }] } };
     const policy = { enabled: true, roles: { leads: { users: ["dave"] } } };
     const { asked, verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }, code));
     expect(asked).toEqual(["docs-file-001", "focused", "focused-file-001", "verdict"]);

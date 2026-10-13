@@ -3,7 +3,7 @@ import {
   CHECK_CATALOG,
   checkName,
   isCatalogId,
-  type ActionKind,
+  type StepKind,
   type CheckPack,
   type CheckRef,
   type ModelShape,
@@ -21,7 +21,7 @@ export const EVENT_NAMES: Record<PolicyEvent, string> = {
   ready: "ready for review",
 };
 
-export const DO_NAMES: Record<ActionKind, string> = {
+export const DO_NAMES: Record<StepKind, string> = {
   labels: "Add labels",
   assign: "Assign",
   "request-review": "Request review",
@@ -29,7 +29,8 @@ export const DO_NAMES: Record<ActionKind, string> = {
   approve: "Approve",
   "request-changes": "Request changes on the pull request",
   close: "Close",
-  agent: "Run an agent",
+  merge: "Merge",
+  nothing: "Do nothing",
 };
 
 export type CheckKind = { evaluation: "rule"; rule: RuleKind; title: string; line: string } | { evaluation: "model"; shape: ModelShape; title: string; line: string };
@@ -42,9 +43,8 @@ export const CHECK_KINDS: CheckKind[] = [
   { evaluation: "rule", rule: "label-required", title: "Label required", line: "A label must be on the pull request." },
   { evaluation: "rule", rule: "diff-excludes", title: "Diff must not contain", line: "Added lines must not match a regular expression." },
   { evaluation: "rule", rule: "min-approvals", title: "Minimum approvals", line: "At least this many approvals." },
-  { evaluation: "rule", rule: "author", title: "Author is", line: "Who opened it: named people, a role, or a kind of contributor. Informs the verdict; never fails it or asks anything of the author." },
   { evaluation: "model", shape: "is-true", title: "Is it true that…", line: "Fails when the answer is no." },
-  { evaluation: "model", shape: "score", title: "Score from 0 to 10", line: "Fails below the minimum." },
+  { evaluation: "model", shape: "score", title: "Score", line: "Picks one of its levels; fails only below the level you pick." },
   { evaluation: "model", shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },
 ];
 

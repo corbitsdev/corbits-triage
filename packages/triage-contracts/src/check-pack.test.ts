@@ -36,25 +36,25 @@ const RULES: CustomCheck[] = [
   { id: "custom-6", name: "No debug", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "console\\.log" },
   { id: "custom-7", name: "Approved", group: "around", kind: "rule", rule: "min-approvals", count: 2 },
 ];
-const AUTHORS: CustomCheck[] = [
-  { id: "custom-1", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] },
-  { id: "custom-2", name: "Core", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "maintainers" },
-  { id: "custom-3", name: "Agents", group: "pull-request", kind: "rule", rule: "author", who: "kinds", kinds: ["bot", "first-timer"] },
-];
 const MODELS: CustomCheck[] = [
   ...CUSTOM,
-  { id: "custom-2", name: "Risk", group: "pull-request", kind: "model", shape: "score", subject: "safety", min: 6 },
+  { id: "custom-2", name: "Risk", group: "pull-request", kind: "model", shape: "score", subject: "safety", levels: ["risky", "fine", "safe"], failBelow: "fine" },
   { id: "custom-3", name: "Size", group: "pull-request", kind: "model", shape: "choose", options: ["small", "large"], failOn: ["large"] },
   { id: "custom-4", name: "Reversible", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "The migration can be rolled back.", scope: "file", when: ["migrations/**"] },
 ];
-const COMMENT = { kind: "comment", target: { body: "Thanks!" } } as const;
-const REVIEW = { kind: "request-review", target: { to: "role", role: "maintainers" } } as const;
+const COMMENT = { do: "comment", target: { body: "Thanks!" } } as const;
+const REVIEW = { do: "request-review", target: { to: "role", role: "maintainers" } } as const;
 const ACTIONS: PolicyActions = {
   when: ["opened", "ready"],
-  pass: [REVIEW],
-  fail: [COMMENT, { kind: "request-changes", target: {} }],
-  unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] } }],
+  pass: [REVIEW, { do: "merge", for: "maintainers" }, { do: "labels", target: { from: "verdict" } }],
+  fail: [COMMENT, { do: "request-changes", for: { team: "acme/core" } }, { do: "labels", target: { from: "rules" } }],
+  unsure: [{ do: "labels", target: { from: "list", labels: ["needs-triage"] }, for: { users: ["maya"] } }, { do: "nothing", for: "bots" }],
 };
+
+/** A step as stored before steps, which is for anyone. */
+function legacy(step: { do: string; target?: object }) {
+  return { kind: step.do, target: step.target ?? {} };
+}
 
 describe("check pack contract", () => {
   test("add one catalog check; unknown ids ignored; absent keys empty", () => {
@@ -149,33 +149,35 @@ describe("check pack contract", () => {
 
   test("legacy actions collapse into one policy: branches join their verdict's list, always joins all three, when is the union", () => {
     const DRAFT = { kind: "convert-to-draft", target: {}, automatic: true };
-    const LABEL = { kind: "labels", target: { from: "type" } };
+    const LABEL = { do: "labels", target: { from: "list", labels: ["triaged"] } } as const;
     const read = readCheckPack({
       ...emptyPack(REPO),
       mergeThreshold: 0.85,
       actions: [
-        { id: "a", when: ["opened"], checks: ["ci", "custom-9"], branches: { yes: [{ ...COMMENT, automatic: true }], no: [DRAFT, REVIEW], unsure: [REVIEW] } },
+        { id: "a", when: ["opened"], checks: ["ci", "custom-9"], branches: { yes: [{ ...legacy(COMMENT), automatic: true }], no: [DRAFT, legacy(REVIEW)], unsure: [legacy(REVIEW)] } },
         { id: "b", when: ["ready", "commented"], checks: ["draft"], branches: { no: [{ target: { role: "maintainers", to: "role" }, kind: "request-review" }] } },
-        { id: "c", when: ["opened"], checks: [], branches: { always: [LABEL] } },
+        { id: "c", when: ["opened"], checks: [], branches: { always: [legacy(LABEL)] } },
       ],
     });
     expect(read.actions).toEqual({ when: ["opened", "ready"], pass: [COMMENT, LABEL], fail: [REVIEW, LABEL], unsure: [REVIEW, LABEL] });
     expect(read).not.toHaveProperty("mergeThreshold");
+    expect(read.dropped).toEqual(["Action a no 1 (convert-to-draft) no longer runs"]);
   });
 
-  test("a legacy action woken by no event a policy names is dropped, not widened", () => {
-    const actions = [
-      { id: "on-merge", when: ["merged", "closed"], checks: [], branches: { always: [COMMENT] } },
-      { id: "on-review", when: ["commented", "reviewed", "approved", "changes-requested"], checks: ["ci"], branches: { no: [REVIEW] } },
-    ];
-    expect(readCheckPack({ ...emptyPack(REPO), actions }).actions).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [], fail: [], unsure: [] });
+  test("lists stored as Dos before steps read as steps for anyone", () => {
+    const stored = { when: ACTIONS.when, pass: [legacy(REVIEW)], fail: [legacy(COMMENT), { kind: "request-changes", target: {} }], unsure: [{ kind: "agent", target: { prompt: "Fix it", tools: [] } }] };
+    const read = readCheckPack({ ...emptyPack(REPO), actions: stored });
+    expect(read.actions).toEqual({ when: ACTIONS.when, pass: [REVIEW], fail: [COMMENT, { do: "request-changes" }], unsure: [] });
+    expect(read.dropped).toEqual(["Unsure step 1 (agent) no longer runs"]);
   });
 
-  test("a legacy close or agent without checks stays held on Unsure and never joins Pass or Fail", () => {
-    const AGENT = { kind: "agent", target: { prompt: "Fix it", tools: [] } };
-    const CLOSE = { kind: "close", target: {} };
-    const read = readCheckPack({ ...emptyPack(REPO), actions: [{ id: "a", when: "every", checks: [], branches: { always: [CLOSE, AGENT, COMMENT] } }] });
-    expect(read.actions).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [COMMENT], fail: [COMMENT], unsure: [CLOSE, AGENT, COMMENT] });
+  test("an author rule is left out and named; a score stored as min on 0 to 10 reads as four levels", () => {
+    const author = { id: "custom-1", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] };
+    const score = { id: "custom-2", name: "Risk", group: "pull-request", kind: "model", shape: "score", subject: "safety" };
+    const read = readCheckPack({ ...emptyPack(REPO), custom: [author, { ...score, min: 0 }, { ...score, id: "custom-3", min: 1 }, { ...score, id: "custom-4", min: 6 }, { ...score, id: "custom-5", min: 10 }] });
+    const levels = ["poor", "fair", "good", "great"];
+    expect(read.custom.map((row) => (row.kind === "model" && row.shape === "score" ? [row.levels, row.failBelow] : row))).toEqual([[levels, undefined], [levels, "fair"], [levels, "good"], [levels, "great"]]);
+    expect(read.dropped).toEqual(["author rule Mine no longer runs"]);
   });
 
   test("legacy custom round-trip; blanks dropped; last duplicate id wins", () => {
@@ -205,7 +207,7 @@ describe("check pack contract", () => {
   });
 
   test("typed custom checks round-trip as written", () => {
-    for (const custom of [RULES, MODELS, AUTHORS]) {
+    for (const custom of [RULES, MODELS]) {
       const pack = { ...emptyPack(REPO), custom };
       expect(parseCheckPack(JSON.stringify(pack))).toEqual(pack);
     }
@@ -265,7 +267,7 @@ describe("check pack contract", () => {
     expect(parseCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, fail: [COMMENT, COMMENT] } })?.actions.fail).toEqual([COMMENT]);
     expect(parseCheckPack({ kind: "corbits.triage.check-pack", schemaVersion: 1, repo: REPO })?.actions).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [], fail: [], unsure: [] });
     expect(emptyPack(REPO).actions).toEqual(defaultActions());
-    expect(defaultActions()).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [], fail: [], unsure: [{ kind: "request-review", target: { to: "codeowners" } }] });
+    expect(defaultActions()).toEqual({ when: ["opened", "updated", "checks", "ready"], pass: [], fail: [], unsure: [{ do: "request-review", target: { to: "codeowners" } }] });
   });
 
   test("invalid actions reject the pack with their reason", () => {
@@ -273,8 +275,10 @@ describe("check pack contract", () => {
       [{ ...ACTIONS, when: ["commented"] }, "Actions when must be one of opened, updated, checks, ready."],
       [{ ...ACTIONS, when: [] }, "Actions when must be a non-empty list."],
       [{ ...ACTIONS, unsure: undefined }, "Actions must set exactly when, pass, fail, unsure."],
-      [{ ...ACTIONS, pass: [{ kind: "comment", target: {} }] }, "Actions pass 1 target must set exactly body."],
-      [[{ id: "a", when: "every", checks: [], branches: { maybe: [COMMENT] } }], "Action a branches must set only yes, no, unsure or always."],
+      [{ ...ACTIONS, pass: [{ do: "comment", target: {} }] }, "Pass step 1 target must set exactly body."],
+      [{ ...ACTIONS, pass: [{ do: "approve", for: "staff" }] }, "Pass step 1 for must be one of anyone, first-timers, maintainers, external, bots."],
+      [{ ...ACTIONS, fail: [{ do: "deploy" }] }, "Fail step 1 do must be one of"],
+      [[{ id: "a", when: "every", checks: [], branches: { maybe: [legacy(COMMENT)] } }], "Action a branches must set only yes, no, unsure or always."],
     ];
     for (const [actions, reason] of rejected) expect(() => readCheckPack({ ...emptyPack(REPO), actions })).toThrow(reason);
   });
@@ -285,8 +289,7 @@ describe("check pack contract", () => {
       { ...emptyPack(REPO), custom: CUSTOM, actions: ACTIONS },
       { ...emptyPack(REPO), custom: RULES },
       { ...emptyPack(REPO), custom: MODELS },
-      { ...emptyPack(REPO), custom: AUTHORS },
-      { ...emptyPack(REPO), actions: [{ id: "a", when: "every", checks: ["ci"], branches: { yes: [COMMENT] } }] },
+      { ...emptyPack(REPO), actions: [{ id: "a", when: "every", checks: ["ci"], branches: { yes: [legacy(COMMENT)] } }] },
       recommendedPack(REPO),
     ];
     for (const pack of accepted) {

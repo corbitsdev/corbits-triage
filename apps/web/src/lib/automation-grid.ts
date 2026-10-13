@@ -1,8 +1,7 @@
 import { ACTION_KINDS, ANY_DO_RESOURCE, DO_GRANT_ACTION, DO_GRANT_PREFIX, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
 import type { HubGrant, HubRole } from "./hub-api.ts";
 
-/** Agent Dos cannot run yet, so no one is granted them. */
-export const GRID_KINDS = ACTION_KINDS.filter((kind) => kind !== "agent");
+export const GRID_KINDS = ACTION_KINDS;
 
 /**
  * `grants` are the role's grants of the kind, on every repository (`*`) or on some; `repos` names those some. Turning

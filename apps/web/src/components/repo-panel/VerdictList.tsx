@@ -1,4 +1,4 @@
-import { alwaysHeld, type ActionKind, type Do, type VerdictWord } from "@corbits/triage-contracts";
+import { alwaysHeld, type ActionKind, type Step, type StepKind, type VerdictWord } from "@corbits/triage-contracts";
 import { buildDo, doFormOf } from "../../lib/action-builder.ts";
 import { LIST_NAMES } from "../../lib/pack-prose.ts";
 import DoEditor from "./DoEditor.tsx";
@@ -9,11 +9,11 @@ const HINTS: Record<VerdictWord, string> = {
   unsure: "the decision model cannot tell",
 };
 
-const NEW_DO: Do = { kind: "labels", target: { from: "list", labels: [] } };
+const NEW_DO: Step = { do: "labels", target: { from: "list", labels: [] } };
 
 type VerdictListProps = {
   list: VerdictWord;
-  dos: Do[];
+  dos: Step[];
   roles: string[];
   /** Whether triage runs a Do of this kind without asking; undefined while its grants are unknown. */
   alone: ((kind: ActionKind) => boolean) | undefined;
@@ -21,13 +21,13 @@ type VerdictListProps = {
   disabled: boolean;
   /** Why the draft cannot be saved, when this list is the reason. */
   reason?: string;
-  onChange: (dos: Do[]) => void;
+  onChange: (dos: Step[]) => void;
 };
 
 /** The Dos that run on one verdict; Unsure starts collapsed. */
 export default function VerdictList({ list, dos, roles, alone, fired, disabled, reason, onChange }: VerdictListProps) {
-  function note(kind: ActionKind): string | undefined {
-    if (alone === undefined) return undefined;
+  function note(kind: StepKind): string | undefined {
+    if (alone === undefined || kind === "nothing") return undefined;
     return alone(kind) && !alwaysHeld(list, kind) ? "Runs alone" : "Waits for you";
   }
 
@@ -39,7 +39,7 @@ export default function VerdictList({ list, dos, roles, alone, fired, disabled, 
           key={index}
           step={doFormOf(step)}
           roles={roles}
-          note={note(step.kind)}
+          note={note(step.do)}
           disabled={disabled}
           onChange={(form) => onChange(dos.map((item, i) => (i === index ? buildDo(form) : item)))}
           onRemove={() => onChange(dos.filter((_, i) => i !== index))}

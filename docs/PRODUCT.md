@@ -45,13 +45,12 @@ that was judged. GitHub sees only the actions.
 ## Rules
 
 A rule answers one question about a pull request: pass, fail, or unconfirmed.
-Each rule says how it is evaluated. There are three kinds; two exist today.
+Each rule says how it is evaluated, in one of two kinds.
 
 | Kind | Evaluates | Cost | Use it for |
 | --- | --- | --- | --- |
-| Rule | GitHub data only: files, diff, title, branch, labels, reviews, CI, author. No inference. | GitHub API calls. | Anything GitHub already knows. |
+| Rule | GitHub data only: files, diff, title, branch, labels, reviews, CI. No inference. | GitHub API calls. | Anything GitHub already knows. |
 | Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs. |
-| Agent | Planned, not built. | | |
 
 ### Rules over GitHub data
 
@@ -65,8 +64,11 @@ a switch: Not a draft (a draft is never ready) and No changes requested (a
 requested change waits on the author).
 
 Custom rules: paths unchanged, paths changed together, title pattern, branch
-pattern, required label, diff excludes a pattern, minimum approvals, and
-author (users, a role, or kinds such as first-timer or bot).
+pattern, required label, diff excludes a pattern and minimum approvals. The
+portal no longer offers them, but stored policies may hold them, so they still
+run. Author rules were removed: who opened the pull request is a step's
+**for** (see [Actions](#actions)). A stored author rule is left out, and every
+verdict's reasons say so.
 
 ### Decision models
 
@@ -76,11 +78,15 @@ a choice, never free text:
 - **Is true**: a yes or no claim, asked of the whole pull request, of each
   changed file, or of each changed hunk, optionally only for paths matching
   globs.
-- **Score**: whether a subject reaches a minimum on a 0 to 10 scale.
-- **Choose**: whether the pull request is best described by a passing option
-  rather than a failing one.
+- **Score**: which of 2 to 10 described levels, worst first, fits a subject.
+  The level is shown in the portal and goes to the verdict question as
+  evidence. It never fails the pull request unless **fail below** names a
+  level.
+- **Choose**: which of the policy's options best describes the pull request;
+  it fails when that is one of the failing options.
 
-Score and Choose are each asked as one yes or no question.
+Is true is one yes or no question, Score one Score question and Choose one
+Choice question.
 
 Built in: Focused (each change is classified against the primary
 change) and Docs (each changed file is asked whether it needs docs;
@@ -89,8 +95,12 @@ changing a doc file satisfies the rule).
 Answers are probabilities, and each rule decides only clear of a band
 around a coin flip:
 
-- **Is true, Score, Choose, Docs**: yes at 0.7 or above, no at 0.3 or
-  below. Docs asks per file; one file that needs docs fails the rule.
+- **Is true, Docs**: yes at 0.7 or above, no at 0.3 or below. Docs asks per
+  file; one file that needs docs fails the rule.
+- **Score, Choose**: the likeliest level or option is the answer. With fail
+  below set, a score fails when the levels below it hold 0.7 or more and passes
+  when they hold 0.3 or less; a choice fails or passes the same way on the
+  failing options.
 - **Focused**: a change is unrelated at 0.6 or above for unrelated,
   and part of the change at 0.6 or above for the other choices combined.
 
@@ -108,8 +118,12 @@ are in [DECISION_MODEL.md](DECISION_MODEL.md).
 
 Each pull request head gets one verdict: **Pass**, **Fail** or **Unsure**.
 
-- A hard rule (every rule above, built in or custom, except author) that fails
+- A hard rule (every rule over GitHub data, built in or custom) that fails
   decides **Fail** without calling the model; the reasons list the failed rules.
+- A policy with no decision-model rule on (no Focused, Docs, Is true, Score or
+  Choose) never calls the model: every rule passing decides **Pass**, and any
+  rule GitHub has not settled yet, such as pending CI, leaves it **Unsure**.
+  The verdict's reason says the policy has no decision-model rule.
 - Otherwise one decision model question decides: does this pull request pass
   this repository's policy? It reads every enabled rule with its result and
   evidence, the judged rules' answers with their probabilities, and the pull
@@ -125,27 +139,84 @@ waits on a maintainer.
 
 ## Actions
 
-The policy holds one **When** and three lists of Dos: **On Pass**, **On Fail**
-and **On Unsure**. The verdict picks the list.
+The policy holds one **When** and three ordered lists of steps: **On Pass**,
+**On Fail** and **On Unsure**. The verdict picks the list. Each step names a
+**Do** and who it is **for**.
 
 - **When**: opened, updated, checks, ready; all four by default. Catching up
   runs the policy whatever it names.
 - **On Unsure** asks CODEOWNERS for review by default.
-- **Dos**: labels, assign, request review, comment, approve, request changes,
-  close, agent. Settings → Access holds one grid, Do kind by role: a role's
-  people may approve held Dos of the kinds it holds, and Dos of the kinds
-  Triage holds run on GitHub during triage; the rest wait in the Inbox for a
-  click. New workspaces automate nothing.
+- **Do**: approve, merge, close, comment, request changes, request review (from
+  users, teams or code owners), assign, labels, or nothing. Settings → Access
+  holds one grid, Do kind by role: a role's people may approve held Dos of the
+  kinds it holds, and Dos of the kinds Triage holds run on GitHub during
+  triage; the rest wait in the Inbox for a click. New workspaces automate
+  nothing.
+- **For**: the pull request's author, who opened it and never changes: anyone
+  (the default), first-timers, maintainers (owner, member or collaborator),
+  external (contributor, first-timer or outside), bots, the members of a team,
+  or named people. A step not for the author is skipped, and the verdict
+  records it as skipped with why. One whose author GitHub cannot place, such
+  as an unknown association or an unconfirmed team membership, is skipped too.
 
-Close and agent Dos never run on their own on Unsure. Triage posts its comment
-when it holds Comment and its labels when it holds Labels. Approve runs only
-on a Pass with CI green; where Triage posts, a later head that may not be
-approved has the approve Do's approvals dismissed. Approvals made from the Inbox are never dismissed.
-Request changes lists the failed rules the author must fix, once per head; the
-automatic mirror dismisses it once none still fails.
+In the policy artifact, `for` may be left out for anyone:
+
+```json
+"actions": {
+  "when": ["opened", "updated", "checks", "ready"],
+  "pass": [
+    { "do": "approve" },
+    { "do": "merge", "for": "maintainers" },
+    { "do": "request-review", "target": { "to": "teams", "teams": ["acme/ledger-maintainers"] }, "for": "first-timers" }
+  ],
+  "fail": [
+    { "do": "request-changes" },
+    { "do": "labels", "target": { "from": "rules" }, "for": { "team": "acme/core" } }
+  ],
+  "unsure": [
+    { "do": "request-review", "target": { "to": "codeowners" } },
+    { "do": "close", "for": "bots" }
+  ]
+}
+```
+
+Close never runs on its own on Unsure, and merge never runs on its own on
+anything but Pass. Triage posts its comment when it holds Comment and its
+verdict label when it holds Labels. Approve runs only on a Pass with CI green,
+and merge only on a head whose CI passed; where Triage posts, a later head that
+may not be approved has the approve Do's approvals dismissed. Approvals made
+from the Inbox are never dismissed. Request changes lists the failed rules the
+author must fix, once per head; the automatic mirror dismisses it once none
+still fails.
+
+### Labels
+
+Labels are the handoff: other tools, such as a coding agent, watch GitHub for
+them and react through their own webhooks. Their names are stable:
+
+| Label | When |
+| --- | --- |
+| `triage: pass`, `triage: fail`, `triage: unsure` | The head's verdict. One at a time. |
+| `rule: <rule id>` | A rule that failed on the head, such as `rule: docs` or `rule: ci-green`. |
+
+A labels step written `{ "from": "verdict" }` sets the verdict label and
+`{ "from": "rules" }` one label per failed rule; each takes back its own labels
+that no longer apply. Triage's automatic mirror writes the verdict label too
+when it holds Labels. Labels earlier versions set (`Triage: Needs changes`,
+`Triage: Needs review`, `Triage: Ready to merge` and the `triage:…` state
+labels) are taken back the next time a head is triaged.
+
+### Stored policies
+
+Policies saved before steps still read. A list of Dos reads as steps for anyone.
+Agent Dos, labels derived from the type or paths, and author rules no longer run: reading leaves them out, and every
+verdict's reasons name what was left out. A score stored as a minimum on 0 to
+10 reads as levels poor, fair, good and great, failing below the level at the
+same share of the scale (`min` 0 never fails; otherwise fail below the level
+at `round(min × 3 / 10)`, at least fair).
 
 Policies saved before verdicts read as one policy: each action's yes Dos join On
-Pass, no Dos On Fail, unsure Dos On Unsure and Dos without rules all three, except close and agent, which join On Unsure only; an action woken by no event the policy names is dropped;
+Pass, no Dos On Fail, unsure Dos On Unsure and Dos without rules all three, except close, which joins On Unsure only; an action woken by no event the policy names is dropped;
 repeated Dos run once and When is every action's together.
 
 ## Triage over time
@@ -160,6 +231,4 @@ model's earlier answers for anything unchanged. See
 
 ## Not finished
 
-- Agent rules and agent Dos: the policy format accepts agent Dos, but they
-  cannot run yet.
 - Sidecars run on the hub's own machine; there is no remote provisioner yet.

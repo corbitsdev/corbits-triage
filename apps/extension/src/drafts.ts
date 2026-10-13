@@ -15,7 +15,7 @@ export function draftsOf(view: TriageView): Draft[] {
   });
   const fromChecks = (view.suggested ?? []).flatMap((action): Draft[] => (action.kind === "comment" && action.body ? [{ id: action.id, title: action.title, why: action.why, body: action.body, source: "check" }] : []));
   // With one failing check, its own draft already says everything.
-  const failing = view.checks.filter((check) => check.result === "fail" && !check.gate).length > 1;
+  const failing = view.checks.filter((check) => check.result === "fail").length > 1;
   const feedback: Draft[] = failing && view.verdict.feedback ? [{ id: "feedback", title: "Everything to address", why: "Every failing rule, as triage words it.", body: view.verdict.feedback, source: "check" }] : [];
   return [...fromDos, ...fromChecks, ...feedback];
 }

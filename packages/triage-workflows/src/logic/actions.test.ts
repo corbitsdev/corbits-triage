@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { alwaysHeld, defaultActions, emptyPack, type Do, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
+import { defaultActions, emptyPack, type Step, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
 import { doEffectId, evaluateActions, holdDos, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
 import type { PrFacts } from "./checks.js";
 
@@ -31,8 +31,8 @@ function targets(steps: SuggestedAction[]) {
   return steps.map((a) => ("target" in a ? a.target : null));
 }
 
-function say(body: string): Do {
-  return { kind: "comment", target: { body } };
+function say(body: string): Step {
+  return { do: "comment", target: { body } };
 }
 
 const SAYS = { pass: [say("pass")], fail: [say("fail")], unsure: [say("unsure")] };
@@ -49,28 +49,28 @@ describe("evaluateActions", () => {
     expect(targets(run({ ...SAYS, when }, verdict, {}, events)).map((t) => (t && "body" in t ? t.body : null))).toEqual(bodies);
   });
 
-  test.each<[string, Do, unknown[]]>([
-    ["a label already set in another case is omitted", { kind: "labels", target: { from: "list", labels: ["Api"] } }, []],
-    ["a partly set label list is kept whole", { kind: "labels", target: { from: "list", labels: ["api", "search"] } }, [{ labels: ["api", "search"] }]],
-    ["an assignee already in place in another case is omitted", { kind: "assign", target: { to: "users", users: ["bob"] } }, []],
+  test.each<[string, Step, unknown[]]>([
+    ["a label already set in another case is omitted", { do: "labels", target: { from: "list", labels: ["Api"] } }, []],
+    ["a partly set label list is kept whole", { do: "labels", target: { from: "list", labels: ["api", "search"] } }, [{ labels: ["api", "search"] }]],
+    ["an assignee already in place in another case is omitted", { do: "assign", target: { to: "users", users: ["bob"] } }, []],
     [
       "review is requested only from people not yet requested or reviewed, ignoring case",
-      { kind: "request-review", target: { to: "users", users: ["OctoCat", "ALICE", "Bob", "carol"] } },
+      { do: "request-review", target: { to: "users", users: ["OctoCat", "ALICE", "Bob", "carol"] } },
       [{ users: ["carol"], teams: [] }],
     ],
-    ["a review request already satisfied is omitted", { kind: "request-review", target: { to: "users", users: ["alice", "bob"] } }, []],
-    ["closing an open pull request stands", { kind: "close", target: {} }, [{}]],
+    ["a review request already satisfied is omitted", { do: "request-review", target: { to: "users", users: ["alice", "bob"] } }, []],
+    ["closing an open pull request stands", { do: "close" }, [{}]],
   ])("%s", (_, task, expected) => {
     expect(targets(run({ pass: [task] }))).toEqual(expected);
   });
 
   test("resolves people targets and skips the ones that cannot apply", () => {
-    const dos: Do[] = [
-      { kind: "request-review", target: { to: "role", role: "leads" } },
-      { kind: "request-review", target: { to: "role", role: "ghost" } },
-      { kind: "request-review", target: { to: "users", users: ["octocat"] } },
-      { kind: "assign", target: { to: "author" } },
-      { kind: "assign", target: { to: "teams", teams: ["core"] } },
+    const dos: Step[] = [
+      { do: "request-review", target: { to: "role", role: "leads" } },
+      { do: "request-review", target: { to: "role", role: "ghost" } },
+      { do: "request-review", target: { to: "users", users: ["octocat"] } },
+      { do: "assign", target: { to: "author" } },
+      { do: "assign", target: { to: "teams", teams: ["core"] } },
     ];
     const reason = "passes the repository's policy";
     const effectId = expect.any(String);
@@ -91,29 +91,60 @@ describe("evaluateActions", () => {
 
   test("a step keeps its index when steps before it are satisfied or skipped", () => {
     const behind = run({ pass: [
-      { kind: "labels", target: { from: "list", labels: ["api"] } },
-      { kind: "assign", target: { to: "teams", teams: ["core"] } },
+      { do: "labels", target: { from: "list", labels: ["api"] } },
+      { do: "assign", target: { to: "teams", teams: ["core"] } },
       say("hello"),
     ] });
     const ref = { repo: "acme/widgets", number: 8, headSha: "abc", list: "pass", index: 2, kind: "comment", target: { body: "hello" } } as const;
     expect(behind).toEqual([expect.objectContaining({ kind: "assign", index: 1, skipped: true }), expect.objectContaining({ kind: "comment", index: 2, effectId: doEffectId(ref) })]);
   });
 
+  test("a step not for the author is skipped with why, and one whose author cannot be told apart is skipped too", () => {
+    const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [
+      { ...say("maintainers"), for: "maintainers" },
+      { ...say("outside"), for: "external" },
+      { ...say("team"), for: { team: "acme/core" } },
+      { ...say("named"), for: { users: ["OctoCat"] } },
+      { do: "nothing" },
+      { ...say("unknown team"), for: { team: "acme/ops" } },
+    ] satisfies Step[] } };
+    const author = { ...facts, authorKind: "outside" as const, authorTeams: ["acme/core"], authorTeamsUnknown: ["acme/ops"] };
+    const ran = evaluateActions({ facts: author, checks: [], verdict: "pass", reason: "passes", pack, roles: {} });
+    expect(ran.map((action) => ("skipped" in action ? action.reason : action.index))).toEqual([
+      "Not run: the author is outside, not one of maintainers.",
+      1,
+      2,
+      3,
+      "Not run: membership of acme/ops is not known.",
+    ]);
+    const unknownKind = evaluateActions({ facts, checks: [], verdict: "pass", reason: "passes", pack, roles: {} });
+    expect(unknownKind[0]).toMatchObject({ skipped: true, reason: "Not run: the author's kind is not known, so it cannot tell whether they are maintainers." });
+  });
+
+  test("derived labels name the verdict and each failed rule, and take back the ones that no longer apply", () => {
+    const labelled = { ...facts, labels: ["api", "Triage: Needs changes", "triage: fail", "rule: docs", "rule: focused"] };
+    const failed = { check: "focused", kind: "model" as const, result: "fail" as const, reason: "mixes", evidence: [], output: { kind: "not-applicable" as const } };
+    const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [{ do: "labels", target: { from: "verdict" } }, { do: "labels", target: { from: "rules" } }] satisfies Step[] } };
+    expect(targets(evaluateActions({ facts: labelled, checks: [failed], verdict: "pass", reason: "passes", pack, roles: {} }))).toEqual([
+      { labels: ["triage: pass"], unlabel: ["Triage: Needs changes", "triage: fail"] },
+      { labels: ["rule: focused"], unlabel: ["rule: docs"] },
+    ]);
+  });
+
   test("a Do inserted earlier by a pack edit does not take the id of the Do that held its index", () => {
     const [before] = run({ pass: [say("hello")] }) as SuggestedDo[];
-    const [inserted, moved] = run({ pass: [{ kind: "labels", target: { from: "list", labels: ["search"] } }, say("hello")] }) as SuggestedDo[];
+    const [inserted, moved] = run({ pass: [{ do: "labels", target: { from: "list", labels: ["search"] } }, say("hello")] }) as SuggestedDo[];
     expect(inserted!.effectId).not.toBe(before!.effectId);
     expect(moved!.effectId).not.toBe(before!.effectId);
   });
 });
 
 describe("holdDos", () => {
-  test("close or an agent on unsure is held though the pr-triage role holds it; on fail it runs", () => {
-    function step(list: VerdictWord, kind: "close" | "agent"): SuggestedDo {
-      return { list, index: 0, kind, reason: "", effectId: `e-${list}-${kind}`, target: kind === "close" ? {} : { prompt: "fix", tools: [] } };
+  test("close on unsure, and merge on anything but pass, is held though the pr-triage role holds it", () => {
+    function step(list: VerdictWord, kind: "close" | "merge"): SuggestedDo {
+      return { list, index: 0, kind, reason: "", effectId: `e-${list}-${kind}`, target: {} };
     }
-    expect(holdDos([step("unsure", "close"), step("fail", "close")], ["close"]).map((action) => "held" in action)).toEqual([true, false]);
-    expect(alwaysHeld("unsure", "agent")).toBe(true);
-    expect(alwaysHeld("fail", "agent")).toBe(false);
+    const steps = [step("unsure", "close"), step("fail", "close"), step("pass", "merge"), step("fail", "merge"), step("unsure", "merge")];
+    expect(holdDos(steps, ["close", "merge"]).map((action) => "held" in action)).toEqual([true, false, false, true, true]);
   });
 });

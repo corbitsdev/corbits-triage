@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { VERDICTS, type ActionKind, type LabelsTarget, type VerdictWord } from "./check-pack.js";
+import { VERDICTS, type ActionKind, type VerdictWord } from "./check-pack.js";
 
 /** The action list a Do is on: the verdict it runs on. */
 export const DoList = type.enumerated(...VERDICTS);
@@ -21,20 +21,20 @@ export function doResource(kind: ActionKind, repo: string): string {
   return `${DO_GRANT_PREFIX}:${kind}:${repo.toLowerCase()}`;
 }
 
-/** Closing or running an agent on an unsure verdict always waits for a person. */
+/** Closing on an unsure verdict, and merging on anything but a pass, always waits for a person. */
 export function alwaysHeld(list: VerdictWord, kind: ActionKind): boolean {
-  return list === "unsure" && (kind === "close" || kind === "agent");
+  return (list === "unsure" && kind === "close") || (list !== "pass" && kind === "merge");
 }
 
+/** `unlabel` names labels the step owns that are on the pull request and no longer apply, which it removes. */
 export type ResolvedTarget =
-  | { labels: string[] }
+  | { labels: string[]; unlabel?: string[] }
   | { users: string[] }
   | { users: string[]; teams: string[] }
   | { body: string }
   | Record<string, never>
-  | { prompt: string; tools: string[] }
-  | { unresolved: "codeowners" }
-  | { unresolved: "derive"; from: Exclude<LabelsTarget["from"], "list"> };
+  | { unresolved: "codeowners" };
 
-export const AGENT_DO = "agent Dos cannot run yet";
-export const DERIVED_LABELS_DO = "labels derived from the pull request cannot run yet";
+/** Agent Dos and labels derived from the type or paths were removed; verdicts recorded before may still hold one. */
+export const AGENT_DO = "agent Dos no longer run";
+export const DERIVED_LABELS_DO = "labels derived from the pull request's type or paths no longer run";

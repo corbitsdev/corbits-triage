@@ -10,7 +10,7 @@ const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 /** GitHub holding pull request 8, reviewed by `reviews` and with `approvals` on it, applying writes so a second run sees the first. */
 function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[] } = {}) {
-  const pr = { state: "open", head: { sha: "abc" }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
+  const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc" }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc" })), ...(seed.approvals ?? [])];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
@@ -41,6 +41,16 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
     if (path.endsWith("/issues/8/labels")) {
       pr.labels.push(...body.labels.map((name: string) => ({ name })));
       return Response.json(pr.labels);
+    }
+    if (method === "DELETE" && path.includes("/issues/8/labels/")) {
+      const name = decodeURIComponent(path.split("/").at(-1)!);
+      pr.labels = pr.labels.filter((label) => label.name !== name);
+      return Response.json(pr.labels);
+    }
+    if (method === "PUT" && path.endsWith("/pulls/8/merge")) {
+      pr.merged = true;
+      pr.state = "closed";
+      return Response.json({ merged: true, sha: "merged" });
     }
     if (path.endsWith("/pulls/8/requested_reviewers")) {
       pr.requested_reviewers.push(...body.reviewers.map((login: string) => ({ login })));
@@ -76,6 +86,24 @@ describe("executeDo", () => {
     expect(await run(gh, task)).toMatchObject({ status: "done" });
     expect(await run(gh, task)).toMatchObject({ status: "satisfied" });
     expect(writes).toEqual([{ method: "POST", path: "/repos/acme/widgets/issues/8/labels", body: { labels: ["search"] } }]);
+  });
+
+  test("derived labels add what applies and take back what no longer does, once", async () => {
+    const { gh, writes } = fakeGithub({ labels: ["api", "triage: fail"] });
+    const task = step("labels", { labels: ["triage: pass"], unlabel: ["triage: fail", "triage: unsure"] });
+    expect(await run(gh, task)).toMatchObject({ status: "done" });
+    expect(await run(gh, task)).toMatchObject({ status: "satisfied" });
+    expect(writes).toEqual([
+      { method: "POST", path: "/repos/acme/widgets/issues/8/labels", body: { labels: ["triage: pass"] } },
+      { method: "DELETE", path: "/repos/acme/widgets/issues/8/labels/triage%3A%20fail", body: null },
+    ]);
+  });
+
+  test("a merge merges the verdict's head once", async () => {
+    const { gh, writes } = fakeGithub();
+    expect(await run(gh, step("merge", {}))).toMatchObject({ status: "done", result: { merged: true } });
+    expect(await run(gh, step("merge", {}))).toMatchObject({ status: "satisfied" });
+    expect(writes).toEqual([{ method: "PUT", path: "/repos/acme/widgets/pulls/8/merge", body: { sha: "abc" } }]);
   });
 
   test("a reviewer requested or reviewed on this head is not asked again", async () => {
@@ -150,20 +178,12 @@ describe("executeDo", () => {
   test.each<[string, DoStep]>([
     ["a comment", step("comment", { body: "Thanks" })],
     ["a close", step("close", {})],
+    ["a merge", step("merge", {})],
     ["an approval", step("approve", {})],
     ["a request for changes", step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" })],
   ])("%s is not written once the pull request has moved on", async (_, task) => {
     const { gh, writes } = fakeGithub();
     await expect(run(gh, { ...task, headSha: "older" })).rejects.toBeInstanceOf(HeadMovedError);
-    expect(writes).toEqual([]);
-  });
-
-  test.each<[string, DoStep]>([
-    ["agent Dos", step("agent", { prompt: "fix it", tools: [] })],
-    ["derived labels", step("labels", { unresolved: "derive", from: "type" })],
-  ])("%s are not runnable", async (_, task) => {
-    const { gh, writes } = fakeGithub();
-    await expect(run(gh, task)).rejects.toBeInstanceOf(DoNotRunnableError);
     expect(writes).toEqual([]);
   });
 });

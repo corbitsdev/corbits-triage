@@ -178,40 +178,6 @@ describe("deriveState rule custom checks", () => {
     expect(performance.now() - started).toBeLessThan(250);
     expect(result.checks[0]?.result).toBe("pass");
   });
-
-  test("author rules gate on people, roles or kinds and never add a finding", () => {
-    const gated = emptyPack("acme/widgets");
-    gated.custom = [
-      { id: "custom-1", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["Octocat"] },
-      { id: "custom-2", name: "Core", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "core" },
-      { id: "custom-3", name: "Agents", group: "pull-request", kind: "rule", rule: "author", who: "kinds", kinds: ["bot"] },
-      { id: "custom-4", name: "Staff", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "staff" },
-      { id: "custom-5", name: "Gone", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "gone" },
-    ];
-    const bot: PrFacts = { ...facts, authorKind: "bot" };
-    const result = deriveState(bot, allOff, gated, { core: { users: ["alice"] }, staff: { users: ["alice"], teams: ["@acme/staff"] } });
-    const byId = Object.fromEntries(result.checks.map((check) => [check.check, check]));
-    expect(byId["custom-1"]).toMatchObject({ result: "pass", evidence: ["@octocat (bot)"], gate: true });
-    expect(byId["custom-2"]).toMatchObject({ result: "fail", reason: "Core: author is not one of the people named" });
-    expect(byId["custom-3"]).toMatchObject({ result: "pass", reason: "Agents: author is bot" });
-    expect(byId["custom-4"]).toMatchObject({ result: "unconfirmed", reason: "Staff: team membership of @acme/staff is not known" });
-    expect(byId["custom-5"]).toMatchObject({ result: "unconfirmed", reason: "Gone: role gone is not defined" });
-    expect(deriveState({ ...facts, authorKind: undefined }, allOff, gated).checks.find((check) => check.check === "custom-3")?.result).toBe("unconfirmed");
-    expect(result.findings).toEqual([]);
-    expect(result.state).toBe("ready-monitoring");
-  });
-
-  test("a role with teams answers from the author's confirmed team membership", () => {
-    const gated = emptyPack("acme/widgets");
-    gated.custom = [{ id: "custom-1", name: "Staff", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "staff" }];
-    const roles = { staff: { users: ["alice"], teams: ["@acme/staff", "ops"] } };
-    function staff(membership: Pick<PrFacts, "authorTeams" | "authorTeamsUnknown">) {
-      return deriveState({ ...facts, ...membership }, allOff, gated, roles).checks.find((check) => check.check === "custom-1");
-    }
-    expect(staff({ authorTeams: ["ops"], authorTeamsUnknown: ["@acme/staff"] })).toMatchObject({ result: "pass", reason: "Staff: author is in team ops", gate: true });
-    expect(staff({ authorTeams: [], authorTeamsUnknown: [] })).toMatchObject({ result: "fail", reason: "Staff: author is not one of the people or teams named", gate: true });
-    expect(staff({ authorTeams: [], authorTeamsUnknown: ["ops"] })).toMatchObject({ result: "unconfirmed", reason: "Staff: team membership of ops is not known" });
-  });
 });
 
 describe("deriveState check output", () => {

@@ -15,7 +15,7 @@ import {
   type CheckPack,
   type CheckRef,
   type CustomCheck,
-  type Do,
+  type Step,
   type PolicyActions,
   type PolicyEvent,
   type RepoPolicy,
@@ -142,7 +142,7 @@ export function setWhen(draft: RepoDraft, when: PolicyEvent[]): RepoDraft {
   return withActions(draft, { when });
 }
 
-export function setList(draft: RepoDraft, list: VerdictWord, dos: Do[]): RepoDraft {
+export function setList(draft: RepoDraft, list: VerdictWord, dos: Step[]): RepoDraft {
   return withActions(draft, { [list]: dos });
 }
 
@@ -199,8 +199,8 @@ function whereOf(message: string, pack: CheckPack): DraftWhere {
 }
 
 /** Role names the Dos assign or request review from. */
-export function rolesUsed(dos: Do[]): string[] {
-  return dos.flatMap((step) => ((step.kind === "assign" || step.kind === "request-review") && step.target.to === "role" ? [step.target.role] : []));
+export function rolesUsed(dos: Step[]): string[] {
+  return dos.flatMap((step) => ((step.do === "assign" || step.do === "request-review") && step.target.to === "role" ? [step.target.role] : []));
 }
 
 /** Why the draft cannot be saved, in the contract's words, and where that belongs; null when it can. */

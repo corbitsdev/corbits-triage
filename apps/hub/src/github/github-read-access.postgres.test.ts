@@ -76,16 +76,18 @@ function member(user: string) {
   return { tenantId: TENANT, principalId: user.replace("usr_", "prn_") };
 }
 
-/** A candidate pack gated on the author being in role `probe`, and roles that put team `secret` in it. */
+/** A candidate pack whose one step is for members of team `secret`. */
 function probe() {
   const pack = emptyPack(REPO);
-  pack.custom = [{ id: "custom-1", name: "Probe", group: "pull-request", kind: "rule", rule: "author", who: "role", role: "probe" }];
-  return PreviewBody.assert({ repo: REPO, number: 8, pack, roles: { probe: { teams: ["secret"] } } });
+  pack.actions.pass = [{ do: "comment", target: { body: "Thanks" }, for: { team: "secret" } }];
+  return PreviewBody.assert({ repo: REPO, number: 8, pack });
 }
 
+/** Whether the step ran, or why it was skipped. */
 async function probeResult(res: Response): Promise<string | undefined> {
-  const body = await res.json() as { checks: Array<{ check: string; result: string }> };
-  return body.checks.find((check) => check.check === "custom-1")?.result;
+  const body = await res.json() as { actions: { dos?: Array<{ reason: string; skipped?: true }> } };
+  const step = body.actions.dos?.[0];
+  return step && (step.skipped ? step.reason : "runs");
 }
 
 beforeAll(async () => {
@@ -156,18 +158,18 @@ test("PostgreSQL: pull request details serve only repositories connected to the 
   expect(await res.json()).toMatchObject({ error: { code: "repo_not_connected" } });
 });
 
-test("PostgreSQL: only a member who may save roles previews candidate roles, so a reader cannot probe team membership", async () => {
+test("PostgreSQL: only a member who may save roles reads the teams a candidate pack's steps are for, so a reader cannot probe team membership", async () => {
   const membership = "GET /orgs/acme/teams/secret/memberships/octocat";
   requested.length = 0;
   const reader = await prPreview(probe(), member("usr_member"), AbortSignal.timeout(30_000));
   expect(reader.status).toBe(200);
   expect(requested).not.toContain(membership);
-  expect(await probeResult(reader)).toBe("unconfirmed");
+  expect(await probeResult(reader)).toBe("Not run: membership of secret is not known.");
 
   const admin = await prPreview(probe(), member("usr_admin"), AbortSignal.timeout(30_000));
   expect(admin.status).toBe(200);
   expect(requested).toContain(membership);
-  expect(await probeResult(admin)).toBe("pass");
+  expect(await probeResult(admin)).toBe("runs");
 });
 
 test("PostgreSQL: approving needs the approve Do grant on top of use, and pins the review to the head shown", async () => {

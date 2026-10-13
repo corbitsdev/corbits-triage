@@ -118,7 +118,7 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
       <div className="sentences">
         {(Object.keys(SENTENCES) as CatalogId[]).map(sentence)}
         {pack.custom.map((check) => (
-          <CustomSentence key={check.id} check={check} draft={draft} disabled={disabled} edit={edit} stat={passed(check.id)} reason={where?.section === "custom" && where.id === check.id ? problem?.reason : undefined} />
+          <CustomSentence key={check.id} check={check} disabled={disabled} edit={edit} stat={passed(check.id)} reason={where?.section === "custom" && where.id === check.id ? problem?.reason : undefined} />
         ))}
       </div>
       {picking ? <CheckKindPicker disabled={disabled} onPick={add} onCancel={() => setPicking(false)} /> : (

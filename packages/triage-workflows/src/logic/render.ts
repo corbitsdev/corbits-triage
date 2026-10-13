@@ -1,14 +1,16 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, type ActionKind, type CheckItem, type CheckOutput, type Rendered, type RuleCustomCheck, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type Rendered, type RuleCustomCheck, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { SuggestedAction } from "./actions.js";
-import { hardFailures, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
+import { hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
 type NoulAnswer = { type: "noul"; noul: number };
 type ChoiceAnswer = { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number };
-type ModelAnswer = NoulAnswer | ChoiceAnswer;
+/** `probabilities` are keyed by level index, worst first. */
+type ScoreAnswer = { type: "score"; score: number; probabilities: Record<string, number>; confidence: number };
+type ModelAnswer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
 
 export interface ParsedAnswers {
   decisions: Record<string, ModelAnswer>;
@@ -56,22 +58,45 @@ function decisionObjects(text: string): Record<string, unknown>[] | null {
   return decisions;
 }
 
+/** Probabilities over exactly `keys` that sum to about 1, as the backend rounds them. */
+function distribution(probabilities: Record<string, unknown>, keys: string[]): probabilities is Record<string, number> {
+  if (keys.length === 0 || !exactKeys(probabilities, keys) || !keys.every((key) => probability(probabilities[key]))) return false;
+  const sum = keys.reduce((total, key) => total + (probabilities[key] as number), 0);
+  return Math.abs(sum - 1) <= 0.02;
+}
+
+/**
+ * A reply is parsed on its own, without its questions: a choice's options are whatever its probabilities name, and a
+ * score's levels whatever its legend names. Each rule checks its options or levels when it reads the answer.
+ */
 function parseDecision(value: Record<string, unknown>): { id: string; answer: ModelAnswer } | null {
+  if (typeof value.id !== "string") return null;
   if (value.type === "noul") {
-    if (!exactKeys(value, ["id", "type", "noul"]) || typeof value.id !== "string" || !probability(value.noul)) return null;
+    if (!exactKeys(value, ["id", "type", "noul"]) || !probability(value.noul)) return null;
     return { id: value.id, answer: { type: "noul", noul: value.noul } };
   }
-  if (value.type !== "choice" || !exactKeys(value, ["id", "type", "choice", "probabilities", "confidence"]) ||
-    typeof value.id !== "string" || !probability(value.confidence) || !isRecord(value.probabilities)) return null;
-  const probabilities = value.probabilities;
-  const choices = [FOCUSED_CHOICES, SLICE_CHOICES, VERDICT_CHOICES].find((options) => exactKeys(probabilities, [...options]));
-  if (!choices || !choices.includes(value.choice as never) || !choices.every((choice) => probability(probabilities[choice]))) return null;
-  const sum = choices.reduce((total, choice) => total + (probabilities[choice] as number), 0);
-  if (Math.abs(sum - 1) > 0.02) return null;
-  return {
-    id: value.id,
-    answer: { type: "choice", choice: value.choice as string, probabilities: probabilities as Record<string, number>, confidence: value.confidence },
-  };
+  if (value.type === "score") {
+    if (!exactKeys(value, ["id", "type", "score", "legend", "probabilities", "confidence"]) || !probability(value.confidence) || !isRecord(value.probabilities) || !isRecord(value.legend)) return null;
+    const levels = Object.keys(value.legend).length;
+    const indexes = Array.from({ length: levels }, (_, index) => String(index));
+    const { score } = value;
+    if (!exactKeys(value.legend, indexes) || !distribution(value.probabilities, indexes) || typeof score !== "number" || !(score >= 0 && score <= levels - 1)) return null;
+    return { id: value.id, answer: { type: "score", score, probabilities: value.probabilities, confidence: value.confidence } };
+  }
+  if (value.type !== "choice" || !exactKeys(value, ["id", "type", "choice", "probabilities", "confidence"]) || !probability(value.confidence) || !isRecord(value.probabilities)) return null;
+  const { probabilities, choice } = value;
+  if (typeof choice !== "string" || !(choice in probabilities) || !distribution(probabilities, Object.keys(probabilities))) return null;
+  return { id: value.id, answer: { type: "choice", choice, probabilities, confidence: value.confidence } };
+}
+
+/** The answer's probabilities when they are over exactly `options`. */
+function choiceOver<T extends string>(answer: ModelAnswer | undefined, options: readonly T[]): Record<T, number> | undefined {
+  return answer?.type === "choice" && exactKeys(answer.probabilities, [...options]) ? (answer.probabilities as Record<T, number>) : undefined;
+}
+
+/** The most likely key, the first of equals. */
+function likeliest(probabilities: Record<string, number>, keys: string[]): string {
+  return keys.reduce((best, key) => (probabilities[key]! > probabilities[best]! ? key : best));
 }
 
 export function parseAnswers(reply: unknown): ParsedAnswers {
@@ -132,6 +157,8 @@ const NOT_APPLICABLE: CheckOutput = { kind: "not-applicable" };
 
 export interface RenderOutput extends Rendered {
   mirror: boolean;
+  /** The verdict's label, which the mirror writes. */
+  labels: string[];
   /** Which action list runs on this head. */
   verdict: VerdictWord;
   /** How likely the pull request passes its policy, as the verdict question answered; null when it was not asked. */
@@ -167,9 +194,12 @@ const VERDICT_DECIDES = 0.7;
 const MAX_FILE_EVIDENCE = 3;
 const MAX_CODE_CHARS = 200;
 
-/** How likely a focused answer says its slice serves the pull request's purpose, and how likely a separate change. */
-function sides({ probabilities }: ChoiceAnswer): { serves: number; separate: number } {
-  return { serves: probabilities.one_thing ?? probabilities.serves_purpose ?? 0, separate: probabilities.more_than_one_thing ?? probabilities.separate_change ?? 0 };
+/** How likely a focused answer says its slice serves the pull request's purpose, and how likely a separate change; undefined for any other answer. */
+function sides(answer: ModelAnswer | undefined): { serves: number; separate: number } | undefined {
+  const whole = choiceOver(answer, FOCUSED_CHOICES);
+  if (whole) return { serves: whole.one_thing, separate: whole.more_than_one_thing };
+  const slice = choiceOver(answer, SLICE_CHOICES);
+  return slice && { serves: slice.serves_purpose, separate: slice.separate_change };
 }
 
 /** Malformed replies, or answers to questions that were not asked, are not trusted, so none of the answers count. */
@@ -182,17 +212,18 @@ export function separateSlices(answers: ParsedAnswers, focused: FocusedPlan, exp
   if (isInvalid(answers, expected)) return [];
   return Object.keys(focused.slices).filter(function separate(id) {
     const answer = answers.decisions[id];
-    return answer?.type === "choice" && sides(answer).separate >= FOCUSED_DECIDES;
+    return (sides(answer)?.separate ?? 0) >= FOCUSED_DECIDES;
   });
 }
 
-/** An answer clear of the unsure band: the verdict it drives would not change were it asked again. */
+/** An answer clear of the unsure band: the verdict it drives would not change were it asked again. A custom rule's choice or level is, when one option or level holds the band's yes edge. */
 function isDecisive(answer: ModelAnswer): boolean {
   if (answer.type === "noul") return answer.noul >= YES || answer.noul <= NO;
-  const { pass, fail } = answer.probabilities;
-  if (pass !== undefined && fail !== undefined) return pass >= VERDICT_DECIDES || fail >= VERDICT_DECIDES;
-  const { serves, separate } = sides(answer);
-  return serves >= FOCUSED_DECIDES || separate >= FOCUSED_DECIDES;
+  const verdict = choiceOver(answer, VERDICT_CHOICES);
+  if (verdict) return verdict.pass >= VERDICT_DECIDES || verdict.fail >= VERDICT_DECIDES;
+  const focused = sides(answer);
+  if (focused) return focused.serves >= FOCUSED_DECIDES || focused.separate >= FOCUSED_DECIDES;
+  return Math.max(...Object.values(answer.probabilities)) >= YES;
 }
 
 /** A judge reply a later run may reuse: well formed, with every answer decisive. */
@@ -306,8 +337,8 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
   function focusedCheck(plan: FocusedPlan | undefined) {
     if (!plan) return push("focused", { result: "pass" }, NOT_APPLICABLE, [], NOT_APPLICABLE_REASON);
     const answered = Object.keys(plan.slices).flatMap((id) => {
-      const answer = invalid ? undefined : parsed.decisions[id];
-      return answer?.type === "choice" ? [sides(answer)] : [];
+      const side = sides(invalid ? undefined : parsed.decisions[id]);
+      return side ? [side] : [];
     });
     const separate = Math.max(...answered.map((side) => side.separate), 0);
     const serves = Math.min(...answered.map((side) => side.serves), 1);
@@ -341,16 +372,39 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
       fileCheck(id, plan[id], true);
       continue;
     }
-    const noul = noulOf(id);
-    if (noul === undefined) {
+    const answer = invalid ? undefined : parsed.decisions[id];
+    const noul = answer?.type === "noul" ? answer.noul : undefined;
+    if (row.shape === "is-true" && noul !== undefined) push(id, band(noul, true), scored(noul, PASS_AT, []));
+    else if (row.shape === "score" && answer?.type === "score" && Object.keys(answer.probabilities).length === row.levels.length) scoreCheck(row, answer);
+    else if (row.shape === "choose" && choiceOver(answer, row.options)) chooseCheck(row, choiceOver(answer, row.options)!);
+    else {
       anyUnanswered = true;
       unchecked(id, unavailable);
-      continue;
     }
-    const decided = band(noul, true);
-    push(id, decided, scored(noul, PASS_AT, []));
   }
   return { checks, unanswered: anyUnanswered };
+
+  /**
+   * The likeliest level is the rule's answer. It fails only below `failBelow`, by how likely the level is below it on
+   * the unsure band, and without `failBelow` it always passes.
+   */
+  function scoreCheck(row: Extract<ModelCustomCheck, { shape: "score" }>, answer: ScoreAnswer) {
+    const indexes = row.levels.map((_, index) => String(index));
+    const level = row.levels[Number(likeliest(answer.probabilities, indexes))]!;
+    const output: CheckOutput = { kind: "level", level, levels: row.levels, ...(row.failBelow && { failBelow: row.failBelow }) };
+    const reason = `rated ${level} for ${row.subject}`;
+    if (!row.failBelow) return push(row.id, { result: "pass" }, output, [level], reason);
+    const at = row.levels.indexOf(row.failBelow);
+    const below = indexes.slice(0, at).reduce((total, index) => total + answer.probabilities[index]!, 0);
+    push(row.id, band(1 - below, true), output, [level], reason);
+  }
+
+  /** The likeliest option is the rule's answer; it fails by how likely the answer is one of `failOn`, on the unsure band. */
+  function chooseCheck(row: Extract<ModelCustomCheck, { shape: "choose" }>, probabilities: Record<string, number>) {
+    const chosen = likeliest(probabilities, row.options);
+    const failing = row.failOn.reduce((total, option) => total + probabilities[option]!, 0);
+    push(row.id, band(1 - failing, true), { kind: "values", values: { chosen } }, [chosen], `best described as ${chosen}`);
+  }
 }
 
 function withoutLimit(evidence: string[]): string {
@@ -393,14 +447,9 @@ function ruleStep(rule: RuleCustomCheck, c: CheckResult): Step {
     case "diff-excludes": return { actor: "author", action: `Remove the excluded content at ${where}` };
     case "label-required": return { actor: "maintainer", action: `Add label ${inlineCode(rule.label)}` };
     case "min-approvals": return { actor: "maintainer", action: `Approve (${where})` };
-    case "author": throw new Error("an author gate never produces a step");
   }
 }
 
-/** Gates decide action branches; they are never something to fix. */
-function judged(checks: CheckResult[]): CheckResult[] {
-  return checks.filter((c) => !c.gate);
-}
 
 function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
   if (c.check === "no-merge-conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
@@ -417,8 +466,7 @@ function oneSplit(failed: CheckResult[]): CheckResult[] {
   return failed.flatMap((c) => (c === sized[0] ? [{ ...c, evidence: sized.flatMap((s) => s.evidence) }] : sized.includes(c) ? [] : [c]));
 }
 
-function nextStep(all: CheckResult[], sources: Sources, reviewers: string[], verdict: VerdictWord): { actor: Actor; nextAction: string } {
-  const checks = judged(all);
+function nextStep(checks: CheckResult[], sources: Sources, reviewers: string[], verdict: VerdictWord): { actor: Actor; nextAction: string } {
   const failing = oneSplit(checks.filter((c) => c.result === "fail")).map((c) => failedStep(c, sources));
   const steps = failing.length ? failing : checks.filter((c) => c.result === "unconfirmed").flatMap((c) => unconfirmedSteps(c, sources));
   if (!steps.length) {
@@ -484,7 +532,7 @@ function failureEvidence(c: CheckResult, repo: string, headSha: string): string 
 
 /** The failed checks that are the author's to fix; a maintainer's requested changes are already in front of the author. */
 export function authorFailures(all: CheckResult[], sources: Sources): CheckResult[] {
-  return judged(all).filter((c) => c.result === "fail" && c.check !== NO_CHANGES_REQUESTED && failedStep(c, sources).actor === "author");
+  return all.filter((c) => c.result === "fail" && c.check !== NO_CHANGES_REQUESTED && failedStep(c, sources).actor === "author");
 }
 
 const VERDICT_TITLES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
@@ -502,8 +550,7 @@ export const NOTHING_TO_CHANGE = "No changes needed from you. ";
  * maintainer's requested changes are already in front of the author, so they are left out, and a comment holding
  * nothing else is not posted.
  */
-function authorComment({ author, repo, headSha, sources }: RenderContext, all: CheckResult[], verdict: VerdictWord): string {
-  const checks = judged(all);
+function authorComment({ author, repo, headSha, sources }: RenderContext, checks: CheckResult[], verdict: VerdictWord): string {
   const failing = checks.filter((c) => c.result === "fail");
   const mine = authorFailures(checks, sources);
   const unconfirmed = sources ? checks.filter(unsure) : [];
@@ -536,12 +583,12 @@ function reasonOf(c: CheckResult, sources: Sources): string {
 
 /** Failed hard rules first, then the judged rules that failed or the judge could not settle. */
 function reasonsOf(det: DeterministicResult, model: CheckResult[]): string[] {
-  const hard = judged(det.checks).filter((c) => c.result === "fail" || (c.result === "unconfirmed" && c.check !== NOT_A_DRAFT));
+  const hard = det.checks.filter((c) => c.result === "fail" || (c.result === "unconfirmed" && c.check !== NOT_A_DRAFT));
   const soft = model.filter((c) => c.result === "fail" || unsure(c));
   return [...hard.filter((c) => c.result === "fail"), ...hard.filter((c) => c.result !== "fail"), ...soft].map((c) => reasonOf(c, det.sources));
 }
 
-type VerdictBase = Omit<RenderOutput, "nextAction" | "actor" | "feedback" | "checks" | "score" | "mirror" | "reasons">;
+type VerdictBase = Omit<RenderOutput, "nextAction" | "actor" | "feedback" | "checks" | "score" | "mirror" | "reasons" | "labels">;
 
 interface RenderContext {
   author: string;
@@ -556,6 +603,7 @@ function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number 
     ...rendered,
     ...nextStep(checks, ctx.sources, ctx.reviewers, rendered.verdict),
     mirror: rendered.state !== "stale-unknown",
+    labels: [verdictLabel(rendered.verdict)],
     score,
     reasons,
     feedback: authorComment(ctx, checks, rendered.verdict),
@@ -578,9 +626,13 @@ const DECIDED_REASONS: Record<VerdictWord, string> = {
   unsure: "the decision model could not tell whether it passes the repository's policy",
 };
 
+export const RULES_PASS_REASON = "every rule passed, and the policy has no decision-model rule";
+const RULES_UNSURE_REASON = "not every rule could be confirmed, and the policy has no decision-model rule";
+
 /**
  * A failed hard rule decides Fail without the decision model; a draft or closed pull request is not decided, and is
- * unsure. Otherwise the verdict question decides, and a judge that did not answer leaves the verdict unsure and degraded.
+ * unsure. A policy without a decision-model rule passes when every rule passes, and is unsure while any is unconfirmed.
+ * Otherwise the verdict question decides, and a judge that did not answer leaves the verdict unsure and degraded.
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
   const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused } = input;
@@ -593,6 +645,10 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   if (!det.needsJudgment) {
     const verdict = withChecks({ ...render(det.state), verdict: "unsure", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
     return { ...verdict, feedback: "" };
+  }
+  if (!hasModelChecks(det.sources)) {
+    const confirmed = det.checks.every((c) => c.result === "pass");
+    return withChecks({ ...render(confirmed ? "ready-monitoring" : "awaiting-review"), verdict: confirmed ? "pass" : "unsure", degraded: null, reason: confirmed ? RULES_PASS_REASON : RULES_UNSURE_REASON }, checks, null, reasons, ctx);
   }
   function unsureOf(reason: string, degraded: RenderOutput["degraded"] = null): RenderOutput {
     return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, null, reasons, ctx);
@@ -611,6 +667,7 @@ export function degradedVerdict(reason: string): RenderOutput {
   return {
     ...render("stale-unknown"),
     mirror: false,
+    labels: [verdictLabel("unsure")],
     verdict: "unsure",
     score: null,
     reasons: ["Could not evaluate"],

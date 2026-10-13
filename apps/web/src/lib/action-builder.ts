@@ -1,25 +1,26 @@
 import {
-  type AuthorKind,
-  type AuthorWho,
   customRuleId,
+  LEGACY_SCORE_LEVELS,
   readCheckPack,
-  type ActionKind,
   type CheckPack,
   type CheckPackGroup,
   type CustomCheck,
   type CustomScope,
-  type Do,
   type LabelsTarget,
   type ModelShape,
   type PeopleTarget,
   type RuleKind,
+  type Step,
+  type StepFor,
+  type StepKind,
 } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import type { CheckKind } from "./pack-prose.ts";
 
-/** A Do as the editor holds it: every target field, so switching kind or recipient keeps what was typed. */
+/** A step as the editor holds it: every target field, so switching kind or recipient keeps what was typed. */
 export type DoForm = {
-  kind: ActionKind;
+  kind: StepKind;
+  for?: StepFor;
   from?: LabelsTarget["from"];
   labels?: string[];
   to?: PeopleTarget["to"];
@@ -27,8 +28,6 @@ export type DoForm = {
   teams?: string[];
   role?: string;
   body?: string;
-  prompt?: string;
-  tools?: string[];
 };
 
 type CheckParams = {
@@ -42,13 +41,10 @@ type CheckParams = {
   scope?: CustomScope;
   when?: string[];
   subject?: string;
-  min?: number;
+  levels?: string[];
+  failBelow?: string;
   options?: string[];
   failOn?: string[];
-  who?: AuthorWho;
-  users?: string[];
-  role?: string;
-  kinds?: AuthorKind[];
 };
 
 export type CheckForm = { name: string; group: CheckPackGroup; enabled?: boolean } & (
@@ -67,9 +63,8 @@ const PARAMS: Record<RuleKind | ModelShape, readonly (keyof CheckParams)[]> = {
   "label-required": ["label"],
   "diff-excludes": ["pattern"],
   "min-approvals": ["count"],
-  author: ["who", "users", "role", "kinds"],
   "is-true": ["claim", "scope", "when"],
-  score: ["subject", "min"],
+  score: ["subject", "levels", "failBelow"],
   choose: ["options", "failOn"],
 };
 
@@ -86,7 +81,7 @@ function peopleTarget(form: DoForm): Record<string, unknown> {
   }
 }
 
-function doTarget(form: DoForm): Record<string, unknown> {
+function doTarget(form: DoForm): Record<string, unknown> | undefined {
   switch (form.kind) {
     case "labels":
       return form.from === "list" ? { from: form.from, labels: form.labels } : { from: form.from };
@@ -96,17 +91,18 @@ function doTarget(form: DoForm): Record<string, unknown> {
     case "comment":
       return { body: form.body };
     case "approve":
+    case "merge":
     case "request-changes":
     case "close":
-      return {};
-    case "agent":
-      return { prompt: form.prompt, tools: form.tools ?? [] };
+    case "nothing":
+      return undefined;
   }
 }
 
-/** The form as a stored Do, not yet validated: the draft holds it as typed and the save bar says what is wrong. */
-export function buildDo(form: DoForm): Do {
-  return { kind: form.kind, target: doTarget(form) } as Do;
+/** The form as a stored step, not yet validated: the draft holds it as typed and the save bar says what is wrong. */
+export function buildDo(form: DoForm): Step {
+  const target = doTarget(form);
+  return { do: form.kind, ...(target && { target }), ...(form.for !== undefined && { for: form.for }) } as Step;
 }
 
 function validated(candidate: unknown, repo: string): CheckPack | Refusal {
@@ -139,8 +135,8 @@ export function customCheckOf(form: CheckForm, id: string): CustomCheck {
 export function checkFormOfKind(kind: CheckKind): CheckForm {
   const name = kind.title.replace(/…$/, "");
   return kind.evaluation === "rule"
-    ? { name, group: "pull-request", kind: "rule", rule: kind.rule, ...(kind.rule === "author" ? { who: "kinds" as const } : {}) }
-    : { name, group: "pull-request", kind: "model", shape: kind.shape };
+    ? { name, group: "pull-request", kind: "rule", rule: kind.rule }
+    : { name, group: "pull-request", kind: "model", shape: kind.shape, ...(kind.shape === "score" && { levels: [...LEGACY_SCORE_LEVELS] }) };
 }
 
 /** Builds the next custom check of `pack`, or replaces check `id` in place, keeping only its rule's or shape's parameters. */
@@ -151,9 +147,9 @@ export function buildCustomCheck(form: CheckForm, pack: CheckPack, id = nextCust
   return read.custom.find((row) => row.id === id)!;
 }
 
-/** The editor's view of a stored Do, so editing it and building again gives the same Do back. */
-export function doFormOf(step: Do): DoForm {
-  return { kind: step.kind, ...step.target };
+/** The editor's view of a stored step, so editing it and building again gives the same step back. */
+export function doFormOf(step: Step): DoForm {
+  return { kind: step.do, ...("target" in step && step.target), ...(step.for !== undefined && { for: step.for }) };
 }
 
 /** The editor's view of a stored custom check. */

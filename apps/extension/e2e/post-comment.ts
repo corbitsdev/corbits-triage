@@ -41,10 +41,10 @@ const pack: CheckPack = {
     ...base.actions,
     unsure: [],
     fail: [
-      { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
-      { kind: "comment", target: { body: "This is only ever posted by a click." } },
-      { kind: "comment", target: { body: "Another draft, to post over Triage's own seed." } },
-      { kind: "comment", target: { body: "One more draft, to post from the banner." } },
+      { do: "labels", target: { from: "list", labels: ["triage:too-large"] } },
+      { do: "comment", target: { body: "This is only ever posted by a click." } },
+      { do: "comment", target: { body: "Another draft, to post over Triage's own seed." } },
+      { do: "comment", target: { body: "One more draft, to post from the banner." } },
     ],
   },
 };
