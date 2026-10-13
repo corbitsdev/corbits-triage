@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CATALOG_IDS, catalogCheckEnabled, classificationSources, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type PolicyActions, type Step } from "@corbits/triage-contracts";
-import { changeCount, fromPack, setCatalogCheck, setCustomEnabled, setList, setWhen, toPack, validate } from "./pack-draft.ts";
+import { fromPack, packChanges, savable, setCatalogCheck, setCustomEnabled, setList, stepProblem, toPack, validate } from "./pack-draft.ts";
 
 const repo = "acme/widgets";
 
@@ -44,8 +44,8 @@ describe("pack draft", () => {
     test(`round trips ${name} unchanged`, () => {
       const draft = fromPack(stored, policy);
       expect(readCheckPack(toPack(draft))).toEqual(stored);
-      expect(changeCount(draft, fromPack(readCheckPack(JSON.stringify(stored)), policy))).toBe(0);
-      expect(validate(draft)).toBeNull();
+      expect(packChanges(draft.pack, readCheckPack(JSON.stringify(stored)))).toBe(0);
+      expect(validate(draft, stored)).toBeNull();
     });
   }
 
@@ -60,17 +60,19 @@ describe("pack draft", () => {
     }
   });
 
-  test("the policy's when and each verdict list are one change apiece", () => {
+  test("each verdict list is one change, and an unfinished step waits unsaved", () => {
     const saved = fromPack(packs["every Do target"]!, policy);
-    expect(changeCount(saved, setWhen(saved, ["opened"]))).toBe(1);
-    expect(changeCount(saved, setList(setList(saved, "pass", []), "fail", []))).toBe(2);
+    expect(packChanges(saved.pack, setList(setList(saved, "pass", []), "fail", []).pack)).toBe(2);
+    const unfinished = setList(saved, "unsure", [{ do: "comment", target: { body: " " } }]);
+    expect(stepProblem(unfinished, "unsure", unfinished.pack.actions.unsure[0]!)).not.toBeNull();
+    expect(savable(unfinished, saved.pack).pack.actions.unsure).toEqual([]);
   });
 
   test("switching a custom check off keeps it in the pack but out of evaluation, and back on restores the saved row", () => {
     const stored = pack({ custom });
     const saved = fromPack(stored, policy);
     const off = setCustomEnabled(saved, "custom-8", false);
-    expect(changeCount(saved, off)).toBe(1);
+    expect(packChanges(saved.pack, off.pack)).toBe(1);
     const read = readCheckPack(JSON.stringify(toPack(off)));
     expect(read.custom.find((row) => row.id === "custom-8")?.enabled).toBe(false);
     expect(classificationSources(read).custom.map((row) => row.id)).not.toContain("custom-8");

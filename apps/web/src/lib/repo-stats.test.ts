@@ -1,19 +1,19 @@
 import { expect, test } from "bun:test";
-import { createElement, Fragment } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { dehydrate, hydrate, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { defaultActions, emptyPack, repoPolicy, type TriageStats } from "@corbits/triage-contracts";
-import VerdictList from "../components/repo-panel/VerdictList.tsx";
-import ChecksSection from "../components/repo-panel/ChecksSection.tsx";
-import TriageStrip from "../components/repo-panel/TriageStrip.tsx";
+import { emptyPack, repoPolicy, type TriageStats } from "@corbits/triage-contracts";
+import RulesSection from "../components/repo-panel/RulesSection.tsx";
 import { fakeHub } from "./fake-hub.ts";
 import { fromPack } from "./pack-draft.ts";
 import { isPersistedQuery } from "./persisted-queries.ts";
 import { draftPolicy, transportRepoPackStore, type RepoPackStore } from "./repo-pack-store.ts";
 import { repoStatsQuery, useRepoStats } from "./repo-stats.ts";
+import { usePolicyView } from "./use-policy-view.ts";
 
 const REPO = "o/r";
-const DRAFT = fromPack({ ...emptyPack(REPO), actions: { ...defaultActions(), pass: [{ do: "comment", target: { body: "hi" } }] } }, draftPolicy(repoPolicy(undefined)));
+const PACK = emptyPack(REPO);
+const DRAFT = fromPack({ ...PACK, checks: { "max-files-changed": { enabled: true, maxFiles: 30 } } }, draftPolicy(repoPolicy(undefined)));
 const STATS: TriageStats = {
   repo: REPO,
   days: 7,
@@ -32,11 +32,8 @@ function noop() {}
 
 function Panel({ store }: { store: RepoPackStore }) {
   const stats = useRepoStats(store, REPO);
-  return createElement(Fragment, null,
-    createElement(TriageStrip, { stats }),
-    createElement(ChecksSection, { draft: DRAFT, saved: DRAFT.pack, stats, disabled: false, edit: noop, problem: null }),
-    createElement(VerdictList, { list: "pass", dos: DRAFT.pack.actions.pass, alone: undefined, fired: stats?.actions.pass, disabled: false, onChange: noop }),
-  );
+  const view = usePolicyView(DRAFT, noop);
+  return createElement(RulesSection, { draft: DRAFT, saved: PACK, view, stats, disabled: false, edit: noop, problem: null });
 }
 
 function render(client: QueryClient, store: RepoPackStore): string {
@@ -47,7 +44,7 @@ function statsRequests(requests: string[]): string[] {
   return requests.filter((request) => request.includes("/triage-stats/"));
 }
 
-test("the strip, the rules and the pass list read one request", async () => {
+test("the rules read their weekly pass counts from one request", async () => {
   const hub = fakeHub();
   hub.stats = STATS;
   const store = transportRepoPackStore(hub.transport, "t");
@@ -57,10 +54,7 @@ test("the strip, the rules and the pass list read one request", async () => {
   const html = render(client, store);
 
   expect(statsRequests(hub.requests)).toEqual([`GET /api/integrations/triage-stats/t?repo=o%2Fr&days=7`]);
-  expect(html).toContain("Median to verdict");
-  expect(html).toContain("1h 12m");
-  expect(html).toContain("Passed 3 of 4 this week");
-  expect(html).toContain("Fired 2 times, 1 done");
+  expect(html).toContain("3 of 4 passed");
 });
 
 test("persisted stats render from the cache after a reload", () => {
@@ -73,10 +67,5 @@ test("persisted stats render from the cache after a reload", () => {
   const after = new QueryClient();
   hydrate(after, persisted);
 
-  expect(render(after, store)).toContain("Passed 3 of 4 this week");
-});
-
-test("a window with nothing triaged is one line, never zeros", () => {
-  const html = renderToStaticMarkup(createElement(TriageStrip, { stats: { ...STATS, triaged: 0, neededYou: 0, actions: {}, checks: {}, comments: 0, medianTimeToVerdictMs: null } }));
-  expect(html).toBe('<p class="hint strip">No pull requests triaged in the last 7 days.</p>');
+  expect(render(after, store)).toContain("3 of 4 passed");
 });
