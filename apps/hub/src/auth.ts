@@ -4,7 +4,8 @@
 import { schema, type DB } from "@intx/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
+import { makeSignature } from "better-auth/crypto";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
 import { lt } from "drizzle-orm";
 import { integer, text, timestamp } from "drizzle-orm/pg-core";
@@ -30,6 +31,12 @@ export const deviceCode = triageSchema.table("device_code", {
   clientId: text("client_id"),
   scope: text("scope"),
 });
+
+type AuthMiddlewareContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
+
+function isDeviceToken(body: unknown): body is { access_token: string } {
+  return typeof body === "object" && body !== null && "access_token" in body && typeof body.access_token === "string";
+}
 
 /** Entries are exact addresses or `@domain`. */
 export function isEmailAllowed(email: string, allowedEmails: readonly string[]): boolean {
@@ -61,6 +68,12 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     await db.delete(deviceCode).where(lt(deviceCode.expiresAt, new Date()));
   }
 
+  async function signDeviceToken(ctx: AuthMiddlewareContext) {
+    const body = ctx.context.returned;
+    if (ctx.path !== "/device/token" || !isDeviceToken(body)) return;
+    return ctx.json({ ...body, access_token: `${body.access_token}.${await makeSignature(body.access_token, config.secret)}` });
+  }
+
   return betterAuth({
     baseURL: config.baseURL,
     secret: config.secret,
@@ -68,17 +81,18 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     database: drizzleAdapter(db, { provider: "pg", schema: { ...schema, deviceCode } }),
     emailAndPassword: { enabled: authMethods(config).emailPassword },
     // better-auth only rate-limits when NODE_ENV is production, which the deployment does not set.
-    rateLimit: { enabled: true },
+    rateLimit: { enabled: true, customRules: { "/device/code": { window: 60, max: 5 } } },
     ...(google && { socialProviders: { google } }),
     plugins: [
-      bearer(),
+      bearer({ requireSignature: true }),
       deviceAuthorization({
         validateClient: (clientId) => clientId === DEVICE_CLIENT_ID,
         verificationUri: new URL("/device", config.portalOrigin).toString(),
         onDeviceAuthRequest: deleteExpiredDeviceCodes,
       }),
     ],
-    rateLimit: { customRules: { "/device/code": { window: 60, max: 5 } } },
+    // The device token is a raw session token; sign it like the session cookie so bearer() accepts only signed tokens.
+    hooks: { after: createAuthMiddleware(signDeviceToken) },
     databaseHooks: {
       user: { create: { before: requireAllowedNewUser } },
       // Also checked per session, so accounts that predate the allowlist are held to it.
