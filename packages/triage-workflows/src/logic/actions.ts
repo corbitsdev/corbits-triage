@@ -160,7 +160,7 @@ function satisfied(kind: ActionKind, target: ResolvedTarget, facts: PrFacts): bo
       return "teams" in target && target.users.length === 0 && target.teams.length === 0;
     case "close":
       return facts.state === "closed";
-    // No effect id records a posted comment or agent run yet, so these always stand; facts do not say which review is the App's.
+    // No effect id records a posted comment or agent run yet, so these always stand; facts do not say which head the App's review is on.
     case "comment":
     case "approve":
     case "request-changes":
