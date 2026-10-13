@@ -103,7 +103,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           Skip to content
         </a>
         <nav className="rail" aria-label="Main">
-          <Link className="brand" to="/inbox" aria-label="Inbox">
+          <Link className="brand" to="/inbox">
             <img src="/triage-logo.svg" alt="Corbits Triage" />
           </Link>
           <WorkspaceSwitcher />
