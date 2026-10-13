@@ -2,9 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Checkbox } from "@corbits/react-ui";
 import { CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type TriageStats } from "@corbits/triage-contracts";
 import { catalogValue, checkOn, removeCustom, setCatalogCheck, setCustomEnabled, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
-import type { JudgementRule } from "../../lib/policy-view.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
-import type { JudgementRow, PolicyView } from "../../lib/use-policy-view.ts";
+import type { JudgementRule, PolicyView } from "../../lib/use-policy-view.ts";
 import CountField from "./CountField.tsx";
 import RuleRow from "./RuleRow.tsx";
 import TokenList from "./TokenList.tsx";
@@ -57,7 +56,7 @@ type ScoreRule = Extract<JudgementRule, { shape: "score" }>;
 
 function scoreTip(rule: ScoreRule): string {
   const fails = rule.failBelow ? ` Fails below ${rule.failBelow}.` : " Never fails a pull request.";
-  return `The decision model picks a level from ${rule.levels[0]} to ${rule.levels.at(-1)}.${fails}`;
+  return `The decision model picks one level, worst first: ${rule.levels.join(", ")}.${fails}`;
 }
 
 type RulesSectionProps = {
@@ -145,19 +144,21 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
     );
   }
 
-  function failBelow(rule: ScoreRule) {
-    const first = rule.levels[1]!;
+  /** Levels worst first, 2 to 10; failing below one is optional. */
+  function levels(rule: ScoreRule) {
+    const above = rule.levels.slice(1);
     return (
       <div className="levels">
-        <Checkbox checked={rule.failBelow !== undefined} label="fail below" disabled={disabled} onCheckedChange={(checked) => view.patchRule(rule.id, { failBelow: checked ? first : null })} />
-        <select className="val q" aria-label="Fail below" disabled={disabled || rule.failBelow === undefined} value={rule.failBelow ?? first} onChange={(event) => view.patchRule(rule.id, { failBelow: event.target.value })}>
-          {rule.levels.slice(1).map((level) => <option key={level} value={level}>{level}</option>)}
+        <TokenList values={rule.levels} noun="level" placeholder="excellent" disabled={disabled} onChange={(next) => view.patchRule(rule.id, { levels: next })} />
+        <Checkbox checked={rule.failBelow !== undefined} label="fail below" disabled={disabled || above.length === 0} onCheckedChange={(checked) => view.patchRule(rule.id, { failBelow: checked ? above[0]! : null })} />
+        <select className="val q" aria-label="Fail below" disabled={disabled || rule.failBelow === undefined} value={rule.failBelow ?? above[0] ?? ""} onChange={(event) => view.patchRule(rule.id, { failBelow: event.target.value })}>
+          {above.map((level) => <option key={level} value={level}>{level}</option>)}
         </select>
       </div>
     );
   }
 
-  function judgementRow(rule: JudgementRow) {
+  function judgementRow(rule: JudgementRule) {
     const text = rule.shape === "is-true" ? rule.claim : rule.subject;
     const label = rule.shape === "is-true" ? `Is it true that ${text || "…"}?` : `Score ${text || "…"}`;
     const words = rule.shape === "is-true"
@@ -173,7 +174,7 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
         tip={rule.shape === "is-true" ? IS_TRUE_TIP : scoreTip(rule)}
         model
         stat={passed(rule.id)}
-        more={rule.shape === "score" ? failBelow(rule) : null}
+        more={rule.shape === "score" ? levels(rule) : null}
         reason={rule.problem}
         disabled={disabled}
         onToggle={(next) => edit((current) => setCustomEnabled(current, rule.id, next))}

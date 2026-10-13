@@ -83,6 +83,9 @@
 .repos .group-note { font-size: 12px; color: var(--ink-mute); margin: 6px 0 0; }
 .repos .add-row { min-height: 36px; padding-top: 8px; gap: 16px; }
 .repos .levels { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 2px; font-size: 12px; }
+.repos .val.lbl { width: auto; min-width: 120px; field-sizing: content; height: 24px; font-size: 12px; padding: 0 6px; text-align: left; }
+.repos .lbl-code { font: 400 12px var(--mono); color: var(--ink-mute); }
+.repos .labels-card { margin-top: 28px; }
 
 /* Values inside sentences */
 .repos .val { font: 700 13px var(--mono); width: 64px; height: 28px; min-height: 0; padding: 0 8px; text-align: center; color: inherit; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); }

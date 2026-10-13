@@ -1,10 +1,9 @@
-import type { AgentTarget, LabelsTarget, PeopleTarget, ReviewTarget } from "@corbits/triage-contracts";
+import { type Step, type StepFor, type StepKind } from "@corbits/triage-contracts";
 
-/** What a step does. A verdict with no steps does nothing. */
-export const STEP_DOS = ["approve", "merge", "close", "comment", "request-changes", "request-review", "assign", "labels"] as const;
-export type StepDo = (typeof STEP_DOS)[number];
+/** What a new step can do. A verdict with no steps does nothing, so `nothing` is shown only when stored. */
+export const STEP_DOS = ["approve", "merge", "close", "comment", "request-changes", "request-review", "assign", "labels"] as const satisfies readonly StepKind[];
 
-export const STEP_DO_NAMES: Record<StepDo | "agent", string> = {
+export const STEP_DO_NAMES: Record<StepKind, string> = {
   approve: "Approve",
   merge: "Approve and merge",
   close: "Close",
@@ -13,11 +12,8 @@ export const STEP_DO_NAMES: Record<StepDo | "agent", string> = {
   "request-review": "Request review from…",
   assign: "Assign to…",
   labels: "Add label…",
-  agent: "Run an agent",
+  nothing: "Do nothing",
 };
-
-/** Whose pull requests a step applies to. */
-export type StepFor = "anyone" | "first-timers" | "maintainers" | "external" | "bots" | { team: string } | { users: string[] };
 
 export const FOR_NAMES = {
   anyone: "anyone",
@@ -29,37 +25,40 @@ export const FOR_NAMES = {
   users: "specific people…",
 } as const;
 
-/** `agent` steps are no longer offered; one already stored stays as it is. */
-export type Step = { for: StepFor } & (
-  | { do: "approve" | "merge" | "close" | "request-changes" }
-  | { do: "comment"; body: string }
-  | { do: "request-review"; who: ReviewTarget }
-  | { do: "assign"; who: PeopleTarget }
-  | { do: "labels"; labels: LabelsTarget }
-  | { do: "agent"; agent: AgentTarget }
-);
+export type ForChoice = keyof typeof FOR_NAMES;
 
-/** A decision-model rule the repository adds: a yes or no claim, or a score over described levels. */
-export type JudgementRule = { id: string; on: boolean } & (
-  | { shape: "is-true"; claim: string }
-  | { shape: "score"; subject: string; levels: string[]; failBelow?: string }
-);
+export function forChoice(step: Step): ForChoice {
+  if (step.for === undefined) return "anyone";
+  if (typeof step.for === "string") return step.for;
+  return "team" in step.for ? "team" : "users";
+}
 
-/** One field of a judgement rule; `failBelow: null` means it never fails. */
-export type JudgementPatch = { claim?: string; subject?: string; failBelow?: string | null };
+/** The step for `choice`; anyone is the default, so it is not stored. */
+export function withFor(step: Step, choice: ForChoice): Step {
+  const { for: _was, ...rest } = step;
+  if (choice === "anyone") return rest as Step;
+  const audience: StepFor = choice === "team" ? { team: "" } : choice === "users" ? { users: [] } : choice;
+  return { ...rest, for: audience } as Step;
+}
 
 /** A step after its Do changes: keeps who it is for and starts the new Do's values empty. */
-export function freshStep(step: Step, next: StepDo): Step {
+export function freshStep(step: Step, next: StepKind): Step {
+  const audience = step.for === undefined ? {} : { for: step.for };
   switch (next) {
     case "comment":
-      return { do: next, for: step.for, body: "" };
+      return { do: next, target: { body: "" }, ...audience };
     case "request-review":
-      return { do: next, for: step.for, who: { to: "codeowners" } };
+      return { do: next, target: { to: "codeowners" }, ...audience };
     case "assign":
-      return { do: next, for: step.for, who: { to: "users", users: [] } };
+      return { do: next, target: { to: "users", users: [] }, ...audience };
     case "labels":
-      return { do: next, for: step.for, labels: { from: "list", labels: [] } };
+      return { do: next, target: { from: "list", labels: [] }, ...audience };
     default:
-      return { do: next, for: step.for };
+      return { do: next, ...audience };
   }
+}
+
+/** A labels step the Labels card owns: the verdict's label or the failed rules' labels. */
+export function isHandoffLabels(step: Step): boolean {
+  return step.do === "labels" && step.target.from !== "list";
 }

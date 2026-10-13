@@ -7,7 +7,7 @@ import { openSession } from "./repo-pack-save.ts";
 import { transportRepoPackStore } from "./repo-pack-store.ts";
 
 const repo = "acme/widgets";
-const config = { corbitsTriage: { repos: [{ name: repo, connected: true, installationId: 9, enabled: true, roles: {}, checkPack: { name: `check-pack/${repo}` } }] } };
+const config = { corbitsTriage: { repos: [{ name: repo, connected: true, installationId: 9, enabled: true, checkPack: { name: `check-pack/${repo}` } }] } };
 
 test("edits made around a conflicting save are replayed onto the other writer's pack; unfinished steps wait and typed text keeps its spacing", async () => {
   const stored = recommendedPack(repo);
@@ -20,23 +20,23 @@ test("edits made around a conflicting save are replayed onto the other writer's 
   hub.artifacts[0]!.content = JSON.stringify({ ...stored, checks: { ...stored.checks, "ci-green": { enabled: false } } });
   hub.artifacts[0]!.version = 2;
 
-  autosave.edit((draft) => setList(draft, "pass", [...draft.pack.actions.pass, { kind: "comment", target: { body: "Thanks!  " } }]));
+  autosave.edit((draft) => setList(draft, "pass", [...draft.pack.actions.pass, { do: "comment" as const, target: { body: "Thanks!  " } }]));
   const saving = autosave.flush();
   autosave.edit((draft) => setCatalogCheck(draft, session.saved.pack, "max-files-changed", { maxFiles: 10 }));
-  autosave.edit((draft) => setList(draft, "fail", [...draft.pack.actions.fail, { kind: "comment", target: { body: "" } }]));
+  autosave.edit((draft) => setList(draft, "fail", [...draft.pack.actions.fail, { do: "comment" as const, target: { body: "" } }]));
   await saving;
   await autosave.flush();
 
   const saved = readCheckPack(JSON.parse(hub.artifacts[0]!.content));
   expect(saved.checks["ci-green"]).toEqual({ enabled: false });
   expect(saved.checks["max-files-changed"]?.maxFiles).toBe(10);
-  expect(saved.actions.pass).toEqual([{ kind: "approve", target: {} }, { kind: "comment", target: { body: "Thanks!" } }]);
+  expect(saved.actions.pass).toEqual([{ do: "approve" }, { do: "comment", target: { body: "Thanks!" } }]);
   expect(saved.actions.fail).toEqual([]);
 
   const { draft, error } = autosave.state();
   expect(error).toBe("");
-  expect(draft.pack.actions.pass[1]).toEqual({ kind: "comment", target: { body: "Thanks!  " } });
-  expect(draft.pack.actions.fail).toEqual([{ kind: "comment", target: { body: "" } }]);
+  expect(draft.pack.actions.pass[1]).toEqual({ do: "comment", target: { body: "Thanks!  " } });
+  expect(draft.pack.actions.fail).toEqual([{ do: "comment", target: { body: "" } }]);
 });
 
 test("a save held back by an unfinished draft does not stop the next one", async () => {

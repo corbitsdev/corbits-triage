@@ -5,7 +5,6 @@ import {
   isCatalogId,
   type StepKind,
   type CheckPack,
-  type VerdictWord,
 } from "@corbits/triage-contracts";
 
 export const DO_NAMES: Record<StepKind, string> = {
@@ -31,8 +30,6 @@ export function checkLabel(pack: CheckPack | null, id: string): string | null {
 function quoted(text: string): string {
   return `“${text}”`;
 }
-
-const LIST_NAMES: Record<VerdictWord, string> = { pass: "On Pass", fail: "On Fail", unsure: "On Unsure" };
 
 /**
  * A contract or draft message as the panel shows it, custom rules by name; an id the policy does
