@@ -139,6 +139,8 @@ export type RuleCustomCheck = Extract<CustomCheck, { kind: "rule" }>;
 
 const SCORE_MAX = 10;
 const PATTERN_MAX = 200;
+const GLOB_MAX = 200;
+const GLOBS_MAX = 50;
 const CUSTOM_ID = /^custom-\d+$/;
 
 export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "close", "agent"] as const;
@@ -375,10 +377,19 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function parseGlobs(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const globs = value.flatMap((item) => (typeof item === "string" && item.trim().length > 0 ? [item.trim()] : []));
+function capGlobs(globs: string[], where: string): string[] {
+  if (globs.length > GLOBS_MAX) throw new Error(`${where} must list at most ${GLOBS_MAX} globs.`);
+  if (globs.some((glob) => glob.length > GLOB_MAX)) throw new Error(`${where} must be globs of at most ${GLOB_MAX} characters.`);
   return globs;
+}
+
+function globs(value: unknown, where: string): string[] {
+  return capGlobs(texts(value, where), where);
+}
+
+function parseGlobs(value: unknown, where: string): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return capGlobs(value.flatMap((item) => (typeof item === "string" && item.trim().length > 0 ? [item.trim()] : [])), where);
 }
 
 function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefined {
@@ -401,7 +412,7 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
     if (maxBehindBy !== undefined) check.maxBehindBy = maxBehindBy;
   }
   if (id === "paths") {
-    const globs = parseGlobs(row.forbiddenGlobs);
+    const globs = parseGlobs(row.forbiddenGlobs, "Forbidden paths globs");
     if (globs) check.forbiddenGlobs = globs;
   }
   return check;
@@ -474,9 +485,9 @@ function parseRule(row: Record<string, unknown>, where: string): RuleCheck {
   const rule = oneOf(row.rule, RULE_KINDS, `${where} rule`);
   switch (rule) {
     case "paths-unchanged":
-      return { rule, globs: texts(row.globs, `${where} globs`) };
+      return { rule, globs: globs(row.globs, `${where} globs`) };
     case "paths-together":
-      return { rule, changed: texts(row.changed, `${where} changed`), requires: texts(row.requires, `${where} requires`) };
+      return { rule, changed: globs(row.changed, `${where} changed`), requires: globs(row.requires, `${where} requires`) };
     case "title-pattern":
     case "branch-pattern":
     case "diff-excludes":
@@ -498,7 +509,7 @@ function parseScope(row: Record<string, unknown>, where: string): { scope?: Cust
   const scope = row.scope === undefined ? undefined : oneOf(row.scope, CUSTOM_SCOPES, `${where} scope`);
   if (row.when === undefined) return scope === undefined ? {} : { scope };
   if (scope === undefined || scope === "pull-request") throw new Error(`${where} when needs a file or hunk scope.`);
-  return { scope, when: texts(row.when, `${where} when`) };
+  return { scope, when: globs(row.when, `${where} when`) };
 }
 
 function parseModel(row: Record<string, unknown>, where: string): ModelCheck {
