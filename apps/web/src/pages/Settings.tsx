@@ -25,7 +25,8 @@ import { useSession } from "../lib/session.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { SignedInDevices } from "../components/SignedInDevices.tsx";
-import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
+import { DECISION_MODEL_INTRO } from "@corbits/triage-contracts";
+import { hasDecisionModelCredential } from "../lib/decision-models.ts";
 
 const TABS = ["Triage", "GitHub", "Integrations", "Model", "Access", "Account"] as const;
 type SettingsTab = (typeof TABS)[number];

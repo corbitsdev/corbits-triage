@@ -23,7 +23,8 @@ import { useRuns } from "../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { OtherWorkspaces } from "../components/OtherWorkspaces.tsx";
-import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
+import { DECISION_MODEL_INTRO } from "@corbits/triage-contracts";
+import { hasDecisionModelCredential } from "../lib/decision-models.ts";
 
 type GuidedStep = "create" | "install" | "select" | "model";
 
