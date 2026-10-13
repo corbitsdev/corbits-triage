@@ -74,6 +74,22 @@ export async function resolveLiveDeployments(
   }));
 }
 
+/** A deployment in any status: `cancelling` tells one released on purpose from one Interchange failed. */
+export type DeploymentRecord = { runId: string; status: (typeof schema.workflowRun.$inferSelect)["status"]; endedAt: Date | null; cancelling: boolean };
+
+/** The tenant's newest `limit` deployments of the workflow, live or ended, newest first. */
+export async function latestDeployments(db: DB["db"], tenantId: string, definitionName: string, limit: number): Promise<DeploymentRecord[]> {
+  const { workflowRun, workflowDefinition } = schema;
+  const rows = await db
+    .select({ runId: workflowRun.id, status: workflowRun.status, endedAt: workflowRun.endedAt, cancellationRequestedAt: workflowRun.cancellationRequestedAt })
+    .from(workflowRun)
+    .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
+    .where(and(eq(workflowRun.tenantId, tenantId), eq(workflowDefinition.name, definitionName), eq(workflowRun.id, workflowRun.anchorRunId)))
+    .orderBy(desc(workflowRun.createdAt), desc(workflowRun.id))
+    .limit(limit);
+  return rows.map(({ cancellationRequestedAt, ...row }) => ({ ...row, cancelling: cancellationRequestedAt !== null }));
+}
+
 export type ActiveTenant = { id: string; domain: string };
 
 /** Tenants with a run of the workflow in flight, or with `deployments` one with a live deployment of it. */

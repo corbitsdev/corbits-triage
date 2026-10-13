@@ -70,6 +70,7 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver) 
   return createTriageReconciler({
     tenants: async () => [{ id: TENANT, domain: "tenant.example", config: CONFIG }],
     liveDeployments: async () => [DEPLOYMENT],
+    latestDeployments: async () => [],
     rotation: { afterRuns: 15, redeploy: async () => ({ status: "skipped", reason: "unused" }), sameSource: async () => false, release: async () => {}, claim: async () => false, clear: async () => {} },
     openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt: LONG_AGO, draft: false })),
     observeTenant: async () => ({ deployments: [DEPLOYMENT], observed: [await noRuns()] }),

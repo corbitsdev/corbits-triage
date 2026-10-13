@@ -53,7 +53,7 @@ import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubPrDos } from "./github/pr-dos.js";
@@ -355,6 +355,9 @@ const reconcilePolicy = triageReconcilePolicy(env);
 const reconcileTriage = createTriageReconciler({
   tenants: reconcileTenants,
   liveDeployments: livePrTriageDeployments,
+  latestDeployments: function latestPrTriageDeployments(tenantId, limit) {
+    return latestDeployments(composition.db, tenantId, prTriageWorkflow.id, limit);
+  },
   rotation: { afterRuns: triageRotateAfterRuns(env), ...deploymentRotation },
   openHeadsFor: tenantOpenHeads,
   observeTenant: tenantObserver.observe,
