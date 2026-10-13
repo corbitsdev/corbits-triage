@@ -9,12 +9,14 @@ import { usePortal } from "../lib/portal.tsx";
 import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { useSession } from "../lib/session.tsx";
-import { CheckIcon, GearIcon, InboxIcon, ListIcon, PersonIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, DownIcon, GearIcon, InboxIcon, ListIcon, PersonIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
-function WorkspaceItems() {
+function WorkspaceSwitcher() {
   const { snapshot } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();
-  if (!snapshot || (snapshot.workspaces.length < 2 && snapshot.invitations.length === 0)) return null;
+  if (!snapshot) return null;
+  const name = <span className="ws-name">{snapshot.tenantName}</span>;
+  if (snapshot.workspaces.length < 2 && snapshot.invitations.length === 0) return <div className="ws">{name}</div>;
   const current = snapshot.workspace.tenantId;
   const options = [...snapshot.workspaces, ...snapshot.invitations];
 
@@ -23,20 +25,24 @@ function WorkspaceItems() {
   }
 
   return (
-    <>
-      {snapshot.workspaces.map((workspace) => (
-        <MenuItem key={workspace.tenantId} aria-current={workspace.tenantId === current ? "true" : undefined} onSelect={() => void choose(workspace.tenantId)}>
-          <span className="ws-option"><b>{workspace.name}</b>{sharesName(workspace, options) ? <small>{workspace.slug}</small> : null}</span>
-          {workspace.tenantId === current ? <CheckIcon /> : null}
-        </MenuItem>
-      ))}
-      {snapshot.invitations.map((invitation) => (
-        <MenuItem key={invitation.tenantId} disabled>
-          <span className="ws-option"><b>{invitation.name}</b><small>Invited. Open the link in your invitation email to join.</small></span>
-        </MenuItem>
-      ))}
-      <MenuSeparator />
-    </>
+    <Menu>
+      <MenuTrigger asChild>
+        <button type="button" className="ws" aria-label={`Workspace: ${snapshot.tenantName}`}>{name}<DownIcon /></button>
+      </MenuTrigger>
+      <MenuContent align="start" className="ws-menu">
+        {snapshot.workspaces.map((workspace) => (
+          <MenuItem key={workspace.tenantId} aria-current={workspace.tenantId === current ? "true" : undefined} onSelect={() => void choose(workspace.tenantId)}>
+            <span className="ws-option"><b>{workspace.name}</b>{sharesName(workspace, options) ? <small>{workspace.slug}</small> : null}</span>
+            {workspace.tenantId === current ? <CheckIcon /> : null}
+          </MenuItem>
+        ))}
+        {snapshot.invitations.map((invitation) => (
+          <MenuItem key={invitation.tenantId} disabled>
+            <span className="ws-option"><b>{invitation.name}</b><small>Invited. Open the link in your invitation email to join.</small></span>
+          </MenuItem>
+        ))}
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -59,7 +65,6 @@ function UserBlock() {
         </button>
       </MenuTrigger>
       <MenuContent side="top" align="start" className="me-menu">
-        <WorkspaceItems />
         <MenuItem onSelect={() => navigate("/settings")}><GearIcon />Settings</MenuItem>
         <MenuItem onSelect={() => navigate("/repositories")}><RepoIcon />Repositories</MenuItem>
         <MenuSeparator />
@@ -102,6 +107,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             <img src="/triage-logo.svg" alt="Corbits" />
             Triage
           </Link>
+          <WorkspaceSwitcher />
           <Link className="nav-a" to="/pulse" aria-current={room === "pulse" ? "true" : undefined}>
             <PulseIcon />
             Pulse
@@ -113,12 +119,11 @@ export default function Layout({ children }: { children: ReactNode }) {
             {openPullsUnanswered ? null : <span className="n">{counts["needs-you"]}</span>}
           </Link>
           <Link className="nav-a" to="/open" aria-current={allOpenActive ? "true" : undefined}>
-            <ListIcon />
             All open
             {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
           </Link>
+          <h3>Saved views</h3>
           <Link className="nav-a" to="/first-timers" aria-current={firstTimersActive ? "true" : undefined}>
-            <PersonIcon />
             First-timers
             {openPullsUnanswered ? null : <span className="n">{counts["first-timers"]}</span>}
           </Link>
