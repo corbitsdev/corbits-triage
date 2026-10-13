@@ -180,13 +180,24 @@ export function packChanges(saved: CheckPack, draft: CheckPack): number {
     + Number(reordered(saved.actions, draft.actions));
 }
 
+/** What a save changes: the switches that differ and each role that differs, null where the draft removed it. */
+export type PolicyChange = Partial<Pick<DraftPolicy, "cleanupMode" | "enabled" | "triageDrafts">> & { roles: Record<string, RepoRole | null> };
+
+export function policyChange(saved: DraftPolicy, draft: DraftPolicy): PolicyChange {
+  const change: PolicyChange = { roles: {} };
+  if (saved.cleanupMode !== draft.cleanupMode) change.cleanupMode = draft.cleanupMode;
+  if (saved.enabled !== draft.enabled) change.enabled = draft.enabled;
+  if (saved.triageDrafts !== draft.triageDrafts) change.triageDrafts = draft.triageDrafts;
+  for (const name of new Set([...Object.keys(saved.roles), ...Object.keys(draft.roles)])) {
+    if (!same(saved.roles[name], draft.roles[name])) change.roles[name] = draft.roles[name] ?? null;
+  }
+  return change;
+}
+
 /** One change per policy switch and per role that differs. */
 export function policyChanges(saved: DraftPolicy, draft: DraftPolicy): number {
-  const roles = new Set([...Object.keys(saved.roles), ...Object.keys(draft.roles)]);
-  return Number(saved.cleanupMode !== draft.cleanupMode)
-    + Number(saved.enabled !== draft.enabled)
-    + Number(saved.triageDrafts !== draft.triageDrafts)
-    + [...roles].filter((name) => !same(saved.roles[name], draft.roles[name])).length;
+  const { roles, ...switches } = policyChange(saved, draft);
+  return Object.keys(switches).length + Object.keys(roles).length;
 }
 
 export function changeCount(saved: RepoDraft, draft: RepoDraft): number {

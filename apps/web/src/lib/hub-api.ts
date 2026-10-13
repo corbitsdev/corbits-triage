@@ -8,6 +8,7 @@ import {
 } from "@intx/hub-client";
 import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
+import type { PolicyChange } from "./pack-draft.ts";
 
 export const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
@@ -307,9 +308,9 @@ export function configFingerprint(config: unknown): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-const CONFIG_CAS_ATTEMPTS = 8;
+const CONFIG_SAVE_ATTEMPTS = 3;
 
-/** PATCH replaces tenant config wholesale: spread existing keys, replace only our namespace. */
+/** Saves the update against the revision it read; when someone saved in between, re-applies it to their settings. */
 export async function patchAppConfig(
   transport: Transport,
   tenantId: string,
@@ -317,16 +318,14 @@ export async function patchAppConfig(
 ): Promise<void> {
   const tid = enc(requireTenantId(tenantId));
   let lastConflict: ApiError | undefined;
-  for (let attempt = 0; attempt < CONFIG_CAS_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < CONFIG_SAVE_ATTEMPTS; attempt += 1) {
     const tenant = await transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`);
-    const existing = tenant.config && typeof tenant.config === "object" ? tenant.config : {};
-    const current = { ...appConfig(existing) };
-    const next = { ...update(current), rev: current.rev ?? 0 };
+    const current = { ...appConfig(tenant.config) };
     try {
-      await transport.fetch("PATCH", `/api/tenants/${tid}`, { config: { ...existing, [CONFIG_KEY]: next } });
+      await transport.fetch("PUT", `/api/integrations/triage-config/${tid}`, { rev: current.rev ?? 0, config: update(current) });
       return;
     } catch (cause) {
-      if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
+      if (!(cause instanceof ApiError && cause.code === "config_conflict")) throw cause;
       lastConflict = cause;
     }
   }
@@ -448,21 +447,34 @@ function assertRepoEnabled(policy: RepoPolicy): void {
   }
 }
 
-/** One config write: the panel's settings, plus the pointer at the repository's pack when it has one. */
+function withRoles(row: unknown, change: PolicyChange["roles"]): Record<string, RepoRole> {
+  const roles = { ...repoPolicy(row).roles };
+  for (const [name, role] of Object.entries(change)) {
+    if (role === null) delete roles[name];
+    else roles[name] = role;
+  }
+  return roles;
+}
+
+/** One config write: only what the panel changed, applied to the stored row, plus the pointer at the repository's pack when it has one. */
 export async function saveRepoSettings(
   transport: Transport,
   tenantId: string,
   repo: string,
-  settings: Pick<RepoPolicy, "cleanupMode" | "enabled" | "triageDrafts" | "roles">,
+  change: PolicyChange,
   linked: boolean,
 ): Promise<void> {
   const clean = validateRepo(repo);
-  const { cleanupMode, enabled, triageDrafts, roles } = settings;
-  const next = { cleanupMode, enabled, triageDrafts, roles, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
+  const { roles, ...switches } = change;
+  const pointer = linked ? { checkPack: { name: checkPackName(clean) } } : {};
+  function applied(row: unknown): unknown {
+    if (rowName(row) !== clean) return row;
+    return { ...(row as object), ...switches, ...(Object.keys(roles).length > 0 ? { roles: withRoles(row, roles) } : {}), ...pointer };
+  }
   await patchAppConfig(transport, tenantId, function applySettings(current) {
     const repos = current.repos ?? [];
     if (!repos.some((row) => rowName(row) === clean)) throw new Error("Repository not found.");
-    return { ...current, repos: repos.map((row) => (rowName(row) === clean ? { ...(row as object), ...next } : row)) };
+    return { ...current, repos: repos.map(applied) };
   });
 }
 
