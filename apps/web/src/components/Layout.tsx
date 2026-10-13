@@ -103,9 +103,8 @@ export default function Layout({ children }: { children: ReactNode }) {
           Skip to content
         </a>
         <nav className="rail" aria-label="Main">
-          <Link className="brand" to="/inbox">
-            <img src="/triage-logo.svg" alt="Corbits" />
-            Triage
+          <Link className="brand" to="/inbox" aria-label="Inbox">
+            <img src="/triage-logo.svg" alt="Corbits Triage" />
           </Link>
           <WorkspaceSwitcher />
           <Link className="nav-a" to="/pulse" aria-current={room === "pulse" ? "true" : undefined}>
