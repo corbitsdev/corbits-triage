@@ -153,7 +153,10 @@ async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 
     },
   } as unknown as ReactorCapabilities;
   const facts = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
-  await facts.decide({ type: "message.received", message: { content: JSON.stringify(mail) } } as ReactorInboundEvent, {} as ReactorState, caps);
+  // Stock hands the director the parsed headers and the text part alone as the body.
+  const parts = (mail as { parts?: Array<{ text?: string }> }).parts ?? [];
+  const message = { headers: (mail as { headers?: unknown }).headers, content: parts[0]?.text ?? JSON.stringify(mail) };
+  await facts.decide({ type: "message.received", message } as ReactorInboundEvent, {} as ReactorState, caps);
   while (reply === undefined) {
     const call = pending.shift()!;
     await facts.decide({ type: "tool.done", result: { callId: call.id, content: githubAnswer(call, pr), isError: false } } as ReactorInboundEvent, {} as ReactorState, caps);

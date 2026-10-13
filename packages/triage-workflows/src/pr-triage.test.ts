@@ -128,7 +128,7 @@ function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], ju
       reply(content: string) { reply = content; return { type: "reply", content }; },
     } as unknown as ReactorCapabilities;
     const director = triageDirectorFactory(agent.director!.config as never, {} as never, agent as never);
-    const queue: ReactorInboundEvent[] = [{ type: "message.received", message: { content: JSON.stringify(input) } } as ReactorInboundEvent];
+    const queue: ReactorInboundEvent[] = [{ type: "message.received", message: delivered(input) } as ReactorInboundEvent];
     for (let event = queue.shift(); event !== undefined && reply === undefined; event = queue.shift()) {
       const taken = [await director.decide(event, {} as ReactorState, caps)].flat() as unknown as Array<{ type: string; calls?: ToolCall[]; request?: { providerOptions: { systemOne: SystemOne } } }>;
       for (const action of taken) {
@@ -181,6 +181,12 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
 /** `request` as stock delivers a mail from `from` to the deployment. */
 function hubMail(request: Record<string, unknown>, from: string) {
   return { headers: { from, to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
+}
+
+/** What stock hands the director for a mail: the parsed headers, and the text part alone as `content`. */
+function delivered(mail: Record<string, unknown>) {
+  const parts = Array.isArray(mail.parts) ? mail.parts as Array<{ text?: string }> : [];
+  return { headers: mail.headers, content: parts[0]?.text ?? JSON.stringify(mail) };
 }
 
 /** The mail the hub sends, as `from`, when a person approves the held Do `step` of `verdict`. */
