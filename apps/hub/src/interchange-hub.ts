@@ -15,6 +15,7 @@ import {
   createPrincipalKeyStore,
   createSidecarAllocationStore,
   createWorkflowRunDispatchStore,
+  createWorkflowRunLaunchSpecStore,
   resolveFrameSenderKey,
   resolveSenderKey,
   withExecutableWorkflowRun,
@@ -47,6 +48,7 @@ import {
   createWorkflowDispatchProjection,
   DEFAULT_WORKFLOW_PROJECTION_CONCURRENCY,
   createWorkflowRunReader,
+  createParkedRunClassifier,
   createWorkflowHistoryReceiveTracker,
   recoverSenderDeploy,
   DEFAULT_SIDECAR_ALLOCATION_CONCURRENCY,
@@ -200,6 +202,7 @@ export async function createInterchangeHub({
     validateSidecarIdentity: sidecarCredentials.isCurrent,
     withExecutableWorkflowRun: (target, send, signal) =>
       withExecutableWorkflowRun(db, target, send, signal),
+    resolveSidecarBindings: sidecarCredentials.resolveBindings,
     lookups,
     ...(settings.probeTimeoutMs !== undefined
       ? { probeTimeoutMs: settings.probeTimeoutMs }
@@ -295,6 +298,21 @@ export async function createInterchangeHub({
   });
   const sidecarAllocationStore = createSidecarAllocationStore(db);
   const runReader = createWorkflowRunReader(agentRepoStore.repoStore);
+  const launchSpecs = createWorkflowRunLaunchSpecStore(db);
+  const classifyParkedRun = createParkedRunClassifier({
+    runReader,
+    addressForAnchor: async (anchorRunId) => {
+      const row = await db.query.workflowRun.findFirst({
+        where: (run, { eq }) => eq(run.id, anchorRunId),
+        columns: { address: true },
+      });
+      return row?.address ?? null;
+    },
+    projectionForAnchor: async (anchorRunId) => {
+      const spec = await launchSpecs.get(anchorRunId);
+      return spec?.frozenApprovalBundle.projection ?? null;
+    },
+  });
   const workflowLifecycleService = createWorkflowLifecycleService({
     db,
     runReader,
@@ -329,6 +347,7 @@ export async function createInterchangeHub({
       : {}),
     onInitializationRecovery: (allocation, reconciliation) =>
       recoverSenderDeploy({ db, sidecarRouter, allocation, reconciliation }),
+    classifyParkedRun,
     onReady: async (allocation, reconciliation) => {
       await workflowAllocationService.deployReadyAllocation(
         allocation,
@@ -343,11 +362,30 @@ export async function createInterchangeHub({
 
   await workflowAllocationService.initialize?.();
   await sidecarAllocationReconciler.initialize();
-  sidecarRouter.events.on("sidecar.disconnect", ({ allocated }) => {
-    if (allocated === undefined) return;
-    return sidecarAllocationReconciler.handleDisconnect(allocated);
+  sidecarRouter.events.on("sidecar.disconnect", async ({ allocated }) => {
+    await Promise.all(
+      allocated.map((target) =>
+        sidecarAllocationReconciler
+          .handleDisconnect(target)
+          .catch((err: unknown) => {
+            log.error(
+              "Failed to handle the disconnect of allocation {allocationId} generation {generation}: {error}",
+              {
+                allocationId: target.allocationId,
+                generation: target.generation,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            );
+          }),
+      ),
+    );
   });
   sidecarRouter.events.on("sidecar.allocated.connected", (allocated) =>
+    sidecarAllocationReconciler.handleConnected(allocated),
+  );
+  // A stop the sidecar reports is acted on like a reconnect: the next
+  // reconciliation reads what the sidecar reported.
+  sidecarRouter.events.on("deployment.stopped", (allocated) =>
     sidecarAllocationReconciler.handleConnected(allocated),
   );
   sidecarRouter.events.on(
