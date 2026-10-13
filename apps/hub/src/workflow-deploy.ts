@@ -2,14 +2,14 @@
 // refuses a package-registry source; delete this route once upstream PR 195 lands.
 import { and, eq } from "drizzle-orm";
 import { type, type Traversal } from "arktype";
-import { schema, TenantConfigInvalidError } from "@intx/db";
+import { schema, TenantConfigInvalidError, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { WorkflowProvisioningError, type WorkflowAllocationService } from "@intx/hub-sessions";
 import { parsePin } from "@intx/tool-packaging";
 import type { WorkflowDeploymentResponse } from "@intx/types";
 import { WorkflowDefinitionInvalidError } from "@intx/workflow-deploy";
-import { failure, portalMember, type PortalCredentialDeps } from "./github/portal-credential.js";
-import { readJson } from "./read-json.js";
+import { failure } from "./github/portal-credential.js";
+import type { Member } from "./integrations/app.js";
 
 export const WORKFLOW_DEPLOY_PATH = "/api/integrations/workflow-deploy";
 
@@ -36,7 +36,8 @@ export const DeployBody = type({
   defaultSourceOfferingId: "string > 0",
 });
 
-export type WorkflowDeployDeps = PortalCredentialDeps & {
+export type WorkflowDeployDeps = {
+  db: DB["db"];
   allocation: Pick<WorkflowAllocationService, "prepareProvisionedDeployment">;
 };
 
@@ -48,15 +49,7 @@ export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
     });
   }
 
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
-    if (!(await deps.authorize(principalId, tenantId, "workflow:*", "create"))) {
-      return failure(403, "forbidden", "You may not deploy workflows in this workspace.");
-    }
-    const body = DeployBody(await readJson(req));
-    if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
-
+  return async function handle(body: typeof DeployBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true } });
     if (!tenant) return failure(404, "not_found", "Workspace not found");
     if (!(await tenantAsset(tenantId, body.definitionAssetId, "workflow"))) return failure(404, "not_found", "Workflow asset not found");

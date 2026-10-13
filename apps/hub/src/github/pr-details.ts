@@ -7,7 +7,8 @@ import { schema } from "@intx/db";
 import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues } from "@corbits/github-reads";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation } from "./open-pulls.js";
-import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 
 export const GITHUB_PR_DETAILS_PATH = "/api/integrations/github-pull";
@@ -17,9 +18,7 @@ const Query = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "string.integer.parse" 
 export function createGithubPrDetails(deps: PortalCredentialDeps & { githubApiOrigin: string }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {
     const url = new URL(req.url);
     const query = Query({ repo: url.searchParams.get("repo"), number: url.searchParams.get("number") });
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);

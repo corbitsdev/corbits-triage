@@ -4,36 +4,15 @@ import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
 import { APPROVE_ACTION, reviewResource } from "./admin-github-grant.js";
-import { validManifestMutationRequest } from "./manifest.js";
-
-type SessionResult = { user: { id: string } };
 
 export type PortalCredentialDeps = {
   db: DB["db"];
   cipher: CredentialCipher;
-  getSession: (headers: Headers) => Promise<SessionResult | null>;
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
-  trustedPortalOrigins: readonly string[];
 };
 
 export function failure(status: number, code: string, message: string, details?: Record<string, string>): Response {
   return Response.json({ error: { ...details, code, message } }, { status });
-}
-
-/** The signed-in member's principal id, or the error response to return. */
-// Browsers omit Origin on same-origin GETs, and reads change nothing, so they only need to not be cross-site.
-// A bearer token without a cookie is an agent's device-code session; browsers never attach one on their own.
-export function fromPortal(req: Request, trustedOrigins: readonly string[]): boolean {
-  if (req.headers.get("authorization")?.toLowerCase().startsWith("bearer ") && !req.headers.has("cookie")) return true;
-  if (req.method === "GET") return req.headers.get("sec-fetch-site")?.toLowerCase() !== "cross-site";
-  return validManifestMutationRequest(req, new Set([new URL(req.url).origin, ...trustedOrigins]));
-}
-
-export async function portalMember(d: PortalCredentialDeps, req: Request, tenantId: string): Promise<string | Response> {
-  if (!fromPortal(req, d.trustedPortalOrigins)) return failure(403, "forbidden", "This request did not come from the portal.");
-  const session = await d.getSession(req.headers);
-  if (!session) return failure(401, "unauthorized", "Sign in again.");
-  return (await memberPrincipal(d.db, tenantId, session.user.id)) ?? failure(401, "unauthorized", "You are not a member of this workspace.");
 }
 
 /** The user's active principal id in the tenant. */
@@ -47,14 +26,6 @@ export async function memberPrincipal(db: DB["db"], tenantId: string, userId: st
     ),
   });
   return member?.id;
-}
-
-/** The member's principal id when they hold `workflow-run:*` read, which reading triage runs needs, or the error response to return. */
-export async function runReadPrincipal(d: PortalCredentialDeps, req: Request, tenantId: string): Promise<string | Response> {
-  const principalId = await portalMember(d, req, tenantId);
-  if (principalId instanceof Response) return principalId;
-  if (await d.authorize(principalId, tenantId, "workflow-run:*", "read")) return principalId;
-  return failure(403, "forbidden", "You do not have access to this workspace's triage runs.");
 }
 
 async function holds(d: PortalCredentialDeps, principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {

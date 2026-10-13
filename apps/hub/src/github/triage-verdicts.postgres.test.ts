@@ -2,8 +2,10 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
+import { createInMemoryGrantStore, type GrantRule } from "@intx/authz";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
+import { guardedApp } from "../integrations/test-app.js";
 import { migrateTriageTables } from "../triage-db.js";
 import { createOpenPullsCache, type RepoPulls } from "./open-pulls.js";
 import type { ObservedRun } from "./reconcile-plan.js";
@@ -98,19 +100,17 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       },
     };
     let session: { user: { id: string } } | null = { user: { id: "usr_member" } };
-    let runsReadable = true;
+    const grants: GrantRule[] = [{ id: "grt_runs", resource: "workflow-run:*", action: "read", effect: "allow", origin: "system", conditions: null, expiresAt: null, roleId: null, principalId: "prn_verdicts" }];
     let ready = false;
     let now = minutes(0);
     const versions = createTenantVersions();
     // The portal's github-open-pulls listing; the workspace has no GitHub credential, so the route never lists on its own.
     const openPulls = createOpenPullsCache(() => minutes(0));
     await openPulls.read(TENANT, async () => OPEN);
-    const route = createTriageVerdicts({
+    const triageVerdicts = createTriageVerdicts({
       db,
       cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
-      getSession: async () => session,
-      authorize: async (_principalId, _tenantId, resource) => resource !== "workflow-run:*" || runsReadable,
-      trustedPortalOrigins: [],
+      authorize: async () => true,
       verdicts,
       observer: { last: () => OBSERVATION },
       ready: () => ready,
@@ -119,8 +119,9 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       githubApiOrigin: "http://github.invalid",
       now: () => now,
     });
+    const app = guardedApp(db, async () => session as never, createInMemoryGrantStore(grants), { triageVerdicts });
     async function get(query = "", headers: Record<string, string> = { "sec-fetch-site": "same-origin" }): Promise<Response> {
-      return route(new Request(`http://hub.test/api/integrations/triage-verdicts/${TENANT}${query}`, { headers }), TENANT);
+      return app.request(`/api/integrations/triage-verdicts/${TENANT}${query}`, { headers });
     }
 
     // Until the hub read the live logs since it started, any pull request may have a run going.
@@ -170,10 +171,10 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
 
     expect((await get(`?repo=${REPO}`)).status).toBe(400);
     expect((await get("", { "sec-fetch-site": "cross-site" })).status).toBe(403);
-    runsReadable = false;
-    expect((await get()).status).toBe(403);
+    grants.length = 0;
+    expect(await (await get()).json()).toEqual({ error: { code: "forbidden", message: "You do not have permission to perform this action" } });
     session = { user: { id: "usr_stranger" } };
-    expect((await get()).status).toBe(401);
+    expect(await (await get()).json()).toEqual({ error: { code: "forbidden", message: "Not a member of this tenant" } });
     session = null;
     expect((await get()).status).toBe(401);
   } finally {

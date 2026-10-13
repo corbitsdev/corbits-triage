@@ -1,12 +1,3 @@
-/** The request's JSON body, or null when it is not JSON. */
-export async function readJson(req: Request): Promise<unknown> {
-  try {
-    return await req.json();
-  } catch {
-    return null;
-  }
-}
-
 /** Largest request body accepted, checked before anything is hashed (mirrors stock MAX_BODY_BYTES). */
 export const MAX_BODY_BYTES = 1024 * 1024;
 

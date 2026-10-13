@@ -1,9 +1,9 @@
 // No stock route exposes a deployment's pin, so the portal reads the versions
 // it runs from each live deployment's frozen closure here.
 import { type } from "arktype";
-import type { WorkflowRunLaunchSpecStore } from "@intx/db";
+import type { DB, WorkflowRunLaunchSpecStore } from "@intx/db";
 import { closureVersions, resolveLiveDeployments } from "./github/deployment.js";
-import { failure, portalMember, type PortalCredentialDeps } from "./github/portal-credential.js";
+import type { Member } from "./integrations/app.js";
 
 export const WORKFLOW_VERSIONS_PATH = "/api/integrations/workflow-versions";
 
@@ -21,7 +21,8 @@ export const DeployedVersions = type({
 });
 export type DeployedVersions = typeof DeployedVersions.infer;
 
-export type WorkflowVersionsDeps = PortalCredentialDeps & {
+export type WorkflowVersionsDeps = {
+  db: DB["db"];
   launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">;
 };
 
@@ -31,12 +32,7 @@ export function createWorkflowVersions(deps: WorkflowVersionsDeps) {
     return spec ? closureVersions(spec.frozenApprovalBundle) : null;
   }
 
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
-    if (!(await deps.authorize(principalId, tenantId, "workflow:*", "read"))) {
-      return failure(403, "forbidden", "You may not read workflow deployments in this workspace.");
-    }
+  return async function handle({ tenantId }: Member): Promise<Response> {
     const deployments: DeployedVersions["deployments"] = [];
     for (const live of await resolveLiveDeployments(deps.db, tenantId)) {
       const versions = await versionsOf(live.runId);
