@@ -130,7 +130,7 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_execute_do_auto",
     description:
-      "Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, approve, request changes, convert to draft, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close, draft, comment or review is refused once the pull request has moved past headSha; a review is pinned to headSha and satisfied when this App already made it there, and a conversion to draft is satisfied when this App already converted headSha. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.",
+      "Run one resolved triage Do on a pull request without waiting for a human approval, unless GitHub already shows it: add labels or assignees, request reviews, post a comment, approve, request changes, or close. A close also upserts the triage comment, adds the request's labels and removes owned labels not in them, as github_mirror does. A close, comment or review is refused once the pull request has moved past headSha; a review is pinned to headSha and satisfied when this App already made it there. Returns { status } as done, satisfied (already on GitHub) or skipped with a reason. Never merges.",
     inputSchema: obj({ request: MIRROR_INPUT, step: obj({ effectId: str, headSha: str, kind: str, target: { type: "object" } }) }),
   },
   {

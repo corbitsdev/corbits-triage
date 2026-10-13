@@ -16,7 +16,7 @@ type TriageSwitchesProps = {
   reason?: string;
 };
 
-/** Whether triage runs on the repository, and on its drafts. */
+/** Whether triage runs on the repository. */
 export default function TriageSwitches({ repo, policy, triaging, disabled, edit, reason }: TriageSwitchesProps) {
   const { runBacklog } = usePortal();
   const [rerunError, setRerunError] = useState("");
@@ -46,10 +46,6 @@ export default function TriageSwitches({ repo, policy, triaging, disabled, edit,
         </div>
         {reason ? <p className="reason">{reason}</p> : null}
         {rerunError ? <p role="alert" className="error">{rerunError}</p> : null}
-        <div className="sentence">
-          <span className="txt">Triage pull requests while they are drafts<small>Drafts are never shown as ready. Off, they wait until marked ready.</small></span>
-          <Switch className="sw" checked={policy.triageDrafts} onCheckedChange={(triageDrafts) => setPolicy({ triageDrafts })} label="Triage pull requests while they are drafts" disabled={disabled} />
-        </div>
       </div>
     </section>
   );

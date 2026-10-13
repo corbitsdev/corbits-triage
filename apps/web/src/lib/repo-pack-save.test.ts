@@ -83,11 +83,11 @@ describe("saving the repository pack", () => {
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts/art_1/versions", "PATCH /api/tenants/t"]);
   });
 
-  test("one config write carries the pack pointer, posting, both triage switches and roles", async () => {
+  test("one config write carries the pack pointer, posting, the triage switch and roles", async () => {
     const hub = fakeHub([], config);
     const store = transportRepoPackStore(hub.transport, "t");
     const session = openSession(repo, await store.load(repo, false));
-    const policy = { cleanupMode: "automated" as const, enabled: true, triageDrafts: false, roles: { core: { users: ["octocat"] } } };
+    const policy = { cleanupMode: "automated" as const, enabled: true, roles: { core: { users: ["octocat"] } } };
     const { failure } = await saveDraft(store, repo, session, { pack: recommendedPack(repo), policy });
     expect(failure).toBeNull();
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts", "PATCH /api/tenants/t"]);

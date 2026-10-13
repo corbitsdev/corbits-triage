@@ -122,7 +122,6 @@ function doTarget(form: DoForm): Record<string, unknown> {
       return { body: form.body };
     case "approve":
     case "request-changes":
-    case "convert-to-draft":
     case "close":
       return {};
     case "agent":

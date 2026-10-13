@@ -576,7 +576,6 @@ describe("repository policy config", () => {
     await saveRepoSettings(transport, "tenant", "acme/one", {
       cleanupMode: "automated",
       enabled: false,
-      triageDrafts: false,
       roles: {},
     }, false);
 
@@ -589,7 +588,6 @@ describe("repository policy config", () => {
       installationId: 9,
       cleanupMode: "automated",
       enabled: false,
-      triageDrafts: false,
       roles: {},
     });
     expect(ns.repos[0]).not.toHaveProperty("checkPack");

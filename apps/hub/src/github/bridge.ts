@@ -34,8 +34,7 @@ import {
 } from "./tenant-config.js";
 import type { CheckPackRead } from "./check-pack-store.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
-import type { OpenPr } from "./reconcile-plan.js";
-import type { OpenHeadsReader } from "./tenant-open-heads.js";
+import type { OpenHeadReader } from "./tenant-open-heads.js";
 
 const HOOK_VERIFY = ["bearer", "standard-webhooks", "slack"] as const;
 
@@ -61,7 +60,7 @@ export interface BridgeDeps {
   log?: (entry: Record<string, unknown>) => void;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   /** Tells a pull request's head and whether it is a draft when its event does not say. */
-  openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
+  openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   /** Has the repository's open pull requests but `except` triaged again; resolves to how many were due. */
   recheckOpenPulls: (tenantId: string, repo: string, except: number) => Promise<number>;
 }
@@ -151,11 +150,10 @@ const INSTALL_EVENTS = new Set(["installation", "installation_repositories"]);
 const REPO_LIST_CAP = 50;
 
 /** Undefined when the pull request is no longer open. */
-async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, number: number): Promise<OpenPr | undefined> {
-  const openHeads = await d.openHeadsFor(tenantId);
-  if (!openHeads) throw new Error("no active github credential");
-  const heads = await openHeads(record);
-  return heads.find((head) => head.number === number);
+async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, number: number) {
+  const read = await d.openHeadFor(tenantId);
+  if (!read) throw new Error("no active github credential");
+  return read(record, number);
 }
 
 export function mailPayload(repo: string, policy: RepoPolicy, pack: CheckPack, extra: Record<string, unknown>) {
@@ -456,8 +454,8 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
       return json(202, { status: "ignored" });
     }
-    let head: OpenPr | undefined;
-    if (mail.headSha === null || (!policy.triageDrafts && mail.draft === null)) {
+    let head: Awaited<ReturnType<OpenHeadReader>>;
+    if (mail.headSha === null || mail.draft === null) {
       try {
         head = await openHead(d, loaded.tenantId, record, mail.prNumber);
       } catch (err) {
@@ -467,7 +465,8 @@ export function createBridgeHandler(d: BridgeDeps) {
       }
     }
     // A pull request no longer open is not a draft to skip; the workflow sees it closed.
-    if (!policy.triageDrafts && (mail.draft ?? head?.draft ?? false)) {
+    // Its conversion to draft is triaged once, so the verdict stops offering it as ready.
+    if (mail.action !== "converted_to_draft" && (mail.draft ?? head?.draft ?? false)) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "draft" });
       return json(202, { status: "ignored" });
     }

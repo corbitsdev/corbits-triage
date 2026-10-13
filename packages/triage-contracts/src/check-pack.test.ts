@@ -56,7 +56,6 @@ const ACTIONS: Action[] = [
       no: [
         { kind: "comment", target: { body: "Please fix CI and link a ticket." }, automatic: false },
         { kind: "request-changes", target: {}, automatic: true },
-        { kind: "convert-to-draft", target: {}, automatic: false },
       ],
       unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] }, automatic: true }],
     },
@@ -113,6 +112,19 @@ describe("check pack contract", () => {
     });
     expect(read.checks).toEqual({ issue: { enabled: true, tracker: "github" } });
     expect(read.actions).toEqual([{ ...BASE, checks: ["ci"] }, { ...BASE, id: "b", checks: ["draft"] }]);
+  });
+
+  test("a stored pack naming removed Dos loads without them", () => {
+    const DRAFT = { kind: "convert-to-draft", target: {}, automatic: true };
+    const read = readCheckPack({
+      ...emptyPack(REPO),
+      actions: [
+        { ...BASE, branches: { yes: [COMMENT], no: [DRAFT] } },
+        { ...BASE, id: "b", branches: { no: [DRAFT] } },
+        { ...BASE, id: "c", checks: [], branches: { always: [DRAFT] } },
+      ],
+    });
+    expect(read.actions).toEqual([{ ...BASE, branches: { yes: [COMMENT], no: [] } }]);
   });
 
   test("legacy custom round-trip; blanks dropped; last duplicate id wins", () => {

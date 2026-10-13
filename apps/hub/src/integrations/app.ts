@@ -260,7 +260,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_HELD_DOS_PATH}/:tenantId`,
     describeRoute({
       summary: "Approve a Do a triage run held, failed or could not run",
-      description: "Needs `use` on the GitHub App credential, and the approve grant for an approval. Mails the repository's pr-triage deployment the Do and who approved it; pr-triage writes the Do at most once under its effect id, and a close, draft, comment or review not once the head has moved.",
+      description: "Needs `use` on the GitHub App credential, and the approve grant for an approval. Mails the repository's pr-triage deployment the Do and who approved it; pr-triage writes the Do at most once under its effect id, and a close, comment or review not once the head has moved.",
       tags: TAGS,
       responses: {
         202: json("Sent to pr-triage", HeldDoSent),

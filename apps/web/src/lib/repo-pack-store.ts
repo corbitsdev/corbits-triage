@@ -31,8 +31,8 @@ export function packArtifact(found: CheckPackArtifact | null): PackArtifact | nu
 }
 
 export function draftPolicy(policy: DraftPolicy): DraftPolicy {
-  const { cleanupMode, enabled, triageDrafts, roles } = policy;
-  return { cleanupMode, enabled, triageDrafts, roles };
+  const { cleanupMode, enabled, roles } = policy;
+  return { cleanupMode, enabled, roles };
 }
 
 export function transportRepoPackStore(transport: Transport, tenantId: string): RepoPackStore {

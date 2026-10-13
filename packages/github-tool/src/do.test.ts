@@ -3,17 +3,15 @@ import { APPROVE_DO_MARKER, appLogin, REQUEST_CHANGES_DO_MARKER, type GithubFetc
 import { DoNotRunnableError, doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from "./do";
 
 type FakeComment = { id: number; user: { login: string; type: string }; body: string };
-type TimelineEvent = { event: string; sha?: string; commit_id?: string; actor?: { login: string } };
 type FakeReview = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body?: string };
 
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 /** GitHub holding pull request 8, reviewed by `reviews` and with `approvals` on it, applying writes so a second run sees the first. */
-function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; timeline?: TimelineEvent[] } = {}) {
-  const pr = { node_id: "PR_8", state: "open", draft: false, head: { sha: "abc" }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
+function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[] } = {}) {
+  const pr = { state: "open", head: { sha: "abc" }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc" })), ...(seed.approvals ?? [])];
-  const timeline = seed.timeline ?? [{ event: "committed", sha: "abc" }];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
@@ -23,18 +21,12 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
       if (method === "PATCH") pr.state = body.state;
       return Response.json(pr);
     }
-    if (path === "/graphql") {
-      pr.draft = body.variables.id === pr.node_id;
-      timeline.push({ event: "convert_to_draft", actor: { login: APP.login } });
-      return Response.json({ data: { convertPullRequestToDraft: { pullRequest: { isDraft: pr.draft } } } });
-    }
     if (path === "/app") return Response.json({ slug: "corbits-triage" });
     if (path.endsWith("/pulls/8/reviews")) {
       reviews.push({ id: reviews.length + 100, user: APP, state: body.event === "APPROVE" ? "APPROVED" : "CHANGES_REQUESTED", commit_id: body.commit_id, body: body.body });
       return Response.json(reviews.at(-1));
     }
     if (path.includes("/pulls/8/reviews?")) return Response.json(reviews);
-    if (path.includes("/issues/8/timeline?")) return Response.json(timeline);
     if (path.endsWith("/dismissals")) {
       const review = reviews.find((r) => path.includes(`/reviews/${r.id}/`))!;
       review.state = "DISMISSED";
@@ -55,7 +47,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
     }
     throw new Error(`unexpected ${method} ${path}`);
   }
-  return { gh: gh satisfies GithubFetch, writes, pr };
+  return { gh: gh satisfies GithubFetch, writes };
 }
 
 function step(kind: DoStep["kind"], target: ResolvedTarget): DoStep {
@@ -137,25 +129,6 @@ describe("executeDo", () => {
     ]);
   });
 
-  test("a pull request is converted to draft once per head, even after the author marks that head ready", async () => {
-    const { gh, writes, pr } = fakeGithub();
-    expect(await run(gh, step("convert-to-draft", {}))).toEqual({ status: "done", result: { draft: true } });
-    pr.draft = false;
-    expect(await run(gh, step("convert-to-draft", {}))).toMatchObject({ status: "satisfied" });
-    expect(writes).toEqual([expect.objectContaining({ method: "POST", path: "/graphql", body: expect.objectContaining({ variables: { id: "PR_8" } }) })]);
-  });
-
-  const DRAFTED = { event: "convert_to_draft", actor: { login: APP.login } };
-  test.each<[string, TimelineEvent[], number]>([
-    ["a conversion before a force-push to the head does not count", [{ event: "committed", sha: "old" }, DRAFTED, { event: "head_ref_force_pushed", commit_id: "abc" }], 1],
-    ["a conversion after a force-push to the head counts", [{ event: "head_ref_force_pushed", commit_id: "abc" }, DRAFTED], 0],
-    ["a head the timeline does not show is converted once", [{ event: "committed", sha: "old" }, DRAFTED, { event: "ready_for_review" }], 1],
-  ])("%s", async (_, timeline, conversions) => {
-    const { gh, writes } = fakeGithub({ timeline });
-    await run(gh, step("convert-to-draft", {}));
-    expect(writes.filter((w) => w.path === "/graphql")).toHaveLength(conversions);
-  });
-
   test.each<[string, FakeReview]>([
     ["an approval of this head from the inbox", { id: 3, user: APP, state: "APPROVED", commit_id: "abc" }],
     ["an approval of this head a person dismissed", { id: 3, user: APP, state: "DISMISSED", commit_id: "abc" }],
@@ -178,7 +151,6 @@ describe("executeDo", () => {
     ["a close", step("close", {})],
     ["an approval", step("approve", {})],
     ["a request for changes", step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" })],
-    ["a conversion to draft", step("convert-to-draft", {})],
   ])("%s is not written once the pull request has moved on", async (_, task) => {
     const { gh, writes } = fakeGithub();
     await expect(run(gh, { ...task, headSha: "older" })).rejects.toBeInstanceOf(HeadMovedError);

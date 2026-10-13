@@ -7,10 +7,8 @@ import {
   approvalOnHead,
   changesRequestedOnHead,
   codeownersForPr,
-  convertToDraft,
   createIssueComment,
   createReview,
-  draftedOnHead,
   getReviews,
   listIssueComments,
   missingFrom,
@@ -64,7 +62,7 @@ export function parseDoInput(args: unknown): DoInput {
 
 type People = { users: string[]; teams: string[] };
 
-/** A close, draft, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
+/** A close, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
 function onHead(sha: string, { repo, number }: DoInput["request"], step: DoStep): void {
   if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);
 }
@@ -117,14 +115,6 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
       const body = `${REQUEST_CHANGES_DO_MARKER}\n${target.body}`;
       return { status: "done", result: await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha }) };
-    }
-    case "convert-to-draft": {
-      const pr = await readPr(gh, repo, number);
-      onHead(pr.sha, request, step);
-      if (pr.draft) return { status: "satisfied", result: { draft: true } };
-      // Marking this head ready again is the author's answer, so it is not converted twice.
-      if (await draftedOnHead(gh, { repo, number, sha: step.headSha, login: await login() })) return { status: "satisfied", result: { draftedOnHead: true } };
-      return { status: "done", result: await convertToDraft(gh, { repo, nodeId: pr.nodeId }) };
     }
     case "close": {
       const pr = await readPr(gh, repo, number);

@@ -4,8 +4,6 @@ import { type } from "arktype";
 export const DEFAULT_GITHUB_API_ORIGIN = "https://api.github.com";
 const REFRESH_MARGIN_MS = 5 * 60_000;
 export const INSTALLATION_SELECTOR_HEADER = "x-corbits-github-installation-id";
-// Names the repository of a request whose path has none, such as GraphQL, so its installation can be discovered.
-const REPOSITORY_SELECTOR_HEADER = "x-corbits-github-repository";
 
 const GithubAppCredential = type({
   appId: "string > 0",
@@ -209,10 +207,8 @@ export function createGithubAppCredentialFetch({
       return fetchImpl(forwarded);
     }
     const selected = original.headers.get(INSTALLATION_SELECTOR_HEADER);
-    const repository = original.headers.get(REPOSITORY_SELECTOR_HEADER);
-    const target = repository === null ? url : new URL(`/repos/${repository}`, apiOrigin);
     const installationId = selected === null
-      ? await discoverInstallation(credential, target)
+      ? await discoverInstallation(credential, url)
       : Number(selected);
     if (!Number.isSafeInteger(installationId) || installationId <= 0) {
       throw new Error("GitHub installation selector must be a positive safe integer");
@@ -229,7 +225,6 @@ export function createGithubAppCredentialFetch({
         redirect: "manual",
       });
       request.headers.delete(INSTALLATION_SELECTOR_HEADER);
-      request.headers.delete(REPOSITORY_SELECTOR_HEADER);
       request.headers.set("authorization", `Bearer ${token}`);
       return fetchImpl(request);
     }
