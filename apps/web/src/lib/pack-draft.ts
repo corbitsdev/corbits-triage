@@ -1,4 +1,5 @@
 import {
+  BUILT_IN_CHECK_NAMES,
   CATALOG_IDS,
   catalogCheckEnabled,
   customCheckEnabled,
@@ -99,6 +100,7 @@ export function upsertCustom(draft: RepoDraft, check: CustomCheck): RepoDraft {
 
 /** Whether a check is in the verdict; a saved tracker of "off" leaves the issue check doing nothing, so it reads as off. */
 export function checkOn(pack: CheckPack, id: CheckRef): boolean {
+  if (BUILT_IN_CHECK_NAMES.has(id)) return true;
   if (!isCatalogId(id)) return pack.custom.some((row) => row.id === id && customCheckEnabled(row));
   return catalogCheckEnabled(pack, id) && !(id === "issue" && pack.checks.issue?.tracker === "off");
 }

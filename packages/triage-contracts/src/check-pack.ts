@@ -650,7 +650,7 @@ function parseCheckRefs(raw: unknown, customIds: ReadonlySet<string>, where: str
     const id = text(item, where);
     if (RETIRED_CHECK_IDS.has(id)) continue;
     if (!REFERENCEABLE.has(id) && !customIds.has(id)) {
-      throw new Error(`${where} ${id} must be a catalog check or a custom check in this pack.`);
+      throw new Error(`${where} ${id} must be a catalog check, the draft check or a custom check in this pack.`);
     }
     refs.add(id as CheckRef);
   }

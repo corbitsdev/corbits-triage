@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
 import { Skeleton } from "@corbits/react-ui";
-import type { CheckPack } from "@corbits/triage-contracts";
+import { BUILT_IN_CHECK_NAMES, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
 import { errorText } from "../lib/error-text.ts";
@@ -175,7 +175,7 @@ function Files({ files, changed }: { files: GithubPullDetail["files"]; changed: 
 
 /** A passed check's measure and limit, or a matched gate, on one line. */
 function passedText(check: CheckResult, pack: CheckPack | null): string {
-  const measured = isCatalogId(check.check) ? checkMeasuredText(check.output) : null;
+  const measured = isCatalogId(check.check) || BUILT_IN_CHECK_NAMES.has(check.check) ? checkMeasuredText(check.output) : null;
   const text = measured ?? check.reason ?? "";
   const parts = check.gate ? ["Matched", text] : [text, checkLimitText(pack, check)];
   return parts.filter(Boolean).join(" · ");
