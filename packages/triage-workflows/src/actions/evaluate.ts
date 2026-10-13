@@ -2,7 +2,7 @@ import type { EffectContext } from "@intx/workflow";
 import { checkName, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
-import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
+import { hasModelChecks, type CheckResult, type DeterministicResult, type PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
@@ -85,10 +85,11 @@ function reusable(answered: Array<[string, unknown]>): Judged {
   return judged;
 }
 
-/** A rule as the verdict question reads it; a judged rule scored out of 100 says how likely it passes, and an author rule is marked as one. */
+/** A rule as the verdict question reads it; a judged rule scored out of 100 says how likely it passes, and a score rule names its level. */
 function policyRule(pack: CheckPack, c: CheckResult): PolicyRule {
   const pass = c.output.kind === "score" ? Math.round(c.output.score) / 100 : undefined;
-  return { name: checkName(pack, c.check), judged: c.kind === "model", ...(c.gate && { author: true as const }), result: c.result, reason: c.reason, evidence: c.evidence, ...(pass !== undefined && { pass }) };
+  const level = c.output.kind === "level" ? c.output.level : undefined;
+  return { name: checkName(pack, c.check), judged: c.kind === "model", result: c.result, reason: c.reason, evidence: c.evidence, ...(pass !== undefined && { pass }), ...(level !== undefined && { level }) };
 }
 
 /** Whether the verdict question is asked with the judged rules' first calls: when none of those is left to ask, their answers are already known. */
@@ -101,7 +102,7 @@ export function choiceFirst(it: Item, { requests }: QualityEvaluation): boolean 
  * is not judged, or a first call failed or left a rule unanswered and the verdict degrades anyway.
  */
 export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[string, unknown]>): { request: JudgeRequest } | { judgeError: string } | undefined {
-  if (!it.det.needsJudgment || !it.pack || it.judgeLimitExceeded || errorOf(first).judgeError !== undefined) return undefined;
+  if (!it.det.needsJudgment || !hasModelChecks(it.det.sources) || !it.pack || it.judgeLimitExceeded || errorOf(first).judgeError !== undefined) return undefined;
   const { facts, det } = it;
   const { plan, focused, requests } = evaluation;
   const model = evaluateModel({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, answers: answersOf(requests, first), plan, focused });
@@ -129,7 +130,7 @@ const DO_NAMES: Record<ActionKind, string> = {
   approve: "approve",
   "request-changes": "request changes",
   close: "close",
-  agent: "run an agent",
+  merge: "merge",
 };
 
 /** What Triage does on this head unattended and what waits on a person, closing the comment; a Do that cannot run is left out. */
@@ -177,10 +178,12 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const wanted = actionInput && changesWanted(actionInput);
     const held = approvalHeldBy(rendered.verdict, it.facts.checks);
     const automatic = it.automatic ?? [];
-    const actions = holdDos(heldApprovals(suggested, held), automatic);
+    const actions = holdDos(heldApprovals(suggested, held, it.facts.checks), automatic);
     const judged = reusable([...first, ...early, ...later, ...late]);
     const feedback = withDos(rendered.feedback, actions);
-    const verdict = { ...stamp(it.facts), ...rendered, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
+    // What reading the policy left out is said on every verdict, so the policy can be fixed.
+    const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
+    const verdict = { ...stamp(it.facts), ...rendered, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
     return { ...verdict, request: toMirrorRequest(verdict) };
   } catch (e) {
     const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`), automatic: it.automatic ?? [], actions: [] };

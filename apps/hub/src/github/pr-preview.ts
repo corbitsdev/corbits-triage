@@ -6,12 +6,12 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { appLogin, authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-reads";
-import { CheckOutputSchema, checkName, checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { CheckOutputSchema, checkName, checkPackSchema, emptyPack, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { rules, type RulesItem } from "@corbits/triage-workflows/actions/rules";
 import type { PrFileFacts } from "@corbits/triage-workflows/logic/checks";
-import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, roleTeams, type FilesCursor, type ItemContext, type ListedFiles } from "@corbits/triage-workflows/logic/facts";
+import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, namedTeams, type FilesCursor, type ItemContext, type ListedFiles } from "@corbits/triage-workflows/logic/facts";
 import { previewActions } from "@corbits/triage-workflows/logic/preview";
 import { NEEDS_JUDGE_REASON, type Verdict } from "@corbits/triage-workflows/logic/render";
 import type { CheckPackRead } from "./check-pack-store.js";
@@ -127,8 +127,11 @@ async function readAuthorTeams(gh: GithubFetch, repo: string, author: string, te
   }
 }
 
-/** The rules step's item for an open pull request, read as the facts director reads it, or the error response to return. */
-async function readItem(gh: GithubFetch, number: number, context: ItemContext): Promise<RulesItem | Response> {
+/**
+ * The rules step's item for an open pull request, read as the facts director reads it, or the error response to return.
+ * Only the teams `trusted` names are read from GitHub; any other team its pack names is left unknown.
+ */
+async function readItem(gh: GithubFetch, number: number, context: ItemContext, trusted: CheckPack): Promise<RulesItem | Response> {
   const { repo } = context;
   try {
     const open = await listOpenPrs(gh, repo);
@@ -149,7 +152,9 @@ async function readItem(gh: GithubFetch, number: number, context: ItemContext): 
       listFiles(gh, repo, number),
     ]);
     const checks = pr.sha ? await getChecks(gh, repo, pr.sha) : [];
-    const membership = pr.author ? await readAuthorTeams(gh, repo, pr.author, roleTeams(context.policy, repo)) : null;
+    const readable = namedTeams(trusted, repo);
+    const read = pr.author ? await readAuthorTeams(gh, repo, pr.author, readable) : null;
+    const membership = read && { ...read, unknown: [...read.unknown, ...namedTeams(context.pack, repo).filter((team) => !readable.includes(team))] };
     return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: membership }, context);
   } catch (err) {
     const message = errorText(err);
@@ -179,13 +184,14 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
       if (stored.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
       pack = stored.pack;
     }
-    // Candidate roles name the teams whose membership is read from GitHub, so only those who may save roles can try them.
-    const candidateRoles = body.roles !== undefined && await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage");
-    const policy = repoPolicy(candidateRoles ? { ...record, roles: body.roles } : record);
+    const manager = await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage");
+    const policy = repoPolicy(body.roles !== undefined && manager ? { ...record, roles: body.roles } : record);
     const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId);
 
+    // A candidate pack's steps name the teams whose membership is read from GitHub, so only those who may save roles can try them.
+    const trusted = candidate === undefined || manager ? pack : emptyPack(repo);
     // The preview never asks the judge, so it reads no docs.
-    const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: { docs: {}, rules: {} } });
+    const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: { docs: {}, rules: {} } }, trusted);
     if (item instanceof Response) return item;
 
     const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, signal);

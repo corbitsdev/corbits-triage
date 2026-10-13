@@ -8,7 +8,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo, errorText } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, repoPolicy, readCheckPack, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, repoPolicy, readCheckPack, checkPackName, legacyCheckPack, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -960,7 +960,7 @@ export async function startBacklogTriage(
     transport,
     tenantId,
     BACKLOG_WORKFLOW,
-    JSON.stringify({ kind: "backlog", repo: clean, policy: { ...policy, checkPack: { name: checkPackName(clean) } }, checkPack: pack }),
+    JSON.stringify({ kind: "backlog", repo: clean, policy: { ...policy, checkPack: { name: checkPackName(clean) } }, checkPack: legacyCheckPack(pack), pack }),
   );
   return { runId };
 }

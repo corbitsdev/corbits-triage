@@ -84,7 +84,6 @@ function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).fo
 const UNSURE = "**Triage: Unsure**\n\n";
 const UNSURE_FOCUSED = "Not yet confirmed, a maintainer will check:\n- makes one focused change";
 const OUTAGE_NOTE = "Some rules could not run this time. Triage will re-check this pull request.";
-const APPROVAL_NOTE = "**Triage: Pass**\n\nNo changes needed from you. A maintainer will review this pull request.";
 
 describe("focused rendering", () => {
   test("fails on more than one thing, naming at most three files most likely to be the separate change", () => {
@@ -347,20 +346,37 @@ describe("rule custom check rendering", () => {
     expect(verdict).toMatchObject({ verdict: "fail", reasons: ["Branch naming: branch does not match the pattern: @acme/team", "Two approvals: not enough approvals: 1 of 2 approvals"] });
   });
 
-  test("a failed author gate is no hard failure and stays out of the next step, the comment and the reasons", () => {
-    const gate = { id: "custom-9", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] } as const;
-    const gated: DeterministicResult = {
-      ...det,
-      state: "ready-monitoring",
-      reason: "all deterministic rules passed",
-      findings: [],
-      checks: [{ check: "custom-9", kind: "machine", result: "fail", reason: "Mine: author is not one of the people named", evidence: ["@octocat (outside)"], gate: true, output: { kind: "values", values: {} } }],
-      needsJudgment: true,
-      sources: { quality: [], custom: [], rules: [gate] },
-    };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: gated, choice: CHOICE.pass });
-    expect(verdict).toMatchObject({ verdict: "pass", actor: "maintainer", nextAction: "Review and merge", reasons: [] });
-    expect(verdict.feedback).toBe(APPROVAL_NOTE);
+});
+
+describe("score and choose rules", () => {
+  const levels = ["poor", "fair", "good", "great"];
+  const pack: CheckPack = {
+    ...emptyPack("acme/widgets"),
+    custom: [
+      { id: "style", name: "Style", group: "pull-request", kind: "model", shape: "score", subject: "style", levels },
+      { id: "care", name: "Care", group: "pull-request", kind: "model", shape: "score", subject: "care", levels, failBelow: "good" },
+      { id: "kind", name: "Kind", group: "pull-request", kind: "model", shape: "choose", options: ["fix", "feature", "chore"], failOn: ["chore"] },
+    ],
+  };
+  const scored: DeterministicResult = { state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks: [], needsJudgment: true, sources: classificationSources(pack) };
+
+  function score(id: string, probabilities: number[]): string {
+    const legend = Object.fromEntries(levels.map((level, index) => [String(index), level]));
+    return JSON.stringify({ id, type: "score", score: 1, legend, probabilities: Object.fromEntries(probabilities.map((p, index) => [String(index), p])), confidence: 0.9 });
+  }
+
+  test("a score rule records its level, never fails without failBelow, and fails when the level is likely below it", () => {
+    const kind = JSON.stringify({ id: "kind", type: "choice", choice: "chore", probabilities: { fix: 0.1, feature: 0.1, chore: 0.8 }, confidence: 0.9 });
+    const answers = parseAnswers([score("style", [0.9, 0.1, 0, 0]), score("care", [0.5, 0.3, 0.2, 0]), kind].join("\n"));
+    const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
+    expect(checks.map((c) => [c.check, c.result, c.evidence])).toEqual([["style", "pass", ["poor"]], ["care", "fail", ["poor"]], ["kind", "fail", ["chore"]]]);
+    expect(checks[1]!.output).toEqual({ kind: "level", level: "poor", levels, failBelow: "good" });
+  });
+
+  test("a score answer over other levels, or a choice over other options, is unanswered", () => {
+    const answers = parseAnswers([JSON.stringify({ id: "kind", type: "choice", choice: "fix", probabilities: { fix: 1 }, confidence: 1 })].join("\n"));
+    const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
+    expect(checks.map((c) => c.result)).toEqual(["unconfirmed", "unconfirmed", "unconfirmed"]);
   });
 });
 

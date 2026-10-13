@@ -347,7 +347,7 @@ async function connectGithub(origin: string, headers: Record<string, string>, te
   return providerId;
 }
 
-type SeededDo = { list: VerdictWord; kind: "labels" | "comment" | "agent"; target: ResolvedTarget; index?: number; effectId?: string; held?: true };
+type SeededDo = { list: VerdictWord; kind: "labels" | "comment"; target: ResolvedTarget; index?: number; effectId?: string; held?: true };
 
 function effectOf(step: SeededDo, index: number, headSha = HEAD): string {
   return doEffectId({ repo: REPO, number: 8, headSha, list: step.list, index, kind: step.kind, target: step.target });
@@ -440,7 +440,7 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
 }, 60_000);
 
 function say(body: string) {
-  return [{ kind: "comment", target: { body } }];
+  return [{ do: "comment", target: { body } }];
 }
 
 // Stored before verdicts were words, so the preview reads it as one policy whose pass list labels.
@@ -483,18 +483,13 @@ test("a pack preview evaluates an open pull request without writing anything", a
     }
 
     const stored = await previewed({ repo: REPO, number: 8 });
-    expect(stored).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-run", verdict: { verdict: "unsure", reason: "needs the judge", degraded: null } });
+    const reason = "every rule passed, and the policy has no decision-model rule";
+    expect(stored).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-needed", verdict: { verdict: "pass", reason, degraded: null } });
     expect(stored.checks).toContainEqual({ check: "ci-green", name: "CI green", kind: "machine", result: "pass", reason: "checks are success", evidence: [], output: { kind: "values", values: { status: "passing" } } });
     expect(stored.verdict).not.toHaveProperty("request");
     const target = { labels: ["checked"] };
-    expect(stored.actions).toEqual({
-      status: "waits-on-judge",
-      lists: [
-        { verdict: "pass", dos: [{ list: "pass", index: 0, kind: "labels", reason: "needs the judge", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "labels", target }) }] },
-        { verdict: "fail", dos: [] },
-        { verdict: "unsure", dos: [] },
-      ],
-    });
+    const effectId = doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "labels", target });
+    expect(stored.actions).toEqual({ status: "decided", verdict: "pass", dos: [{ list: "pass", index: 0, kind: "labels", reason, target, effectId, held: true }] });
 
     const sized = await previewed({ repo: REPO, number: 8, pack: JUDGED_PACK });
     expect(sized).toMatchObject({ pack: "candidate", judge: "not-needed", verdict: { verdict: "fail", state: "needs-author-update", degraded: null, score: null } });

@@ -170,6 +170,11 @@ export async function addLabels(gh: GithubFetch, input: { repo: string; number: 
   return { labels: input.labels };
 }
 
+export async function removeLabels(gh: GithubFetch, input: { repo: string; number: number; labels: string[] }) {
+  for (const name of input.labels) await json(gh, `/repos/${input.repo}/issues/${input.number}/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
+  return { removed: input.labels };
+}
+
 export async function addAssignees(gh: GithubFetch, input: { repo: string; number: number; assignees: string[] }) {
   const issue = await json(gh, `/repos/${input.repo}/issues/${input.number}/assignees`, send("POST", { assignees: input.assignees }));
   return { assignees: (issue.assignees ?? []).map((u: any) => u.login) as string[] };

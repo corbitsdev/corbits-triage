@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CATALOG_IDS, catalogCheckEnabled, classificationSources, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type Do, type PolicyActions } from "@corbits/triage-contracts";
+import { CATALOG_IDS, catalogCheckEnabled, classificationSources, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type PolicyActions, type Step } from "@corbits/triage-contracts";
 import { changeCount, fromPack, setCatalogCheck, setCustomEnabled, setList, setWhen, toPack, validate } from "./pack-draft.ts";
 
 const repo = "acme/widgets";
@@ -15,22 +15,23 @@ const custom: CustomCheck[] = [
   { id: "custom-8", name: "Public API", group: "pull-request", kind: "model", shape: "is-true", claim: "The change alters a public API." },
 ];
 
-const everyDo: Do[] = [
-  { kind: "labels", target: { from: "list", labels: ["needs-review"] } },
-  { kind: "labels", target: { from: "type" } },
-  { kind: "labels", target: { from: "paths" } },
-  { kind: "assign", target: { to: "users", users: ["octocat"] } },
-  { kind: "assign", target: { to: "teams", teams: ["core"] } },
-  { kind: "assign", target: { to: "role", role: "maintainers" } },
-  { kind: "assign", target: { to: "codeowners" } },
-  { kind: "assign", target: { to: "author" } },
-  { kind: "request-review", target: { to: "codeowners" } },
-  { kind: "comment", target: { body: "Thanks!" } },
-  { kind: "close", target: {} },
-  { kind: "agent", target: { prompt: "Fix the lint errors.", tools: ["github"] } },
+const everyDo: Step[] = [
+  { do: "labels", target: { from: "list", labels: ["needs-review"] } },
+  { do: "labels", target: { from: "verdict" } },
+  { do: "labels", target: { from: "rules" }, for: "maintainers" },
+  { do: "assign", target: { to: "users", users: ["octocat"] } },
+  { do: "assign", target: { to: "teams", teams: ["core"] } },
+  { do: "assign", target: { to: "role", role: "maintainers" } },
+  { do: "assign", target: { to: "codeowners" } },
+  { do: "assign", target: { to: "author" } },
+  { do: "request-review", target: { to: "codeowners" }, for: { team: "acme/core" } },
+  { do: "comment", target: { body: "Thanks!" }, for: { users: ["octocat"] } },
+  { do: "close", for: "bots" },
+  { do: "merge" },
+  { do: "nothing", for: "first-timers" },
 ];
 
-const actions: PolicyActions = { when: ["opened", "ready"], pass: everyDo, fail: everyDo, unsure: [{ kind: "close", target: {} }] };
+const actions: PolicyActions = { when: ["opened", "ready"], pass: everyDo, fail: everyDo, unsure: [{ do: "close" }] };
 
 function pack(overrides: Partial<CheckPack>): CheckPack {
   return { ...emptyPack(repo), ...overrides };
@@ -69,7 +70,7 @@ describe("pack draft", () => {
     const saved = fromPack(packs["every Do target"]!, policy);
     expect(changeCount(saved, setWhen(saved, ["opened"]))).toBe(1);
     expect(changeCount(saved, setList(setList(saved, "pass", []), "fail", []))).toBe(2);
-    const ghost = setList(saved, "unsure", [{ kind: "request-review", target: { to: "role", role: "ghost" } }]);
+    const ghost = setList(saved, "unsure", [{ do: "request-review", target: { to: "role", role: "ghost" } }]);
     expect(validate(ghost)).toEqual({ reason: "Actions unsure targets role ghost, which this repository does not define.", where: { section: "actions", list: "unsure" } });
   });
 

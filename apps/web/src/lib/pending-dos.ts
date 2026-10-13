@@ -12,7 +12,7 @@ function teamName(slug: string, repo: string): string {
   return `@${repo.split("/", 1)[0]}/${slug}`;
 }
 
-/** Null when the step has nothing the hub can run: an unresolved target, an empty one, or an agent. */
+/** Null when the step has nothing the hub can run: an unresolved target or an empty one. */
 function label(action: SuggestedAction, repo: string): string | null {
   const { kind, target } = action;
   if ("unresolved" in target) return null;
@@ -37,8 +37,8 @@ function label(action: SuggestedAction, repo: string): string | null {
       return "Request changes";
     case "close":
       return "Close";
-    case "agent":
-      return null;
+    case "merge":
+      return "Merge";
   }
 }
 

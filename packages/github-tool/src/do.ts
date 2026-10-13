@@ -1,4 +1,4 @@
-import { ACTION_KINDS, AGENT_DO, DERIVED_LABELS_DO, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import {
   codeownersForPr,
@@ -19,7 +19,9 @@ import {
   changesRequestedOnHead,
   createIssueComment,
   createReview,
+  mergePr,
   mirror,
+  removeLabels,
   requestReviewers,
   type MirrorInput,
 } from "./github";
@@ -41,12 +43,10 @@ export function doMarker(effectId: string): string {
   return `<!-- corbits-do:${effectId} -->`;
 }
 
-const Target = type({ labels: "string[]" })
+const Target = type({ labels: "string[]", "unlabel?": "string[]" })
   .or({ users: "string[]", "teams?": "string[]" })
   .or({ body: "string" })
-  .or({ prompt: "string", tools: "string[]" })
   .or({ unresolved: "'codeowners'" })
-  .or({ unresolved: "'derive'", from: "'type' | 'paths'" })
   .or({ "+": "reject" });
 
 /** A Do as a caller hands it over the wire. */
@@ -64,7 +64,7 @@ export function parseDoInput(args: unknown): DoInput {
 
 type People = { users: string[]; teams: string[] };
 
-/** A close, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
+/** A close, merge, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
 function onHead(sha: string, { repo, number }: DoInput["request"], step: DoStep): void {
   if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);
 }
@@ -83,10 +83,15 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
   const { target } = step;
   switch (step.kind) {
     case "labels": {
-      if (!("labels" in target)) throw new DoNotRunnableError(DERIVED_LABELS_DO);
-      const labels = missingFrom((await readPr(gh, repo, number)).labels, target.labels);
-      if (!labels.length) return { status: "satisfied", result: { labels } };
-      return { status: "done", result: await addLabels(gh, { repo, number, labels }) };
+      if (!("labels" in target)) throw new DoNotRunnableError("this labels Do names no labels");
+      const present = (await readPr(gh, repo, number)).labels;
+      const labels = missingFrom(present, target.labels);
+      const stale = (target.unlabel ?? []).filter((label) => missingFrom(present, [label]).length === 0);
+      if (!labels.length && !stale.length) return { status: "satisfied", result: { labels } };
+      // Adding first means a failure part-way leaves an extra label rather than none.
+      const added = labels.length ? await addLabels(gh, { repo, number, labels }) : { labels };
+      const removed = stale.length ? await removeLabels(gh, { repo, number, labels: stale }) : { removed: [] };
+      return { status: "done", result: { ...added, ...removed } };
     }
     case "assign": {
       const { users } = await people(gh, repo, number, target);
@@ -132,8 +137,12 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (posted) return { status: "satisfied", result: { commentId: posted.id } };
       return { status: "done", result: await createIssueComment(gh, { repo, number, body: `${marker}\n${target.body}` }) };
     }
-    case "agent":
-      throw new DoNotRunnableError(AGENT_DO);
+    case "merge": {
+      const pr = await readPr(gh, repo, number);
+      if (pr.merged === true) return { status: "satisfied", result: { merged: true } };
+      onHead(pr.sha, request, step);
+      return { status: "done", result: await mergePr(gh, { repo, number, sha: step.headSha }) };
+    }
     default:
       throw new DoNotRunnableError(`unknown Do kind ${(step as { kind: unknown }).kind}`);
   }

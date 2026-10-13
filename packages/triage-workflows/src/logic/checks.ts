@@ -11,11 +11,11 @@ import {
   type CheckOutput,
   type CheckPack,
   type IssueTracker,
-  type RepoRole,
   type TriageEvent,
   type TrustTier,
   type WorkflowState,
 } from "@corbits/triage-contracts";
+import { isRecord } from "@corbits/common";
 import { globMatch } from "./glob.js";
 import { evaluateRuleChecks } from "./rule-checks.js";
 
@@ -66,9 +66,9 @@ export interface PrFacts {
   /** The repository's contribution rules on the default branch, by path, read apart from its docs. */
   rules?: Record<string, string>;
   branch?: string;
-  /** Teams the pack's roles name that the author is an active member of, as the roles write them. */
+  /** Teams the steps are for that the author is an active member of, as the steps write them. */
   authorTeams?: string[];
-  /** Teams the pack's roles name whose membership GitHub would not confirm either way. */
+  /** Teams the steps are for whose membership GitHub would not confirm either way. */
   authorTeamsUnknown?: string[];
   /** What woke this run; empty for webhook actions no pack event names. */
   events?: TriageEvent[];
@@ -90,8 +90,6 @@ export interface CheckResult {
   reason: string;
   evidence: string[];
   output: CheckOutput;
-  /** Says who the author is without being a defect: never a hard failure, a step, a comment line or a retry. */
-  gate?: true;
 }
 
 export interface DeterministicResult {
@@ -139,11 +137,11 @@ function finish(findings: Finding[], checks: CheckResult[], facts: PrFacts, pack
   };
 }
 
-type RuleOutcome = Pick<CheckResult, "check" | "kind" | "result" | "gate">;
+type RuleOutcome = Pick<CheckResult, "check" | "kind" | "result">;
 
-/** Hard rules that failed, which decide the verdict without the decision model; none on a draft, which is not decided at all, and an author gate is not a defect. */
+/** Hard rules that failed, which decide the verdict without the decision model; none on a draft, which is not decided at all. */
 export function hardFailures<T extends RuleOutcome>(checks: readonly T[]): T[] {
-  const failed = checks.filter((c) => c.kind === "machine" && c.result === "fail" && !c.gate);
+  const failed = checks.filter((c) => c.kind === "machine" && c.result === "fail");
   return failed.some((c) => c.check === NOT_A_DRAFT) ? [] : failed;
 }
 
@@ -182,7 +180,7 @@ interface CheckRules {
   tracker: IssueTracker;
 }
 
-function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Record<string, RepoRole> = {}): DeterministicResult {
+function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): DeterministicResult {
   const findings: Finding[] = [];
   const checks: CheckResult[] = [];
   function add(check: string, state: WorkflowState, reason: string) {
@@ -259,7 +257,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
       });
     }
     if (pack) {
-      const custom = evaluateRuleChecks(facts, classificationSources(pack).rules, roles);
+      const custom = evaluateRuleChecks(facts, classificationSources(pack).rules);
       findings.push(...custom.findings);
       checks.push(...custom.checks);
     }
@@ -268,23 +266,26 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
   return finish(findings, checks, facts, pack);
 }
 
-function deriveFromPack(facts: PrFacts, pack: CheckPack, roles: Record<string, RepoRole>): DeterministicResult {
+function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
   return evaluate(facts, {
     enabled: (id) => catalogCheckEnabled(pack, id),
     maxFiles: pack.checks["max-files-changed"]?.maxFiles,
     maxLines: pack.checks["max-lines-changed"]?.maxLines,
     forbiddenGlobs: pack.checks["no-forbidden-paths"]?.forbiddenGlobs ?? [],
     tracker: pack.checks["linked-issue"]?.tracker ?? "either",
-  }, pack, roles);
+  }, pack);
 }
 
+/** The hub read the stored policy, so what that read left out comes with the pack it mails. */
 export function packFromInput(raw: unknown): CheckPack | null {
-  return parseCheckPack(raw);
+  const pack = parseCheckPack(raw);
+  const dropped = isRecord(raw) && Array.isArray(raw.dropped) ? raw.dropped.filter((note): note is string => typeof note === "string") : [];
+  return pack && dropped.length > 0 ? { ...pack, dropped: [...new Set([...(pack.dropped ?? []), ...dropped])] } : pack;
 }
 
 /** Leftover boolean flags when no pack is supplied. Pack, when present, is the check source. */
-export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack | null, roles: Record<string, RepoRole> = {}): DeterministicResult {
-  if (pack) return deriveFromPack(facts, pack, roles);
+export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack | null): DeterministicResult {
+  if (pack) return deriveFromPack(facts, pack);
   const legacy = repoPolicy(policy).checks;
   const enabled: Partial<Record<CatalogId, boolean>> = { "ci-green": legacy.ci, "no-merge-conflicts": legacy.conflicts };
   return evaluate(facts, {

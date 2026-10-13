@@ -13,6 +13,7 @@ const DetailCheck = type({
   "evidence?": "string[]",
   /** What the check found, as `CheckOutput`; the portal parses it. */
   "output?": "Record<string, unknown>",
+  /** Marks an author rule, on verdicts recorded before author rules were removed. */
   "gate?": "boolean",
 });
 
@@ -106,7 +107,8 @@ export const TriageVerdicts = type({
 });
 export type TriageVerdicts = typeof TriageVerdicts.infer;
 
-const CheckStats = type({ pass: "number", fail: "number", unconfirmed: "number" });
+/** `levels` counts a score rule's heads by the level each was rated. */
+const CheckStats = type({ pass: "number", fail: "number", unconfirmed: "number", "levels?": "Record<string, number>" });
 const ActionStats = type({ suggested: "number", executed: "number", failed: "number" });
 
 export const TriageStats = type({

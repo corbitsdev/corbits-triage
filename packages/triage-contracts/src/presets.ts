@@ -1,25 +1,20 @@
+import { VERDICTS, verdictLabel } from "./check-pack.js";
 import type { Priority, WorkflowState } from "./types.js";
 
-interface Preset {
-  labels: string[];
-  owner: string;
-}
-
-const NEEDS_CHANGES = "Triage: Needs changes";
-const NEEDS_REVIEW = "Triage: Needs review";
-const READY_TO_MERGE = "Triage: Ready to merge";
-
-const PRESETS: Record<WorkflowState, Preset> = {
-  "needs-decision": { labels: [NEEDS_REVIEW], owner: "Maintainer" },
-  "awaiting-review": { labels: [NEEDS_REVIEW], owner: "Reviewer / Maintainer" },
-  "needs-author-update": { labels: [NEEDS_CHANGES], owner: "Author" },
-  blocked: { labels: [NEEDS_CHANGES], owner: "Author" },
-  "ready-monitoring": { labels: [READY_TO_MERGE], owner: "Maintainer" },
-  "stale-unknown": { labels: [NEEDS_REVIEW], owner: "system" },
+const OWNERS: Record<WorkflowState, string> = {
+  "needs-decision": "Maintainer",
+  "awaiting-review": "Reviewer / Maintainer",
+  "needs-author-update": "Author",
+  blocked: "Author",
+  "ready-monitoring": "Maintainer",
+  "stale-unknown": "system",
 };
 
 // Labels earlier versions set; owning them clears them from a pull request the next time it is triaged.
 const RETIRED_LABELS = [
+  "Triage: Needs changes",
+  "Triage: Needs review",
+  "Triage: Ready to merge",
   "triage:needs-decision",
   "triage:awaiting-review",
   "triage:needs-author-update",
@@ -28,24 +23,21 @@ const RETIRED_LABELS = [
   "triage:stale-unknown",
 ];
 
-/** Every label a verdict state can set, and every label it once set; the mirror removes only these. */
-export const TRIAGE_LABELS: readonly string[] = [...new Set([...Object.values(PRESETS).flatMap((preset) => preset.labels), ...RETIRED_LABELS])];
+/** Every verdict label, and every label triage once set; the mirror removes only these. */
+export const TRIAGE_LABELS: readonly string[] = [...VERDICTS.map(verdictLabel), ...RETIRED_LABELS];
 
 export interface Rendered {
   state: WorkflowState;
   priority: Priority;
-  labels: string[];
   owner: string;
   humanGated: boolean;
 }
 
 export function render(state: WorkflowState, ctx: { priority?: Priority; humanGated?: boolean } = {}): Rendered {
-  const p = PRESETS[state];
   return {
     state,
     priority: ctx.priority ?? priorityFor(state),
-    labels: [...p.labels],
-    owner: p.owner,
+    owner: OWNERS[state],
     humanGated: ctx.humanGated ?? state === "needs-decision",
   };
 }

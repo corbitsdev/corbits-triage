@@ -33,10 +33,10 @@ const pack: CheckPack = {
     ...base.actions,
     fail: [
       ...base.actions.fail,
-      { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
-      { kind: "assign", target: { to: "author" } },
-      { kind: "request-review", target: { to: "users", users: [owner] } },
-      { kind: "close", target: {} },
+      { do: "labels", target: { from: "list", labels: ["triage:too-large"] } },
+      { do: "assign", target: { to: "author" } },
+      { do: "request-review", target: { to: "users", users: [owner] } },
+      { do: "close" },
     ],
   },
 };

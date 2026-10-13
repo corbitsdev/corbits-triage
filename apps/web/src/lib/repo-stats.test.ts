@@ -13,7 +13,7 @@ import { draftPolicy, transportRepoPackStore, type RepoPackStore } from "./repo-
 import { repoStatsQuery, useRepoStats } from "./repo-stats.ts";
 
 const REPO = "o/r";
-const DRAFT = fromPack({ ...emptyPack(REPO), actions: { ...defaultActions(), pass: [{ kind: "comment", target: { body: "hi" } }] } }, draftPolicy(repoPolicy(undefined)));
+const DRAFT = fromPack({ ...emptyPack(REPO), actions: { ...defaultActions(), pass: [{ do: "comment", target: { body: "hi" } }] } }, draftPolicy(repoPolicy(undefined)));
 const STATS: TriageStats = {
   repo: REPO,
   days: 7,

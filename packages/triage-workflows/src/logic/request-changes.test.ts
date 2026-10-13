@@ -29,7 +29,7 @@ const facts: PrFacts = {
 const pack: CheckPack = {
   ...emptyPack("acme/widgets"),
   checks: { "no-merge-conflicts": { enabled: true }, "ci-green": { enabled: true } },
-  actions: { ...defaultActions(), pass: [{ kind: "approve", target: {} }], fail: [{ kind: "request-changes", target: {} }] },
+  actions: { ...defaultActions(), pass: [{ do: "approve" }], fail: [{ do: "request-changes" }] },
 };
 
 /** The verdict as the evaluate step renders it, the verdict question answering pass when no hard rule failed. */

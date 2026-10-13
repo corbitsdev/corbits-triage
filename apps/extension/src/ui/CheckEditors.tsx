@@ -1,5 +1,5 @@
 import { Button, Checkbox, Input, Select, Textarea } from "@corbits/react-ui";
-import { ISSUE_TRACKERS, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type ModelShape, type RuleKind } from "@corbits/triage-contracts";
+import { ISSUE_TRACKERS, LEGACY_SCORE_LEVELS, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type ModelShape, type RuleKind } from "@corbits/triage-contracts";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react";
 import { defaultLocalPack } from "../local-pack.ts";
 import { withCatalogParams, withCustomCheck, type CustomForm } from "../pack-edit.ts";
@@ -123,19 +123,19 @@ export function CatalogEditor({ id, pack, onSave, onCancel }: CatalogEditorProps
 }
 
 /** What a custom check is: a rule kind, or a model shape. */
-export type CustomVariant = { kind: "rule"; rule: Exclude<RuleKind, "author"> } | { kind: "model"; shape: ModelShape };
+export type CustomVariant = { kind: "rule"; rule: RuleKind } | { kind: "model"; shape: ModelShape };
 
 /** The editor's text for each of a check's parameters, so switching nothing loses what was typed. */
-type CustomText = { name: string; globs: string; changed: string; requires: string; pattern: string; label: string; count: string; claim: string; subject: string; min: string; options: string; failOn: string[] };
+type CustomText = { name: string; globs: string; changed: string; requires: string; pattern: string; label: string; count: string; claim: string; subject: string; levels: string; failBelow: string; options: string; failOn: string[] };
 
 function textOf(form: CustomForm | undefined, name: string): CustomText {
-  const text: CustomText = { name, globs: "", changed: "", requires: "", pattern: "", label: "", count: "1", claim: "", subject: "", min: "7", options: "", failOn: [] };
+  const text: CustomText = { name, globs: "", changed: "", requires: "", pattern: "", label: "", count: "1", claim: "", subject: "", levels: LEGACY_SCORE_LEVELS.join("\n"), failBelow: "", options: "", failOn: [] };
   if (!form) return text;
   const named = { ...text, name: form.name };
   if (form.kind === "model") {
     switch (form.shape) {
       case "is-true": return { ...named, claim: form.claim };
-      case "score": return { ...named, subject: form.subject, min: String(form.min) };
+      case "score": return { ...named, subject: form.subject, levels: form.levels.join("\n"), failBelow: form.failBelow ?? "" };
       case "choose": return { ...named, options: form.options.join("\n"), failOn: form.failOn };
     }
   }
@@ -147,7 +147,6 @@ function textOf(form: CustomForm | undefined, name: string): CustomText {
     case "diff-excludes": return { ...named, pattern: form.pattern };
     case "label-required": return { ...named, label: form.label };
     case "min-approvals": return { ...named, count: String(form.count) };
-    case "author": return named;
   }
 }
 
@@ -159,8 +158,8 @@ function formOf(variant: CustomVariant, text: CustomText): CustomForm | string {
     switch (shape) {
       case "is-true": return { name, kind, shape, claim: text.claim.trim() };
       case "score": {
-        const min = wholeNumber(text.min, 0, "The minimum score");
-        return typeof min === "string" ? min : { name, kind, shape, subject: text.subject.trim(), min };
+        const failBelow = text.failBelow.trim();
+        return { name, kind, shape, subject: text.subject.trim(), levels: linesOf(text.levels), ...(failBelow && { failBelow }) };
       }
       case "choose": {
         const options = linesOf(text.options);
@@ -246,10 +245,11 @@ export function CustomEditor({ variant, pack, id, form, defaultName, onSave, onC
       {rule === "min-approvals" ? <Field label="Require at least this many approvals">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={text.count} onChange={set("count")} />}</Field> : null}
       {shape === "is-true" ? <Field label="Is it true that…" hint="The decision model answers yes or no; no fails the rule.">{(fid, hid) => <Textarea id={fid} aria-describedby={hid} rows={2} value={text.claim} onChange={set("claim")} />}</Field> : null}
       {shape === "score" ? (
-        <div className="field-pair">
-          <Field label="What to score from 0 to 10">{(fid) => <Input id={fid} value={text.subject} onChange={set("subject")} />}</Field>
-          <Field label="Pass at or above">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={text.min} onChange={set("min")} />}</Field>
-        </div>
+        <>
+          <Field label="What to score">{(fid) => <Input id={fid} value={text.subject} onChange={set("subject")} />}</Field>
+          <Field label="Levels" hint="One level per line, worst first, 2 to 10.">{(fid, hid) => <Textarea id={fid} aria-describedby={hid} rows={4} value={text.levels} onChange={set("levels")} />}</Field>
+          <Field label="Fail below" hint="One of the levels after the first; empty never fails.">{(fid, hid) => <Input id={fid} aria-describedby={hid} value={text.failBelow} onChange={set("failBelow")} />}</Field>
+        </>
       ) : null}
       {shape === "choose" ? (
         <>

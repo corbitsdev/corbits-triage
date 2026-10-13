@@ -10,7 +10,7 @@ A System One model does not generate text. A request carries a JSON `state` and 
 
 - **Noul**: a yes/no question, answered with P(yes).
 - **Choice**: one option from a fixed set, answered with the chosen option, a probability per option and a confidence.
-- **Score**: ordered, described levels, answered with the chosen level, a probability per level and a confidence. Triage does not use it.
+- **Score**: ordered, described levels, answered with a position across them, a probability per level and a confidence. Score rules use it.
 
 Triage reaches the model through Interchange inference. The agents name the tenant model alias `decision` on the `corbits-system-one` provider (`packages/triage-workflows/src/agents.ts`). The operator picks the endpoint and model behind that alias in the portal's decision model settings (`apps/web/src/lib/decision-models.ts`):
 
@@ -21,7 +21,7 @@ Triage reaches the model through Interchange inference. The agents name the tena
 | OpenCode Zen | `https://opencode.ai/zen/v1` | `jev-1.13` |
 | Custom | any | any |
 
-The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that infers: a `map` over the rules step's chunks, one System One call per chunk, then a second `map` over focused's follow-up chunks and the verdict question (`triage-steps.ts`, `directors.ts`). A pull request without judged rules to ask, or whose judged rules an earlier run answered, asks the verdict question in the first map. A failed hard rule, a draft or a closed pull request asks nothing. The request body is `{ state, questions, model }`; no system prompt reaches the model.
+The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that infers: a `map` over the rules step's chunks, one System One call per chunk, then a second `map` over focused's follow-up chunks and the verdict question (`triage-steps.ts`, `directors.ts`). A pull request without judged rules to ask, or whose judged rules an earlier run answered, asks the verdict question in the first map. A failed hard rule, a draft, a closed pull request or a policy with no decision-model rule on asks nothing. The request body is `{ state, questions, model }`; no system prompt reaches the model.
 
 ## Why Triage uses it
 
@@ -53,8 +53,10 @@ Questions point into the state by path, such as `` `pullRequest.files[3].hunks[0
 - **Custom model rules** (`packages/triage-contracts/src/check-pack.ts`):
   - `is-true` with scope `pull-request` (the default): one Noul, `<name>: <claim>`.
   - `is-true` with scope `file` or `hunk`, optionally limited by `when` globs: one Noul per file or hunk in scope, "Does the change in … meet this rule: <claim>?". At most 3 items are named on failure.
-  - `score` and `choose` are each reduced to one Noul ("reach at least N out of 10 for …", "best described as … rather than …").
-- **Verdict**: once no hard rule failed and the judged rules are answered, one Choice, question id `verdict`: "Does this pull request pass this repository's policy?", `pass`, `fail` or `cant_tell`; a rule whose result is fail means the pull request fails unless it plainly does not apply. Its state is `policy.rules`, every enabled rule with its result, reason and evidence and, for a judged rule, `pass`, how likely it passes; and the pull request's metadata as focused reads it, with as many judged files as fit one request, packed in order as focused's first slice is. It is not asked when a first-round call failed or left a rule unanswered, since the verdict degrades anyway. Its own key keeps the rules' answers reusable under theirs (`verdictRequest`, `logic/quality.ts`; `choiceOf`, `actions/evaluate.ts`).
+  - `score`: one Score question, `<name>: Which level, worst first, best describes the pull request for <subject>?`, with the rule's levels as its criteria. The likeliest level is the answer, recorded as the rule's evidence and output (`{ kind: "level" }`) and given to the verdict question as the rule's `level`. Without `failBelow` it passes; with it, it fails when the levels below `failBelow` hold P ≥ 0.7, passes when they hold P ≤ 0.3, and is unconfirmed between.
+  - `choose`: one Choice question, `<name>: Which option best describes the pull request?`, with the rule's options as criteria (no descriptions). The likeliest option is its evidence; it fails when the `failOn` options hold P ≥ 0.7, passes at P ≤ 0.3, and is unconfirmed between.
+  - A reply is parsed on its own, as before: a choice's options are whatever its probabilities name and a score's levels whatever its legend names. Each rule then checks the answer is over its own options or levels, and treats one that is not as unanswered.
+- **Verdict**: a policy with no decision-model rule on (no focused, docs, is-true, score or choose) is decided in code: every rule passing is Pass and any unconfirmed is Unsure, with a reason saying the policy has no decision-model rule (`renderVerdict`, `logic/render.ts`). Otherwise, once no hard rule failed and the judged rules are answered, one Choice, question id `verdict`: "Does this pull request pass this repository's policy?", `pass`, `fail` or `cant_tell`; a rule whose result is fail means the pull request fails unless it plainly does not apply. Its state is `policy.rules`, every enabled rule with its result, reason and evidence and, for a judged rule, `pass`, how likely it passes, and for a score rule, `level`; and the pull request's metadata as focused reads it, with as many judged files as fit one request, packed in order as focused's first slice is. It is not asked when a first-round call failed or left a rule unanswered, since the verdict degrades anyway. Its own key keeps the rules' answers reusable under theirs (`verdictRequest`, `logic/quality.ts`; `choiceOf`, `actions/evaluate.ts`).
 
 ## Writing questions
 
@@ -78,7 +80,7 @@ From `logic/render.ts`:
 
 Two different numbers come out of the answers:
 
-- **Rule score** (`packages/triage-contracts/src/check-output.ts`): per model rule, 0–100 and unrounded, how likely the rule is fine, with `passAt` 70 (docs, custom) or 60 (focused). It clears `passAt` exactly when the rule passes. Docs scores 1 − P(needs docs) of the weakest file; custom rules P(meets the rule); focused the least P(`one_thing` or `serves_purpose`) over its slices. A rule with no score reports `met`, `not-applicable` or `could-not-check` with a reason.
+- **Rule score** (`packages/triage-contracts/src/check-output.ts`): per is-true, docs and focused rule, 0–100 and unrounded, how likely the rule is fine, with `passAt` 70 (docs, custom) or 60 (focused). It clears `passAt` exactly when the rule passes. Docs scores 1 − P(needs docs) of the weakest file; is-true rules P(meets the rule); focused the least P(`one_thing` or `serves_purpose`) over its slices. A score rule reports its `level`, a choose rule its chosen option; a rule with no score reports `met`, `not-applicable` or `could-not-check` with a reason.
 - **Verdict score**: per pull request, the verdict question's P(pass), shown out of 100. A verdict a failed hard rule decided has none.
 
 ## Budgets and limits
@@ -154,12 +156,13 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 | definition on the local runner (CL-10638), run 1 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
 | definition on the local runner (CL-10638), run 2 | 2026-10-13 | 7, all unsure | 0 | 2, none unsure |
 | definition on the local runner (CL-10638), run 3 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
+| author rules removed from the verdict question (CL-10611) | 2026-10-13 | 5 | 0 | 2, none unsure |
 
 These cover one repository's pull requests. Custom rules and other repositories are unmeasured.
 
 ## Adding a decision-model rule
 
-1. **Prefer a rule.** If GitHub data decides it, use a rule over GitHub data: `paths-unchanged`, `paths-together`, `title-pattern`, `branch-pattern`, `label-required`, `diff-excludes`, `min-approvals` or `author`.
+1. **Prefer a rule.** If GitHub data decides it, use a rule over GitHub data: `paths-unchanged`, `paths-together`, `title-pattern`, `branch-pattern`, `label-required`, `diff-excludes` or `min-approvals`. Who opened the pull request is a step's `for`, not a rule.
 2. **Write the question** by the rules above.
 3. **Add it to the repository's policy.** Use the rules section of the repository panel in the portal, or write the policy through the hub's stock artifact route: the artifact titled `check-pack/<owner>/<repo>` under `/api/tenants/{tenantId}/artifacts`, with each save a new version. A file-scoped rule in `custom`:
 
@@ -188,5 +191,5 @@ The eval covers focused, docs and the verdict only.
 - **Not deterministic.** Answers vary slightly between runs, so a case near the band edge can flip between pass, fail and unsure. That is why the eval allows a few misses.
 - **No injection guard.** Pull request text and docs are untrusted input in the state. Jev does not treat state as hostile by default, and Triage has no prompt-injection check today.
 - **English.** TypeSafe reports its best accuracy in English; other languages are handled less well.
-- **No Score primitive.** `score` and `choose` custom rules are reduced to one yes/no question.
+- **Score and Choice are unmeasured.** No eval case uses a score or choose rule.
 - **Narrow test detection.** Test files, which docs does not ask about, are recognised only by the JS/TS-centred patterns above.

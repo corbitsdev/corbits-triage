@@ -409,7 +409,7 @@ try {
   }
   await page.emulateMedia({ colorScheme: "light" });
   const cardText = await card.innerText();
-  const topFailing = failing.checks.find((check) => check.result === "fail" && !check.gate);
+  const topFailing = failing.checks.find((check) => check.result === "fail");
   console.log(`hover card: "${cardText.split("\n").slice(0, 3).join(" / ")}"`);
   if (!cardText.includes(failing.verdict.nextAction) || (topFailing && !cardText.includes(topFailing.name))) process.exitCode = 1;
   await page.mouse.move(0, 0);

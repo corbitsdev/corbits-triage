@@ -15,11 +15,12 @@ export type CheckItem = typeof ItemsSchema.infer[number];
 /**
  * What a check found, beside its pass, fail or unconfirmed result. Values are facts named for what they state
  * (`hasConflicts: true`, `status: "pending"`, `files: 33`). A score is 0 to 100, how likely the check is fine, unrounded,
- * with the bar at which the check passes, the files or hunks behind it and any it could not read. Met, not applicable and
- * could not check are states, never numbers.
+ * with the bar at which the check passes, the files or hunks behind it and any it could not read. A level is what a score
+ * rule was rated, of its levels worst first. Met, not applicable and could not check are states, never numbers.
  */
 export const CheckOutputSchema = type({ kind: "'values'", values: "Record<string, number | boolean | string>" })
   .or({ kind: "'score'", score: "0 <= number <= 100", passAt: "0 <= number <= 100", items: ItemsSchema, "unread?": "string[]" })
+  .or({ kind: "'level'", level: "string", levels: "string[]", "failBelow?": "string" })
   .or({ kind: "'met'", items: ItemsSchema })
   .or({ kind: "'not-applicable'" })
   .or({ kind: "'could-not-check'", reason: "string", "items?": ItemsSchema });
@@ -51,7 +52,7 @@ export function itemText(item: CheckItem): string {
 
 /** The cited lines behind an evidence line, when the check's output carries them. */
 export function citationOf(output: CheckOutput | null | undefined, evidence: string): LineCitation | undefined {
-  if (!output || output.kind === "values" || output.kind === "not-applicable") return undefined;
+  if (!output || output.kind === "values" || output.kind === "level" || output.kind === "not-applicable") return undefined;
   return output.items?.find((item): item is LineCitation => typeof item !== "string" && itemText(item) === evidence);
 }
 

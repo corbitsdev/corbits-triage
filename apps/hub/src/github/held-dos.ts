@@ -5,7 +5,7 @@
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
-import { ACTION_KINDS, APPROVE_DO_KIND, DoList, repoPolicy, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, AGENT_DO, APPROVE_DO_KIND, DoList, repoPolicy, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -21,7 +21,7 @@ import { verdictFor } from "./triage-runs.js";
 
 export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
 
-export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0", effectId: "string > 0", kind: type.enumerated(...ACTION_KINDS) });
+export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0", effectId: "string > 0", kind: type.enumerated(...ACTION_KINDS, "agent") });
 export const HeldDoSent = type({ status: "'sent'" });
 
 const StepBase = type({
@@ -95,6 +95,8 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
   }
 
   return async function approve(body: typeof HeldDoBody.infer, { tenantId, principalId }: Member): Promise<Response> {
+    // A verdict recorded before agent Dos were removed may still hold one.
+    if (body.kind === "agent") return failure(409, "do_not_runnable", AGENT_DO);
     const refused = await doRefused(deps, principalId, tenantId, body.repo, body.kind);
     if (refused) return refused;
 

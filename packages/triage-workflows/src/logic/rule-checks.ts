@@ -1,4 +1,4 @@
-import type { CheckOutput, RepoRole, RuleCustomCheck } from "@corbits/triage-contracts";
+import type { CheckOutput, RuleCustomCheck } from "@corbits/triage-contracts";
 import { RE2JS } from "re2js";
 import { missingFrom } from "@corbits/github-reads";
 import type { CheckResult, Finding, PrFacts, PrFileFacts } from "./checks.js";
@@ -6,8 +6,8 @@ import { globMatch } from "./glob.js";
 
 const MAX_DIFF_HITS = 5;
 
-/** A gate decides an action's branch without being a defect, so it adds no finding. `measured` adds the numbers a rule counted. */
-type Outcome = { failed: boolean | null; reason: string; evidence?: string[]; state?: Finding["state"]; gate?: true; measured?: Record<string, number> };
+/** `measured` adds the numbers a rule counted. */
+type Outcome = { failed: boolean | null; reason: string; evidence?: string[]; state?: Finding["state"]; measured?: Record<string, number> };
 
 function matching(paths: string[], globs: string[]): string[] {
   return paths.filter((path) => globs.some((glob) => globMatch(path, glob)));
@@ -41,43 +41,7 @@ function unscanned(file: PrFileFacts): boolean {
   return (file.additions ?? 0) > 0 && (file.patch === undefined || file.patchTruncated === true);
 }
 
-type AuthorRule = Extract<RuleCustomCheck, { rule: "author" }>;
-
-/** Facts gathered before team membership was read know no team, so every team is unknown. */
-function named(check: Exclude<AuthorRule, { who: "kinds" }>, facts: PrFacts, roles: Record<string, RepoRole>): Omit<Outcome, "gate"> {
-  if (check.who === "users") return oneOf(check.users, facts.author);
-  const role = roles[check.role];
-  if (!role) return { failed: null, reason: `role ${check.role} is not defined` };
-  const users = role.users ?? [];
-  const teams = role.teams ?? [];
-  if (!users.length && !teams.length) return { failed: null, reason: `role ${check.role} names no people` };
-  const outcome = oneOf(users, facts.author);
-  if (!outcome.failed || !teams.length) return outcome;
-  const member = teams.find((team) => facts.authorTeams?.includes(team));
-  if (member) return { failed: false, reason: `author is in team ${member}` };
-  const unknown = teams.filter((team) => !facts.authorTeams || facts.authorTeamsUnknown?.includes(team));
-  if (unknown.length) return { failed: null, reason: `team membership of ${unknown.join(", ")} is not known` };
-  return { failed: true, reason: "author is not one of the people or teams named" };
-}
-
-function oneOf(users: string[], author: string): Omit<Outcome, "gate"> {
-  const failed = missingFrom(users, [author]).length > 0;
-  return { failed, reason: failed ? "author is not one of the people named" : "author is one of the people named" };
-}
-
-function author(check: AuthorRule, facts: PrFacts, roles: Record<string, RepoRole>): Outcome {
-  const kind = facts.authorKind;
-  if (!facts.author) return { failed: null, reason: "the author is not known", gate: true };
-  const evidence = [`@${facts.author}${kind ? ` (${kind})` : ""}`];
-  if (check.who === "kinds") {
-    if (!kind) return { failed: null, reason: "the author's kind is not known", evidence, gate: true };
-    const failed = !check.kinds.includes(kind);
-    return { failed, reason: failed ? `author is ${kind}, not ${check.kinds.join(" or ")}` : `author is ${kind}`, evidence, gate: true };
-  }
-  return { ...named(check, facts, roles), evidence, gate: true };
-}
-
-function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, RepoRole>): Outcome {
+function outcome(check: RuleCustomCheck, facts: PrFacts): Outcome {
   const paths = facts.paths ?? [];
   switch (check.rule) {
     case "paths-unchanged": {
@@ -114,21 +78,19 @@ function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, R
       const failed = facts.approvals < check.count;
       return { failed, reason: failed ? "not enough approvals" : "enough approvals", evidence: [`${facts.approvals} of ${check.count} approvals`], state: "awaiting-review", measured: { approvals: facts.approvals } };
     }
-    case "author":
-      return author(check, facts, roles);
   }
 }
 
 /** Evaluates the pack's rule custom checks from facts alone. Patterns were validated when the pack was read. */
-export function evaluateRuleChecks(facts: PrFacts, rules: RuleCustomCheck[], roles: Record<string, RepoRole>): { findings: Finding[]; checks: CheckResult[] } {
+export function evaluateRuleChecks(facts: PrFacts, rules: RuleCustomCheck[]): { findings: Finding[]; checks: CheckResult[] } {
   const findings: Finding[] = [];
   const checks: CheckResult[] = [];
   for (const check of rules) {
-    const { failed, reason: detail, evidence = [], state = "needs-author-update", gate, measured } = outcome(check, facts, roles);
+    const { failed, reason: detail, evidence = [], state = "needs-author-update", measured } = outcome(check, facts);
     const reason = `${check.name}: ${detail}`;
-    if (failed && !gate) findings.push({ check: check.id, state, reason });
+    if (failed) findings.push({ check: check.id, state, reason });
     const output: CheckOutput = failed === null ? { kind: "could-not-check", reason: detail } : { kind: "values", values: { holds: !failed, ...measured } };
-    checks.push({ check: check.id, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence, output, ...(gate ? { gate } : {}) });
+    checks.push({ check: check.id, kind: "machine", result: failed === null ? "unconfirmed" : failed ? "fail" : "pass", reason, evidence, output });
   }
   return { findings, checks };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
-import { emptyPack, readCheckPack, recommendedPack, repoPolicy } from "@corbits/triage-contracts";
+import { emptyPack, readCheckPack, recommendedPack, repoPolicy, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import { applyInstallationListing, createBridgeHandler, loadBridgeHook, mailPayload, type BridgeDeps } from "./bridge.js";
 import { MAX_BODY_BYTES } from "../read-json.js";
 import { repoRecords } from "./tenant-config.js";
@@ -629,5 +629,19 @@ describe("mailPayload", () => {
       branches: { yes: [{ kind: "approve", target: {}, automatic: false }], no: [], unsure: [{ kind: "request-review", target: { to: "codeowners" }, automatic: false }] },
     }]);
     expect(readCheckPack(checkPack)).toEqual(pack);
+  });
+
+  test("mails the pack whole as `pack`, and leaves out of `checkPack` what a deployment built before steps would run wrongly or refuse", () => {
+    const base = recommendedPack("octocat/hello");
+    const score: CustomCheck = { id: "care", name: "Care", group: "pull-request", kind: "model", shape: "score", subject: "care", levels: ["poor", "fair", "good", "great"], failBelow: "good" };
+    const pack: CheckPack = {
+      ...base,
+      custom: [score],
+      actions: { ...base.actions, pass: [...base.actions.pass, { do: "merge" }, { do: "comment", target: { body: "Hi" }, for: "first-timers" }, { do: "labels", target: { from: "verdict" } }] },
+    };
+    const mail = mailPayload("octocat/hello", repoPolicy({ enabled: true }), { pack, automatic: [] }, {});
+    expect(mail.pack).toBe(pack);
+    expect(readCheckPack(mail.checkPack)).toEqual({ ...base, custom: [score] });
+    expect(mail.checkPack.custom).toEqual([{ id: "care", name: "Care", group: "pull-request", kind: "model", shape: "score", subject: "care", min: 7 }]);
   });
 });

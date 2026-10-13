@@ -9,7 +9,7 @@ const facts: ActionInput["facts"] = {
 };
 
 function say(body: string) {
-  return [{ kind: "comment" as const, target: { body } }];
+  return [{ do: "comment" as const, target: { body } }];
 }
 
 const pack = { ...emptyPack("acme/widgets"), actions: { when: ["opened" as const], pass: say("pass"), fail: say("fail"), unsure: say("unsure") } };

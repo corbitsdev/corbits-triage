@@ -24,10 +24,9 @@ function rowsOf(pack: CheckPack): Row[] {
   });
 }
 
-/** The editor a custom check opens with; Author is only gates actions, which local mode cannot edit. */
-function variantOf(check: CustomCheck): CustomVariant | undefined {
-  if (check.kind === "model") return { kind: "model", shape: check.shape };
-  return check.rule === "author" ? undefined : { kind: "rule", rule: check.rule };
+/** The editor a custom check opens with. */
+function variantOf(check: CustomCheck): CustomVariant {
+  return check.kind === "model" ? { kind: "model", shape: check.shape } : { kind: "rule", rule: check.rule };
 }
 
 function EvalBadge({ model }: { model: boolean }) {

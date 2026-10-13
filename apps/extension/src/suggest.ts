@@ -39,7 +39,7 @@ export function suggest({ facts, checks, pack, jobs }: SuggestInput): { actions:
     for (const path of check.evidence) notes.push({ path, check: check.name, reason: "Touches a protected path." });
   }
 
-  for (const check of checks.filter((each) => each.result === "fail" && !each.gate)) {
+  for (const check of checks.filter((each) => each.result === "fail")) {
     const rule = custom.get(check.check);
     const why = `${check.name} failed. ${sentence(check.reason)}`;
     // A custom rule is suggested for by its kind, a built-in one by its id, so a custom id never reads as a built-in's.
@@ -87,7 +87,7 @@ export function suggest({ facts, checks, pack, jobs }: SuggestInput): { actions:
     }
   }
   // The changed lines a failing check cites, marked where they are in the Files tab.
-  for (const check of checks.filter((each) => each.result === "fail" && !each.gate)) {
+  for (const check of checks.filter((each) => each.result === "fail")) {
     const items = "items" in check.output ? check.output.items ?? [] : [];
     for (const item of items) {
       if (typeof item !== "string" && item.added) notes.push({ path: item.path, line: item.added.start, check: check.name, reason: sentence(check.reason) });

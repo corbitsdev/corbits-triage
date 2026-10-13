@@ -1,14 +1,11 @@
-import { AUTHOR_KINDS, type AuthorWho } from "@corbits/triage-contracts";
 import type { CheckForm } from "../../lib/action-builder.ts";
 import CountField from "./CountField.tsx";
 import TokenList from "./TokenList.tsx";
 
-type CheckParamsProps = { form: CheckForm; roles: string[]; disabled: boolean; onChange: (form: CheckForm) => void };
-
-const WHO: Record<AuthorWho, string> = { kinds: "a kind of contributor", users: "one of these people", role: "in a role" };
+type CheckParamsProps = { form: CheckForm; disabled: boolean; onChange: (form: CheckForm) => void };
 
 /** One rule kind's or model shape's parameters, as a sentence with its values inline. */
-export default function CheckParams({ form, roles, disabled, onChange }: CheckParamsProps) {
+export default function CheckParams({ form, disabled, onChange }: CheckParamsProps) {
   function set(patch: Partial<CheckForm>) {
     onChange({ ...form, ...patch } as CheckForm);
   }
@@ -17,7 +14,7 @@ export default function CheckParams({ form, roles, disabled, onChange }: CheckPa
     return <input className={mono ? "val w mono-val" : "val w"} aria-label={label} disabled={disabled} value={form[key] ?? ""} onChange={(event) => set({ [key]: event.target.value })} />;
   }
 
-  function count(key: "count" | "min", label: string, min: number, max?: number) {
+  function count(key: "count", label: string, min: number, max?: number) {
     return <CountField value={form[key]} label={label} min={min} max={max} disabled={disabled} onChange={(value) => set({ [key]: value })} />;
   }
 
@@ -30,8 +27,18 @@ export default function CheckParams({ form, roles, disabled, onChange }: CheckPa
       switch (form.shape) {
         case "is-true":
           return <>Is it true that {text("claim", "Claim")}?</>;
-        case "score":
-          return <>Score {text("subject", "What to score")} from 0 to 10, pass at {count("min", "Minimum score", 0, 10)} or above.</>;
+        case "score": {
+          const levels = form.levels ?? [];
+          return (
+            <>
+              Score {text("subject", "What to score")} as <TokenList values={levels} noun="level" disabled={disabled} onChange={(values) => set({ levels: values, failBelow: form.failBelow !== undefined && values.indexOf(form.failBelow) > 0 ? form.failBelow : undefined })} />, worst first; fail below
+              <select className="val" aria-label="Fail below" disabled={disabled} value={form.failBelow ?? ""} onChange={(event) => set({ levels, failBelow: event.target.value || undefined })}>
+                <option value="">never</option>
+                {levels.slice(1).map((level) => <option key={level} value={level}>{level}</option>)}
+              </select>
+            </>
+          );
+        }
         case "choose": {
           const options = form.options ?? [];
           return (
@@ -63,28 +70,6 @@ export default function CheckParams({ form, roles, disabled, onChange }: CheckPa
         return <>Require the label {text("label", "Required label")}</>;
       case "min-approvals":
         return <>Require at least {count("count", "Approvals", 1)} approvals</>;
-      case "author":
-        return (
-          <>
-            Author is
-            <select className="val" aria-label="Author is" disabled={disabled} value={form.who} onChange={(event) => set({ who: event.target.value as AuthorWho })}>
-              {Object.entries(WHO).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-            {form.who === "users" ? <TokenList values={form.users ?? []} noun="person" placeholder="login" disabled={disabled} onChange={(users) => set({ users })} /> : null}
-            {form.who === "role" ? (
-              <select className="val" aria-label="Role" disabled={disabled} value={form.role ?? ""} onChange={(event) => set({ role: event.target.value })}>
-                <option value="" disabled>Pick a role</option>
-                {[...new Set([...roles, ...(form.role ? [form.role] : [])])].map((role) => <option key={role} value={role}>{role}</option>)}
-              </select>
-            ) : null}
-            {form.who === "kinds" ? <span className="picks">{AUTHOR_KINDS.map((kind) => (
-              <label key={kind} className="pick">
-                <input type="checkbox" disabled={disabled} checked={(form.kinds ?? []).includes(kind)} onChange={(event) => set({ kinds: event.target.checked ? [...(form.kinds ?? []), kind] : (form.kinds ?? []).filter((item) => item !== kind) })} />
-                {kind}
-              </label>
-            ))}</span> : null}
-          </>
-        );
     }
   }
 

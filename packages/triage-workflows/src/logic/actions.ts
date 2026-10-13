@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, checkName, classificationSources, type ActionKind, type CheckPack, type Do, type RepoRole, type ResolvedTarget, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, checkName, classificationSources, RULE_LABEL_PREFIX, ruleLabel, stepForAuthor, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckPack, type RepoRole, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { authorFailures } from "./render.js";
 import { errorText } from "@corbits/common";
@@ -29,13 +29,13 @@ export function doEffectId(ref: DoRef): string {
   return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
 }
 
-type Step = { list: VerdictWord; index: number; kind: ActionKind; reason: string };
+type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: string };
 
 /** `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant. */
-export type SuggestedDo = Step & { effectId: string; target: ResolvedTarget; held?: true };
+export type SuggestedDo = Place & { effectId: string; target: ResolvedTarget; held?: true };
 
-/** A step resolves to a target or is skipped. */
-export type SuggestedAction = SuggestedDo | (Step & { skipped: true });
+/** A step resolves to a target or is skipped, as one not for this author is. */
+export type SuggestedAction = SuggestedDo | (Place & { skipped: true });
 
 export interface ActionInput {
   facts: PrFacts;
@@ -63,8 +63,8 @@ function ownTeam(team: string, repo: string): string {
 
 type People = { users: string[]; teams: string[] } | { unresolved: "codeowners" };
 
-function people(task: Extract<Do, { kind: "assign" | "request-review" }>, { facts, roles }: ActionInput): People {
-  const t = task.target;
+function people(step: Extract<Step, { do: "assign" | "request-review" }>, { facts, roles }: ActionInput): People {
+  const t = step.target;
   switch (t.to) {
     case "users":
       return { users: t.users, teams: [] };
@@ -95,18 +95,38 @@ function changesBody(input: ActionInput): string {
   return ["Triage requests changes:", ...failed.map((c) => `- ${checkName(pack, c.check)}: ${c.reason}`)].join("\n");
 }
 
-function resolve(task: Do, input: ActionInput): ResolvedTarget {
-  switch (task.kind) {
-    case "labels":
-      return task.target.from === "list" ? { labels: task.target.labels } : { unresolved: "derive", from: task.target.from };
+/** The labels a derived step wants, and the ones it owns on the pull request that no longer apply. */
+function derivedLabels(wanted: string[], owns: (label: string) => boolean, facts: PrFacts): ResolvedTarget {
+  const keep = new Set(wanted.map((label) => label.toLowerCase()));
+  return { labels: wanted, unlabel: (facts.labels ?? []).filter((label) => owns(label) && !keep.has(label.toLowerCase())) };
+}
+
+const OWNED_LABELS = new Set(TRIAGE_LABELS.map((label) => label.toLowerCase()));
+
+function ownsVerdictLabel(label: string): boolean {
+  return OWNED_LABELS.has(label.toLowerCase());
+}
+
+function ownsRuleLabel(label: string): boolean {
+  return label.toLowerCase().startsWith(RULE_LABEL_PREFIX);
+}
+
+function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): ResolvedTarget {
+  switch (step.do) {
+    case "labels": {
+      const { target } = step;
+      if (target.from === "list") return { labels: target.labels };
+      if (target.from === "verdict") return derivedLabels([verdictLabel(input.verdict)], ownsVerdictLabel, input.facts);
+      return derivedLabels(input.checks.filter((c) => c.result === "fail").map((c) => ruleLabel(c.check)), ownsRuleLabel, input.facts);
+    }
     case "assign": {
-      const resolved = people(task, input);
+      const resolved = people(step, input);
       if ("unresolved" in resolved) return resolved;
       if (!resolved.users.length) throw new Error("assignees must be users and this target names none");
       return { users: resolved.users };
     }
     case "request-review": {
-      const resolved = people(task, input);
+      const resolved = people(step, input);
       if ("unresolved" in resolved) return resolved;
       const { author, reviewers = [], reviewedBy = [] } = input.facts;
       const users = missingFrom([author], resolved.users);
@@ -116,10 +136,11 @@ function resolve(task: Do, input: ActionInput): ResolvedTarget {
     case "request-changes":
       return { body: changesBody(input) };
     case "comment":
+      return step.target;
     case "approve":
+    case "merge":
     case "close":
-    case "agent":
-      return task.target;
+      return {};
   }
 }
 
@@ -128,19 +149,19 @@ function satisfied(kind: ActionKind, target: ResolvedTarget, facts: PrFacts): bo
   if ("unresolved" in target) return false;
   switch (kind) {
     case "labels":
-      return "labels" in target && missingFrom(facts.labels, target.labels).length === 0;
+      return "labels" in target && missingFrom(facts.labels, target.labels).length === 0 && !target.unlabel?.length;
     case "assign":
       return "users" in target && missingFrom(facts.assignees, target.users).length === 0;
     // Resolution already dropped everyone requested or reviewed on this head.
     case "request-review":
       return "teams" in target && target.users.length === 0 && target.teams.length === 0;
     case "close":
+    case "merge":
       return facts.state === "closed";
-    // No effect id records a posted comment or agent run yet, so these always stand; facts do not say which head the App's review is on.
+    // No effect id records a posted comment yet, so it always stands; facts do not say which head the App's review is on.
     case "comment":
     case "approve":
     case "request-changes":
-    case "agent":
       return false;
   }
 }
@@ -149,17 +170,27 @@ function sentence(text: string): string {
   return `${text[0]!.toUpperCase()}${text.slice(1)}.`;
 }
 
-/** The Dos of the verdict's list on this head; none when the event does not wake the policy. Suggest only: nothing here writes to GitHub. */
+/**
+ * The Dos of the verdict's list on this head; none when the event does not wake the policy. A step not for this author
+ * is skipped, and one that does nothing is not listed. Suggest only: nothing here writes to GitHub.
+ */
 export function evaluateActions(input: ActionInput): SuggestedAction[] {
   if (!wakes(input.pack, input.facts)) return [];
   const { verdict: list, reason, facts } = input;
+  const author = { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown };
   const out: SuggestedAction[] = [];
-  for (const [index, task] of input.pack.actions[list].entries()) {
-    const base = { list, index, kind: task.kind };
+  for (const [index, step] of input.pack.actions[list].entries()) {
+    if (step.do === "nothing") continue;
+    const base = { list, index, kind: step.do };
+    const audience = stepForAuthor(step.for, author);
+    if (audience.matches !== true) {
+      out.push({ ...base, skipped: true, reason: sentence(`not run: ${audience.reason}`) });
+      continue;
+    }
     try {
-      const target = resolve(task, input);
-      const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: task.kind, target });
-      if (!satisfied(task.kind, target, facts)) out.push({ ...base, effectId, target, reason });
+      const target = resolve(step, input);
+      const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: step.do, target });
+      if (!satisfied(step.do, target, facts)) out.push({ ...base, effectId, target, reason });
     } catch (e) {
       out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
     }
@@ -178,7 +209,7 @@ export function approvalHeldBy(verdict: VerdictWord, ci: PrFacts["checks"]): str
 }
 
 function lists(pack: CheckPack, kind: ActionKind): boolean {
-  return VERDICTS.some((list) => pack.actions[list].some((step) => step.kind === kind));
+  return VERDICTS.some((list) => pack.actions[list].some((step) => step.do === kind));
 }
 
 /** The pack approves pull requests, so the approvals its approve Dos made are its own to take back. */
@@ -195,11 +226,12 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
   return changesFor(input).length > 0;
 }
 
-/** Approve Dos are skipped for `reason`, when the head may not be approved. */
-export function heldApprovals(actions: SuggestedAction[], reason: string | undefined): SuggestedAction[] {
-  if (reason === undefined) return actions;
+/** Approve Dos are skipped for `approval`, when the head may not be approved, and merge Dos until CI has passed on it. */
+export function heldApprovals(actions: SuggestedAction[], approval: string | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
+  const merge = ci === "success" ? undefined : "CI has not passed on this head.";
   return actions.map(function held(action): SuggestedAction {
-    if (!("effectId" in action) || action.kind !== "approve") return action;
+    const reason = action.kind === "approve" ? approval : action.kind === "merge" ? merge : undefined;
+    if (!("effectId" in action) || reason === undefined) return action;
     const { list, index, kind } = action;
     return { list, index, kind, skipped: true, reason };
   });

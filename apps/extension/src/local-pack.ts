@@ -18,6 +18,6 @@ export function defaultLocalPack(repo: string): CheckPack {
       { id: "tests-changed-with-code", name: "Tests changed with code", group: "code-vs-ci", kind: "rule", rule: "paths-together", changed: SOURCE_GLOBS, requires: TEST_GLOBS },
       { id: "no-debug-leftovers", name: "No debug leftovers", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: DEBUG_LEFTOVERS },
     ],
-    actions: { ...defaultActions(), fail: [{ kind: "labels", target: { from: "list", labels: ["triage:needs-author-update"] } }] },
+    actions: { ...defaultActions(), fail: [{ do: "labels", target: { from: "list", labels: ["triage:needs-author-update"] } }] },
   };
 }
