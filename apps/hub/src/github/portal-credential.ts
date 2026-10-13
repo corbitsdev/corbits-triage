@@ -47,6 +47,14 @@ export async function memberPrincipal(db: DB["db"], tenantId: string, userId: st
   return member?.id;
 }
 
+/** The member's principal id when they hold `workflow-run:*` read, which reading triage runs needs, or the error response to return. */
+export async function runReadPrincipal(d: PortalCredentialDeps, req: Request, tenantId: string): Promise<string | Response> {
+  const principalId = await portalMember(d, req, tenantId);
+  if (principalId instanceof Response) return principalId;
+  if (await d.authorize(principalId, tenantId, "workflow-run:*", "read")) return principalId;
+  return failure(403, "forbidden", "You do not have access to this workspace's triage runs.");
+}
+
 async function holds(d: PortalCredentialDeps, principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
   if (await d.authorize(principalId, tenantId, resource, action)) return true;
   return action === "read" && d.authorize(principalId, tenantId, resource, "use");
