@@ -307,7 +307,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     observeTenant: observer.observe,
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
-      return { status: "ok", pack: options.pack ?? emptyPack(repo) };
+      return { status: "ok", pack: options.pack ?? emptyPack(repo), automatic: [] };
     },
     deliver: async function deliver(tenantId, address, payload) {
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
@@ -368,7 +368,7 @@ describe("triage reconciler", () => {
   });
 
   test("the Dos a run executed are recorded on its verdict", async () => {
-    const comment = { id: "hello", branch: "always", index: 0, kind: "comment", automatic: true, reason: "", effectId: "e-comment", target: { body: "hi" } };
+    const comment = { id: "hello", branch: "always", index: 0, kind: "comment", reason: "", effectId: "e-comment", target: { body: "hi" } };
     const label = { ...comment, index: 1, kind: "labels", effectId: "e-label", target: { labels: ["x"] } };
     const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [comment, label] };
     const executed = replied("execute", { dos: [{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }] });
@@ -381,7 +381,7 @@ describe("triage reconciler", () => {
   });
 
   test("a held Do's approval run puts its outcome on the verdicts of its head, once", async () => {
-    const held = { id: "hello", branch: "always", index: 0, kind: "comment", automatic: false, reason: "", effectId: "e-comment", target: { body: "hi" }, held: true };
+    const held = { id: "hello", branch: "always", index: 0, kind: "comment", reason: "", effectId: "e-comment", target: { body: "hi" }, held: true };
     const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [held] };
     const mail = stockTriggerMail({ kind: "approve-do", runId: "run_1", request: { repo: REPO, number: 1 } });
     const approval = [startedBy(mail, "2026-10-07T02:00:00.000Z"), replied("executeApproved", { dos: [{ effectId: "e-comment", status: "done" }] }), completed];

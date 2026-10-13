@@ -62,7 +62,7 @@ export async function saveDraft(store: RepoPackStore, repo: string, session: Pac
   } catch (cause) {
     const message = current.unlinked
       ? `The checks are saved and in effect, but could not be linked to the repository. Save again to link them. ${errorText(cause)}`
-      : `Could not save the posting and triage settings. ${errorText(cause)}`;
+      : `Could not save the triage settings. ${errorText(cause)}`;
     return { session: current, draft: shown, failure: { message, cause, stale: false } };
   }
   const saved = { pack: current.saved.pack, policy };

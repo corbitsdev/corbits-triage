@@ -114,19 +114,19 @@ const MIRROR_INPUT = obj({
   comment: str,
   notReadyHead: str,
   fixedHead: str,
-}, ["repo", "number", "labels", "comment"]);
+}, ["repo", "number", "labels"]);
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_mirror",
     description:
-      "Post (or update) the triage comment on a pull request, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Never merges.",
+      "Post (or update) the triage comment on a pull request when comment is given, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_mirror_auto",
     description:
-      "Post (or update) the triage comment on a pull request without waiting for a human approval, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Never merges.",
+      "Post (or update) the triage comment on a pull request when comment is given, without waiting for a human approval, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {

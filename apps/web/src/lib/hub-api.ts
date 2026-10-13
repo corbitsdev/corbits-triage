@@ -64,7 +64,6 @@ export type RepoRecord = {
   account?: string;
   installationUrl?: string;
   selection?: "all" | "selected";
-  cleanupMode?: RepoPolicy["cleanupMode"];
   enabled?: boolean;
   checks?: RepoCheckFlags;
   checkPack?: { name: string };
@@ -397,12 +396,12 @@ export async function saveRepoSettings(
   transport: Transport,
   tenantId: string,
   repo: string,
-  settings: Pick<RepoPolicy, "cleanupMode" | "enabled" | "roles">,
+  settings: Pick<RepoPolicy, "enabled" | "roles">,
   linked: boolean,
 ): Promise<void> {
   const clean = validateRepo(repo);
-  const { cleanupMode, enabled, roles } = settings;
-  const next = { cleanupMode, enabled, roles, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
+  const { enabled, roles } = settings;
+  const next = { enabled, roles, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
   await patchAppConfig(transport, tenantId, function applySettings(current) {
     const repos = current.repos ?? [];
     if (!repos.some((row) => rowName(row) === clean)) throw new Error("Repository not found.");
@@ -1007,7 +1006,7 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
 }
 
 /** Names one held Do by the run whose verdict holds it; the hub looks the Do up and mails the deployment to run it. */
-export type HeldDoRef = { runId: string; repo: string; number: number; effectId: string };
+export type HeldDoRef = { runId: string; repo: string; number: number; effectId: string; kind: ActionKind };
 
 /** The hub's refusals that name its internals; the rest of its text is already plain. */
 const DO_REFUSALS: Record<string, string> = {
@@ -1107,7 +1106,7 @@ export async function loadGithubPull(
 }
 
 /** One Do as a preview resolves it; `skipped` ones carry why instead of an effect id. */
-export type PreviewDo = { id: string; branch: DoBranch; index: number; kind: ActionKind; automatic: boolean; reason: string; effectId?: string; target?: Record<string, unknown>; skipped?: true };
+export type PreviewDo = { id: string; branch: DoBranch; index: number; kind: ActionKind; reason: string; effectId?: string; target?: Record<string, unknown>; skipped?: true };
 
 export type PreviewBranch = { branch: DoBranch; reason: string; dos: PreviewDo[] };
 
@@ -1445,6 +1444,8 @@ export type PrItem = {
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
   failure: RunFailure | null;
   actions: SuggestedAction[];
+  /** The Do kinds triage was granted to write on its own when it made the verdict. */
+  automatic: ActionKind[];
   href: string;
 };
 
@@ -1594,6 +1595,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     running: isRunning(pull.run),
     failure: failureOf(pull.run),
     actions: suggestedActions(detail.actions ?? []),
+    automatic: ACTION_KINDS.filter((kind) => detail.automatic?.includes(kind)),
     href: canonicalPrHref(pull.repo, pull.number),
   };
 }
@@ -1677,6 +1679,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         running: isRunning(pull?.run ?? null),
         failure: failureOf(pull?.run ?? null),
         actions: [],
+        automatic: [],
         href: canonicalPrHref(repo, pr.number),
       });
     }

@@ -14,7 +14,7 @@
 // through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, repoPolicy, triageEventOf, type CheckPack, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, repoPolicy, triageEventOf, type CheckPack, type Do, type RepoPolicy } from "@corbits/triage-contracts";
 import { asRecord, isRecord } from "@corbits/common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
@@ -33,7 +33,7 @@ import {
   type InstallationFields,
   type RepoRecord,
 } from "./tenant-config.js";
-import type { CheckPackRead } from "./check-pack-store.js";
+import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
 
@@ -157,13 +157,22 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
   return read(record, number);
 }
 
-export function mailPayload(repo: string, policy: RepoPolicy, pack: CheckPack, extra: Record<string, unknown>) {
+/** A deployment built before grants decided automation rejects a Do without `automatic`; the current workflow ignores it. */
+function withLegacyFlags(pack: CheckPack) {
+  function flagged(dos: Do[]) {
+    return dos.map((step) => ({ ...step, automatic: false }));
+  }
+  return { ...pack, actions: pack.actions.map((action) => ({ ...action, branches: Object.fromEntries(Object.entries(action.branches).map(([branch, dos]) => [branch, flagged(dos)])) })) };
+}
+
+export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic }: StoredPack, extra: Record<string, unknown>) {
   return {
     ...extra,
     kind: "pr",
     repo,
     policy: { ...policy, checkPack: { name: checkPackName(repo) } },
-    checkPack: pack,
+    checkPack: withLegacyFlags(pack),
+    automatic,
   };
 }
 
@@ -171,9 +180,9 @@ async function resolvedPack(
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>,
   tenantId: string,
   repo: string,
-): Promise<CheckPack | null> {
+): Promise<StoredPack | null> {
   const read = await readCheckPack(tenantId, repo);
-  return read.status === "ok" ? read.pack : null;
+  return read.status === "ok" ? read : null;
 }
 
 function installationFields(payload: Record<string, unknown>): InstallationFields | undefined {
@@ -472,14 +481,14 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "not_open" });
       return json(202, { status: "ignored" });
     }
-    const pack = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo);
-    if (!pack) {
+    const stored = await resolvedPack(d.readCheckPack, loaded.tenantId, mail.repo);
+    if (!stored) {
       log({ level: "info", msg: "needs_setup", delivery, event, repo: mail.repo, hook: loaded.credentialId });
       return json(202, { status: "needs-setup" });
     }
     let accepted: Accepted;
     try {
-      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack, mail, number: mail.prNumber, headSha, event: triageEvent });
+      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, mail, number: mail.prNumber, headSha, event: triageEvent });
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });

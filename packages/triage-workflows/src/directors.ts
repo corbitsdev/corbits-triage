@@ -9,7 +9,7 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { classificationSources, isFromTriageSender, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, classificationSources, isFromTriageSender, repoPolicy, triageEventsOf, type ActionKind, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoInput, DoOutcome } from "@corbits/github-tool/do";
 import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
@@ -149,9 +149,17 @@ function carriedAnswers(items: unknown[]): Map<number, Judged> {
   }));
 }
 
+/** The Do kinds the hub's mail says the pr-triage role is granted; only the hub's mail is trusted to grant any. */
+function automaticKinds(content: string | undefined, input: Record<string, unknown> | undefined): ActionKind[] {
+  const kinds = input?.automatic;
+  if (!isFromTriageSender(content) || !Array.isArray(kinds)) return [];
+  return ACTION_KINDS.filter((kind) => kinds.includes(kind));
+}
+
 function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   let carried = new Map<number, Judged>();
+  let automatic: ActionKind[] = [];
   function reply(items: RulesItem[], batch: boolean) {
     return caps.reply(JSON.stringify({ items, batch }));
   }
@@ -232,7 +240,8 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
             authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
           }, { repo, policy, pack, events, docs });
           const judged = carried.get(n);
-          return judged === undefined || "error" in item ? item : { ...item, judged };
+          if ("error" in item) return item;
+          return judged === undefined ? { ...item, automatic } : { ...item, automatic, judged };
         }
         return reply(numbers.map(itemFor), batch);
       }
@@ -284,6 +293,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     if (!policy.enabled) return fail("Triage is disabled for this repository.");
     const pack = packFromInput(input?.checkPack);
     if (!pack) return fail(NEEDS_SETUP_REASON);
+    automatic = automaticKinds(message.content, input);
     if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, ["catch-up"]);
     if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
     // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.
@@ -343,7 +353,27 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
   };
 }
 
-/** Only automated repos mirror; other verdicts leave `request` for the portal to post. */
+const MIRRORED_KINDS: readonly ActionKind[] = ["comment", "labels", "approve", "request-changes"];
+
+/**
+ * A settled head that may not be approved takes back the approve Do's approvals, of it or earlier heads, in a pack that approves;
+ * one with nothing left for the author to fix takes back the request-changes Do's requests, in a pack that requests changes.
+ */
+function dismissals(v: Verdict) {
+  const settled = v.headSha !== null && decidesDos(v);
+  return { ...(settled && v.approvable === false && { notReadyHead: v.headSha }), ...(settled && v.changesWanted === false && { fixedHead: v.headSha }) };
+}
+
+/** Whether the mirror writes anything for the verdict: what the pr-triage role is granted, or what an earlier Do left to take back. */
+function mirrors(v: Verdict): boolean {
+  if (v.mirror !== true || !v.request || !Array.isArray(v.automatic)) return false;
+  return MIRRORED_KINDS.some((kind) => v.automatic.includes(kind)) || Object.keys(dismissals(v)).length > 0;
+}
+
+/**
+ * The mirror writes triage's labels when the pr-triage role holds labels and its reply when it holds comment, and takes
+ * back what earlier approve and request-changes Dos left standing; the portal offers the rest.
+ */
 function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   let batch = false;
@@ -356,16 +386,11 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
     return caps.reply(JSON.stringify(batch ? { results: outcomes } : (outcomes[0] ?? { skipped: true })));
   }
 
-  /**
-   * A settled head that may not be approved takes back the approve Do's approvals, of it or earlier heads, in a pack that approves;
-   * one with nothing left for the author to fix takes back the request-changes Do's requests, in a pack that requests changes.
-   */
   function mirrorCall(v: Verdict): ToolCall {
     const r = v.request;
-    const settled = v.headSha !== null && decidesDos(v);
-    const stale = settled && v.approvable === false ? { notReadyHead: v.headSha } : {};
-    const fixed = settled && v.changesWanted === false ? { fixedHead: v.headSha } : {};
-    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, ...stale, ...fixed }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
+    const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
+    const comment = v.automatic.includes("comment") ? { comment: r.comment } : {};
+    return call("github_mirror_auto", { repo: r.repo, number: r.number, ...labels, ...comment, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
   return {
@@ -376,7 +401,7 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
           if (!input) return caps.reply(JSON.stringify({ skipped: true, reason: "mirror: input is not JSON" }));
           const parsed = verdictsOf(input);
           batch = parsed.batch;
-          const mirrored = parsed.verdicts.filter((v) => v.mirror === true && v.request && v.cleanupMode === "automated");
+          const mirrored = parsed.verdicts.filter(mirrors);
           if (!mirrored.length) return caps.reply(JSON.stringify({ skipped: true }));
           return b.run(mirrored.map(mirrorCall), finish);
         }
@@ -392,13 +417,13 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   };
 }
 
-/** One Do's outcome; a failed or skipped automatic one is tried again by the next run. */
+/** One Do's outcome; a failed or skipped unattended one is tried again by the next run. */
 export type DoResult = { effectId: string; status: DoOutcome["status"] | "failed" | "skipped"; error?: string };
 
 /** Dos one run writes at most; the rest wait for the next run. */
 export const MAX_DOS_PER_RUN = 10;
 const NOT_SETTLED = "verdict not settled";
-const OVER_CAP = `more than ${MAX_DOS_PER_RUN} automatic Dos in one run`;
+const OVER_CAP = `more than ${MAX_DOS_PER_RUN} unattended Dos in one run`;
 
 type AutomaticDo = { verdict: Verdict; step: SuggestedDo };
 
@@ -406,10 +431,10 @@ function isDo(action: SuggestedAction): action is SuggestedDo {
   return "effectId" in action;
 }
 
-/** Only automated repos run Dos unattended, and only those the pack marks automatic. */
+/** Only Dos whose kind the pr-triage role holds run unattended, and only those evaluate did not hold. */
 function automaticDos(v: Verdict): AutomaticDo[] {
-  if (v.cleanupMode !== "automated" || !v.request || !Array.isArray(v.actions)) return [];
-  return v.actions.filter(isDo).filter((step) => step.automatic).map((step) => ({ verdict: v, step }));
+  if (!v.request || !Array.isArray(v.actions) || !Array.isArray(v.automatic)) return [];
+  return v.actions.filter(isDo).filter((step) => step.held !== true && v.automatic.includes(step.kind)).map((step) => ({ verdict: v, step }));
 }
 
 /** Why the Do is not run in this run, if it is not. */

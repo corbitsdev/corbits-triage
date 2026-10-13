@@ -244,5 +244,5 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
   const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, events, ...docs, ...membership(data.authorTeams, policy, repo) };
-  return { facts, pack, roles: policy.roles, cleanupMode: policy.cleanupMode };
+  return { facts, pack, roles: policy.roles };
 }

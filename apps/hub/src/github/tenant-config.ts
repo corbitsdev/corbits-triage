@@ -3,6 +3,7 @@ import { schema, type DB } from "@intx/db";
 import { repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
+import type { Tx } from "./admin-github-grant.js";
 import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 
 const CONFIG_KEY = "corbitsTriage";
@@ -14,7 +15,6 @@ export type RepoRecord = {
   account?: string;
   installationUrl?: string;
   selection?: "all" | "selected";
-  cleanupMode?: RepoPolicy["cleanupMode"];
   enabled?: boolean;
   checks?: RepoPolicy["checks"];
 };
@@ -61,14 +61,14 @@ function nsRev(ns: CorbitsTriageNs): number {
 export async function patchCorbitsTriage(
   db: DB["db"],
   tenantId: string,
-  patch: (ns: CorbitsTriageNs) => CorbitsTriageNs | undefined,
+  patch: (ns: CorbitsTriageNs, tx: Tx) => CorbitsTriageNs | undefined | Promise<CorbitsTriageNs | undefined>,
 ): Promise<CorbitsTriageNs | undefined> {
   return db.transaction(async function patchLocked(tx) {
     const [row] = await tx.select().from(schema.tenant).where(eq(schema.tenant.id, tenantId)).for("update");
     if (!row) return undefined;
     const existing = asRecord(row.config) ?? {};
     const current = triageNs(existing);
-    const patched = patch(current);
+    const patched = await patch(current, tx);
     if (patched === undefined) return current;
     const nextNs = { ...patched, rev: nsRev(current) + 1 };
     await tx.update(schema.tenant)

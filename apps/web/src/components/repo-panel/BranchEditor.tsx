@@ -9,7 +9,7 @@ const HINTS: Record<Branch, string> = {
   always: "every time",
 };
 
-const NEW_DO: DoForm = { kind: "labels", automatic: false, from: "list", labels: [] };
+const NEW_DO: DoForm = { kind: "labels", from: "list", labels: [] };
 
 type BranchEditorProps = { branch: Branch; dos: DoForm[]; roles: string[]; disabled: boolean; onChange: (dos: DoForm[]) => void };
 
@@ -25,7 +25,7 @@ export default function BranchEditor({ branch, dos, roles, disabled, onChange }:
     <div className="branch" role="group" aria-label={BRANCH_NAMES[branch]}>
       <div className="branch-h"><b>{BRANCH_NAMES[branch]}</b> <span>{HINTS[branch]}</span></div>
       {dos.map((step, index) => (
-        <DoEditor key={index} step={step} branch={branch} roles={roles} disabled={disabled} onChange={replace(index)} onRemove={() => onChange(dos.filter((_, i) => i !== index))} />
+        <DoEditor key={index} step={step} roles={roles} disabled={disabled} onChange={replace(index)} onRemove={() => onChange(dos.filter((_, i) => i !== index))} />
       ))}
       <button type="button" className="linkish" disabled={disabled} onClick={() => onChange([...dos, NEW_DO])}>Add a Do</button>
     </div>

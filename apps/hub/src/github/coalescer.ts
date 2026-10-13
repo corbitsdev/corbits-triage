@@ -9,7 +9,7 @@
 // even on a head already queued: a queued row does not say whether its run
 // has read facts yet. The window map lives in process: the hub runs as one
 // replica.
-import type { CheckPack, PrTriageRow, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
+import type { ActionKind, CheckPack, PrTriageRow, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { PrMail } from "./normalize.js";
 import type { RepoRecord } from "./tenant-config.js";
@@ -28,6 +28,7 @@ export type CoalescedEvent = {
   record: RepoRecord;
   policy: RepoPolicy;
   pack: CheckPack;
+  automatic: ActionKind[];
   mail: PrMail;
   number: number;
   headSha: string;
@@ -148,7 +149,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       return;
     }
     try {
-      await deps.sendMail(head.tenantId, latest.workflow, mailPayload(head.repo, latest.policy, latest.pack, { ...latest.mail, headSha: head.headSha, events }));
+      await deps.sendMail(head.tenantId, latest.workflow, mailPayload(head.repo, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events }));
     } catch (err) {
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
       await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());

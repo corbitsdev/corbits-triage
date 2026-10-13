@@ -2,15 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { authorAssociation, DEFAULT_REPO_POLICY, repoPolicy, tierOf } from "./repo-policy.ts";
 
 describe("repoPolicy", () => {
-  test("defaults missing fields to all-on human-approved policy", () => {
+  test("defaults missing fields to an all-on policy", () => {
     expect(repoPolicy(undefined)).toEqual(DEFAULT_REPO_POLICY);
     expect(repoPolicy({})).toEqual(DEFAULT_REPO_POLICY);
     expect(repoPolicy({ name: "acme/widgets", connected: true })).toEqual(DEFAULT_REPO_POLICY);
   });
 
-  test("fills partial check flags and nested policy objects", () => {
+  test("fills partial check flags and nested policy objects, ignoring a stored posting mode", () => {
     expect(repoPolicy({ cleanupMode: "automated", checks: { ci: false } })).toEqual({
-      cleanupMode: "automated",
       enabled: false,
       checks: {
         ci: false,
@@ -33,7 +32,6 @@ describe("repoPolicy", () => {
         },
       },
     })).toEqual({
-      cleanupMode: "human-approved",
       enabled: false,
       checks: {
         ci: true,

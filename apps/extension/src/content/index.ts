@@ -365,7 +365,6 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
     if (applying || !autoRepos[pr.repo] || !confirmed) return;
     applying = true;
     try {
-      // Comments are never posted on their own, whatever a pack marks automatic.
       for (const action of actions.filter((each) => each.auto && each.kind !== "comment" && liveApplied(applied[actionKey(pr, each.id)]) === undefined)) {
         await settle(apply(pr, action));
       }

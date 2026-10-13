@@ -23,19 +23,19 @@ export function defaultLocalPack(repo: string): CheckPack {
         id: "ask-for-tests",
         when: "every",
         checks: ["custom-1"],
-        branches: { no: [{ kind: "comment", automatic: false, target: { body: "Thanks for the change. Could you add or update tests that cover it?" } }] },
+        branches: { no: [{ kind: "comment", target: { body: "Thanks for the change. Could you add or update tests that cover it?" } }] },
       },
       {
         id: "suggest-split",
         when: "every",
         checks: ["size"],
-        branches: { no: [{ kind: "comment", automatic: false, target: { body: "This is a lot to review in one pass. Could you split it into smaller pull requests?" } }] },
+        branches: { no: [{ kind: "comment", target: { body: "This is a lot to review in one pass. Could you split it into smaller pull requests?" } }] },
       },
       {
         id: "needs-author-update",
         when: "every",
         checks: ["ci", "custom-1", "custom-2"],
-        branches: { no: [{ kind: "labels", automatic: false, target: { from: "list", labels: ["triage:needs-author-update"] } }] },
+        branches: { no: [{ kind: "labels", target: { from: "list", labels: ["triage:needs-author-update"] } }] },
       },
     ],
   };

@@ -36,7 +36,6 @@ const Do = type({
   branch: "'yes' | 'no' | 'unsure' | 'always'",
   index: "number",
   kind: "string",
-  automatic: "boolean",
   reason: "string",
   "effectId?": "string",
   "target?": "Record<string, unknown>",

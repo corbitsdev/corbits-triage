@@ -355,7 +355,7 @@ function effectOf(step: SeededDo, index: number, headSha = HEAD): string {
 
 /** A Do seeded without an index stands for a verdict written before Dos had one. */
 function verdictStep(step: SeededDo, headSha: string) {
-  const base = { id: step.id, branch: BRANCH, kind: step.kind, automatic: false, reason: "Always applies.", target: step.target };
+  const base = { id: step.id, branch: BRANCH, kind: step.kind, reason: "Always applies.", target: step.target };
   return step.index === undefined ? base : { ...base, index: step.index, effectId: step.effectId ?? effectOf(step, step.index, headSha), ...(step.held && { held: true }) };
 }
 
@@ -423,7 +423,7 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
 
     async function approve(effectId: string, run = runId) {
       const res = await fetch(`${origin}/api/integrations/github-held-dos/${tenantId}`, {
-        method: "POST", headers, body: JSON.stringify({ runId: run, repo: REPO, number: 8, effectId }),
+        method: "POST", headers, body: JSON.stringify({ runId: run, repo: REPO, number: 8, effectId, kind: "labels" }),
       });
       return { status: res.status, body: await res.json() };
     }
@@ -439,18 +439,18 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
   }
 }, 60_000);
 
-function comments(): Record<"yes" | "no" | "unsure", Array<{ kind: "comment"; automatic: false; target: { body: string } }>> {
+function comments(): Record<"yes" | "no" | "unsure", Array<{ kind: "comment"; target: { body: string } }>> {
   return {
-    yes: [{ kind: "comment", automatic: false, target: { body: "yes" } }],
-    no: [{ kind: "comment", automatic: false, target: { body: "no" } }],
-    unsure: [{ kind: "comment", automatic: false, target: { body: "unsure" } }],
+    yes: [{ kind: "comment", target: { body: "yes" } }],
+    no: [{ kind: "comment", target: { body: "no" } }],
+    unsure: [{ kind: "comment", target: { body: "unsure" } }],
   };
 }
 
 const SAVED_PACK = {
   ...emptyPack(REPO),
   checks: { ci: { enabled: true } },
-  actions: [{ id: "tag", when: "every", checks: ["ci"], branches: { yes: [{ kind: "labels", automatic: false, target: { from: "list", labels: ["checked"] } }] } }],
+  actions: [{ id: "tag", when: "every", checks: ["ci"], branches: { yes: [{ kind: "labels", target: { from: "list", labels: ["checked"] } }] } }],
 };
 
 const JUDGED_PACK = {
@@ -494,7 +494,7 @@ test("a pack preview evaluates an open pull request without writing anything", a
     const target = { labels: ["checked"] };
     expect(rule.actions).toEqual([{
       id: "tag", status: "decided", branch: "yes", reason: "CI passed.",
-      dos: [{ id: "tag", branch: "yes", index: 0, kind: "labels", automatic: false, reason: "CI passed.", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: "tag", branch: "yes", index: 0, kind: "labels", target }) }],
+      dos: [{ id: "tag", branch: "yes", index: 0, kind: "labels", reason: "CI passed.", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: "tag", branch: "yes", index: 0, kind: "labels", target }) }],
     }]);
     expect(rule.verdict).not.toHaveProperty("request");
     expect(rule.verdict.merge).toEqual({ verdict: "ready", score: null, threshold: 0.7, reasons: [] });

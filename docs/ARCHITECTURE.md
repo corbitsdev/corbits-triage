@@ -88,12 +88,17 @@ one does.
    slice through a second judge map; no call otherwise.
 6. **evaluate**: combines rule results and answers into checks, a verdict and
    each action's branch.
-7. **execute**: runs the automatic Dos on GitHub. Every other Do is held in
-   the verdict (`held: true`) and the run finishes.
-8. **mirror**: writes the triage labels and one marker comment for
-   repositories set to automated cleanup.
+7. **execute**: runs the Dos whose kind the `pr-triage` role holds on GitHub.
+   Every other Do is held in the verdict (`held: true`) and the run finishes.
+8. **mirror**: writes the triage labels when the `pr-triage` role holds the
+   labels grant, and one marker comment when it holds the comment grant.
 
-A maintainer approves a held Do, or an automatic one the run failed or could
+The hub reads which kinds the `pr-triage` system role is granted, `invoke` on
+`triage-do:<kind>:<owner>/<name>`, and mails them with each trigger; the run
+trusts them only from the hub's sender. Close on an Unsure verdict, and close
+or an agent from an action without checks, are always held. At start the hub
+grants the role comment and labels on each repository still set to post
+automatically, then drops that setting. A person holding the same grant approves a held Do, or one the run failed or could
 not write, from the inbox: the hub checks the grants below and mails the
 deployment the Do, its effect id, head and approver. That mail skips triage: an
 `approval` action reads it, trusting only the hub's sender and checking the
@@ -121,17 +126,16 @@ installation tokens at the fetch boundary, so workflow and tool code never
 hold it. Hub routes that read GitHub check the caller's `read` (or `use`)
 grant on the same credential; routes that write to GitHub check `use`. Reads
 (open pull requests, details, previews) use the secret on the caller's
-behalf and never return it; writes are pull request actions, triage and approving held Dos.
-Approving a pull request from the portal also checks `approve` on
-`github-review:<owner>/<name>`, the repository name in lowercase; the admin
-role holds `approve` on `github-review:*` from GitHub setup; in workspaces set
-up earlier, an owner adds it in Settings → Access or reconnects GitHub, and
-owners hold every grant. In a run, the repository's pack decides when to
+behalf and never return it; writes are pull request actions and triage; approving a held Do checks only its kind's grant.
+A pull request action from the portal that is a Do kind (comment, labels,
+assign, request review, approve, request changes, close) also checks `invoke`
+on `triage-do:<kind>:<owner>/<name>`, the repository name in lowercase; the
+admin role holds `triage-do:*` from GitHub setup, and owners hold every grant. In a run, the repository's pack decides when to
 approve, and only a head ready to merge with CI green is approved, from the
-newest verdict. In an automated repository whose pack approves, a settled
-head that may not be approved dismisses the approvals the approve Do made;
-one dismissed on a head is not made again on it. Human-approved repositories
-write nothing unattended, so their approvals are not dismissed.
+newest verdict. Where triage mirrors and its pack approves, a settled head
+that may not be approved dismisses the approvals the approve Do made; one
+dismissed on a head is not made again on it. Where it does not mirror, its
+approvals are not dismissed.
 Hub routes that reach GitHub for the portal use the same adapter.
 
 ## Data

@@ -24,7 +24,6 @@ export type ActionEvent = Exclude<TriageEvent, "catch-up">;
 /** A Do as the editor holds it: every target field, so switching kind or recipient keeps what was typed. */
 export type DoForm = {
   kind: ActionKind;
-  automatic: boolean;
   from?: LabelsTarget["from"];
   labels?: string[];
   to?: PeopleTarget["to"];
@@ -130,7 +129,7 @@ function doTarget(form: DoForm): Record<string, unknown> {
 }
 
 function buildDo(form: DoForm): Record<string, unknown> {
-  return { kind: form.kind, automatic: form.automatic, target: doTarget(form) };
+  return { kind: form.kind, target: doTarget(form) };
 }
 
 function buildBranches(form: ActionForm): Record<string, unknown> {
@@ -197,7 +196,7 @@ function isActionEvent(event: TriageEvent): event is ActionEvent {
 }
 
 function doFormOf(step: Do): DoForm {
-  return { kind: step.kind, automatic: step.automatic, ...step.target };
+  return { kind: step.kind, ...step.target };
 }
 
 /** The editor's view of a stored action, so editing it and building again gives the same action back. */

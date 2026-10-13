@@ -16,25 +16,25 @@ const custom: CustomCheck[] = [
 ];
 
 const everyDo: Do[] = [
-  { kind: "labels", automatic: true, target: { from: "list", labels: ["needs-review"] } },
-  { kind: "labels", automatic: true, target: { from: "type" } },
-  { kind: "labels", automatic: false, target: { from: "paths" } },
-  { kind: "assign", automatic: false, target: { to: "users", users: ["octocat"] } },
-  { kind: "assign", automatic: false, target: { to: "teams", teams: ["core"] } },
-  { kind: "assign", automatic: false, target: { to: "role", role: "maintainers" } },
-  { kind: "assign", automatic: false, target: { to: "codeowners" } },
-  { kind: "assign", automatic: false, target: { to: "author" } },
-  { kind: "request-review", automatic: true, target: { to: "codeowners" } },
-  { kind: "comment", automatic: true, target: { body: "Thanks!" } },
-  { kind: "close", automatic: false, target: {} },
-  { kind: "agent", automatic: false, target: { prompt: "Fix the lint errors.", tools: ["github"] } },
+  { kind: "labels", target: { from: "list", labels: ["needs-review"] } },
+  { kind: "labels", target: { from: "type" } },
+  { kind: "labels", target: { from: "paths" } },
+  { kind: "assign", target: { to: "users", users: ["octocat"] } },
+  { kind: "assign", target: { to: "teams", teams: ["core"] } },
+  { kind: "assign", target: { to: "role", role: "maintainers" } },
+  { kind: "assign", target: { to: "codeowners" } },
+  { kind: "assign", target: { to: "author" } },
+  { kind: "request-review", target: { to: "codeowners" } },
+  { kind: "comment", target: { body: "Thanks!" } },
+  { kind: "close", target: {} },
+  { kind: "agent", target: { prompt: "Fix the lint errors.", tools: ["github"] } },
 ];
 
 const actions: Action[] = [
-  { id: "action-1", when: "every", checks: [], branches: { always: [{ kind: "comment", automatic: true, target: { body: "Welcome." } }] } },
-  { id: "action-2", when: ["opened", "updated"], checks: ["size"], branches: { yes: [{ kind: "labels", automatic: true, target: { from: "type" } }] } },
+  { id: "action-1", when: "every", checks: [], branches: { always: [{ kind: "comment", target: { body: "Welcome." } }] } },
+  { id: "action-2", when: ["opened", "updated"], checks: ["size"], branches: { yes: [{ kind: "labels", target: { from: "type" } }] } },
   { id: "action-3", when: "every", checks: ["ci", "custom-8"], branches: { yes: everyDo, no: everyDo, unsure: everyDo.filter((step) => step.kind !== "close") } },
-  { id: "action-4", when: ["ready", "reviewed"], checks: ["custom-8"], branches: { yes: everyDo, no: [], unsure: [{ kind: "close", automatic: false, target: {} }] } },
+  { id: "action-4", when: ["ready", "reviewed"], checks: ["custom-8"], branches: { yes: everyDo, no: [], unsure: [{ kind: "close", target: {} }] } },
 ];
 
 function pack(overrides: Partial<CheckPack>): CheckPack {

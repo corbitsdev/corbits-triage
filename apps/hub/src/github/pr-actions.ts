@@ -15,9 +15,9 @@ import {
   upsertTriageComment,
 } from "@corbits/github-tool/github";
 import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
-import { TRIAGE_LABELS } from "@corbits/triage-contracts";
+import { TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { appGithubFetch, approvalRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
@@ -72,16 +72,33 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
   }
 }
 
+/** The Do kind whose grant a direct action needs; triage's reply is a comment, and merging is not a Do. */
+function doKind(body: typeof ActionBody.infer): ActionKind | undefined {
+  switch (body.action) {
+    case "comment":
+    case "reply":
+      return "comment";
+    case "labels":
+    case "assign":
+    case "request-review":
+    case "close":
+      return body.action;
+    case "review":
+      return body.event === "APPROVE" ? "approve" : "request-changes";
+    case "merge":
+      return undefined;
+  }
+}
+
 export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOrigin: string }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
   return async function handle(body: typeof ActionBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
     if (appJson instanceof Response) return appJson;
-    if (body.action === "review" && body.event === "APPROVE") {
-      const refused = await approvalRefused(deps, principalId, tenantId, body.repo);
-      if (refused) return refused;
-    }
+    const kind = doKind(body);
+    const refused = kind && (await doRefused(deps, principalId, tenantId, body.repo, kind));
+    if (refused) return refused;
     const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
 
     try {

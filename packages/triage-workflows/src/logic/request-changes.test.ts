@@ -36,7 +36,7 @@ const pack: CheckPack = {
     id: "gate",
     when: "every",
     checks: [ALL_CHECKS],
-    branches: { yes: [{ kind: "approve", automatic: true, target: {} }], no: [{ kind: "request-changes", automatic: true, target: {} }] },
+    branches: { yes: [{ kind: "approve", target: {} }], no: [{ kind: "request-changes", target: {} }] },
   }],
 };
 
@@ -71,7 +71,7 @@ function markedRequest(login: string) {
 const CI_ONLY: CheckPack = {
   ...emptyPack("acme/widgets"),
   checks: { ci: { enabled: true }, conflicts: { enabled: true } },
-  actions: [{ id: "ci-gate", when: "every", checks: ["ci"], branches: { no: [{ kind: "request-changes", automatic: true, target: {} }] } }],
+  actions: [{ id: "ci-gate", when: "every", checks: ["ci"], branches: { no: [{ kind: "request-changes", target: {} }] } }],
 };
 
 describe("the request-changes Do", () => {

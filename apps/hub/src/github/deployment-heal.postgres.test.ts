@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { createDB, createWorkflowRunLaunchSpecStore, runMigrations, schema } from "@intx/db";
 import type { PrepareProvisionedWorkflowDeploymentArgs, WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
-import { checkPackName, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { createDeploymentRotation, latestDeployments, resolveLiveDeployments } from "./deployment.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
@@ -18,7 +18,7 @@ const REPO = "acme/widgets";
 const NOW = new Date("2026-10-12T12:00:00Z");
 const MINUTE = 60_000;
 const CONFIG = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true, installationId: 1 }] } };
-const PACK = { name: checkPackName(REPO), schemaVersion: 1, repo: REPO, checks: [] } as unknown as CheckPack;
+const PACK = emptyPack(REPO);
 const BUNDLE = {
   source: { kind: "asset", assetId: "ast_triage", package: { format: "source", commitSha: "c0ffee", packageName: "@corbits/pr-triage-workflow" } },
   entry: "./pr-triage.mjs",
@@ -118,7 +118,7 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
         return null;
       },
     },
-    readCheckPack: async () => ({ status: "ok", pack: PACK }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [] }),
     deliver: async function deliver(_tenantId, address, payload) {
       delivered.push({ address, payload });
     },
