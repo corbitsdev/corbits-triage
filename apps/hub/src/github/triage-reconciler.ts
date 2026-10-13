@@ -54,7 +54,7 @@ type Failure = { repo: string; error: unknown };
 /** `retry` asks for another pass soon: a deployment was not routable yet, or is being redeployed. */
 export type ReconcileOutcome = { retry: boolean };
 
-/** A failed deployment is left this long first, so a portal visit or Interchange itself can bring one back. */
+/** A failed deployment is left this long first, so a portal visit can bring one back. */
 const HEAL_AFTER_MS = 2 * 60_000;
 /** Failed deployments of one source in a row, within `HEAL_CAP_WINDOW_MS`, after which no more copies are made. */
 const HEAL_CAP = 3;
@@ -310,7 +310,15 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_heal_capped", tenantId, deployment: failed.runId });
       return false;
     }
-    const redeployed = await deps.rotation.redeploy(tenantId, failed.runId);
+    // The portal may have deployed while this pass read; a copy of the old source would then outrank it.
+    if ((await deps.liveDeployments(tenantId)).length > 0) return true;
+    let redeployed: Redeployed;
+    try {
+      redeployed = await deps.rotation.redeploy(tenantId, failed.runId);
+    } catch (error) {
+      deps.log({ level: "warn", msg: "triage_heal_skipped", tenantId, deployment: failed.runId, reason: String(error) });
+      return false;
+    }
     if (redeployed.status === "skipped") {
       deps.log({ level: "warn", msg: "triage_heal_skipped", tenantId, deployment: failed.runId, reason: redeployed.reason });
       return false;

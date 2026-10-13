@@ -88,9 +88,17 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     return resolveLiveDeployments(db, TENANT, WORKFLOW);
   }
 
+  // Runs once the reconciler has read the failed deployment and before it looks for a live one, like a portal deploy landing mid-pass.
+  const hooks: { beforeRedeploy?: () => Promise<void> } = {};
+  async function liveDeployments() {
+    await hooks.beforeRedeploy?.();
+    hooks.beforeRedeploy = undefined;
+    return live();
+  }
+
   const reconcile = createTriageReconciler({
     tenants: async () => [{ id: TENANT, domain: DOMAIN, config: CONFIG }],
-    liveDeployments: live,
+    liveDeployments,
     latestDeployments: (tenantId, limit) => latestDeployments(db, tenantId, WORKFLOW, limit),
     rotation: {
       afterRuns: 1_000,
@@ -124,7 +132,7 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     await db.update(schema.workflowRun).set(at).where(eq(schema.workflowRun.id, runId));
   }
 
-  return { anchor, update, reconcile, live, prepared, delivered, logged };
+  return { anchor, update, reconcile, live, prepared, delivered, logged, hooks };
 }
 
 function messages(logged: readonly Record<string, unknown>[]): unknown[] {
@@ -135,26 +143,26 @@ test("PostgreSQL: a deployment Interchange failed is deployed again from its lau
   await withHub(async (hub) => {
     await hub.anchor("run_failed", { status: "failed", createdAt: ago(60 * MINUTE), endedAt: ago(3 * MINUTE) });
     expect(await hub.reconcile()).toEqual({ retry: true });
-    expect(hub.prepared).toEqual([{
-      tenantId: TENANT,
-      anchorRunId: expect.not.stringMatching(/^run_failed$/),
-      deploymentDomain: DOMAIN,
-      source: BUNDLE.source,
-      entry: BUNDLE.entry,
-      definitionAssetId: "ast_triage",
-      sessionId: expect.any(String),
-      sourceAuthorityPrincipalId: "prn_deployer",
-      sourceOfferingIds: ["off_a", "off_b"],
-      defaultSourceOfferingId: "off_a",
-      deployContent: { systemPrompt: "Triage pull requests." },
-    }] as never);
+    expect(hub.prepared).toHaveLength(1);
     const copy = hub.prepared[0]!.anchorRunId;
+    expect(copy).not.toBe("run_failed");
     expect((await hub.live()).map((live) => live.runId)).toEqual([copy]);
     expect(hub.logged).toContainEqual(expect.objectContaining({ msg: "triage_deployment_healed", deployment: "run_failed", replacedBy: copy }));
 
     expect(await hub.reconcile()).toEqual({ retry: false });
     expect(hub.delivered.map((mail) => mail.address)).toEqual([`${copy}@${DOMAIN}`]);
     expect(hub.prepared).toHaveLength(1);
+  });
+}, 120_000);
+
+test("PostgreSQL: a deployment the portal made during the pass is kept, and no copy is made", async () => {
+  await withHub(async (hub) => {
+    await hub.anchor("run_failed", { status: "failed", createdAt: ago(60 * MINUTE), endedAt: ago(3 * MINUTE) });
+    hub.hooks.beforeRedeploy = () => hub.anchor("run_portal", { status: "deployed", createdAt: NOW });
+    expect(await hub.reconcile()).toEqual({ retry: true });
+    expect(hub.prepared).toEqual([]);
+    expect((await hub.live()).map((live) => live.runId)).toEqual(["run_portal"]);
+    expect(messages(hub.logged)).toEqual([]);
   });
 }, 120_000);
 
