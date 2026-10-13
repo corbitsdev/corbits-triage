@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPO_POLICY, emptyPack } from "@corbits/triage-contracts";
-import type { IssueComment, Review } from "@corbits/github-tool";
+import type { IssueComment, Review } from "@corbits/github-reads";
 import { assembleItem, buildFacts } from "./facts.ts";
 
 test("buildFacts carries the author's trust tier", () => {

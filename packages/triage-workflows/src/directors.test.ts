@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { listPrFilesPage } from "@corbits/github-tool/github";
+import { listPrFilesPage } from "@corbits/github-reads";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import { MAX_DOS_PER_RUN, triageDirectorFactory, type DoResult } from "./directors.js";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";

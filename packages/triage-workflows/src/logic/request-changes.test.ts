@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getReviews, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-tool/github";
+import { getReviews, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
 import { ALL_CHECKS, DEFAULT_REPO_POLICY, emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals } from "./actions.js";
 import { deriveState, type PrFacts } from "./checks.js";

@@ -3,9 +3,9 @@
 // verdict and written to GitHub at most once under its effect id.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
-import { DoNotRunnableError, executeDo, HeadMovedError, type ResolvedTarget } from "@corbits/github-tool/do";
-import { appLogin } from "@corbits/github-tool/github";
-import { ACTION_KINDS, repoPolicy } from "@corbits/triage-contracts";
+import { DoNotRunnableError, executeDo, HeadMovedError } from "@corbits/github-tool/do";
+import { appLogin } from "@corbits/github-reads";
+import { ACTION_KINDS, repoPolicy, type ResolvedTarget } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";

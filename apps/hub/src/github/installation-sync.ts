@@ -5,7 +5,7 @@ import { createGithubAppCredentialFetch, INSTALLATION_SELECTOR_HEADER } from "./
 import { applyInstallationListing, type InstallationListing } from "./bridge.js";
 import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
 import { patchCorbitsTriage } from "./tenant-config.js";
-import { jsonAll, type GithubFetch } from "@corbits/github-tool/github";
+import { jsonAll, type GithubFetch } from "@corbits/github-reads";
 
 export const GITHUB_INSTALLATIONS_PATH = "/api/integrations/github-installations";
 

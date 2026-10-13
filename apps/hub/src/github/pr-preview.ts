@@ -5,7 +5,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { appLogin, authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-tool/github";
+import { appLogin, authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-reads";
 import { CheckOutputSchema, checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, type CheckPack } from "@corbits/triage-contracts";
 import { evaluate } from "../../../../packages/triage-workflows/src/actions/evaluate.js";
 import { rules, type RulesItem } from "../../../../packages/triage-workflows/src/actions/rules.js";

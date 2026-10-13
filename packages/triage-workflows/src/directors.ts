@@ -11,7 +11,7 @@ import type {
 import { type } from "arktype";
 import { classificationSources, isFromTriageSender, repoPolicy, triageEventsOf, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoOutcome } from "@corbits/github-tool/do";
-import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-tool";
+import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "./logic/checks.js";
 import { unrunnable } from "./logic/execute-do.js";

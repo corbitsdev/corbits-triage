@@ -1,5 +1,5 @@
 import type { RepoPolicy } from "@corbits/triage-contracts";
-import { isTriageComment } from "@corbits/github-tool/github";
+import { isTriageComment } from "@corbits/github-reads";
 
 const EVENTS = ["pull_request", "pull_request_review", "issue_comment", "check_run"] as const;
 

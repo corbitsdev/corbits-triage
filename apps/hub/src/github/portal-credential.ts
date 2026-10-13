@@ -2,7 +2,7 @@
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
-import type { GithubFetch } from "@corbits/github-tool/github";
+import type { GithubFetch } from "@corbits/github-reads";
 import { APPROVE_ACTION, reviewResource } from "./admin-github-grant.js";
 import { validManifestMutationRequest } from "./manifest.js";
 

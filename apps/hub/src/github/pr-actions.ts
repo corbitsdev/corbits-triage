@@ -5,15 +5,14 @@ import { type, type Traversal } from "arktype";
 import {
   addAssignees,
   addLabels,
-  codeownersForPr,
   createIssueComment,
   createReview,
   mergePr,
   mirror,
   requestReviewers,
   upsertTriageComment,
-  type GithubFetch,
 } from "@corbits/github-tool/github";
+import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, approvalRefused, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
