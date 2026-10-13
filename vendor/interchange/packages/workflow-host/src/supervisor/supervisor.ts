@@ -65,13 +65,10 @@ import {
   type WorkflowRunSupervisorPrincipal,
   type WorkflowRunWorkflowProcessPrincipal,
 } from "@intx/hub-sessions/substrate";
-import {
-  base64Decode,
-  base64Encode,
-  deriveMessageId,
-  deriveWorkflowRunId,
-  signalName,
-} from "@intx/types";
+import { base64Decode, base64Encode } from "@intx/types/base64";
+import { deriveMessageId } from "@intx/types/message-id";
+import { deriveWorkflowRunId } from "@intx/types/workflow-run-id";
+import { signalName } from "@intx/types/signals";
 import { RepoId } from "@intx/types/repo";
 import type { CredentialDelivery } from "@intx/types/credential-delivery";
 import { inboundMessageToRaw } from "@intx/mail-memory";
@@ -100,15 +97,15 @@ import type { CancelOrigin } from "@intx/workflow";
 
 import {
   createControlChannelSender,
-  generateChannelId,
-  generateHmacKey,
-  receiveControlChannel,
-  receiveEventChannel,
   type ControlChannelSender,
-  type ControlPayload,
-  type EventPayload,
-  type OutboundMessagePayload,
-} from "../ipc/index";
+} from "../ipc/control-sender";
+import { generateChannelId, generateHmacKey } from "../ipc/crypto";
+import { receiveControlChannel } from "../ipc/control-receiver";
+import { receiveEventChannel, type EventPayload } from "../ipc/event-channel";
+import type {
+  ControlPayload,
+  OutboundMessagePayload,
+} from "../ipc/control-payloads";
 
 import {
   assembleCredentialsSnapshot,
@@ -433,6 +430,11 @@ export type DeliverSignalOpts = {
   signalId: string;
   /** Opaque signal payload the awaiter resolves with. */
   payload: unknown;
+  /**
+   * The onTrigger relay park this delivery addresses. Omitted, the
+   * delivery is name-FIFO and does not complete a correlated park.
+   */
+  correlationId?: string;
 };
 
 export type DeliverSourcesOpts = {
@@ -1051,9 +1053,9 @@ export function createWorkflowSupervisor(
    * Cached per-spawn context the recycle path needs to respawn the
    * child against the same deploy tree. Populated on `spawn(opts)`;
    * cleared on `shutdown`. The recycle path never mutates the
-   * `stepOrder` or `definitionHash` -- the orthogonality with redeploy
-   * lives at this field: a deploy-tree change would land via a
-   * different code path that minted a new supervisor.
+   * `stepOrder` or `definitionHash`: a deployment keeps them for its
+   * life, and a different deploy tree means a new deployment with its
+   * own supervisor.
    */
   let spawnContext: SpawnContext | null = null;
   let recyclePolicy: RecyclePolicy | null = null;
@@ -2157,6 +2159,11 @@ export function createWorkflowSupervisor(
    * transport rejection) surfaces back to the child as a structured
    * `{ ok: false, reason }` so the agent's mail-tool call fails loudly
    * rather than silently dropping the send.
+   *
+   * The child sends only as its deployment's mail address. The host
+   * transport can hold signing keys for other deployments on the same
+   * host, so a child naming any other sender is refused here, before the
+   * transport would sign as that deployment.
    */
   async function handleOutboundMessage(
     data: Extract<ControlPayload, { type: "outbound.message" }>["data"],
@@ -2173,6 +2180,12 @@ export function createWorkflowSupervisor(
       return;
     }
     try {
+      if (data.senderAddress !== bindings.deploymentMailAddress) {
+        logger.warn`outbound.message requestId=${data.requestId} named sender ${data.senderAddress}; refused, the child sends only as ${bindings.deploymentMailAddress}`;
+        throw new Error(
+          `the child sends mail only as ${bindings.deploymentMailAddress}, not ${data.senderAddress}`,
+        );
+      }
       const message = outboundMessageFromPayload(data.message);
       // A connector reply arrives with `inReplyTo` and no References, and
       // it is the only send that sets `completeReferences`. `mail_send`
@@ -3182,8 +3195,8 @@ export function createWorkflowSupervisor(
 
       // Cache the spawn context for the recycle path. The recycle path
       // reuses the same stepOrder/definitionHash/onInferenceEvent on
-      // every respawn -- those are the strict-orthogonality anchors
-      // with redeploy, and the supervisor never mutates them.
+      // every respawn -- a deployment keeps them for its life, and the
+      // supervisor never mutates them.
       const now = bindings.recyclePolicyNow ?? defaultNow;
       spawnContext = {
         stepOrder: opts.stepOrder,
@@ -4912,6 +4925,9 @@ export function createWorkflowSupervisor(
         signalName: opts.signalName,
         signalId: opts.signalId,
         payload: opts.payload,
+        ...(opts.correlationId !== undefined
+          ? { correlationId: opts.correlationId }
+          : {}),
       },
     });
   }

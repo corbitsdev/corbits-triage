@@ -114,28 +114,37 @@ export interface Scheduler {
  * for its name on subscription.
  *
  * The shape is in-process callback-based (`deliver` / `awaitNext`).
- * A production signal source that delivers via a mail bus has to
- * translate "mail arrives" into "the right awaiter's promise
- * resolves," and on resume the channel's in-memory queue is empty
- * even though the state machine's `unconsumedSignals` carries the
- * queued signals. The choice of resolution -- rehydrate the channel
- * from the log, change `awaitNext` to consult the state-machine
- * queue, or replace this interface with a log-tail subscription
- * shape -- is a substrate-shaped decision that depends on the
- * production mail substrate.
+ * The production channel tails the run's log from the moment
+ * `awaitNext` is called, so it never sees a signal committed before
+ * that; the runtime reads such a signal from the log after starting
+ * the wait.
  */
 export interface SignalChannel {
-  /** Inject a signal. The state machine handles dedup by `signalId`. */
-  deliver(name: string, payload: unknown, signalId?: string): Promise<void>;
   /**
-   * Wait for the next signal of the given name. Resolves with the
-   * payload (and the assigned `signalId`) when the signal arrives.
-   * Rejects on `signal.abort()` if `signal` is supplied.
+   * Inject a signal. The state machine handles dedup by `signalId`.
+   * `correlationId`, when present, addresses one correlated park. A
+   * name-only delivery leaves that park waiting.
+   */
+  deliver(
+    name: string,
+    payload: unknown,
+    signalId?: string,
+    correlationId?: string,
+  ): Promise<void>;
+  /**
+   * Wait for the next signal of the given name. When `correlationId`
+   * is set, only a delivery of that id resolves; a name-only delivery
+   * stays queued for a name wait. When it is omitted, only a name-only
+   * delivery resolves. Resolves with the payload and the assigned
+   * `signalId`. Rejects on `signal.abort()` if `signal` is supplied.
+   * Must see every signal delivered after the call, since the runtime
+   * only checks the log for ones delivered before it.
    */
   awaitNext(
     name: string,
     signal?: AbortSignal,
-  ): Promise<{ payload: unknown; signalId: string }>;
+    correlationId?: string,
+  ): Promise<{ payload: unknown; signalId: string; correlationId?: string }>;
 }
 
 /**

@@ -46,7 +46,12 @@ The package is organized along the abstract pieces it implements:
   reader into the child is what that capability waits on.
 - `ipc/` — control and event channel implementations the
   supervisor wraps. Threat model lives at the top of
-  `ipc/index.ts`; the supervisor uses these primitives directly.
+  `ipc/index.ts`; the supervisor imports the individual primitives without
+  constructing the combined control-payload union. Each message kind's top-level
+  validator is built on first receipt and cached; shared payload schemas and
+  the message header are still constructed at module load. The event receiver
+  authenticates and validates each payload into the canonical `InferenceEvent`
+  type, which the deploy router forwards without a second validation pass.
 - `supervisor/` — the per-deployment supervisor. See the next
   section.
 - `child/` — the workflow-process child entry function
@@ -178,10 +183,10 @@ escalates to a signed `CancelRequested{origin: "supervisor-drain"}`.
 
 `recycle(opts)` tears the current child down and stands a fresh one up
 against the SAME deploy tree (same materialized source closure, same
-per-step credential repos). It is strictly orthogonal to redeploy,
-which mints a new deploy tree. Operator, supervisor-policy (max-uptime
-/ max-rss / grants-staleness), and workflow-process-self-initiated
-origins all funnel through the same path.
+per-step credential repos). A deployment keeps its deploy tree for its
+life; a different tree means a new deployment. Operator,
+supervisor-policy (max-uptime / max-rss / grants-staleness), and
+workflow-process-self-initiated origins all funnel through the same path.
 
 ### Respawn policy
 
