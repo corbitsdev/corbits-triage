@@ -19,9 +19,9 @@ export default function CheckFields({ form, roles, disabled, onChange }: CheckFi
 
   return (
     <div className="check-fields">
-      <label>Name <input className="val w" aria-label="Check name" disabled={disabled} value={form.name} onChange={(event) => set({ name: event.target.value })} /></label>
+      <label>Name <input className="val w" aria-label="Rule name" disabled={disabled} value={form.name} onChange={(event) => set({ name: event.target.value })} /></label>
       <label>Looks at
-        <select className="val" aria-label="Where the check looks" disabled={disabled} value={form.group} onChange={(event) => set({ group: event.target.value as CheckPackGroup })}>
+        <select className="val" aria-label="Where the rule looks" disabled={disabled} value={form.group} onChange={(event) => set({ group: event.target.value as CheckPackGroup })}>
           {GROUPS.map((group) => <option key={group.id} value={group.id}>{group.label}</option>)}
         </select>
       </label>

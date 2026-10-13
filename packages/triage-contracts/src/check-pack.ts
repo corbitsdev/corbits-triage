@@ -10,7 +10,16 @@ export const CUSTOM_CHECK_CAP = 8;
 export const CHECK_PACK_GROUPS = ["pull-request", "issue", "around", "code-vs-ci"] as const;
 export type CheckPackGroup = (typeof CHECK_PACK_GROUPS)[number];
 
-export const CATALOG_IDS = ["size", "focused", "docs", "issue", "conflicts", "ci", "paths"] as const;
+export const CATALOG_IDS = [
+  "max-files-changed",
+  "max-lines-changed",
+  "focused",
+  "docs",
+  "linked-issue",
+  "no-merge-conflicts",
+  "ci-green",
+  "no-forbidden-paths",
+] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
 export const QUALITY_CHECK_IDS = ["focused", "docs"] as const;
@@ -20,17 +29,21 @@ export const ISSUE_TRACKERS = ["github", "linear", "either", "off"] as const;
 export type IssueTracker = (typeof ISSUE_TRACKERS)[number];
 
 export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGroup; kind: "machine" | "quality" }> = {
-  size: { name: "Size", group: "pull-request", kind: "machine" },
-  focused: { name: "Focused change", group: "pull-request", kind: "quality" },
+  "max-files-changed": { name: "Max files changed", group: "pull-request", kind: "machine" },
+  "max-lines-changed": { name: "Max lines changed", group: "pull-request", kind: "machine" },
+  focused: { name: "Focused", group: "pull-request", kind: "quality" },
   docs: { name: "Docs", group: "pull-request", kind: "quality" },
-  issue: { name: "Linked issue", group: "issue", kind: "machine" },
-  conflicts: { name: "Merge conflicts", group: "around", kind: "machine" },
-  ci: { name: "CI", group: "code-vs-ci", kind: "machine" },
-  paths: { name: "Forbidden paths", group: "code-vs-ci", kind: "machine" },
+  "linked-issue": { name: "Linked issue", group: "issue", kind: "machine" },
+  "no-merge-conflicts": { name: "No merge conflicts", group: "around", kind: "machine" },
+  "ci-green": { name: "CI green", group: "code-vs-ci", kind: "machine" },
+  "no-forbidden-paths": { name: "No forbidden paths", group: "code-vs-ci", kind: "machine" },
 };
 
-/** Checks pr-triage runs on every pull request, outside any pack's switches. */
-export const BUILT_IN_CHECK_NAMES: ReadonlyMap<string, string> = new Map([["draft", "Draft"], ["review", "Changes requested"]]);
+export const NOT_A_DRAFT = "not-a-draft";
+export const NO_CHANGES_REQUESTED = "no-changes-requested";
+
+/** Rules pr-triage runs on every pull request, outside any policy's switches. */
+export const BUILT_IN_CHECK_NAMES: ReadonlyMap<string, string> = new Map([[NOT_A_DRAFT, "Not a draft"], [NO_CHANGES_REQUESTED, "No changes requested"]]);
 
 export function isCatalogId(id: string): id is CatalogId {
   return (CATALOG_IDS as readonly string[]).includes(id);
@@ -42,8 +55,41 @@ export function checkName(pack: CheckPack, id: string): string {
   return isCatalogId(id) ? CHECK_CATALOG[id].name : pack.custom.find((row) => row.id === id)?.name ?? id;
 }
 
-/** Catalog checks since removed; stored packs and verdicts may still name them. */
+/** Built-in rules since removed; stored policies and verdicts may still name them. */
 export const RETIRED_CHECK_IDS: ReadonlySet<string> = new Set(["duplicate", "reviewers", "drift", "tests"]);
+
+/** Built-in rule ids before they were renamed, to the rules that replaced them; stored policies and verdicts may still name them. */
+export const RENAMED_RULE_IDS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["size", ["max-files-changed", "max-lines-changed"]],
+  ["issue", ["linked-issue"]],
+  ["conflicts", ["no-merge-conflicts"]],
+  ["ci", ["ci-green"]],
+  ["paths", ["no-forbidden-paths"]],
+  ["draft", [NOT_A_DRAFT]],
+  ["review", [NO_CHANGES_REQUESTED]],
+]);
+
+/** The current ids of a rule id as stored, which may predate a rename. */
+export function currentRuleIds(id: string): readonly string[] {
+  return RENAMED_RULE_IDS.get(id) ?? [id];
+}
+
+const SIZE_LIMITS: Array<[string, RegExp]> = [["max-files-changed", /^\d+ files \(max /], ["max-lines-changed", /^\d+ lines changed \(max /]];
+
+/** A recorded verdict row under the current ids. An old size row splits into the limits its evidence names; one without evidence stands for both. */
+export function currentRows(check: string, evidence: readonly string[] = []): Array<{ check: string; evidence: string[] }> {
+  if (check === "size") {
+    const split = SIZE_LIMITS.flatMap(([id, pattern]) => {
+      const lines = evidence.filter((line) => pattern.test(line));
+      return lines.length ? [{ check: id, evidence: lines }] : [];
+    });
+    if (split.length) return split;
+  }
+  return currentRuleIds(check).map((id) => ({ check: id, evidence: [...evidence] }));
+}
+
+/** The finding a closed pull request gets; a verdict id, never a rule's. */
+export const CLOSED_FINDING = "state";
 
 export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**"] } as const;
@@ -133,7 +179,8 @@ const SCORE_MAX = 10;
 const PATTERN_MAX = 200;
 const GLOB_MAX = 200;
 const GLOBS_MAX = 50;
-const CUSTOM_ID = /^custom-\d+$/;
+const CUSTOM_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const CUSTOM_ID_MAX = 64;
 
 export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "agent"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
@@ -159,13 +206,14 @@ export type TriageEvent = (typeof TRIAGE_EVENTS)[number];
 
 const COMMENT_BODY_MAX = 65536;
 
-export type CheckRef = CatalogId | "draft" | `custom-${number}`;
-/** An action's reference to every check the pack runs, catalog and custom, as they are when it is evaluated. */
+/** A built-in rule, the not-a-draft rule or a custom rule's id. */
+export type CheckRef = string;
+/** An action's reference to every rule the policy runs, built-in and custom, as they are when it is evaluated. */
 export const ALL_CHECKS = "all";
 export type ActionCheckRef = CheckRef | typeof ALL_CHECKS;
 
 export type LabelsTarget = { from: "list"; labels: string[] } | { from: "type" } | { from: "paths" };
-/** A role names an entry in the repository policy's roles, resolved at evaluation time. */
+/** A role names an entry in the repository settings' roles, resolved at evaluation time. */
 export type PeopleTarget =
   | { to: "users"; users: string[] }
   | { to: "teams"; teams: string[] }
@@ -254,7 +302,7 @@ const CatalogCheckSchema = type({
   "forbiddenGlobs?": "string[]",
 });
 
-const CUSTOM_BASE = { id: CUSTOM_ID, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
+const CUSTOM_BASE = { id: type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX), name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
 const RULE = { ...CUSTOM_BASE, kind: "'rule'" } as const;
 const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
@@ -289,7 +337,33 @@ export const checkPackSchema = type({
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
-const REFERENCEABLE = new Set<string>([...CATALOG_IDS, "draft"]);
+const REFERENCEABLE = new Set<string>([...CATALOG_IDS, NOT_A_DRAFT]);
+const RESERVED_IDS = new Set<string>([...CATALOG_IDS, ...BUILT_IN_CHECK_NAMES.keys(), ...RENAMED_RULE_IDS.keys(), ...RETIRED_CHECK_IDS, ALL_CHECKS, CLOSED_FINDING]);
+// Judge question ids are built from rule ids (`docs-file-001`, `focused-slice-001`, `<id>-hunk-001-002`), so no custom id may read as one.
+const QUESTION_LIKE = /^(?:docs|focused)-|-(?:file|hunk|slice)(?:-\d+)+$/;
+
+function customIdProblem(id: string): string | undefined {
+  if (!CUSTOM_ID.test(id) || id.length > CUSTOM_ID_MAX) return `must be at most ${CUSTOM_ID_MAX} lowercase letters, digits and single hyphens`;
+  if (RESERVED_IDS.has(id)) return "must not be a built-in rule's id";
+  if (QUESTION_LIKE.test(id)) return "must not start with docs- or focused- or end in -file, -hunk or -slice and numbers";
+  return undefined;
+}
+
+/**
+ * A custom rule's id from its name: lowercase words joined by hyphens. A taken name is numbered past the highest
+ * number its ids already carry, so the id of a removed rule is not handed to another while a later one remains.
+ */
+export function customRuleId(name: string, taken: Iterable<string>): string {
+  let base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, CUSTOM_ID_MAX - 12).replace(/^-+|-+$/g, "") || "rule";
+  if (/^(?:docs|focused)-/.test(`${base}-`)) base = `rule-${base}`;
+  if (QUESTION_LIKE.test(`${base}-2`)) base = `${base}-rule`;
+  const ids = [...taken];
+  const numbered = new RegExp(`^${base}-(\\d+)$`);
+  const highest = Math.max(0, ...ids.flatMap((id) => numbered.exec(id)?.[1] ?? []).map(Number));
+  if (highest === 0 && !ids.includes(base) && !RESERVED_IDS.has(base)) return base;
+  return `${base}-${Math.max(highest, 1) + 1}`;
+}
+
 const GROUP_SET = new Set<string>(CHECK_PACK_GROUPS);
 const TRACKER_SET = new Set<string>(ISSUE_TRACKERS);
 
@@ -319,13 +393,14 @@ export function recommendedPack(repo: string): CheckPack {
   return {
     ...base,
     checks: {
-      size: { enabled: true, maxFiles: RECOMMENDED_SIZE.maxFiles, maxLines: RECOMMENDED_SIZE.maxLines },
+      "max-files-changed": { enabled: true, maxFiles: RECOMMENDED_SIZE.maxFiles },
+      "max-lines-changed": { enabled: true, maxLines: RECOMMENDED_SIZE.maxLines },
       focused: { enabled: true },
       docs: { enabled: true },
-      issue: { enabled: true, tracker: RECOMMENDED_ISSUE.tracker },
-      conflicts: { enabled: true },
-      ci: { enabled: true },
-      paths: { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
+      "linked-issue": { enabled: true, tracker: RECOMMENDED_ISSUE.tracker },
+      "no-merge-conflicts": { enabled: true },
+      "ci-green": { enabled: true },
+      "no-forbidden-paths": { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
     },
     actions: [{ id: "approve", when: ["opened", "updated", "ready", "checks"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", target: {} }] } }],
   };
@@ -363,20 +438,30 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
   const row = asRecord(raw);
   if (!row) return undefined;
   const check: CatalogCheck = { enabled: row.enabled === false ? false : true };
-  if (id === "size") {
+  if (id === "max-files-changed") {
     const maxFiles = finiteNumber(row.maxFiles);
-    const maxLines = finiteNumber(row.maxLines);
     if (maxFiles !== undefined) check.maxFiles = maxFiles;
+  }
+  if (id === "max-lines-changed") {
+    const maxLines = finiteNumber(row.maxLines);
     if (maxLines !== undefined) check.maxLines = maxLines;
   }
-  if (id === "issue") {
+  if (id === "linked-issue") {
     if (typeof row.tracker === "string" && TRACKER_SET.has(row.tracker)) check.tracker = row.tracker as IssueTracker;
   }
-  if (id === "paths") {
-    const globs = parseGlobs(row.forbiddenGlobs, "Forbidden paths globs");
+  if (id === "no-forbidden-paths") {
+    const globs = parseGlobs(row.forbiddenGlobs, "No forbidden paths globs");
     if (globs) check.forbiddenGlobs = globs;
   }
   return check;
+}
+
+/** An old size row that set only one limit never measured the other, so that half loads switched off. */
+function sizeLimitMissing(id: string, raw: unknown): boolean {
+  const row = asRecord(raw);
+  const files = finiteNumber(row?.maxFiles) !== undefined;
+  const lines = finiteNumber(row?.maxLines) !== undefined;
+  return files !== lines && (id === "max-files-changed" ? !files : !lines);
 }
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], where: string): T {
@@ -492,8 +577,10 @@ function parseModel(row: Record<string, unknown>, where: string): ModelCheck {
 }
 
 function parseTypedCustom(row: Record<string, unknown>, index: number): CustomCheck {
-  const where = `Custom check ${typeof row.id === "string" ? row.id : index + 1}`;
-  if (typeof row.id !== "string" || !CUSTOM_ID.test(row.id)) throw new Error(`${where} id must be custom- and a number.`);
+  const where = `Custom rule ${typeof row.id === "string" ? row.id : index + 1}`;
+  if (typeof row.id !== "string") throw new Error(`${where} id must be a string.`);
+  const problem = customIdProblem(row.id);
+  if (problem) throw new Error(`${where} id ${problem}.`);
   if (row.enabled !== undefined && typeof row.enabled !== "boolean") throw new Error(`${where} enabled must be true or false.`);
   const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }) };
   const kind = oneOf(row.kind, ["rule", "model"] as const, `${where} kind`);
@@ -507,7 +594,7 @@ function parseLegacyCustom(row: Record<string, unknown>, next: number): CustomCh
   const group = typeof row.group === "string" ? row.group.trim() : "";
   if (!name || !instruction || !GROUP_SET.has(group)) return undefined;
   const requested = typeof row.id === "string" ? row.id.trim() : "";
-  const id = CUSTOM_ID.test(requested) ? requested : `custom-${next}`;
+  const id = customIdProblem(requested) === undefined ? requested : `custom-${next}`;
   return { id, name, group: group as CheckPackGroup, kind: "model", shape: "is-true", claim: instruction };
 }
 
@@ -520,11 +607,11 @@ function parseCustom(raw: unknown): CustomCheck[] {
     if (!row) continue;
     const check = row.kind === undefined ? parseLegacyCustom(row, next) : parseTypedCustom(row, index);
     if (!check) continue;
-    const n = Number(check.id.slice("custom-".length));
+    const n = check.id.startsWith("custom-") ? Number(check.id.slice("custom-".length)) : Number.NaN;
     if (Number.isInteger(n) && n >= next) next = n + 1;
     else next += 1;
     if (!byId.has(check.id) && byId.size >= CUSTOM_CHECK_CAP) {
-      throw new Error(`Check pack must have at most ${CUSTOM_CHECK_CAP} custom checks.`);
+      throw new Error(`Policy must have at most ${CUSTOM_CHECK_CAP} custom rules.`);
     }
     byId.set(check.id, check);
   }
@@ -644,17 +731,19 @@ function parseCheckRefs(raw: unknown, customIds: ReadonlySet<string>, where: str
   }
   const refs = new Set<CheckRef>();
   for (const item of raw) {
-    const id = text(item, where);
-    if (RETIRED_CHECK_IDS.has(id)) continue;
-    if (!REFERENCEABLE.has(id) && !customIds.has(id)) {
-      throw new Error(`${where} ${id} must be a catalog check, the draft check or a custom check in this pack.`);
+    const stored = text(item, where);
+    if (RETIRED_CHECK_IDS.has(stored)) continue;
+    for (const id of currentRuleIds(stored)) {
+      if (!REFERENCEABLE.has(id) && !customIds.has(id)) {
+        throw new Error(`${where} ${id} must be a built-in rule, the not-a-draft rule or a custom rule in this policy.`);
+      }
+      refs.add(id);
     }
-    refs.add(id as CheckRef);
   }
   return [...refs];
 }
 
-/** An action that checked only retired checks has no branch left to choose, so it is dropped. */
+/** An action that checked only retired rules has no branch left to choose, so it is dropped. */
 function parseAction(raw: unknown, index: number, customIds: ReadonlySet<string>): Action | undefined {
   const row = record(raw, `Action ${index + 1}`);
   const id = text(row.id, `Action ${index + 1} id`);
@@ -693,14 +782,14 @@ function parseJson(value: unknown): unknown {
   try {
     return JSON.parse(value);
   } catch {
-    throw new Error("Check pack must be JSON.");
+    throw new Error("Policy must be JSON.");
   }
 }
 
 /** Reads a stored pack, throwing an Error whose message says why it is rejected. */
 export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const body = asRecord(parseJson(raw));
-  if (!body) throw new Error("Check pack must be an object.");
+  if (!body) throw new Error("Policy must be an object.");
   if (body.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
   if (body.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
   const repo = asRepo(body.repo);
@@ -709,10 +798,14 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const checksRaw = body.checks === undefined ? {} : asRecord(body.checks);
   if (!checksRaw) throw new Error("checks must be an object.");
   const checks: CheckPack["checks"] = {};
-  for (const [id, value] of Object.entries(checksRaw)) {
-    if (!CATALOG_SET.has(id)) continue;
-    const parsed = parseCatalogCheck(id as CatalogId, value);
-    if (parsed) checks[id as CatalogId] = parsed;
+  // A row under its current id wins over one stored under the id it had before a rename.
+  for (const [stored, value] of Object.entries(checksRaw)) {
+    for (const id of currentRuleIds(stored)) {
+      if (!CATALOG_SET.has(id) || (stored !== id && checks[id as CatalogId])) continue;
+      const parsed = parseCatalogCheck(id as CatalogId, value);
+      if (parsed && stored === "size" && sizeLimitMissing(id, value)) parsed.enabled = false;
+      if (parsed) checks[id as CatalogId] = parsed;
+    }
   }
   const custom = parseCustom(body.custom);
   const actions = parseActions(body.actions, new Set(custom.map((row) => row.id)));

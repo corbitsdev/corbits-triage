@@ -19,7 +19,7 @@ export async function listCheckPacks(transport: Transport, tenantId: string): Pr
 
 export class StaleCheckPackError extends Error {
   constructor() {
-    super("This check pack changed since you opened it. Reload to see the latest.");
+    super("This policy changed since you opened it. Reload to see the latest.");
   }
 }
 
@@ -27,7 +27,7 @@ export class StaleCheckPackError extends Error {
 export type LoadedCheckPack = Pick<StoredCheckPack, "id" | "version">;
 
 function versionOf(body: { version?: number } | undefined, what: string): number {
-  if (typeof body?.version !== "number") throw new Error(`The hub ${what} the check pack without returning its version.`);
+  if (typeof body?.version !== "number") throw new Error(`The hub ${what} the policy without returning its version.`);
   return body.version;
 }
 
@@ -61,7 +61,7 @@ async function createCheckPack(transport: Transport, tenantId: string, title: st
     metadata: { checkPack: title },
   });
   const id = created?.artifact?.id;
-  if (typeof id !== "string") throw new Error("The hub created the check pack without returning its id.");
+  if (typeof id !== "string") throw new Error("The hub created the policy without returning its id.");
   return { id, version: versionOf(created.artifact, "created") };
 }
 

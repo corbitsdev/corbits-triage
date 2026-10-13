@@ -1,4 +1,4 @@
-import { CATALOG_IDS, customCheckEnabled, readCheckPack, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type ModelCheck, type RuleCheck } from "@corbits/triage-contracts";
+import { CATALOG_IDS, customCheckEnabled, customRuleId, readCheckPack, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type ModelCheck, type RuleCheck } from "@corbits/triage-contracts";
 import { errorText } from "./error-text.ts";
 import { defaultLocalPack } from "./local-pack.ts";
 import { CATALOG_ORDER } from "./prose.ts";
@@ -49,16 +49,15 @@ export function withCatalogParams(pack: CheckPack, id: CatalogId, params: Partia
 /** A custom check as the editor holds it: a name and its rule's or shape's parameters. */
 export type CustomForm = { name: string } & (({ kind: "rule" } & RuleCheck) | ({ kind: "model" } & ModelCheck));
 
-/** Highest plus one over the pack's and the defaults' ids, so a new check never takes a default's id while that default is removed. */
-function nextCustomId(pack: CheckPack): string {
-  const taken = [...pack.custom, ...defaultLocalPack(pack.repo).custom].map((check) => Number(check.id.slice("custom-".length)));
-  return `custom-${Math.max(0, ...taken) + 1}`;
+/** Unique over the pack's and the defaults' ids, so a new rule never takes a default's id while that default is removed. */
+function nextCustomId(pack: CheckPack, name: string): string {
+  return customRuleId(name, [...pack.custom, ...defaultLocalPack(pack.repo).custom].map((check) => check.id));
 }
 
 /** Adds a custom check, or replaces check `id` in place keeping its group and switch; the reason is the contract's. */
 export function withCustomCheck(pack: CheckPack, form: CustomForm, id?: string): { pack: CheckPack; id: string } | Refusal {
   const existing = id === undefined ? undefined : pack.custom.find((check) => check.id === id);
-  const checkId = existing?.id ?? nextCustomId(pack);
+  const checkId = existing?.id ?? nextCustomId(pack, form.name);
   const check = { ...form, id: checkId, group: existing?.group ?? "pull-request", ...(existing?.enabled === false && { enabled: false }) } as CustomCheck;
   const custom = existing ? pack.custom.map((row) => (row.id === checkId ? check : row)) : [...pack.custom, check];
   const next = validated({ ...pack, custom });
@@ -91,7 +90,17 @@ function same(a: unknown, b: unknown): boolean {
 export function changesFromDefaults(pack: CheckPack): number {
   const defaults = defaultLocalPack(pack.repo);
   const catalog = CATALOG_IDS.filter((id) => !same(pack.checks[id] ?? null, defaults.checks[id] ?? null)).length;
-  const ids = new Set([...pack.custom, ...defaults.custom].map((check) => check.id));
-  const custom = [...ids].filter((id) => !same(pack.custom.find((c) => c.id === id) ?? null, defaults.custom.find((c) => c.id === id) ?? null)).length;
-  return catalog + custom;
+  function sameRule(a: CustomCheck, b: CustomCheck): boolean {
+    return same({ ...a, id: "" }, { ...b, id: "" });
+  }
+  // A default saved under the id it had before rules were renamed matches by content.
+  function counterpart(row: CustomCheck, rows: CustomCheck[]): CustomCheck | undefined {
+    return rows.find((c) => c.id === row.id) ?? rows.find((c) => sameRule(c, row));
+  }
+  const changed = pack.custom.filter((row) => {
+    const match = counterpart(row, defaults.custom);
+    return !match || !sameRule(match, row);
+  }).length;
+  const removed = defaults.custom.filter((row) => !counterpart(row, pack.custom)).length;
+  return catalog + changed + removed;
 }

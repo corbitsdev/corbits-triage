@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REPO_POLICY, emptyPack, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
+import { evaluateActions } from "./actions.ts";
 import { deriveState, REVIEW_ANSWERED_REASON, type PrFacts } from "./checks.ts";
 
 const noisy: PrFacts = {
@@ -34,17 +35,17 @@ describe("deriveState policy", () => {
     expect(deriveState(noisy)).toEqual(deriveState(noisy, DEFAULT_REPO_POLICY));
     expect(deriveState(noisy)).toEqual(deriveState(noisy, repoPolicy(undefined)));
     expect(deriveState(noisy).findings.map((finding) => finding.check)).toEqual([
-      "checks",
-      "conflicts",
+      "ci-green",
+      "no-merge-conflicts",
     ]);
   });
 
   test("skips a finding when that check is disabled; the draft check always runs", () => {
     const off = deriveState(noisy, allOff);
     expect(off.findings).toEqual([]);
-    expect(off.checks).toEqual([{ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } }, expect.objectContaining({ check: "review" })]);
-    expect(deriveState(noisy, only("ci")).findings.map((finding) => finding.check)).toEqual(["checks"]);
-    expect(deriveState(noisy, only("conflicts")).findings.map((finding) => finding.check)).toEqual(["conflicts"]);
+    expect(off.checks).toEqual([{ check: "not-a-draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } }, expect.objectContaining({ check: "no-changes-requested" })]);
+    expect(deriveState(noisy, only("ci")).findings.map((finding) => finding.check)).toEqual(["ci-green"]);
+    expect(deriveState(noisy, only("conflicts")).findings.map((finding) => finding.check)).toEqual(["no-merge-conflicts"]);
   });
 
   test("closed state check always runs", () => {
@@ -60,8 +61,8 @@ describe("deriveState policy", () => {
       checks: "success",
       approvals: 1,
     };
-    expect(deriveState(unknown).findings.map((finding) => finding.check)).toEqual(["conflicts"]);
-    expect(deriveState(unknown).checks.find((check) => check.check === "conflicts")?.output).toEqual({ kind: "could-not-check", reason: "mergeability not yet computed" });
+    expect(deriveState(unknown).findings.map((finding) => finding.check)).toEqual(["no-merge-conflicts"]);
+    expect(deriveState(unknown).checks.find((check) => check.check === "no-merge-conflicts")?.output).toEqual({ kind: "could-not-check", reason: "mergeability not yet computed" });
     expect(deriveState(unknown, allOff).findings).toEqual([]);
   });
 });
@@ -86,25 +87,26 @@ describe("deriveState check pack", () => {
     const sized: PrFacts = { ...noisy, changedFiles: 80, additions: 10, deletions: 10, paths: ["src/a.ts"], changesRequested: ["maintainer"] };
     const result = deriveState(sized, allOff, pack);
     expect(result.findings.map((finding) => finding.check)).toEqual([
-      "checks",
-      "conflicts",
-      "review",
-      "size",
-      "issue",
+      "ci-green",
+      "no-merge-conflicts",
+      "no-changes-requested",
+      "max-files-changed",
+      "linked-issue",
     ]);
-    expect(result.checks.find((check) => check.check === "review")).toMatchObject({
+    expect(result.checks.find((check) => check.check === "no-changes-requested")).toMatchObject({
       result: "fail",
       evidence: ["changes requested by @maintainer"],
     });
-    expect(result.checks.find((check) => check.check === "size")).toEqual({
-      check: "size",
+    expect(result.checks.find((check) => check.check === "max-files-changed")).toEqual({
+      check: "max-files-changed",
       kind: "machine",
       result: "fail",
-      reason: "pull request is over the size limits",
+      reason: "pull request is over the files limit",
       evidence: ["80 files (max 30)"],
-      output: { kind: "values", values: { files: 80, lines: 20 } },
+      output: { kind: "values", values: { files: 80 } },
     });
-    expect(result.checks.find((check) => check.check === "paths")?.result).toBe("pass");
+    expect(result.checks.find((check) => check.check === "max-lines-changed")).toMatchObject({ result: "pass", evidence: ["20 lines changed (max 3000)"] });
+    expect(result.checks.find((check) => check.check === "no-forbidden-paths")?.result).toBe("pass");
     expect(result.sources?.custom).toEqual(pack.custom);
     expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused"]);
   });
@@ -216,16 +218,17 @@ describe("deriveState rule custom checks", () => {
 describe("deriveState check output", () => {
   test("each fact is named for what it states, so pending CI never reads as passing", () => {
     const pack = recommendedPack("acme/widgets");
-    pack.checks.paths = { enabled: true, forbiddenGlobs: ["vendor/**"] };
+    pack.checks["no-forbidden-paths"] = { enabled: true, forbiddenGlobs: ["vendor/**"] };
     pack.custom = [{ id: "custom-1", name: "No vendor", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["vendor/**"] }];
     const facts: PrFacts = { ...noisy, checks: "pending", mergeable: true, paths: ["vendor/x.ts"], changedFiles: 1, additions: 1, deletions: 0 };
     const outputs = Object.fromEntries(deriveState(facts, undefined, pack).checks.map((check) => [check.check, check.output]));
     expect(outputs).toMatchObject({
-      draft: { kind: "values", values: { isDraft: true } },
-      ci: { kind: "values", values: { status: "pending" } },
-      conflicts: { kind: "values", values: { hasConflicts: false } },
-      paths: { kind: "values", values: { touchesForbiddenPaths: true } },
-      size: { kind: "values", values: { files: 1, lines: 1 } },
+      "not-a-draft": { kind: "values", values: { isDraft: true } },
+      "ci-green": { kind: "values", values: { status: "pending" } },
+      "no-merge-conflicts": { kind: "values", values: { hasConflicts: false } },
+      "no-forbidden-paths": { kind: "values", values: { touchesForbiddenPaths: true } },
+      "max-files-changed": { kind: "values", values: { files: 1 } },
+      "max-lines-changed": { kind: "values", values: { lines: 1 } },
       "custom-1": { kind: "values", values: { holds: false } },
     });
   });
@@ -234,9 +237,48 @@ describe("deriveState check output", () => {
 describe("review check", () => {
   test("keeps the author's turn on requested changes and names an answered review", () => {
     const requested = { ...noisy, changesRequested: ["maya"] };
-    const review = (facts: PrFacts) => deriveState(facts, allOff).checks.find((check) => check.check === "review");
+    const review = (facts: PrFacts) => deriveState(facts, allOff).checks.find((check) => check.check === "no-changes-requested");
     expect(review(requested)).toMatchObject({ result: "fail", reason: "a reviewer requested changes" });
     expect(review({ ...requested, reviewAnswered: true })).toMatchObject({ result: "fail", reason: REVIEW_ANSWERED_REASON });
     expect(deriveState({ ...requested, reviewAnswered: true }, allOff).state).toBe("needs-author-update");
+  });
+});
+
+describe("a policy stored with the old rule ids", () => {
+  const custom = { id: "custom-1", name: "Lockfile frozen", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["bun.lock"] } as const;
+  const comment = (body: string) => [{ kind: "comment", automatic: false, target: { body } }];
+  const branches = { yes: comment("yes"), no: comment("no"), unsure: comment("unsure") };
+  function stored(ids: Record<string, string>) {
+    return {
+      ...emptyPack("acme/widgets"),
+      checks: {
+        [ids.size!]: { enabled: true, maxFiles: 5, maxLines: 100 },
+        [ids.issue!]: { enabled: true, tracker: "github" },
+        [ids.conflicts!]: { enabled: true },
+        [ids.ci!]: { enabled: true },
+        [ids.paths!]: { enabled: true, forbiddenGlobs: ["vendor/**"] },
+      },
+      custom: [custom],
+      actions: [
+        { id: "gate", when: "every", checks: [ids.size, ids.ci, ids.draft, "custom-1"], branches },
+        { id: "tidy", when: "every", checks: [ids.issue, ids.conflicts, ids.paths], branches },
+      ],
+    };
+  }
+  const OLD = { size: "size", issue: "issue", conflicts: "conflicts", ci: "ci", paths: "paths", draft: "draft" };
+  const NEW = { size: "max-files-changed", issue: "linked-issue", conflicts: "no-merge-conflicts", ci: "ci-green", paths: "no-forbidden-paths", draft: "not-a-draft" };
+
+  test("loads and evaluates as the same policy written with the new ids", () => {
+    const old = readCheckPack(JSON.stringify(stored(OLD)));
+    const current = readCheckPack({ ...stored(NEW), checks: { ...stored(NEW).checks, "max-files-changed": { enabled: true, maxFiles: 5 }, "max-lines-changed": { enabled: true, maxLines: 100 } } });
+    current.actions[0]!.checks.splice(1, 0, "max-lines-changed");
+    expect(old).toEqual(current);
+    const facts: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success", changedFiles: 9, additions: 40, deletions: 0, paths: ["src/a.ts", "bun.lock"], body: "Fixes #12", events: ["opened"] };
+    const ran = deriveState(facts, undefined, old);
+    expect(ran).toEqual(deriveState(facts, undefined, current));
+    expect(Object.fromEntries(ran.checks.map((check) => [check.check, check.result]))).toEqual({
+      "not-a-draft": "pass", "ci-green": "pass", "no-changes-requested": "pass", "no-merge-conflicts": "pass", "max-files-changed": "fail", "max-lines-changed": "pass", "no-forbidden-paths": "pass", "linked-issue": "pass", "custom-1": "fail",
+    });
+    expect(evaluateActions({ facts, checks: ran.checks, pack: old, roles: {} }).map((action) => "branch" in action && action.branch)).toEqual(["no", "yes"]);
   });
 });

@@ -165,7 +165,7 @@ function About({ item }: { item: PrItem }) {
         </dl>
       </section>
       <section className="brief">
-        <h2>Checks</h2>
+        <h2>Rules</h2>
         <CheckList repo={item.repo} sha={item.verdictSha} checks={item.checks} fallback={item.evidence} />
         {item.labels.length > 0 && (
           <div className="row wrap">

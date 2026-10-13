@@ -96,10 +96,10 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
       <div className="row">
         {editable && row.on ? (
           <button type="button" ref={editRef} className="text-button" aria-expanded={editing} onClick={startEdit}>
-            {editing ? "Close the editor" : isCatalogId(row.id) ? "Edit the limits" : "Edit the check"}
+            {editing ? "Close the editor" : isCatalogId(row.id) ? "Edit the limits" : "Edit the rule"}
           </button>
         ) : null}
-        {custom ? <ConfirmButton size="sm" variant="ghost" confirmLabel={`Confirm: remove ${custom.name}`} onConfirm={remove}>Remove the check</ConfirmButton> : null}
+        {custom ? <ConfirmButton size="sm" variant="ghost" confirmLabel={`Confirm: remove ${custom.name}`} onConfirm={remove}>Remove the rule</ConfirmButton> : null}
       </div>
       {editing && isCatalogId(row.id) ? <CatalogEditor id={row.id as CatalogId} pack={pack} onSave={saveEdit} onCancel={stopEdit} /> : null}
       {editing && custom && variant ? (
@@ -130,7 +130,7 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
   }, [open, kind]);
 
   async function add(next: CheckPack, id: string) {
-    const name = next.custom.find((check) => check.id === id)?.name ?? "the check";
+    const name = next.custom.find((check) => check.id === id)?.name ?? "the rule";
     if (!(await onSave(() => next, `Added ${name}.`))) return;
     setKind(null);
     setOpen(false);
@@ -146,7 +146,7 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
   }
 
   if (full) return <p className="hint">Up to {CUSTOM_CHECK_CAP} checks of your own. Remove one to add another.</p>;
-  if (!open) return <Button ref={addRef} size="sm" variant="outline" onClick={start}><Plus aria-hidden="true" />Add a check</Button>;
+  if (!open) return <Button ref={addRef} size="sm" variant="outline" onClick={start}><Plus aria-hidden="true" />Add a rule</Button>;
   if (kind) {
     return (
       <div className="add-check">
@@ -157,7 +157,7 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
   }
   return (
     <div className="add-check">
-      <ul className="gallery" ref={galleryRef} aria-label="New check">
+      <ul className="gallery" ref={galleryRef} aria-label="New rule">
         {CHECK_KINDS.map((each) => (
           <li key={each.title}>
             <button type="button" className="gallery-item" aria-label={`Use ${each.title}`} onClick={() => setKind(each)}>
@@ -247,7 +247,7 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
       return;
     }
     setEditing(null);
-    setStatus("Back to the default checks.");
+    setStatus("Back to the default rules.");
     rescore();
   }
 
@@ -258,7 +258,7 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
     <div className="manager">
       <div className="scope" data-changed={changes > 0}>
         <p><span className="mono repo-name">{repo}</span> {changes > 0 ? `· ${changes} ${changes === 1 ? "change" : "changes"}` : "· Defaults"}</p>
-        {changes > 0 ? <ConfirmButton size="sm" variant="ghost" confirmLabel="Confirm: reset every check" onConfirm={reset}>Reset to defaults</ConfirmButton> : null}
+        {changes > 0 ? <ConfirmButton size="sm" variant="ghost" confirmLabel="Confirm: reset every rule" onConfirm={reset}>Reset to defaults</ConfirmButton> : null}
       </div>
       <div className="manager-status">
         {scoring ? <LiveScore pr={scoring} /> : null}
@@ -266,9 +266,9 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
         {error ? <p className="error" role="alert">{error}</p> : null}
       </div>
       <section className="part" aria-labelledby="checks">
-        <h2 id="checks">Checks <span className="count mono">{on} on</span></h2>
+        <h2 id="checks">Rules <span className="count mono">{on} on</span></h2>
         <p className="hint">The rules Triage applies to every pull request.</p>
-        {settings ? null : <p className="hint">Checks marked Decision model need one. <button type="button" className="text-button" onClick={onAddModel}>Add a decision model</button></p>}
+        {settings ? null : <p className="hint">Rules marked Decision model need one. <button type="button" className="text-button" onClick={onAddModel}>Add a decision model</button></p>}
         <ul className="manage-list">
           {rows.map((row) => (
             <CheckRow key={row.id} row={row} pack={pack} editing={editing === row.id} onEdit={setEditing} onSave={save} locked={locked(row)} />

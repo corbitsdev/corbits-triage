@@ -18,7 +18,7 @@ type Pane = "triage" | "checks" | "settings";
 
 const PANES = [
   { id: "triage", label: "Triage" },
-  { id: "checks", label: "Checks" },
+  { id: "checks", label: "Rules" },
   { id: "settings", label: "Settings" },
 ] as const;
 
@@ -142,7 +142,7 @@ function PrDetail({ pr, view, state }: { pr: PrRef; view: TriageView | undefined
             <Actions view={view} tabId={tabId} primary={!limited && tabId !== undefined} />
           </div>
           <section className="part ws-col" aria-labelledby="ws-checks-head">
-            <h2 id="ws-checks-head">Checks</h2>
+            <h2 id="ws-checks-head">Rules</h2>
             <CheckList view={view} expanded />
           </section>
         </div>
@@ -223,7 +223,7 @@ export function Workspace() {
             if (active === "checks") {
               return checksFor
                 ? <div className="ws-narrow"><h1 className="ws-pane-title mono">{checksFor}</h1><CheckManager repo={checksFor} pr={selected?.repo === checksFor ? selected : undefined} onAddModel={openSettings} /></div>
-                : <EmptyState title="No repository yet" description="Open a pull request on GitHub, and its repository's checks can be changed here." />;
+                : <EmptyState title="No repository yet" description="Open a pull request on GitHub, and its repository's rules can be changed here." />;
             }
             return selected
               ? <PrDetail key={key} pr={selected} view={allViews[key!]} state={allStates[key!]} />

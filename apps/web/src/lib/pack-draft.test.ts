@@ -32,8 +32,8 @@ const everyDo: Do[] = [
 
 const actions: Action[] = [
   { id: "action-1", when: "every", checks: [], branches: { always: [{ kind: "comment", target: { body: "Welcome." } }] } },
-  { id: "action-2", when: ["opened", "updated"], checks: ["size"], branches: { yes: [{ kind: "labels", target: { from: "type" } }] } },
-  { id: "action-3", when: "every", checks: ["ci", "custom-8"], branches: { yes: everyDo, no: everyDo, unsure: everyDo.filter((step) => step.kind !== "close") } },
+  { id: "action-2", when: ["opened", "updated"], checks: ["max-files-changed"], branches: { yes: [{ kind: "labels", target: { from: "type" } }] } },
+  { id: "action-3", when: "every", checks: ["ci-green", "custom-8"], branches: { yes: everyDo, no: everyDo, unsure: everyDo.filter((step) => step.kind !== "close") } },
   { id: "action-4", when: ["ready", "reviewed"], checks: ["custom-8"], branches: { yes: everyDo, no: [], unsure: [{ kind: "close", target: {} }] } },
 ];
 
@@ -45,7 +45,7 @@ const policy = { ...DEFAULT_REPO_POLICY, roles: { maintainers: { users: ["octoca
 
 const packs: Record<string, CheckPack> = {
   recommended: recommendedPack(repo),
-  "no optional catalog keys": pack({ checks: { size: { enabled: true }, issue: { enabled: false }, paths: { enabled: true } } }),
+  "no optional catalog keys": pack({ checks: { "max-files-changed": { enabled: true }, "linked-issue": { enabled: false }, "no-forbidden-paths": { enabled: true } } }),
   "every action form and Do target": pack({ checks: recommendedPack(repo).checks, custom, actions }),
 };
 
@@ -91,10 +91,10 @@ describe("pack draft", () => {
     const removed = removeCustom(saved, "custom-8");
     if ("reason" in removed) throw new Error(removed.reason);
     expect(removed.pack.custom.map((row) => row.id)).not.toContain("custom-8");
-    expect(removed.pack.actions[1]!.checks).toEqual(["ci"]);
+    expect(removed.pack.actions[1]!.checks).toEqual(["ci-green"]);
     expect(validate(removed)).toBeNull();
     const only = fromPack(pack({ custom, actions: [actions[3]!] }), policy);
-    expect(removeCustom(only, "custom-8")).toEqual({ reason: "Action action-4 checks only custom-8. Give it another check or remove the action first." });
+    expect(removeCustom(only, "custom-8")).toEqual({ reason: "Action action-4 checks only custom-8. Give it another rule or remove the action first." });
   });
 
   test("switching a custom check off keeps it in the pack but out of evaluation, and back on restores the saved row", () => {

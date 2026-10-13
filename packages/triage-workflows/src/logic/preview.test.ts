@@ -11,8 +11,8 @@ const facts: PrFacts = {
 };
 
 const checks: ActionInput["checks"] = [
-  { check: "ci", kind: "machine", result: "pass", reason: "", evidence: [] },
-  { check: "size", kind: "machine", result: "fail", reason: "", evidence: [] },
+  { check: "ci-green", kind: "machine", result: "pass", reason: "", evidence: [] },
+  { check: "max-files-changed", kind: "machine", result: "fail", reason: "", evidence: [] },
   { check: "focused", kind: "model", result: "unconfirmed", reason: NEEDS_JUDGE_REASON, evidence: [] },
 ];
 
@@ -23,11 +23,11 @@ function branching(id: string, when: Action["when"], refs: CheckRef[]): Action {
 
 test("previewActions decides what the judge cannot change and lists the branches it can", () => {
   const actions = [
-    branching("rule-only", ["opened"], ["ci"]),
-    branching("judged", ["opened"], ["ci", "focused"]),
-    branching("failing", ["opened"], ["size", "focused"]),
-    branching("asleep", ["updated"], ["ci"]),
-    branching("off", ["opened"], ["paths"]),
+    branching("rule-only", ["opened"], ["ci-green"]),
+    branching("judged", ["opened"], ["ci-green", "focused"]),
+    branching("failing", ["opened"], ["max-files-changed", "focused"]),
+    branching("asleep", ["updated"], ["ci-green"]),
+    branching("off", ["opened"], ["no-forbidden-paths"]),
   ];
   const preview = previewActions({ facts, checks, pack: { ...emptyPack("acme/widgets"), actions }, roles: {} });
   expect(preview.map((p) => [p.id, p.status, "branch" in p ? p.branch : "branches" in p ? p.branches.map((b) => b.branch) : null])).toEqual([
@@ -40,5 +40,5 @@ test("previewActions decides what the judge cannot change and lists the branches
   const judged = preview[1]!;
   if (judged.status !== "waits-on-judge") throw new Error("judged must wait on the judge");
   expect(judged.branches.map((b) => b.dos.map((d) => ("target" in d ? d.target : null)))).toEqual([[{ body: "yes" }], [{ body: "no" }], [{ body: "unsure" }]]);
-  expect(preview[2]).toMatchObject({ reason: "Size failed.", dos: [{ effectId: expect.any(String), target: { body: "no" } }] });
+  expect(preview[2]).toMatchObject({ reason: "Max files changed failed.", dos: [{ effectId: expect.any(String), target: { body: "no" } }] });
 });

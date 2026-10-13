@@ -1,7 +1,7 @@
 import { errorText } from "@corbits/common";
 import { emptyPack, repoPolicy, type CheckPack } from "@corbits/triage-contracts";
 import { StaleCheckPackError } from "./check-pack.ts";
-import { fromPack, packChanges, policyChanges, toPack, type RepoDraft } from "./pack-draft.ts";
+import { fromPack, namedNewRules, packChanges, policyChanges, toPack, type RepoDraft } from "./pack-draft.ts";
 import { draftPolicy, type LoadedRepoPack, type PackRef, type RepoPackStore } from "./repo-pack-store.ts";
 
 /** What the hub holds for the repository, as far as the panel knows. */
@@ -32,14 +32,14 @@ export function openSession(repo: string, found: LoadedRepoPack): PackSession {
 }
 
 function checksFailed(cause: unknown): SaveFailure {
-  return { message: `Could not save the checks. ${errorText(cause)} Check the values, then try again.`, cause, stale: false };
+  return { message: `Could not save the policy. ${errorText(cause)} Check the values, then try again.`, cause, stale: false };
 }
 
 /** Writes the pack when it changed or the stored one is corrupt, then one config write when anything is left to point at or change. */
 export async function saveDraft(store: RepoPackStore, repo: string, session: PackSession, draft: RepoDraft): Promise<SaveOutcome> {
   let pack: CheckPack;
   try {
-    pack = toPack(draft);
+    pack = toPack({ ...draft, pack: namedNewRules(draft.pack, session.saved.pack) });
   } catch (cause) {
     return { session, draft, failure: checksFailed(cause) };
   }
@@ -61,7 +61,7 @@ export async function saveDraft(store: RepoPackStore, repo: string, session: Pac
     await store.writePolicy(repo, policy, current.loaded !== null && current.corrupt === null);
   } catch (cause) {
     const message = current.unlinked
-      ? `The checks are saved and in effect, but could not be linked to the repository. Save again to link them. ${errorText(cause)}`
+      ? `The policy is saved and in effect, but could not be linked to the repository. Save again to link it. ${errorText(cause)}`
       : `Could not save the triage settings. ${errorText(cause)}`;
     return { session: current, draft: shown, failure: { message, cause, stale: false } };
   }

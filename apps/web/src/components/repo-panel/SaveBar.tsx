@@ -21,7 +21,7 @@ function plural(n: number, word: string): string {
 
 function summary(changes: number, unlinked: boolean): string {
   if (changes > 0) return plural(changes, "unsaved change");
-  return unlinked ? "Checks saved but not linked yet" : "The saved checks could not be read. Saving replaces them.";
+  return unlinked ? "Policy saved but not linked yet" : "The saved policy could not be read. Saving replaces it.";
 }
 
 /** Pending changes, the first reason they cannot be saved, and Discard and Save. */

@@ -1,5 +1,5 @@
 import { getChecks, getReviews, listIssueComments, listPrCommits, listPrFilesPage, readPr, readRepoDocsPage, repoDocs, type GithubFetch, type RepoDocsPage, type Review } from "@corbits/github-reads";
-import { classificationSources, QUALITY_CHECK_IDS, repoPolicy, type CheckPack, type CustomCheck, type RuleCustomCheck } from "@corbits/triage-contracts";
+import { classificationSources, NO_CHANGES_REQUESTED, QUALITY_CHECK_IDS, repoPolicy, type CheckPack, type CustomCheck, type RuleCustomCheck } from "@corbits/triage-contracts";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { rules } from "@corbits/triage-workflows/actions/rules";
 import { checkName } from "@corbits/triage-contracts";
@@ -111,11 +111,11 @@ function feeds(pack: CheckPack): Record<Read, (c: CheckResult) => boolean> {
     return pack.custom.some((custom) => custom.id === c.check && isRuleCheck(custom) && rules.includes(custom.rule));
   }
   return {
-    checks: (c) => c.check === "ci",
-    reviews: (c) => c.check === "review" || packRule(c, ["min-approvals"]),
-    comments: (c) => c.check === "review",
-    commits: (c) => c.check === "issue" || c.kind === "model",
-    files: (c) => c.check === "paths" || c.kind === "model" || packRule(c, ["paths-unchanged", "paths-together", "diff-excludes"]),
+    checks: (c) => c.check === "ci-green",
+    reviews: (c) => c.check === NO_CHANGES_REQUESTED || packRule(c, ["min-approvals"]),
+    comments: (c) => c.check === NO_CHANGES_REQUESTED,
+    commits: (c) => c.check === "linked-issue" || c.kind === "model",
+    files: (c) => c.check === "no-forbidden-paths" || c.kind === "model" || packRule(c, ["paths-unchanged", "paths-together", "diff-excludes"]),
     docs: (c) => c.kind === "model",
   };
 }
@@ -189,7 +189,7 @@ export async function runLocal({ repo, number }: PrRef, { gh, pack: packed, syst
   const { state, reason, nextAction, actor, feedback, score, merge, degraded } = verdict;
   const named = verdict.checks.map((c) => ({ ...c, name: checkName(pack, c.check) }));
   const failing = new Set(named.filter((c) => c.result === "fail").map((c) => c.check));
-  const jobs = failing.has("ci") && pr.sha ? await withoutSuggestion(jobPages(gh, repo, pr.sha), {}, "the failing jobs' pages") : {};
+  const jobs = failing.has("ci-green") && pr.sha ? await withoutSuggestion(jobPages(gh, repo, pr.sha), {}, "the failing jobs' pages") : {};
   const { actions: suggested, notes } = suggest({ facts: ruledItem.facts, checks: named, pack, jobs });
   return {
     pr: { repo, number },

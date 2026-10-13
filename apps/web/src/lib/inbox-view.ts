@@ -1,4 +1,4 @@
-import type { AuthorKind } from "@corbits/triage-contracts";
+import { NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
 import type { PrItem, QueueState } from "./hub-api.ts";
 import { priorityRank } from "./triage-view.ts";
 
@@ -88,7 +88,7 @@ export function isPostedToAuthor(item: PrItem): boolean {
 
 /** A maintainer's requested changes are all the verdict holds against the pull request; triage has nothing to add to them. */
 function onlyRequestedChanges(item: Omit<StatusFields, "running">): boolean {
-  return item.state === "needs-author-update" && !hasDraftComment(item.comment) && item.checks.some((c) => c.check === "review" && c.result === "fail");
+  return item.state === "needs-author-update" && !hasDraftComment(item.comment) && item.checks.some((c) => c.check === NO_CHANGES_REQUESTED && c.result === "fail");
 }
 
 /** The author answered the requested changes, so they wait on the reviewer again. */

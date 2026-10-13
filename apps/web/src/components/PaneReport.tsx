@@ -214,7 +214,7 @@ export function ReportRows({ item, pull, pack }: { item: PrItem; pull: PullState
           <Disclosure label={plural(detail.pr.changedFiles, "file", "files")}><Files files={detail.files} changed={detail.pr.changedFiles} /></Disclosure>
         </>
       )}
-      {passed.length > 0 ? <Disclosure label={`${plural(passed.length, "check", "checks")} passed`}><Passed checks={passed} pack={pack} /></Disclosure> : null}
+      {passed.length > 0 ? <Disclosure label={`${plural(passed.length, "rule", "rules")} passed`}><Passed checks={passed} pack={pack} /></Disclosure> : null}
       <Link className="more" to={prHref(item)}>Commits and conversation</Link>
     </div>
   );

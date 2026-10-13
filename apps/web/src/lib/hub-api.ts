@@ -8,7 +8,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo, errorText } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail } from "@corbits/triage-contracts";
+import { repoPolicy, readCheckPack, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -953,8 +953,8 @@ export async function startBacklogTriage(
   const policy = await loadRepoPolicy(transport, tenantId, clean);
   assertRepoEnabled(policy);
   const read = await loadRepoCheckPack(transport, tenantId, clean);
-  if (!read) throw new Error("This repository still needs check setup.");
-  if (read.kind === "corrupt") throw new Error(`This repository's check pack is unreadable: ${read.reason} Replace it on the repository page.`);
+  if (!read) throw new Error("This repository still needs a policy.");
+  if (read.kind === "corrupt") throw new Error(`This repository's policy is unreadable: ${read.reason} Replace it on the repository page.`);
   const pack = read.pack;
   const { runId } = await triggerNamedWorkflow(
     transport,
@@ -1489,16 +1489,16 @@ function isCheckResult(value: unknown): value is CheckResult["result"] {
 function checkResults(checks: NonNullable<VerdictDetail["checks"]>): CheckResult[] {
   const out: CheckResult[] = [];
   for (const { check, kind, result, reason, evidence, output, gate } of checks) {
-    // A verdict from before a check was removed may still list it.
+    // A verdict from before a rule was removed may still list it.
     if (RETIRED_CHECK_IDS.has(check) || (kind !== "machine" && kind !== "model") || !isCheckResult(result)) continue;
-    out.push({ check, kind, result, reason: reason ?? null, evidence: evidence ?? [], output: parseCheckOutput(output) ?? null, gate: gate === true });
+    for (const row of currentRows(check, evidence)) out.push({ ...row, kind, result, reason: reason ?? null, output: parseCheckOutput(output) ?? null, gate: gate === true });
   }
   return out;
 }
 
 /** A verdict recorded before the hub kept its detail still has each check's result. */
 function recordedChecks(checks: PullVerdict["checks"]): CheckResult[] {
-  return checks.flatMap(({ check, result }) => (isCheckResult(result) && !RETIRED_CHECK_IDS.has(check) ? [{ check, kind: null, result, reason: null, evidence: [], output: null, gate: false }] : []));
+  return checks.flatMap(({ check, result }) => (isCheckResult(result) && !RETIRED_CHECK_IDS.has(check) ? currentRows(check).map((row) => ({ ...row, kind: null, result, reason: null, output: null, gate: false })) : []));
 }
 
 function canonicalPrHref(repo: string, number: number): string {

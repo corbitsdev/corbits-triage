@@ -34,7 +34,7 @@ function ChecksSection({ pr, onManage }: { pr: PrRef | undefined; onManage: (rep
   }));
   const repos = [...new Set([...(pr ? [pr.repo] : []), ...changed.keys()])];
   return (
-    <SettingSection id="setting-checks" title="Checks">
+    <SettingSection id="setting-checks" title="Rules">
       {repos.length ? (
         <ul className="repo-links">
           {repos.map((repo) => {
@@ -50,7 +50,7 @@ function ChecksSection({ pr, onManage }: { pr: PrRef | undefined; onManage: (rep
             );
           })}
         </ul>
-      ) : <p className="empty-line">Open a pull request to change its repository's checks.</p>}
+      ) : <p className="empty-line">Open a pull request to change its repository's rules.</p>}
     </SettingSection>
   );
 }
@@ -158,7 +158,7 @@ function ModelSection() {
   }
 
   return (
-    <SettingSection id="setting-model" title="Decision model" status={settings ? <Badge tone="success">Saved</Badge> : null} description="Optional. Answers the checks that need judgement.">
+    <SettingSection id="setting-model" title="Decision model" status={settings ? <Badge tone="success">Saved</Badge> : null} description="Optional. Answers the rules that need judgement.">
       {settings || choosing
         ? <DecisionModelForm current={settings} variant="outline" onSaved={chosen} onCancel={chosen} />
         : <div className="row"><Button size="sm" variant="outline" onClick={choose}>Choose a provider</Button></div>}

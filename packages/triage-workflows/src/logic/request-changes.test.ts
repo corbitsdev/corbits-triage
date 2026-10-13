@@ -31,7 +31,7 @@ const facts: PrFacts = {
 
 const pack: CheckPack = {
   ...emptyPack("acme/widgets"),
-  checks: { draft: { enabled: true }, conflicts: { enabled: true }, ci: { enabled: true } },
+  checks: { draft: { enabled: true }, "no-merge-conflicts": { enabled: true }, "ci-green": { enabled: true } },
   actions: [{
     id: "gate",
     when: "every",
@@ -70,8 +70,8 @@ function markedRequest(login: string) {
 
 const CI_ONLY: CheckPack = {
   ...emptyPack("acme/widgets"),
-  checks: { ci: { enabled: true }, conflicts: { enabled: true } },
-  actions: [{ id: "ci-gate", when: "every", checks: ["ci"], branches: { no: [{ kind: "request-changes", target: {} }] } }],
+  checks: { "ci-green": { enabled: true }, "no-merge-conflicts": { enabled: true } },
+  actions: [{ id: "ci-gate", when: "every", checks: ["ci-green"], branches: { no: [{ kind: "request-changes", target: {} }] } }],
 };
 
 describe("the request-changes Do", () => {

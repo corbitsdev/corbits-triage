@@ -106,7 +106,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
           </header>
           {settings.error ? <p role="alert" className="error">{settings.error}</p> : null}
           {settings.stale ? <p className="note"><button type="button" className="linkish" onClick={settings.reload}>Reload</button> Reloading discards your edits.</p> : null}
-          {settings.corrupt ? <p className="note">The saved checks could not be read. Saving replaces them. {settings.corrupt}</p> : null}
+          {settings.corrupt ? <p className="note">The saved policy could not be read. Saving replaces it. {settings.corrupt}</p> : null}
           {renderBody()}
         </div>
       </div>

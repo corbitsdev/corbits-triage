@@ -27,8 +27,8 @@ const targets: Array<[DoForm, Do]> = [
 
 describe("buildAction", () => {
   test("every Do target keeps exactly the contract keys", () => {
-    const built = buildAction(form({ checks: ["ci"], yes: targets.map(([step]) => step) }), pack);
-    expect(built).toEqual({ id: "action-1", when: "every", checks: ["ci"], branches: { yes: targets.map(([, expected]) => expected) } });
+    const built = buildAction(form({ checks: ["ci-green"], yes: targets.map(([step]) => step) }), pack);
+    expect(built).toEqual({ id: "action-1", when: "every", checks: ["ci-green"], branches: { yes: targets.map(([, expected]) => expected) } });
   });
 
   test("no checks gives always, ignoring branch lists", () => {
@@ -38,17 +38,17 @@ describe("buildAction", () => {
 
   test("checks keep only the branches that have Dos, under the next free id", () => {
     const existing = { ...pack, actions: [{ id: "action-3", when: "every" as const, checks: [], branches: { always: [commented] } }] };
-    const built = buildAction(form({ checks: ["ci", "size"], no: [close], unsure: [comment], always: [comment] }), existing);
+    const built = buildAction(form({ checks: ["ci-green", "max-files-changed"], no: [close], unsure: [comment], always: [comment] }), existing);
     expect(built).toEqual({
       id: "action-4",
       when: "every",
-      checks: ["ci", "size"],
+      checks: ["ci-green", "max-files-changed"],
       branches: { no: [{ kind: "close", target: {} }], unsure: [commented] },
     });
   });
 
   test("an edited action is rebuilt under its own id", () => {
-    const first = { id: "action-1", when: ["opened" as const], checks: ["ci" as const], branches: { yes: [commented], unsure: [{ kind: "close" as const, target: {} }] } };
+    const first = { id: "action-1", when: ["opened" as const], checks: ["ci-green" as const], branches: { yes: [commented], unsure: [{ kind: "close" as const, target: {} }] } };
     const second = { id: "action-2", when: "every" as const, checks: [], branches: { always: [commented] } };
     const existing = { ...pack, actions: [first, second] };
     expect(buildAction(actionFormOf(first), existing, "action-1")).toEqual(first);
@@ -57,7 +57,7 @@ describe("buildAction", () => {
 
   test("refusals carry the readCheckPack reason", () => {
     expect(buildAction(form({}), pack)).toEqual({ reason: "Action action-1 branches always must not be empty." });
-    expect(buildAction(form({ checks: ["ci"], always: [comment] }), pack)).toEqual({ reason: "Action action-1 branches must set at least one step." });
+    expect(buildAction(form({ checks: ["ci-green"], always: [comment] }), pack)).toEqual({ reason: "Action action-1 branches must set at least one step." });
     expect(buildAction(form({ when: ["opened", "catch-up"] as ActionEvent[], always: [comment] }), pack)).toEqual({
       reason: "Action action-1 when must not list catch-up; catch-up runs every action.",
     });
@@ -65,17 +65,17 @@ describe("buildAction", () => {
 });
 
 const checkForms: Array<[CheckForm, CustomCheck]> = [
-  [{ name: "Lockfile", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["bun.lock"], claim: "unused" }, { id: "custom-1", name: "Lockfile", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["bun.lock"] }],
-  [{ name: "Schema", group: "code-vs-ci", kind: "rule", rule: "paths-together", changed: ["db/**"], requires: ["migrations/**"] }, { id: "custom-1", name: "Schema", group: "code-vs-ci", kind: "rule", rule: "paths-together", changed: ["db/**"], requires: ["migrations/**"] }],
-  [{ name: "Title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^feat" }, { id: "custom-1", name: "Title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^feat" }],
-  [{ name: "Branch", group: "pull-request", kind: "rule", rule: "branch-pattern", pattern: "^cl-" }, { id: "custom-1", name: "Branch", group: "pull-request", kind: "rule", rule: "branch-pattern", pattern: "^cl-" }],
-  [{ name: "Label", group: "issue", kind: "rule", rule: "label-required", label: "triaged" }, { id: "custom-1", name: "Label", group: "issue", kind: "rule", rule: "label-required", label: "triaged" }],
-  [{ name: "No debug", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "console\\.log" }, { id: "custom-1", name: "No debug", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "console\\.log" }],
-  [{ name: "Approved", group: "around", kind: "rule", rule: "min-approvals", count: 2 }, { id: "custom-1", name: "Approved", group: "around", kind: "rule", rule: "min-approvals", count: 2 }],
-  [{ name: "Changelog", group: "pull-request", kind: "model", shape: "is-true", claim: "The changelog is updated", globs: ["x"] }, { id: "custom-1", name: "Changelog", group: "pull-request", kind: "model", shape: "is-true", claim: "The changelog is updated" }],
-  [{ name: "Reversible", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "The migration can be rolled back", scope: "hunk", when: ["migrations/**"] }, { id: "custom-1", name: "Reversible", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "The migration can be rolled back", scope: "hunk", when: ["migrations/**"] }],
-  [{ name: "Clarity", group: "pull-request", kind: "model", shape: "score", subject: "Description clarity", min: 6 }, { id: "custom-1", name: "Clarity", group: "pull-request", kind: "model", shape: "score", subject: "Description clarity", min: 6 }],
-  [{ name: "Risk", group: "around", kind: "model", shape: "choose", options: ["low", "high"], failOn: ["high"] }, { id: "custom-1", name: "Risk", group: "around", kind: "model", shape: "choose", options: ["low", "high"], failOn: ["high"] }],
+  [{ name: "Lockfile", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["bun.lock"], claim: "unused" }, { id: "lockfile", name: "Lockfile", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["bun.lock"] }],
+  [{ name: "Schema", group: "code-vs-ci", kind: "rule", rule: "paths-together", changed: ["db/**"], requires: ["migrations/**"] }, { id: "schema", name: "Schema", group: "code-vs-ci", kind: "rule", rule: "paths-together", changed: ["db/**"], requires: ["migrations/**"] }],
+  [{ name: "Title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^feat" }, { id: "title", name: "Title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^feat" }],
+  [{ name: "Branch", group: "pull-request", kind: "rule", rule: "branch-pattern", pattern: "^cl-" }, { id: "branch", name: "Branch", group: "pull-request", kind: "rule", rule: "branch-pattern", pattern: "^cl-" }],
+  [{ name: "Label", group: "issue", kind: "rule", rule: "label-required", label: "triaged" }, { id: "label", name: "Label", group: "issue", kind: "rule", rule: "label-required", label: "triaged" }],
+  [{ name: "No debug", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "console\\.log" }, { id: "no-debug", name: "No debug", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "console\\.log" }],
+  [{ name: "Approved", group: "around", kind: "rule", rule: "min-approvals", count: 2 }, { id: "approved", name: "Approved", group: "around", kind: "rule", rule: "min-approvals", count: 2 }],
+  [{ name: "Changelog", group: "pull-request", kind: "model", shape: "is-true", claim: "The changelog is updated", globs: ["x"] }, { id: "changelog", name: "Changelog", group: "pull-request", kind: "model", shape: "is-true", claim: "The changelog is updated" }],
+  [{ name: "Reversible", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "The migration can be rolled back", scope: "hunk", when: ["migrations/**"] }, { id: "reversible", name: "Reversible", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "The migration can be rolled back", scope: "hunk", when: ["migrations/**"] }],
+  [{ name: "Clarity", group: "pull-request", kind: "model", shape: "score", subject: "Description clarity", min: 6 }, { id: "clarity", name: "Clarity", group: "pull-request", kind: "model", shape: "score", subject: "Description clarity", min: 6 }],
+  [{ name: "Risk", group: "around", kind: "model", shape: "choose", options: ["low", "high"], failOn: ["high"] }, { id: "risk", name: "Risk", group: "around", kind: "model", shape: "choose", options: ["low", "high"], failOn: ["high"] }],
 ];
 
 describe("buildCustomCheck", () => {
@@ -96,7 +96,7 @@ describe("buildCustomCheck", () => {
       if ("reason" in built) throw new Error(built.reason);
       full = { ...full, custom: [...full.custom, built] };
     }
-    expect(full.custom.at(-1)!.id).toBe(`custom-${CUSTOM_CHECK_CAP}`);
-    expect(buildCustomCheck(checkForms[0]![0], full)).toEqual({ reason: `Check pack must have at most ${CUSTOM_CHECK_CAP} custom checks.` });
+    expect(full.custom.at(-1)!.id).toBe(`lockfile-${CUSTOM_CHECK_CAP}`);
+    expect(buildCustomCheck(checkForms[0]![0], full)).toEqual({ reason: `Policy must have at most ${CUSTOM_CHECK_CAP} custom rules.` });
   });
 });

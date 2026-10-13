@@ -8,13 +8,13 @@ export function checkLimitText(pack: CheckPack | null, check: Pick<CheckResult, 
   if (check.output?.kind === "score") return `needs ${Math.round(check.output.passAt)}`;
   if (pack === null) return null;
   switch (check.check) {
-    case "size": {
-      const { maxFiles, maxLines } = pack.checks.size ?? {};
-      const limits = [
-        ...(maxFiles === undefined ? [] : [`${COUNT.format(maxFiles)} files`]),
-        ...(maxLines === undefined ? [] : [`${COUNT.format(maxLines)} lines`]),
-      ];
-      return limits.length === 0 ? null : `limit ${limits.join(" / ")}`;
+    case "max-files-changed": {
+      const maxFiles = pack.checks["max-files-changed"]?.maxFiles;
+      return maxFiles === undefined ? null : `limit ${COUNT.format(maxFiles)} files`;
+    }
+    case "max-lines-changed": {
+      const maxLines = pack.checks["max-lines-changed"]?.maxLines;
+      return maxLines === undefined ? null : `limit ${COUNT.format(maxLines)} lines`;
     }
   }
   const custom = pack.custom.find((row) => row.id === check.check);

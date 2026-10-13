@@ -84,7 +84,7 @@ export function PrView({ pr, title, tabId, view, state }: PrViewProps) {
           <ScoreCard view={view} />
           <Actions view={view} tabId={tabId} primary={!limited} />
           <section className="part" aria-labelledby="checks-head">
-            <h2 id="checks-head">Checks</h2>
+            <h2 id="checks-head">Rules</h2>
             <CheckList view={view} />
           </section>
         </>

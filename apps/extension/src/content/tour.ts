@@ -79,14 +79,14 @@ export function tour(): Tour {
   function steps(parts: TourParts): DriveStep[] {
     const list: DriveStep[] = [
       ...step(parts.chip, { title: "The pull request's score", description: "Triage scores every pull request you open, from what GitHub shows you. Hover for a summary; click to open the side panel.", side: "bottom", align: "start" }),
-      ...step(parts.block, { title: "Triage in the sidebar", description: "The state, the next step and each failing or unsure check, in a line each. It sits here on every pull request.", side: "left", align: "start" }),
-      ...step(parts.actions, { title: "Steps to take", description: "Each one comes from a check. A click applies it as you, signed in to GitHub. A comment posts only when you press Post comment; nothing posts on its own.", side: "left", align: "start" }),
+      ...step(parts.block, { title: "Triage in the sidebar", description: "The state, the next step and each failing or unsure rule, in a line each. It sits here on every pull request.", side: "left", align: "start" }),
+      ...step(parts.actions, { title: "Steps to take", description: "Each one comes from a rule. A click applies it as you, signed in to GitHub. A comment posts only when you press Post comment; nothing posts on its own.", side: "left", align: "start" }),
       ...step(parts.draft, { title: "A drafted comment", description: "Where you can comment, Triage puts its best draft in the comment box without posting it. Edit it and press Comment, or Undo to take it back out.", side: "top", align: "start" }),
     ];
     list.push({
       popover: {
         title: "The side panel",
-        description: "Every check with its evidence, the drafts, and your checks and settings. Expand it into a full tab from its header.",
+        description: "Every rule with its evidence, the drafts, and your rules and settings. Expand it into a full tab from its header.",
         nextBtnText: "Open the side panel",
         onNextClick: function openPanel() {
           parts.openPanel();

@@ -88,7 +88,7 @@ describe("batch pairing through the real facts director and evaluate action", ()
 });
 
 describe("verdicts the decision model was never asked about", () => {
-  const pack: CheckPack = { ...emptyPack(REPO), checks: { conflicts: { enabled: true }, focused: { enabled: true } } };
+  const pack: CheckPack = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true }, focused: { enabled: true } } };
   const at = (minute: number) => new Date(Date.UTC(2026, 9, 7, 1, minute)).toISOString();
 
   // The hub stamps each run with its deployment's version as it reads the log.
@@ -127,7 +127,7 @@ describe("verdicts the decision model was never asked about", () => {
     expect(verdict.state).toBe("stale-unknown");
     expect(verdict.checks.filter((check) => check.kind === "model").map((check) => check.reason)).toEqual(["not asked"]);
     const [run] = (await observe([1], reply)).get("1@sha1")!;
-    expect(run).toMatchObject({ unsettled: "unconfirmed checks: conflicts", unconfirmed: true });
+    expect(run).toMatchObject({ unsettled: "unconfirmed checks: no-merge-conflicts", unconfirmed: true });
   });
 
   test("deterministic and ambiguous human gates settle while a real inference outage requeues", async () => {

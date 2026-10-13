@@ -27,11 +27,11 @@ const shots = resolve(import.meta.dir, "../.output/e2e");
 const DEBUG_PORT = 9334;
 const LABEL = "needs-triage-review";
 
-// Stricter than the default: a GitHub issue reference, small size limits, and rule checks a real pull request fails.
+// Stricter than the default: a GitHub issue reference, small size limits, and rules a real pull request fails.
 const base = defaultLocalPack(repo);
 const pack = parseCheckPack({
   ...base,
-  checks: { ...base.checks, issue: { enabled: true, tracker: "github" }, size: { enabled: true, maxFiles: 5, maxLines: 200 } },
+  checks: { ...base.checks, "linked-issue": { enabled: true, tracker: "github" }, "max-files-changed": { enabled: true, maxFiles: 5 }, "max-lines-changed": { enabled: true, maxLines: 200 } },
   custom: [
     ...base.custom,
     { id: "custom-3", name: "Ticket in the title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^\\[[A-Z]+-\\d+\\]" },
@@ -355,7 +355,7 @@ try {
     await shoot(workspace, null, `workspace-${width}`);
   }
   await workspace.setViewportSize({ width: 1440, height: 1000 });
-  await workspace.getByRole("tab", { name: "Checks" }).click();
+  await workspace.getByRole("tab", { name: "Rules" }).click();
   await workspace.locator(".manager").waitFor({ state: "visible" });
   await shoot(workspace, null, "workspace-checks");
   await workspace.getByRole("tab", { name: "Settings" }).click();

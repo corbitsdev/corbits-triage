@@ -30,18 +30,18 @@ const extension = resolve(import.meta.dir, "../.output/chrome-mv3");
 const shots = resolve(import.meta.dir, "../.output/e2e");
 const SIGN_IN = "Sign in to GitHub";
 
-// The size check fails on any pull request of more than one file; its comment Dos give several drafts, beside a
-// label that shows auto-apply ran. The checks whose failures add steps of their own are
+// The max files changed rule fails on any pull request of more than one file; its comment Dos give several drafts, beside a
+// label that shows auto-apply ran. The rules whose failures add steps of their own are
 // off and the default actions left out, so every draft fits the sidebar block whatever else the pull request fails.
 const base = defaultLocalPack(repo);
 const pack: CheckPack = {
   ...base,
-  checks: { ...base.checks, size: { enabled: true, maxFiles: 1, maxLines: 1 }, ci: { enabled: false }, issue: { enabled: false }, conflicts: { enabled: false } },
+  checks: { ...base.checks, "max-files-changed": { enabled: true, maxFiles: 1 }, "ci-green": { enabled: false }, "linked-issue": { enabled: false }, "no-merge-conflicts": { enabled: false } },
   actions: [
     {
       id: "too-large",
       when: "every",
-      checks: ["size"],
+      checks: ["max-files-changed"],
       branches: {
         no: [
           { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },

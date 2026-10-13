@@ -402,7 +402,7 @@ describe("triage reconciler", () => {
     const mail = stockTriggerMail({ kind: "pr", repo: REPO, prNumber: 1, headSha: "sha1", event: "pull_request", action: "synchronize" });
     const facts = { repo: REPO, number: 1, title: "Add widgets", author: "ann", draft: false, mergeable: true, checks: "success", body: "not shown" };
     const ruled: WorkflowRunEvent = { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "rules", output: { ref: `inline:${JSON.stringify({ items: [{ facts, det: {} }] })}` } } };
-    const check = { check: "ci", kind: "machine", result: "pass", reason: "green", evidence: [], gate: false };
+    const check = { check: "ci-green", kind: "machine", result: "pass", reason: "green", evidence: [], gate: false };
     const verdict = { ...current(1), repo: REPO, number: 1, state: "ready-monitoring", actor: "author", humanGated: false, priority: "P2", feedback: "Thanks.", checks: [check], det: { sources: {} } };
     const { reconcile, verdicts } = harness({ [repoKey(LIVE.runId)]: { run_1: [startedBy(mail, "2026-10-07T01:00:00.000Z"), ruled, rendered(verdict), completed] } }, [head(1)]);
     await reconcile();
@@ -438,7 +438,7 @@ describe("triage reconciler", () => {
   test("a degraded verdict is queued again and a clean one settles the head", async () => {
     const logs: Logs = {
       [repoKey(LIVE.runId)]: {
-        run_degraded: [started(2), rendered({ degraded: "error", reason: "This repository still needs check setup." }), completed],
+        run_degraded: [started(2), rendered({ degraded: "error", reason: "This repository still needs a policy." }), completed],
         run_clean: [started(3), rendered(current(3)), completed],
       },
     };
@@ -451,7 +451,7 @@ describe("triage reconciler", () => {
   });
 
   test("verdicts on another commit or with unconfirmed checks are queued again with their reason", async () => {
-    const unconfirmed = [{ check: "conflicts", kind: "machine", result: "unconfirmed" }, { check: "docs", kind: "model", result: "unconfirmed" }];
+    const unconfirmed = [{ check: "no-merge-conflicts", kind: "machine", result: "unconfirmed" }, { check: "docs", kind: "model", result: "unconfirmed" }];
     const logs: Logs = {
       [repoKey(LIVE.runId)]: {
         run_other_head: [started(2), rendered({ ...current(2), headSha: "sha2-pushed" }), completed],
@@ -463,7 +463,7 @@ describe("triage reconciler", () => {
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([2, 3]);
     const reasons = logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"]);
-    expect(reasons).toEqual(["verdict made on head sha2-pushed", "unconfirmed checks: conflicts"]);
+    expect(reasons).toEqual(["verdict made on head sha2-pushed", "unconfirmed checks: no-merge-conflicts"]);
     const rows = saved.get(REPO) ?? [];
     expect(rows.filter((row) => row.number !== 4).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === VERSION)).toBe(true);
     expect(rows.find((row) => row.number === 4)).toMatchObject({ status: "triaged", runId: "run_not_asked", workflowVersion: VERSION });
@@ -604,7 +604,7 @@ describe("triage reconciler", () => {
   });
 
   describe("judge answers", () => {
-    const pack: CheckPack = { ...emptyPack(REPO), checks: { conflicts: { enabled: true }, focused: { enabled: true } } };
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true }, focused: { enabled: true } } };
     const policy = { enabled: true, checkPack: { name: REPO } };
 
     /** Heads 1 and 3 triaged once with `related` as every focused answer, then #2 merged and the others mailed again. */
@@ -625,7 +625,7 @@ describe("triage reconciler", () => {
       const recheck = await triageMail(stockTriggerMail(payload), { mergeable: false });
       expect(recheck.asked).toBe(0);
       for (const { checks } of recheck.verdicts) {
-        expect(checks.find((check) => check.check === "conflicts")?.result).toBe("fail");
+        expect(checks.find((check) => check.check === "no-merge-conflicts")?.result).toBe("fail");
         expect(checks.find((check) => check.check === "focused")?.result).toBe("pass");
       }
     });

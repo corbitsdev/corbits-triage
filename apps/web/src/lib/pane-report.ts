@@ -105,7 +105,7 @@ export function paneStatus({ item, detail, handled, approved, primary }: StatusI
   const unsure = problems.filter((problem) => problem.severity === "unsure").length;
   const check = problems.length - fix;
   const author = item.author === null ? "the author" : `@${item.author}`;
-  if (handled?.kind === "approve") return fix > 0 ? status("you", `You approved · ${fix} ${fix === 1 ? "check" : "checks"} failing`) : status("ready", "You approved · ready to merge");
+  if (handled?.kind === "approve") return fix > 0 ? status("you", `You approved · ${fix} ${fix === 1 ? "rule" : "rules"} failing`) : status("ready", "You approved · ready to merge");
   if (isPostedToAuthor(item) || (handled !== null && waitsOn(item, handled) === "author")) {
     return status("author", fix > 0 ? `Waiting on ${author} to fix ${things(fix)}` : `Waiting on ${author}`);
   }

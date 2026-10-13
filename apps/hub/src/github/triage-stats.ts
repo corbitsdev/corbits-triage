@@ -2,11 +2,11 @@
 // only: no run log or GitHub read, so the portal and the extension can ask
 // for it on every view.
 import { type } from "arktype";
-import { TriageStats } from "@corbits/triage-contracts";
+import { currentRows, TriageStats } from "@corbits/triage-contracts";
 import { failure } from "./portal-credential.js";
 import { runKey } from "./reconcile-plan.js";
 import type { Member } from "../integrations/app.js";
-import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
+import { evidenceOf, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_STATS_PATH = "/api/integrations/triage-stats";
 
@@ -84,7 +84,8 @@ function aggregate(repo: string, days: number, from: Date, since: Date | null, r
   const empty = { pass: 0, fail: 0, unconfirmed: 0 };
   for (const verdict of latest) {
     for (const { check, result } of verdict.checks) {
-      if (result === "pass" || result === "fail" || result === "unconfirmed") count(checks, check, empty, result);
+      if (result !== "pass" && result !== "fail" && result !== "unconfirmed") continue;
+      for (const row of currentRows(check, evidenceOf(verdict, check))) count(checks, row.check, empty, result);
     }
   }
 
