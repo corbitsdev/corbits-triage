@@ -49,7 +49,8 @@ import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
-import { createBridgeHandler, logJson, MAX_BODY_BYTES } from "./github/bridge.js";
+import { createBridgeHandler, logJson } from "./github/bridge.js";
+import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { activeTenants, createDeploymentRotation, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
@@ -75,7 +76,7 @@ import { createSettledStatusReader, createTriageRuns } from "./github/triage-run
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch } from "./github/tenant-config.js";
+import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManagerRefusal } from "./github/tenant-config.js";
 import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "../../../packages/triage-workflows/src/pr-triage-historical.js";
 import { githubRead, githubWrite } from "../../../packages/github-tool/src/index.js";
@@ -574,6 +575,8 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       } catch {
         return Response.json({ error: "not_found" }, { status: 404 });
       }
+      const refused = await tenantManagerRefusal({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
+      if (refused) return refused;
       const prepared = await prepareCorbitsTriagePatch(composition.db, tenantId, req);
       if (prepared instanceof Response) return prepared;
       return stock.fetch(prepared, server);

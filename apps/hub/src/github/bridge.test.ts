@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { emptyPack } from "@corbits/triage-contracts";
-import { applyInstallationListing, createBridgeHandler, loadBridgeHook, MAX_BODY_BYTES, type BridgeDeps } from "./bridge.js";
+import { applyInstallationListing, createBridgeHandler, loadBridgeHook, type BridgeDeps } from "./bridge.js";
+import { MAX_BODY_BYTES } from "../read-json.js";
 import { repoRecords } from "./tenant-config.js";
 import { DeliveryCache } from "./dedupe.js";
 import type { CoalescedEvent } from "./coalescer.js";

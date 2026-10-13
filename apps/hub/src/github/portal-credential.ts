@@ -31,16 +31,20 @@ export async function portalMember(d: PortalCredentialDeps, req: Request, tenant
   if (!fromPortal(req, d.trustedPortalOrigins)) return failure(403, "forbidden", "This request did not come from the portal.");
   const session = await d.getSession(req.headers);
   if (!session) return failure(401, "unauthorized", "Sign in again.");
-  const member = await d.db.query.principal.findFirst({
+  return (await memberPrincipal(d.db, tenantId, session.user.id)) ?? failure(401, "unauthorized", "You are not a member of this workspace.");
+}
+
+/** The user's active principal id in the tenant. */
+export async function memberPrincipal(db: DB["db"], tenantId: string, userId: string): Promise<string | undefined> {
+  const member = await db.query.principal.findFirst({
     where: and(
       eq(schema.principal.tenantId, tenantId),
       eq(schema.principal.kind, "user"),
-      eq(schema.principal.refId, session.user.id),
+      eq(schema.principal.refId, userId),
       eq(schema.principal.status, "active"),
     ),
   });
-  if (!member) return failure(401, "unauthorized", "You are not a member of this workspace.");
-  return member.id;
+  return member?.id;
 }
 
 async function holds(d: PortalCredentialDeps, principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
