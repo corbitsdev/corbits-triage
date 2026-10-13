@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
 import { createHoldQueue, HOLD_MS } from "./held-actions.ts";
-import { projectQueue, runPackDo, type DoRun, type PrItem } from "./hub-api.ts";
+import { approveHeldDo, projectQueue, type PrItem } from "./hub-api.ts";
 import { doWrite } from "./inbox-pane.ts";
 import { pendingDos, type PendingDo } from "./pending-dos.ts";
 
@@ -10,7 +10,7 @@ const pull = { repo: "acme/widgets", number: 8 };
 const NONE: ReadonlySet<string> = new Set();
 
 function step(kind: string, target: Record<string, unknown>, index = 0): Record<string, unknown> {
-  return { id: "route", branch: "no", index, effectId: `effect-${index}`, kind, automatic: false, reason: "Size failed.", target };
+  return { id: "route", branch: "no", index, effectId: `effect-${index}`, kind, automatic: false, held: true, reason: "Size failed.", target };
 }
 
 /** A pr-triage verdict as the hub's triage-verdicts route answers it, read back the way the inbox reads it. */
@@ -30,102 +30,90 @@ function labels(dos: PendingDo[]): string[] {
 }
 
 describe("pendingDos", () => {
-  test("each resolved kind is labelled and sent to the hub by reference only", async () => {
+  test("each held kind is labelled and approved through the hub by reference only", async () => {
     const dos = pendingDos(verdict([
       step("labels", { labels: ["size/xl", "needs-split"] }, 0),
       step("assign", { users: ["alice"] }, 1),
       step("request-review", { users: ["bob"], teams: ["core"] }, 2),
       step("comment", { body: "Please split this." }, 3),
       step("close", {}, 4),
-    ]), [], NONE);
+    ]), NONE, NONE);
     expect(labels(dos)).toEqual(["Add labels size/xl, needs-split", "Assign alice", "Request review from @acme/core, bob", "Comment", "Close"]);
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const transport: Transport = {
       fetch: async (method, path, body) => {
         calls.push({ method, path, body });
-        const effectId = (body as { index: number }).index.toString();
-        return { effectId, actionId: "route", kind: "labels", headSha: "abc", status: "done", error: null, updatedAt: "2026-10-01T12:00:00.000Z" } as never;
+        return { status: "sent" } as never;
       },
       subscribe: () => () => {},
     };
-    for (const pending of dos) await runPackDo(transport, "t", pending.ref);
+    for (const pending of dos) await approveHeldDo(transport, "t", pending.ref);
     expect(calls).toEqual(dos.map((_, index) => ({
       method: "POST",
-      path: "/api/integrations/github-dos/t",
-      body: { runId: "run-8", ...pull, actionId: "route", branch: "no", index },
+      path: "/api/integrations/github-held-dos/t",
+      body: { runId: "run-8", ...pull, effectId: `effect-${index}` },
     })));
   });
 
   test("the hub's refusal is said plainly", async () => {
-    const [pending] = pendingDos(verdict([step("assign", { users: ["alice"] })]), [], NONE);
+    const [pending] = pendingDos(verdict([step("assign", { users: ["alice"] })]), NONE, NONE);
     const transport: Transport = {
       fetch: async () => {
-        throw new ApiError(409, "verdict_outdated", "This verdict predates Dos by reference. Run triage again.");
+        throw new ApiError(409, "do_not_held", "The verdict does not hold this Do.");
       },
       subscribe: () => () => {},
     };
     if (pending === undefined) throw new Error("no Do offered");
-    await expect(runPackDo(transport, "t", pending.ref)).rejects.toThrow("This verdict is out of date. Run triage again.");
+    await expect(approveHeldDo(transport, "t", pending.ref)).rejects.toThrow("This action is not waiting for approval. Run triage again.");
   });
 
-  test("skipped actions and steps, unresolved targets and agents are not offered", () => {
+  test("Dos written or not held, skipped actions and steps, unresolved targets, agents and hidden Dos are not offered; a failed automatic Do is", () => {
     const dos = pendingDos(verdict([
       { id: "off", skipped: true, reason: "CI is off in this pack." },
       { ...step("assign", { users: ["ops"] }), target: undefined, skipped: true, reason: "Role ops is not defined." },
       step("request-review", { unresolved: "codeowners" }),
       step("labels", { unresolved: "derive", from: "paths" }),
       step("agent", { prompt: "Review it", tools: [] }),
-      step("assign", { users: ["alice"] }),
-      { id: "old", branch: "no", kind: "assign", automatic: false, reason: "Before Dos by reference.", target: { users: ["bob"] } },
-    ]), [], NONE);
-    expect(labels(dos)).toEqual(["Assign alice"]);
-  });
-});
-
-describe("pendingDos against the hub's records", () => {
-  const item = verdict([step("labels", { labels: ["size/xl"] }, 0), step("assign", { users: ["alice"] }, 1), step("comment", { body: "Hi" }, 2)]);
-
-  test("a done or satisfied Do is hidden, a running one stays without a second send, and a failed one comes back with the hub's error", () => {
-    const runs: DoRun[] = [
-      { effectId: "effect-0", status: "done", error: null },
-      { effectId: "effect-1", status: "failed", error: "github POST /repos/acme/widgets/issues/8/assignees -> 422" },
-      { effectId: "effect-2", status: "satisfied", error: null },
-    ];
-    expect(pendingDos(item, runs, NONE).map(({ label, running, error }) => ({ label, running, error }))).toEqual([
-      { label: "Assign alice", running: false, error: "github POST /repos/acme/widgets/issues/8/assignees -> 422" },
-    ]);
-    const running: DoRun[] = [{ effectId: "effect-1", status: "running", error: null }];
-    expect(pendingDos(item, running, NONE).map(({ label, running }) => ({ label, running }))).toEqual([
-      { label: "Add label size/xl", running: false },
-      { label: "Assign alice", running: true },
-      { label: "Comment", running: false },
-    ]);
+      { ...step("labels", { labels: ["ran"] }, 5), held: false, automatic: true, status: "done" },
+      { ...step("labels", { labels: ["approved"] }, 8), status: "satisfied" },
+      { ...step("labels", { labels: ["auto"] }, 9), held: false, automatic: true },
+      { ...step("labels", { labels: ["refused"] }, 10), held: false, automatic: true, status: "failed" },
+      step("assign", { users: ["alice"] }, 6),
+      step("assign", { users: ["skipped"] }, 7),
+    ]), new Set(["effect-7"]), NONE);
+    expect(labels(dos)).toEqual(["Add label refused", "Assign alice"]);
   });
 
-  test("a held Do is hidden and offered again on Undo, without reaching the hub", () => {
-    const timers = { set: () => 1, clear: () => {} };
-    const queue = createHoldQueue(timers, HOLD_MS);
-    const [first] = pendingDos(item, [], NONE);
+  test("a Do sent for approval stays hidden until its run fails it, then is offered again with why", () => {
+    const sent = new Set([`effect-0:held`]);
+    expect(pendingDos(verdict([step("comment", { body: "Hi" }, 0)]), NONE, sent)).toEqual([]);
+    const [failed] = pendingDos(verdict([{ ...step("comment", { body: "Hi" }, 0), status: "failed", error: "github POST -> 500" }]), NONE, sent);
+    expect(failed).toMatchObject({ label: "Comment", error: "github POST -> 500" });
+  });
+
+  test("a Do approved is hidden and offered again on Undo, without reaching the hub", () => {
+    const item = verdict([step("labels", { labels: ["size/xl"] }, 0), step("comment", { body: "Hi" }, 1)]);
+    const queue = createHoldQueue({ set: () => 1, clear: () => {} }, HOLD_MS);
+    const [first] = pendingDos(item, NONE, NONE);
     if (first === undefined || item.number === null) throw new Error("no Do offered");
-    let held = new Set([first.key]);
+    let held = new Set([first.sentKey]);
     const sent: unknown[] = [];
-    async function runDo(ref: unknown): Promise<DoRun> {
+    async function approveDo(ref: unknown) {
       sent.push(ref);
-      return { effectId: first?.key ?? "", status: "done", error: null };
     }
     const write = doWrite({ ...item, number: item.number }, first, () => {
       held = new Set();
     });
     queue.hold({
       pending: write.pending,
-      send: () => write.send({ write: async () => ({ commentId: null }), replySent: () => {}, runDo }),
+      send: () => write.send({ write: async () => ({ commentId: null }), replySent: () => {}, approveDo }),
       undo: () => write.restore?.(),
       restore: () => write.restore?.(),
       failText: (error) => error,
     });
-    expect(labels(pendingDos(item, [], held))).toEqual(["Assign alice", "Comment"]);
+    expect(labels(pendingDos(item, NONE, held))).toEqual(["Comment"]);
     expect(queue.undo()).toBe(true);
-    expect(labels(pendingDos(item, [], held))).toEqual(["Add label size/xl", "Assign alice", "Comment"]);
+    expect(labels(pendingDos(item, NONE, held))).toEqual(["Add label size/xl", "Comment"]);
     expect(sent).toEqual([]);
   });
 });

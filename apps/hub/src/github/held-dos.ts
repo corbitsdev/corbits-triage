@@ -1,0 +1,137 @@
+// Approves a Do a triage run held for a maintainer, or one it failed or could
+// not run unattended. The hub checks the clicker's grants and mails the
+// pr-triage deployment the Do as the run's verdict recorded it, with who
+// approved it; the run writes it at most once under its effect id.
+import { and, eq } from "drizzle-orm";
+import { type } from "arktype";
+import { isRunTriggerUnroutable } from "@corbits/webhooks";
+import { ACTION_KINDS, APPROVE_DO_KIND, DoBranch, repoPolicy, type ResolvedTarget } from "@corbits/triage-contracts";
+import { schema } from "@intx/db";
+import { formatRunAddress } from "@intx/types";
+import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
+import { doEffectId } from "../../../../packages/triage-workflows/src/logic/actions.js";
+import { unrunnable } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
+import { approvalRefused, failure, githubAppGrant, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import type { VerdictRecordStore } from "./verdict-record-store.js";
+import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
+import { repoRecords, triageNs } from "./tenant-config.js";
+import { verdictFor } from "./triage-runs.js";
+import { readJson } from "../read-json.js";
+
+export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
+
+export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0", effectId: "string > 0" });
+export const HeldDoSent = type({ status: "'sent'" });
+
+const StepBase = type({
+  id: "string",
+  branch: DoBranch,
+  index: "number.integer >= 0",
+  kind: type.enumerated(...ACTION_KINDS),
+  effectId: "string",
+  target: "object",
+});
+/** Held, or automatic and failed or not run: a done or satisfied Do has nothing left to approve. */
+const HeldStep = StepBase.and({ held: "true", "status?": "'failed' | 'skipped'" }).or(StepBase.and({ status: "'failed' | 'skipped'" }));
+
+const MirrorRequest = type({ repo: "string", number: "number", labels: "string[]", owned: "string[]", comment: "string" });
+
+export type GithubHeldDosDeps = PortalCredentialDeps & {
+  runReader: Pick<WorkflowRunReader, "readRunEvents">;
+  verdicts: Pick<VerdictRecordStore, "forPull">;
+  /** Newest first; the approval goes to the first. */
+  liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
+  deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
+  log: (entry: Record<string, unknown>) => void;
+};
+
+type Body = typeof HeldDoBody.infer;
+type Approval = {
+  kind: typeof APPROVE_DO_KIND;
+  runId: string;
+  principalId: string;
+  actionId: string;
+  branch: typeof DoBranch.infer;
+  index: number;
+  request: typeof MirrorRequest.infer;
+  step: { effectId: string; headSha: string; kind: string; target: ResolvedTarget };
+};
+
+/** The held Do as the verdict recorded it, with its effect id checked against the one the hub computes. */
+function heldDo(verdict: Record<string, unknown>, body: Body, principalId: string): Approval | Response {
+  const actions = Array.isArray(verdict["actions"]) ? (verdict["actions"] as Array<Record<string, unknown>>) : [];
+  const raw = actions.find((a) => a["effectId"] === body.effectId);
+  if (!raw) return failure(404, "do_not_found", "The verdict has no such Do.");
+  const step = HeldStep(raw);
+  if (step instanceof type.errors) return failure(409, "do_not_held", "This Do is not waiting for approval.");
+  const request = MirrorRequest(verdict["request"]);
+  const headSha = verdict["headSha"];
+  if (request instanceof type.errors || typeof headSha !== "string") return failure(409, "verdict_outdated", "Run triage again.");
+  const target = step.target as ResolvedTarget;
+  const effectId = doEffectId({ repo: body.repo, number: body.number, headSha, actionId: step.id, branch: step.branch, index: step.index, kind: step.kind, target });
+  if (effectId !== step.effectId) return failure(409, "effect_mismatch", "The verdict's effect id does not match this Do.");
+  const { id: actionId, branch, index, kind } = step;
+  const refused = unrunnable({ kind, target });
+  if (refused) return failure(409, "do_not_runnable", refused);
+  return { kind: APPROVE_DO_KIND, runId: body.runId, principalId, actionId, branch, index, request, step: { effectId, headSha, kind, target } };
+}
+
+export function createGithubHeldDos(deps: GithubHeldDosDeps) {
+  async function runEvents(tenantId: string, domain: string, runId: string) {
+    const run = await deps.db.query.workflowRun.findFirst({
+      where: and(eq(schema.workflowRun.id, runId), eq(schema.workflowRun.tenantId, tenantId)),
+      columns: { anchorRunId: true },
+    });
+    if (!run?.anchorRunId) return undefined;
+    const repoId = workflowRunRepoIdForAddress(formatRunAddress(run.anchorRunId, domain));
+    return deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId);
+  }
+
+  /** An approval stands only on the newest verdict that judged something; a run not recorded yet has none newer that is known. */
+  async function superseded(tenantId: string, repo: string, number: number, runId: string): Promise<boolean> {
+    const verdicts = await deps.verdicts.forPull(tenantId, repo, number);
+    const at = verdicts.findIndex((verdict) => verdict.runId === runId);
+    return at >= 0 && verdicts.slice(at + 1).some((verdict) => verdict.degraded === null && (verdict.runStatus === null || verdict.runStatus === "completed"));
+  }
+
+  return async function approve(req: Request, tenantId: string): Promise<Response> {
+    const principalId = await portalMember(deps, req, tenantId);
+    if (principalId instanceof Response) return principalId;
+    const body = HeldDoBody(await readJson(req));
+    if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
+    const granted = await githubAppGrant(deps, principalId, tenantId, "use");
+    if (granted instanceof Response) return granted;
+
+    const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true, config: true } });
+    if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
+    const { repo, number, runId } = body;
+    const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected);
+    if (!record || !repoPolicy(record).enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
+
+    const events = await runEvents(tenantId, tenant.domain, runId);
+    if (!events?.length) return failure(404, "run_not_found", "No such run in this workspace.");
+    const verdict = verdictFor(events, repo, number);
+    if (!verdict) return failure(404, "verdict_not_found", `The run has no verdict for ${repo}#${number}.`);
+    const approval = heldDo(verdict, body, principalId);
+    if (approval instanceof Response) return approval;
+    if (approval.step.kind === "approve") {
+      const refused = await approvalRefused(deps, principalId, tenantId, repo);
+      if (refused) return refused;
+    }
+    if (await superseded(tenantId, repo, number, runId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
+
+    const deployment = newestLive(await deps.liveDeployments(tenantId));
+    if (!deployment) return failure(503, "service_not_running", "The pr-triage service is not running.");
+    const logged = { tenantId, principalId, runId, repo, number, effectId: body.effectId, kind: approval.step.kind };
+    try {
+      await deps.deliver(tenantId, deployment.address, approval);
+    } catch (err) {
+      deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
+      if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
+      const unroutable = isRunTriggerUnroutable(err);
+      return failure(unroutable ? 503 : 502, unroutable ? "service_not_running" : "hub_unavailable", `Could not send the approval: ${err instanceof Error ? err.message : String(err)}. Try again.`);
+    }
+    deps.log({ level: "info", msg: "held_do_approved", ...logged });
+    return Response.json({ status: "sent" }, { status: 202 });
+  };
+}

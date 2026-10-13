@@ -178,6 +178,30 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
   return { path: { invoked, mirrors }, mirrored: mirrors.map((id) => outputs[id]), requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
 }
 
+/** The mail the hub sends, as `from`, when a maintainer approves the held Do `step` of `verdict`. */
+function approvalMail(verdict: Verdict, step: SuggestedDo, from = "github@acme.test") {
+  const approval = {
+    kind: "approve-do", runId: "run_1", principalId: "prn_ann", actionId: step.id, branch: step.branch, index: step.index,
+    request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha, kind: step.kind, target: step.target },
+  };
+  return { headers: { from, to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify(approval) }] };
+}
+
+async function approve(github: ReturnType<typeof fakeGithub>, mail: ReturnType<typeof approvalMail>) {
+  const body = (workflow.steps.events as OnTriggerPrimitive).body;
+  if (!("inline" in body)) throw new Error("triage body is not inline");
+  const invoked: string[] = [];
+  const { terminalStatus, outputs } = await runLocal(body.inline, {
+    authorize: allow,
+    hasUpstreamSignalResolver: true,
+    invokeStep: stepInvoker(github.gh, invoked, [], false),
+    actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
+    triggerPayload: mail,
+  }).complete;
+  const executed = outputs["executeApproved"] as { reply: string } | undefined;
+  return { terminalStatus, invoked, dos: executed && (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
+}
+
 describe("pr-triage body", () => {
   test("without model checks the judge is skipped and the verdict carries the pack's actions", async () => {
     const { path, requests, verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { labels: ["bug", "triage:awaiting-review"] });
@@ -299,6 +323,33 @@ describe("pr-triage body", () => {
     const again = await triage(pack, { github });
     expect(again.dos).toEqual([{ effectId, status: "satisfied" }]);
     expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([expect.objectContaining({ body: `${doMarker(effectId)}\nhi` })]);
+  });
+
+  test("a Do that is not automatic is held in the verdict, and the hub's approval mail writes it once and never on a later head", async () => {
+    const github = fakeGithub();
+    const { dos, verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { github });
+    const held = (verdict as Verdict).actions[0] as SuggestedDo;
+    expect(held).toMatchObject({ id: "hello", held: true });
+    expect(dos).toEqual([]);
+    const mail = approvalMail(verdict as Verdict, held);
+    const first = await approve(github, mail);
+    expect(first).toMatchObject({ terminalStatus: "completed", invoked: ["triage-execute"], dos: [{ effectId: held.effectId, status: "done" }] });
+    expect((await approve(github, mail)).dos).toEqual([{ effectId: held.effectId, status: "satisfied" }]);
+    expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([expect.objectContaining({ body: `${doMarker(held.effectId)}\nhi` })]);
+    const forged = approvalMail(verdict as Verdict, { ...held, target: { body: "spam" } });
+    expect((await approve(github, forged)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: "the approval's effect id does not match its Do" }]);
+    const unreadable = approvalMail(verdict as Verdict, { ...held, kind: "bogus" as never });
+    expect((await approve(github, unreadable)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: expect.stringContaining("invalid Do") }]);
+    github.pr.head = "def";
+    expect((await approve(github, mail)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: expect.stringContaining("has new commits") }]);
+  });
+
+  test("an approval mail from anyone but the hub's sender writes nothing", async () => {
+    const github = fakeGithub();
+    const { verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { github });
+    const denied = await approve(github, approvalMail(verdict as Verdict, (verdict as Verdict).actions[0] as SuggestedDo, "mallory@acme.test"));
+    expect(denied).toMatchObject({ terminalStatus: "completed", dos: undefined });
+    expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([]);
   });
 
   /** GitHub with CI green on head abc, for a pack that approves on every check. */

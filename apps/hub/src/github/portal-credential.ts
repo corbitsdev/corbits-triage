@@ -62,13 +62,10 @@ async function holds(d: PortalCredentialDeps, principalId: string, tenantId: str
   return action === "read" && d.authorize(principalId, tenantId, resource, "use");
 }
 
-/** The decrypted App credential when the member holds `action` on it, or the error response to return. Holding `use` also allows `read`. */
-export async function githubAppCredential(
-  d: PortalCredentialDeps,
-  principalId: string,
-  tenantId: string,
-  action: "read" | "use" | "manage",
-): Promise<string | Response> {
+type CredentialAction = "read" | "use" | "manage";
+
+/** The App credential's row when the member holds `action` on it, or the error response to return. Holding `use` also allows `read`. */
+export async function githubAppGrant(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction) {
   const credential = await d.db.query.credential.findFirst({
     where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.name, "github"), eq(schema.credential.status, "active")),
   });
@@ -76,6 +73,13 @@ export async function githubAppCredential(
   if (!(await holds(d, principalId, tenantId, `credential:${credential.id}`, action))) {
     return failure(403, "forbidden", "You do not have access to the GitHub App credential.");
   }
+  return credential;
+}
+
+/** The decrypted App credential when the member holds `action` on it, or the error response to return. */
+export async function githubAppCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction): Promise<string | Response> {
+  const credential = await githubAppGrant(d, principalId, tenantId, action);
+  if (credential instanceof Response) return credential;
   return d.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
 }
 

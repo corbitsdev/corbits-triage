@@ -47,19 +47,6 @@ export const DO_NAMES: Record<ActionKind, string> = {
   agent: "Run an agent",
 };
 
-/** What a Do that ran did, for the readiness history. */
-export const DONE_DO_NAMES: Record<ActionKind, string> = {
-  labels: "Added labels",
-  assign: "Assigned",
-  "request-review": "Requested review",
-  comment: "Posted comment",
-  approve: "Approved the pull request",
-  "request-changes": "Requested changes on the pull request",
-  "convert-to-draft": "Converted the pull request to draft",
-  close: "Closed the pull request",
-  agent: "Ran an agent",
-};
-
 export type Branch = "yes" | "no" | "unsure" | "always";
 
 export const BRANCH_NAMES: Record<Branch, string> = { yes: "Yes", no: "No", unsure: "Unsure", always: "Always" };

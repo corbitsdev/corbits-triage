@@ -47,3 +47,6 @@ export function triggerRequestOf(payload: unknown): Record<string, unknown> | un
   }
   return undefined;
 }
+
+/** The `kind` of the mail the hub sends pr-triage when a maintainer approves a held Do. */
+export const APPROVE_DO_KIND = "approve-do";

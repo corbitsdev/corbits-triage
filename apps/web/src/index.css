@@ -756,8 +756,6 @@ input, textarea { caret-color: var(--heat); }
 }
 .timeline-entry .soft { color: var(--ink-soft); }
 .timeline-score { font-weight: 700; text-align: right; }
-.timeline-do { color: var(--ink-soft); }
-.timeline-do.failed { color: var(--bad); }
 .pr-pane {
   flex: 1;
   min-height: 0;

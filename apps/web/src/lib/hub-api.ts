@@ -1093,51 +1093,23 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
   return { commentId: typeof result.commentId === "number" ? result.commentId : null };
 }
 
-/** Names one pack Do by the run whose verdict suggested it; the hub looks the Do up and decides what to write. */
-export type DoRef = { runId: string; repo: string; number: number; actionId: string; branch: DoBranch; index: number };
-
-/** The hub's record of one Do, by its effect id; only `failed` leaves it to run again. `updatedAt` is when its status last changed. */
-export type DoRun = { effectId: string; actionId: string; kind: ActionKind; headSha: string; status: "running" | "done" | "satisfied" | "failed"; error: string | null; updatedAt: string };
-
-const DO_STATUSES: ReadonlyArray<DoRun["status"]> = ["running", "done", "satisfied", "failed"];
-
-function doRun(value: unknown): DoRun {
-  const row = obj(value);
-  const { effectId, actionId, kind, headSha, status, updatedAt } = row;
-  if (
-    typeof effectId !== "string" || typeof actionId !== "string" || !isActionKind(kind) || typeof headSha !== "string"
-    || !DO_STATUSES.includes(status as DoRun["status"]) || typeof updatedAt !== "string"
-  ) throw new Error("The hub returned a malformed Do record.");
-  return { effectId, actionId, kind, headSha, status: status as DoRun["status"], error: typeof row.error === "string" ? row.error : null, updatedAt };
-}
-
-const OUTDATED = "This verdict is out of date. Run triage again.";
+/** Names one held Do by the run whose verdict holds it; the hub looks the Do up and mails the deployment to run it. */
+export type HeldDoRef = { runId: string; repo: string; number: number; effectId: string };
 
 /** The hub's refusals that name its internals; the rest of its text is already plain. */
 const DO_REFUSALS: Record<string, string> = {
-  verdict_outdated: OUTDATED,
-  effect_mismatch: OUTDATED,
-  do_in_progress: "This action is already running.",
+  do_not_held: "This action is not waiting for approval. Run triage again.",
+  verdict_superseded: "A newer triage result exists. Approve from it instead.",
 };
 
-function doRefusal(cause: unknown): unknown {
-  if (!(cause instanceof ApiError)) return cause;
-  if (cause.code === "do_not_runnable") return new Error(`This action cannot run from the portal: ${cause.message}`);
-  const plain = DO_REFUSALS[cause.code];
-  return plain === undefined ? cause : new Error(plain);
-}
-
-export async function runPackDo(transport: Transport, tenantId: string, ref: DoRef): Promise<DoRun> {
+/** The hub hands the Do to pr-triage, which runs it once on the head the verdict judged. */
+export async function approveHeldDo(transport: Transport, tenantId: string, ref: HeldDoRef): Promise<void> {
   try {
-    return doRun(await transport.fetch<unknown>("POST", `/api/integrations/github-dos/${enc(requireTenantId(tenantId))}`, { ...ref, repo: validateRepo(ref.repo) }));
+    await transport.fetch<unknown>("POST", `/api/integrations/github-held-dos/${enc(requireTenantId(tenantId))}`, { ...ref, repo: validateRepo(ref.repo) });
   } catch (cause) {
-    throw doRefusal(cause);
+    const plain = cause instanceof ApiError ? DO_REFUSALS[cause.code] : undefined;
+    throw plain === undefined ? cause : new Error(plain);
   }
-}
-
-export async function listDoRuns(transport: Transport, tenantId: string, repo: string, number: number): Promise<DoRun[]> {
-  const listed = obj(await transport.fetch<unknown>("GET", `/api/integrations/github-dos/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`));
-  return Array.isArray(listed.dos) ? listed.dos.map(doRun) : [];
 }
 
 /** A repository's triage over the last `days` days, as the hub's triage-stats route answers. */
@@ -1602,7 +1574,16 @@ export type PrItem = {
 };
 
 // The portal reads verdict JSON and does not import the workflow package, so this keeps only the fields it uses.
-export type SuggestedAction = { id: string; branch: DoBranch; index: number; effectId: string; kind: ActionKind; reason: string; target: Record<string, unknown> };
+/** `held` waits for a maintainer's approval; `status` is how running it last ended, and `error` why it did not write. */
+export type SuggestedAction = { id: string; branch: DoBranch; index: number; effectId: string; kind: ActionKind; reason: string; target: Record<string, unknown>; held: boolean; status?: DoStatus; error?: string };
+
+const DO_STATUSES = ["done", "satisfied", "failed", "skipped"] as const;
+
+type DoStatus = (typeof DO_STATUSES)[number];
+
+function isDoStatus(value: unknown): value is DoStatus {
+  return (DO_STATUSES as readonly unknown[]).includes(value);
+}
 
 const DO_BRANCHES = ["yes", "no", "unsure", "always"] as const;
 
@@ -1624,7 +1605,7 @@ function suggestedActions(value: unknown): SuggestedAction[] {
     if (a.skipped === true || typeof a.id !== "string" || typeof a.reason !== "string" || !isActionKind(a.kind) || !a.target || typeof a.target !== "object") continue;
     // A verdict from before Dos by reference names none the hub can run.
     if (!isDoBranch(a.branch) || !Number.isInteger(a.index) || typeof a.effectId !== "string") continue;
-    out.push({ id: a.id, branch: a.branch, index: a.index as number, effectId: a.effectId, kind: a.kind, reason: a.reason, target: obj(a.target) });
+    out.push({ id: a.id, branch: a.branch, index: a.index as number, effectId: a.effectId, kind: a.kind, reason: a.reason, target: obj(a.target), held: a.held === true, ...(isDoStatus(a.status) && { status: a.status }), ...(typeof a.error === "string" && { error: a.error }) });
   }
   return out;
 }

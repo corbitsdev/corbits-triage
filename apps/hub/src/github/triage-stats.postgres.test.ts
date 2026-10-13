@@ -5,7 +5,6 @@ import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { migrateTriageTables } from "../triage-db.js";
-import { createDoRunStore } from "./do-run-store.js";
 import { createTriageStats, TriageStats } from "./triage-stats.js";
 import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
 
@@ -40,7 +39,7 @@ test("PostgreSQL: only verdicts of completed runs count as triaged", async () =>
 
     const stats = createTriageStats({
       db, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)), getSession: async () => ({ user: { id: "usr_stats" } }), authorize: async () => true,
-      trustedPortalOrigins: [], verdicts, dos: createDoRunStore(db), now: () => AT,
+      trustedPortalOrigins: [], verdicts, now: () => AT,
     });
     const res = await stats(new Request(`http://hub.test/api/integrations/triage-stats/${TENANT}?repo=${REPO}`, { headers: { "sec-fetch-site": "same-origin" } }), TENANT);
     expect(TriageStats.assert(await res.json())).toMatchObject({ triaged: 2, verdicts: { "ready-monitoring": 2 } });

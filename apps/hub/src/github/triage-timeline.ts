@@ -1,7 +1,6 @@
 // A pull request's readiness history, from the recorded verdicts only: one
 // entry per verdict that changed the head or a check result, with the checks
-// that changed since the judged verdict before it. The portal merges in the
-// pull request's Do runs, which it already reads from the github-dos route.
+// that changed since the judged verdict before it.
 import { type } from "arktype";
 import { failure, runReadPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 import type { RecordedCheck, VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";

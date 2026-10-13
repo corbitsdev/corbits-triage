@@ -27,10 +27,11 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates `pr-triage` deployments and redeploys failed ones. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
-| `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and records verdicts and Dos. |
-| `src/github/verdict-record-store.ts`, `do-run-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict and Do records and the routes that serve them. |
+| `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and records verdicts. |
+| `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict records and the routes that serve them. |
 | `src/github/manifest.ts` | GitHub App Manifest flow: start and callback. The setup state is an HMAC-SHA256 token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes and bound to the user who started it; nothing is stored. |
-| `src/github/pr-*.ts` | Pull request actions, Dos, details, previews and single-PR triage. |
+| `src/github/pr-*.ts` | Pull request actions, details, previews and single-PR triage. |
+| `src/github/held-dos.ts` | Approves a held Do by mailing it to `pr-triage`. |
 | `src/github/github-app-*` | Credential adapter: App JWT → installation token, cached per installation, pinned to the GitHub API origin. |
 
 ### Non-default GitHub origin

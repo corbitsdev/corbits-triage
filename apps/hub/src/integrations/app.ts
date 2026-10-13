@@ -7,11 +7,11 @@ import { describeRoute, resolver } from "hono-openapi";
 import { AUTHOR_KINDS, checkPackSchema, repoPolicySchema } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUTH_METHODS_PATH } from "../auth.js";
+import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody } from "../github/manifest.js";
 import { GITHUB_OPEN_PULLS_PATH } from "../github/open-pulls.js";
 import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
-import { DoBody, DoRunList, DoRunResponse, GITHUB_DOS_PATH } from "../github/pr-dos.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
@@ -34,7 +34,7 @@ export type IntegrationHandlers = {
   manifest: { start: TenantHandler; callback: (req: Request) => Promise<Response> };
   syncInstallations: TenantHandler;
   prActions: TenantHandler;
-  dos: { run: TenantHandler; list: TenantHandler };
+  heldDos: TenantHandler;
   prTriage: TenantHandler;
   openPulls: TenantHandler;
   prDetails: TenantHandler;
@@ -226,38 +226,23 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
   );
 
   app.post(
-    `${GITHUB_DOS_PATH}/:tenantId`,
+    `${GITHUB_HELD_DOS_PATH}/:tenantId`,
     describeRoute({
-      summary: "Run a pack Do from a triage run's verdict",
-      description: "Writes to GitHub at most once per Do effect and records it; a repeat answers with the recorded row as replayed.",
+      summary: "Approve a Do a triage run held, failed or could not run",
+      description: "Needs `use` on the GitHub App credential, and the approve grant for an approval. Mails the repository's pr-triage deployment the Do and who approved it; pr-triage writes the Do at most once under its effect id, and a close, draft, comment or review not once the head has moved.",
       tags: TAGS,
-      requestBody: body(DoBody),
+      requestBody: body(HeldDoBody),
       responses: {
-        200: json("The recorded Do", DoRunResponse),
+        202: json("Sent to pr-triage", HeldDoSent),
         ...invalid,
         ...failures,
         404: json("Run, verdict or Do not found in this workspace", Failure),
-        409: json("GitHub not connected, repository not enabled, verdict outdated, effect id mismatch, head moved, Do running or not runnable", Failure),
-        ...githubFailed,
+        409: json("GitHub not connected, repository not enabled, Do already written or not awaiting approval, verdict outdated or superseded", Failure),
+        502: json("The run trigger failed", Failure),
+        503: json("The pr-triage service is not running", Failure),
       },
     }),
-    tenantRoute(handlers.dos.run),
-  );
-
-  app.get(
-    `${GITHUB_DOS_PATH}/:tenantId`,
-    describeRoute({
-      summary: "Recorded pack Dos of a repository, newest first",
-      description: "Needs `workflow-run:*` read.",
-      tags: TAGS,
-      parameters: [
-        { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
-        { in: "query", name: "number", required: false, schema: { type: "integer", minimum: 1 } },
-        { in: "query", name: "runId", required: false, schema: { type: "string" } },
-      ],
-      responses: { 200: json("Recorded Dos, at most 200", DoRunList), ...invalid, 401: failures[401], 403: failures[403] },
-    }),
-    tenantRoute(handlers.dos.list),
+    tenantRoute(handlers.heldDos),
   );
 
   app.post(
@@ -324,7 +309,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     `${TRIAGE_STATS_PATH}/:tenantId`,
     describeRoute({
       summary: "Triage stats of a repository over the last whole UTC days",
-      description: "Needs `workflow-run:*` read. From the recorded verdicts and Dos, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. Cached for a minute.",
+      description: "Needs `workflow-run:*` read. From the recorded verdicts and the Dos their runs executed, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. Cached for a minute.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
@@ -339,7 +324,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     `${TRIAGE_TIMELINE_PATH}/:tenantId`,
     describeRoute({
       summary: "Readiness history of a pull request",
-      description: "Needs `workflow-run:*` read. From the recorded verdicts only, oldest first; the pull request's Do runs are read from github-dos. A verdict with the same head, settled and degraded state and check results as the one before it is left out. Each scores its checks (pass 1, unconfirmed half, fail 0, out of 100) and lists the checks whose result changed since the previous judged verdict; degraded verdicts score nothing.",
+      description: "Needs `workflow-run:*` read. From the recorded verdicts only, oldest first. A verdict with the same head, settled and degraded state and check results as the one before it is left out. Each scores its checks (pass 1, unconfirmed half, fail 0, out of 100) and lists the checks whose result changed since the previous judged verdict; degraded verdicts score nothing.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },

@@ -9,7 +9,7 @@ import { errorText } from "../lib/error-text.ts";
 import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
 import type { PendingDo } from "../lib/pending-dos.ts";
-import { useDoRuns, useHeldDos, usePendingDos } from "../lib/do-runs.ts";
+import { useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
 import { MergeChip } from "../components/MergeChip.tsx";
 import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
 import { approvedByTriage, endedText, paneBar, paneProblems, paneStatus, type PaneBar } from "../lib/pane-report.ts";
@@ -247,10 +247,10 @@ type PaneProps = {
   onBack: () => void;
 };
 
-type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; dos: PendingDo[]; doBlocked: boolean; running: boolean; onRun: (kind: PaneKind) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void };
+type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; dos: PendingDo[]; doBlocked: boolean; running: boolean; onRun: (kind: PaneKind) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void; onSkip: (pending: PendingDo) => void };
 
 /** One primary for the state, up to two secondaries, the rest in More; on a phone the second secondary moves into More. */
-function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo }: BottomBarProps) {
+function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo, onSkip }: BottomBarProps) {
   const [menu, setMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { primary, secondary, more } = bar;
@@ -289,11 +289,10 @@ function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo }:
             {more.map((entry) => (
               <button key={entry.label} type="button" role="menuitem" disabled={entry.blocker !== null} onClick={() => choose(() => onRun(entry.kind))}>{entry.label}</button>
             ))}
-            {dos.map((pending) => (
-              <button key={pending.key} type="button" role="menuitem" disabled={doBlocked || pending.running} onClick={() => choose(() => onDo(pending))}>
-                {pending.running ? `${pending.label}: already running` : pending.label}
-              </button>
-            ))}
+            {dos.flatMap((pending) => [
+              <button key={pending.key} type="button" role="menuitem" disabled={doBlocked} onClick={() => choose(() => onDo(pending))}>Approve: {pending.label}</button>,
+              <button key={`${pending.key}:skip`} type="button" role="menuitem" onClick={() => choose(() => onSkip(pending))}>Hide for me: {pending.label}</button>,
+            ])}
           </div>
         ) : null}
       </div>
@@ -305,7 +304,6 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   const { triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const pack = useRepoPack(item.repo);
-  const doRuns = useDoRuns(item.repo, item.number);
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
   const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
   const [composer, setComposer] = useState<Composer | null>(restored === null ? null : restored.composer);
@@ -319,10 +317,10 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   const bar = paneBar(gate, pull.data?.pr.base ?? null, facts.author);
   const draft = replyDraft(item, reply);
   const dos = usePendingDos(item);
-  const heldDos = useHeldDos();
+  const heldDoKeys = useHeldDoKeys();
   const doBlocked = writeBlocker(gate) !== null;
   const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
-  const status = paneStatus({ item, detail: pull.data, handled, approved: approvedByTriage(item, doRuns.data ?? []), primary: bar.primary });
+  const status = paneStatus({ item, detail: pull.data, handled, approved: approvedByTriage(item), primary: bar.primary });
   const ended = endedText(item, pull.data, handled) !== null;
 
   // A new verdict replaces the drafted feedback and the last note; composer text and an edit made while a run is merely in flight stay.
@@ -363,11 +361,11 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
     }
   }
 
-  function runDo(pending: PendingDo) {
+  function approveDo(pending: PendingDo) {
     if (!hasNumber(item) || doBlocked) return;
-    heldDos.hold(pending.key);
+    heldDoKeys.hold(pending.sentKey);
     function release() {
-      heldDos.release(pending.key);
+      heldDoKeys.release(pending.sentKey);
     }
     onHold(item, doWrite(item, pending, release), { reply, composer });
   }
@@ -448,7 +446,8 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
         running={item.running}
         onRun={run}
         onEdit={draft === null || editing ? null : () => setEditing(true)}
-        onDo={runDo}
+        onDo={approveDo}
+        onSkip={(pending) => heldDoKeys.hide(pending.key)}
       />}
     </section>
   );
