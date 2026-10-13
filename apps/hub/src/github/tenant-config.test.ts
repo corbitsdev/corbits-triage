@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_BODY_BYTES } from "../read-json.js";
-import { patchCorbitsTriage, prepareCorbitsTriagePatch, tenantManagerRefusal, type CorbitsTriageNs } from "./tenant-config.js";
+import { guardTenantPatch, patchCorbitsTriage, tenantManagerRefusal, type CorbitsTriageNs } from "./tenant-config.js";
 
 const TENANT_ID = "tnt_test";
 
@@ -47,27 +47,6 @@ describe("corbitsTriage rev CAS", () => {
     expect((await patchCorbitsTriage(db, TENANT_ID, unchanged))?.rev).toBe(1);
     expect((await patchCorbitsTriage(db, TENANT_ID, unchanged))?.rev).toBe(2);
   });
-
-  test("a stale portal rev is rejected with 409 config_conflict", async () => {
-    const db = stubDb({ corbitsTriage: { rev: 2, repos: [] } });
-    const res = await prepareCorbitsTriagePatch(db, TENANT_ID, patchRequest({ config: { corbitsTriage: { rev: 1, repos: [] } } }));
-    expect(res).toBeInstanceOf(Response);
-    expect((res as Response).status).toBe(409);
-    expect(await (res as Response).json()).toEqual({ error: "config_conflict" });
-  });
-
-  test("a matching portal rev is rewritten to current+1 and passed through", async () => {
-    const db = stubDb({ other: true, corbitsTriage: { rev: 3, repos: [{ name: "keep/me", connected: true }] } });
-    const prepared = await prepareCorbitsTriagePatch(db, TENANT_ID, patchRequest({
-      name: "Acme",
-      config: { other: true, corbitsTriage: { rev: 3, repos: [] } },
-    }));
-    expect(prepared).toBeInstanceOf(Request);
-    expect(await (prepared as Request).json()).toEqual({
-      name: "Acme",
-      config: { other: true, corbitsTriage: { rev: 4, repos: [] } },
-    });
-  });
 });
 
 /** Fails the test when anything reads the database. */
@@ -103,8 +82,15 @@ describe("tenant PATCH guard", () => {
     expect(await tenantManagerRefusal({ db: memberDb("prn_admin"), getSession: signedIn, authorize: managesOnly }, TENANT_ID, headers)).toBeUndefined();
   });
 
-  test("a body over the cap is refused 413 before the database is read", async () => {
-    const res = await prepareCorbitsTriagePatch(untouchable, TENANT_ID, new Request("https://hub.example/api/tenants/tnt_test", { method: "PATCH", body: "x".repeat(MAX_BODY_BYTES + 1) }));
+  test("a body over the cap is refused 413", async () => {
+    const res = await guardTenantPatch(new Request("https://hub.example/api/tenants/tnt_test", { method: "PATCH", body: "x".repeat(MAX_BODY_BYTES + 1) }));
     expect(res instanceof Response && res.status).toBe(413);
+  });
+
+  test("a body carrying corbitsTriage is refused 400; any other is passed on", async () => {
+    const refused = await guardTenantPatch(patchRequest({ config: { corbitsTriage: { rev: 0 } } }));
+    expect(refused instanceof Response && refused.status).toBe(400);
+    const passed = await guardTenantPatch(patchRequest({ name: "Acme", config: { other: true } }));
+    expect(passed instanceof Request && await passed.json()).toEqual({ name: "Acme", config: { other: true } });
   });
 });

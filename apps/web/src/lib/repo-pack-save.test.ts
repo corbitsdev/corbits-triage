@@ -10,12 +10,12 @@ const repo = "acme/widgets";
 const title = "check-pack/acme/widgets";
 const config = { corbitsTriage: { repos: [{ name: repo, connected: true, installationId: 9 }] } };
 
-function failingPatchOnce(inner: Transport): Transport {
+function failingConfigSaveOnce(inner: Transport): Transport {
   let failed = false;
   return {
     subscribe: inner.subscribe,
     async fetch(method, path, body) {
-      if (method === "PATCH" && !failed) {
+      if (method === "PUT" && !failed) {
         failed = true;
         throw new Error("network down");
       }
@@ -47,7 +47,7 @@ describe("saving the repository pack", () => {
 
   test("a failed config write after the pack write leaves it unlinked; saving again redoes only that write", async () => {
     const hub = fakeHub([], config);
-    const store = transportRepoPackStore(failingPatchOnce(hub.transport), "t");
+    const store = transportRepoPackStore(failingConfigSaveOnce(hub.transport), "t");
     const session = openSession(repo, await store.load(repo, false));
     const draft = { ...session.saved, pack: recommendedPack(repo) };
     const first = await saveDraft(store, repo, session, draft);
@@ -58,7 +58,7 @@ describe("saving the repository pack", () => {
     const second = await saveDraft(store, repo, first.session, draft);
     expect(second.failure).toBeNull();
     expect(second.session.unlinked).toBe(false);
-    expect(writes(hub)).toEqual(["PATCH /api/tenants/t"]);
+    expect(writes(hub)).toEqual(["PUT /api/integrations/triage-config/t"]);
     expect(repoRow(hub)).toMatchObject({ checkPack: { name: title } });
   });
 
@@ -80,7 +80,7 @@ describe("saving the repository pack", () => {
     const { session: after, failure } = await saveDraft(store, repo, session, session.saved);
     expect(failure).toBeNull();
     expect(after.corrupt).toBeNull();
-    expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts/art_1/versions", "PATCH /api/tenants/t"]);
+    expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts/art_1/versions", "PUT /api/integrations/triage-config/t"]);
   });
 
   test("one config write carries the pack pointer, posting, both triage switches and roles", async () => {
@@ -90,7 +90,7 @@ describe("saving the repository pack", () => {
     const policy = { cleanupMode: "automated" as const, enabled: true, triageDrafts: false, roles: { core: { users: ["octocat"] } } };
     const { failure } = await saveDraft(store, repo, session, { pack: recommendedPack(repo), policy });
     expect(failure).toBeNull();
-    expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts", "PATCH /api/tenants/t"]);
+    expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts", "PUT /api/integrations/triage-config/t"]);
     expect(repoRow(hub)).toEqual({ name: repo, connected: true, installationId: 9, ...policy, checkPack: { name: title } });
   });
 
