@@ -162,7 +162,8 @@ describe("verdicts the decision model was never asked about", () => {
     }
 
     const compact = [{ path: "src/config.ts", patch: '@@ -0,0 +1 @@\n+const value = { name: "Candidate" };' }];
-    const oversized = Array.from({ length: 200 }, (_, index) => ({ path: `src/${"nested/".repeat(80)}${index}.ts` }));
+    const wide = Array.from({ length: 20 }, (_, index) => `@@ -${index + 1} +${index + 1} @@\n+// ${"設".repeat(3_000)}`).join("\n");
+    const oversized = Array.from({ length: 40 }, (_, index) => ({ path: `src/wide${index}.ts`, patch: wide }));
     const local = await triage(oversized);
     const provider = await triage(compact, { type: "inference.error", error: { message: QUALITY_EVALUATION_LIMIT_ERROR } } as ReactorInboundEvent);
     const ambiguousDecision = JSON.stringify({
@@ -171,7 +172,7 @@ describe("verdicts the decision model was never asked about", () => {
     });
     const ambiguousResult = await triage(compact, { type: "inference.done", turn: { content: [{ type: "text", text: ambiguousDecision }] } } as ReactorInboundEvent);
     expect(local.judged).toBeUndefined();
-    expect(local.ruled.items[0]).toMatchObject({ judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ KB\)$/), judgeLimitExceeded: true });
+    expect(local.ruled.items[0]).toMatchObject({ judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ requests\)$/), judgeLimitExceeded: true });
     expect(provider.judged).toEqual([{ judgeError: QUALITY_EVALUATION_LIMIT_ERROR }]);
 
     const deterministic = (await observe([1], local.reply, "run_limit", at(0))).get("1@sha1")!;

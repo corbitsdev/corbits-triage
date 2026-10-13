@@ -2,11 +2,11 @@ import type { EffectContext } from "@intx/workflow";
 import { packMergeThreshold } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves } from "../logic/actions.js";
-import type { PrFacts } from "../logic/checks.js";
+import type { DeterministicResult, PrFacts } from "../logic/checks.js";
 import { errorText } from "../logic/extract.js";
 import type { Item, Judged } from "../logic/item.js";
-import { focusedPartRequests, judgeKey, prepareQualityEvaluation, type FocusedParts, type FocusedPlan, type JudgeRequest } from "../logic/quality.js";
-import { degradedVerdict, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type Verdict } from "../logic/render.js";
+import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, type FocusedParts, type JudgeRequest, type QualityEvaluation } from "../logic/quality.js";
+import { degradedVerdict, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 
 /** The rules items, merged with the judge maps' per-chunk outputs, in chunk order, when the judge ran. */
@@ -31,16 +31,29 @@ function stamp(facts: PrFacts | undefined) {
   return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null };
 }
 
-/** Joins one item's chunk answers; only the chunks that failed contribute an error, each distinct error once. */
-function judgmentOf(replies: unknown[]): Judgment {
-  const answers: string[] = [];
+/**
+ * Merges the answers of each reply that is well formed and answers only its own request's questions, so a bad reply
+ * leaves only its own questions unanswered.
+ */
+function answersOf(requests: JudgeRequest[], answered: Array<[string, unknown]>): ParsedAnswers {
+  const decisions: ParsedAnswers["decisions"] = {};
+  for (const [index, [, reply]] of answered.entries()) {
+    const { judge } = (stepJson(reply) ?? {}) as Judgment;
+    const parsed = typeof judge === "string" ? parseAnswers(judge) : undefined;
+    const asked = new Set(requests[index]!.questions.map((question) => question.id));
+    if (parsed && !parsed.malformed && Object.keys(parsed.decisions).every((id) => asked.has(id))) Object.assign(decisions, parsed.decisions);
+  }
+  return { decisions, malformed: false };
+}
+
+/** Each distinct error of the chunks that failed. */
+function errorOf(answered: Array<[string, unknown]>): Judgment {
   const errors = new Set<string>();
-  for (const reply of replies) {
-    const { judge, judgeError } = (stepJson(reply) ?? {}) as Judgment;
-    if (typeof judge === "string") answers.push(judge);
+  for (const [, reply] of answered) {
+    const { judgeError } = (stepJson(reply) ?? {}) as Judgment;
     if (typeof judgeError === "string") errors.add(judgeError);
   }
-  return { ...(answers.length > 0 ? { judge: answers.join("\n") } : {}), ...(errors.size > 0 ? { judgeError: [...errors].join("; ") } : {}) };
+  return errors.size > 0 ? { judgeError: [...errors].join("; ") } : {};
 }
 
 /** The item's reply to each of its requests by `judgeKey`: an earlier run's answer where it has one, else the next of `replies`. */
@@ -72,9 +85,8 @@ function reusable(answered: Array<[string, unknown]>): Judged {
 }
 
 /** Focused's follow-up requests about the slices its first answers call a separate change, if any. */
-export function partsOf(focused: FocusedPlan | undefined, requests: JudgeRequest[], answered: Array<[string, unknown]>): FocusedParts | undefined {
-  const { judge } = judgmentOf(answered.map(([, reply]) => reply));
-  const failing = focused && judge !== undefined ? separateSlices(parseAnswers(judge), focused) : [];
+export function partsOf(sources: DeterministicResult["sources"], { plan, focused, requests }: QualityEvaluation, answered: Array<[string, unknown]>): FocusedParts | undefined {
+  const failing = focused && sources ? separateSlices(answersOf(requests, answered), focused, askedQuestionIds(sources, plan, focused)) : [];
   return failing.length > 0 ? focusedPartRequests(requests, failing) : undefined;
 }
 
@@ -86,13 +98,15 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
   }
   try {
     // Rules recorded this same pure split as the judge's chunks, less the requests an earlier run answered.
-    const { plan, focused: asked, requests } = prepareQualityEvaluation(it.facts, it.det.sources);
+    const evaluation = prepareQualityEvaluation(it.facts, it.det.sources);
+    const { plan, focused: asked, requests } = evaluation;
     const first = it.det.needsJudgment ? repliesTo(it, requests, replies) : [];
-    const parts = partsOf(asked, requests, first);
-    const answered = parts ? [...first, ...repliesTo(it, parts.requests, partReplies)] : first;
+    const parts = partsOf(it.det.sources, evaluation, first);
+    const later = parts ? repliesTo(it, parts.requests, partReplies) : [];
     const focused = parts && asked ? { ...asked, parts: parts.asked } : asked;
-    const { judge, judgeError } = it.det.needsJudgment ? { ...it, ...judgmentOf(answered.map(([, reply]) => reply)) } : it;
-    const answers = judge !== undefined ? parseAnswers(judge) : null;
+    // Follow-up replies only name files, so one that failed or came back malformed never costs the first answers.
+    const { judgeError } = it.det.needsJudgment ? { ...it, ...errorOf(first) } : it;
+    const answers = answersOf([...requests, ...(parts?.requests ?? [])], [...first, ...later]);
     const rendered = renderVerdict({ author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, plan, focused, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, threshold: packMergeThreshold(it.pack) });
     // A degraded verdict is incomplete, so nothing is suggested from it.
     const actionInput = it.pack && rendered.degraded === null ? { facts: it.facts, checks: rendered.checks, pack: it.pack, roles: it.roles ?? {} } : undefined;
@@ -100,7 +114,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const wanted = actionInput && changesWanted(actionInput);
     const held = approvalHeldBy(rendered.merge.verdict, it.facts.checks);
     const actions = holdDos(heldApprovals(suggested, held), it.cleanupMode);
-    const judged = reusable(answered);
+    const judged = reusable([...first, ...later]);
     const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
     return { ...verdict, request: toMirrorRequest(verdict) };
   } catch (e) {

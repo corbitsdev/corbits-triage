@@ -181,11 +181,16 @@ function sides({ probabilities }: ChoiceAnswer): { serves: number; separate: num
   return { serves: probabilities.one_thing ?? probabilities.serves_purpose ?? 0, separate: probabilities.more_than_one_thing ?? probabilities.separate_change ?? 0 };
 }
 
+/** Malformed replies, or answers to questions that were not asked, are not trusted, so none of the answers count. */
+function isInvalid({ decisions, malformed }: ParsedAnswers, expected: Set<string>): boolean {
+  return malformed || Object.keys(decisions).some((id) => !expected.has(id));
+}
+
 /** The focused slices whose answers call them a separate change, for the follow-up file questions. */
-export function separateSlices({ decisions, malformed }: ParsedAnswers, focused: FocusedPlan): string[] {
-  if (malformed) return [];
+export function separateSlices(answers: ParsedAnswers, focused: FocusedPlan, expected: Set<string>): string[] {
+  if (isInvalid(answers, expected)) return [];
   return Object.keys(focused.slices).filter(function separate(id) {
-    const answer = decisions[id];
+    const answer = answers.decisions[id];
     return answer?.type === "choice" && sides(answer).separate >= FOCUSED_DECIDES;
   });
 }
@@ -238,9 +243,8 @@ function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimi
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
-  const expectedIds = askedQuestionIds(sources, plan, focused);
   const unavailable = !det.needsJudgment ? NOT_ASKED_REASON : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
-  const invalid = parsed.malformed || Object.keys(parsed.decisions).some((id) => !expectedIds.has(id));
+  const invalid = isInvalid(parsed, askedQuestionIds(sources, plan, focused));
   const checks: CheckResult[] = [];
   const scores: number[] = [];
   let anyUnanswered = false;
@@ -324,8 +328,7 @@ function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimi
         const noul = noulOf(id);
         return noul !== undefined && noul >= YES ? [[item, noul]] : [];
       }).sort((a, b) => b[1] - a[1]);
-      // A file split across failing slices is asked about once in each.
-      const named = [...new Set(likely.map(([item]) => item))].slice(0, MAX_FILE_EVIDENCE);
+      const named = likely.map(([item]) => item).slice(0, MAX_FILE_EVIDENCE);
       return push("focused", { result: "fail" }, { ...scored(serves, FOCUSED_PASS_AT, named), ...unread }, named.map(itemText));
     }
     const asked = Object.keys(plan.slices).length;
