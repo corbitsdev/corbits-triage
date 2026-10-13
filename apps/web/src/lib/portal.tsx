@@ -3,6 +3,7 @@ import { toast } from "@corbits/react-ui/ui/toast";
 import { toast as lastingToast } from "sonner";
 import { useQuery, useQueryClient, type Query, type QueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
+import { errorText } from "@corbits/common";
 import { useSession } from "./session.tsx";
 import { hubConfigured } from "./hub-origin.ts";
 import { isTerminalRunEvents } from "@intx/hub-client";
@@ -268,7 +269,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         if (deployed.length) refresh();
       } catch (cause: unknown) {
         convergedTenants.delete(id);
-        warn(`Could not deploy triage workflows. ${cause instanceof Error ? cause.message : String(cause)}`);
+        warn(`Could not deploy triage workflows. ${errorText(cause)}`);
       }
     }
     void deploy();

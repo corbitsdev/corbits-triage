@@ -3,6 +3,7 @@ import {
   authorTeams,
   codeownersFor,
   codeownersForPr,
+  listInstallations,
   listOpenPrs,
   listPrFiles,
   listPrFilesPage,
@@ -56,6 +57,19 @@ describe("listOpenPrs", () => {
     const { gh } = recorder(() => [{ number: 7, title: "T", head: { sha: "s" } }]);
     const [pr] = await listOpenPrs(gh, "acme/widgets");
     expect(pr?.author).toBeNull();
+  });
+});
+
+describe("listInstallations", () => {
+  test("an enterprise account is named by its slug, and a suspended installation says so", async () => {
+    const { gh } = recorder(() => [
+      { id: 1, account: { login: "acme" }, html_url: "https://github.com/a", repository_selection: "all", suspended_at: null },
+      { id: 2, account: { slug: "corp" }, html_url: "https://github.com/b", repository_selection: "selected", suspended_at: "2026-10-01T00:00:00Z" },
+    ]);
+    expect(await listInstallations(gh)).toEqual([
+      { id: 1, account: "acme", htmlUrl: "https://github.com/a", selection: "all", suspended: false },
+      { id: 2, account: "corp", htmlUrl: "https://github.com/b", selection: "selected", suspended: true },
+    ]);
   });
 });
 

@@ -6,6 +6,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
+import { asRecord, asRepo, errorText } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
 import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
@@ -142,7 +143,7 @@ type ProviderBody = {
 
 const MAX_LIST_PAGES = 100;
 
-function enc(value: string): string {
+export function enc(value: string): string {
   return encodeURIComponent(value);
 }
 
@@ -159,18 +160,9 @@ function requireId(value: string, what: string): string {
 }
 
 export function validateRepo(repo: string): string {
-  const trimmed = repo.trim();
-  const parts = trimmed.split("/");
-  if (parts.length !== 2 || parts[0].length === 0 || parts[1].length === 0) {
-    throw new Error("Repository must be owner/name.");
-  }
-  if (parts.some((part) => part === "." || part === "..") || trimmed.includes("..")) {
-    throw new Error("Repository must not traverse paths.");
-  }
-  if (/[\s\\]/.test(trimmed)) {
-    throw new Error("Repository must not contain whitespace or backslashes.");
-  }
-  return trimmed;
+  const clean = asRepo(repo);
+  if (!clean) throw new Error("Repository must be owner/name.");
+  return clean;
 }
 
 export function githubAppSecret(app: { appId: string; privateKey: string }): string {
@@ -858,7 +850,7 @@ const SERVICE_NOT_RUNNING = "The service is not running. Restart the hub, then t
 
 function isTerminalMailFailure(cause: unknown): boolean {
   if (cause instanceof ApiError && cause.code === "deployment_unreachable") return true;
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorText(cause);
   return message.includes("terminal and cannot receive more mail")
     || message.includes("workflow_run_terminal")
     || message.includes("deployment_unreachable")
@@ -935,7 +927,7 @@ async function triggerNamedWorkflow(
       const existing = await readWorkflowRunEvents(transport, tenantId, deploymentId, deploymentId);
       for (const event of existing.events) {
         if (event.type !== "ChildSpawned") continue;
-        const body = obj(event.body);
+        const body = asRecord(event.body) ?? {};
         if (body.stepId === "events" && typeof body.childRunId === "string") priorBodyRunIds.add(body.childRunId);
       }
     } catch (cause) {
@@ -1010,7 +1002,7 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
   if (input.action === "review" && input.event !== "APPROVE" && !input.body.trim()) {
     throw new Error("Review body must not be empty.");
   }
-  const result = obj(await transport.fetch<unknown>("POST", `/api/integrations/github-actions/${enc(requireTenantId(tenantId))}`, { ...input, repo }));
+  const result = asRecord(await transport.fetch<unknown>("POST", `/api/integrations/github-actions/${enc(requireTenantId(tenantId))}`, { ...input, repo })) ?? {};
   return { commentId: typeof result.commentId === "number" ? result.commentId : null };
 }
 
@@ -1528,10 +1520,6 @@ function recordedChecks(checks: PullVerdict["checks"]): CheckResult[] {
 function canonicalPrHref(repo: string, number: number): string {
   const [owner, name] = repo.split("/");
   return `/triage/pr/${encodeURIComponent(owner ?? "")}/${encodeURIComponent(name ?? "")}/${number}`;
-}
-
-function obj(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
 export function strings(value: unknown): string[] {

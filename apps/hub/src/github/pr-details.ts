@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues } from "@corbits/github-reads";
+import { errorText } from "@corbits/common";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation } from "./open-pulls.js";
 import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
@@ -47,7 +48,7 @@ export function createGithubPrDetails(deps: PortalCredentialDeps & { githubApiOr
       ]);
       return Response.json({ pr, files, commits, comments, issues, checks, reviews });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorText(err);
       console.log(JSON.stringify({ ts: new Date().toISOString(), level: "warn", msg: "github_pr_details_failed", tenantId, repo: query.repo, number: query.number, error: message }));
       return failure(502, "github_failed", `Could not read ${query.repo}#${query.number} from GitHub: ${message}.`);
     }

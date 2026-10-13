@@ -1,10 +1,10 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { missingFrom } from "@corbits/github-reads";
-import { ALL_CHECKS, BUILT_IN_CHECK_NAMES, CHECK_CATALOG, classificationSources, type Action, type ActionKind, type CatalogId, type CheckPack, type CleanupMode, type Do, type RepoRole, type ResolvedTarget, teamSlug } from "@corbits/triage-contracts";
+import { ALL_CHECKS, checkName, classificationSources, type Action, type ActionKind, type CheckPack, type CleanupMode, type Do, type RepoRole, type ResolvedTarget, teamSlug } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { authorFailures, type MergeVerdict } from "./render.js";
-import { errorText } from "./extract.js";
+import { errorText } from "@corbits/common";
 import { unrunnable } from "./execute-do.js";
 
 export type Branch = "yes" | "no" | "unsure" | "always";
@@ -47,10 +47,6 @@ export interface ActionInput {
   roles: Record<string, RepoRole>;
 }
 
-export function checkName(id: string, pack: CheckPack): string {
-  return BUILT_IN_CHECK_NAMES.get(id) ?? CHECK_CATALOG[id as CatalogId]?.name ?? pack.custom.find((c) => c.id === id)?.name ?? id;
-}
-
 function joined(names: string[]): string {
   return names.join(", ");
 }
@@ -69,7 +65,7 @@ function pick(action: Action, { checks, pack }: ActionInput): Picked {
   const every = action.checks.includes(ALL_CHECKS);
   if (every && !checks.length) return { skipped: "Every check is off in this pack." };
   const ids = every ? checks.map((c) => c.check) : action.checks;
-  const results = ids.map((id) => ({ name: checkName(id, pack), result: checks.find((c) => c.check === id)?.result }));
+  const results = ids.map((id) => ({ name: checkName(pack, id), result: checks.find((c) => c.check === id)?.result }));
   const off = results.filter((r) => r.result === undefined);
   if (off.length) return { skipped: `${joined(off.map((r) => r.name))} ${off.length === 1 ? "is" : "are"} off in this pack.` };
   const failed = results.filter((r) => r.result === "fail").map((r) => r.name);
@@ -118,7 +114,7 @@ function changesBody(action: Action, input: ActionInput): string {
   const { pack } = input;
   const failed = changesFor(action, input);
   if (!failed.length) throw new Error("nothing that failed is the author's to fix");
-  return ["Triage requests changes:", ...failed.map((c) => `- ${checkName(c.check, pack)}: ${c.reason}`)].join("\n");
+  return ["Triage requests changes:", ...failed.map((c) => `- ${checkName(pack, c.check)}: ${c.reason}`)].join("\n");
 }
 
 function resolve(task: Do, action: Action, input: ActionInput): ResolvedTarget {

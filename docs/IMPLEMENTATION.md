@@ -84,6 +84,7 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
 - `triage-contracts`: check pack schema, repository policy, triage state,
   verdict labels, trigger mail and shared types.
 - `openai-null-delta`: inference adapter fix for null stream deltas.
+- `common`: dependency-free helpers shared across apps and packages.
 
 ## Environment
 

@@ -10,7 +10,7 @@ import { usePullPageItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
-import { errorText } from "../lib/error-text.ts";
+import { errorText } from "@corbits/common";
 import { approvedHead, checkedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
@@ -225,7 +225,7 @@ function RecommendedComment({ item, posted, onPosted, onDismiss }: {
       onPosted();
       await queryClient.invalidateQueries({ queryKey: ["github-pull"] });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setBusy(false);
     }
@@ -299,7 +299,7 @@ export default function PRDetail() {
       setError("");
       await decide(approval.id, decision);
     } catch (cause) {
-      setError(`Could not update the approval. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
+      setError(`Could not update the approval. ${errorText(cause)} Try again.`);
     } finally {
       setBusy(false);
     }
@@ -326,7 +326,7 @@ export default function PRDetail() {
         }, "now");
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setBusy(false);
     }
@@ -368,7 +368,7 @@ export default function PRDetail() {
       }
       setComposer(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setBusy(false);
     }

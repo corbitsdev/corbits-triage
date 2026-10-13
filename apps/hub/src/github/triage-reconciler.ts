@@ -9,7 +9,7 @@ import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type Reconcil
 import { repoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
-import { mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
+import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
@@ -69,10 +69,6 @@ function enabledRepos(config: unknown): EnabledRepo[] {
     const policy = repoPolicy(record);
     return record.connected && policy.enabled ? [{ record, policy }] : [];
   });
-}
-
-function isRunning(runs: ObservedRuns): boolean {
-  return [...runs.byRepo.values()].some((byHead) => [...byHead.values()].some((list) => list.some((run) => run.status === "running")));
 }
 
 type Claimed = { rows: PrTriageRow[]; version: TriageStateVersion; enqueue: QueuedPr[] };

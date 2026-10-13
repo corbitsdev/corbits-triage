@@ -1,7 +1,7 @@
 import type { KeyboardEvent } from "react";
 import { useDismissablePopover } from "@corbits/react-ui";
+import { checkName } from "@corbits/triage-contracts";
 import { checkOn } from "../../lib/pack-draft.ts";
-import { checkName } from "../../lib/pack-prose.ts";
 import CheckPopover, { type CheckPopoverProps } from "./CheckPopover.tsx";
 
 type CheckNameProps = Omit<CheckPopoverProps, "onClose">;

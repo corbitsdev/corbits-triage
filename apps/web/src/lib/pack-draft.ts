@@ -3,6 +3,7 @@ import {
   CATALOG_IDS,
   catalogCheckEnabled,
   customCheckEnabled,
+  isCatalogId,
   packMergeThreshold,
   readCheckPack,
   RECOMMENDED_ISSUE,
@@ -18,7 +19,6 @@ import {
   type RepoPolicy,
   type RepoRole,
 } from "@corbits/triage-contracts";
-import { isCatalogId } from "./pack-prose.ts";
 
 export type DraftPolicy = Pick<RepoPolicy, "cleanupMode" | "enabled" | "roles">;
 

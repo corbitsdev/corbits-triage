@@ -2,7 +2,8 @@ import { getChecks, getReviews, listIssueComments, listPrCommits, listPrFilesPag
 import { classificationSources, QUALITY_CHECK_IDS, repoPolicy, type CheckPack, type CustomCheck, type RuleCustomCheck } from "@corbits/triage-contracts";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { rules } from "@corbits/triage-workflows/actions/rules";
-import { checkName, type SuggestedAction, type SuggestedDo } from "@corbits/triage-workflows/logic/actions";
+import { checkName } from "@corbits/triage-contracts";
+import type { SuggestedAction, SuggestedDo } from "@corbits/triage-workflows/logic/actions";
 import { hasModelChecks, type CheckResult, type PrFileFacts } from "@corbits/triage-workflows/logic/checks";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, type FilesCursor, type ListedFiles, type RepoDocs } from "@corbits/triage-workflows/logic/facts";
 import type { Judged } from "@corbits/triage-workflows/logic/item";
@@ -186,7 +187,7 @@ export async function runLocal({ repo, number }: PrRef, { gh, pack: packed, syst
     ? verdict.actions.filter(isDo)
     : previews.flatMap((preview) => (preview.status === "decided" ? preview.dos.filter(isDo) : []));
   const { state, reason, nextAction, actor, feedback, score, merge, degraded } = verdict;
-  const named = verdict.checks.map((c) => ({ ...c, name: checkName(c.check, pack) }));
+  const named = verdict.checks.map((c) => ({ ...c, name: checkName(pack, c.check) }));
   const failing = new Set(named.filter((c) => c.result === "fail").map((c) => c.check));
   const jobs = failing.has("ci") && pr.sha ? await withoutSuggestion(jobPages(gh, repo, pr.sha), {}, "the failing jobs' pages") : {};
   const { actions: suggested, notes } = suggest({ facts: ruledItem.facts, checks: named, pack, jobs });

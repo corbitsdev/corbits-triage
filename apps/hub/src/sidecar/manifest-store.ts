@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { errorText } from "@corbits/common";
 import type { CredentialCipher } from "@intx/types";
 
 /** What a hub restart needs to re-spawn an allocation identically. */
@@ -30,10 +31,6 @@ export type CreateLocalSidecarManifestStoreOpts = {
 
 /** `token` holds the cipher blob, not the plaintext. */
 type StoredManifest = LocalSidecarManifest;
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** Domain-separated from `credentialAad` so a manifest token never decrypts as a credential secret. */
 function manifestTokenAad(allocationId: string): string {
@@ -104,7 +101,7 @@ export function createLocalSidecarManifestStore({
         level: "warn",
         msg: "local_sidecar_manifest_unreadable_removed",
         file,
-        error: errorMessage(error),
+        error: errorText(error),
       }));
       return null;
     }

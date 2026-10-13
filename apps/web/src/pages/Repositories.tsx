@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { Button } from "@corbits/react-ui";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
+import { errorText } from "@corbits/common";
 import HealthMark from "../components/repo-panel/HealthMark.tsx";
 import RepoPanel from "../components/repo-panel/RepoPanel.tsx";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
@@ -113,7 +114,7 @@ export default function Repositories() {
       }
       window.location.assign(url);
     } catch (cause) {
-      setError(`Could not open GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
+      setError(`Could not open GitHub. ${errorText(cause)}`);
     } finally {
       setOpening(false);
     }

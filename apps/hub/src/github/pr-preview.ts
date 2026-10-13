@@ -6,10 +6,10 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { appLogin, authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-reads";
-import { CheckOutputSchema, checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, type CheckPack } from "@corbits/triage-contracts";
+import { CheckOutputSchema, checkName, checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, type CheckPack } from "@corbits/triage-contracts";
+import { errorText } from "@corbits/common";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { rules, type RulesItem } from "@corbits/triage-workflows/actions/rules";
-import { checkName } from "@corbits/triage-workflows/logic/actions";
 import type { PrFileFacts } from "@corbits/triage-workflows/logic/checks";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, roleTeams, type FilesCursor, type ItemContext, type ListedFiles } from "@corbits/triage-workflows/logic/facts";
 import { previewActions } from "@corbits/triage-workflows/logic/preview";
@@ -119,7 +119,7 @@ function candidatePack(raw: unknown, repo: string): CheckPack | string {
   try {
     return readCheckPack(raw, repo);
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return errorText(err);
   }
 }
 
@@ -158,7 +158,7 @@ async function readItem(gh: GithubFetch, number: number, context: ItemContext): 
     const membership = pr.author ? await readAuthorTeams(gh, repo, pr.author, roleTeams(context.policy, repo)) : null;
     return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: membership }, context);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorText(err);
     return failure(502, "github_failed", `Could not read ${repo}#${number} from GitHub: ${message}.`);
   }
 }
@@ -201,7 +201,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     const { state, priority, labels, owner, humanGated, score, confidence, merge, degraded, reason, nextAction, actor, feedback } = verdict;
     const checks = verdict.checks.map((c) => ({
       ...c,
-      name: checkName(c.check, pack),
+      name: checkName(pack, c.check),
       result: c.kind === "model" && c.reason === NEEDS_JUDGE_REASON ? "needs-judge" as const : c.result,
     }));
     // A degraded verdict suggests nothing, as evaluate does.

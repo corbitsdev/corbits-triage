@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "
 import { Badge, Button, StatusDot } from "@corbits/react-ui";
 import { useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
+import { errorText } from "@corbits/common";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
@@ -38,10 +39,6 @@ function startingStep(snapshot: PortalSnapshot | null, returnedFromGithub: boole
   if (!snapshot || !hasActiveGithubCredential(snapshot.credentials)) return "create";
   if (returnedFromInstall()) return "select";
   return snapshot.repos.length > 0 ? "model" : "install";
-}
-
-function message(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 export default function Connect() {
@@ -104,7 +101,7 @@ export default function Connect() {
     } catch (cause) {
       setPrivateKey("");
       setPemName("");
-      setError(`Could not read the private key. ${message(cause)}`);
+      setError(`Could not read the private key. ${errorText(cause)}`);
     }
   }
   async function startManifest(replace = false) {
@@ -122,7 +119,7 @@ export default function Connect() {
         }
         return;
       }
-      setError(`Could not start GitHub setup. ${message(cause)}`);
+      setError(`Could not start GitHub setup. ${errorText(cause)}`);
       setBusy(false);
     }
   }
@@ -155,7 +152,7 @@ export default function Connect() {
         if (window.confirm("A GitHub App is already connected. Replace the GitHub App and webhook secrets?")) await saveManual(true);
         return;
       }
-      setError(`Could not save the existing GitHub App. ${message(cause)}`);
+      setError(`Could not save the existing GitHub App. ${errorText(cause)}`);
     } finally {
       setBusy(false);
     }
@@ -192,7 +189,7 @@ export default function Connect() {
       }
       window.location.assign(url);
     } catch (cause) {
-      setError(`Could not open GitHub. ${message(cause)}`);
+      setError(`Could not open GitHub. ${errorText(cause)}`);
     }
   }
 

@@ -1,4 +1,4 @@
-import { errorText } from "./error-text.ts";
+import { errorText } from "@corbits/common";
 
 /** How long an action waits for Undo before it is sent, and how long its result stays on screen. */
 export const HOLD_MS = 6_000;

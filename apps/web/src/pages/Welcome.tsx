@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { AuthLayout, Button, Input, LoginForm } from "@corbits/react-ui";
+import { errorText } from "@corbits/common";
 import { getAuthMethods, requestPasswordReset, signInWithGoogle, type AuthMethods } from "../lib/hub-auth.ts";
 import { useSession } from "../lib/session.tsx";
 
 type Mode = "sign-in" | "sign-up" | "reset";
 
 function message(cause: unknown): string {
-  return (cause instanceof Error ? cause.message : String(cause)).replace(/[.\s]*$/, "");
+  return errorText(cause).replace(/[.\s]*$/, "");
 }
 
 /** better-auth sends the browser back with `?error=<code>` when social sign-in fails. */

@@ -1,9 +1,8 @@
-import type { CheckPack } from "@corbits/triage-contracts";
+import { checkName, type CheckPack } from "@corbits/triage-contracts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { relativeTime } from "../lib/duration.ts";
-import { errorText } from "../lib/error-text.ts";
+import { errorText } from "@corbits/common";
 import type { CheckChange, PrItem, TimelineEntry } from "../lib/hub-api.ts";
-import { checkName } from "../lib/pack-prose.ts";
 import { usePrTimeline } from "../lib/pr-timeline.ts";
 
 function changeText(pack: CheckPack | null, { check, from, to }: CheckChange): string {

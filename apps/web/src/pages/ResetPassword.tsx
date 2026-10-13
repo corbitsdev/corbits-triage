@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@corbits/react-ui";
 import { useLocation } from "react-router-dom";
+import { errorText } from "@corbits/common";
 import { resetPassword } from "../lib/hub-auth.ts";
 
 /** Where the hub's password reset email lands, with `?token=` or, for a spent or expired link, `?error=`. */
@@ -20,7 +21,7 @@ export function ResetPassword() {
       await resetPassword(token, password);
       setDone(true);
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setPending(false);
     }

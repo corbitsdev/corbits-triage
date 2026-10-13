@@ -5,11 +5,7 @@ import {
   readCheckPack,
   type CheckPack,
 } from "@corbits/triage-contracts";
-import { findArtifactByTitle, listArtifacts, newestByTitle, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
-
-function enc(value: string): string {
-  return encodeURIComponent(value);
-}
+import { enc, findArtifactByTitle, listArtifacts, newestByTitle, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
 
 function collection(tenantId: string): string {
   return `/api/tenants/${enc(tenantId)}/artifacts`;
