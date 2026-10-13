@@ -50,9 +50,6 @@ export type Branch = "yes" | "no" | "unsure" | "always";
 
 export const BRANCH_NAMES: Record<Branch, string> = { yes: "Yes", no: "No", unsure: "Unsure", always: "Always" };
 
-/** The Do kinds the contract refuses to run automatically on a branch. */
-export const MANUAL_ONLY: Record<Branch, readonly ActionKind[]> = { yes: [], no: [], unsure: ["close"], always: ["close", "agent"] };
-
 export type CheckKind = { evaluation: "rule"; rule: RuleKind; title: string; line: string } | { evaluation: "model"; shape: ModelShape; title: string; line: string };
 
 export const CHECK_KINDS: CheckKind[] = [
@@ -117,11 +114,6 @@ function people(target: PeopleTarget): string {
 }
 
 export function doText(step: Do): string {
-  const text = doAction(step);
-  return step.automatic ? `${text} automatically` : text;
-}
-
-function doAction(step: Do): string {
   switch (step.kind) {
     case "labels":
       if (step.target.from === "type") return "label it by type";

@@ -1,9 +1,17 @@
 import { findArtifactByTitle, getArtifact, type ArtifactDb } from "@corbits/artifacts";
-import { checkPackName, readCheckPack, type CheckPack } from "@corbits/triage-contracts";
+import { checkPackName, readCheckPack, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 
-export type CheckPackRead = { status: "ok"; pack: CheckPack } | { status: "missing" } | { status: "corrupt"; reason: string };
+/** `automatic` is the Do kinds the pr-triage role is granted on the repository. */
+export type StoredPack = { pack: CheckPack; automatic: ActionKind[] };
 
-export async function loadCheckPack(db: ArtifactDb, tenantId: string, repo: string): Promise<CheckPackRead> {
+export type CheckPackRead = ({ status: "ok" } & StoredPack) | { status: "missing" } | { status: "corrupt"; reason: string };
+
+export async function loadCheckPack(
+  db: ArtifactDb,
+  tenantId: string,
+  repo: string,
+  automaticKinds: (tenantId: string, repo: string) => Promise<ActionKind[]>,
+): Promise<CheckPackRead> {
   let title: string;
   try {
     title = checkPackName(repo);
@@ -14,10 +22,12 @@ export async function loadCheckPack(db: ArtifactDb, tenantId: string, repo: stri
   if (!found) return { status: "missing" };
   const row = await getArtifact(db, found.artifactId);
   if (!row) return { status: "missing" };
+  let pack: CheckPack;
   try {
-    return { status: "ok", pack: readCheckPack(row.content, repo) };
+    pack = readCheckPack(row.content, repo);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     return { status: "corrupt", reason: error.message };
   }
+  return { status: "ok", pack, automatic: await automaticKinds(tenantId, repo) };
 }

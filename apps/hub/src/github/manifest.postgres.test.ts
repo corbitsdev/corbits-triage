@@ -165,7 +165,7 @@ test("PostgreSQL: completing setup lets admins act on GitHub, once across reconn
     const grants = await db.select().from(schema.grant).where(eq(schema.grant.roleId, "rol_admin"));
     expect(grants.map(({ resource, action, effect, origin }) => ({ resource, action, effect, origin }))).toEqual([
       { resource: `credential:${app?.id}`, action: "use", effect: "allow", origin: "role" },
-      { resource: "github-review:*", action: "approve", effect: "allow", origin: "role" },
+      { resource: "triage-do:*", action: "invoke", effect: "allow", origin: "role" },
     ]);
   } finally {
     await handle?.close();

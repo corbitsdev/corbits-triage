@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
-import { emptyPack } from "@corbits/triage-contracts";
-import { applyInstallationListing, createBridgeHandler, loadBridgeHook, type BridgeDeps } from "./bridge.js";
+import { emptyPack, readCheckPack, recommendedPack, repoPolicy } from "@corbits/triage-contracts";
+import { applyInstallationListing, createBridgeHandler, loadBridgeHook, mailPayload, type BridgeDeps } from "./bridge.js";
 import { MAX_BODY_BYTES } from "../read-json.js";
 import { repoRecords } from "./tenant-config.js";
 import { DeliveryCache } from "./dedupe.js";
@@ -110,7 +110,7 @@ function packsFor(repos: string[]): BridgeDeps["readCheckPack"] {
   const packs = new Map(repos.map((repo) => [repo, emptyPack(repo)]));
   return async function readCheckPack(_tenant, repo) {
     const pack = packs.get(repo);
-    return pack ? { status: "ok", pack } : { status: "missing" };
+    return pack ? { status: "ok", pack, automatic: [] } : { status: "missing" };
   };
 }
 
@@ -221,7 +221,6 @@ describe("bridge handler", () => {
       event: "opened",
       mail: expect.objectContaining({ repo: "octocat/hello", prNumber: 7 }),
       policy: expect.objectContaining({
-        cleanupMode: "human-approved",
         enabled: true,
         checks: { ci: true, conflicts: true },
       }),
@@ -474,7 +473,7 @@ describe("bridge installation events", () => {
           name: "octocat/hello",
           connected: true,
           installationId: 42,
-          cleanupMode: "automated",
+          triageDrafts: false,
           enabled: false,
           checks: { ci: true, conflicts: false },
         }],
@@ -494,7 +493,7 @@ describe("bridge installation events", () => {
         account: "octocat",
         installationUrl: "https://github.com/settings/installations/42",
         selection: "selected",
-        cleanupMode: "automated",
+        triageDrafts: false,
         enabled: false,
         checks: expect.objectContaining({ conflicts: false }),
       }),
@@ -582,7 +581,7 @@ describe("bridge installation events", () => {
       other: { keep: true },
       corbitsTriage: {
         confidenceFloor: 0.8,
-        repos: [{ name: "octocat/hello", connected: true, installationId: 1, cleanupMode: "automated" }],
+        repos: [{ name: "octocat/hello", connected: true, installationId: 1, triageDrafts: false }],
       },
     });
     await bridge({ db })(installRequest("installation_repositories", {
@@ -592,11 +591,11 @@ describe("bridge installation events", () => {
     }, "siblings-1"), TARGET);
     const config = db.tenantConfig() as {
       other: unknown;
-      corbitsTriage: { confidenceFloor: number; repos: Array<{ name: string; cleanupMode?: string }> };
+      corbitsTriage: { confidenceFloor: number; repos: Array<{ name: string; triageDrafts?: boolean }> };
     };
     expect(config.other).toEqual({ keep: true });
     expect(config.corbitsTriage.confidenceFloor).toBe(0.8);
-    expect(config.corbitsTriage.repos.find((row) => row.name === "octocat/hello")?.cleanupMode).toBe("automated");
+    expect(config.corbitsTriage.repos.find((row) => row.name === "octocat/hello")?.triageDrafts).toBe(false);
   });
 });
 
@@ -617,4 +616,15 @@ test("installation listing mirrors GitHub", () => {
   const next = applyInstallationListing(ns, listings);
   expect(repoRecords(next).map((row) => row.name).sort()).toEqual(["acme/kept", "acme/new", "manual/repo", "paused/repo"]);
   expect(repoRecords(next).find((row) => row.name === "paused/repo")?.connected).toBe(false);
+});
+
+describe("mailPayload", () => {
+  test("every mailed Do carries the boolean automatic flag a deployment built before grants requires, and reads back as the pack", () => {
+    const pack = recommendedPack("octocat/hello");
+    const { checkPack } = mailPayload("octocat/hello", repoPolicy({ enabled: true }), { pack, automatic: [] }, {});
+    const dos = checkPack.actions.flatMap((action) => Object.values(action.branches).flat()) as Array<Record<string, unknown>>;
+    expect(dos.length).toBeGreaterThan(0);
+    expect(dos.every((step) => typeof step["automatic"] === "boolean")).toBe(true);
+    expect(readCheckPack(checkPack)).toEqual(pack);
+  });
 });

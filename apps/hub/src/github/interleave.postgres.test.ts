@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { runArtifactMigrations } from "@corbits/artifacts";
-import { checkPackName, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { createGithubPrTriage } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
@@ -17,7 +17,7 @@ const TENANT = "tnt_state";
 const REPO = "acme/widgets";
 const NOW = new Date("2026-10-08T12:00:00Z");
 const LONG_AGO = "2026-10-07T00:00:00.000Z";
-const PACK = { name: checkPackName(REPO), schemaVersion: 1, repo: REPO, checks: [] } as unknown as CheckPack;
+const PACK = emptyPack(REPO);
 const CONFIG = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true, installationId: 1 }] } };
 const DEPLOYMENT = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
 const FAILED: PrTriageRow = { number: 8, headSha: "abc123", status: "failed", attempts: 1, error: "run failed", firstSeenAt: LONG_AGO, queuedAt: LONG_AGO, updatedAt: LONG_AGO };
@@ -43,7 +43,7 @@ function route(store: TriageStateStore, deliver: Deliver) {
     cipher: { async decrypt() { return "{}"; } } as never,
     authorize: async () => true,
     pullHead: async () => "abc123",
-    readCheckPack: async () => ({ status: "ok", pack: PACK }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [] }),
     liveDeployments: async () => [DEPLOYMENT],
     observeRuns: noRuns,
     store,
@@ -63,7 +63,7 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver) 
     openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt: LONG_AGO, draft: false })),
     observeTenant: async () => ({ deployments: [DEPLOYMENT], observed: [await noRuns()] }),
     store,
-    readCheckPack: async () => ({ status: "ok", pack: PACK }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [] }),
     deliver: async (_tenant, _address, payload) => deliver(payload),
     policy: DEFAULT_RECONCILE_POLICY,
     batchSize: DEFAULT_RECONCILE_POLICY.maxInFlight,

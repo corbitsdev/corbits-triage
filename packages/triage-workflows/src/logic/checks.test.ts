@@ -17,7 +17,6 @@ const noisy: PrFacts = {
 };
 
 const allOff: RepoPolicy = {
-  cleanupMode: "human-approved",
   enabled: true,
   checks: {
     ci: false,

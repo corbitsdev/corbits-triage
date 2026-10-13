@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { emptyPack, type Action, type CheckRef, type Do } from "@corbits/triage-contracts";
-import { doEffectId, evaluateActions, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
+import { alwaysHeld, emptyPack, type Action, type CheckRef, type Do } from "@corbits/triage-contracts";
+import { doEffectId, evaluateActions, holdDos, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
 import { deriveState, type PrFacts } from "./checks.js";
 
 const facts: PrFacts = {
@@ -37,7 +37,7 @@ function targets(steps: SuggestedAction[]) {
 }
 
 function say(body: string): Do {
-  return { kind: "comment", automatic: false, target: { body } };
+  return { kind: "comment", target: { body } };
 }
 
 function branching(when: Action["when"], refs: CheckRef[]): Action {
@@ -67,7 +67,7 @@ describe("evaluateActions", () => {
 
   test("names the checks behind the branch", () => {
     expect(run([branching(["opened"], ["ci", "size"])])).toEqual([
-      { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "no" }, reason: "Size failed." },
+      { id: "a", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", target: { body: "no" }, reason: "Size failed." },
     ]);
   });
 
@@ -82,29 +82,29 @@ describe("evaluateActions", () => {
   });
 
   test.each<[string, Do, unknown[]]>([
-    ["a label already set in another case is omitted", { kind: "labels", automatic: true, target: { from: "list", labels: ["Api"] } }, []],
-    ["a partly set label list is kept whole", { kind: "labels", automatic: true, target: { from: "list", labels: ["api", "search"] } }, [{ labels: ["api", "search"] }]],
-    ["an assignee already in place in another case is omitted", { kind: "assign", automatic: true, target: { to: "users", users: ["bob"] } }, []],
+    ["a label already set in another case is omitted", { kind: "labels", target: { from: "list", labels: ["Api"] } }, []],
+    ["a partly set label list is kept whole", { kind: "labels", target: { from: "list", labels: ["api", "search"] } }, [{ labels: ["api", "search"] }]],
+    ["an assignee already in place in another case is omitted", { kind: "assign", target: { to: "users", users: ["bob"] } }, []],
     [
       "review is requested only from people not yet requested or reviewed, ignoring case",
-      { kind: "request-review", automatic: false, target: { to: "users", users: ["OctoCat", "ALICE", "Bob", "carol"] } },
+      { kind: "request-review", target: { to: "users", users: ["OctoCat", "ALICE", "Bob", "carol"] } },
       [{ users: ["carol"], teams: [] }],
     ],
-    ["a review request already satisfied is omitted", { kind: "request-review", automatic: false, target: { to: "users", users: ["alice", "bob"] } }, []],
-    ["closing an open pull request stands", { kind: "close", automatic: false, target: {} }, [{}]],
+    ["a review request already satisfied is omitted", { kind: "request-review", target: { to: "users", users: ["alice", "bob"] } }, []],
+    ["closing an open pull request stands", { kind: "close", target: {} }, [{}]],
   ])("%s", (_, task, expected) => {
     expect(targets(run([always([task])]))).toEqual(expected);
   });
 
   test("resolves people targets and skips the ones that cannot apply", () => {
     const dos: Do[] = [
-      { kind: "request-review", automatic: false, target: { to: "role", role: "leads" } },
-      { kind: "request-review", automatic: false, target: { to: "role", role: "ghost" } },
-      { kind: "request-review", automatic: false, target: { to: "users", users: ["octocat"] } },
-      { kind: "assign", automatic: false, target: { to: "author" } },
-      { kind: "assign", automatic: false, target: { to: "teams", teams: ["core"] } },
+      { kind: "request-review", target: { to: "role", role: "leads" } },
+      { kind: "request-review", target: { to: "role", role: "ghost" } },
+      { kind: "request-review", target: { to: "users", users: ["octocat"] } },
+      { kind: "assign", target: { to: "author" } },
+      { kind: "assign", target: { to: "teams", teams: ["core"] } },
     ];
-    const base = { id: "a", branch: "always", automatic: false } as const;
+    const base = { id: "a", branch: "always" } as const;
     const effectId = expect.any(String);
     expect(run([always(dos)], { leads: { users: ["dave", "octocat"], teams: ["@acme/core"] } })).toEqual([
       { ...base, index: 0, effectId, kind: "request-review", target: { users: ["dave"], teams: ["core"] }, reason: "Always applies." },
@@ -123,8 +123,8 @@ describe("evaluateActions", () => {
 
   test("a step keeps its index when steps before it are satisfied or skipped", () => {
     const behind = run([always([
-      { kind: "labels", automatic: false, target: { from: "list", labels: ["api"] } },
-      { kind: "assign", automatic: false, target: { to: "teams", teams: ["core"] } },
+      { kind: "labels", target: { from: "list", labels: ["api"] } },
+      { kind: "assign", target: { to: "teams", teams: ["core"] } },
       say("hello"),
     ])]);
     const ref = { repo: "acme/widgets", number: 8, headSha: "abc", actionId: "a", branch: "always", index: 2, kind: "comment", target: { body: "hello" } } as const;
@@ -133,8 +133,17 @@ describe("evaluateActions", () => {
 
   test("a Do inserted earlier by a pack edit does not take the id of the Do that held its index", () => {
     const [before] = run([always([say("hello")])]) as SuggestedDo[];
-    const [inserted, moved] = run([always([{ kind: "labels", automatic: false, target: { from: "list", labels: ["search"] } }, say("hello")])]) as SuggestedDo[];
+    const [inserted, moved] = run([always([{ kind: "labels", target: { from: "list", labels: ["search"] } }, say("hello")])]) as SuggestedDo[];
     expect(inserted!.effectId).not.toBe(before!.effectId);
     expect(moved!.effectId).not.toBe(before!.effectId);
+  });
+});
+
+describe("holdDos", () => {
+  test("close on unsure, and close or an agent without checks, are held though the pr-triage role holds them; elsewhere they run", () => {
+    const close = (branch: SuggestedDo["branch"]): SuggestedDo => ({ id: "c", branch, index: 0, kind: "close", reason: "", effectId: `e-${branch}`, target: {} });
+    expect(holdDos([close("unsure"), close("always"), close("no")], ["close"]).map((action) => "held" in action)).toEqual([true, true, false]);
+    expect(alwaysHeld("always", "agent")).toBe(true);
+    expect(alwaysHeld("yes", "agent")).toBe(false);
   });
 });

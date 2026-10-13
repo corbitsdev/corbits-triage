@@ -69,6 +69,7 @@ import { createGithubPrDetails } from "./github/pr-details.js";
 import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
+import { createAutomation } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
 import { createPullHeadReader, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads } from "./github/tenant-open-heads.js";
@@ -213,6 +214,8 @@ cronTicker = createCronTicker({
 cronTicker.start();
 await migrateRepoEnabledFlag(composition.db);
 await migrateTriageTables(composition.db, database.schema ?? "public");
+const automation = createAutomation({ db: composition.db, now });
+await automation.startUp();
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
@@ -270,7 +273,7 @@ async function sendBridgeMail(tenantId: string, workflow: string, payload: unkno
   await deliverToDeployment(tenantId, live.address, payload);
 }
 function readCheckPack(tenantId: string, repo: string) {
-  return loadCheckPack(composition.db, tenantId, repo);
+  return loadCheckPack(composition.db, tenantId, repo, automation.automaticKinds);
 }
 // A tenant's system principal never changes once minted.
 const githubSenderPrincipals = new Map<string, string>();

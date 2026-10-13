@@ -72,7 +72,7 @@ export const judgeAgent = defineAgent({
 
 export const executeAgent = defineAgent({
   id: "triage-execute",
-  systemPrompt: "Deterministic execution of automatic pack Dos. No inference.",
+  systemPrompt: "Deterministic execution of unattended pack Dos. No inference.",
   tools: [githubWrite],
   capabilities: [],
   inference,

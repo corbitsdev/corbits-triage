@@ -11,7 +11,7 @@ const pull = { repo: "acme/widgets", number: 8 };
 const NONE: ReadonlySet<string> = new Set();
 
 function step(kind: string, target: Record<string, unknown>, index = 0): Record<string, unknown> {
-  return { id: "route", branch: "no", index, effectId: `effect-${index}`, kind, automatic: false, held: true, reason: "Size failed.", target };
+  return { id: "route", branch: "no", index, effectId: `effect-${index}`, kind, held: true, reason: "Size failed.", target };
 }
 
 /** A pr-triage verdict as the hub's triage-verdicts route answers it, read back the way the inbox reads it. */
@@ -49,10 +49,10 @@ describe("pendingDos", () => {
       subscribe: () => () => {},
     };
     for (const pending of dos) await approveHeldDo(transport, "t", pending.ref);
-    expect(calls).toEqual(dos.map((_, index) => ({
+    expect(calls).toEqual(dos.map((pending, index) => ({
       method: "POST",
       path: "/api/integrations/github-held-dos/t",
-      body: { runId: "run-8", ...pull, effectId: `effect-${index}` },
+      body: { runId: "run-8", ...pull, effectId: `effect-${index}`, kind: pending.kind },
     })));
   });
 
@@ -75,10 +75,10 @@ describe("pendingDos", () => {
       step("request-review", { unresolved: "codeowners" }),
       step("labels", { unresolved: "derive", from: "paths" }),
       step("agent", { prompt: "Review it", tools: [] }),
-      { ...step("labels", { labels: ["ran"] }, 5), held: false, automatic: true, status: "done" },
+      { ...step("labels", { labels: ["ran"] }, 5), held: false, status: "done" },
       { ...step("labels", { labels: ["approved"] }, 8), status: "satisfied" },
-      { ...step("labels", { labels: ["auto"] }, 9), held: false, automatic: true },
-      { ...step("labels", { labels: ["refused"] }, 10), held: false, automatic: true, status: "failed" },
+      { ...step("labels", { labels: ["auto"] }, 9), held: false },
+      { ...step("labels", { labels: ["refused"] }, 10), held: false, status: "failed" },
       step("assign", { users: ["alice"] }, 6),
       step("assign", { users: ["skipped"] }, 7),
     ]), new Set(["effect-7"]), NONE);

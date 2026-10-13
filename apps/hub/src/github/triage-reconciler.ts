@@ -2,9 +2,9 @@
 // without relying on any webhook, sidecar or portal visit having survived:
 // reads GitHub's open pull requests, the live deployments' run logs and the
 // stored state, then queues what the plan says to the newest deployment.
-import { repoPolicy, type CheckPack, type PrTriageRow, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, type PrTriageRow, type RepoPolicy } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
-import type { CheckPackRead } from "./check-pack-store.js";
+import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { repoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
@@ -48,7 +48,7 @@ export type TriageReconcilerDeps = {
 
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
-type LoadedRepo = EnabledRepo & { pack: CheckPack; prs: OpenPr[]; stored: LoadedTriageState };
+type LoadedRepo = EnabledRepo & StoredPack & { prs: OpenPr[]; stored: LoadedTriageState };
 type Failure = { repo: string; error: unknown };
 
 /** `retry` asks for another pass soon: a deployment was not routable yet, or is being redeployed. */
@@ -100,7 +100,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     if (read.status !== "ok") return undefined;
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
     const stored = await deps.store.load(pass.tenantId, repo.record.name);
-    return { ...repo, pack: read.pack, prs, stored };
+    return { ...repo, pack: read.pack, automatic: read.automatic, prs, stored };
   }
 
   /**
@@ -159,7 +159,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       const batch = claimed.enqueue.slice(from, from + deps.batchSize);
       const items = batch.map((queued) => ({ prNumber: queued.number, headSha: claimed.rows.find((row) => row.number === queued.number)!.headSha, ...(queued.judged && { judged: queued.judged }) }));
       try {
-        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo.pack, { items }));
+        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo, { items }));
       } catch (err) {
         const restored = claimed.enqueue.slice(from).map((queued) => ({ ...queued.undelivered, error: `delivery failed: ${String(err)}` }));
         await restoreRows(pass.tenantId, name, claimed, restored);

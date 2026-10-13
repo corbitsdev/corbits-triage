@@ -13,11 +13,12 @@ disclosure timeline.
 
 Corbits Triage classifies pull requests on repositories it is installed on and
 posts labels and comments through a GitHub App. Triage write-back is gated
-behind human approval unless a repository is set to automated posting. Treat
+behind human approval unless the workspace's `pr-triage` role holds the grant
+for that kind of write on the repository. Treat
 any way around that gate as security-relevant, including:
 
-- a GitHub write (comment, label, review, merge, close) without the approval the
-  repository's posting mode requires
+- a GitHub write (comment, label, review, merge, close) without the approval or
+  grant it requires
 - the GitHub App private key, webhook secret, or any vaulted credential exposed
   through any surface
 - a webhook accepted without a valid signature

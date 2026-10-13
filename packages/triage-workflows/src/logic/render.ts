@@ -1,4 +1,4 @@
-import { citationOf, citationUrl, itemText, render, TRIAGE_LABELS, type CheckItem, type CheckOutput, type CleanupMode, type Rendered, type RuleCustomCheck, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, render, TRIAGE_LABELS, type ActionKind, type CheckItem, type CheckOutput, type Rendered, type RuleCustomCheck, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { SuggestedAction } from "./actions.js";
 import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
@@ -616,7 +616,8 @@ export type Verdict = RenderOutput & {
   number: number;
   headSha: string | null;
   request: MirrorRequest;
-  cleanupMode?: CleanupMode;
+  /** The Do kinds the pr-triage role is granted on the repository, as the hub's mail said. */
+  automatic: ActionKind[];
   actions: SuggestedAction[];
   /** The judge answers a later run of this head reuses instead of asking again. */
   judged?: Judged;

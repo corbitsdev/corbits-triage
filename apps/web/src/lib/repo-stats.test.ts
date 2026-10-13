@@ -13,7 +13,7 @@ import { draftPolicy, transportRepoPackStore, type RepoPackStore } from "./repo-
 import { repoStatsQuery, useRepoStats } from "./repo-stats.ts";
 
 const REPO = "o/r";
-const ACTION: Action = { id: "small", when: "every", checks: ["size"], branches: { yes: [{ kind: "comment", automatic: false, target: { body: "hi" } }] } };
+const ACTION: Action = { id: "small", when: "every", checks: ["size"], branches: { yes: [{ kind: "comment", target: { body: "hi" } }] } };
 const DRAFT = fromPack({ ...emptyPack(REPO), actions: [ACTION] }, draftPolicy(repoPolicy(undefined)));
 const STATS: TriageStats = {
   repo: REPO,

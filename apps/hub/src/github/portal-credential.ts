@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
-import { APPROVE_ACTION, reviewResource } from "./admin-github-grant.js";
+import { DO_GRANT_ACTION, doResource, type ActionKind } from "@corbits/triage-contracts";
 
 export type PortalCredentialDeps = {
   db: DB["db"];
@@ -54,10 +54,10 @@ export async function githubAppCredential(d: PortalCredentialDeps, principalId: 
   return d.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
 }
 
-/** The response to return when the member may not approve pull requests in `repo`. */
-export async function approvalRefused(d: PortalCredentialDeps, principalId: string, tenantId: string, repo: string): Promise<Response | undefined> {
-  if (await d.authorize(principalId, tenantId, reviewResource(repo), APPROVE_ACTION)) return undefined;
-  return failure(403, "forbidden", "You do not have the grant to approve pull requests in this repository.");
+/** The response to return when the member does not hold the grant for Dos of `kind` in `repo`. */
+export async function doRefused(d: PortalCredentialDeps, principalId: string, tenantId: string, repo: string, kind: ActionKind): Promise<Response | undefined> {
+  if (await d.authorize(principalId, tenantId, doResource(kind, repo), DO_GRANT_ACTION)) return undefined;
+  return failure(403, "forbidden", "You do not have the grant for this kind of Do in this repository.");
 }
 
 /** GitHub fetch that the App credential adapter turns into App-JWT or installation-token calls. */

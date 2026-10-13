@@ -6,6 +6,7 @@ import { schema } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import { generateId } from "@intx/hub-common";
 import { grantAdminGithub } from "./admin-github-grant.js";
+import { ensureTriageRole } from "./automation.js";
 
 const { credential, principal, provider } = schema;
 
@@ -286,6 +287,7 @@ export function createGithubManifestIntegration({
         }
       }
       await grantAdminGithub(tx, state.tenantId, state.appCredentialId, stamp);
+      await ensureTriageRole(tx, state.tenantId, stamp);
     });
   }
 

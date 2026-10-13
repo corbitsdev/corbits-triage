@@ -4,7 +4,7 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
-import { ALL_CHECKS, emptyPack, recommendedPack, type Action, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { ACTION_KINDS, ALL_CHECKS, emptyPack, recommendedPack, type Action, type ActionKind, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory, type DoResult } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
@@ -14,10 +14,9 @@ import { workflow } from "./pr-triage.js";
 import { workflow as historical } from "./pr-triage-historical.js";
 
 const REPO = "acme/widgets";
-const HELLO: Action = { id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", automatic: false, target: { body: "hi" } }] } };
-const AUTO_HELLO: Action = { ...HELLO, id: "auto-hello", branches: { always: [{ kind: "comment", automatic: true, target: { body: "hi" } }] } };
-const APPROVE: Action = { id: "approve", when: ["opened", "updated"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } };
-const REQUEST_CHANGES: Action = { id: "ci-gate", when: "every", checks: ["ci"], branches: { no: [{ kind: "request-changes", automatic: true, target: {} }] } };
+const HELLO: Action = { id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", target: { body: "hi" } }] } };
+const APPROVE: Action = { id: "approve", when: ["opened", "updated"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", target: {} }] } };
+const REQUEST_CHANGES: Action = { id: "ci-gate", when: "every", checks: ["ci"], branches: { no: [{ kind: "request-changes", target: {} }] } };
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 type Recorded = { method: string; path: string };
@@ -156,11 +155,12 @@ const RULES_PATH = { invoked: ["triage-facts", "triage-execute", "triage-mirror"
 // `judgeText` fails focused, so the judge is called again for its file questions.
 const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
 
-type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; cleanupMode?: string; github?: ReturnType<typeof fakeGithub> };
+/** `automatic` is the Do kinds the hub's mail says the pr-triage role is granted, and `from` who sent the mail. */
+type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub> };
 
-async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, cleanupMode = "automated", github, ...seed }: TriageOptions = {}) {
+async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, automatic = ACTION_KINDS, from = "github@acme.test", github, ...seed }: TriageOptions = {}) {
   const { gh, requests } = github ?? fakeGithub(seed);
-  const policy = { enabled: true, cleanupMode };
+  const policy = { enabled: true };
   const invoked: string[] = [];
   const judged: SystemOne[] = [];
   const body = ((backlog ? historical : workflow).steps.events as OnTriggerPrimitive).body;
@@ -170,7 +170,7 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
     hasUpstreamSignalResolver: true,
     invokeStep: stepInvoker(gh, invoked, judged, judgeFails),
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
-    triggerPayload: backlog ? { kind: "backlog", repo: REPO, policy, checkPack } : { kind: "pr", repo: REPO, prNumber: 8, policy, checkPack, events: ["opened"] },
+    triggerPayload: hubMail(backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, policy, checkPack, automatic, events: ["opened"] }, from),
   }).complete;
   expect(terminalStatus).toBe("completed");
   const mirrors = Object.keys(outputs).filter((id) => id.startsWith("mirror"));
@@ -178,13 +178,17 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
   return { path: { invoked, mirrors }, mirrored: mirrors.map((id) => outputs[id]), requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
 }
 
-/** The mail the hub sends, as `from`, when a maintainer approves the held Do `step` of `verdict`. */
+/** `request` as stock delivers a mail from `from` to the deployment. */
+function hubMail(request: Record<string, unknown>, from: string) {
+  return { headers: { from, to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
+}
+
+/** The mail the hub sends, as `from`, when a person approves the held Do `step` of `verdict`. */
 function approvalMail(verdict: Verdict, step: SuggestedDo, from = "github@acme.test") {
-  const approval = {
+  return hubMail({
     kind: "approve-do", runId: "run_1", principalId: "prn_ann", actionId: step.id, branch: step.branch, index: step.index,
     request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha, kind: step.kind, target: step.target },
-  };
-  return { headers: { from, to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify(approval) }] };
+  }, from);
 }
 
 async function approve(github: ReturnType<typeof fakeGithub>, mail: ReturnType<typeof approvalMail>) {
@@ -297,13 +301,13 @@ describe("pr-triage body", () => {
     expect((unmigrated.verdict as Verdict).checks.find((c) => c.check === "custom-1")).toMatchObject({ result: "pass", reason: "does not apply", output: { kind: "not-applicable" } });
   });
 
-  test("an automated repository whose judge fails still posts a comment; a human-approved one does not", async () => {
+  test("a role granted comment and labels posts a comment when the judge fails; one without them does not", async () => {
     const comment = { method: "POST", path: `/repos/${REPO}/issues/8/comments` };
     const automated = await triage(recommendedPack(REPO), { judgeFails: true });
     expect(automated.verdict).toMatchObject({ degraded: "inference-outage", mirror: true, merge: { verdict: "not-recommended" } });
     expect((automated.verdict as Verdict).request.comment).toContain("Triage will re-check this pull request.");
     expect(automated.requests).toContainEqual(comment);
-    const approved = await triage(recommendedPack(REPO), { judgeFails: true, cleanupMode: "human-approved" });
+    const approved = await triage(recommendedPack(REPO), { judgeFails: true, automatic: ["approve"] });
     expect(approved.verdict).toMatchObject({ degraded: "inference-outage", mirror: true });
     expect(approved.requests).not.toContainEqual(comment);
   });
@@ -314,20 +318,29 @@ describe("pr-triage body", () => {
     expect(requests).toContainEqual({ method: "PATCH", path: `/repos/${REPO}/issues/comments/5` });
   });
 
-  test("an automated repository runs an automatic Do once per head", async () => {
+  test("an automated repository runs a Do whose kind the pr-triage role is granted once per head", async () => {
     const github = fakeGithub();
-    const pack = { ...emptyPack(REPO), actions: [HELLO, AUTO_HELLO] };
+    const pack = { ...emptyPack(REPO), actions: [HELLO] };
     const first = await triage(pack, { github });
-    const effectId = ((first.verdict as Verdict).actions.find((a) => a.id === "auto-hello") as SuggestedDo).effectId;
+    const effectId = ((first.verdict as Verdict).actions[0] as SuggestedDo).effectId;
     expect(first.dos).toEqual([{ effectId, status: "done" }]);
     const again = await triage(pack, { github });
     expect(again.dos).toEqual([{ effectId, status: "satisfied" }]);
     expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([expect.objectContaining({ body: `${doMarker(effectId)}\nhi` })]);
   });
 
-  test("a Do that is not automatic is held in the verdict, and the hub's approval mail writes it once and never on a later head", async () => {
+  test.each<[string, TriageOptions]>([
+    ["the pr-triage role is not granted", { automatic: ["labels"] }],
+    ["only a mail from anyone but the hub's sender grants", { from: "mallory@acme.test" }],
+  ])("a Do whose kind %s is held", async (_, options) => {
+    const { dos, verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, options);
+    expect((verdict as Verdict).actions).toEqual([expect.objectContaining({ id: "hello", held: true })]);
+    expect(dos).toEqual([]);
+  });
+
+  test("a held Do is written once by the hub's approval mail and never on a later head", async () => {
     const github = fakeGithub();
-    const { dos, verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { github });
+    const { dos, verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { github, automatic: [] });
     const held = (verdict as Verdict).actions[0] as SuggestedDo;
     expect(held).toMatchObject({ id: "hello", held: true });
     expect(dos).toEqual([]);
@@ -346,7 +359,7 @@ describe("pr-triage body", () => {
 
   test("an approval mail from anyone but the hub's sender writes nothing", async () => {
     const github = fakeGithub();
-    const { verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { github });
+    const { verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { github, automatic: [] });
     const denied = await approve(github, approvalMail(verdict as Verdict, (verdict as Verdict).actions[0] as SuggestedDo, "mallory@acme.test"));
     expect(denied).toMatchObject({ terminalStatus: "completed", dos: undefined });
     expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([]);
@@ -466,17 +479,10 @@ describe("pr-triage body", () => {
     expect(appReads(github)).toBe(0);
   });
 
-  test("a human-approved repository runs no Do", async () => {
-    const github = fakeGithub();
-    const { dos } = await triage({ ...emptyPack(REPO), actions: [AUTO_HELLO] }, { github, cleanupMode: "human-approved" });
-    expect(dos).toEqual([]);
-    expect(github.comments).toEqual([]);
-  });
-
   test("a Do GitHub refuses is reported failed with its error and stays suggested on the verdict", async () => {
-    const { dos, verdict } = await triage({ ...emptyPack(REPO), actions: [AUTO_HELLO] }, { failComments: true });
+    const { dos, verdict } = await triage({ ...emptyPack(REPO), actions: [HELLO] }, { failComments: true });
     const effectId = ((verdict as Verdict).actions[0] as SuggestedDo).effectId;
-    expect((verdict as Verdict).actions).toEqual([expect.objectContaining({ id: "auto-hello", effectId, automatic: true })]);
+    expect((verdict as Verdict).actions).toEqual([expect.objectContaining({ id: "hello", effectId })]);
     expect(dos).toEqual([{ effectId, status: "failed", error: `github POST /repos/${REPO}/issues/8/comments -> 500` }]);
   });
 

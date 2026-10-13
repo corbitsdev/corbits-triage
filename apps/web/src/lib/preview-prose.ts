@@ -38,9 +38,7 @@ function people(target: Record<string, unknown>, repo: string): string {
 /** A Do as the hub resolved it: roles are people by now, and Dos already true on the pull request are left out. */
 function resolvedDoText(step: PreviewDo, repo: string): string {
   if (step.skipped) return `skip ${DO_NAMES[step.kind].toLowerCase()} (${step.reason.replace(/\.$/, "")})`;
-  const target = step.target ?? {};
-  const text = resolvedAction(step, target, repo);
-  return step.automatic ? `${text} automatically` : text;
+  return resolvedAction(step, step.target ?? {}, repo);
 }
 
 function resolvedAction(step: PreviewDo, target: Record<string, unknown>, repo: string): string {

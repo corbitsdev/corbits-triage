@@ -47,6 +47,8 @@ export const VerdictDetail = type({
   "labels?": "string[]",
   "feedback?": "string",
   "actions?": DetailAction.array(),
+  /** The Do kinds the pr-triage role was granted on the repository when the verdict was made. */
+  "automatic?": "string[]",
   "facts?": { "+": "delete", "title?": "string", "author?": "string", "draft?": "boolean", "mergeable?": "boolean | null", "checks?": "string", "reviewAnswered?": "boolean" },
 });
 export type VerdictDetail = typeof VerdictDetail.infer;

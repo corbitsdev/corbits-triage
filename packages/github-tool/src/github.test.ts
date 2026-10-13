@@ -91,6 +91,14 @@ describe("triage comment", () => {
     expect(comments).toEqual([other]);
   });
 
+  test("no comment leaves the triage comment as it is", async () => {
+    const ours = { id: 42, user: APP, body: "<!-- corbits-triage -->\nKept" };
+    const { gh, comments } = fakeGithub([{ ...ours }]);
+    const { comment: _comment, ...labelsOnly } = MIRROR;
+    await mirror(gh, { ...labelsOnly, close: false });
+    expect(comments).toEqual([ours]);
+  });
+
   test("creates its own when GitHub refuses to edit another App's marked comment", async () => {
     const other = { id: 9, user: { login: "other-app[bot]", type: "Bot" }, body: "<!-- corbits-triage -->\nTheirs" };
     const { gh, requests, comments } = fakeGithub([{ ...other }], [9]);

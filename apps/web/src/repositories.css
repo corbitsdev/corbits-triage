@@ -23,7 +23,6 @@
 .repos .rt-empty { font-size: 14px; margin: 24px 16px; }
 @container rl (max-width: 820px) { .repos .rt .c-act, .repos .rt .c-checks { display: none; } }
 @container rl (max-width: 640px) { .repos .rt .c-own, .repos .rt .c-n:nth-child(2) { display: none; } }
-@container rl (max-width: 540px) { .repos .rt .c-post { display: none; } }
 .repos .rt tbody tr.on { background: var(--fill-hover); }
 .repos .rt .c-name a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
 

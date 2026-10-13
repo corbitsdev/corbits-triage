@@ -3,26 +3,26 @@ import { CUSTOM_CHECK_CAP, recommendedPack, type CustomCheck, type Do } from "@c
 import { actionFormOf, buildAction, buildCustomCheck, checkFormOf, type ActionEvent, type ActionForm, type CheckForm, type DoForm } from "./action-builder.ts";
 
 const pack = recommendedPack("acme/widgets");
-const comment: DoForm = { kind: "comment", automatic: true, body: "Thanks!", labels: ["stale"], prompt: "unused" };
-const commented: Do = { kind: "comment", automatic: true, target: { body: "Thanks!" } };
-const close: DoForm = { kind: "close", automatic: true };
+const comment: DoForm = { kind: "comment", body: "Thanks!", labels: ["stale"], prompt: "unused" };
+const commented: Do = { kind: "comment", target: { body: "Thanks!" } };
+const close: DoForm = { kind: "close" };
 
 function form(overrides: Partial<ActionForm>): ActionForm {
   return { when: "every", checks: [], yes: [], no: [], unsure: [], always: [], ...overrides };
 }
 
 const targets: Array<[DoForm, Do]> = [
-  [{ kind: "labels", automatic: true, from: "list", labels: ["bug"], to: "users" }, { kind: "labels", automatic: true, target: { from: "list", labels: ["bug"] } }],
-  [{ kind: "labels", automatic: true, from: "type", labels: ["bug"] }, { kind: "labels", automatic: true, target: { from: "type" } }],
+  [{ kind: "labels", from: "list", labels: ["bug"], to: "users" }, { kind: "labels", target: { from: "list", labels: ["bug"] } }],
+  [{ kind: "labels", from: "type", labels: ["bug"] }, { kind: "labels", target: { from: "type" } }],
   [comment, commented],
-  [{ kind: "assign", automatic: true, to: "users", users: ["ada"], teams: ["core"] }, { kind: "assign", automatic: true, target: { to: "users", users: ["ada"] } }],
-  [{ kind: "assign", automatic: true, to: "teams", teams: ["core"], role: "maintainers" }, { kind: "assign", automatic: true, target: { to: "teams", teams: ["core"] } }],
-  [{ kind: "assign", automatic: true, to: "role", role: "maintainers", users: ["ada"] }, { kind: "assign", automatic: true, target: { to: "role", role: "maintainers" } }],
-  [{ kind: "assign", automatic: true, to: "author", users: ["ada"] }, { kind: "assign", automatic: true, target: { to: "author" } }],
-  [{ kind: "request-review", automatic: false, to: "codeowners", teams: ["core"] }, { kind: "request-review", automatic: false, target: { to: "codeowners" } }],
-  [{ kind: "close", automatic: true, body: "unused" }, { kind: "close", automatic: true, target: {} }],
-  [{ kind: "agent", automatic: true, prompt: "Fix CI", tools: ["git"], body: "unused" }, { kind: "agent", automatic: true, target: { prompt: "Fix CI", tools: ["git"] } }],
-  [{ kind: "agent", automatic: false, prompt: "Fix CI" }, { kind: "agent", automatic: false, target: { prompt: "Fix CI", tools: [] } }],
+  [{ kind: "assign", to: "users", users: ["ada"], teams: ["core"] }, { kind: "assign", target: { to: "users", users: ["ada"] } }],
+  [{ kind: "assign", to: "teams", teams: ["core"], role: "maintainers" }, { kind: "assign", target: { to: "teams", teams: ["core"] } }],
+  [{ kind: "assign", to: "role", role: "maintainers", users: ["ada"] }, { kind: "assign", target: { to: "role", role: "maintainers" } }],
+  [{ kind: "assign", to: "author", users: ["ada"] }, { kind: "assign", target: { to: "author" } }],
+  [{ kind: "request-review", to: "codeowners", teams: ["core"] }, { kind: "request-review", target: { to: "codeowners" } }],
+  [{ kind: "close", body: "unused" }, { kind: "close", target: {} }],
+  [{ kind: "agent", prompt: "Fix CI", tools: ["git"], body: "unused" }, { kind: "agent", target: { prompt: "Fix CI", tools: ["git"] } }],
+  [{ kind: "agent", prompt: "Fix CI" }, { kind: "agent", target: { prompt: "Fix CI", tools: [] } }],
 ];
 
 describe("buildAction", () => {
@@ -43,12 +43,12 @@ describe("buildAction", () => {
       id: "action-4",
       when: "every",
       checks: ["ci", "size"],
-      branches: { no: [{ kind: "close", automatic: true, target: {} }], unsure: [commented] },
+      branches: { no: [{ kind: "close", target: {} }], unsure: [commented] },
     });
   });
 
   test("an edited action is rebuilt under its own id", () => {
-    const first = { id: "action-1", when: ["opened" as const], checks: ["ci" as const], branches: { yes: [commented], unsure: [{ kind: "close" as const, automatic: false, target: {} }] } };
+    const first = { id: "action-1", when: ["opened" as const], checks: ["ci" as const], branches: { yes: [commented], unsure: [{ kind: "close" as const, target: {} }] } };
     const second = { id: "action-2", when: "every" as const, checks: [], branches: { always: [commented] } };
     const existing = { ...pack, actions: [first, second] };
     expect(buildAction(actionFormOf(first), existing, "action-1")).toEqual(first);
@@ -56,10 +56,6 @@ describe("buildAction", () => {
   });
 
   test("refusals carry the readCheckPack reason", () => {
-    const agent: DoForm = { kind: "agent", automatic: true, prompt: "Fix CI" };
-    expect(buildAction(form({ always: [close] }), pack)).toEqual({ reason: "Action action-1 branches always 1 cannot close automatically." });
-    expect(buildAction(form({ always: [agent] }), pack)).toEqual({ reason: "Action action-1 branches always 1 cannot agent automatically." });
-    expect(buildAction(form({ checks: ["ci"], unsure: [close] }), pack)).toEqual({ reason: "Action action-1 branches unsure 1 cannot close automatically." });
     expect(buildAction(form({}), pack)).toEqual({ reason: "Action action-1 branches always must not be empty." });
     expect(buildAction(form({ checks: ["ci"], always: [comment] }), pack)).toEqual({ reason: "Action action-1 branches must set at least one step." });
     expect(buildAction(form({ when: ["opened", "catch-up"] as ActionEvent[], always: [comment] }), pack)).toEqual({

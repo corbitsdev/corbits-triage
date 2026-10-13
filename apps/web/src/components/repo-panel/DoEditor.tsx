@@ -1,7 +1,7 @@
-import { Button, Switch } from "@corbits/react-ui";
+import { Button } from "@corbits/react-ui";
 import { ACTION_KINDS, type ActionKind, type LabelsTarget, type PeopleTarget } from "@corbits/triage-contracts";
 import type { DoForm } from "../../lib/action-builder.ts";
-import { DO_NAMES, MANUAL_ONLY, type Branch } from "../../lib/pack-prose.ts";
+import { DO_NAMES } from "../../lib/pack-prose.ts";
 import { CloseIcon } from "../inbox-icons.tsx";
 import TokenList from "./TokenList.tsx";
 
@@ -19,11 +19,10 @@ const RECIPIENTS: Array<{ value: PeopleTarget["to"]; label: string }> = [
   { value: "author", label: "the author" },
 ];
 
-type DoEditorProps = { step: DoForm; branch: Branch; roles: string[]; disabled: boolean; onChange: (step: DoForm) => void; onRemove: () => void };
+type DoEditorProps = { step: DoForm; roles: string[]; disabled: boolean; onChange: (step: DoForm) => void; onRemove: () => void };
 
-/** One Do: its kind, its target and whether it runs without asking. */
-export default function DoEditor({ step, branch, roles, disabled, onChange, onRemove }: DoEditorProps) {
-  const manual = MANUAL_ONLY[branch].includes(step.kind);
+/** One Do: its kind and its target. */
+export default function DoEditor({ step, roles, disabled, onChange, onRemove }: DoEditorProps) {
   // Agent Dos cannot run yet, so they are offered only to keep one that is already stored.
   const kinds = ACTION_KINDS.filter((kind) => kind !== "agent" || step.kind === "agent");
   const recipients = RECIPIENTS.filter((option) => option.value !== "author" || step.kind === "assign");
@@ -36,7 +35,7 @@ export default function DoEditor({ step, branch, roles, disabled, onChange, onRe
     const people = kind === "assign" || kind === "request-review";
     const to = people && (!step.to || (kind === "request-review" && step.to === "author")) ? "codeowners" : step.to;
     const from = kind === "labels" && !step.from ? "list" : step.from;
-    onChange({ ...step, kind, to, from, automatic: step.automatic && !MANUAL_ONLY[branch].includes(kind) });
+    onChange({ ...step, kind, to, from });
   }
 
   function target() {
@@ -85,10 +84,6 @@ export default function DoEditor({ step, branch, roles, disabled, onChange, onRe
           {kinds.map((kind) => <option key={kind} value={kind}>{DO_NAMES[kind]}</option>)}
         </select>
         {target()}
-      </span>
-      <span className="auto" title={manual ? `Cannot ${DO_NAMES[step.kind].toLowerCase()} automatically here` : undefined}>
-        Automatic
-        <Switch className="sw" checked={step.automatic && !manual} onCheckedChange={(automatic) => set({ automatic })} label="Automatic" disabled={disabled || manual} />
       </span>
       <Button type="button" variant="ghost" size="icon" aria-label="Remove this Do" disabled={disabled} onClick={onRemove}><CloseIcon /></Button>
     </div>

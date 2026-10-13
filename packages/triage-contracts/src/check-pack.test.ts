@@ -52,23 +52,23 @@ const ACTIONS: Action[] = [
     when: ["opened", "ready"],
     checks: ["ci", "custom-1"],
     branches: {
-      yes: [{ kind: "request-review", target: { to: "role", role: "maintainers" }, automatic: true }],
+      yes: [{ kind: "request-review", target: { to: "role", role: "maintainers" } }],
       no: [
-        { kind: "comment", target: { body: "Please fix CI and link a ticket." }, automatic: false },
-        { kind: "request-changes", target: {}, automatic: true },
+        { kind: "comment", target: { body: "Please fix CI and link a ticket." } },
+        { kind: "request-changes", target: {} },
       ],
-      unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] }, automatic: true }],
+      unsure: [{ kind: "labels", target: { from: "list", labels: ["needs-triage"] } }],
     },
   },
   {
     id: "label-type",
     when: "every",
     checks: [],
-    branches: { always: [{ kind: "labels", target: { from: "type" }, automatic: true }] },
+    branches: { always: [{ kind: "labels", target: { from: "type" } }] },
   },
 ];
 
-const COMMENT = { kind: "comment", target: { body: "Thanks!" }, automatic: false };
+const COMMENT = { kind: "comment", target: { body: "Thanks!" } };
 const BASE = { id: "a", when: ["opened"], checks: ["ci"], branches: { yes: [COMMENT] } };
 
 describe("check pack contract", () => {
@@ -216,7 +216,6 @@ describe("check pack contract", () => {
   });
 
   test("invalid actions reject the pack", () => {
-    const close = { kind: "close", target: {}, automatic: true };
     const rejected = [
       { ...BASE, when: ["pushed"] },
       { ...BASE, when: ["catch-up"] },
@@ -224,11 +223,14 @@ describe("check pack contract", () => {
       { ...BASE, branches: {} },
       { ...BASE, branches: { always: [COMMENT] } },
       { ...BASE, checks: [] },
-      { ...BASE, branches: { unsure: [close] } },
-      { ...BASE, checks: [], branches: { always: [close] } },
     ];
     expect(parseCheckPack({ ...emptyPack(REPO), actions: [BASE] })?.actions).toHaveLength(1);
     for (const action of rejected) expect(parseCheckPack({ ...emptyPack(REPO), actions: [action] })).toBeNull();
+  });
+
+  test("a pack stored with the legacy automatic flag loads without it", () => {
+    const stored = { ...emptyPack(REPO), actions: [{ ...BASE, branches: { yes: [{ ...COMMENT, automatic: true }] } }] };
+    expect(readCheckPack(stored).actions[0]!.branches).toEqual({ yes: [COMMENT] });
   });
 
   test("the schema accepts what the parser reads, and a rejection says why", () => {

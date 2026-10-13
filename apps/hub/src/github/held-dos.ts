@@ -1,18 +1,18 @@
-// Approves a Do a triage run held for a maintainer, or one it failed or could
-// not run unattended. The hub checks the clicker's grants and mails the
+// Approves a Do a triage run held, or one it failed or could not run
+// unattended. The hub checks the clicker holds the Do kind's grant and mails the
 // pr-triage deployment the Do as the run's verdict recorded it, with who
 // approved it; the run writes it at most once under its effect id.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
-import { ACTION_KINDS, APPROVE_DO_KIND, DoBranch, repoPolicy, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, APPROVE_DO_KIND, DoBranch, repoPolicy, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
 import { errorText } from "@corbits/common";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { unrunnable } from "@corbits/triage-workflows/logic/execute-do";
-import { approvalRefused, failure, githubAppGrant, type PortalCredentialDeps } from "./portal-credential.js";
+import { doRefused, failure, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
@@ -21,7 +21,7 @@ import { verdictFor } from "./triage-runs.js";
 
 export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
 
-export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0", effectId: "string > 0" });
+export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0", effectId: "string > 0", kind: type.enumerated(...ACTION_KINDS) });
 export const HeldDoSent = type({ status: "'sent'" });
 
 const StepBase = type({
@@ -32,7 +32,7 @@ const StepBase = type({
   effectId: "string",
   target: "object",
 });
-/** Held, or automatic and failed or not run: a done or satisfied Do has nothing left to approve. */
+/** Held, or unattended and failed or not run: a done or satisfied Do has nothing left to approve. */
 const HeldStep = StepBase.and({ held: "true", "status?": "'failed' | 'skipped'" }).or(StepBase.and({ status: "'failed' | 'skipped'" }));
 
 const MirrorRequest = type({ repo: "string", number: "number", labels: "string[]", owned: "string[]", comment: "string" });
@@ -55,7 +55,7 @@ type Approval = {
   branch: typeof DoBranch.infer;
   index: number;
   request: typeof MirrorRequest.infer;
-  step: { effectId: string; headSha: string; kind: string; target: ResolvedTarget };
+  step: { effectId: string; headSha: string; kind: ActionKind; target: ResolvedTarget };
 };
 
 /** The held Do as the verdict recorded it, with its effect id checked against the one the hub computes. */
@@ -65,6 +65,7 @@ function heldDo(verdict: Record<string, unknown>, body: Body, principalId: strin
   if (!raw) return failure(404, "do_not_found", "The verdict has no such Do.");
   const step = HeldStep(raw);
   if (step instanceof type.errors) return failure(409, "do_not_held", "This Do is not waiting for approval.");
+  if (step.kind !== body.kind) return failure(409, "kind_mismatch", "The Do is not of the kind named.");
   const request = MirrorRequest(verdict["request"]);
   const headSha = verdict["headSha"];
   if (request instanceof type.errors || typeof headSha !== "string") return failure(409, "verdict_outdated", "Run triage again.");
@@ -96,8 +97,8 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
   }
 
   return async function approve(body: typeof HeldDoBody.infer, { tenantId, principalId }: Member): Promise<Response> {
-    const granted = await githubAppGrant(deps, principalId, tenantId, "use");
-    if (granted instanceof Response) return granted;
+    const refused = await doRefused(deps, principalId, tenantId, body.repo, body.kind);
+    if (refused) return refused;
 
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true, config: true } });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
@@ -111,10 +112,6 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     if (!verdict) return failure(404, "verdict_not_found", `The run has no verdict for ${repo}#${number}.`);
     const approval = heldDo(verdict, body, principalId);
     if (approval instanceof Response) return approval;
-    if (approval.step.kind === "approve") {
-      const refused = await approvalRefused(deps, principalId, tenantId, repo);
-      if (refused) return refused;
-    }
     if (await superseded(tenantId, repo, number, runId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
 
     const deployment = newestLive(await deps.liveDeployments(tenantId));

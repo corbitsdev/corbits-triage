@@ -177,7 +177,7 @@ export type CommentTarget = { body: string };
 export type CloseTarget = Record<string, never>;
 export type AgentTarget = { prompt: string; tools: string[] };
 
-export type Do = { automatic: boolean } & (
+export type Do =
   | { kind: "labels"; target: LabelsTarget }
   | { kind: "assign"; target: PeopleTarget }
   | { kind: "request-review"; target: ReviewTarget }
@@ -185,8 +185,7 @@ export type Do = { automatic: boolean } & (
   | { kind: "approve"; target: CloseTarget }
   | { kind: "request-changes"; target: CloseTarget }
   | { kind: "close"; target: CloseTarget }
-  | { kind: "agent"; target: AgentTarget }
-);
+  | { kind: "agent"; target: AgentTarget };
 
 /** Branches follow the checks' combined verdict; without checks, `always` runs. */
 export type Branches = { yes?: Do[]; no?: Do[]; unsure?: Do[] } | { always: Do[] };
@@ -227,14 +226,13 @@ const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
 
 const DoSchema = type({
   kind: "'labels'",
-  automatic: "boolean",
   target: type({ "+": "reject", from: "'list'", labels: Texts }).or({ "+": "reject", from: "'type' | 'paths'" }),
 })
-  .or({ kind: "'assign'", automatic: "boolean", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
-  .or({ kind: "'request-review'", automatic: "boolean", target: ReviewTargetSchema })
-  .or({ kind: "'comment'", automatic: "boolean", target: { "+": "reject", body: Text } })
-  .or({ kind: "'approve' | 'request-changes' | 'close'", automatic: "boolean", target: { "+": "reject" } })
-  .or({ kind: "'agent'", automatic: "boolean", target: { "+": "reject", prompt: Text, tools: Text.array() } });
+  .or({ kind: "'assign'", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
+  .or({ kind: "'request-review'", target: ReviewTargetSchema })
+  .or({ kind: "'comment'", target: { "+": "reject", body: Text } })
+  .or({ kind: "'approve' | 'request-changes' | 'close'", target: { "+": "reject" } })
+  .or({ kind: "'agent'", target: { "+": "reject", prompt: Text, tools: Text.array() } });
 
 const ActionSchema = type({
   id: Text,
@@ -278,7 +276,7 @@ const CatalogChecksSchema = type(
 
 /**
  * Published as JSON Schema. `readCheckPack` stays the authority: it also drops catalog and blank legacy custom rows,
- * and checks patterns, choices, references, branch sets and automatic steps.
+ * and checks patterns, choices, references and branch sets.
  */
 export const checkPackSchema = type({
   kind: type.unit(CHECK_PACK_KIND),
@@ -329,7 +327,7 @@ export function recommendedPack(repo: string): CheckPack {
       ci: { enabled: true },
       paths: { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
     },
-    actions: [{ id: "approve", when: ["opened", "updated", "ready", "checks"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } }],
+    actions: [{ id: "approve", when: ["opened", "updated", "ready", "checks"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", target: {} }] } }],
   };
 }
 
@@ -561,48 +559,39 @@ function parsePeopleTarget(target: Record<string, unknown>, allowAuthor: boolean
 function parseDo(raw: unknown, where: string): Do {
   const row = record(raw, where);
   const kind = oneOf(row.kind, ACTION_KINDS, `${where} kind`);
-  if (typeof row.automatic !== "boolean") throw new Error(`${where} automatic must be true or false.`);
-  const automatic = row.automatic;
   const at = `${where} target`;
   const target = record(row.target, at);
   switch (kind) {
     case "labels":
-      return { kind, automatic, target: parseLabelsTarget(target, at) };
+      return { kind, target: parseLabelsTarget(target, at) };
     case "assign":
-      return { kind, automatic, target: parsePeopleTarget(target, true, at) };
+      return { kind, target: parsePeopleTarget(target, true, at) };
     case "request-review":
-      return { kind, automatic, target: parsePeopleTarget(target, false, at) as ReviewTarget };
+      return { kind, target: parsePeopleTarget(target, false, at) as ReviewTarget };
     case "comment": {
       exactKeys(target, ["body"], at);
       const body = text(target.body, `${at} body`);
       if (body.length > COMMENT_BODY_MAX) throw new Error(`${at} body must be at most ${COMMENT_BODY_MAX} characters.`);
-      return { kind, automatic, target: { body } };
+      return { kind, target: { body } };
     }
     case "approve":
     case "request-changes":
     case "close":
       exactKeys(target, [], at);
-      return { kind, automatic, target: {} };
+      return { kind, target: {} };
     case "agent": {
       exactKeys(target, ["prompt", "tools"], at);
       if (!Array.isArray(target.tools)) throw new Error(`${at} tools must be a list.`);
       const tools = new Set<string>();
       for (const tool of target.tools) tools.add(text(tool, `${at} tools`));
-      return { kind, automatic, target: { prompt: text(target.prompt, `${at} prompt`), tools: [...tools] } };
+      return { kind, target: { prompt: text(target.prompt, `${at} prompt`), tools: [...tools] } };
     }
   }
 }
 
-function parseBranch(raw: unknown, manualOnly: readonly ActionKind[], where: string): Do[] {
+function parseBranch(raw: unknown, where: string): Do[] {
   if (!Array.isArray(raw)) throw new Error(`${where} must be a list.`);
-  const dos: Do[] = [];
-  for (const [i, item] of raw.entries()) {
-    if (RETIRED_DO_KINDS.has(record(item, `${where} ${i + 1}`).kind)) continue;
-    const step = parseDo(item, `${where} ${i + 1}`);
-    if (step.automatic && manualOnly.includes(step.kind)) throw new Error(`${where} ${i + 1} cannot ${step.kind} automatically.`);
-    dos.push(step);
-  }
-  return dos;
+  return raw.flatMap((item, i) => (RETIRED_DO_KINDS.has(record(item, `${where} ${i + 1}`).kind) ? [] : [parseDo(item, `${where} ${i + 1}`)]));
 }
 
 function listed(raw: unknown): boolean {
@@ -614,7 +603,7 @@ function parseBranches(raw: unknown, hasChecks: boolean, where: string): Branche
   const row = record(raw, where);
   if (!hasChecks) {
     exactKeys(row, ["always"], where);
-    const always = parseBranch(row.always, ["close", "agent"], `${where} always`);
+    const always = parseBranch(row.always, `${where} always`);
     if (always.length === 0) {
       if (listed(row.always)) return undefined;
       throw new Error(`${where} always must not be empty.`);
@@ -626,9 +615,9 @@ function parseBranches(raw: unknown, hasChecks: boolean, where: string): Branche
     throw new Error(`${where} must set only yes, no and unsure.`);
   }
   const branches: { yes?: Do[]; no?: Do[]; unsure?: Do[] } = {};
-  if (row.yes !== undefined) branches.yes = parseBranch(row.yes, [], `${where} yes`);
-  if (row.no !== undefined) branches.no = parseBranch(row.no, [], `${where} no`);
-  if (row.unsure !== undefined) branches.unsure = parseBranch(row.unsure, ["close"], `${where} unsure`);
+  if (row.yes !== undefined) branches.yes = parseBranch(row.yes, `${where} yes`);
+  if (row.no !== undefined) branches.no = parseBranch(row.no, `${where} no`);
+  if (row.unsure !== undefined) branches.unsure = parseBranch(row.unsure, `${where} unsure`);
   if (Object.values(branches).every((dos) => dos.length === 0)) {
     if (listed(row.yes) || listed(row.no) || listed(row.unsure)) return undefined;
     throw new Error(`${where} must set at least one step.`);
