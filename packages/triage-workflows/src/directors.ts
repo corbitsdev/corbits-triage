@@ -15,7 +15,8 @@ import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleS
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "./logic/checks.js";
 import { unrunnable } from "./logic/execute-do.js";
-import { asText, isRecord, parseJsonText } from "./logic/extract.js";
+import { isRecord } from "@corbits/common";
+import { asText, parseJsonText } from "./logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, roleTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";

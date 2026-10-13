@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { asRecord } from "@corbits/common";
 import type { TrustTier } from "./types.js";
 
 export const CLEANUP_MODES = ["human-approved", "automated"] as const;
@@ -60,10 +61,6 @@ export const repoPolicySchema = type({
   "checkPack?": { name: "string" },
 });
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
 function flag(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
@@ -78,9 +75,9 @@ function members(value: unknown): string[] | null {
 
 function roles(value: unknown): Record<string, RepoRole> {
   const out: Record<string, RepoRole> = {};
-  for (const [rawName, raw] of Object.entries(asRecord(value))) {
+  for (const [rawName, raw] of Object.entries(asRecord(value) ?? {})) {
     const name = rawName.trim();
-    const row = asRecord(raw);
+    const row = asRecord(raw) ?? {};
     const users = members(row.users);
     const teams = members(row.teams);
     if (!name || !users || !teams || users.length + teams.length === 0) continue;
@@ -109,11 +106,11 @@ export function tierOf(association: AuthorAssociation | null, author: string, ap
 
 /** Defaults missing fields so pre-policy tenant config keeps all checks on. */
 export function repoPolicy(raw: unknown): RepoPolicy {
-  const row = asRecord(raw);
-  const nested = asRecord(row.policy);
+  const row = asRecord(raw) ?? {};
+  const nested = asRecord(row.policy) ?? {};
   const source = Object.keys(nested).length > 0 ? { ...row, ...nested } : row;
-  const checks = asRecord(source.checks);
-  const pointer = asRecord(source.checkPack);
+  const checks = asRecord(source.checks) ?? {};
+  const pointer = asRecord(source.checkPack) ?? {};
   const pointerName = typeof pointer.name === "string" ? pointer.name.trim() : "";
   return {
     cleanupMode: source.cleanupMode === "automated" ? "automated" : "human-approved",

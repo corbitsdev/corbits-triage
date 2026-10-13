@@ -17,6 +17,7 @@
   },
   "scripts": {},
   "dependencies": {
+    "@corbits/common": "workspace:*",
     "@corbits/github-reads": "workspace:*",
     "@corbits/github-tool": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",

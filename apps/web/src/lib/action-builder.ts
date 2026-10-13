@@ -16,7 +16,7 @@ import {
   type RuleKind,
   type TriageEvent,
 } from "@corbits/triage-contracts";
-import { errorText } from "./error-text.ts";
+import { errorText } from "@corbits/common";
 import type { CheckKind } from "./pack-prose.ts";
 
 export type ActionEvent = Exclude<TriageEvent, "catch-up">;

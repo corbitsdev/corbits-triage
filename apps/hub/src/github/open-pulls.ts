@@ -3,8 +3,9 @@
 import { eq } from "drizzle-orm";
 import { schema } from "@intx/db";
 import { authorAssociation, authorKindOf, type AuthorKind } from "@corbits/triage-contracts";
-import { listOpenPrs, type GithubFetch } from "@corbits/github-reads";
-import { createGithubAppCredentialFetch, INSTALLATION_SELECTOR_HEADER } from "./github-app-credential-adapter.js";
+import { INSTALLATION_SELECTOR_HEADER, listOpenPrs, type GithubFetch } from "@corbits/github-reads";
+import { errorText } from "@corbits/common";
+import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
@@ -34,7 +35,7 @@ async function pullsFor(gh: GithubFetch, record: RepoRecord): Promise<RepoPulls>
     const prs = await listOpenPrs(forInstallation(gh, record.installationId), record.name);
     return { repo: record.name, prs: prs.map(withAuthorKind) };
   } catch (err) {
-    return { repo: record.name, prs: [], error: err instanceof Error ? err.message : String(err) };
+    return { repo: record.name, prs: [], error: errorText(err) };
   }
 }
 

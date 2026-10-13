@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from "react";
-import { errorText } from "../lib/error-text.ts";
+import { errorText } from "@corbits/common";
 
 type State = { error: unknown };
 

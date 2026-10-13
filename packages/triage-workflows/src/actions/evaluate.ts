@@ -3,7 +3,7 @@ import { packMergeThreshold } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves } from "../logic/actions.js";
 import type { DeterministicResult, PrFacts } from "../logic/checks.js";
-import { errorText } from "../logic/extract.js";
+import { errorText } from "@corbits/common";
 import type { Item, Judged } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, type FocusedParts, type JudgeRequest, type QualityEvaluation } from "../logic/quality.js";
 import { degradedVerdict, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";

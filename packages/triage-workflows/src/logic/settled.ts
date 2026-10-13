@@ -1,4 +1,4 @@
-import { isRecord } from "./extract.js";
+import { isRecord } from "@corbits/common";
 import { QUALITY_EVALUATION_LIMIT_ERROR } from "./quality.js";
 import { NEEDS_JUDGE_REASON, NOT_ASKED_REASON } from "./render.js";
 

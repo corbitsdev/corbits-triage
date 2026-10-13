@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@corbits/react-ui";
 import { useLocation } from "react-router-dom";
+import { errorText } from "@corbits/common";
 import { acceptInvitation } from "../lib/hub-api.ts";
 import { getAuthMethods, hasSignInMethod } from "../lib/hub-auth.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
@@ -38,7 +39,7 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
       }
       await openWorkspace(tenantId, "/inbox");
     } catch (cause: unknown) {
-      setRefusal(cause instanceof Error ? cause.message : String(cause));
+      setRefusal(errorText(cause));
     }
   }, [openWorkspace, tenantId, warn]);
 

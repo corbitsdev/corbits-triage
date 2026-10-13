@@ -7,6 +7,7 @@ import { type } from "arktype";
 import { schema } from "@intx/db";
 import { repoPolicy } from "@corbits/triage-contracts";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
+import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead } from "./check-pack-store.js";
 import { failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
@@ -58,7 +59,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     try {
       openHead = await deps.pullHead(appJson, record, number);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorText(err);
       return failure(502, "github_failed", `Could not read ${repo}#${number} from GitHub: ${message}.`);
     }
     if (openHead === undefined) return failure(409, "pull_request_not_open", `${repo}#${number} is not an open pull request.`);
@@ -88,7 +89,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
         deps.log({ level: "error", msg: "triage_state_restore_failed", tenantId, repo, pr: number, headSha, error: String(restoreErr) });
       }
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = errorText(err);
       return failure(isRunTriggerUnroutable(err) ? 503 : 502, isRunTriggerUnroutable(err) ? "service_not_running" : "hub_unavailable", `Could not queue ${repo}#${number}: ${reason}. Try again.`);
     }
     deps.log({ level: "info", msg: "triage_requested", tenantId, principalId, repo, pr: number, headSha });

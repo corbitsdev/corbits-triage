@@ -1,14 +1,11 @@
+import { asRecord } from "@corbits/common";
 import { triggerRequestOf } from "@corbits/triage-contracts";
 import type { HubRun, RunLog } from "./hub-api.ts";
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
 function eventPayload(body: unknown): Record<string, unknown> {
-  const row = record(body);
-  const trigger = record(row.trigger);
-  return record(triggerRequestOf(trigger.payload ?? row.payload ?? row.content));
+  const row = asRecord(body) ?? {};
+  const trigger = asRecord(row.trigger) ?? {};
+  return asRecord(triggerRequestOf(trigger.payload ?? row.payload ?? row.content)) ?? {};
 }
 
 function backlogRepoFromLog(log: RunLog): string | null {

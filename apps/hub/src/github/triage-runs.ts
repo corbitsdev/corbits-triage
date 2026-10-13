@@ -3,6 +3,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { type } from "arktype";
 import { APPROVE_DO_KIND, triggerRequestOf } from "@corbits/triage-contracts";
+import { asRecord } from "@corbits/common";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -49,6 +50,10 @@ export type ObservedRuns = {
   approved: ApprovedDo[];
 };
 
+export function isRunning(runs: ObservedRuns): boolean {
+  return [...runs.byRepo.values()].some((byHead) => [...byHead.values()].some((list) => list.some((run) => run.status === "running")));
+}
+
 /** Statuses the stock lifecycle settled for these runs, which it can do without a terminal event in the log. */
 export type ReadSettled = (anchorRunId: string, runIds: string[]) => Promise<Map<string, Terminal["status"]>>;
 
@@ -58,10 +63,6 @@ export type TriageRunsDeps = {
   /** Runs remembered at most; the oldest is forgotten first and read again while it is still in the log. */
   maxKnownRuns: number;
 };
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
 
 function parseJson(value: unknown): unknown {
   if (typeof value !== "string") return value;

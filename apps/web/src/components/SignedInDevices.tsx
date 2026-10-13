@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@corbits/react-ui";
 import { useQuery } from "@tanstack/react-query";
+import { errorText } from "@corbits/common";
 import { listSessions, revokeSession, type HubSessionRow } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 
@@ -21,7 +22,7 @@ export function SignedInDevices() {
     try {
       await revokeSession(createHubTransport(), session.id);
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setPending(null);
       await query.refetch();

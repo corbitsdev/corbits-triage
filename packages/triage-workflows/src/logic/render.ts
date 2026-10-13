@@ -1,4 +1,5 @@
 import { citationOf, citationUrl, itemText, render, TRIAGE_LABELS, type CheckItem, type CheckOutput, type CleanupMode, type Rendered, type RuleCustomCheck, type WorkflowState } from "@corbits/triage-contracts";
+import { isRecord } from "@corbits/common";
 import type { SuggestedAction } from "./actions.js";
 import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
@@ -12,10 +13,6 @@ type ModelAnswer = NoulAnswer | ChoiceAnswer;
 export interface ParsedAnswers {
   decisions: Record<string, ModelAnswer>;
   malformed: boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function exactKeys(value: Record<string, unknown>, keys: string[]): boolean {

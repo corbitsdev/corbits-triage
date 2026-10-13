@@ -1,11 +1,11 @@
 import {
   BUILT_IN_CHECK_NAMES,
-  CATALOG_IDS,
   CHECK_CATALOG,
+  checkName,
+  isCatalogId,
   TRIAGE_EVENTS,
   type Action,
   type ActionKind,
-  type CatalogId,
   type CheckPack,
   type CheckRef,
   type Do,
@@ -68,16 +68,6 @@ export const CHECK_KINDS: CheckKind[] = [
   { evaluation: "model", shape: "score", title: "Score from 0 to 10", line: "Fails below the minimum." },
   { evaluation: "model", shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },
 ];
-
-export function isCatalogId(id: string): id is CatalogId {
-  return (CATALOG_IDS as readonly string[]).includes(id);
-}
-
-export function checkName(pack: CheckPack, id: string): string {
-  const builtIn = BUILT_IN_CHECK_NAMES.get(id);
-  if (builtIn !== undefined) return builtIn;
-  return isCatalogId(id) ? CHECK_CATALOG[id].name : pack.custom.find((row) => row.id === id)?.name ?? id;
-}
 
 /** A check's name; a custom check's waits for its pack. */
 export function checkLabel(pack: CheckPack | null, id: string): string | null {

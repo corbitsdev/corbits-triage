@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import type { ActiveTenant, LiveDeployment } from "./deployment.js";
 import type { RecordRuns } from "./run-recorder.js";
-import { mergeObservedRuns, observeDeployments, type ObserveRuns, type ObservedRuns } from "./triage-runs.js";
+import { isRunning, mergeObservedRuns, observeDeployments, type ObserveRuns, type ObservedRuns } from "./triage-runs.js";
 
 export type TenantObservation = { deployments: LiveDeployment[]; observed: ObservedRuns[] };
 
@@ -103,10 +103,6 @@ export type RecordPass = {
   ready: (tenantId: string) => boolean;
 };
 
-function isRunning(observation: TenantObservation): boolean {
-  return observation.observed.some((runs) => [...runs.byRepo.values()].some((byHead) => [...byHead.values()].some((list) => list.some((run) => run.status === "running"))));
-}
-
 /**
  * The recording loop: each pass reads the logs of every tenant with a run in flight, and of those that had one last pass, so a
  * verdict is recorded within a pass of its step completing and a run's end is seen. Every tenant with a live deployment when
@@ -123,7 +119,7 @@ export function createRecordPass(deps: RecordPassDeps): RecordPass {
     const backoff = failing.get(tenant.id);
     if (backoff && deps.now().getTime() < backoff.until) return { ok: false, running: true };
     try {
-      const running = isRunning(await deps.observer.observe(tenant.id, tenant.domain));
+      const running = (await deps.observer.observe(tenant.id, tenant.domain)).observed.some(isRunning);
       failing.delete(tenant.id);
       return { ok: true, running };
     } catch (err) {

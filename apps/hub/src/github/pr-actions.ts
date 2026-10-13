@@ -2,6 +2,7 @@
 // these run synchronously in the hub against the tenant's vaulted GitHub App
 // credential instead of as workflows.
 import { type, type Traversal } from "arktype";
+import { errorText } from "@corbits/common";
 import type { Member } from "../integrations/app.js";
 import {
   addAssignees,
@@ -90,7 +91,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
       console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number }));
       return Response.json(result);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorText(err);
       console.log(JSON.stringify({ ts: new Date().toISOString(), level: "warn", msg: "github_pr_action_failed", tenantId, action: body.action, repo: body.repo, number: body.number, error: message }));
       return githubFailed(`${GITHUB_VERB[body.action]} ${body.repo}#${body.number}`, err);
     }

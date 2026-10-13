@@ -1,4 +1,4 @@
-import { errorText } from "./error-text.ts";
+import { errorText } from "@corbits/common";
 import type { Outcome } from "./held-actions.ts";
 import type { GithubPullDetail, HeldDoRef, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import { offersClose, type PendingDo } from "./pending-dos.ts";

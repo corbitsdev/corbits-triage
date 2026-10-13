@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@corbits/artifacts": "0.2.0",
+    "@corbits/common": "workspace:*",
     "@corbits/cron": "0.2.1",
     "@corbits/github-reads": "workspace:*",
     "@corbits/github-tool": "workspace:*",

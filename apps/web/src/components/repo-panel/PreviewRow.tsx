@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@corbits/react-ui";
 import type { CheckPack } from "@corbits/triage-contracts";
-import { errorText } from "../../lib/error-text.ts";
+import { errorText } from "@corbits/common";
 import { previewPull, type PullPreview } from "../../lib/hub-api.ts";
 import { createHubTransport } from "../../lib/hub-transport.ts";
 import { useOpenPulls } from "../../lib/open-pulls.ts";

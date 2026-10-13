@@ -5,6 +5,7 @@
 // supplies the spawn so the child env is built from validated hub config.
 import fs from "node:fs/promises";
 import path from "node:path";
+import { errorText } from "@corbits/common";
 import type {
   DestroySidecarRequest,
   DestroySidecarResult,
@@ -73,10 +74,6 @@ function logAllocation(msg: string, manifest: LocalSidecarManifest): void {
     generation: manifest.generation,
     sidecarId: manifest.sidecarId,
   }));
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function waitForExit(managed: ManagedProcess): Promise<true> {
@@ -282,7 +279,7 @@ export function createLocalProcessSidecarProvisioner({
       return {
         kind: "rejected" as const,
         code: "spawn_failed",
-        message: errorMessage(error),
+        message: errorText(error),
         retryable: true,
       };
     }

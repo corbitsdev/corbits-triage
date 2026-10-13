@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
+import { asRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
 import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-credential.js";
 
@@ -32,10 +33,6 @@ export type CorbitsTriageNs = {
   rev?: number;
   [key: string]: unknown;
 };
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
 
 function isRepoRecord(row: unknown): row is RepoRecord {
   if (!row || typeof row !== "object") return false;

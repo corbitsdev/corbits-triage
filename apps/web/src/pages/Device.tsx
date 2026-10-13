@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@corbits/react-ui";
 import { useSearchParams } from "react-router-dom";
+import { errorText } from "@corbits/common";
 import { claimDeviceCode, decideDeviceCode } from "../lib/hub-auth.ts";
 import { useSession } from "../lib/session.tsx";
 
@@ -25,7 +26,7 @@ export function Device() {
     try {
       await run();
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorText(cause));
     } finally {
       setPending(false);
     }

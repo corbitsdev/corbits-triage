@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { RE2JS, RE2JSSyntaxException } from "re2js";
+import { asRecord, asRepo } from "@corbits/common";
 import type { AuthorAssociation } from "./repo-policy.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
@@ -30,6 +31,16 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
 
 /** Checks pr-triage runs on every pull request, outside any pack's switches. */
 export const BUILT_IN_CHECK_NAMES: ReadonlyMap<string, string> = new Map([["draft", "Draft"], ["review", "Changes requested"]]);
+
+export function isCatalogId(id: string): id is CatalogId {
+  return (CATALOG_IDS as readonly string[]).includes(id);
+}
+
+export function checkName(pack: CheckPack, id: string): string {
+  const builtIn = BUILT_IN_CHECK_NAMES.get(id);
+  if (builtIn !== undefined) return builtIn;
+  return isCatalogId(id) ? CHECK_CATALOG[id].name : pack.custom.find((row) => row.id === id)?.name ?? id;
+}
 
 /** Catalog checks since removed; stored packs and verdicts may still name them. */
 export const RETIRED_CHECK_IDS: ReadonlySet<string> = new Set(["duplicate", "reviewers", "drift", "tests"]);
@@ -283,21 +294,6 @@ const CATALOG_SET = new Set<string>(CATALOG_IDS);
 const REFERENCEABLE = new Set<string>([...CATALOG_IDS, "draft"]);
 const GROUP_SET = new Set<string>(CHECK_PACK_GROUPS);
 const TRACKER_SET = new Set<string>(ISSUE_TRACKERS);
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
-
-function asRepo(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  const parts = trimmed.split("/");
-  if (parts.length !== 2 || parts[0]!.length === 0 || parts[1]!.length === 0) return undefined;
-  if (parts.some((part) => part === "." || part === "..") || trimmed.includes("..") || /[\s\\]/.test(trimmed)) {
-    return undefined;
-  }
-  return trimmed;
-}
 
 export const CHECK_PACK_TITLE_PREFIX = "check-pack/";
 

@@ -1,3 +1,5 @@
+import { asRecord } from "@corbits/common";
+
 /** The local part of the tenant system sender the hub mails triage requests as. */
 export const TRIAGE_MAIL_SENDER = "github";
 
@@ -19,10 +21,6 @@ export function isFromTriageSender(payload: unknown): boolean {
   const to = headers?.["to"];
   if (from?.local !== TRIAGE_MAIL_SENDER || !Array.isArray(to) || to.length !== 1) return false;
   return bareAddress(to[0])?.domain === from.domain;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 function parsed(value: unknown): unknown {

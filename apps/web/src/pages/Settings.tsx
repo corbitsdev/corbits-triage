@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs } from "@corbits/react-ui";
 import { useNavigate, useParams } from "react-router-dom";
+import { errorText } from "@corbits/common";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { runCredentialAction, uniqueSecretDisplayNames } from "../lib/credential-actions.ts";
 import {
@@ -134,7 +135,7 @@ function AccessRules({
       setAction("");
       setEffect("allow");
     } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : String(cause);
+      const detail = errorText(cause);
       onError(`Could not add the access rule. ${detail} Try again.`);
     } finally {
       setAdding(false);
@@ -148,7 +149,7 @@ function AccessRules({
     try {
       await removeGrant(grant);
     } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : String(cause);
+      const detail = errorText(cause);
       onError(`Could not remove the access rule. ${detail} Try again.`);
     } finally {
       setRemovingId(null);
@@ -269,7 +270,7 @@ function RoleRow({
       await renameRole(role, name.trim());
       setName(null);
     } catch (cause) {
-      onError(`Could not rename the role. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
+      onError(`Could not rename the role. ${errorText(cause)} Try again.`);
     } finally {
       setPending(false);
     }
@@ -282,7 +283,7 @@ function RoleRow({
     try {
       await removeRole(role);
     } catch (cause) {
-      onError(`Could not remove the role. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
+      onError(`Could not remove the role. ${errorText(cause)} Try again.`);
       setPending(false);
     }
   }
@@ -353,7 +354,7 @@ function Roles({
       await addRole(name.trim());
       setName("");
     } catch (cause) {
-      onError(`Could not add the role. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
+      onError(`Could not add the role. ${errorText(cause)} Try again.`);
     } finally {
       setAdding(false);
     }
@@ -460,7 +461,7 @@ function CredentialRow({
         setEditing(false);
       }
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const message = errorText(cause);
       onError(`Could not ${action === "rotate" ? "update" : "remove"} the secret. ${message} Try again.`);
     } finally {
       setPending(null);
@@ -529,7 +530,7 @@ export default function Settings() {
     try {
       await syncFromGithub();
     } catch (cause) {
-      setError(`Could not read your repositories from GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
+      setError(`Could not read your repositories from GitHub. ${errorText(cause)}`);
     }
   }
   const { arm } = useGithubReturnSync(() => { void syncAfterGithub(); });
@@ -549,7 +550,7 @@ export default function Settings() {
         arm();
       }
     } catch (cause) {
-      setError(`Could not open GitHub. ${cause instanceof Error ? cause.message : String(cause)}`);
+      setError(`Could not open GitHub. ${errorText(cause)}`);
     }
   }
 
