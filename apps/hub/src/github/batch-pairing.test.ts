@@ -3,7 +3,8 @@ import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall }
 import type { WorkflowRunEvent, WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { triageDirectorFactory } from "@corbits/triage-workflows/directors";
-import { evaluate, rules } from "@corbits/triage-workflows/actions/index";
+import { evaluate, parts, rules } from "@corbits/triage-workflows/actions/index";
+import type { RulesOutput, JudgeChunk } from "@corbits/triage-workflows/actions/rules";
 import { createTriageRuns } from "./triage-runs.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR } from "@corbits/triage-workflows/logic/quality";
@@ -13,6 +14,45 @@ const DOMAIN = "acme.test";
 const ANCHOR = "run_live";
 
 type VerdictOptions = { pack?: CheckPack; pr?: Record<string, unknown>; skipJudge?: boolean };
+
+const ctx = {} as never;
+const signal = new AbortController().signal;
+
+/** Every question answered decisively: the verdict passes, focused is one thing. */
+function decisive(questions: Array<{ id: string }>): ReactorInboundEvent {
+  const probabilities: Record<string, Record<string, number>> = {
+    verdict: { pass: 0.9, fail: 0.05, cant_tell: 0.05 },
+    focused: { one_thing: 0.9, more_than_one_thing: 0.05, cant_tell: 0.05 },
+  };
+  const text = questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: Object.keys(probabilities[id]!)[0], probabilities: probabilities[id], confidence: 0.9 })).join("");
+  return { type: "inference.done", turn: { content: [{ type: "text", text }] } } as ReactorInboundEvent;
+}
+
+/** One judge director call per chunk, answered by `answer`, as the workflow's map runs them. */
+async function judge(chunks: JudgeChunk[], answer: (questions: Array<{ id: string }>) => ReactorInboundEvent): Promise<Array<{ reply: string }>> {
+  const output: Array<{ reply: string }> = [];
+  for (const chunk of chunks) {
+    let reply = "";
+    const caps = {
+      infer() { return { type: "infer" }; },
+      reply(content: string) { reply = content; return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const director = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
+    await director.decide({ type: "message.received", message: { content: JSON.stringify(chunk) } } as ReactorInboundEvent, {} as ReactorState, caps);
+    await director.decide(answer(chunk.questions), {} as ReactorState, caps);
+    output.push({ reply });
+  }
+  return output;
+}
+
+/** Both judge rounds and evaluate, as the workflow runs them when the gate asks the judge; the first round's answers come from `first`. */
+async function judgeAndEvaluate(ruled: RulesOutput, first: (questions: Array<{ id: string }>) => ReactorInboundEvent = decisive) {
+  if (!ruled.needsJudgment) return { output: undefined, reply: JSON.stringify(await evaluate(ruled, ctx, signal)) };
+  const output = await judge(ruled.chunks, first);
+  const judged = { ...ruled, judge: { output } };
+  const { chunks } = await parts(judged, ctx, signal);
+  return { output, reply: JSON.stringify(await evaluate({ ...judged, judgeParts: { output: await judge(chunks, decisive) } }, ctx, signal)) };
+}
 
 /** Drives the real facts director and the rules and evaluate actions for one batch mail and returns the verdict output; `skipJudge` evaluates as the build that never asked the decision model did. */
 async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack = emptyPack(REPO), pr = {}, skipJudge = false }: VerdictOptions = {}): Promise<string> {
@@ -39,10 +79,9 @@ async function batchVerdicts(numbers: number[], failGetPr: Set<number>, { pack =
     await done(`files:${n}:0`, { files: [{ path: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }] });
   }
   for (const n of numbers) if (!failGetPr.has(n)) await done(`checks:${n}`, { checks: [] });
-  const ctx = {} as never;
-  const signal = new AbortController().signal;
   const ruled = await rules({ reply: replies[0] }, ctx, signal);
-  if (skipJudge) for (const item of ruled.items) item.det.needsJudgment = false;
+  if (!skipJudge) return (await judgeAndEvaluate(ruled)).reply;
+  for (const item of ruled.items) item.det.needsJudgment = false;
   return JSON.stringify(await evaluate(ruled, ctx, signal));
 }
 
@@ -101,12 +140,12 @@ describe("verdicts the decision model was never asked about", () => {
   }
 
   test("are triaged again once and settle on a verdict that asked", async () => {
-    const skipped = (await observe([1], await batchVerdicts([1], new Set(), { pack, pr: { mergeable: false }, skipJudge: true }), "run_old", at(0))).get("1@sha1")!;
+    const skipped = (await observe([1], await batchVerdicts([1], new Set(), { pack, skipJudge: true }), "run_old", at(0))).get("1@sha1")!;
     expect(skipped[0]!.unsettled).toBe("model not asked");
     const triaged: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: 0, runId: "run_old", workflowVersion: VERSION, firstSeenAt: at(-1), queuedAt: at(-1), updatedAt: at(1) };
     const redo = plan([triaged], skipped, 10);
     expect(redo.enqueue.map((queued) => queued.reason)).toEqual(["model not asked"]);
-    const asked = (await observe([1], await batchVerdicts([1], new Set(), { pack, pr: { mergeable: false } }), "run_new", at(11))).get("1@sha1")!;
+    const asked = (await observe([1], await batchVerdicts([1], new Set(), { pack }), "run_new", at(11))).get("1@sha1")!;
     expect(asked[0]!.unsettled).toBeUndefined();
     const settled = plan(redo.rows, [...skipped, ...asked], 20);
     expect(settled.rows[0]).toMatchObject({ status: "triaged", runId: "run_new" });
@@ -114,26 +153,24 @@ describe("verdicts the decision model was never asked about", () => {
   });
 
   test("are triaged again once even after the head spent its attempts", async () => {
-    const skipped = (await observe([1], await batchVerdicts([1], new Set(), { pack, pr: { mergeable: false }, skipJudge: true }), "run_old", at(0))).get("1@sha1")!;
+    const skipped = (await observe([1], await batchVerdicts([1], new Set(), { pack, skipJudge: true }), "run_old", at(0))).get("1@sha1")!;
     const capped: PrTriageRow = { number: 1, headSha: "sha1", status: "triaged", attempts: DEFAULT_RECONCILE_POLICY.maxAttempts, runId: "run_old", workflowVersion: VERSION, firstSeenAt: at(-1), queuedAt: at(-1), updatedAt: at(1) };
     const redo = plan([capped], skipped, 10);
     expect(redo.enqueue.map((queued) => queued.reason)).toEqual(["model not asked"]);
     expect(redo.rows[0]).toMatchObject({ status: "queued", attempts: 1 });
   });
 
-  test("a stale-unknown verdict keeps its own reason", async () => {
+  test("unknown mergeability keeps its own reason though the judge was asked", async () => {
     const reply = await batchVerdicts([1], new Set(), { pack, pr: { mergeable: null } });
-    const verdict = JSON.parse(reply).items[0] as { state: string; checks: Array<{ kind: string; reason: string }> };
-    expect(verdict.state).toBe("stale-unknown");
-    expect(verdict.checks.filter((check) => check.kind === "model").map((check) => check.reason)).toEqual(["not asked"]);
+    const verdict = JSON.parse(reply).items[0] as { verdict: string; checks: Array<{ kind: string; result: string }> };
+    expect(verdict.verdict).toBe("pass");
+    expect(verdict.checks.filter((check) => check.kind === "model").map((check) => check.result)).toEqual(["pass"]);
     const [run] = (await observe([1], reply)).get("1@sha1")!;
     expect(run).toMatchObject({ unsettled: "unconfirmed checks: no-merge-conflicts", unconfirmed: true });
   });
 
   test("deterministic and ambiguous human gates settle while a real inference outage requeues", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { focused: { enabled: true } } };
-    const ctx = {} as never;
-    const signal = new AbortController().signal;
     function facts(files: Array<{ path: string; patch?: string }>) {
       return {
         repo: REPO, number: 1, title: "Change", author: "octocat", tier: "external", headSha: "sha1", state: "open", draft: false,
@@ -142,23 +179,11 @@ describe("verdicts the decision model was never asked about", () => {
         paths: files.map((file) => file.path),
       };
     }
-    /** Runs rules, the judge once per chunk when the gate would, and evaluate, as the workflow does. */
+    /** Rules, the judge with the first round answered by `event`, and evaluate, as the workflow runs them. */
     async function triage(files: Array<{ path: string; patch?: string }>, event?: ReactorInboundEvent) {
       const ruled = await rules({ items: [{ facts: facts(files), pack }], batch: true }, ctx, signal);
-      if (!ruled.needsJudgment) return { ruled, judged: undefined, reply: JSON.stringify(await evaluate(ruled, ctx, signal)) };
-      const output: Array<{ reply: string }> = [];
-      for (const chunk of ruled.chunks) {
-        let reply = "";
-        const judgeCaps = {
-          infer() { return { type: "infer" }; },
-          reply(content: string) { reply = content; return { type: "reply", content }; },
-        } as unknown as ReactorCapabilities;
-        const judge = triageDirectorFactory({ role: "judge" }, {} as never, { systemPrompt: "" } as never);
-        await judge.decide({ type: "message.received", message: { content: JSON.stringify(chunk) } } as ReactorInboundEvent, {} as ReactorState, judgeCaps);
-        if (event) await judge.decide(event, {} as ReactorState, judgeCaps);
-        output.push({ reply });
-      }
-      return { ruled, judged: output.map(({ reply }) => JSON.parse(reply) as Record<string, unknown>), reply: JSON.stringify(await evaluate({ ...ruled, judge: { output } }, ctx, signal)) };
+      const { output, reply } = await judgeAndEvaluate(ruled, () => event!);
+      return { ruled, judged: output?.map((chunk) => JSON.parse(chunk.reply) as Record<string, unknown>), reply };
     }
 
     const compact = [{ path: "src/config.ts", patch: '@@ -0,0 +1 @@\n+const value = { name: "Candidate" };' }];

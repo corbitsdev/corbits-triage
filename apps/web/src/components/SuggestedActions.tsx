@@ -9,7 +9,7 @@ export function SuggestedActions({ dos, disabled, onApprove, onSkip }: Suggested
     <section className="dos" aria-label="Suggested actions">
       <h3 className="lbl-h">Waiting for your approval</h3>
       {doGroups(dos).map((group) => (
-        <div key={group.actionId} className="suggest">
+        <div key={group.list} className="suggest">
           <p className="suggest-text">{group.reason}</p>
           <div className="suggest-actions">
             {group.dos.flatMap((pending) => [

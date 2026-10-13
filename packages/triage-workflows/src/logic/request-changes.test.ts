@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getReviews, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
-import { ALL_CHECKS, DEFAULT_REPO_POLICY, emptyPack, type CheckPack } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, defaultActions, emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals } from "./actions.js";
 import { deriveState, type PrFacts } from "./checks.js";
 import { buildFacts } from "./facts.js";
@@ -16,13 +16,10 @@ const facts: PrFacts = {
   state: "open",
   draft: false,
   mergeable: true,
-  baseBehindBy: 0,
   checks: "success",
-  requestedReviewers: 1,
   reviewers: ["alice"],
   reviewedBy: [],
   approvals: 0,
-  openPrs: [],
   labels: [],
   assignees: [],
   paths: ["src/search.ts"],
@@ -31,25 +28,21 @@ const facts: PrFacts = {
 
 const pack: CheckPack = {
   ...emptyPack("acme/widgets"),
-  checks: { draft: { enabled: true }, "no-merge-conflicts": { enabled: true }, "ci-green": { enabled: true } },
-  actions: [{
-    id: "gate",
-    when: "every",
-    checks: [ALL_CHECKS],
-    branches: { yes: [{ kind: "approve", target: {} }], no: [{ kind: "request-changes", target: {} }] },
-  }],
+  checks: { "no-merge-conflicts": { enabled: true }, "ci-green": { enabled: true } },
+  actions: { ...defaultActions(), pass: [{ kind: "approve", target: {} }], fail: [{ kind: "request-changes", target: {} }] },
 };
 
+/** The verdict as the evaluate step renders it, the verdict question answering pass when no hard rule failed. */
 function input(over: Partial<PrFacts>, using = pack) {
   const pr = { ...facts, ...over };
   const det = deriveState(pr, undefined, using);
-  const rendered = renderVerdict({ author: pr.author, repo: pr.repo, headSha: pr.headSha, det, answers: null, threshold: 0 });
-  return { rendered, input: { facts: pr, checks: rendered.checks, pack: using, roles: {} } };
+  const rendered = renderVerdict({ author: pr.author, repo: pr.repo, headSha: pr.headSha, det, answers: null, choice: { pass: 0.9, fail: 0.05, cant_tell: 0.05 } });
+  return { rendered, input: { facts: pr, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: using, roles: {} } };
 }
 
 function suggested(over: Partial<PrFacts>, using = pack) {
   const { rendered, input: actionInput } = input(over, using);
-  return heldApprovals(evaluateActions(actionInput), approvalHeldBy(rendered.merge.verdict, actionInput.facts.checks));
+  return heldApprovals(evaluateActions(actionInput), approvalHeldBy(rendered.verdict, actionInput.facts.checks));
 }
 
 const APP = "corbits-triage[bot]";
@@ -68,15 +61,9 @@ function markedRequest(login: string) {
   return { id: 1, user: { login, type: "Bot" }, state: "CHANGES_REQUESTED", commit_id: "abc", submitted_at: "2026-10-01T10:00:00Z", body: `${REQUEST_CHANGES_DO_MARKER}\nTriage requests changes:` };
 }
 
-const CI_ONLY: CheckPack = {
-  ...emptyPack("acme/widgets"),
-  checks: { "ci-green": { enabled: true }, "no-merge-conflicts": { enabled: true } },
-  actions: [{ id: "ci-gate", when: "every", checks: ["ci-green"], branches: { no: [{ kind: "request-changes", target: {} }] } }],
-};
-
 describe("the request-changes Do", () => {
   test("triage's own request on an earlier head is not a reviewer's, so the fixed head approves", async () => {
-    expect(suggested(await reviewFacts([markedRequest(APP)]))).toEqual([expect.objectContaining({ kind: "approve", branch: "yes" })]);
+    expect(suggested(await reviewFacts([markedRequest(APP)]))).toEqual([expect.objectContaining({ kind: "approve", list: "pass" })]);
   });
 
   test("another bot's request carrying the marker is still a reviewer's", async () => {
@@ -84,24 +71,19 @@ describe("the request-changes Do", () => {
   });
 
   test("a pack that no longer requests changes takes back the App's standing request, and has nothing to decide without one", async () => {
-    const plain = { ...pack, actions: [] };
+    const plain = { ...pack, actions: defaultActions() };
     expect(changesWanted(input(await reviewFacts([markedRequest(APP)]), plain).input)).toBe(false);
     expect(changesWanted(input({}, plain).input)).toBeUndefined();
   });
 
-  test("an action on CI lists only CI, and stops wanting changes once CI is fixed though conflicts remain", () => {
-    const [step] = suggested({ checks: "failure", failingChecks: ["build"], mergeable: false }, CI_ONLY);
-    expect(step).toMatchObject({ kind: "request-changes", target: { body: expect.not.stringMatching(/onflict/) } });
-    expect(changesWanted(input({ mergeable: false }, CI_ONLY).input)).toBe(false);
-  });
-
-  test("lists only the failed checks that are the author's to fix", () => {
-    expect(suggested({ checks: "failure", failingChecks: ["build"] })).toEqual([
-      expect.objectContaining({ kind: "request-changes", branch: "no", target: { body: expect.stringMatching(/^Triage requests changes:\n- .+: /) } }),
+  test("lists every failed rule that is the author's to fix, and stops wanting changes once they are fixed", () => {
+    expect(suggested({ checks: "failure", failingChecks: ["build"], mergeable: false })).toEqual([
+      expect.objectContaining({ kind: "request-changes", list: "fail", target: { body: "Triage requests changes:\n- CI green: required checks are failing\n- No merge conflicts: merge conflicts with base" } }),
     ]);
+    expect(changesWanted(input({}).input)).toBe(false);
   });
 
   test("is skipped when nothing failed is the author's to fix", () => {
-    expect(suggested({ draft: true })).toEqual([expect.objectContaining({ kind: "request-changes", skipped: true })]);
+    expect(suggested({ changesRequested: ["maya"] })).toEqual([expect.objectContaining({ kind: "request-changes", skipped: true })]);
   });
 });

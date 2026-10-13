@@ -37,21 +37,16 @@ const base = defaultLocalPack(repo);
 const pack: CheckPack = {
   ...base,
   checks: { ...base.checks, "max-files-changed": { enabled: true, maxFiles: 1 }, "ci-green": { enabled: false }, "linked-issue": { enabled: false }, "no-merge-conflicts": { enabled: false } },
-  actions: [
-    {
-      id: "too-large",
-      when: "every",
-      checks: ["max-files-changed"],
-      branches: {
-        no: [
-          { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
-          { kind: "comment", target: { body: "This is only ever posted by a click." } },
-          { kind: "comment", target: { body: "Another draft, to post over Triage's own seed." } },
-          { kind: "comment", target: { body: "One more draft, to post from the banner." } },
-        ],
-      },
-    },
-  ],
+  actions: {
+    ...base.actions,
+    unsure: [],
+    fail: [
+      { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
+      { kind: "comment", target: { body: "This is only ever posted by a click." } },
+      { kind: "comment", target: { body: "Another draft, to post over Triage's own seed." } },
+      { kind: "comment", target: { body: "One more draft, to post from the banner." } },
+    ],
+  },
 };
 
 let failed = false;

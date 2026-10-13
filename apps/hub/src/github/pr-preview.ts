@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { appLogin, authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-reads";
-import { CheckOutputSchema, checkName, checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, type CheckPack } from "@corbits/triage-contracts";
+import { CheckOutputSchema, checkName, checkPackSchema, readCheckPack, repoPolicy, repoPolicySchema, TRIAGE_EVENTS, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { rules, type RulesItem } from "@corbits/triage-workflows/actions/rules";
@@ -31,17 +31,18 @@ export const PreviewBody = type({
   "event?": type.enumerated(...TRIAGE_EVENTS),
 });
 
+const VerdictWord = type.enumerated(...VERDICTS);
 const Do = type({
-  id: "string",
-  branch: "'yes' | 'no' | 'unsure' | 'always'",
+  list: VerdictWord,
   index: "number",
   kind: "string",
   reason: "string",
   "effectId?": "string",
   "target?": "Record<string, unknown>",
   "skipped?": "true",
+  "held?": "true",
 });
-const BranchPreview = type({ branch: "'yes' | 'no' | 'unsure' | 'always'", reason: "string", dos: Do.array() });
+const ListPreview = type({ verdict: VerdictWord, dos: Do.array() });
 
 export const PreviewResponse = type({
   repo: "string",
@@ -56,14 +57,9 @@ export const PreviewResponse = type({
     labels: "string[]",
     owner: "string",
     humanGated: "boolean",
+    verdict: VerdictWord,
     score: "number | null",
-    confidence: "number | 'unknown'",
-    merge: {
-      verdict: "'ready' | 'not-recommended'",
-      score: "number | null",
-      threshold: "number",
-      reasons: "string[]",
-    },
+    reasons: "string[]",
     degraded: "'inference-outage' | 'error' | null",
     reason: "string",
     nextAction: "string",
@@ -79,11 +75,10 @@ export const PreviewResponse = type({
     evidence: "string[]",
     output: CheckOutputSchema,
   }).array(),
-  actions: type({ id: "string", status: "'not-woken'" })
-    .or({ id: "string", status: "'skipped'", reason: "string" })
-    .or(BranchPreview.and({ id: "string", status: "'decided'" }))
-    .or({ id: "string", status: "'waits-on-judge'", branches: BranchPreview.array() })
-    .array(),
+  /** The policy's actions on this head: the verdict's list, or every list while the verdict waits on the judge. */
+  actions: type({ status: "'not-woken'" })
+    .or(ListPreview.and({ status: "'decided'" }))
+    .or({ status: "'waits-on-judge'", lists: ListPreview.array() }),
 });
 
 export type GithubPrPreviewDeps = PortalCredentialDeps & {
@@ -197,14 +192,14 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     const ruledItem = ruled.items[0]!;
     const judged = ruled.needsJudgment ? { ...ruledItem, judgeSkipped: true as const } : ruledItem;
     const verdict = await evaluate({ items: [judged], batch: false }, NO_EFFECTS, signal) as Verdict;
-    const { state, priority, labels, owner, humanGated, score, confidence, merge, degraded, reason, nextAction, actor, feedback } = verdict;
+    const { state, priority, labels, owner, humanGated, verdict: word, score, reasons, degraded, reason, nextAction, actor, feedback } = verdict;
     const checks = verdict.checks.map((c) => ({
       ...c,
       name: checkName(pack, c.check),
       result: c.kind === "model" && c.reason === NEEDS_JUDGE_REASON ? "needs-judge" as const : c.result,
     }));
-    // A degraded verdict suggests nothing, as evaluate does.
-    const actions = degraded === null ? previewActions({ facts: judged.facts, checks: verdict.checks, pack, roles: policy.roles }) : [];
+    const waits = reason === NEEDS_JUDGE_REASON ? "waits-on-judge" as const : verdict.actions;
+    const actions = previewActions({ facts: judged.facts, checks: verdict.checks, verdict: word, reason, pack, roles: policy.roles }, waits);
     return Response.json({
       repo,
       number,
@@ -212,7 +207,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
       event,
       pack: candidate === undefined ? "saved" : "candidate",
       judge: ruled.needsJudgment ? "not-run" : "not-needed",
-      verdict: { state, priority, labels, owner, humanGated, score, confidence, merge, degraded, reason, nextAction, actor, feedback },
+      verdict: { state, priority, labels, owner, humanGated, verdict: word, score, reasons, degraded, reason, nextAction, actor, feedback },
       checks,
       actions,
     });

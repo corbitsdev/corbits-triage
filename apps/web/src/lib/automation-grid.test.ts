@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { gridCell } from "./automation-grid.ts";
+import { gridCell, triageRunsAlone } from "./automation-grid.ts";
 import type { HubGrant } from "./hub-api.ts";
 
 const TRIAGE = { id: "rol_triage", name: "pr-triage", isSystem: true };
@@ -15,4 +15,11 @@ describe("automation grid", () => {
     expect(gridCell(TRIAGE, "close", grants)).toEqual({ granted: false, locked: false, grants: [], repos: [] });
   });
 
+  test("triage runs a Do alone only on the repositories its role is granted the kind on", () => {
+    const grants = [grant("g1", "triage-do:comment:acme/api"), grant("g2", "triage-do:labels:*")];
+    expect(triageRunsAlone([TRIAGE], grants, "comment", "Acme/API")).toBe(true);
+    expect(triageRunsAlone([TRIAGE], grants, "comment", "acme/web")).toBe(false);
+    expect(triageRunsAlone([TRIAGE], grants, "labels", "acme/web")).toBe(true);
+    expect(triageRunsAlone([], grants, "labels", "acme/web")).toBe(false);
+  });
 });

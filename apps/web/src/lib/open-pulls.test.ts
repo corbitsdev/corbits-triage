@@ -7,7 +7,7 @@ const KEY = "acme/widgets#8";
 /** #8 as the hub answers it: a ready verdict from `runId`, which saw `ci`, and when author activity last started a run. */
 function latest(runId: string, activityAt: string | null, ci = "success", facts: Record<string, unknown> = {}): PullTriage {
   const verdict = {
-    runId, at: "2026-10-01T01:00:00.000Z", headSha: "a", settled: true, state: "ready-monitoring", actor: "author", humanGated: false,
+    runId, at: "2026-10-01T01:00:00.000Z", headSha: "a", verdict: "pass" as const, settled: true, state: "ready-monitoring", actor: "author", humanGated: false,
     degraded: null, commented: false, checks: [], detail: { facts: { checks: ci, ...facts } },
   };
   return { repo: "acme/widgets", number: 8, activityAt, verdict, run: null };

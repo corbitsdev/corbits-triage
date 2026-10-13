@@ -36,7 +36,7 @@ test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its k
     const automation = createAutomation({ db, now: () => new Date() });
     const targets = { comment: { body: "hi" }, labels: { labels: ["api"] } };
     async function held(repo: string, kind: keyof typeof targets): Promise<boolean> {
-      const suggested: SuggestedDo = { id: kind, branch: "yes", index: 0, kind, reason: "", effectId: `e-${kind}`, target: targets[kind] };
+      const suggested: SuggestedDo = { list: "pass", index: 0, kind, reason: "", effectId: `e-${kind}`, target: targets[kind] };
       const [step] = holdDos([suggested], await automation.automaticKinds(TENANT, repo));
       return (step as SuggestedDo).held === true;
     }

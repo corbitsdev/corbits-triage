@@ -204,13 +204,13 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
     { id: "wfr_verdict", definitionId: "wfd_triage", anchorRunId: "wfr_anchor", tenantId: TENANT, status: "completed" },
   ]);
   function held(id: string, kind: ActionKind, target: Record<string, unknown>) {
-    const step = { id, branch: "always" as const, index: 0, kind, reason: "Always applies.", target, held: true };
-    return { ...step, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: id, branch: step.branch, index: 0, kind, target: target as never }) };
+    const step = { list: "pass" as const, index: Number(id), kind, reason: "passes the repository's policy", target, held: true };
+    return { ...step, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: step.list, index: step.index, kind, target: target as never }) };
   }
-  const ship = held("ship", "approve", {});
-  const tag = held("tag", "labels", { labels: ["api"] });
-  const written = { ...held("written", "labels", { labels: ["done"] }), status: "done" };
-  const derived = held("derived", "labels", { unresolved: "derive", from: "type" });
+  const ship = held("0", "approve", {});
+  const tag = held("1", "labels", { labels: ["api"] });
+  const written = { ...held("2", "labels", { labels: ["done"] }), status: "done" };
+  const derived = held("3", "labels", { unresolved: "derive", from: "type" });
   const verdict = { repo: REPO, number: 8, headSha: HEAD, request: { repo: REPO, number: 8, labels: [], owned: [], comment: "" }, actions: [ship, tag, written, derived] };
   const events = [{ seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } } }];
   const mailed: Array<{ address: string; payload: unknown }> = [];
@@ -237,7 +237,7 @@ test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage
   expect(mailed).toEqual([{
     address: "wfr_anchor@read-access.test",
     payload: {
-      kind: "approve-do", runId: "wfr_verdict", principalId: "prn_approver", actionId: "tag", branch: "always", index: 0,
+      kind: "approve-do", runId: "wfr_verdict", principalId: "prn_approver", list: "pass", index: 1,
       request: verdict.request, step: { effectId: tag.effectId, headSha: HEAD, kind: "labels", target: { labels: ["api"] } },
     },
   }]);

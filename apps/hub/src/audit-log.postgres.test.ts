@@ -38,7 +38,7 @@ function verdict(runId: string, time: string, state: string, comment: string): R
   return {
     runId, repo: REPO, number: 7, headSha: "abcdef123", startedAt: at(time), verdictAt: at(time), settled: true, state, actor: "maintainer", humanGated: true,
     degraded: null, checks: [], dos: [], commented: false, runStatus: "completed",
-    detail: { actions: [{ id: "nudge", effectId: "eff_comment", kind: "comment", status: comment }, { id: "ship", effectId: "eff_approve", kind: "approve", held: true, status: "done" }] },
+    detail: { actions: [{ list: "fail", effectId: "eff_comment", kind: "comment", status: comment }, { list: "pass", effectId: "eff_approve", kind: "approve", held: true, status: "done" }] },
   };
 }
 
@@ -137,7 +137,9 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
       "unknown | Invited | invitee@acme.test",
       `${OWNER} | Approved a held Do | ${REPO}#7`,
     ]);
-    expect((await log(audit, `?repo=${REPO}&since=2026-10-01T10:05:00Z`)).entries.map((entry) => entry.action)).toEqual(["Created checks", "Triaged", "Failed comment", "Approved a held Do"]);
+    const windowed = (await log(audit, `?repo=${REPO}&since=2026-10-01T10:05:00Z`)).entries;
+    expect(windowed.map((entry) => entry.action)).toEqual(["Created checks", "Triaged", "Failed comment", "Approved a held Do"]);
+    expect(windowed.find((entry) => entry.action === "Failed comment")?.detail).toBe("on fail");
 
     expect(lines(await log(auditFor(new Set(["principal:*", "workflow:*"])), "?since=2026-10-01T10:05:00Z"))).toEqual([
       `prn_owner | Created checks | ${REPO}`,

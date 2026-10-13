@@ -1,21 +1,18 @@
-import type { CheckPack } from "@corbits/triage-contracts";
-import { strings, type PreviewCheck, type PreviewBranch, type PreviewDo, type PullPreview } from "./hub-api.ts";
-import { actionLabel, BRANCH_NAMES, DO_NAMES, listed, quoted, sentence } from "./pack-prose.ts";
-import { checkValueText } from "./triage-view.ts";
+import { strings, type PreviewCheck, type PreviewDo, type PreviewList, type PullPreview } from "./hub-api.ts";
+import { DO_NAMES, LIST_NAMES, listed, quoted, sentence } from "./pack-prose.ts";
+import { checkValueText, VERDICT_LABEL } from "./triage-view.ts";
 
 type CheckLine = { result: PreviewCheck["result"]; label: string; names: string[] };
 
-export type BranchLine = { branch: string; reason: string; dos: string };
-
-type ActionLine =
-  | { id: string; label: string; status: "decided"; branch: BranchLine }
-  | { id: string; label: string; status: "waits-on-judge"; branches: BranchLine[] }
-  | { id: string; label: string; status: "skipped"; reason: string };
+export type ListLine = { list: string; dos: string };
 
 export type PreviewProse = {
   checks: CheckLine[];
-  actions: ActionLine[];
-  /** The actions the event does not wake, as one sentence. */
+  /** The verdict in words, or that it waits on the judge. */
+  verdict: string;
+  /** The verdict's list, or every list while the verdict waits on the judge; empty when the event does not wake the policy. */
+  lists: ListLine[];
+  /** Why no Dos run, when the event does not wake the policy. */
   notWoken: string | null;
   /** Why the verdict is degraded, when it is; a degraded verdict suggests no Dos. */
   degraded: string | null;
@@ -65,9 +62,9 @@ function resolvedAction(step: PreviewDo, target: Record<string, unknown>, repo: 
   }
 }
 
-function branchLine(branch: PreviewBranch, repo: string): BranchLine {
-  const dos = branch.dos.length ? sentence(branch.dos.map((step) => resolvedDoText(step, repo)).join(", then ")) : "nothing to do.";
-  return { branch: BRANCH_NAMES[branch.branch], reason: branch.reason, dos };
+function listLine(list: PreviewList, repo: string): ListLine {
+  const dos = list.dos.length ? sentence(list.dos.map((step) => resolvedDoText(step, repo)).join(", then ")) : "nothing to do.";
+  return { list: LIST_NAMES[list.verdict], dos };
 }
 
 /** The judge never runs in a preview, so a check waiting on it has no value to show. */
@@ -76,31 +73,17 @@ function nameWithValue(row: PreviewCheck): string {
   return value === null ? row.name : `${row.name} (${value})`;
 }
 
-/** A preview response in the panel's prose, actions named by their place in the pack that was previewed. */
-export function previewProse(preview: PullPreview, pack: CheckPack): PreviewProse {
+/** A preview response in the panel's prose. */
+export function previewProse(preview: PullPreview): PreviewProse {
   const checks = CHECK_LABELS.flatMap(function line([result, text]): CheckLine[] {
     const names = preview.checks.filter((row) => row.result === result).map(nameWithValue);
     return names.length ? [{ result, label: text, names }] : [];
   });
-  const actions: ActionLine[] = [];
-  const asleep: string[] = [];
-  for (const action of preview.actions) {
-    switch (action.status) {
-      case "not-woken":
-        asleep.push(actionLabel(pack, action.id));
-        break;
-      case "skipped":
-        actions.push({ id: action.id, label: actionLabel(pack, action.id), status: "skipped", reason: action.reason });
-        break;
-      case "decided":
-        actions.push({ id: action.id, label: actionLabel(pack, action.id), status: "decided", branch: branchLine(action, preview.repo) });
-        break;
-      case "waits-on-judge":
-        actions.push({ id: action.id, label: actionLabel(pack, action.id), status: "waits-on-judge", branches: action.branches.map((branch) => branchLine(branch, preview.repo)) });
-        break;
-    }
-  }
-  const notWoken = asleep.length ? `${listed(asleep, "and")} ${asleep.length === 1 ? "does" : "do"} not run on this event.` : null;
-  const { degraded, reason, feedback } = preview.verdict;
-  return { checks, actions, notWoken, degraded: degraded === null ? null : reason, comment: feedback.trim() ? feedback : null };
+  const { actions } = preview;
+  const { degraded, reason, feedback, verdict: word, reasons } = preview.verdict;
+  const waits = actions.status === "waits-on-judge";
+  const verdict = waits ? "The verdict waits on the judge." : sentence(`${VERDICT_LABEL[word]}: ${reasons[0] ?? reason}`);
+  const lists = actions.status === "not-woken" ? [] : waits ? actions.lists.map((list) => listLine(list, preview.repo)) : [listLine(actions, preview.repo)];
+  const notWoken = actions.status === "not-woken" ? `This event does not wake the policy's actions.` : null;
+  return { checks, verdict, lists, notWoken, degraded: degraded === null ? null : reason, comment: feedback.trim() ? feedback : null };
 }

@@ -1,41 +1,23 @@
 import { asRecord } from "@corbits/common";
-import { itemText, type CheckItem, type CheckOutput } from "@corbits/triage-contracts";
-import { type HubApproval, type MergeVerdict, type PrItem } from "./hub-api.ts";
+import { itemText, type CheckItem, type CheckOutput, type VerdictWord } from "@corbits/triage-contracts";
+import { type HubApproval, type PrItem } from "./hub-api.ts";
 
 export { relativeTime } from "./duration.ts";
-
-function points(value: number): number {
-  return Math.round(value * 100);
-}
-
-const SCORE_REASON = /^Score \S+ is below the threshold \S+$/;
 
 function lowerFirst(text: string): string {
   return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
-export const MERGE_LABEL: Record<MergeVerdict["verdict"], string> = { ready: "Ready to merge", "not-recommended": "Merge not recommended" };
-
-export const MERGE_SHORT_LABEL: Record<MergeVerdict["verdict"], string> = { ready: "Ready", "not-recommended": "Not ready" };
+export const VERDICT_LABEL: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
 
 export const NOT_EVALUATED = "Not evaluated";
 
-const UNSURE_PREFIX = "Not sure enough of every answer";
-
-/** Why the merge is not recommended; each check shows its own value, so the threshold is named as how sure Triage must be. */
-function mergeReasons(merge: MergeVerdict): string[] {
-  return merge.reasons.map((reason) => (SCORE_REASON.test(reason) ? `${UNSURE_PREFIX} to recommend merging (needs ${points(merge.threshold)}%)` : reason));
-}
-
-/** The merge verdict in one line: ready, or not recommended with the first thing in the way, the threshold last. */
-export function mergeText(item: Pick<PrItem, "merge">): string {
-  const { merge } = item;
-  if (merge === null) return NOT_EVALUATED;
-  if (merge.verdict === "ready") return MERGE_LABEL.ready;
-  const reasons = mergeReasons(merge);
-  const blocker = reasons.find((reason) => !reason.startsWith(UNSURE_PREFIX)) ?? reasons[0];
-  if (blocker === undefined) return MERGE_LABEL["not-recommended"];
-  return `${MERGE_LABEL["not-recommended"]} · ${lowerFirst(blocker.replace(/^Failed: /, ""))}`;
+/** The verdict in one line: its word, how likely it passes when the judge was asked, and the first reason. */
+export function verdictText(item: Pick<PrItem, "verdict" | "score" | "reasons">): string {
+  const { verdict, score, reasons } = item;
+  if (verdict === null) return NOT_EVALUATED;
+  const scored = score === null ? "" : ` · ${Math.round(score * 100)}% likely to pass`;
+  return `${VERDICT_LABEL[verdict]}${scored}${reasons[0] === undefined ? "" : ` · ${lowerFirst(reasons[0])}`}`;
 }
 
 const COUNT = new Intl.NumberFormat("en-US");

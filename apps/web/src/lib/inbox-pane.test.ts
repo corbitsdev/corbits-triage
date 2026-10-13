@@ -17,7 +17,9 @@ function item(overrides: Partial<PrItem>): PrItem {
     priority: "P2",
     owner: null,
     nextAction: null,
-    confidence: 0.5,
+    verdict: "unsure",
+    score: 0.5,
+    reasons: [],
     evidence: [],
     checks: [],
     labels: [],
@@ -104,7 +106,7 @@ describe("paneActions", () => {
   });
 
   test("a held pack close Do stands in for the menu's plain close", () => {
-    const actions = [{ id: "stale", branch: "always" as const, index: 0, effectId: "e", kind: "close" as const, reason: "Stale.", target: {}, held: true }];
+    const actions = [{ list: "unsure" as const, index: 0, effectId: "e", kind: "close" as const, reason: "Stale.", target: {}, held: true }];
     expect(paneActions(gate({ actions })).more.map((row) => row.kind)).not.toContain("close");
   });
 

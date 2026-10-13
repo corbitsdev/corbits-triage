@@ -11,14 +11,14 @@ const pull = { repo: "acme/widgets", number: 8 };
 const NONE: ReadonlySet<string> = new Set();
 
 function step(kind: string, target: Record<string, unknown>, index = 0): Record<string, unknown> {
-  return { id: "route", branch: "no", index, effectId: `effect-${index}`, kind, held: true, reason: "Size failed.", target };
+  return { list: "fail", index, effectId: `effect-${index}`, kind, held: true, reason: "Size failed.", target };
 }
 
 /** A pr-triage verdict as the hub's triage-verdicts route answers it, read back the way the inbox reads it. */
 function verdict(actions: unknown[]): PrItem {
   const detail = VerdictDetail.assert({ labels: ["triage:needs-decision"], feedback: "Please split this.", actions });
   const recorded = {
-    runId: "run-8", at: NOW, headSha: "abc", settled: true, state: "needs-decision", actor: "maintainer", humanGated: true,
+    runId: "run-8", at: NOW, headSha: "abc", verdict: "fail" as const, settled: true, state: "needs-decision", actor: "maintainer", humanGated: true,
     degraded: null, commented: false, checks: [], detail,
   };
   const [item] = projectQueue([{ ...pull, activityAt: null, verdict: recorded, run: null }], [], undefined);
@@ -70,8 +70,7 @@ describe("pendingDos", () => {
 
   test("Dos written or not held, skipped actions and steps, unresolved targets, agents and hidden Dos are not offered; a failed automatic Do is", () => {
     const dos = pendingDos(verdict([
-      { id: "off", skipped: true, reason: "CI is off in this pack." },
-      { id: "route", branch: "no", index: 0, effectId: "effect-0", kind: "assign", held: true, skipped: true, reason: "Role ops is not defined." },
+            { list: "fail", index: 0, effectId: "effect-0", kind: "assign", held: true, skipped: true, reason: "Role ops is not defined." },
       step("request-review", { unresolved: "codeowners" }),
       step("labels", { unresolved: "derive", from: "paths" }),
       step("agent", { prompt: "Review it", tools: [] }),

@@ -10,8 +10,8 @@ import { formatRunAddress } from "@intx/types";
 import { PreviewResponse } from "./github/pr-preview.js";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
 import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName, TriageStats } from "@corbits/triage-contracts";
-import type { ResolvedTarget } from "@corbits/triage-contracts";
-import { doEffectId, type Branch } from "@corbits/triage-workflows/logic/actions";
+import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
+import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage";
 import { verdictRecord } from "./github/verdict-record-store.js";
 import { ensureTriageRole } from "./github/automation.js";
@@ -347,17 +347,15 @@ async function connectGithub(origin: string, headers: Record<string, string>, te
   return providerId;
 }
 
-type SeededDo = { id: string; kind: "labels" | "comment" | "agent"; target: ResolvedTarget; index?: number; effectId?: string; held?: true };
-
-const BRANCH: Branch = "always";
+type SeededDo = { list: VerdictWord; kind: "labels" | "comment" | "agent"; target: ResolvedTarget; index?: number; effectId?: string; held?: true };
 
 function effectOf(step: SeededDo, index: number, headSha = HEAD): string {
-  return doEffectId({ repo: REPO, number: 8, headSha, actionId: step.id, branch: BRANCH, index, kind: step.kind, target: step.target });
+  return doEffectId({ repo: REPO, number: 8, headSha, list: step.list, index, kind: step.kind, target: step.target });
 }
 
 /** A Do seeded without an index stands for a verdict written before Dos had one. */
 function verdictStep(step: SeededDo, headSha: string) {
-  const base = { id: step.id, branch: BRANCH, kind: step.kind, reason: "Always applies.", target: step.target };
+  const base = { list: step.list, kind: step.kind, reason: "passes the repository's policy", target: step.target };
   return step.index === undefined ? base : { ...base, index: step.index, effectId: step.effectId ?? effectOf(step, step.index, headSha), ...(step.held && { held: true }) };
 }
 
@@ -418,8 +416,8 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
 
     await connectGithub(origin, headers, tenantId, github.origin);
 
-    const label: SeededDo = { id: "label", kind: "labels", target: { labels: ["api"] }, index: 0, held: true };
-    const forged: SeededDo = { id: "forged", kind: "labels", target: { labels: ["api"] }, index: 0, effectId: "0".repeat(64), held: true };
+    const label: SeededDo = { list: "pass", kind: "labels", target: { labels: ["api"] }, index: 0, held: true };
+    const forged: SeededDo = { list: "fail", kind: "labels", target: { labels: ["api"] }, index: 0, effectId: "0".repeat(64), held: true };
     const runId = await seedRun(db, dataDir, tenantId, [label, forged]);
     const otherRunId = await seedRun(db, dataDir, otherTenantId, [label]);
 
@@ -441,14 +439,11 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
   }
 }, 60_000);
 
-function comments(): Record<"yes" | "no" | "unsure", Array<{ kind: "comment"; target: { body: string } }>> {
-  return {
-    yes: [{ kind: "comment", target: { body: "yes" } }],
-    no: [{ kind: "comment", target: { body: "no" } }],
-    unsure: [{ kind: "comment", target: { body: "unsure" } }],
-  };
+function say(body: string) {
+  return [{ kind: "comment", target: { body } }];
 }
 
+// Stored before verdicts were words, so the preview reads it as one policy whose pass list labels.
 const SAVED_PACK = {
   ...emptyPack(REPO),
   checks: { "ci-green": { enabled: true } },
@@ -457,12 +452,9 @@ const SAVED_PACK = {
 
 const JUDGED_PACK = {
   ...emptyPack(REPO),
-  checks: { size: { enabled: true, maxFiles: 0 } },
+  checks: { "max-files-changed": { enabled: true, maxFiles: 0 } },
   custom: [{ id: "custom-1", name: "Explains why", group: "pull-request", kind: "model", shape: "is-true", claim: "The description says why." }],
-  actions: [
-    { id: "judged", when: "every", checks: ["custom-1"], branches: comments() },
-    { id: "judged-and-sized", when: "every", checks: ["max-files-changed", "custom-1"], branches: comments() },
-  ],
+  actions: { when: ["opened", "updated", "checks", "ready"], pass: say("pass"), fail: say("fail"), unsure: say("unsure") },
 };
 
 test("a pack preview evaluates an open pull request without writing anything", async () => {
@@ -490,30 +482,33 @@ test("a pack preview evaluates an open pull request without writing anything", a
       return PreviewResponse.assert(res.body);
     }
 
-    const rule = await previewed({ repo: REPO, number: 8 });
-    expect(rule).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-needed" });
-    expect(rule.checks).toContainEqual({ check: "ci-green", name: "CI green", kind: "machine", result: "pass", reason: "checks are success", evidence: [], output: { kind: "values", values: { status: "passing" } } });
+    const stored = await previewed({ repo: REPO, number: 8 });
+    expect(stored).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-run", verdict: { verdict: "unsure", reason: "needs the judge", degraded: null } });
+    expect(stored.checks).toContainEqual({ check: "ci-green", name: "CI green", kind: "machine", result: "pass", reason: "checks are success", evidence: [], output: { kind: "values", values: { status: "passing" } } });
+    expect(stored.verdict).not.toHaveProperty("request");
     const target = { labels: ["checked"] };
-    expect(rule.actions).toEqual([{
-      id: "tag", status: "decided", branch: "yes", reason: "CI green passed.",
-      dos: [{ id: "tag", branch: "yes", index: 0, kind: "labels", reason: "CI green passed.", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: "tag", branch: "yes", index: 0, kind: "labels", target }) }],
-    }]);
-    expect(rule.verdict).not.toHaveProperty("request");
-    expect(rule.verdict.merge).toEqual({ verdict: "ready", score: null, threshold: 0.7, reasons: [] });
+    expect(stored.actions).toEqual({
+      status: "waits-on-judge",
+      lists: [
+        { verdict: "pass", dos: [{ list: "pass", index: 0, kind: "labels", reason: "needs the judge", target, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "labels", target }) }] },
+        { verdict: "fail", dos: [] },
+        { verdict: "unsure", dos: [] },
+      ],
+    });
 
-    const judged = await previewed({ repo: REPO, number: 8, pack: JUDGED_PACK });
-    expect(judged).toMatchObject({ pack: "candidate", judge: "not-run", verdict: { state: "needs-author-update", degraded: null, merge: { verdict: "not-recommended" } } });
+    const sized = await previewed({ repo: REPO, number: 8, pack: JUDGED_PACK });
+    expect(sized).toMatchObject({ pack: "candidate", judge: "not-needed", verdict: { verdict: "fail", state: "needs-author-update", degraded: null, score: null } });
+    expect(sized.checks).toContainEqual({ check: "custom-1", name: "Explains why", kind: "model", result: "unconfirmed", reason: "not asked", evidence: [], output: { kind: "could-not-check", reason: "not asked" } });
+    expect(sized.actions).toMatchObject({ status: "decided", verdict: "fail", dos: [{ list: "fail", target: { body: "fail" }, held: true }] });
+    const judged = await previewed({ repo: REPO, number: 8, pack: { ...JUDGED_PACK, checks: {} } });
+    expect(judged).toMatchObject({ judge: "not-run", verdict: { verdict: "unsure", state: "awaiting-review", reason: "needs the judge", humanGated: false, degraded: null } });
     expect(judged.checks).toContainEqual({ check: "custom-1", name: "Explains why", kind: "model", result: "needs-judge", reason: "needs the judge", evidence: [], output: { kind: "could-not-check", reason: "needs the judge" } });
-    const [waiting, sized] = judged.actions;
-    if (waiting?.status !== "waits-on-judge") throw new Error("the judged action must wait on the judge");
-    expect(waiting.branches.map((b) => [b.branch, b.dos.map((d) => d.target)])).toEqual([
-      ["yes", [{ body: "yes" }]],
-      ["no", [{ body: "no" }]],
+    if (judged.actions.status !== "waits-on-judge") throw new Error("a judged pack must wait on the judge");
+    expect(judged.actions.lists.map((list) => [list.verdict, list.dos.map((d) => d.target)])).toEqual([
+      ["pass", [{ body: "pass" }]],
+      ["fail", [{ body: "fail" }]],
       ["unsure", [{ body: "unsure" }]],
     ]);
-    expect(sized).toMatchObject({ id: "judged-and-sized", status: "decided", branch: "no", dos: [{ target: { body: "no" } }] });
-    const unsized = await previewed({ repo: REPO, number: 8, pack: { ...JUDGED_PACK, checks: {}, mergeThreshold: 0.9 } });
-    expect(unsized).toMatchObject({ judge: "not-run", verdict: { state: "awaiting-review", reason: "needs the judge", humanGated: false, degraded: null, merge: { threshold: 0.9 } } });
 
     expect(github.repoRequests.filter((request) => !request.startsWith("GET "))).toEqual([]);
     expect(await findArtifactByTitle(db, tenantId, triageStateName(REPO))).toBeNull();
@@ -564,8 +559,8 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
     const otherTenantId = await createTenant(origin, headers);
     await connectGithub(origin, headers, tenantId, github.origin);
 
-    const label: SeededDo = { id: "label", kind: "labels", target: { labels: ["api"] }, index: 0 };
-    const note: SeededDo = { id: "note", kind: "comment", target: { body: "Thanks" }, index: 0 };
+    const label: SeededDo = { list: "pass", kind: "labels", target: { labels: ["api"] }, index: 0 };
+    const note: SeededDo = { list: "fail", kind: "comment", target: { body: "Thanks" }, index: 0 };
     const ci = (result: string, check = "ci-green") => ({ check, kind: "machine", result, reason: "", evidence: [] });
     const started = new Date(Date.now() - 3_600_000);
     await seedDeployment(db, dataDir, tenantId, [
@@ -601,7 +596,7 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
       verdicts: { "ready-monitoring": 1, "awaiting-review": 1 },
       neededYou: 1,
       checks: { "ci-green": { pass: 1, fail: 0, unconfirmed: 1 } },
-      actions: { label: { suggested: 1, executed: 1, failed: 0 }, note: { suggested: 1, executed: 0, failed: 0 } },
+      actions: { pass: { suggested: 1, executed: 1, failed: 0 }, fail: { suggested: 1, executed: 0, failed: 0 } },
       comments: 1,
       medianTimeToVerdictMs: 120_000,
     });

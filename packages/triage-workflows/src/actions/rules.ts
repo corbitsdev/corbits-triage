@@ -4,6 +4,7 @@ import { ACTION_KINDS, type ActionKind, type CheckPack, type RepoRole } from "@c
 import { deriveState, type PrFacts } from "../logic/checks.js";
 import { degradedItem, type Item, type Judged } from "../logic/item.js";
 import { judgeKey, prepareQualityEvaluation, type JudgeRequest } from "../logic/quality.js";
+import { choiceFirst, choiceOf, repliesTo } from "./evaluate.js";
 import { stepJson } from "../logic/step-json.js";
 
 export type RulesItem = { error: string } | { facts: PrFacts; pack: CheckPack; roles?: Record<string, RepoRole>; automatic?: ActionKind[]; judged?: Judged };
@@ -36,9 +37,13 @@ function ruled(it: RulesItem): { item: Item; requests: JudgeRequest[] } {
   if ("error" in it) return { item: degradedItem(it.error), requests: [] };
   const item = { facts: it.facts, det: deriveState(it.facts, undefined, it.pack, it.roles ?? {}), automatic: it.automatic, pack: it.pack, roles: it.roles, judged: it.judged };
   if (!item.det.needsJudgment) return { item, requests: [] };
-  const { requests, judgeError } = prepareQualityEvaluation(item.facts, item.det.sources);
+  const evaluation = prepareQualityEvaluation(item.facts, item.det.sources);
+  const { requests, judgeError } = evaluation;
   if (judgeError !== undefined) return { item: { ...item, judgeError, judgeLimitExceeded: true }, requests: [] };
-  return { item, requests: requests.filter((request) => it.judged?.[judgeKey(request)] === undefined) };
+  // With every judged rule answered already, the verdict question needs no second round.
+  const choice = choiceFirst(item, evaluation) ? choiceOf(item, evaluation, repliesTo(item, requests, [])) : undefined;
+  const asked = [...requests, ...(choice && "request" in choice ? [choice.request] : [])];
+  return { item, requests: asked.filter((request) => it.judged?.[judgeKey(request)] === undefined) };
 }
 
 export async function rules(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<RulesOutput> {

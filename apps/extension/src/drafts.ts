@@ -4,17 +4,14 @@ import type { TriageView } from "./view.ts";
 /** A comment a person can drop into GitHub's comment box, edit and post as themselves. */
 export type Draft = { id: string; title: string; why: string; body: string; source: "do" | "check" };
 
-function titleOf(actionId: string): string {
-  const words = actionId.replace(/[-_]+/g, " ").trim();
-  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
-}
+const LIST_TITLES = { pass: "On pass", fail: "On fail", unsure: "On unsure" } as const;
 
 /** The pack's comment Dos on this head, the comments its failing checks suggest, then the verdict's own comment for the author. */
 export function draftsOf(view: TriageView): Draft[] {
   if (view.ended) return [];
   const fromDos = view.dos.flatMap(function draft(step): Draft[] {
     const body = commentBody(step);
-    return body === undefined ? [] : [{ id: step.effectId, title: titleOf(step.id), why: step.reason, body, source: "do" }];
+    return body === undefined ? [] : [{ id: step.effectId, title: LIST_TITLES[step.list], why: step.reason, body, source: "do" }];
   });
   const fromChecks = (view.suggested ?? []).flatMap((action): Draft[] => (action.kind === "comment" && action.body ? [{ id: action.id, title: action.title, why: action.why, body: action.body, source: "check" }] : []));
   // With one failing check, its own draft already says everything.

@@ -10,7 +10,7 @@ export type Severity = "fail" | "unsure" | "cant";
 /** `cited` are evidence lines the check's output links to changed lines; `notes` are the rest of its evidence. */
 export type Problem = { check: CheckResult; severity: Severity; text: string | null; cited: string[]; notes: string[] };
 
-/** A gate only picks an action's branch, so it is a problem only when it could not be decided. */
+/** An author rule never fails a pull request, so it is a problem only when it could not be decided. */
 function severityOf(check: CheckResult): Severity | null {
   if (check.result === "pass") return null;
   if (check.result === "fail") return check.gate ? null : "fail";

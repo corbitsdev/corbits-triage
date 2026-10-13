@@ -1,6 +1,6 @@
 // Judge eval: replays frozen pull requests through the production triage steps (the hub's file paging, rules,
-// one System One call per judge chunk, focused's follow-up calls, evaluate) against the production decision model and checks each model check's
-// answer against its label. The judge is not deterministic, so each check may miss a few cases.
+// one System One call per judge chunk, focused's follow-up calls and the verdict question, evaluate) against the production decision model and
+// checks each judged rule's answer and the verdict against its label. The judge is not deterministic, so each may miss a few cases.
 //
 //   bun run eval:judge
 import { EvalFailure, evaluate, type CheckFn, type Report } from "@corbits/evals";
@@ -14,7 +14,7 @@ import { parts } from "../../packages/triage-workflows/src/actions/parts.js";
 import { rules, type JudgeChunk } from "../../packages/triage-workflows/src/actions/rules.js";
 import { assembleItem, type RepoDocs } from "../../packages/triage-workflows/src/logic/facts.js";
 import type { Verdict } from "../../packages/triage-workflows/src/logic/render.js";
-import { MODEL_CHECKS, variant, type CaseInput, type Expected, type ModelCheck, type Snapshot, type StoredSnapshot } from "./cases.js";
+import { MODEL_CHECKS, SCORED, variant, type CaseInput, type Expected, type Scored, type Snapshot, type StoredSnapshot } from "./cases.js";
 
 // The OpenCode Zen preset the production workspace's decision model uses.
 const ENDPOINT = { kind: "custom", url: "https://opencode.ai/zen/v1/systemone", model: "jev-1.13" } as const;
@@ -29,7 +29,7 @@ const NO_EFFECTS: Parameters<typeof rules>[1] = {
   },
 };
 
-type Outcomes = Record<ModelCheck, "pass" | "fail" | "unsure">;
+type Outcomes = Record<Scored, "pass" | "fail" | "unsure">;
 
 function snapshot(number: number): Snapshot {
   const stored = JSON.parse(readFileSync(`${here}pulls/${number}.json`, "utf8")) as StoredSnapshot;
@@ -110,24 +110,26 @@ async function judge(input: CaseInput): Promise<Outcomes> {
   const { chunks } = await parts(judged, NO_EFFECTS, AbortSignal.timeout(1_000));
   const partsOutput = await Promise.all(chunks.map(judgeChunk));
   const verdict = await evaluateStep({ ...judged, judgeParts: { output: partsOutput } }, NO_EFFECTS, AbortSignal.timeout(1_000)) as Verdict;
-  return Object.fromEntries(MODEL_CHECKS.map((check) => {
+  const checks = Object.fromEntries(MODEL_CHECKS.map((check) => {
     const result = verdict.checks.find((row) => row.check === check)?.result;
     return [check, result === "pass" || result === "fail" ? result : "unsure"];
-  })) as Outcomes;
+  }));
+  return { ...checks, verdict: verdict.verdict } as Outcomes;
 }
 
 /** Right when the check answered what its label expects; the answer is the label, so unsure answers show apart. */
-function answered(check: ModelCheck): CheckFn<CaseInput, Outcomes, Expected> {
+function answered(check: Scored): CheckFn<CaseInput, Outcomes, Expected> {
   return function right({ output, expect }) {
     const got = output[check];
     return { pass: got === expect![check], value: got === expect![check] ? 1 : 0, label: got };
   };
 }
 
-/** Wrong and unsure answers both miss; how many were unsure says how often the judge declined to decide. */
+/** Wrong and unsure answers both miss; how many were unsure says how often the judge declined to decide, and each miss is named with its answer. */
 function printUnsure(report: Report) {
-  for (const check of MODEL_CHECKS) {
-    console.log(`  ${check}: ${report.cases.filter((row) => row.checks[check]?.label === "unsure").length} unsure`);
+  for (const check of SCORED) {
+    const missed = report.cases.filter((row) => row.checks[check]?.pass === false).map((row) => `${row.name} (${row.checks[check]?.label})`);
+    console.log(`  ${check}: ${report.cases.filter((row) => row.checks[check]?.label === "unsure").length} unsure${missed.length ? `; missed ${missed.join(", ")}` : ""}`);
   }
 }
 
@@ -135,10 +137,10 @@ try {
   printUnsure(await evaluate("judge", {
     run: judge,
     cases: `${here}cases.jsonl`,
-    checks: Object.fromEntries(MODEL_CHECKS.map((check) => [check, answered(check)])),
+    checks: Object.fromEntries(SCORED.map((check) => [check, answered(check)])),
     // Focused decided every case in each measured run; two misses leave room for answers near the band edge. Docs missed 5
-    // of the 49 cases, all unsure, in the first run after the tests check was removed.
-    allow: { docs: 7, focused: 2 },
+    // of the 49 cases, all unsure, in the first run after the tests check was removed. The verdict missed 2, none unsure, in its first run.
+    allow: { docs: 7, focused: 2, verdict: 4 },
     about: { model: ENDPOINT.model },
     concurrency: 2,
     timeout: "10m",

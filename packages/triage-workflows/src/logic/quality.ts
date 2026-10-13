@@ -15,7 +15,7 @@ interface ChoiceQualityQuestion {
   id: string;
   type: "choice";
   instructions: string;
-  criteria: Record<FocusedChoice, string> | Record<SliceChoice, string>;
+  criteria: Record<FocusedChoice, string> | Record<SliceChoice, string> | Record<VerdictChoice, string>;
 }
 
 export type QualityQuestion = BooleanQualityQuestion | ChoiceQualityQuestion;
@@ -25,6 +25,21 @@ export type FocusedChoice = typeof FOCUSED_CHOICES[number];
 
 export const SLICE_CHOICES = ["serves_purpose", "separate_change", "cant_tell"] as const;
 export type SliceChoice = typeof SLICE_CHOICES[number];
+
+export const VERDICT_CHOICES = ["pass", "fail", "cant_tell"] as const;
+export type VerdictChoice = typeof VERDICT_CHOICES[number];
+
+/** The question that decides the verdict once no hard rule failed; its id is apart from every rule's, so rule answers keep their keys. */
+export const VERDICT_QUESTION: ChoiceQualityQuestion = {
+  id: "verdict",
+  type: "choice",
+  instructions: "Does this pull request pass this repository's policy? `policy.rules` lists every rule the repository enabled with its result and evidence; a judged rule's `pass` is how likely it passes. Judge by those results and by the pull request's title, body, commits, changed paths and the diff in `pullRequest.files`. A rule other than an author rule whose result is fail means the pull request fails, unless the pull request plainly shows the rule does not apply to it. An author rule (`author: true`) only says who opened the pull request and never fails it.",
+  criteria: {
+    pass: "No rule fails, anything unconfirmed is minor, and nothing in the pull request breaks the policy.",
+    fail: "A rule fails, or the pull request clearly breaks the policy in a way its rules describe.",
+    cant_tell: "The rules and the pull request do not show enough to tell.",
+  },
+};
 
 /** Focused asks about the whole pull request when its diff fits one request: a change across many files is still one thing. */
 const FOCUSED_QUESTION: ChoiceQualityQuestion = {
@@ -278,9 +293,18 @@ function jsonBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
+/** A rule as the verdict question reads it: a hard rule's result, or a judged rule's answer with how likely it passes. */
+/** `author` marks an author rule, which says who opened the pull request and never fails it. */
+export type PolicyRule = { name: string; judged: boolean; author?: true; result: "pass" | "fail" | "unconfirmed"; reason: string; evidence: string[]; pass?: number };
+
+export type VerdictState = {
+  pullRequest: JudgeState["pullRequest"];
+  policy: { rules: PolicyRule[] };
+};
+
 /** One System One call: the pull request with a share of its files, and the questions about them. */
 export interface JudgeRequest {
-  state: JudgeState;
+  state: JudgeState | VerdictState;
   questions: QualityQuestion[];
 }
 
@@ -497,6 +521,29 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
   // A diff that fits one request is asked about the whole pull request rather than as a slice.
   for (const request of requests) request.questions = request.questions.map((question) => (question.id === ids[0] ? FOCUSED_QUESTION : question));
   return { plan, focused: { ...focused, slices: { [FOCUSED_QUESTION.id]: focused.slices[ids[0]!]! } }, requests };
+}
+
+/**
+ * The verdict question: the rules' results with the pull request's metadata and as much of its diff as fits one request,
+ * packed as focused's first slice is. Refused when the metadata and rules alone leave too little room for files.
+ */
+export function verdictRequest(facts: PrFacts, rules: PolicyRule[]): { request: JudgeRequest } | { judgeError: string } {
+  const listed = pathList(facts, true);
+  const empty: VerdictState = { pullRequest: judgeState(facts, [], false, listed).pullRequest, policy: { rules } };
+  const room = MAX_SYSTEM_ONE_STATE_BYTES - jsonBytes(empty);
+  if (room < MIN_FILE_ROOM) return { judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${Math.ceil(jsonBytes(empty) / 1024)} KB)` };
+  const files: StateFile[] = [];
+  let used = 0;
+  for (const file of judgedFiles(facts)) {
+    const hunks = typeof file.patch === "string" ? patchHunks(file.patch) : [];
+    if (hunks.length === 0) continue;
+    const fitted = fitFile(room - used - (files.length > 0 ? 1 : 0), stateFile(file, hunks));
+    if (!fitted) break;
+    files.push(fitted);
+    used += jsonBytes(fitted) + (files.length > 1 ? 1 : 0);
+    if (fitted.hunks.length < hunks.length) break;
+  }
+  return { request: { state: { ...empty, pullRequest: { ...empty.pullRequest, files } }, questions: [VERDICT_QUESTION] } };
 }
 
 function stateFile(file: PrFileFacts, hunks: string[]): StateFile {

@@ -28,13 +28,13 @@ export type TriageView = {
   /** The decision model's answers a later run of this head can reuse, and the model that gave them. */
   judged?: Judged;
   judgedBy?: string;
-  verdict: Pick<Verdict, "state" | "reason" | "nextAction" | "actor" | "feedback" | "score" | "merge" | "degraded">;
+  verdict: Pick<Verdict, "state" | "reason" | "nextAction" | "actor" | "feedback" | "verdict" | "score" | "reasons" | "degraded">;
   /** 0 to 100, the hub's readiness: pass counts 1, unconfirmed half and fail 0; null when there are no checks or the verdict is degraded. */
   readiness: number | null;
   checks: ViewCheck[];
   /** The Dos this verdict suggests, in pack order. */
   dos: SuggestedDo[];
-  /** Actions whose branch depends on the model checks' answers, so they suggest nothing until those are answered. */
+  /** Dos that depend on the verdict the decision model has not given, so they suggest nothing until it does. */
   waitingOnJudge: number;
   /** GitHub's API limit after a local run's reads, when any went to the API. */
   rate?: RateLimit;
