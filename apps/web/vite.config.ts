@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defaultClientConditions, defineConfig } from "vite";
 import { contentSecurityPolicy, securityHeaders } from "./src/security-headers.ts";
 
 export default defineConfig(({ command }) => ({
@@ -17,6 +17,10 @@ export default defineConfig(({ command }) => ({
       },
     },
   ],
+  // Stock @intx packages export source only under the intx-src condition; this list replaces Vite's defaults.
+  resolve: {
+    conditions: ["intx-src", ...defaultClientConditions],
+  },
   preview: {
     headers: securityHeaders(),
   },
