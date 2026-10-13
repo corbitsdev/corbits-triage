@@ -1,10 +1,10 @@
-import { citationOf, citationUrl, CLOSED_FINDING, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, type ActionKind, type CheckItem, type CheckOutput, type Rendered, type RuleCustomCheck, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, type ActionKind, type CheckItem, type CheckOutput, type Rendered, type RuleCustomCheck, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { SuggestedAction } from "./actions.js";
-import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
+import { hardFailures, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan } from "./quality.js";
+import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
 type NoulAnswer = { type: "noul"; noul: number };
 type ChoiceAnswer = { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number };
@@ -64,7 +64,7 @@ function parseDecision(value: Record<string, unknown>): { id: string; answer: Mo
   if (value.type !== "choice" || !exactKeys(value, ["id", "type", "choice", "probabilities", "confidence"]) ||
     typeof value.id !== "string" || !probability(value.confidence) || !isRecord(value.probabilities)) return null;
   const probabilities = value.probabilities;
-  const choices = [FOCUSED_CHOICES, SLICE_CHOICES].find((options) => exactKeys(probabilities, [...options]));
+  const choices = [FOCUSED_CHOICES, SLICE_CHOICES, VERDICT_CHOICES].find((options) => exactKeys(probabilities, [...options]));
   if (!choices || !choices.includes(value.choice as never) || !choices.every((choice) => probability(probabilities[choice]))) return null;
   const sum = choices.reduce((total, choice) => total + (probabilities[choice] as number), 0);
   if (Math.abs(sum - 1) > 0.02) return null;
@@ -102,8 +102,10 @@ export interface RenderInput {
   judgeSkipped?: true;
   /** Logins of requested reviewers. */
   reviewers?: string[];
-  /** The pack's merge threshold. */
-  threshold: number;
+  /** The verdict question's probability for each choice; undefined when it was not asked or not answered. */
+  choice?: Record<VerdictChoice, number>;
+  /** Why the verdict question could not be asked: the pull request is too large for it. */
+  choiceRefused?: string;
 }
 
 export type Actor = "author" | "maintainer" | "system";
@@ -128,21 +130,14 @@ const UNREAD_REASON = "file could not be read";
 
 const NOT_APPLICABLE: CheckOutput = { kind: "not-applicable" };
 
-/** Whether this pull request should merge now; shown in the portal, never posted to GitHub. */
-export interface MergeVerdict {
-  verdict: "ready" | "not-recommended";
-  score: number | null;
-  threshold: number;
-  reasons: string[];
-}
-
 export interface RenderOutput extends Rendered {
   mirror: boolean;
-  /** The weakest model answer's confidence; null when no model check was asked. */
+  /** Which action list runs on this head. */
+  verdict: VerdictWord;
+  /** How likely the pull request passes its policy, as the verdict question answered; null when it was not asked. */
   score: number | null;
-  /** @deprecated Read `score`; kept for one release because old run logs carry it. */
-  confidence: number | "unknown";
-  merge: MergeVerdict;
+  /** Why the verdict is what it is: the failed hard rules first, then the judged rules that failed or were not confirmed. */
+  reasons: string[];
   degraded: "inference-outage" | "error" | null;
   checks: CheckResult[];
   /** The reason the verdict was rendered with. */
@@ -160,8 +155,6 @@ interface Step {
   action: string;
 }
 
-// Only these states let model answers drive the verdict; anything worse is driven by its machine findings.
-const JUDGED_STATES = new Set<WorkflowState>(["ready-monitoring", "awaiting-review"]);
 const ACTOR_ORDER: Actor[] = ["author", "maintainer", "system"];
 const MAX_ACTIONS = 2;
 // Jev's yes/no answers are calibrated probabilities: decide only well clear of a coin flip, otherwise leave it unsure.
@@ -169,6 +162,8 @@ const YES = 0.7;
 const NO = 0.3;
 // A focused slice serves the pull request's purpose, or is a separate change, only when that option holds this much probability.
 const FOCUSED_DECIDES = 0.6;
+// The verdict passes or fails only when that choice holds this much probability; anything less is unsure.
+const VERDICT_DECIDES = 0.7;
 const MAX_FILE_EVIDENCE = 3;
 const MAX_CODE_CHARS = 200;
 
@@ -194,6 +189,8 @@ export function separateSlices(answers: ParsedAnswers, focused: FocusedPlan, exp
 /** An answer clear of the unsure band: the verdict it drives would not change were it asked again. */
 function isDecisive(answer: ModelAnswer): boolean {
   if (answer.type === "noul") return answer.noul >= YES || answer.noul <= NO;
+  const { pass, fail } = answer.probabilities;
+  if (pass !== undefined && fail !== undefined) return pass >= VERDICT_DECIDES || fail >= VERDICT_DECIDES;
   const { serves, separate } = sides(answer);
   return serves >= FOCUSED_DECIDES || separate >= FOCUSED_DECIDES;
 }
@@ -210,7 +207,6 @@ const FOCUSED_PASS_AT = Math.round(FOCUSED_DECIDES * 100);
 
 type ModelEvaluation = {
   checks: CheckResult[];
-  scores: number[];
   /** Some asked question got no usable answer. */
   unanswered: boolean;
 };
@@ -234,15 +230,15 @@ function band(noul: number, yesPasses: boolean): Decided {
   return { result: "unconfirmed", reason: UNDECIDED_REASON };
 }
 
-function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
-  if (!det.sources) return { checks: [], scores: [], unanswered: false };
+/** The judged rules' results from the judge's answers; each is unconfirmed when its question was not asked or not answered. */
+export function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
+  if (!det.sources) return { checks: [], unanswered: false };
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
   const unavailable = !det.needsJudgment ? NOT_ASKED_REASON : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
   const invalid = isInvalid(parsed, askedQuestionIds(sources, plan, focused));
   const checks: CheckResult[] = [];
-  const scores: number[] = [];
   let anyUnanswered = false;
 
   function noulOf(id: string): number | undefined {
@@ -288,7 +284,6 @@ function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimi
     anyUnanswered ||= unanswered;
     const needing = answered.filter(([, short]) => short >= YES).sort((a, b) => b[1] - a[1]);
     if (needing.length > 0) {
-      scores.push(needing[0]![1]);
       const named = needing.slice(0, MAX_FILE_EVIDENCE).map(([item]) => item);
       return push(check, { result: "fail" }, scored(1 - needing[0]![1], PASS_AT, named), named.map(itemText));
     }
@@ -300,7 +295,6 @@ function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimi
     if (answered.length === 0) return push(check, { result: "pass" }, NOT_APPLICABLE);
     const weakest = answered.reduce((a, b) => (b[1] > a[1] ? b : a));
     const decided = band(weakest[1], false);
-    if (decided.result === "pass") scores.push(1 - weakest[1]);
     return push(check, decided, scored(1 - weakest[1], PASS_AT, [weakest[0]]));
   }
 
@@ -319,7 +313,6 @@ function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimi
     const serves = Math.min(...answered.map((side) => side.serves), 1);
     const unread = plan.unread.length > 0 ? { unread: plan.unread } : {};
     if (separate >= FOCUSED_DECIDES) {
-      scores.push(separate);
       const likely = Object.entries(plan.parts).flatMap(([id, item]): Array<[CheckItem, number]> => {
         const noul = noulOf(id);
         return noul !== undefined && noul >= YES ? [[item, noul]] : [];
@@ -335,7 +328,6 @@ function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimi
     }
     // A file the judge could not get whole may be the separate change, so only a fully read pull request passes.
     if (plan.unread.length > 0) return push("focused", { result: "unconfirmed", reason: UNDECIDED_REASON }, { kind: "could-not-check", reason: UNREAD_REASON, items: plan.unread });
-    if (serves >= FOCUSED_DECIDES) scores.push(serves);
     return push("focused", serves >= FOCUSED_DECIDES ? { result: "pass" } : { result: "unconfirmed", reason: UNDECIDED_REASON }, scored(serves, FOCUSED_PASS_AT, []));
   }
 
@@ -356,10 +348,9 @@ function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimi
       continue;
     }
     const decided = band(noul, true);
-    if (decided.result !== "unconfirmed") scores.push(Math.max(noul, 1 - noul));
     push(id, decided, scored(noul, PASS_AT, []));
   }
-  return { checks, scores, unanswered: anyUnanswered };
+  return { checks, unanswered: anyUnanswered };
 }
 
 function withoutLimit(evidence: string[]): string {
@@ -426,13 +417,13 @@ function oneSplit(failed: CheckResult[]): CheckResult[] {
   return failed.flatMap((c) => (c === sized[0] ? [{ ...c, evidence: sized.flatMap((s) => s.evidence) }] : sized.includes(c) ? [] : [c]));
 }
 
-function nextStep(all: CheckResult[], sources: Sources, reviewers: string[]): { actor: Actor; nextAction: string } {
+function nextStep(all: CheckResult[], sources: Sources, reviewers: string[], verdict: VerdictWord): { actor: Actor; nextAction: string } {
   const checks = judged(all);
   const failing = oneSplit(checks.filter((c) => c.result === "fail")).map((c) => failedStep(c, sources));
   const steps = failing.length ? failing : checks.filter((c) => c.result === "unconfirmed").flatMap((c) => unconfirmedSteps(c, sources));
   if (!steps.length) {
     const requested = reviewers.length ? ` — ${reviewers.map((r) => `@${r}`).join(", ")} requested` : "";
-    return { actor: "maintainer", nextAction: `Review and merge${requested}` };
+    return { actor: "maintainer", nextAction: `${verdict === "pass" ? "Review and merge" : "Review"}${requested}` };
   }
   const ordered = ACTOR_ORDER.flatMap((actor) => steps.filter((s) => s.actor === actor));
   const actions = ordered.map((s) => s.action);
@@ -496,11 +487,22 @@ export function authorFailures(all: CheckResult[], sources: Sources): CheckResul
   return judged(all).filter((c) => c.result === "fail" && c.check !== NO_CHANGES_REQUESTED && failedStep(c, sources).actor === "author");
 }
 
+const VERDICT_TITLES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
+
+/** The comment's first line, naming the verdict. */
+export function commentTitle(verdict: VerdictWord): string {
+  return `**Triage: ${VERDICT_TITLES[verdict]}**`;
+}
+
+/** What a passing comment tells the author when nothing else is listed. */
+export const NOTHING_TO_CHANGE = "No changes needed from you. ";
+
 /**
- * Public: only what the author must fix and what is not yet confirmed; never a score or model reasoning. A maintainer's
- * requested changes are already in front of the author, so they are left out, and a comment holding nothing else is not posted.
+ * Public: the verdict, what the author must fix and what is not yet confirmed; never a score or model reasoning. A
+ * maintainer's requested changes are already in front of the author, so they are left out, and a comment holding
+ * nothing else is not posted.
  */
-function authorComment({ author, repo, headSha, sources }: RenderContext, all: CheckResult[]): string {
+function authorComment({ author, repo, headSha, sources }: RenderContext, all: CheckResult[], verdict: VerdictWord): string {
   const checks = judged(all);
   const failing = checks.filter((c) => c.result === "fail");
   const mine = authorFailures(checks, sources);
@@ -521,32 +523,25 @@ function authorComment({ author, repo, headSha, sources }: RenderContext, all: C
   }
   if (!lines.length) {
     if (failing.some((c) => c.check === NO_CHANGES_REQUESTED)) return "";
-    lines.push("No changes needed from you. A maintainer will review this pull request.");
+    lines.push(`${verdict === "pass" ? NOTHING_TO_CHANGE : ""}A maintainer will review this pull request.`);
   }
-  return bounded(lines);
+  return bounded([commentTitle(verdict), "", ...lines]);
 }
 
-function scoreOf(scores: number[]): number | null {
-  return scores.length > 0 ? Math.round(Math.min(...scores) * 100) / 100 : null;
+/** A failed or unconfirmed rule as the portal lists it: its reason and what it found. */
+function reasonOf(c: CheckResult, sources: Sources): string {
+  if (c.result === "fail") return c.evidence.length ? `${c.reason}: ${c.evidence.join(", ")}` : c.reason;
+  return `Not confirmed: ${c.kind === "model" && sources ? passText(c.check, sources) : c.reason}`;
 }
 
-/** Red when anything fails or is unconfirmed, or the score is under the threshold; a null score skips the threshold. */
-function mergeVerdict(all: CheckResult[], sources: Sources, score: number | null, threshold: number): MergeVerdict {
-  const checks = judged(all);
-  const outage = outageCount(checks);
-  const reasons = [
-    ...(outage > 0 ? [`Could not evaluate ${outage} ${outage === 1 ? "rule" : "rules"}`] : []),
-    ...checks.flatMap((c) => {
-      if (c.result === "fail") return [`Failed: ${c.reason}`];
-      if (c.result !== "unconfirmed" || c.reason === NOT_ASKED_REASON || c.reason === UNAVAILABLE_REASON) return [];
-      return [`Not confirmed: ${c.kind === "model" && sources ? passText(c.check, sources) : c.reason}`];
-    }),
-    ...(score !== null && score < threshold ? [`Score ${score} is below the threshold ${threshold}`] : []),
-  ];
-  return { verdict: reasons.length ? "not-recommended" : "ready", score, threshold, reasons };
+/** Failed hard rules first, then the judged rules that failed or the judge could not settle. */
+function reasonsOf(det: DeterministicResult, model: CheckResult[]): string[] {
+  const hard = judged(det.checks).filter((c) => c.result === "fail" || (c.result === "unconfirmed" && c.check !== NOT_A_DRAFT));
+  const soft = model.filter((c) => c.result === "fail" || unsure(c));
+  return [...hard.filter((c) => c.result === "fail"), ...hard.filter((c) => c.result !== "fail"), ...soft].map((c) => reasonOf(c, det.sources));
 }
 
-type VerdictBase = Omit<RenderOutput, "nextAction" | "actor" | "feedback" | "checks" | "merge" | "score" | "confidence" | "mirror">;
+type VerdictBase = Omit<RenderOutput, "nextAction" | "actor" | "feedback" | "checks" | "score" | "mirror" | "reasons">;
 
 interface RenderContext {
   author: string;
@@ -554,56 +549,71 @@ interface RenderContext {
   headSha: string;
   sources: Sources;
   reviewers: string[];
-  threshold: number;
 }
 
-function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, ctx: RenderContext, commented = checks): RenderOutput {
-  const { sources, reviewers, threshold } = ctx;
+function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, reasons: string[], ctx: RenderContext): RenderOutput {
   return {
     ...rendered,
-    ...nextStep(checks, sources, reviewers),
+    ...nextStep(checks, ctx.sources, ctx.reviewers, rendered.verdict),
     mirror: rendered.state !== "stale-unknown",
     score,
-    confidence: score ?? "unknown",
-    merge: mergeVerdict(checks, sources, score, threshold),
-    feedback: authorComment(ctx, commented),
+    reasons,
+    feedback: authorComment(ctx, checks, rendered.verdict),
     checks,
   };
 }
 
-export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], threshold } = input;
-  const ctx = { author, repo, headSha, sources: det.sources, reviewers, threshold };
-  const evaluated = evaluateModel(input);
-  const checks = [...det.checks, ...evaluated.checks];
-  const score = scoreOf(evaluated.scores);
-  if (!det.needsJudgment || !det.sources || !JUDGED_STATES.has(det.state)) {
-    const verdict = withChecks({ ...render(det.state), degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
-    // Model answers do not drive this verdict, so the comment speaks only to the machine checks; a closed pull request gets none.
-    return det.findings.some((f) => f.check === CLOSED_FINDING) ? { ...verdict, feedback: "" } : verdict;
-  }
-  const failing = evaluated.checks.filter((check) => check.result === "fail");
-  const unconfirmed = evaluated.checks.some((check) => check.result === "unconfirmed" && check.reason !== NOT_ASKED_REASON);
-  const state = failing.length ? "needs-author-update" : unconfirmed ? "awaiting-review" : det.state;
-  const outage = judgeLimitExceeded !== true && judgeSkipped !== true && (judgeError !== undefined || evaluated.unanswered);
-  const focused = failing.find((check) => check.check === "focused");
-  const reasons = failing.map((check) => check === focused && check.evidence.length
-    ? `${check.reason}: ${check.evidence.join(", ")}`
-    : check.reason);
-  const reason = judgeLimitExceeded === true ? judgeError!
-    : judgeSkipped === true ? NEEDS_JUDGE_REASON
-      : outage ? `${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`
-        : reasons.length ? reasons.join("; ") : det.reason;
-  return withChecks({ ...render(state), degraded: outage ? "inference-outage" : null, reason }, checks, score, ctx);
+const VERDICT_STATES: Record<VerdictWord, WorkflowState> = { pass: "ready-monitoring", fail: "needs-author-update", unsure: "awaiting-review" };
+
+/** Pass or fail only when that choice clears the bar; anything else is unsure. */
+function decide(choice: Record<VerdictChoice, number>): VerdictWord {
+  if (choice.pass >= VERDICT_DECIDES) return "pass";
+  if (choice.fail >= VERDICT_DECIDES) return "fail";
+  return "unsure";
 }
 
-export function degradedVerdict(reason: string, threshold: number): RenderOutput {
+const DECIDED_REASONS: Record<VerdictWord, string> = {
+  pass: "passes the repository's policy",
+  fail: "does not pass the repository's policy",
+  unsure: "the decision model could not tell whether it passes the repository's policy",
+};
+
+/**
+ * A failed hard rule decides Fail without the decision model; a draft or closed pull request is not decided, and is
+ * unsure. Otherwise the verdict question decides, and a judge that did not answer leaves the verdict unsure and degraded.
+ */
+export function renderVerdict(input: RenderInput): RenderOutput {
+  const { author, repo, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused } = input;
+  const ctx = { author, repo, headSha, sources: det.sources, reviewers };
+  const evaluated = evaluateModel(input);
+  const checks = [...det.checks, ...evaluated.checks];
+  const reasons = reasonsOf(det, evaluated.checks);
+  const hard = hardFailures(det.checks);
+  if (hard.length > 0) return withChecks({ ...render(det.state), verdict: "fail", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
+  if (!det.needsJudgment) {
+    const verdict = withChecks({ ...render(det.state), verdict: "unsure", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
+    return { ...verdict, feedback: "" };
+  }
+  function unsureOf(reason: string, degraded: RenderOutput["degraded"] = null): RenderOutput {
+    return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, null, reasons, ctx);
+  }
+  if (judgeSkipped === true) return unsureOf(NEEDS_JUDGE_REASON);
+  if (judgeLimitExceeded === true) return unsureOf(judgeError!);
+  if (choiceRefused !== undefined) return unsureOf(choiceRefused);
+  if (judgeError !== undefined || evaluated.unanswered || choice === undefined) return unsureOf(`${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`, "inference-outage");
+  const verdict = decide(choice);
+  const failing = evaluated.checks.filter((check) => check.result === "fail").map((check) => reasonOf(check, det.sources));
+  const reason = verdict === "fail" && failing.length ? failing.join("; ") : DECIDED_REASONS[verdict];
+  return withChecks({ ...render(VERDICT_STATES[verdict]), verdict, degraded: null, reason }, checks, choice.pass, reasons, ctx);
+}
+
+export function degradedVerdict(reason: string): RenderOutput {
   return {
     ...render("stale-unknown"),
     mirror: false,
+    verdict: "unsure",
     score: null,
-    confidence: "unknown",
-    merge: { verdict: "not-recommended", score: null, threshold, reasons: ["Could not evaluate"] },
+    reasons: ["Could not evaluate"],
     degraded: "error",
     checks: [],
     reason,

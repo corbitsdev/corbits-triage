@@ -113,11 +113,9 @@ describe("saving the repository pack", () => {
     const store = transportRepoPackStore(hub.transport, "t");
     const session = openSession(repo, await store.load(repo, false));
     const added = { id: "title-matches-a-pattern", name: "Ticket in the title", group: "pull-request" as const, kind: "rule" as const, rule: "title-pattern" as const, pattern: "^\\[" };
-    const action = { id: "action-1", when: "every" as const, checks: [added.id], branches: { no: [{ kind: "comment" as const, target: { body: "Add a ticket." } }] } };
-    const first = await saveDraft(store, repo, session, { pack: { ...emptyPack(repo), custom: [added], actions: [action] }, policy: session.saved.policy });
+    const first = await saveDraft(store, repo, session, { pack: { ...emptyPack(repo), custom: [added] }, policy: session.saved.policy });
     expect(first.failure).toBeNull();
     expect(first.draft.pack.custom.map((row) => row.id)).toEqual(["ticket-in-the-title"]);
-    expect(first.draft.pack.actions[0]!.checks).toEqual(["ticket-in-the-title"]);
     const renamed = { ...first.draft.pack, custom: [{ ...first.draft.pack.custom[0]!, name: "Ticket first" }] };
     const second = await saveDraft(store, repo, first.session, { ...first.draft, pack: renamed });
     expect(second.draft.pack.custom.map((row) => row.id)).toEqual(["ticket-in-the-title"]);

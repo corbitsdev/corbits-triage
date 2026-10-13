@@ -14,11 +14,6 @@ export type SuggestInput = {
   jobs: Record<string, string>;
 };
 
-/** The checks a pack comment Do already words, so the same check gets no second draft. */
-function wordedByDos(pack: CheckPack): Set<string> {
-  return new Set(pack.actions.flatMap((action) => ("no" in action.branches && action.branches.no?.some((step) => step.kind === "comment") ? action.checks : [])));
-}
-
 function sentence(text: string): string {
   const trimmed = text.replace(/^[^:]+: /, "");
   return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}.`;
@@ -32,7 +27,6 @@ export function suggest({ facts, checks, pack, jobs }: SuggestInput): { actions:
   const { repo, number, headSha } = facts;
   const base = `/${repo}/pull/${number}`;
   const head = headSha.slice(0, 12);
-  const worded = wordedByDos(pack);
   const custom = new Map<string, CustomCheck>(pack.custom.map((check) => [check.id, check]));
   const actions: PageAction[] = [];
   const notes: FileNote[] = [];
@@ -76,7 +70,7 @@ export function suggest({ facts, checks, pack, jobs }: SuggestInput): { actions:
         break;
       case "max-files-changed":
       case "max-lines-changed":
-        if (!worded.has(check.check)) add(check, { kind: "comment", title: "Ask the author to split this pull request", why, body: `This is a lot to review in one pass (${check.evidence.join(", ")}). Could you split it into smaller pull requests?` });
+        add(check, { kind: "comment", title: "Ask the author to split this pull request", why, body: `This is a lot to review in one pass (${check.evidence.join(", ")}). Could you split it into smaller pull requests?` });
         break;
       case "ci-green": {
         const linked = (facts.failingChecks ?? []).filter((name) => jobs[name]).slice(0, MOST_JOBS);

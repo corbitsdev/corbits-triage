@@ -219,9 +219,9 @@ const SummaryFields = type({
 
 function suggestedDos(actions: readonly unknown[]): RecordedDo[] {
   return actions.map(asRecord).flatMap(function suggested(action) {
-    const actionId = action?.["id"];
+    const list = action?.["list"];
     const effectId = action?.["effectId"];
-    return typeof actionId === "string" && typeof effectId === "string" && action?.["skipped"] !== true ? [{ actionId, effectId }] : [];
+    return typeof list === "string" && typeof effectId === "string" && action?.["skipped"] !== true ? [{ list, effectId }] : [];
   });
 }
 

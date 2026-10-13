@@ -6,7 +6,7 @@ import { repoHealth, repoRows, triageReadyRepos } from "./repo-rows.ts";
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   return {
     key: `${repo}#${number}`, repo, number, title: null, author: null, authorKind: null, draft: null, mergeable: null, state: "new",
-    priority: null, owner: null, nextAction: null, confidence: null, evidence: [], checks: [], labels: [], comment: null,
+    priority: null, owner: null, nextAction: null, verdict: null, score: null, reasons: [], evidence: [], checks: [], labels: [], comment: null,
     sha: null, verdictSha: null, degraded: null, needsHuman: false, closed: false, pendingApprovalId: null, runId: null, waitingSince: null, updatedAt: null,
     ci: null, headSha: null, activityAt: null, reviewAnswered: false, posted: false, running: false, failure: null, actions: [], href: "", ...extra,
   };
@@ -61,7 +61,7 @@ describe("repository rows", () => {
 
   test("GitHub's updatedAt reaches pull requests that already have a verdict", () => {
     const verdict = {
-      runId: "run-1", at: "2026-10-01T00:30:00.000Z", headSha: "abc", settled: true, state: "ready-monitoring", actor: "author", humanGated: false,
+      runId: "run-1", at: "2026-10-01T00:30:00.000Z", headSha: "abc", verdict: "pass" as const, settled: true, state: "ready-monitoring", actor: "author", humanGated: false,
       degraded: null, commented: false, checks: [], detail: null,
     };
     const listing = { repos: [{ repo: "acme/api", prs: [{ number: 8, title: "PR 8", author: "ada", draft: false, sha: "abc", updatedAt: "2026-10-01T01:00:00.000Z", labels: [] }] }] };

@@ -1,22 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@corbits/react-ui";
-import type { CheckPack } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { previewPull, type PullPreview } from "../../lib/hub-api.ts";
 import { createHubTransport } from "../../lib/hub-transport.ts";
 import { useOpenPulls } from "../../lib/open-pulls.ts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
 import { usePortal } from "../../lib/portal.tsx";
-import { previewProse, type BranchLine } from "../../lib/preview-prose.ts";
+import { previewProse } from "../../lib/preview-prose.ts";
 
-type Previewed = { preview: PullPreview; pack: CheckPack };
-
-function Outcome({ line }: { line: BranchLine }) {
-  return <span> <b>{line.branch}:</b> {line.dos}</span>;
-}
-
-function Result({ preview, pack }: Previewed) {
-  const prose = previewProse(preview, pack);
+function Result({ preview }: { preview: PullPreview }) {
+  const prose = previewProse(preview);
   return (
     <div className="preview">
       <p className="prose">
@@ -24,14 +17,8 @@ function Result({ preview, pack }: Previewed) {
         {prose.checks.map((line) => <span key={line.result}> {line.label}: {line.names.join(", ")}.</span>)}
       </p>
       {prose.degraded ? <p className="note">{prose.degraded}</p> : null}
-      {prose.actions.map((action) => (
-        <p key={action.id} className="prose">
-          <b>{action.label}</b>{" "}
-          {action.status === "skipped" ? `is skipped. ${action.reason}` : null}
-          {action.status === "decided" ? <>{action.branch.reason}<Outcome line={action.branch} /></> : null}
-          {action.status === "waits-on-judge" ? <>waits on the judge.{action.branches.map((line) => <Outcome key={line.branch} line={line} />)}</> : null}
-        </p>
-      ))}
+      <p className="prose">{prose.verdict}</p>
+      {prose.lists.map((line) => <p key={line.list} className="prose"><b>{line.list}:</b> {line.dos}</p>)}
       {prose.notWoken ? <p className="prose">{prose.notWoken}</p> : null}
       {prose.comment ? <><p className="prose"><b>Comment to the author</b></p><blockquote className="feedback">{prose.comment}</blockquote></> : null}
     </div>
@@ -46,7 +33,7 @@ export default function PreviewRow({ repo, draft }: { repo: string; draft: RepoD
   const listed = openPulls.data?.repos.find((row) => row.repo === repo);
   const pulls = listed?.error === undefined ? listed?.prs ?? [] : [];
   const [picked, setPicked] = useState("");
-  const [previewed, setPreviewed] = useState<Previewed | null>(null);
+  const [previewed, setPreviewed] = useState<PullPreview | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   // A typed number or an earlier pick only holds while it is still one of the listed pulls.
@@ -59,7 +46,7 @@ export default function PreviewRow({ repo, draft }: { repo: string; draft: RepoD
     setRunning(true);
     setError("");
     try {
-      setPreviewed({ preview: await previewPull(createHubTransport(), tenantId, { repo, number, pack, roles: policy.roles }), pack });
+      setPreviewed(await previewPull(createHubTransport(), tenantId, { repo, number, pack, roles: policy.roles }));
     } catch (cause) {
       setPreviewed(null);
       setError(`Could not preview. ${errorText(cause)}`);
@@ -87,7 +74,7 @@ export default function PreviewRow({ repo, draft }: { repo: string; draft: RepoD
         <Button type="submit" variant="outline" size="sm" disabled={tenantId === undefined || running || !Number.isInteger(number) || number < 1}>{running ? "Previewing…" : "Preview"}</Button>
       </form>
       {error ? <p role="alert" className="error">{error}</p> : null}
-      {previewed ? <Result {...previewed} /> : null}
+      {previewed ? <Result preview={previewed} /> : null}
     </section>
   );
 }

@@ -18,7 +18,8 @@ import { markBaseMoved } from "./triage-queue.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import { triageDirectorFactory } from "@corbits/triage-workflows/directors";
-import { evaluate, rules } from "@corbits/triage-workflows/actions/index";
+import { evaluate, parts, rules } from "@corbits/triage-workflows/actions/index";
+import type { JudgeChunk } from "@corbits/triage-workflows/actions/rules";
 import type { Verdict } from "@corbits/triage-workflows/logic/render";
 
 const REPO = "acme/widgets";
@@ -132,13 +133,17 @@ function githubAnswer({ id, name }: ToolCall, pr: Record<string, unknown>): Reco
   throw new Error(`unexpected call ${name}`);
 }
 
-/** Focused answered as one thing with probability `related`, and no file as a separate change. */
+/** Focused is one thing and the verdict passes, each with probability `related`. */
 function focusedAnswers(questions: Array<{ id: string }>, related: number): string {
-  const probabilities = { one_thing: related, more_than_one_thing: (1 - related) / 2, cant_tell: (1 - related) / 2 };
-  return questions.map(({ id }) => JSON.stringify(id === "focused" ? { id, type: "choice", choice: "one_thing", probabilities, confidence: 0.9 } : { id, type: "noul", noul: 0.1 })).join("");
+  const rest = (1 - related) / 2;
+  const probabilities: Record<string, Record<string, number>> = {
+    focused: { one_thing: related, more_than_one_thing: rest, cant_tell: rest },
+    verdict: { pass: related, fail: rest, cant_tell: rest },
+  };
+  return questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: Object.keys(probabilities[id]!)[0], probabilities: probabilities[id], confidence: 0.9 })).join("");
 }
 
-/** Runs a trigger mail through the real facts director, rules, a judge answering every chunk, and evaluate, as the workflow does. */
+/** Runs a trigger mail through the real facts director, rules, both judge rounds answering every chunk, and evaluate, as the workflow does; `asked` counts the first round's calls. */
 async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 0.8) {
   const pending: ToolCall[] = [];
   let reply: string | undefined;
@@ -154,8 +159,8 @@ async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 
   } as unknown as ReactorCapabilities;
   const facts = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
   // Stock hands the director the parsed headers and the text part alone as the body.
-  const parts = (mail as { parts?: Array<{ text?: string }> }).parts ?? [];
-  const message = { headers: (mail as { headers?: unknown }).headers, content: parts[0]?.text ?? JSON.stringify(mail) };
+  const mailParts = (mail as { parts?: Array<{ text?: string }> }).parts ?? [];
+  const message = { headers: (mail as { headers?: unknown }).headers, content: mailParts[0]?.text ?? JSON.stringify(mail) };
   await facts.decide({ type: "message.received", message } as ReactorInboundEvent, {} as ReactorState, caps);
   while (reply === undefined) {
     const call = pending.shift()!;
@@ -164,8 +169,12 @@ async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 
   const ctx = {} as never;
   const signal = new AbortController().signal;
   const ruled = await rules({ reply }, ctx, signal);
-  const output = ruled.chunks.map((chunk) => ({ reply: JSON.stringify({ judge: focusedAnswers(chunk.questions, related) }) }));
-  const verdicts = await evaluate(ruled.needsJudgment ? { ...ruled, judge: { output } } : ruled, ctx, signal) as { items: Verdict[] };
+  function answer(chunks: JudgeChunk[]) {
+    return chunks.map((chunk) => ({ reply: JSON.stringify({ judge: focusedAnswers(chunk.questions, related) }) }));
+  }
+  const judged = { ...ruled, judge: { output: answer(ruled.chunks) } };
+  const { chunks } = await parts(judged, ctx, signal);
+  const verdicts = await evaluate(ruled.needsJudgment ? { ...judged, judgeParts: { output: answer(chunks) } } : ruled, ctx, signal) as { items: Verdict[] };
   return { asked: ruled.chunks.length, verdicts: verdicts.items };
 }
 
@@ -621,13 +630,13 @@ describe("triage reconciler", () => {
     test("a head re-checked after a merge reuses its decisive answers, while its conflicts are read afresh", async () => {
       const { first, payload } = await remailed(0.8);
       expect(first.asked).toBe(2);
-      expect((payload["items"] as Array<{ judged?: object }>).map((item) => Object.keys(item.judged ?? {}).length)).toEqual([1, 1]);
-      const recheck = await triageMail(stockTriggerMail(payload), { mergeable: false });
-      expect(recheck.asked).toBe(0);
-      for (const { checks } of recheck.verdicts) {
-        expect(checks.find((check) => check.check === "no-merge-conflicts")?.result).toBe("fail");
-        expect(checks.find((check) => check.check === "focused")?.result).toBe("pass");
-      }
+      expect((payload["items"] as Array<{ judged?: object }>).map((item) => Object.keys(item.judged ?? {}).length)).toEqual([2, 2]);
+      const reused = await triageMail(stockTriggerMail(payload), { mergeable: true });
+      expect(reused.asked).toBe(0);
+      expect(reused.verdicts.map(({ verdict, checks }) => [verdict, checks.find((check) => check.check === "focused")?.result])).toEqual([["pass", "pass"], ["pass", "pass"]]);
+      const conflicted = await triageMail(stockTriggerMail(payload), { mergeable: false });
+      expect(conflicted.asked).toBe(0);
+      expect(conflicted.verdicts.map(({ verdict, checks }) => [verdict, checks.find((check) => check.check === "no-merge-conflicts")?.result])).toEqual([["fail", "fail"], ["fail", "fail"]]);
     });
 
     test("answers ride only on mail whose From is the hub's bare address on the deployment's domain", async () => {
@@ -650,7 +659,7 @@ describe("triage reconciler", () => {
       await trigger.to(LIVE.address, JSON.stringify(payload), TENANT_ID, undefined);
       const { headers, rawHeaders, parts } = decodeMail(raw!);
       const fromHub = { headers, rawHeaders, parts: parts.map((part, i) => ({ contentType: part.contentType, ref: `mail-part:///run_x/m1/${i}`, text: new TextDecoder().decode(part.content) })) };
-      expect((await triageMail(fromHub, { mergeable: false })).asked).toBe(0);
+      expect((await triageMail(fromHub, { mergeable: true })).asked).toBe(0);
 
       // Stock binds a mail to its authenticated sender by the address `extractAddrSpec` reads, so this From passes its gate for another run.
       const memberRun = formatRunAddress("run_member", DOMAIN);
@@ -659,7 +668,7 @@ describe("triage reconciler", () => {
       for (const from of [named, "github@other.test"]) {
         const mail = stockTriggerMail(payload);
         const forged = { ...mail, headers: { ...mail.headers, from }, rawHeaders: { ...mail.rawHeaders, from: [from] } };
-        expect((await triageMail(forged, { mergeable: false })).asked).toBe(2);
+        expect((await triageMail(forged, { mergeable: true })).asked).toBe(2);
       }
     });
 

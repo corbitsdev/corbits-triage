@@ -1,4 +1,6 @@
 import { isRecord } from "@corbits/common";
+import { NOT_A_DRAFT } from "@corbits/triage-contracts";
+import { hardFailures, type CheckResult } from "./checks.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR } from "./quality.js";
 import { NEEDS_JUDGE_REASON, NOT_ASKED_REASON } from "./render.js";
 
@@ -19,10 +21,11 @@ function isUnconfirmedMachineCheck(check: Record<string, unknown>): boolean {
   return check["kind"] === "machine" && check["result"] === "unconfirmed" && check["gate"] !== true;
 }
 
-/** Every model check of the verdict was skipped, outside a stale-unknown verdict that skips them by design. */
+/** Every model check of the verdict was skipped, outside a stale-unknown verdict, a failed hard rule or a draft, which skip them by design. */
 function modelNotAsked(verdict: VerdictFields, checks: Array<Record<string, unknown>>): boolean {
   const model = checks.filter((check) => check["kind"] === "model");
-  return verdict.state !== "stale-unknown" && model.length > 0 && model.every((check) => check["reason"] === NOT_ASKED_REASON);
+  const draft = checks.some((check) => check["check"] === NOT_A_DRAFT && check["result"] === "fail");
+  return verdict.state !== "stale-unknown" && !draft && hardFailures(checks as Array<Pick<CheckResult, "check" | "kind" | "result" | "gate">>).length === 0 && model.length > 0 && model.every((check) => check["reason"] === NOT_ASKED_REASON);
 }
 
 /** Why the verdict does not settle `headSha`, when given, or its own head: degraded, made on another commit, a machine check GitHub had not computed yet, or the decision model never asked. */
@@ -42,12 +45,16 @@ export function unsettledBy(verdict: VerdictFields, headSha?: string): Unsettled
   return {};
 }
 
-/** A model check a skipped or over-budget judge left unanswered: the verdict still stands, so the head settles, but its branches were not decided. */
-function modelUnanswered(checks: Array<Record<string, unknown>>): boolean {
-  return checks.some((check) => check["kind"] === "model" && check["result"] === "unconfirmed" && (check["reason"] === NEEDS_JUDGE_REASON || String(check["reason"]).startsWith(QUALITY_EVALUATION_LIMIT_ERROR)));
+function unasked(reason: unknown): boolean {
+  return reason === NEEDS_JUDGE_REASON || String(reason).startsWith(QUALITY_EVALUATION_LIMIT_ERROR);
+}
+
+/** A skipped or over-budget judge left a model check or the verdict question unanswered: the verdict still stands, so the head settles, but it was not decided. */
+function modelUnanswered(verdict: VerdictFields, checks: Array<Record<string, unknown>>): boolean {
+  return unasked(verdict.reason) || checks.some((check) => check["kind"] === "model" && check["result"] === "unconfirmed" && unasked(check["reason"]));
 }
 
 /** Dos run unattended only on a verdict that settles its head with every model check answered. */
 export function decidesDos(verdict: VerdictFields): boolean {
-  return unsettledBy(verdict).unsettled === undefined && !modelUnanswered(checksOf(verdict));
+  return unsettledBy(verdict).unsettled === undefined && !modelUnanswered(verdict, checksOf(verdict));
 }

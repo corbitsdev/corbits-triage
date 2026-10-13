@@ -22,7 +22,7 @@
 - Downstream work is another workflow. Reviewing, fixing or de-slopping a pull request is a workflow of its own, started by mail or a signal from a Do. It is never a step inside pr-triage.
 - API first. Everything stock goes through stock routes. Every custom hub route is a Hono route described with hono-openapi and arktype, merged into `/openapi.json`. The portal and the browser extension are wrappers over those routes and must not be the only way to do anything.
 - Credentials, grants and tenants are Interchange's. Secrets live in the hub vault and are delivered to sidecars at launch and rotation; never read them anywhere else, never persist them. Where stock lacks a path (an action reaching a bound credential), raise it upstream; a vendored carry needs owner approval and the allowlist.
-- Rules say how they are evaluated: rule (GitHub data, no inference), decision model (a fixed question shape that cites evidence), or agent. Actions are When → Rules → Yes / No / Unsure → Dos; a Do runs on its own only when the workspace's `pr-triage` role holds the grant for its kind.
+- Rules say how they are evaluated: rule (GitHub data, no inference), decision model (a fixed question shape that cites evidence), or agent. Actions are one policy-wide When and a list of Dos for each verdict (Pass, Fail, Unsure); a failed hard rule decides Fail without the model, otherwise one Choice question decides; a Do runs on its own only when the workspace's `pr-triage` role holds the grant for its kind.
 
 ## Interchange reference
 

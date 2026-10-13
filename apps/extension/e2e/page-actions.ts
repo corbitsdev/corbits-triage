@@ -23,28 +23,22 @@ const shots = resolve(import.meta.dir, "../.output/e2e");
 const quietShots = resolve(import.meta.dir, "../.output/e2e/placements");
 const owner = repo.split("/")[0]!;
 
-// Every kind of action on the max files changed rule failing, beside the default policy's comment Dos.
+// Every kind of action on a failing verdict, beside the default pack's.
 const base = defaultLocalPack(repo);
-// A limit of one file, so any pull request with more fails the rule these actions follow.
+// A limit of one file, so any pull request with more fails the max files changed rule and the verdict.
 const pack: CheckPack = {
   ...base,
   checks: { ...base.checks, "max-files-changed": { enabled: true, maxFiles: 1 } },
-  actions: [
+  actions: {
     ...base.actions,
-    {
-      id: "too-large",
-      when: "every",
-      checks: ["max-files-changed"],
-      branches: {
-        no: [
-          { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
-          { kind: "assign", target: { to: "author" } },
-          { kind: "request-review", target: { to: "users", users: [owner] } },
-          { kind: "close", target: {} },
-        ],
-      },
-    },
-  ],
+    fail: [
+      ...base.actions.fail,
+      { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
+      { kind: "assign", target: { to: "author" } },
+      { kind: "request-review", target: { to: "users", users: [owner] } },
+      { kind: "close", target: {} },
+    ],
+  },
 };
 
 // Each placement's own part, then the sidebar block, which shows on every pull request whatever the placement.

@@ -14,7 +14,7 @@
 // through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, repoPolicy, triageEventOf, type CheckPack, type Do, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, repoPolicy, triageEventOf, VERDICTS, type CheckPack, type Do, type RepoPolicy } from "@corbits/triage-contracts";
 import { asRecord, isRecord } from "@corbits/common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
@@ -157,12 +157,18 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
   return read(record, number);
 }
 
-/** A deployment built before grants decided automation rejects a Do without `automatic`; the current workflow ignores it. */
-function withLegacyFlags(pack: CheckPack) {
+/**
+ * The pack as deployments built before verdicts read it: one action on every check whose yes, no and unsure branches are
+ * the Pass, Fail and Unsure lists, each Do flagged as one built before grants requires. The current workflow reads it
+ * back as the same policy.
+ */
+function withLegacyActions(pack: CheckPack) {
   function flagged(dos: Do[]) {
     return dos.map((step) => ({ ...step, automatic: false }));
   }
-  return { ...pack, actions: pack.actions.map((action) => ({ ...action, branches: Object.fromEntries(Object.entries(action.branches).map(([branch, dos]) => [branch, flagged(dos)])) })) };
+  const { when, pass, fail, unsure } = pack.actions;
+  const empty = VERDICTS.every((list) => pack.actions[list].length === 0);
+  return { ...pack, actions: empty ? [] : [{ id: "policy", when, checks: ["all"], branches: { yes: flagged(pass), no: flagged(fail), unsure: flagged(unsure) } }] };
 }
 
 export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic }: StoredPack, extra: Record<string, unknown>) {
@@ -171,7 +177,7 @@ export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic 
     kind: "pr",
     repo,
     policy: { ...policy, checkPack: { name: checkPackName(repo) } },
-    checkPack: withLegacyFlags(pack),
+    checkPack: withLegacyActions(pack),
     automatic,
   };
 }

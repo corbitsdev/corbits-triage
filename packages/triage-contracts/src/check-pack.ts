@@ -208,9 +208,14 @@ const COMMENT_BODY_MAX = 65536;
 
 /** A built-in rule, the not-a-draft rule or a custom rule's id. */
 export type CheckRef = string;
-/** An action's reference to every rule the policy runs, built-in and custom, as they are when it is evaluated. */
-export const ALL_CHECKS = "all";
-export type ActionCheckRef = CheckRef | typeof ALL_CHECKS;
+
+/** The events a policy's actions wake on; a catch-up run wakes them whatever its policy names. */
+export const POLICY_EVENTS = ["opened", "updated", "checks", "ready"] as const satisfies readonly TriageEvent[];
+export type PolicyEvent = (typeof POLICY_EVENTS)[number];
+
+/** What triage decides about each pull request head; each names the action list that runs on it. */
+export const VERDICTS = ["pass", "fail", "unsure"] as const;
+export type VerdictWord = (typeof VERDICTS)[number];
 
 export type LabelsTarget = { from: "list"; labels: string[] } | { from: "type" } | { from: "paths" };
 /** A role names an entry in the repository settings' roles, resolved at evaluation time. */
@@ -235,16 +240,8 @@ export type Do =
   | { kind: "close"; target: CloseTarget }
   | { kind: "agent"; target: AgentTarget };
 
-/** Branches follow the checks' combined verdict; without checks, `always` runs. */
-export type Branches = { yes?: Do[]; no?: Do[]; unsure?: Do[] } | { always: Do[] };
-
-export type Action = {
-  id: string;
-  when: "every" | TriageEvent[];
-  /** `[ALL_CHECKS]` alone, or the checks by id. */
-  checks: ActionCheckRef[];
-  branches: Branches;
-};
+/** One list of Dos per verdict, run when an event in `when` wakes the policy. */
+export type PolicyActions = { when: PolicyEvent[] } & Record<VerdictWord, Do[]>;
 
 export type CheckPack = {
   kind: typeof CHECK_PACK_KIND;
@@ -252,15 +249,12 @@ export type CheckPack = {
   repo: string;
   checks: Partial<Record<CatalogId, CatalogCheck>>;
   custom: CustomCheck[];
-  actions: Action[];
-  /** The lowest model score at which a pull request whose checks all pass is ready to merge, from 0 to 1. */
-  mergeThreshold?: number;
+  actions: PolicyActions;
 };
 
-export const DEFAULT_MERGE_THRESHOLD = 0.7;
-
-export function packMergeThreshold(pack: CheckPack | undefined): number {
-  return pack?.mergeThreshold ?? DEFAULT_MERGE_THRESHOLD;
+/** A new pack's policy wakes on every event and asks a person to review what it is unsure of. */
+export function defaultActions(): PolicyActions {
+  return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [{ kind: "request-review", target: { to: "codeowners" } }] };
 }
 
 const Text = type(/\S/);
@@ -282,17 +276,16 @@ const DoSchema = type({
   .or({ kind: "'approve' | 'request-changes' | 'close'", target: { "+": "reject" } })
   .or({ kind: "'agent'", target: { "+": "reject", prompt: Text, tools: Text.array() } });
 
-const ActionSchema = type({
-  id: Text,
-  when: type("'every'").or(type.enumerated(...TRIAGE_EVENTS.filter((event) => event !== "catch-up")).array().atLeastLength(1)),
-  checks: Text.array(),
-  branches: type({ "+": "reject", always: DoSchema.array().atLeastLength(1) }).or({
-    "+": "reject",
-    "yes?": DoSchema.array(),
-    "no?": DoSchema.array(),
-    "unsure?": DoSchema.array(),
-  }),
-});
+const DoList = DoSchema.array();
+
+/** Packs written before verdicts held one list of actions, each choosing a branch from its own checks; reading one collapses them. */
+const PolicyActionsSchema = type({
+  "+": "reject",
+  when: type.enumerated(...POLICY_EVENTS).array().atLeastLength(1),
+  pass: DoList,
+  fail: DoList,
+  unsure: DoList,
+}).or("object[]");
 
 const CatalogCheckSchema = type({
   enabled: "boolean",
@@ -324,7 +317,7 @@ const CatalogChecksSchema = type(
 
 /**
  * Published as JSON Schema. `readCheckPack` stays the authority: it also drops catalog and blank legacy custom rows,
- * and checks patterns, choices, references and branch sets.
+ * checks patterns and choices, and collapses legacy actions.
  */
 export const checkPackSchema = type({
   kind: type.unit(CHECK_PACK_KIND),
@@ -332,13 +325,11 @@ export const checkPackSchema = type({
   repo: RepoName,
   "checks?": CatalogChecksSchema,
   "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
-  "actions?": ActionSchema.array(),
-  "mergeThreshold?": "0 <= number <= 1",
+  "actions?": PolicyActionsSchema,
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
-const REFERENCEABLE = new Set<string>([...CATALOG_IDS, NOT_A_DRAFT]);
-const RESERVED_IDS = new Set<string>([...CATALOG_IDS, ...BUILT_IN_CHECK_NAMES.keys(), ...RENAMED_RULE_IDS.keys(), ...RETIRED_CHECK_IDS, ALL_CHECKS, CLOSED_FINDING]);
+const RESERVED_IDS = new Set<string>([...CATALOG_IDS, ...BUILT_IN_CHECK_NAMES.keys(), ...RENAMED_RULE_IDS.keys(), ...RETIRED_CHECK_IDS, "all", "verdict", CLOSED_FINDING]);
 // Judge question ids are built from rule ids (`docs-file-001`, `focused-slice-001`, `<id>-hunk-001-002`), so no custom id may read as one.
 const QUESTION_LIKE = /^(?:docs|focused)-|-(?:file|hunk|slice)(?:-\d+)+$/;
 
@@ -384,7 +375,7 @@ export function emptyPack(repo: string): CheckPack {
     repo: clean,
     checks: {},
     custom: [],
-    actions: [],
+    actions: defaultActions(),
   };
 }
 
@@ -402,7 +393,7 @@ export function recommendedPack(repo: string): CheckPack {
       "ci-green": { enabled: true },
       "no-forbidden-paths": { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
     },
-    actions: [{ id: "approve", when: ["opened", "updated", "ready", "checks"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", target: {} }] } }],
+    actions: { ...defaultActions(), pass: [{ kind: "approve", target: {} }] },
   };
 }
 
@@ -676,105 +667,73 @@ function parseDo(raw: unknown, where: string): Do {
   }
 }
 
-function parseBranch(raw: unknown, where: string): Do[] {
+function parseList(raw: unknown, where: string): Do[] {
   if (!Array.isArray(raw)) throw new Error(`${where} must be a list.`);
   return raw.flatMap((item, i) => (RETIRED_DO_KINDS.has(record(item, `${where} ${i + 1}`).kind) ? [] : [parseDo(item, `${where} ${i + 1}`)]));
 }
 
-function listed(raw: unknown): boolean {
-  return Array.isArray(raw) && raw.length > 0;
+function parseWhen(raw: unknown, where: string): PolicyEvent[] {
+  const events = new Set<PolicyEvent>();
+  for (const event of list(raw, where)) events.add(oneOf(event, POLICY_EVENTS, where));
+  return POLICY_EVENTS.filter((event) => events.has(event));
 }
 
-/** Branches that named only retired Dos have nothing left to run, so their action is dropped. */
-function parseBranches(raw: unknown, hasChecks: boolean, where: string): Branches | undefined {
-  const row = record(raw, where);
-  if (!hasChecks) {
-    exactKeys(row, ["always"], where);
-    const always = parseBranch(row.always, `${where} always`);
-    if (always.length === 0) {
-      if (listed(row.always)) return undefined;
-      throw new Error(`${where} always must not be empty.`);
-    }
-    return { always };
-  }
-  const keys = Object.keys(row).filter((key) => row[key] !== undefined);
-  if (keys.some((key) => key !== "yes" && key !== "no" && key !== "unsure")) {
-    throw new Error(`${where} must set only yes, no and unsure.`);
-  }
-  const branches: { yes?: Do[]; no?: Do[]; unsure?: Do[] } = {};
-  if (row.yes !== undefined) branches.yes = parseBranch(row.yes, `${where} yes`);
-  if (row.no !== undefined) branches.no = parseBranch(row.no, `${where} no`);
-  if (row.unsure !== undefined) branches.unsure = parseBranch(row.unsure, `${where} unsure`);
-  if (Object.values(branches).every((dos) => dos.length === 0)) {
-    if (listed(row.yes) || listed(row.no) || listed(row.unsure)) return undefined;
-    throw new Error(`${where} must set at least one step.`);
-  }
-  return branches;
-}
-
-function parseWhen(raw: unknown, where: string): Action["when"] {
-  if (raw === "every") return raw;
-  const events = new Set<TriageEvent>();
-  for (const event of list(raw, where)) {
-    const parsed = oneOf(event, TRIAGE_EVENTS, where);
-    if (parsed === "catch-up") throw new Error(`${where} must not list catch-up; catch-up runs every action.`);
-    events.add(parsed);
-  }
-  return [...events];
-}
-
-function parseCheckRefs(raw: unknown, customIds: ReadonlySet<string>, where: string): ActionCheckRef[] {
-  if (!Array.isArray(raw)) throw new Error(`${where} must be a list.`);
-  if (raw.includes(ALL_CHECKS)) {
-    if (raw.length > 1) throw new Error(`${where} ${ALL_CHECKS} must be the only check.`);
-    return [ALL_CHECKS];
-  }
-  const refs = new Set<CheckRef>();
-  for (const item of raw) {
-    const stored = text(item, where);
-    if (RETIRED_CHECK_IDS.has(stored)) continue;
-    for (const id of currentRuleIds(stored)) {
-      if (!REFERENCEABLE.has(id) && !customIds.has(id)) {
-        throw new Error(`${where} ${id} must be a built-in rule, the not-a-draft rule or a custom rule in this policy.`);
-      }
-      refs.add(id);
-    }
-  }
-  return [...refs];
-}
-
-/** An action that checked only retired rules has no branch left to choose, so it is dropped. */
-function parseAction(raw: unknown, index: number, customIds: ReadonlySet<string>): Action | undefined {
-  const row = record(raw, `Action ${index + 1}`);
-  const id = text(row.id, `Action ${index + 1} id`);
-  const where = `Action ${id}`;
-  const when = parseWhen(row.when, `${where} when`);
-  const checks = parseCheckRefs(row.checks, customIds, `${where} checks`);
-  if (checks.length === 0 && listed(row.checks)) return undefined;
-  const branches = parseBranches(row.branches, checks.length > 0, `${where} branches`);
-  return branches && { id, when, checks, branches };
-}
-
-function parseActions(raw: unknown, customIds: ReadonlySet<string>): Action[] {
-  if (raw === undefined) return [];
-  if (!Array.isArray(raw)) throw new Error("Actions must be a list.");
-  const actions: Action[] = [];
+/** The same Do listed twice runs once. */
+function distinctDos(dos: Do[]): Do[] {
   const seen = new Set<string>();
-  for (const [index, item] of raw.entries()) {
-    const action = parseAction(item, index, customIds);
-    if (!action) continue;
-    if (seen.has(action.id)) throw new Error(`Action ${action.id} is defined more than once.`);
-    seen.add(action.id);
-    actions.push(action);
-  }
-  return actions;
+  return dos.filter(function first(step) {
+    const key = JSON.stringify(step);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-function parseMergeThreshold(raw: unknown): number | undefined {
-  if (raw === undefined) return undefined;
-  const value = finiteNumber(raw);
-  if (value === undefined || value < 0 || value > 1) throw new Error("Merge score threshold must be between 0 and 1.");
-  return value;
+const LEGACY_LISTS: Record<string, VerdictWord[]> = { yes: ["pass"], no: ["fail"], unsure: ["unsure"], always: ["pass", "fail", "unsure"] };
+
+/** Which lists a legacy Do joins: one that ran without checks joins all three, except a close or agent, which only ever ran with a person's approval and stays held on Unsure. */
+function listsOf(branch: string, step: Do): VerdictWord[] {
+  return branch === "always" && (step.kind === "close" || step.kind === "agent") ? ["unsure"] : LEGACY_LISTS[branch]!;
+}
+
+/**
+ * Legacy actions collapse into one policy: each branch's Dos join its verdict's list, `always` joins all three, and
+ * `when` is every action's together. An action that woke on no event a policy names is dropped, not widened.
+ */
+function migrateActions(rows: unknown[]): PolicyActions {
+  const when = new Set<PolicyEvent>();
+  const lists: Record<VerdictWord, Do[]> = { pass: [], fail: [], unsure: [] };
+  for (const [index, raw] of rows.entries()) {
+    const row = record(raw, `Action ${index + 1}`);
+    const where = `Action ${typeof row.id === "string" ? row.id : index + 1}`;
+    const named = row.when === "every" ? POLICY_EVENTS : Array.isArray(row.when) ? row.when : [];
+    const events = POLICY_EVENTS.filter((event) => named.includes(event));
+    if (events.length === 0) continue;
+    for (const event of events) when.add(event);
+    for (const [branch, dos] of Object.entries(record(row.branches, `${where} branches`))) {
+      if (!LEGACY_LISTS[branch]) throw new Error(`${where} branches must set only yes, no, unsure or always.`);
+      for (const step of parseList(dos, `${where} ${branch}`)) for (const verdict of listsOf(branch, step)) lists[verdict].push(step);
+    }
+  }
+  return {
+    when: when.size > 0 ? POLICY_EVENTS.filter((event) => when.has(event)) : [...POLICY_EVENTS],
+    pass: distinctDos(lists.pass),
+    fail: distinctDos(lists.fail),
+    unsure: distinctDos(lists.unsure),
+  };
+}
+
+function parseActions(raw: unknown): PolicyActions {
+  if (raw === undefined) return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] };
+  if (Array.isArray(raw)) return migrateActions(raw);
+  const row = record(raw, "Actions");
+  exactKeys(row, ["when", ...VERDICTS], "Actions");
+  return {
+    when: parseWhen(row.when, "Actions when"),
+    pass: distinctDos(parseList(row.pass, "Actions pass")),
+    fail: distinctDos(parseList(row.fail, "Actions fail")),
+    unsure: distinctDos(parseList(row.unsure, "Actions unsure")),
+  };
 }
 
 function parseJson(value: unknown): unknown {
@@ -807,17 +766,13 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
       if (parsed) checks[id as CatalogId] = parsed;
     }
   }
-  const custom = parseCustom(body.custom);
-  const actions = parseActions(body.actions, new Set(custom.map((row) => row.id)));
-  const mergeThreshold = parseMergeThreshold(body.mergeThreshold);
   return {
     kind: CHECK_PACK_KIND,
     schemaVersion: CHECK_PACK_SCHEMA_VERSION,
     repo,
     checks,
-    custom,
-    actions,
-    ...(mergeThreshold !== undefined && { mergeThreshold }),
+    custom: parseCustom(body.custom),
+    actions: parseActions(body.actions),
   };
 }
 

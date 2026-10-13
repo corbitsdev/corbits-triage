@@ -93,18 +93,18 @@ function aggregate(repo: string, days: number, from: Date, since: Date | null, r
   const actionOf = new Map<string, string>();
   const none = { suggested: 0, executed: 0, failed: 0 };
   for (const verdict of judged) {
-    for (const { actionId, effectId } of verdict.dos) {
-      if (actionOf.has(effectId)) continue;
-      actionOf.set(effectId, actionId);
-      count(actions, actionId, none, "suggested");
+    for (const { list, effectId } of verdict.dos) {
+      if (list === undefined || actionOf.has(effectId)) continue;
+      actionOf.set(effectId, list);
+      count(actions, list, none, "suggested");
     }
   }
   const ran = ranDos(records);
   for (const [effectId, { status }] of ran) {
-    const actionId = actionOf.get(effectId);
-    if (actionId === undefined) continue;
-    if (EXECUTED.has(status)) count(actions, actionId, none, "executed");
-    else if (status === "failed") count(actions, actionId, none, "failed");
+    const list = actionOf.get(effectId);
+    if (list === undefined) continue;
+    if (EXECUTED.has(status)) count(actions, list, none, "executed");
+    else if (status === "failed") count(actions, list, none, "failed");
   }
 
   const triagedOn = new Map<string, Set<number>>();

@@ -15,7 +15,7 @@ import { approvedHead, checkedHead, paneFacts, titleText } from "../lib/inbox-pa
 import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
-import { MergeChip } from "../components/MergeChip.tsx";
+import { VerdictChip } from "../components/VerdictChip.tsx";
 import { PrTimeline } from "../components/PrTimeline.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import { DiffView } from "../components/DiffView.tsx";
@@ -28,6 +28,7 @@ import {
   checkValueText,
   findPrItem,
   relativeTime,
+  verdictText,
 } from "../lib/triage-view.ts";
 
 type SliverTab = "about" | "files" | "commits" | "issue" | "conversation";
@@ -135,10 +136,12 @@ function About({ item }: { item: PrItem }) {
         <h2>Status</h2>
         <dl className="facts">
           <div><dt>Workflow</dt><dd>{QUEUE_STATE_LABEL[item.state]}</dd></div>
+          <div><dt>Verdict</dt><dd>{verdictText({ ...item, reasons: [] })}</dd></div>
           <div><dt>Priority</dt><dd>{item.priority ?? "Unset"}</dd></div>
           <div><dt>Owner</dt><dd>{item.owner ?? "Unassigned"}</dd></div>
           <div><dt>Next</dt><dd className="soft">{item.nextAction ?? "No next action recorded."}</dd></div>
         </dl>
+        {item.reasons.length ? <ul className="small-text" aria-label="Why">{item.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
       </section>
       <section className="brief">
         <h2>CI</h2>
@@ -463,7 +466,7 @@ export default function PRDetail() {
               <Badge>{QUEUE_STATE_LABEL[item.state]}</Badge>
               {closed ? <Badge>{pull.data?.pr.merged ? "Merged" : "Closed"}</Badge>
                 : mergeable === null ? null : <Badge>{mergeable ? "Mergeable" : "Not mergeable"}</Badge>}
-              <MergeChip merge={item.merge} />
+              <VerdictChip item={item} />
               {github ? <a className="ghost-link" href={github} target="_blank" rel="noreferrer">View on GitHub</a> : null}
             </div>
           </div>

@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { listPrFilesPage } from "@corbits/github-reads";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import { MAX_DOS_PER_RUN, triageDirectorFactory, type DoResult } from "./directors.js";
-import { emptyPack, recommendedPack, TRIAGE_LABELS } from "@corbits/triage-contracts";
+import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
+import { unsettledBy } from "./logic/settled.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
 import { evaluate, parts, rules } from "./actions/index.js";
@@ -35,6 +36,20 @@ async function judgeChunks(ruled: RulesOutput, respond: (questions: Array<{ id: 
     output.push({ reply });
   }
   return { requests, judged: { ...ruled, judge: { output } } };
+}
+
+/** Both judge rounds as the workflow runs them: the rules chunks, then focused's follow-ups and the verdict question. */
+async function judgeRounds(ruled: RulesOutput, respond: Parameters<typeof judgeChunks>[1]) {
+  const first = await judgeChunks(ruled, respond);
+  const { chunks } = await parts(first.judged, ctx, signal);
+  const second = await judgeChunks({ ...ruled, chunks }, (questions, call) => respond(questions, first.requests.length + call));
+  return { requests: [...first.requests, ...second.requests], judged: { ...first.judged, judgeParts: second.judged.judge } };
+}
+
+/** The verdict question answered `verdict`. */
+function verdictAnswer(verdict: "pass" | "fail") {
+  const probabilities = verdict === "pass" ? { pass: 0.85, fail: 0.1, cant_tell: 0.05 } : { pass: 0.1, fail: 0.85, cant_tell: 0.05 };
+  return { id: "verdict", type: "choice", choice: verdict, probabilities, confidence: 0.9 };
 }
 
 describe("facts director policy", () => {
@@ -266,8 +281,9 @@ describe("judge on a blocked pull request", () => {
     return reply;
   }
 
-  /** No file needs docs; focused is more than one thing when it is failing; every other question is a noul pass or fail. */
+  /** No file needs docs; focused is more than one thing when it is failing; the verdict fails when anything is failing; every other question is a noul pass or fail. */
   function answer(id: string, failing: string[]) {
+    if (id === "verdict") return verdictAnswer(failing.length ? "fail" : "pass");
     if (/^docs-file-/.test(id)) return { id, type: "noul", noul: 0.1 };
     if (id !== "focused") return { id, type: "noul", noul: failing.includes(id) ? 0.1 : 0.9 };
     const choice = failing.includes("focused") ? "more_than_one_thing" : "one_thing";
@@ -276,14 +292,14 @@ describe("judge on a blocked pull request", () => {
   }
 
   /** Runs rules, the judge only when the gate would, and evaluate, as the workflow does. */
-  async function judgeAndEvaluate(factsReply: string, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; verdict: Verdict }> {
+  async function judgeAndEvaluate(factsReply: string, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; requests: SystemOneRequest[]; verdict: Verdict }> {
     const ruled = await rules({ reply: factsReply }, ctx, signal);
-    if (!ruled.needsJudgment) return { asked: [], verdict: await evaluate(ruled, ctx, signal) as Verdict };
-    const { requests, judged } = await judgeChunks(ruled, (questions) => (judgeError !== undefined
+    if (!ruled.needsJudgment) return { asked: [], requests: [], verdict: await evaluate(ruled, ctx, signal) as Verdict };
+    const { requests, judged } = await judgeRounds(ruled, (questions) => (judgeError !== undefined
       ? { error: judgeError }
       : questions.map(({ id }) => JSON.stringify(answer(id, failing))).join("")));
     const asked = requests.flatMap((request) => request.providerOptions.systemOne.questions.map((q) => q.id));
-    return { asked, verdict: await evaluate(judged, ctx, signal) as Verdict };
+    return { asked, requests, verdict: await evaluate(judged, ctx, signal) as Verdict };
   }
 
   test("reads a patch too long for one page across pages and judges it whole", async () => {
@@ -335,93 +351,72 @@ describe("judge on a blocked pull request", () => {
     expect(await focused([read, lockfile, binary, code])).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check", items: ["src/b.ts"] } });
   });
 
-  test("a coalesced run wakes an action on any event it carries, not only the latest", async () => {
-    const checkPack = {
-      ...emptyPack("acme/widgets"),
-      checks: { "ci-green": { enabled: true } },
-      actions: [{ id: "greet", when: ["opened"], checks: ["ci-green"], branches: { yes: [{ kind: "comment", target: { body: "Welcome" } }] } }],
-    };
+  test("a coalesced run wakes the policy on any event it carries, not only the latest", async () => {
+    const checkPack = { ...emptyPack("acme/widgets"), checks: { "ci-green": { enabled: true } }, actions: { ...defaultActions(), when: ["opened"], pass: [{ kind: "comment", target: { body: "Welcome" } }] } };
     const latest = { checkPack, event: "check_run", action: "completed" };
-    async function actionIds(setup: Record<string, unknown>): Promise<string[]> {
-      const { verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "success" }], true, false, setup));
-      return verdict.actions.map((action) => action.id);
+    async function lists(setup: Record<string, unknown>): Promise<string[]> {
+      const { verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "success" }], true, false, setup), undefined, []);
+      return verdict.actions.map((action) => action.list);
     }
-    expect(await actionIds({ ...latest, events: ["opened", "checks"] })).toEqual(["greet"]);
-    expect(await actionIds(latest)).toEqual([]);
+    expect(await lists({ ...latest, events: ["opened", "checks"] })).toEqual(["pass"]);
+    expect(await lists(latest)).toEqual([]);
   });
 
   const code = [{ filename: "src/flag.ts", patch: "@@ -0,0 +1 @@\n+export const flag = true;" }];
 
-  test("a CI-blocked pull request records the model's answers but stays driven by CI", async () => {
-    const { asked, verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true, false, {}, code), undefined, []);
-    expect(asked).toEqual(["docs-file-001", "focused"]);
-    expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", nextAction: "Fix failing CI: build" });
-    expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
-      { check: "focused", kind: "model", result: "pass", reason: "makes one focused change", evidence: [], output: { kind: "score", score: 70, passAt: 60, items: [] } },
-      { check: "docs", kind: "model", result: "pass", reason: "documentation is up to date", evidence: [], output: { kind: "score", score: 90, passAt: 70, items: ["src/flag.ts"] } },
-    ]);
-  });
-
-  test("a judge outage on a blocked pull request leaves the verdict settled", async () => {
-    const { verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true, false, {}, code), "upstream 503");
-    expect(verdict).toMatchObject({ state: "blocked", degraded: null, mirror: true });
-    expect(verdict.checks.some((c) => c.kind === "machine" && c.result === "unconfirmed")).toBe(false);
-    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["decision model unavailable", "decision model unavailable"]);
-  });
-
-  test("a clean draft awaits review with an informational draft check, asks nothing of the author and is red", async () => {
-    const feedback = "No changes needed from you. A maintainer will review this pull request.";
-    const { asked, verdict } = await judgeAndEvaluate(await facts([], true, true), undefined, []);
+  test("a CI-blocked pull request fails without asking the judge and stays settled", async () => {
+    const { asked, verdict } = await judgeAndEvaluate(await facts([{ name: "build", status: "completed", conclusion: "failure" }], true, false, {}, code));
     expect(asked).toEqual([]);
-    expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, humanGated: false, feedback, actor: "maintainer", nextAction: "Review once marked ready" });
-    expect(verdict.merge.reasons).toEqual(["Failed: pull request is a draft"]);
+    expect(verdict).toMatchObject({ verdict: "fail", state: "blocked", degraded: null, mirror: true, reason: "required checks are failing", actor: "author", nextAction: "Fix failing CI: build" });
+    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["not asked", "not asked"]);
+    expect(unsettledBy(verdict)).toEqual({});
+  });
+
+  test("a failed author rule with every other rule passing still asks the verdict question, marking the rule as one about the author", async () => {
+    const outsiders = { id: "maintainers-only", name: "Maintainers only", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] };
+    const checkPack = { ...recommendedPack("acme/widgets"), custom: [outsiders] };
+    const { asked, requests } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code), undefined, []);
+    expect(asked).toContain("verdict");
+    const rules = requests.find((request) => request.providerOptions.systemOne.questions.some((question) => question.id === "verdict"))!.providerOptions.systemOne.state.policy.rules as Array<{ name: string; result: string; author?: true }>;
+    expect(rules.filter((rule) => rule.result === "fail")).toEqual([expect.objectContaining({ name: "Maintainers only", author: true })]);
+    expect(rules.filter((rule) => rule.author)).toHaveLength(1);
+  });
+
+  test.each<[string, unknown[]]>([
+    ["a clean draft", []],
+    ["a draft with CI failing", [{ name: "build", status: "completed", conclusion: "failure" }]],
+  ])("%s is not decided: it asks nothing, posts nothing and awaits review", async (_, checkRuns) => {
+    const { asked, verdict } = await judgeAndEvaluate(await facts(checkRuns, true, true), undefined, []);
+    expect(asked).toEqual([]);
+    expect(verdict).toMatchObject({ verdict: "unsure", degraded: null, mirror: true, humanGated: false, feedback: "", actions: [] });
     expect(verdict.checks.find((c) => c.check === "not-a-draft")).toEqual({ check: "not-a-draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } });
-    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: feedback });
+    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "" });
+    expect(unsettledBy(verdict)).toEqual({});
   });
 
   test("a degraded verdict suggests no actions", async () => {
-    const checkPack = { ...recommendedPack("acme/widgets"), actions: [{ id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", target: { body: "hi" } }] } }] };
+    const hi = [{ kind: "comment", target: { body: "hi" } }];
+    const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), pass: hi, fail: hi, unsure: hi } };
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code), "upstream 503");
     expect(verdict.degraded).toBe("inference-outage");
     expect(verdict.actions).toEqual([]);
   });
 
-  test("suggests a pack action matched on a model check, resolved through the policy's roles", async () => {
-    const checkPack = {
-      ...recommendedPack("acme/widgets"),
-      actions: [{ id: "ask-leads", when: "every", checks: ["focused"], branches: { no: [{ kind: "request-review", target: { to: "role", role: "leads" } }] } }],
-    };
+  test("runs the fail list, resolved through the policy's roles, with the failed judged rule as its reason", async () => {
+    const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), fail: [{ kind: "request-review", target: { to: "role", role: "leads" } }] } };
     const policy = { enabled: true, roles: { leads: { users: ["dave"] } } };
-    const files = [{ filename: "src/flag.ts", patch: "@@ -0,0 +1 @@\n+export const flag = true;" }];
-    const { verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }, files));
+    const { asked, verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }, code));
+    expect(asked).toEqual(["docs-file-001", "focused", "focused-file-001", "verdict"]);
     expect(verdict.actions).toEqual([
-      { id: "ask-leads", branch: "no", index: 0, effectId: expect.any(String), kind: "request-review", target: { users: ["dave"], teams: [] }, reason: "Focused failed.", held: true },
+      { list: "fail", index: 0, effectId: expect.any(String), kind: "request-review", target: { users: ["dave"], teams: [] }, reason: "mixes unrelated changes: src/flag.ts", held: true },
     ]);
   });
 
-  test("a gapped custom check id matches the action on that check, not its neighbour", async () => {
-    const checkPack = {
-      ...recommendedPack("acme/widgets"),
-      custom: [
-        { id: "custom-2", name: "No secrets", group: "pull-request", instruction: "No secrets are committed." },
-        { id: "custom-3", name: "Changelog", group: "pull-request", instruction: "The changelog is updated." },
-      ],
-      actions: [
-        { id: "on-2", when: "every", checks: ["custom-2"], branches: { no: [{ kind: "comment", target: { body: "secrets" } }] } },
-        { id: "on-3", when: "every", checks: ["custom-3"], branches: { no: [{ kind: "comment", target: { body: "changelog" } }] } },
-      ],
-    };
-    const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }), undefined, ["custom-3"]);
-    expect(verdict.actions).toEqual([
-      { id: "on-3", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", target: { body: "changelog" }, reason: "Changelog failed.", held: true },
-    ]);
-  });
-
-  test("stale-unknown facts skip the model", async () => {
-    const { asked, verdict } = await judgeAndEvaluate(await facts([], null, false, {}, code));
-    expect(asked).toEqual([]);
-    expect(verdict.state).toBe("stale-unknown");
-    expect(verdict.checks.filter((c) => c.kind === "model").map((c) => c.reason)).toEqual(["not asked", "not asked"]);
+  test("unknown mergeability is no failure: the judge decides and the head stays unsettled", async () => {
+    const { asked, verdict } = await judgeAndEvaluate(await facts([], null, false, {}, code), undefined, []);
+    expect(asked).toContain("verdict");
+    expect(verdict).toMatchObject({ verdict: "pass", state: "ready-monitoring" });
+    expect(verdict.checks.find((c) => c.check === "no-merge-conflicts")).toMatchObject({ result: "unconfirmed" });
   });
 });
 
@@ -457,7 +452,7 @@ describe("focused judge input", () => {
   }
 
   function primary(questions: Array<{ id: string }>) {
-    return questions.map(({ id }) => JSON.stringify(focusedAnswer(id, 0.9, 0.05) ?? { id, type: "noul", noul: 0.1 })).join("");
+    return questions.map(({ id }) => JSON.stringify(id === "verdict" ? verdictAnswer("pass") : focusedAnswer(id, 0.9, 0.05) ?? { id, type: "noul", noul: 0.1 })).join("");
   }
 
   test("asks one choice about the whole pull request, and a question per file only once it fails", async () => {
@@ -471,12 +466,13 @@ describe("focused judge input", () => {
     ]);
     expect(systemOne.state.pullRequest.files).toEqual([{ path: "src/a.ts", status: "renamed", hunks: [patch] }]);
     const passing = await judgeChunks(ruled, primary);
-    expect((await parts(passing.judged, ctx, signal)).chunks).toEqual([]);
+    expect((await parts(passing.judged, ctx, signal)).chunks.map((chunk) => chunk.questions.map((question) => question.id))).toEqual([["verdict"]]);
 
     const { chunks } = await parts(first.judged, ctx, signal);
-    const second = await judgeChunks({ ...ruled, chunks }, (questions) => questions.map(({ id }) => JSON.stringify({ id, type: "noul", noul: 0.9 })).join(""));
+    const second = await judgeChunks({ ...ruled, chunks }, (questions) => questions.map(({ id }) => JSON.stringify(id === "verdict" ? verdictAnswer("fail") : { id, type: "noul", noul: 0.9 })).join(""));
     expect(second.requests.map((request) => request.providerOptions.systemOne.questions.map((question) => [question.id, question.instructions]))).toEqual([
       [["focused-file-001", expect.stringContaining("`pullRequest.files[0]`")]],
+      [["verdict", expect.stringContaining("pass this repository's policy")]],
     ]);
     const verdict = await evaluate({ ...first.judged, judgeParts: second.judged.judge }, ctx, signal) as Verdict;
     expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: ["src/a.ts"] });
@@ -499,10 +495,10 @@ describe("focused judge input", () => {
     const files = largeFiles("large", 24);
     expect(files.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(MAX_SYSTEM_ONE_STATE_BYTES);
     const ruled = await ruledFor(files);
-    const { requests, judged } = await judgeChunks(ruled, primary);
-    expect(requests.length).toBeGreaterThanOrEqual(2);
+    const { requests, judged } = await judgeRounds(ruled, primary);
+    expect(requests.length).toBeGreaterThanOrEqual(3);
     expect(requests.every(withinBudget)).toBe(true);
-    const slices = requests.map((request) => request.providerOptions.systemOne.state.pullRequest.files.map((file: { path: string }) => file.path));
+    const slices = requests.slice(0, -1).map((request) => request.providerOptions.systemOne.state.pullRequest.files.map((file: { path: string }) => file.path));
     expect(slices.flat()).toEqual(files.map((file) => file.path));
     const verdict = await evaluate(judged, ctx, signal) as Verdict;
     expect(verdict.degraded).toBeNull();
@@ -510,8 +506,8 @@ describe("focused judge input", () => {
 
     const split = await judgeChunks(ruled, (questions, call) => questions.map(({ id }) => JSON.stringify(call === 1 ? focusedAnswer(id, 0.1, 0.8) : focusedAnswer(id, 0.9, 0.05))).join(""));
     const { chunks } = await parts(split.judged, ctx, signal);
-    const named = await judgeChunks({ ...ruled, chunks }, (questions) => questions.map(({ id }) => JSON.stringify({ id, type: "noul", noul: 0.9 })).join(""));
-    expect(named.requests.flatMap((request) => request.providerOptions.systemOne.state.pullRequest.files.map((file: { path: string }) => file.path))).toEqual(slices[1]);
+    const named = await judgeChunks({ ...ruled, chunks }, (questions) => questions.map(({ id }) => JSON.stringify(id === "verdict" ? verdictAnswer("fail") : { id, type: "noul", noul: 0.9 })).join(""));
+    expect(named.requests[0]!.providerOptions.systemOne.state.pullRequest.files.map((file: { path: string }) => file.path)).toEqual(slices[1]);
     const failed = await evaluate({ ...split.judged, judgeParts: named.judged.judge }, ctx, signal) as Verdict;
     expect(failed.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: slices[1]!.slice(0, 3) });
   });
@@ -521,14 +517,17 @@ describe("focused judge input", () => {
     const split = await judgeChunks(ruled, (questions, call) => questions.map(({ id }) => JSON.stringify(call === 1 ? focusedAnswer(id, 0.1, 0.8) : focusedAnswer(id, 0.9, 0.05))).join(""));
     const { chunks } = await parts(split.judged, ctx, signal);
     for (const reply of ["not json", { error: "upstream 503" }]) {
-      const named = await judgeChunks({ ...ruled, chunks }, () => reply);
+      const named = await judgeChunks({ ...ruled, chunks }, (questions) => (questions[0]!.id === "verdict" ? JSON.stringify(verdictAnswer("fail")) : reply));
       const verdict = await evaluate({ ...split.judged, judgeParts: named.judged.judge }, ctx, signal) as Verdict;
       expect(verdict.degraded).toBeNull();
       expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: [] });
     }
+    // A malformed verdict reply leaves the pull request undecided: Unsure, and degraded so it is checked again.
+    const garbledVerdict = await judgeChunks({ ...ruled, chunks }, (questions) => (questions[0]!.id === "verdict" ? JSON.stringify({ ...verdictAnswer("pass"), probabilities: { pass: 0.9 } }) : questions.map(({ id }) => JSON.stringify({ id, type: "noul", noul: 0.9 })).join("")));
+    expect(await evaluate({ ...split.judged, judgeParts: garbledVerdict.judged.judge }, ctx, signal)).toMatchObject({ verdict: "unsure", degraded: "inference-outage", actions: [] });
 
     const garbled = await judgeChunks(ruled, (questions, call) => (call === 0 ? "not json" : questions.map(({ id }) => JSON.stringify(call === 1 ? focusedAnswer(id, 0.1, 0.8) : focusedAnswer(id, 0.9, 0.05))).join("")));
-    expect((await parts(garbled.judged, ctx, signal)).chunks).toHaveLength(1);
+    expect((await parts(garbled.judged, ctx, signal)).chunks.map((chunk) => chunk.questions[0]!.id)).toEqual([expect.stringMatching(/^focused-slice-002-file-/), "verdict"]);
     const verdict = await evaluate(garbled.judged, ctx, signal) as Verdict;
     expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail" });
 
@@ -543,8 +542,8 @@ describe("focused judge input", () => {
     expect(new Set(ruled.chunks.map((chunk) => chunk.item))).toEqual(new Set([0, 1, 2]));
     expect(ruled.chunks.length).toBeGreaterThanOrEqual(6);
     const failed = ruled.chunks.findIndex((chunk) => chunk.item === 0);
-    const { requests, judged } = await judgeChunks(ruled, (questions, call) => (call === failed ? { error: "upstream 503" } : primary(questions)));
-    expect(requests).toHaveLength(ruled.chunks.length);
+    const { requests, judged } = await judgeRounds(ruled, (questions, call) => (call === failed ? { error: "upstream 503" } : primary(questions)));
+    expect(requests).toHaveLength(ruled.chunks.length + 2);
     expect(requests.every(withinBudget)).toBe(true);
 
     const { items: verdicts } = await evaluate(judged, ctx, signal) as { items: Verdict[] };
@@ -562,7 +561,7 @@ describe("focused judge input", () => {
     expect(ruled.items[0]).toMatchObject({ judgeError: tooLarge, judgeLimitExceeded: true });
 
     const verdict = await evaluate(ruled, ctx, signal) as Verdict;
-    expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: "Not yet confirmed, a maintainer will check:\n- makes one focused change\n- documentation is up to date", reason: tooLarge });
+    expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: "**Triage: Unsure**\n\nNot yet confirmed, a maintainer will check:\n- makes one focused change\n- documentation is up to date", reason: tooLarge });
     expect(verdict.checks.filter((c) => c.kind === "model")).toEqual([
       { check: "focused", kind: "model", result: "unconfirmed", reason: tooLarge, evidence: [], output: { kind: "could-not-check", reason: tooLarge } },
       { check: "docs", kind: "model", result: "unconfirmed", reason: tooLarge, evidence: [], output: { kind: "could-not-check", reason: tooLarge } },
@@ -577,10 +576,9 @@ describe("mirror director grants", () => {
     number: 8,
     state: "ready-monitoring",
     headSha: "abc",
-    merge: { verdict: "ready" },
+    verdict: "pass",
     mirror: true,
     request,
-    confidence: 0.9,
     humanGated: false,
   };
 
@@ -621,7 +619,7 @@ describe("execute", () => {
   const REQUEST = { repo: "acme/widgets", number: 8, labels: [], owned: [], comment: "" };
 
   function comment(index: number) {
-    return { id: "hi", branch: "always", index, kind: "comment", reason: "Always applies.", effectId: `e${index}`, target: { body: "hi" } };
+    return { list: "pass", index, kind: "comment", reason: "passes the repository's policy", effectId: `e${index}`, target: { body: "hi" } };
   }
 
   /** Answers every Do call done, one at a time as the director asks, and returns the calls and its reply. */
@@ -651,7 +649,7 @@ describe("execute", () => {
   });
 
   test("a Do whose kind the role is not granted is neither attempted nor recorded", async () => {
-    const derived = { id: "tag", branch: "always", index: 0, kind: "labels", reason: "Always applies.", effectId: "e-tag", target: { unresolved: "derive", from: "type" } };
+    const derived = { list: "pass", index: 0, kind: "labels", reason: "passes the repository's policy", effectId: "e-tag", target: { unresolved: "derive", from: "type" } };
     expect(await execute({ ...verdict, actions: [comment(0), derived] })).toEqual({ calls: [expect.objectContaining({ id: "e0" })], dos: [{ effectId: "e0", status: "done" }] });
   });
 

@@ -1,15 +1,15 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { judgeKey, prepareQualityEvaluation } from "../logic/quality.js";
-import { Input, partsOf, repliesTo, type EvaluateInput } from "./evaluate.js";
+import { choiceFirst, choiceOf, Input, partsOf, repliesTo, type EvaluateInput } from "./evaluate.js";
 import type { JudgeChunk } from "./rules.js";
 
-/** Focused's follow-up calls, in item order; empty unless an item's first answers failed focused. */
+/** Focused's follow-up calls and the verdict questions the first calls' answers were needed for, in item order. */
 export interface PartsOutput {
   chunks: JudgeChunk[];
 }
 
-/** Reads each item's first-round replies as evaluate does, and asks focused's file questions only where it failed. */
+/** Reads each item's first-round replies as evaluate does, asks focused's file questions only where it failed, then the verdict question. */
 export async function parts(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<PartsOutput> {
   const parsed = Input(input);
   if (parsed instanceof type.errors) throw new Error(`parts: invalid input: ${parsed.summary}`);
@@ -18,7 +18,13 @@ export async function parts(input: unknown, _ctx: EffectContext, _signal: AbortS
   const chunks = items.flatMap(function partChunks(it, item): JudgeChunk[] {
     if (it.error !== undefined || !it.det.needsJudgment) return [];
     const evaluation = prepareQualityEvaluation(it.facts, it.det.sources);
-    const asked = partsOf(it.det.sources, evaluation, repliesTo(it, evaluation.requests, replies))?.requests ?? [];
+    const first = repliesTo(it, evaluation.requests, replies);
+    const choice = choiceOf(it, evaluation, first);
+    const asking = choice && "request" in choice ? [choice.request] : [];
+    // A verdict question asked in the first round took its reply there.
+    if (choiceFirst(it, evaluation)) repliesTo(it, asking, replies);
+    const late = choiceFirst(it, evaluation) ? [] : asking;
+    const asked = [...(partsOf(it.det.sources, evaluation, first)?.requests ?? []), ...late];
     return asked.filter((request) => it.judged?.[judgeKey(request)] === undefined).map(({ state, questions }) => ({ item, state, questions }));
   });
   return { chunks };

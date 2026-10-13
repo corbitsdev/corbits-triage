@@ -9,7 +9,8 @@ import type { VerdictDetail } from "@corbits/triage-contracts";
 import { triageSchema } from "../triage-db.js";
 
 export type RecordedCheck = { check: string; result: string };
-export type RecordedDo = { actionId: string; effectId: string };
+/** `list` is the verdict's list the Do is on; Dos recorded before verdicts were words carry their action's id instead and are not counted. */
+export type RecordedDo = { list?: string; effectId: string };
 
 export const verdictRecord = triageSchema.table("verdict", {
   tenantId: text("tenant_id").notNull(),

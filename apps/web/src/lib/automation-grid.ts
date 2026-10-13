@@ -1,4 +1,4 @@
-import { ACTION_KINDS, ANY_DO_RESOURCE, DO_GRANT_ACTION, DO_GRANT_PREFIX, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { ACTION_KINDS, ANY_DO_RESOURCE, DO_GRANT_ACTION, DO_GRANT_PREFIX, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
 import type { HubGrant, HubRole } from "./hub-api.ts";
 
 /** Agent Dos cannot run yet, so no one is granted them. */
@@ -46,3 +46,10 @@ export function roleName(role: NamedRole): string {
   return role.name.charAt(0).toUpperCase() + role.name.slice(1);
 }
 
+/** Whether the pr-triage role is granted `kind` on `repo`, so triage runs it without asking. */
+export function triageRunsAlone(roles: readonly HubRole[], grants: readonly HubGrant[], kind: ActionKind, repo: string): boolean {
+  const triage = roles.find((role) => system(role, TRIAGE_ROLE));
+  if (!triage) return false;
+  const resources = [ANY_DO_RESOURCE, doResource(kind, "*"), doResource(kind, repo)];
+  return grants.some((grant) => grant.roleId === triage.id && grant.action === DO_GRANT_ACTION && grant.effect === "allow" && resources.includes(grant.resource));
+}

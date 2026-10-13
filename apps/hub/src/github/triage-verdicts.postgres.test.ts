@@ -145,7 +145,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       number: 8,
       activityAt: minutes(4).toISOString(),
       verdict: {
-        runId: "run_3", at: minutes(10).toISOString(), headSha: "sha_run_3", settled: true, state: "awaiting-review", actor: "maintainer",
+        runId: "run_3", at: minutes(10).toISOString(), headSha: "sha_run_3", verdict: "unsure", settled: true, state: "awaiting-review", actor: "maintainer",
         humanGated: false, degraded: null, commented: false, checks: [{ check: "ci-green", result: "pass" }], detail: DETAIL,
       },
       run: { runId: "run_3", startedAt: minutes(9).toISOString(), status: "failed" },

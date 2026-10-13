@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classificationSources, DEFAULT_MERGE_THRESHOLD, emptyPack, type CheckPack } from "@corbits/triage-contracts";
+import { classificationSources, emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict } from "./render.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR, type FocusedPlan, type QualityPlan } from "./quality.js";
 import { REVIEW_ANSWERED_REASON, type DeterministicResult } from "./checks.js";
@@ -26,7 +26,6 @@ describe("custom check rendering", () => {
         sources: classificationSources(pack),
       },
       answers: { "custom-2": 0.1 },
-      threshold: DEFAULT_MERGE_THRESHOLD,
     });
 
     expect(verdict.checks).toEqual([
@@ -63,7 +62,14 @@ function focusedPlan(separate: Record<string, number>, slices: Record<string, st
   return { focused: { slices, unread, parts }, nouls };
 }
 
-function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).focused, threshold = DEFAULT_MERGE_THRESHOLD) {
+/** The verdict question's answer, by the verdict it decides. */
+const CHOICE = {
+  pass: { pass: 0.8, fail: 0.1, cant_tell: 0.1 },
+  fail: { pass: 0.1, fail: 0.85, cant_tell: 0.05 },
+  unsure: { pass: 0.5, fail: 0.3, cant_tell: 0.2 },
+} as const;
+
+function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).focused, choice: Record<"pass" | "fail" | "cant_tell", number> = CHOICE.pass) {
   return renderVerdict({
     author: "octocat",
     repo: "acme/widgets",
@@ -71,19 +77,20 @@ function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).fo
     det: FOCUSED_DET,
     answers: parseAnswers(reply),
     focused,
-    threshold,
+    choice,
   });
 }
 
+const UNSURE = "**Triage: Unsure**\n\n";
 const UNSURE_FOCUSED = "Not yet confirmed, a maintainer will check:\n- makes one focused change";
 const OUTAGE_NOTE = "Some rules could not run this time. Triage will re-check this pull request.";
-const APPROVAL_NOTE = "No changes needed from you. A maintainer will review this pull request.";
+const APPROVAL_NOTE = "**Triage: Pass**\n\nNo changes needed from you. A maintainer will review this pull request.";
 
 describe("focused rendering", () => {
   test("fails on more than one thing, naming at most three files most likely to be the separate change", () => {
     const { focused, nouls } = focusedPlan({ "src/a.ts": 0.1, "src/b.ts": 0.75, "src/c.ts": 0.9, "src/d.ts": 0.8, "src/e.ts": 0.71, "src/f.ts": 0.6 });
-    const verdict = focusedVerdict(focusedAnswer(0.1, 0.85) + nouls, focused);
-    expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, humanGated: false, score: 0.85 });
+    const verdict = focusedVerdict(focusedAnswer(0.1, 0.85) + nouls, focused, CHOICE.fail);
+    expect(verdict).toMatchObject({ verdict: "fail", state: "needs-author-update", mirror: true, humanGated: false, score: 0.1 });
     expect(verdict.checks).toEqual([{
       check: "focused",
       kind: "model",
@@ -93,7 +100,7 @@ describe("focused rendering", () => {
       output: { kind: "score", score: expect.closeTo(10), passAt: 60, items: ["src/c.ts", "src/d.ts", "src/b.ts"] },
     }]);
     expect(verdict.reason).toBe("mixes unrelated changes: src/c.ts, src/d.ts, src/b.ts");
-    expect(verdict.feedback.split("\n").slice(1)).toEqual([
+    expect(verdict.feedback.split("\n").slice(3)).toEqual([
       "- Split out unrelated change: `src/c.ts`",
       "- Split out unrelated change: `src/d.ts`",
       "- Split out unrelated change: `src/b.ts`",
@@ -102,9 +109,9 @@ describe("focused rendering", () => {
 
   test("still fails when no file is clearly the separate change", () => {
     const { focused, nouls } = focusedPlan({ "src/a.ts": 0.5 });
-    const verdict = focusedVerdict(focusedAnswer(0.2, 0.8) + nouls, focused);
+    const verdict = focusedVerdict(focusedAnswer(0.2, 0.8) + nouls, focused, CHOICE.fail);
     expect(verdict.checks[0]).toMatchObject({ result: "fail", evidence: [], output: { kind: "score", items: [] } });
-    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- mixes unrelated changes"]);
+    expect(verdict.feedback.split("\n").slice(3)).toEqual(["- mixes unrelated changes"]);
     expect(verdict.nextAction).toBe("Split out unrelated changes");
   });
 
@@ -129,17 +136,16 @@ describe("focused rendering", () => {
   });
 
   test("does not apply with no lines to read", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, plan: {}, threshold: DEFAULT_MERGE_THRESHOLD });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, plan: {}, choice: CHOICE.pass });
     expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "pass", reason: "does not apply", evidence: [], output: { kind: "not-applicable" } }]);
     expect(verdict.degraded).toBeNull();
   });
 
-  test("names an unsure focused check in the comment, awaits review and is red", () => {
-    const verdict = focusedVerdict(focusedAnswer(0.5, 0.4));
-    expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, merge: { verdict: "not-recommended" } });
+  test("names an unsure focused check in the comment and among the reasons of an unsure verdict", () => {
+    const verdict = focusedVerdict(focusedAnswer(0.5, 0.4), undefined, CHOICE.unsure);
+    expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, humanGated: false, degraded: null, score: 0.5, reasons: ["Not confirmed: makes one focused change"] });
     expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "score", score: 50, passAt: 60, items: [] } }]);
-    expect(verdict.feedback).toBe(UNSURE_FOCUSED);
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: null, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Not confirmed: makes one focused change"] });
+    expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}`);
   });
 
   test.each([
@@ -147,17 +153,16 @@ describe("focused rendering", () => {
     ["malformed", JSON.stringify({ id: "focused", type: "choice", choice: "one_thing", probabilities: { one_thing: 1 }, confidence: 2 })],
   ] as const)("a %s answer is an outage that still posts", (_name, reply) => {
     const verdict = focusedVerdict(reply);
-    expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: "inference-outage", feedback: OUTAGE_NOTE });
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: null, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Could not evaluate 1 rule"] });
+    expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, humanGated: false, degraded: "inference-outage", feedback: `${UNSURE}${OUTAGE_NOTE}`, score: null });
   });
 
   test("the judge budget and a judge outage both still post", () => {
-    const limited = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}, {}).focused, judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true, threshold: DEFAULT_MERGE_THRESHOLD });
-    expect(limited).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: UNSURE_FOCUSED });
+    const limited = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}, {}).focused, judgeError: QUALITY_EVALUATION_LIMIT_ERROR, judgeLimitExceeded: true });
+    expect(limited).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, humanGated: false, degraded: null, feedback: `${UNSURE}${UNSURE_FOCUSED}` });
     expect(limited.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: QUALITY_EVALUATION_LIMIT_ERROR, evidence: [], output: { kind: "could-not-check", reason: QUALITY_EVALUATION_LIMIT_ERROR } }]);
     expect(limited.reason).toBe(QUALITY_EVALUATION_LIMIT_ERROR);
-    const outage = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}).focused, judgeError: "upstream 503", threshold: DEFAULT_MERGE_THRESHOLD });
-    expect(outage).toMatchObject({ mirror: true, humanGated: false, degraded: "inference-outage", feedback: OUTAGE_NOTE });
+    const outage = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: FOCUSED_DET, focused: focusedPlan({}).focused, judgeError: "upstream 503" });
+    expect(outage).toMatchObject({ verdict: "unsure", mirror: true, humanGated: false, degraded: "inference-outage", feedback: `${UNSURE}${OUTAGE_NOTE}` });
   });
 
   test("rejects duplicate decisions and illegal choice probability keys", () => {
@@ -178,16 +183,16 @@ describe("focused rendering", () => {
     const plan: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] } };
     function results(docs: number, custom: number) {
       const answers = noul({ "docs-file-001": docs, "custom-1": custom });
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ check, result, evidence }) => [check, result, evidence]);
+      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan }).checks.map(({ check, result, evidence }) => [check, result, evidence]);
     }
     expect(results(0.9, 0.2)).toEqual([["docs", "fail", ["src/a.ts"]], ["custom-1", "fail", []]]);
     expect(results(0.5, 0.5)).toEqual([["docs", "unconfirmed", []], ["custom-1", "unconfirmed", []]]);
     expect(results(0.2, 0.9)).toEqual([["docs", "pass", []], ["custom-1", "pass", []]]);
 
     const duplicate = parseAnswers('{"id":"custom-1","type":"noul","noul":0.9}{"id":"custom-1","type":"noul","noul":0.9}');
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: duplicate, plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
+    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: duplicate, plan })).toMatchObject({ mirror: true, degraded: "inference-outage" });
     const unknown = parseAnswers('{"id":"docs","type":"noul","noul":0.9}');
-    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: unknown, plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
+    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: unknown, plan })).toMatchObject({ mirror: true, degraded: "inference-outage" });
   });
 
   test("a model check scores how likely it is fine, unsure answers included, and a file it could not read is a state", () => {
@@ -203,7 +208,7 @@ describe("focused rendering", () => {
     function outputs(unread: string[]) {
       const plan: QualityPlan = { docs: { changed: [], asked, unread } };
       const answers = noul({ "docs-file-001": 0.2, "docs-file-002": 0.41, "custom-1": 0.55 });
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ result, output }) => [result, output]);
+      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan }).checks.map(({ result, output }) => [result, output]);
     }
     expect(outputs([])).toEqual([
       ["unconfirmed", { kind: "score", score: expect.closeTo(59), passAt: 70, items: ["src/b.ts"] }],
@@ -223,7 +228,7 @@ describe("focused rendering", () => {
     };
     const plan: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] } };
     function modelChecks(answer: number) {
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": answer, "custom-1": answer }), plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks;
+      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": answer, "custom-1": answer }), plan }).checks;
     }
     function focusedCheck(one: number) {
       return focusedVerdict(focusedAnswer(one, 0.2)).checks;
@@ -239,8 +244,8 @@ describe("focused rendering", () => {
   test("an over-long comment is cut at line boundaries and still posts", () => {
     const custom = Array.from({ length: 200 }, (_, index) => ({ id: `custom-${index + 1}`, name: `${"N".repeat(500)}-${index}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
     const det: DeterministicResult = { ...FOCUSED_DET, sources: { quality: [], custom, rules: [] } };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul(Object.fromEntries(custom.map((row) => [row.id, 0.1]))), threshold: DEFAULT_MERGE_THRESHOLD });
-    const lines = verdict.feedback.split("\n").slice(1);
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul(Object.fromEntries(custom.map((row) => [row.id, 0.1]))), choice: CHOICE.fail });
+    const lines = verdict.feedback.split("\n").slice(3);
     expect(new TextEncoder().encode(verdict.feedback).byteLength).toBeLessThanOrEqual(MAX_MIRROR_COMMENT_BYTES);
     expect(lines[0]).toContain(custom[0]!.name);
     expect(lines.at(-1)).toBe(`- and ${200 - (lines.length - 1)} more`);
@@ -250,17 +255,16 @@ describe("focused rendering", () => {
 
   test("an over-long CI name is cut to one line without replacing its CI and path verdict", () => {
     const checks = [
-      { check: "ci-green", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: ["界".repeat(21_000)] },
-      { check: "no-forbidden-paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/generated.ts"] },
+      { check: "ci-green", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: ["界".repeat(21_000)], output: { kind: "values" as const, values: {} } },
+      { check: "no-forbidden-paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/generated.ts"], output: { kind: "values" as const, values: {} } },
     ];
     const verdict = renderVerdict({
       author: "octocat",
       repo: "acme/widgets",
       headSha: "abc123",
       det: { state: "blocked", reason: "required checks are failing", findings: [], checks, needsJudgment: false },
-      threshold: DEFAULT_MERGE_THRESHOLD,
     });
-    expect(verdict.feedback).toBe(`@octocat, please address the following:\n- required checks are failing: \`${"界".repeat(200)}…\`\n- touches forbidden paths: \`vendor/generated.ts\``);
+    expect(verdict.feedback).toBe(`**Triage: Fail**\n\n@octocat, please address the following:\n- required checks are failing: \`${"界".repeat(200)}…\`\n- touches forbidden paths: \`vendor/generated.ts\``);
     expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", mirror: true, humanGated: false, checks });
     expect(verdict.nextAction).toContain("Fix failing CI");
     expect(verdict.nextAction).toContain("Remove changes under vendor/generated.ts");
@@ -272,7 +276,7 @@ describe("focused rendering", () => {
       { check: "max-lines-changed", kind: "machine" as const, result: "fail" as const, reason: "pull request is over the lines limit", evidence: ["4000 lines changed (max 3000)"] },
     ];
     const det = { state: "needs-author-update" as const, reason: "too large", findings: [], checks, needsJudgment: false };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, threshold: DEFAULT_MERGE_THRESHOLD });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det });
     expect(verdict.nextAction).toBe("Consider splitting it (40 files, 4000 lines changed)");
   });
 });
@@ -287,45 +291,35 @@ function noul(answers: Record<string, number>) {
   return parseAnswers(Object.entries(answers).map(([id, value]) => JSON.stringify({ id, type: "noul", noul: value })).join(""));
 }
 
-describe("merge verdict", () => {
-  test("every check passing at or above the threshold is ready", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.2 }), plan: PLAN, threshold: 0.7 });
-    expect(verdict.merge).toEqual({ verdict: "ready", score: 0.8, threshold: 0.7, reasons: [] });
-    expect(verdict).toMatchObject({ state: "ready-monitoring", mirror: true, feedback: APPROVAL_NOTE });
+describe("verdict", () => {
+  test.each<[string, Record<"pass" | "fail" | "cant_tell", number>, string, string]>([
+    ["pass at 0.7", { pass: 0.7, fail: 0.2, cant_tell: 0.1 }, "pass", "ready-monitoring"],
+    ["fail at 0.7", { pass: 0.2, fail: 0.7, cant_tell: 0.1 }, "fail", "needs-author-update"],
+    ["unsure below both", { pass: 0.65, fail: 0.3, cant_tell: 0.05 }, "unsure", "awaiting-review"],
+  ])("the verdict question decides %s, and its pass probability is the score", (_, choice, verdict, state) => {
+    const rendered = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.2 }), plan: PLAN, choice });
+    expect(rendered).toMatchObject({ verdict, state, score: choice.pass, degraded: null, mirror: true, reasons: [] });
   });
 
-  test("every check passing below the threshold is red with the score reason", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.2 }), plan: PLAN, threshold: 0.85 });
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.85, reasons: ["Score 0.8 is below the threshold 0.85"] });
-    expect(verdict.feedback).toBe(APPROVAL_NOTE);
+  test("a failed hard rule decides Fail without the verdict question, failed hard rules first among the reasons", () => {
+    const checks = [{ check: "no-forbidden-paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/a.ts"], output: { kind: "values" as const, values: {} } }];
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, state: "needs-author-update", reason: "touches forbidden paths", checks, needsJudgment: false } });
+    expect(verdict).toMatchObject({ verdict: "fail", state: "needs-author-update", score: null, degraded: null, reasons: ["touches forbidden paths: vendor/a.ts"] });
+    expect(verdict.checks.at(-1)).toMatchObject({ check: "docs", result: "unconfirmed", reason: "not asked" });
   });
 
-  test("a failing rule is red", () => {
-    const checks = [{ check: "no-forbidden-paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/a.ts"] }];
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, state: "blocked", checks }, answers: noul({ "docs-file-001": 0.1 }), plan: PLAN, threshold: 0.7 });
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.9, threshold: 0.7, reasons: ["Failed: touches forbidden paths"] });
-  });
-
-  test("a failed chunk is red with the count of checks it could not evaluate and keeps the answered ones", () => {
+  test("a failed chunk degrades the verdict to unsure and keeps the answered checks", () => {
     const det: DeterministicResult = { ...MODEL_DET, sources: { ...MODEL_DET.sources!, custom: [{ id: "custom-1", name: "Ticket", group: "pull-request", kind: "model", shape: "is-true", claim: "Names a ticket." }] } };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": 0.8 }), plan: PLAN, judgeError: "upstream 503", threshold: 0.7 });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": 0.8 }), plan: PLAN, judgeError: "upstream 503" });
     expect(verdict.checks.map(({ check, result }) => [check, result])).toEqual([["docs", "fail"], ["custom-1", "unconfirmed"]]);
-    expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, degraded: "inference-outage" });
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.7, reasons: ["Could not evaluate 1 rule", "Failed: documentation is not updated"] });
-    expect(verdict.feedback).toBe(`@octocat, please address the following:\n- documentation is not updated for \`src/a.ts\`\n\n${OUTAGE_NOTE}`);
+    expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, degraded: "inference-outage", reasons: ["documentation is not updated: src/a.ts"] });
+    expect(verdict.feedback).toBe(`${UNSURE}@octocat, please address the following:\n- documentation is not updated for \`src/a.ts\`\n\n${OUTAGE_NOTE}`);
   });
 
-  test("rules only has no score and is green", () => {
-    const checks = [{ check: "ci-green", kind: "machine" as const, result: "pass" as const, reason: "required checks pass", evidence: [] }];
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...FOCUSED_DET, checks, needsJudgment: false, sources: undefined }, threshold: 0.7 });
-    expect(verdict.merge).toEqual({ verdict: "ready", score: null, threshold: 0.7, reasons: [] });
-    expect(verdict).toMatchObject({ score: null, confidence: "unknown", mirror: true, feedback: APPROVAL_NOTE });
-  });
-
-  test("a closed pull request gets no comment", () => {
+  test("a closed pull request is not decided and gets no comment", () => {
     const findings = [{ check: "state", state: "ready-monitoring" as const, reason: "pull request is closed" }];
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, findings, checks: [], needsJudgment: false }, threshold: 0.7 });
-    expect(verdict).toMatchObject({ mirror: true, feedback: "" });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, findings, checks: [], needsJudgment: false } });
+    expect(verdict).toMatchObject({ verdict: "unsure", mirror: true, feedback: "" });
   });
 });
 
@@ -347,25 +341,26 @@ describe("rule custom check rendering", () => {
   };
 
   test("names the rule, asks the author in inline code and keeps approvals with the maintainer", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, threshold: DEFAULT_MERGE_THRESHOLD });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det });
     expect(verdict).toMatchObject({ actor: "author", nextAction: "Rename the branch to match `^cl-`; Approve (`1 of 2 approvals`)" });
-    expect(verdict.feedback.split("\n").slice(1)).toEqual(["- Branch naming: branch does not match the pattern: `@acme/team`"]);
-    expect(verdict.merge.reasons).toContain("Failed: Two approvals: not enough approvals");
+    expect(verdict.feedback.split("\n").slice(3)).toEqual(["- Branch naming: branch does not match the pattern: `@acme/team`"]);
+    expect(verdict).toMatchObject({ verdict: "fail", reasons: ["Branch naming: branch does not match the pattern: @acme/team", "Two approvals: not enough approvals: 1 of 2 approvals"] });
   });
 
-  test("a failed author gate stays out of the next step, the comment and the merge verdict", () => {
+  test("a failed author gate is no hard failure and stays out of the next step, the comment and the reasons", () => {
     const gate = { id: "custom-9", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] } as const;
     const gated: DeterministicResult = {
       ...det,
       state: "ready-monitoring",
       reason: "all deterministic rules passed",
       findings: [],
-      checks: [{ check: "custom-9", kind: "machine", result: "fail", reason: "Mine: author is not one of the people named", evidence: ["@octocat (outside)"], gate: true }],
+      checks: [{ check: "custom-9", kind: "machine", result: "fail", reason: "Mine: author is not one of the people named", evidence: ["@octocat (outside)"], gate: true, output: { kind: "values", values: {} } }],
+      needsJudgment: true,
       sources: { quality: [], custom: [], rules: [gate] },
     };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: gated, threshold: DEFAULT_MERGE_THRESHOLD });
-    expect(verdict).toMatchObject({ actor: "maintainer", nextAction: "Review and merge", merge: { verdict: "ready", reasons: [] } });
-    expect(verdict.feedback).toBe("No changes needed from you. A maintainer will review this pull request.");
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: gated, choice: CHOICE.pass });
+    expect(verdict).toMatchObject({ verdict: "pass", actor: "maintainer", nextAction: "Review and merge", reasons: [] });
+    expect(verdict.feedback).toBe(APPROVAL_NOTE);
   });
 });
 
@@ -387,11 +382,10 @@ describe("author text in the comment", () => {
       repo: "acme/widgets",
       headSha: "abc123",
       det: { state: "blocked", reason: "required checks are failing", findings: [], checks, needsJudgment: false },
-      threshold: DEFAULT_MERGE_THRESHOLD,
     });
     const lines = verdict.feedback.split("\n");
-    expect(lines).toHaveLength(2 + hostile.length);
-    for (const line of lines.slice(1)) {
+    expect(lines).toHaveLength(4 + hostile.length);
+    for (const line of lines.slice(3)) {
       expect(line).toMatch(/^- /);
       const outside = line.replace(/(`+)(?:(?!\1)[\s\S])*?\1(?!`)/g, "");
       expect(outside).not.toMatch(/@|\]\(|<!--|[\u202e\u0007]/);
@@ -412,18 +406,18 @@ describe("requested changes rendering", () => {
   };
 
   test("posts nothing when the maintainer's review is the only reason, and still waits on the author", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, threshold: DEFAULT_MERGE_THRESHOLD });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det });
     expect(verdict).toMatchObject({ state: "needs-author-update", actor: "author", nextAction: "Address requested changes from @maya", feedback: "" });
   });
 
   test("hands an answered review back to the maintainer without a comment", () => {
     const answered = { ...review, reason: REVIEW_ANSWERED_REASON };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, checks: [answered] }, threshold: DEFAULT_MERGE_THRESHOLD });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, checks: [answered] } });
     expect(verdict).toMatchObject({ state: "needs-author-update", actor: "maintainer", nextAction: "Re-review: the author responded to changes requested by @maya", feedback: "" });
   });
 
   test("leaves the review out of a comment that has other reasons", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, checks: [review, conflicts] }, threshold: DEFAULT_MERGE_THRESHOLD });
-    expect(verdict.feedback).toBe("@octocat, please address the following:\n- merge conflicts with base");
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, checks: [review, conflicts] } });
+    expect(verdict.feedback).toBe("**Triage: Fail**\n\n@octocat, please address the following:\n- merge conflicts with base");
   });
 });

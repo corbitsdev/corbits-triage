@@ -79,41 +79,26 @@
 .repos .rp .pfoot .sp { flex: 1; }
 .repos .rp .txt { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; }
 .repos .tokens { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.repos .check-name { display: inline; }
-.repos .chk { border: 0; padding: 0; background: none; font: inherit; font-weight: 600; color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
-.repos .chk small { font-weight: 400; }
-.repos .act { border-bottom: 1px solid var(--rule); }
-.repos .act > .sentence { border-bottom: 0; align-items: flex-start; }
 .repos .prose { flex: 1; min-width: 0; margin: 0; line-height: 1.6; white-space: normal; overflow-wrap: anywhere; }
 .repos .rp .reason { margin: 4px 0 8px; font-size: 13px; font-weight: 600; }
 .repos .rp .hint { margin: 0; font-size: 12px; }
 .repos .rp .strip { margin-top: 28px; }
-.repos .act.invalid, .repos .sentence.invalid { box-shadow: inset 3px 0 0 var(--orange); padding-left: 10px; }
-.repos .act.invalid > .reason { margin: 0 0 12px; }
+.repos .branch.invalid, .repos .sentence.invalid { box-shadow: inset 3px 0 0 var(--orange); padding-left: 10px; }
 .repos .bar.save .linkish.blocked { font-size: 13px; text-align: left; white-space: normal; }
 .repos .more { margin-top: 16px; }
 .repos .rp .pills { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.repos .rp .pill { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 10px; border-radius: 13px; background: var(--fill-hover); font-size: 13px; }
-.repos .rp .pill:not(:has(button)) { padding-right: 10px; }
-.repos .rp .pill > button { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }
-.repos .rp .pill > button:hover { background: var(--white); }
-.repos .builder { display: grid; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
-.repos .blk { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.repos .bl { width: 64px; font-size: 13px; font-weight: 700; }
-.repos .branch { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--r-md); }
-.repos .branch-h { font-size: 13px; }
+.repos .rp .pill { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 0; border-radius: 13px; background: var(--fill-hover); font: inherit; font-size: 13px; color: inherit; cursor: pointer; }
+.repos .rp .pill[aria-pressed="false"] { background: none; box-shadow: inset 0 0 0 1px var(--rule); }
+.repos .rp .pill:disabled { cursor: default; }
+.repos .branch { display: grid; gap: 6px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--r-md); }
+.repos .branch-h { font-size: 13px; cursor: pointer; }
 .repos .branch-h span { font-size: 12px; }
 .repos .branch > .linkish { justify-self: start; }
 .repos .do { display: flex; gap: 10px; align-items: center; }
 .repos .do .txt { flex: 1; min-width: 0; }
-.repos .do .auto { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
 .repos .val.body { flex: 1 1 100%; height: auto; padding: 6px 8px; font-weight: 400; resize: vertical; }
-.repos .bfoot { display: flex; gap: 12px; align-items: center; }
-.repos .bfoot .end { margin-left: auto; }
 .repos .gallery { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
 .repos .gallery-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; font-size: 13px; }
-.repos .check-fields { display: grid; gap: 8px; font-size: 13px; }
-.repos .check-fields > label { display: flex; gap: 8px; align-items: center; font-weight: 600; }
 .repos .pick { display: inline-flex; gap: 4px; align-items: center; }
 .repos .picks { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .repos .sentence.role .txt b { min-width: 96px; }

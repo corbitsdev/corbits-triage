@@ -1,17 +1,17 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@corbits/react-ui";
-import type { Action, RepoRole } from "@corbits/triage-contracts";
+import { VERDICTS, type PolicyActions, type RepoRole } from "@corbits/triage-contracts";
 import { removeRole, rolesUsed, setRole } from "../../lib/pack-draft.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
 import { CloseIcon } from "../inbox-icons.tsx";
 import TokenList from "./TokenList.tsx";
 
-type RolesEditorProps = { roles: Record<string, RepoRole>; actions: Action[]; disabled: boolean; edit: RepoPack["edit"] };
+type RolesEditorProps = { roles: Record<string, RepoRole>; actions: PolicyActions; disabled: boolean; edit: RepoPack["edit"] };
 
 /** Named groups of people and teams that actions assign or request review from. */
 export default function RolesEditor({ roles, actions, disabled, edit }: RolesEditorProps) {
   const [name, setName] = useState("");
-  const missing = [...new Set(actions.flatMap(rolesUsed))].filter((role) => !Object.hasOwn(roles, role));
+  const missing = [...new Set(rolesUsed(VERDICTS.flatMap((list) => actions[list])))].filter((role) => !Object.hasOwn(roles, role));
   const fresh = name.trim();
 
   function set(role: string, patch: RepoRole) {

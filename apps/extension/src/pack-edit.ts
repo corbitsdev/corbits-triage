@@ -32,12 +32,8 @@ export function withCheck(pack: CheckPack, id: string, on: boolean): CheckPack {
   return readCheckPack({ ...pack, custom: pack.custom.map(toggled) }, pack.repo);
 }
 
-/** Drops a custom check from the pack and from every action; an action left with no checks goes with it, since there is no action editor here to give it another. */
 export function withoutCheck(pack: CheckPack, id: string): CheckPack {
-  const actions = pack.actions
-    .map((action) => ({ ...action, checks: action.checks.filter((ref) => ref !== id) }))
-    .filter((action) => action.checks.length > 0);
-  return readCheckPack({ ...pack, custom: pack.custom.filter((c) => c.id !== id), actions }, pack.repo);
+  return readCheckPack({ ...pack, custom: pack.custom.filter((c) => c.id !== id) }, pack.repo);
 }
 
 /** A catalog check's limits merged into its row, which keeps the default's values for the rest. */

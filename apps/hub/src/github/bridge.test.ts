@@ -619,12 +619,15 @@ test("installation listing mirrors GitHub", () => {
 });
 
 describe("mailPayload", () => {
-  test("every mailed Do carries the boolean automatic flag a deployment built before grants requires, and reads back as the pack", () => {
+  test("mails the action shape a deployment built before verdicts reads, every Do flagged, and it reads back as the pack", () => {
     const pack = recommendedPack("octocat/hello");
     const { checkPack } = mailPayload("octocat/hello", repoPolicy({ enabled: true }), { pack, automatic: [] }, {});
-    const dos = checkPack.actions.flatMap((action) => Object.values(action.branches).flat()) as Array<Record<string, unknown>>;
-    expect(dos.length).toBeGreaterThan(0);
-    expect(dos.every((step) => typeof step["automatic"] === "boolean")).toBe(true);
+    expect(checkPack.actions).toEqual([{
+      id: "policy",
+      when: pack.actions.when,
+      checks: ["all"],
+      branches: { yes: [{ kind: "approve", target: {}, automatic: false }], no: [], unsure: [{ kind: "request-review", target: { to: "codeowners" }, automatic: false }] },
+    }]);
     expect(readCheckPack(checkPack)).toEqual(pack);
   });
 });

@@ -8,7 +8,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo, errorText } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, repoPolicy, readCheckPack, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail } from "@corbits/triage-contracts";
+import { AuditLog, repoPolicy, readCheckPack, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -1112,15 +1112,15 @@ export async function loadGithubPull(
 }
 
 /** One Do as a preview resolves it; `skipped` ones carry why instead of an effect id. */
-export type PreviewDo = { id: string; branch: DoBranch; index: number; kind: ActionKind; reason: string; effectId?: string; target?: Record<string, unknown>; skipped?: true };
+export type PreviewDo = { list: VerdictWord; index: number; kind: ActionKind; reason: string; effectId?: string; target?: Record<string, unknown>; skipped?: true; held?: true };
 
-export type PreviewBranch = { branch: DoBranch; reason: string; dos: PreviewDo[] };
+export type PreviewList = { verdict: VerdictWord; dos: PreviewDo[] };
 
-export type PreviewAction =
-  | { id: string; status: "not-woken" }
-  | { id: string; status: "skipped"; reason: string }
-  | ({ id: string; status: "decided" } & PreviewBranch)
-  | { id: string; status: "waits-on-judge"; branches: PreviewBranch[] };
+/** The policy's actions on the head: the verdict's list, or every list while the verdict waits on the judge. */
+export type PreviewActions =
+  | { status: "not-woken" }
+  | ({ status: "decided" } & PreviewList)
+  | { status: "waits-on-judge"; lists: PreviewList[] };
 
 export type PreviewCheck = { check: string; name: string; kind: "machine" | "model"; result: "pass" | "fail" | "unconfirmed" | "needs-judge"; reason: string; evidence: string[]; output: CheckOutput };
 
@@ -1137,9 +1137,9 @@ export type PullPreview = {
     labels: string[];
     owner: string;
     humanGated: boolean;
+    verdict: VerdictWord;
     score: number | null;
-    confidence: number | "unknown";
-    merge: MergeVerdict;
+    reasons: string[];
     degraded: "inference-outage" | "error" | null;
     reason: string;
     nextAction: string;
@@ -1147,7 +1147,7 @@ export type PullPreview = {
     feedback: string;
   };
   checks: PreviewCheck[];
-  actions: PreviewAction[];
+  actions: PreviewActions;
 };
 
 /** Evaluates `pack` and `roles`, saved or not, against one open pull request; the hub writes nothing and does not run the judge. */
@@ -1377,15 +1377,6 @@ function isCiState(value: unknown): value is CiState {
   return CI_STATES.includes(value);
 }
 
-/** Whether a pull request should merge now; shown in the portal, never posted to GitHub. */
-export type MergeVerdict = { verdict: "ready" | "not-recommended"; score: number | null; threshold: number; reasons: string[] };
-
-/** Null for a verdict rendered before it carried a merge verdict. */
-function mergeVerdict(merge: VerdictDetail["merge"]): MergeVerdict | null {
-  const verdict = merge?.verdict;
-  if (!merge || (verdict !== "ready" && verdict !== "not-recommended")) return null;
-  return { verdict, score: merge.score, threshold: merge.threshold, reasons: merge.reasons };
-}
 
 export type PrItem = {
   key: string;
@@ -1401,8 +1392,12 @@ export type PrItem = {
   priority: string | null;
   owner: string | null;
   nextAction: string | null;
-  confidence: number | null;
-  merge: MergeVerdict | null;
+  /** Null until the pull request is triaged. */
+  verdict: VerdictWord | null;
+  /** How likely it passes its policy, as the verdict question answered; null when it was not asked. */
+  score: number | null;
+  /** Why the verdict is what it is; empty on verdicts recorded before they carried reasons. */
+  reasons: string[];
   evidence: string[];
   checks: CheckResult[];
   labels: string[];
@@ -1440,7 +1435,7 @@ export type PrItem = {
 
 // The portal reads verdict JSON and does not import the workflow package, so this keeps only the fields it uses.
 /** `held` waits for a maintainer's approval; `status` is how running it last ended, and `error` why it did not write. */
-export type SuggestedAction = { id: string; branch: DoBranch; index: number; effectId: string; kind: ActionKind; reason: string; target: Record<string, unknown>; held: boolean; status?: DoStatus; error?: string };
+export type SuggestedAction = { list: VerdictWord; index: number; effectId: string; kind: ActionKind; reason: string; target: Record<string, unknown>; held: boolean; status?: DoStatus; error?: string };
 
 const DO_STATUSES = ["done", "satisfied", "failed", "skipped"] as const;
 
@@ -1450,25 +1445,17 @@ function isDoStatus(value: unknown): value is DoStatus {
   return (DO_STATUSES as readonly unknown[]).includes(value);
 }
 
-const DO_BRANCHES = ["yes", "no", "unsure", "always"] as const;
-
-type DoBranch = (typeof DO_BRANCHES)[number];
-
 function isActionKind(value: unknown): value is ActionKind {
   return (ACTION_KINDS as readonly unknown[]).includes(value);
 }
 
-function isDoBranch(value: unknown): value is DoBranch {
-  return (DO_BRANCHES as readonly unknown[]).includes(value);
-}
-
 function suggestedActions(actions: NonNullable<VerdictDetail["actions"]>): SuggestedAction[] {
   const out: SuggestedAction[] = [];
-  for (const { id, branch, index, effectId, kind, reason, target, skipped, held, status, error } of actions) {
+  for (const { list, index, effectId, kind, reason, target, skipped, held, status, error } of actions) {
     if (skipped || reason === undefined || !isActionKind(kind) || !target) continue;
-    // A verdict from before Dos by reference names none the hub can run.
-    if (!isDoBranch(branch) || index === undefined || effectId === undefined) continue;
-    out.push({ id, branch, index, effectId, kind, reason, target, held: held === true, ...(isDoStatus(status) && { status }), ...(error !== undefined && { error }) });
+    // A verdict from before Dos ran from verdict lists names none the hub can run.
+    if (list === undefined || index === undefined || effectId === undefined) continue;
+    out.push({ list, index, effectId, kind, reason, target, held: held === true, ...(isDoStatus(status) && { status }), ...(error !== undefined && { error }) });
   }
   return out;
 }
@@ -1484,7 +1471,7 @@ export type CheckResult = {
   evidence: string[];
   /** Null for a verdict made before checks carried output. */
   output: CheckOutput | null;
-  /** Decides an action's branch; shown as matched or not, never as a failure. */
+  /** An author rule: says who opened the pull request, shown as matched or not, never as a failure. */
   gate: boolean;
 };
 
@@ -1561,8 +1548,9 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     priority: detail.priority || null,
     owner: detail.owner || null,
     nextAction: detail.nextAction || null,
-    confidence: detail.score ?? null,
-    merge: mergeVerdict(detail.merge),
+    verdict: verdict.verdict,
+    score: detail.score ?? null,
+    reasons: detail.reasons ?? [],
     evidence: detail.evidence ?? [],
     checks: verdict.detail === null ? recordedChecks(verdict.checks) : checkResults(detail.checks ?? []),
     labels: detail.labels ?? [],
@@ -1645,8 +1633,9 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         priority: null,
         owner: null,
         nextAction: null,
-        confidence: null,
-        merge: null,
+        verdict: null,
+        score: null,
+        reasons: [],
         evidence: [],
         checks: [],
         labels: pr.labels,

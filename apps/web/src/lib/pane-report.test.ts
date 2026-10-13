@@ -17,8 +17,9 @@ function item(overrides: Partial<PrItem>): PrItem {
     priority: "P2",
     owner: null,
     nextAction: null,
-    confidence: 0.5,
-    merge: null,
+    verdict: "unsure",
+    score: 0.5,
+    reasons: [],
     evidence: [],
     checks: [],
     labels: [],
@@ -139,7 +140,7 @@ describe("paneStatus", () => {
 describe("approvedByTriage", () => {
   const approved = (overrides: Partial<SuggestedAction>, pr: Partial<PrItem> = {}) => approvedByTriage(item({
     ...pr,
-    actions: [{ id: "a", branch: "yes", index: 0, effectId: "e", kind: "approve", reason: "", target: {}, held: false, status: "done", ...overrides }],
+    actions: [{ list: "pass", index: 0, effectId: "e", kind: "approve", reason: "", target: {}, held: false, status: "done", ...overrides }],
   }));
 
   test("only the verdict's settled approve Do on the current head counts", () => {

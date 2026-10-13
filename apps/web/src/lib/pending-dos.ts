@@ -1,11 +1,11 @@
-import type { ActionKind } from "@corbits/triage-contracts";
+import type { ActionKind, VerdictWord } from "@corbits/triage-contracts";
 import { strings, type HeldDoRef, type PrItem, type SuggestedAction } from "./hub-api.ts";
 
 /**
  * A Do waiting for approval, keyed by its effect id; `sentKey` also names the status it had when approved, so a later failure offers it again.
  * `error` is why its last run did not write it.
  */
-export type PendingDo = { key: string; sentKey: string; label: string; actionId: string; kind: ActionKind; reason: string; ref: HeldDoRef; error: string | null };
+export type PendingDo = { key: string; sentKey: string; label: string; list: VerdictWord; kind: ActionKind; reason: string; ref: HeldDoRef; error: string | null };
 
 /** Resolution keeps only team slugs, and only the repository owner's teams can review. */
 function teamName(slug: string, repo: string): string {
@@ -47,7 +47,7 @@ function awaitsApproval({ held, status }: SuggestedAction): boolean {
   return status === undefined ? held : status === "failed" || status === "skipped";
 }
 
-/** The verdict's Dos waiting for a maintainer that the hub can run, in the order the pack lists them. */
+/** The verdict's Dos waiting for a maintainer that the hub can run, in the order the policy lists them. */
 function offeredDos(item: PrItem): PendingDo[] {
   const { repo, number, runId } = item;
   if (number === null || runId === null) return [];
@@ -57,7 +57,7 @@ function offeredDos(item: PrItem): PendingDo[] {
     if (text === null) continue;
     const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind };
     const sentKey = `${action.effectId}:${action.status ?? "held"}`;
-    out.push({ key: action.effectId, sentKey, label: text, actionId: action.id, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
+    out.push({ key: action.effectId, sentKey, label: text, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
   }
   return out;
 }
@@ -72,14 +72,14 @@ export function offersClose(item: PrItem): boolean {
   return offeredDos(item).some((pending) => pending.kind === "close");
 }
 
-export type DoGroup = { actionId: string; reason: string; dos: PendingDo[] };
+export type DoGroup = { list: VerdictWord; reason: string; dos: PendingDo[] };
 
-/** One pack action's Dos share the branch it took, and so its reason. */
+/** One verdict list's Dos share its verdict, and so its reason. */
 export function doGroups(dos: PendingDo[]): DoGroup[] {
-  const groups = new Map<string, DoGroup>();
+  const groups = new Map<VerdictWord, DoGroup>();
   for (const pending of dos) {
-    const group = groups.get(pending.actionId);
-    if (group === undefined) groups.set(pending.actionId, { actionId: pending.actionId, reason: pending.reason, dos: [pending] });
+    const group = groups.get(pending.list);
+    if (group === undefined) groups.set(pending.list, { list: pending.list, reason: pending.reason, dos: [pending] });
     else group.dos.push(pending);
   }
   return [...groups.values()];

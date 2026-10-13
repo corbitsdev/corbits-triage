@@ -1,6 +1,6 @@
 # The decision model
 
-Triage answers its judgment rules (focused, docs and custom model rules) with a decision model: TypeSafe's Jev, a System One model. Every other rule is evaluated over GitHub data. This page describes how Triage asks the model, how it reads the answers, the limits it works within, what it costs and how accurate it has measured.
+Triage answers its judged rules (focused, docs and custom model rules) and decides each pull request's verdict with a decision model: TypeSafe's Jev, a System One model. Every other rule is a hard rule over GitHub data. This page describes how Triage asks the model, how it reads the answers, the limits it works within, what it costs and how accurate it has measured.
 
 TypeSafe's docs: [index (llms.txt)](https://docs.typesafe.ai/llms.txt), [System One](https://docs.typesafe.ai/concepts/system-one.md), [models and limits](https://docs.typesafe.ai/models.md), [primitives](https://docs.typesafe.ai/primitives.md), [confidence](https://docs.typesafe.ai/confidence.md), [jev-1.13 jagged edges](https://docs.typesafe.ai/model-jaggedness/jev-1.13.md).
 
@@ -21,7 +21,7 @@ Triage reaches the model through Interchange inference. The agents name the tena
 | OpenCode Zen | `https://opencode.ai/zen/v1` | `jev-1.13` |
 | Custom | any | any |
 
-The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that infers: a `map` over the rules step's chunks, one System One call per chunk, then a second `map` over focused's follow-up chunks, which is empty unless focused failed (`triage-steps.ts`, `directors.ts`). The request body is `{ state, questions, model }`; no system prompt reaches the model.
+The judge eval pins OpenCode Zen `jev-1.13`. The judge is the only step that infers: a `map` over the rules step's chunks, one System One call per chunk, then a second `map` over focused's follow-up chunks and the verdict question (`triage-steps.ts`, `directors.ts`). A pull request without judged rules to ask, or whose judged rules an earlier run answered, asks the verdict question in the first map. A failed hard rule, a draft or a closed pull request asks nothing. The request body is `{ state, questions, model }`; no system prompt reaches the model.
 
 ## Why Triage uses it
 
@@ -54,6 +54,7 @@ Questions point into the state by path, such as `` `pullRequest.files[3].hunks[0
   - `is-true` with scope `pull-request` (the default): one Noul, `<name>: <claim>`.
   - `is-true` with scope `file` or `hunk`, optionally limited by `when` globs: one Noul per file or hunk in scope, "Does the change in … meet this rule: <claim>?". At most 3 items are named on failure.
   - `score` and `choose` are each reduced to one Noul ("reach at least N out of 10 for …", "best described as … rather than …").
+- **Verdict**: once no hard rule failed and the judged rules are answered, one Choice, question id `verdict`: "Does this pull request pass this repository's policy?", `pass`, `fail` or `cant_tell`; a rule whose result is fail means the pull request fails unless it plainly does not apply. Its state is `policy.rules`, every enabled rule with its result, reason and evidence and, for a judged rule, `pass`, how likely it passes; and the pull request's metadata as focused reads it, with as many judged files as fit one request, packed in order as focused's first slice is. It is not asked when a first-round call failed or left a rule unanswered, since the verdict degrades anyway. Its own key keeps the rules' answers reusable under theirs (`verdictRequest`, `logic/quality.ts`; `choiceOf`, `actions/evaluate.ts`).
 
 ## Writing questions
 
@@ -72,12 +73,13 @@ Rules learned while tuning, which match TypeSafe's [jagged edges](https://docs.t
 From `logic/render.ts`:
 
 - **Noul**: P ≥ 0.7 decides yes, P ≤ 0.3 decides no; anything between is unconfirmed ("not enough evidence to decide") and asks a maintainer to confirm.
+- **Verdict**: P(pass) ≥ 0.7 is Pass, P(fail) ≥ 0.7 is Fail, anything else is Unsure. No setting changes these.
 - **Focused**: any slice with `more_than_one_thing` or `separate_change` ≥ 0.6 fails it. Otherwise an unread file leaves it unconfirmed, every slice with `one_thing` or `serves_purpose` ≥ 0.6 passes it, and anything else is unconfirmed. A failure names up to 3 files whose separate-change Noul is ≥ 0.7, most likely first; when none is, it fails without naming files.
 
 Two different numbers come out of the answers:
 
 - **Rule score** (`packages/triage-contracts/src/check-output.ts`): per model rule, 0–100 and unrounded, how likely the rule is fine, with `passAt` 70 (docs, custom) or 60 (focused). It clears `passAt` exactly when the rule passes. Docs scores 1 − P(needs docs) of the weakest file; custom rules P(meets the rule); focused the least P(`one_thing` or `serves_purpose`) over its slices. A rule with no score reports `met`, `not-applicable` or `could-not-check` with a reason.
-- **Merge score**: per pull request, 0–1, the weakest confidence among decided answers. For a Noul that is max(P, 1 − P); for failing docs, P(falls short) of the worst file; for focused, the most separate slice's P(separate) when it fails and the least serving slice's P(serves) when it passes. The policy's merge threshold applies to it. It measures how sure the model was, not how likely the pull request is fine.
+- **Verdict score**: per pull request, the verdict question's P(pass), shown out of 100. A verdict a failed hard rule decided has none.
 
 ## Budgets and limits
 
@@ -131,21 +133,24 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 
 ## Measured accuracy
 
-`evals/judge` replays frozen, labelled pull requests of this repository through the production steps (file paging, rules, one call per chunk, focused's follow-up calls, evaluate) against OpenCode Zen `jev-1.13`, with focused and docs enabled.
+`evals/judge` replays frozen, labelled pull requests of this repository through the production steps (file paging, rules, one call per chunk, focused's follow-up calls and the verdict question, evaluate) against OpenCode Zen `jev-1.13`, with focused and docs enabled. Each case expects the verdict to fail when docs or focused is expected to fail, and to pass otherwise.
 
 - **Cases**: 49 in `cases.jsonl`. These are 34 pull requests labelled in `labels.json` (needs docs), 4 variants with their docs removed (body and matching commit messages dropped too), 7 mixes of two unrelated pull requests that focused must fail, and 4 of those mixes again with a title and body describing both halves (`describedMixes`). #190 and #191 are one feature each spread across hub, portal, contracts and workflows, which focused must pass.
-- **Allowed misses**: docs 7, focused 2 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
+- **Allowed misses**: docs 7, focused 2, verdict 4 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
 - **Recent results**, misses as reported in commit messages and pull requests, out of 58 cases up to `45f34e6`, out of 72 on the row that says so, out of 76 after, and out of 49 once the tests rule and its cases were removed:
 
-| Commit | Date | docs | focused |
-| --- | --- | --- | --- |
-| `e31d6ba` | 2026-10-11 | 8 | 10 |
-| `4c7fead`, run 1 | 2026-10-11 | 5 | 1 |
-| `4c7fead`, run 2 | 2026-10-11 | 6 | 1 |
-| `45f34e6`, 72 cases | 2026-10-12 | 10 | 4 |
-| #192, run 1 | 2026-10-12 | 9 | 0 |
-| #192, run 2 | 2026-10-12 | 10 | 0 |
-| tests removed, 49 cases (CL-10584) | 2026-10-12 | 5 | 0 |
+| Commit | Date | docs | focused | verdict |
+| --- | --- | --- | --- | --- |
+| `e31d6ba` | 2026-10-11 | 8 | 10 | |
+| `4c7fead`, run 1 | 2026-10-11 | 5 | 1 | |
+| `4c7fead`, run 2 | 2026-10-11 | 6 | 1 | |
+| `45f34e6`, 72 cases | 2026-10-12 | 10 | 4 | |
+| #192, run 1 | 2026-10-12 | 9 | 0 | |
+| #192, run 2 | 2026-10-12 | 10 | 0 | |
+| tests removed, 49 cases (CL-10584) | 2026-10-12 | 5 | 0 | |
+| verdict question (CL-10604) | 2026-10-12 | 5 | 0 | 2, none unsure |
+| "fail means fail" wording, run 1 | 2026-10-13 | 5 | 0 | 2, none unsure |
+| "fail means fail" wording, run 2 | 2026-10-13 | 5 | 0 | 2, none unsure |
 
 These cover one repository's pull requests. Custom rules and other repositories are unmeasured.
 
@@ -172,7 +177,7 @@ These cover one repository's pull requests. Custom rules and other repositories 
 5. **Measure before and after** with `bun run eval:judge`. It calls OpenCode Zen with `OPENCODE_API_KEY` from the environment (Bun also reads `.env`).
 6. **To add cases**, label pull requests in `evals/judge/labels.json` (`needsDocs`, a note; `mixes` for unfocused pairs). Then run `bun evals/judge/snapshot.ts`, which needs an authenticated `gh` CLI. It freezes the pull requests of the repository named in `labels.json` and regenerates `cases.jsonl`. Change the allowances only with a measured reason.
 
-The eval covers focused and docs only.
+The eval covers focused, docs and the verdict only.
 
 ## Known limits
 
