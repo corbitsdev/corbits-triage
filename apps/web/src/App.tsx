@@ -16,6 +16,8 @@ import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
 import { AcceptInvite } from "./pages/AcceptInvite.tsx";
 import { Device, DEVICE_PATH } from "./pages/Device.tsx";
+import { ResetPassword } from "./pages/ResetPassword.tsx";
+import { RESET_PASSWORD_PATH } from "./lib/hub-auth.ts";
 import { Welcome } from "./pages/Welcome.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
@@ -114,7 +116,7 @@ function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
         <h1>Invitation pending</h1>
         {invitations.map((invitation) => (
           <p key={invitation.tenantId} className="muted">
-            {invitation.name} has invited you. {invitation.byLink ? "Open the link in your invitation email to join." : "An admin needs to let you in."}
+            {invitation.name} has invited you. Open the link in your invitation email to join, or ask for a new one.
           </p>
         ))}
         <button type="button" className="btn" onClick={() => void signOut()}>Sign out</button>
@@ -131,9 +133,10 @@ function Gate() {
 
   if (!configured) return <NotConfigured />;
   if (!ready) return <LoadingGate />;
+  if (path.startsWith(INVITE_PATH)) return <AcceptInvite tenantId={path.slice(INVITE_PATH.length)} />;
+  if (path === RESET_PASSWORD_PATH) return <ResetPassword />;
   if (!session) return <Welcome />;
   if (path === DEVICE_PATH) return <Device />;
-  if (path.startsWith(INVITE_PATH)) return <AcceptInvite token={path.slice(INVITE_PATH.length)} />;
   if (!snapshot) {
     if (invitations.length > 0) return <InvitationGate invitations={invitations} />;
     if (loading || !loadError) return <LoadingGate />;

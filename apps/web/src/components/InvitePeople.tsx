@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@intx/hub-client";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { createInvitation, listInvitations, revokeInvitation, type Invitation } from "../lib/hub-api.ts";
+import { createInvitation, inviteRoles, listInvited, resendInvitation, withdrawInvitation, type HubPrincipal, type InviteSent } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { INVITATIONS_QUERY_KEY, usePortal, useSignOutWhenRejected } from "../lib/portal.tsx";
 import { useRoles } from "../lib/tenant-entities.ts";
@@ -26,8 +26,10 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   const query = useQuery({
     queryKey: [INVITATIONS_QUERY_KEY, tenantId],
     queryFn: tenantId === undefined ? skipToken : async function readInvitations() {
+      const transport = createHubTransport();
       try {
-        return await listInvitations(createHubTransport(), tenantId);
+        const [assignableRoleIds, invited] = await Promise.all([inviteRoles(transport, tenantId), listInvited(transport, tenantId)]);
+        return { assignableRoleIds, invited };
       } catch (cause: unknown) {
         signOutWhenRejected(cause);
         throw cause;
@@ -39,11 +41,12 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   const [roleId, setRoleId] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [link, setLink] = useState<{ email: string; url: string } | null>(null);
 
   const denied = query.error instanceof ApiError && query.error.status === 403;
   if (denied) return onSetupPage ? null : <DeniedNotice section="invites" />;
   if (!tenantId || !query.data) return null;
-  const { invitations, assignableRoleIds } = query.data;
+  const { invited, assignableRoleIds } = query.data;
   const choices = roles.rows.filter((role) => assignableRoleIds.includes(role.id));
   const chosenRole = roleId || choices.find((role) => role.name === DEFAULT_ROLE)?.id || "";
 
@@ -60,37 +63,53 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
     }
   }
 
+  function sent(result: InviteSent) {
+    setLink(result.link === undefined ? null : { email: result.email, url: result.link });
+    notify(result.emailed ? `Invite emailed to ${result.email}.` : `Invited ${result.email}. Copy the link and send it to them.`);
+  }
+
   async function invite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!tenantId) return;
     await act("invite", async function sendInvite() {
-      const created = await createInvitation(createHubTransport(), tenantId, { email: email.trim(), roleId: chosenRole });
-      notify(created.emailed ? `Invite emailed to ${created.email}.` : `Invited ${created.email}. Copy the link and send it to them.`);
+      sent(await createInvitation(createHubTransport(), tenantId, { email: email.trim(), roleId: chosenRole }));
       setEmail("");
     });
   }
 
-  async function copy(invitation: Invitation) {
-    if (invitation.link === undefined) return;
+  async function copy(shown: { email: string; url: string }) {
     try {
-      await navigator.clipboard.writeText(invitation.link);
-      notify(`Link for ${invitation.email} copied.`);
+      await navigator.clipboard.writeText(shown.url);
+      notify(`Link for ${shown.email} copied.`);
     } catch (cause: unknown) {
       setError(`Could not copy the link. ${message(cause)}`);
     }
   }
 
-  function withdraw(invitation: Invitation) {
-    if (!tenantId || !window.confirm(`Withdraw the invite to ${invitation.email}? Its link stops working.`)) return;
-    void act(invitation.id, async function withdrawInvite() {
-      await revokeInvitation(createHubTransport(), tenantId, invitation.id);
-      notify(`Withdrew the invite to ${invitation.email}.`);
+  function resend(person: HubPrincipal) {
+    if (!tenantId) return;
+    void act(`resend:${person.id}`, async function resendInvite() {
+      sent(await resendInvitation(createHubTransport(), tenantId, person.id));
+    });
+  }
+
+  function withdraw(person: HubPrincipal) {
+    if (!tenantId || !window.confirm(`Withdraw the invite to ${person.email}? Its links stop working.`)) return;
+    void act(person.id, async function withdrawInvite() {
+      await withdrawInvitation(createHubTransport(), tenantId, person.id);
+      notify(`Withdrew the invite to ${person.email}.`);
     });
   }
 
   const content = <>
-    <p className="field-help">They join with the role you pick by opening the invite link, signed in as that email. Links expire after 7 days.</p>
+    <p className="field-help">They join with the role you pick by opening the sign-in link sent to that email. Links work once and expire after 15 minutes; resend one if it has.</p>
     {error && <p role="alert" className="error">{error}</p>}
+    {link && (
+      <div className="hook-url">
+        <code>{link.url}</code>
+        <button type="button" className="btn ghost" onClick={() => void copy(link)}>Copy link</button>
+      </div>
+    )}
     <form onSubmit={(event) => void invite(event)}>
       <label className="field">
         Email
@@ -106,27 +125,29 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
         {pending === "invite" ? "Inviting…" : "Invite"}
       </button>
     </form>
-    {invitations.length > 0 && (
+    {invited.length > 0 && (
       <div className="table-scroll">
         <table className="data-table">
           <thead>
             <tr>
               <th>Invited</th>
               <th>Role</th>
-              <th>Expires</th>
               <th><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            {invitations.map((invitation) => (
-              <tr key={invitation.id}>
-                <td>{invitation.email}</td>
-                <td>{roleLabel(invitation.role.name)}</td>
-                <td>{new Date(invitation.expiresAt).toLocaleDateString()}</td>
+            {invited.map((person) => (
+              <tr key={person.id}>
+                <td>{person.email}</td>
+                <td>{person.roles.map((role) => roleLabel(role.name)).join(", ")}</td>
                 <td>
-                  {invitation.link && <button type="button" className="btn ghost" onClick={() => void copy(invitation)}>Copy link</button>}
-                  <button type="button" className="btn ghost" disabled={readOnly || pending !== null} onClick={() => withdraw(invitation)}>
-                    {pending === invitation.id ? "Withdrawing…" : "Withdraw"}
+                  {person.roles.every((role) => assignableRoleIds.includes(role.id)) && (
+                    <button type="button" className="btn ghost" disabled={readOnly || pending !== null} onClick={() => resend(person)}>
+                      {pending === `resend:${person.id}` ? "Sending…" : "Resend"}
+                    </button>
+                  )}
+                  <button type="button" className="btn ghost" disabled={readOnly || pending !== null} onClick={() => withdraw(person)}>
+                    {pending === person.id ? "Withdrawing…" : "Withdraw"}
                   </button>
                 </td>
               </tr>

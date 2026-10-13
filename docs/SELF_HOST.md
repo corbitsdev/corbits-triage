@@ -45,8 +45,11 @@ password.
 
 ### Email
 
-Admins invite teammates from the portal; the invitee joins by opening the link
-signed in as that address.
+Admins invite teammates from the portal. The invitee joins by opening the
+sign-in link sent to that address; it works once and expires after 15
+minutes, and admins can resend it. An account whose address is not verified
+(an email/password sign-up) cannot be invited. With email set up, anyone can
+set or reset their password from the sign-in page.
 
 | Variable | Value |
 | --- | --- |
@@ -54,7 +57,8 @@ signed in as that address.
 | `EMAIL_FROM` | The sender, for example `Triage <triage@example.com>`, on a domain the provider accepts. |
 
 Set both or neither. Without them the portal shows each invite link to copy
-and send yourself.
+and send yourself. That link signs nobody in: without email, invitees must
+sign in with Google first.
 
 ### Portal hosting
 
@@ -172,6 +176,8 @@ migrations on every start; nothing else is needed.
   it: `DROP TABLE IF EXISTS corbits_triage_verdict_backfill;`
 - A hub that ran a build creating `corbits_github_manifest_state` can drop
   it: `DROP TABLE IF EXISTS corbits_github_manifest_state;`
+- The hub drops `corbits_triage.invitation` on start; invites still open then
+  are gone and need sending again.
 - Triage's tables move from `public.corbits_triage_*` into the
   `corbits_triage` schema on first start. If an older build runs after that,
   it recreates empty `public.corbits_triage_*` tables and the next start

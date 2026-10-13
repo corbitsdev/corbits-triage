@@ -3,7 +3,8 @@
 // function name; the return shape, which adds the Hono `app` (so extra tenant
 // routes mount on the same instance as `resolveTenant`), the live sidecar
 // router, what those routes share (database, credential cipher, principal
-// key store, and `getSession`, hoisted out of `createApp` for reuse) and the
+// key store, `getSession`, hoisted out of `createApp` for reuse, and the
+// better-auth instance invites send magic links through) and the
 // workflow allocation and lifecycle services the pr-triage deployment
 // rotation calls; and the injected database config, auth config, credential
 // cipher and Interchange settings, whose defaults env.ts `interchangeSettings`
@@ -526,6 +527,7 @@ export async function createInterchangeHub({
     credentialCipher,
     principalKeyStore,
     getSession,
+    auth,
     runReader,
     workflowAllocationService,
     workflowLifecycleService,

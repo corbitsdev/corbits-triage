@@ -44,7 +44,7 @@ import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createInvitations } from "./invitations/invitations.js";
-import { createSmtpInviteEmail } from "./invitations/invite-email.js";
+import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
@@ -159,10 +159,11 @@ process.once("SIGTERM", onShutdownSignal);
 const portalOrigin = env.PORTAL_ORIGIN === undefined ? [] : [new URL(env.PORTAL_ORIGIN).origin];
 const signIn = signInSettings(env);
 const email = emailSettings(env);
+const smtp = email === undefined ? undefined : createSmtpEmail(email);
 const composition = await createInterchangeHub({
   database,
   settings: interchangeSettings(env),
-  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env) },
+  authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { sendResetPassword: smtp.passwordReset }) },
   credentialCipher,
   sidecarProvisioners: [local.provisioner],
   probeSidecarProvisioners: [local.provisioner],
@@ -457,7 +458,7 @@ function tenantHintFrom(req: Request, pathTenant: string | undefined): string | 
 }
 
 const integrations = createIntegrationsApp({
-  authMethods: authMethods(signIn),
+  authMethods: authMethods(signIn, smtp !== undefined),
   manifest: githubManifest,
   syncInstallations,
   prActions: githubPrActions,
@@ -527,10 +528,13 @@ const integrations = createIntegrationsApp({
     getSession: composition.getSession,
     trustedPortalOrigins,
     authorize: authorizePortal,
-    principalKeyStore: composition.principalKeyStore,
+    auth: composition.auth,
+    stockFetch: async function stockFetch(req) {
+      return composition.app.fetch(req);
+    },
     allowedEmails: signIn.allowedEmails,
     linkOrigin: inviteLinkOrigin(env),
-    sendEmail: email === undefined ? undefined : createSmtpInviteEmail(email),
+    sendEmail: smtp?.invite,
     now,
     log: logJson,
   }),

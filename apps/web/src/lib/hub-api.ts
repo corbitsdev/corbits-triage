@@ -47,8 +47,7 @@ export type Membership = {
   roles: Array<{ id: string; name: string }>;
 };
 
-/** `byLink` marks an invite sent as an email link, which the invitee accepts by opening it. */
-export type WorkspaceOption = { tenantId: string; name: string; slug: string; byLink?: true };
+export type WorkspaceOption = { tenantId: string; name: string; slug: string };
 
 export type MemberAccess = { kind: "member"; workspace: Workspace; workspaces: WorkspaceOption[]; invitations: WorkspaceOption[] };
 export type InvitedAccess = { kind: "invited"; invitations: WorkspaceOption[] };
@@ -121,6 +120,7 @@ export type HubPrincipal = {
   status: string;
   displayName: string;
   email?: string;
+  roles: Array<{ id: string; name: string }>;
 };
 
 export type HubRole = {
@@ -504,46 +504,38 @@ export function sharesName(option: WorkspaceOption, options: WorkspaceOption[]):
   return options.some((other) => other.tenantId !== option.tenantId && other.name === option.name);
 }
 
-/** An invite link holds no stock principal until it is accepted, so a user with no workspace also checks for one. */
 export async function resolveWorkspace(transport: Transport, chosen: string | null): Promise<WorkspaceAccess> {
   const user = await transport.fetch<HubMe | null>("GET", "/api/me");
   if (!user?.id) throw new Error("The hub did not return the signed-in user.");
-  const memberships = await listAll<Membership>(transport, "/api/me/principals");
-  const access = chooseWorkspace(memberships, user, chosen);
-  if (access.kind === "member") return access;
-  const invited = access.kind === "invited" ? access.invitations : [];
-  const linked = (await listMyInvitations(transport))
-    .filter((invite) => !invited.some((option) => option.tenantId === invite.tenantId))
-    .map((invite): WorkspaceOption => ({ tenantId: invite.tenantId, name: invite.tenantName, slug: invite.tenantSlug, byLink: true }));
-  const invitations = [...invited, ...linked];
-  return invitations.length > 0 ? { kind: "invited", invitations } : { kind: "none" };
+  return chooseWorkspace(await listAll<Membership>(transport, "/api/me/principals"), user, chosen);
 }
 
-export type Invitation = {
-  id: string;
-  email: string;
-  role: { id: string; name: string };
-  createdAt: string;
-  expiresAt: string;
-  /** Left out when the caller could not have sent the invite. */
-  link?: string;
-};
+/** The invited principal, and its magic link when the hub sends no email. */
+export type InviteSent = { principalId: string; email: string; emailed: boolean; link?: string };
 
-/** `assignableRoleIds`: roles the caller may invite people into. */
-export type InvitationList = { invitations: Invitation[]; assignableRoleIds: string[] };
-
-export type MyInvitation = { id: string; tenantId: string; tenantName: string; tenantSlug: string; expiresAt: string };
-
-export async function listInvitations(transport: Transport, tenantId: string): Promise<InvitationList> {
-  return transport.fetch<InvitationList>("GET", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`);
+/** Roles the caller may invite people into. */
+export async function inviteRoles(transport: Transport, tenantId: string): Promise<string[]> {
+  return (await transport.fetch<{ assignableRoleIds: string[] }>("GET", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`)).assignableRoleIds;
 }
 
-export async function createInvitation(transport: Transport, tenantId: string, input: { email: string; roleId: string }): Promise<Invitation & { emailed: boolean }> {
+export async function listInvited(transport: Transport, tenantId: string): Promise<HubPrincipal[]> {
+  return listAll<HubPrincipal>(transport, `/api/tenants/${enc(requireTenantId(tenantId))}/principals?kind=user&status=invited`);
+}
+
+export async function createInvitation(transport: Transport, tenantId: string, input: { email: string; roleId: string }): Promise<InviteSent> {
   return transport.fetch("POST", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`, input);
 }
 
-export async function revokeInvitation(transport: Transport, tenantId: string, invitationId: string): Promise<void> {
-  await transport.fetch("DELETE", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}/${enc(requireId(invitationId, "Invite id"))}`, {});
+export async function resendInvitation(transport: Transport, tenantId: string, principalId: string): Promise<InviteSent> {
+  return transport.fetch("POST", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}/${enc(requireId(principalId, "Principal id"))}/resend`, {});
+}
+
+export async function withdrawInvitation(transport: Transport, tenantId: string, principalId: string): Promise<void> {
+  await transport.fetch("DELETE", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}/${enc(requireId(principalId, "Principal id"))}`, {});
+}
+
+export async function acceptInvitation(transport: Transport, tenantId: string): Promise<void> {
+  await transport.fetch("POST", "/api/integrations/invite-accept", { tenantId: requireTenantId(tenantId) });
 }
 
 export type HubSessionRow = { id: string; userAgent: string | null; createdAt: string; expiresAt: string; isCurrent: boolean };
@@ -554,15 +546,6 @@ export async function listSessions(transport: Transport): Promise<HubSessionRow[
 
 export async function revokeSession(transport: Transport, sessionId: string): Promise<void> {
   await transport.fetch("DELETE", `/api/integrations/sessions/${enc(requireId(sessionId, "Session id"))}`, {});
-}
-
-export async function listMyInvitations(transport: Transport): Promise<MyInvitation[]> {
-  return (await transport.fetch<{ invitations: MyInvitation[] }>("GET", "/api/integrations/my-invitations")).invitations;
-}
-
-/** The workspace the invite joined. */
-export async function acceptInvitation(transport: Transport, token: string): Promise<string> {
-  return (await transport.fetch<{ tenantId: string }>("POST", "/api/integrations/my-invitations/accept", { token })).tenantId;
 }
 
 function workspaceNameFor(user: HubMe): string {
