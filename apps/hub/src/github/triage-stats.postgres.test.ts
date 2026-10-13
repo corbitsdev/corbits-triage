@@ -2,7 +2,6 @@
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { migrateTriageTables } from "../triage-db.js";
 import { createTriageStats, TriageStats } from "./triage-stats.js";
@@ -32,16 +31,12 @@ test("PostgreSQL: only verdicts of completed runs count as triaged", async () =>
     const db = handle.db;
     await migrateTriageTables(db, "public");
     await db.insert(schema.tenant).values({ id: TENANT, name: "Stats", slug: "stats", domain: "stats.test" });
-    await db.insert(schema.principal).values({ id: "prn_stats", tenantId: TENANT, kind: "user", refId: "usr_stats", status: "active" });
     const verdicts = createVerdictRecordStore(db);
     // #4 was recorded before runs' ends were, when only completed runs were recorded.
     await verdicts.record(TENANT, [verdict("run_1", 1, "completed"), verdict("run_2", 2, "failed"), verdict("run_3", 3, "running"), verdict("run_4", 4, null)]);
 
-    const stats = createTriageStats({
-      db, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)), getSession: async () => ({ user: { id: "usr_stats" } }), authorize: async () => true,
-      trustedPortalOrigins: [], verdicts, now: () => AT,
-    });
-    const res = await stats(new Request(`http://hub.test/api/integrations/triage-stats/${TENANT}?repo=${REPO}`, { headers: { "sec-fetch-site": "same-origin" } }), TENANT);
+    const stats = createTriageStats({ verdicts, now: () => AT });
+    const res = await stats(new Request(`http://hub.test/api/integrations/triage-stats/${TENANT}?repo=${REPO}`), { tenantId: TENANT, principalId: "prn_stats" });
     expect(TriageStats.assert(await res.json())).toMatchObject({ triaged: 2, verdicts: { "ready-monitoring": 2 } });
   } finally {
     await handle?.close();

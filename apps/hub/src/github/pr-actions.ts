@@ -2,6 +2,7 @@
 // these run synchronously in the hub against the tenant's vaulted GitHub App
 // credential instead of as workflows.
 import { type, type Traversal } from "arktype";
+import type { Member } from "../integrations/app.js";
 import {
   addAssignees,
   addLabels,
@@ -15,9 +16,8 @@ import {
 import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
 import { TRIAGE_LABELS } from "@corbits/rule-packs";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { appGithubFetch, approvalRefused, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, approvalRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
-import { readJson } from "../read-json.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
@@ -74,11 +74,7 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
 export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOrigin: string }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
-    const body = ActionBody(await readJson(req));
-    if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
+  return async function handle(body: typeof ActionBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
     if (appJson instanceof Response) return appJson;
     if (body.action === "review" && body.event === "APPROVE") {

@@ -3,7 +3,8 @@
 import { type } from "arktype";
 import { createGithubAppCredentialFetch, INSTALLATION_SELECTOR_HEADER } from "./github-app-credential-adapter.js";
 import { applyInstallationListing, type InstallationListing } from "./bridge.js";
-import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import { patchCorbitsTriage } from "./tenant-config.js";
 import { jsonAll, type GithubFetch } from "@corbits/github-reads";
 
@@ -52,9 +53,7 @@ async function listingFor(gh: GithubFetch, installation: Installation): Promise<
 export function createInstallationSync(deps: PortalCredentialDeps & { githubApiOrigin: string; onSynced: (tenantId: string) => void }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
-  return async function syncInstallations(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  return async function syncInstallations({ tenantId, principalId }: Member): Promise<Response> {
     // Rewrites the workspace's repositories, so it needs what connecting GitHub needs.
     const appJson = await githubAppCredential(deps, principalId, tenantId, "manage");
     if (appJson instanceof Response) return appJson;

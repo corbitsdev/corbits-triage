@@ -9,9 +9,9 @@ import { repoPolicy } from "@corbits/triage-contracts";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead } from "./check-pack-store.js";
-import { failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
-import { readJson } from "../read-json.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
 import type { PullHeadReader } from "./tenant-open-heads.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
@@ -37,12 +37,7 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
 };
 
 export function createGithubPrTriage(deps: GithubPrTriageDeps) {
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
-    const body = TriageBody(await readJson(req));
-    if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
-    const { repo, number } = body;
+  return async function handle({ repo, number }: typeof TriageBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
     if (appJson instanceof Response) return appJson;
 

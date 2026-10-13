@@ -233,16 +233,12 @@ const githubManifest = createGithubManifestIntegration({
 const githubPrActions = createGithubPrActions({
   db: composition.db,
   cipher: composition.credentialCipher,
-  getSession: composition.getSession,
-  trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
 });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,
   cipher: composition.credentialCipher,
-  getSession: composition.getSession,
-  trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
 });
@@ -252,8 +248,6 @@ const githubOpenPulls = createGithubOpenPulls({
   cache: openPullsCache,
   db: composition.db,
   cipher: composition.credentialCipher,
-  getSession: composition.getSession,
-  trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
 });
@@ -360,8 +354,6 @@ triageLoop = createReconcileLoop(reconcileTriage, { intervalMs: triageReconcileI
 const githubPrTriage = createGithubPrTriage({
   db: composition.db,
   cipher: composition.credentialCipher,
-  getSession: composition.getSession,
-  trustedPortalOrigins,
   authorize: authorizePortal,
   pullHead: createPullHeadReader({ githubApiOrigin: githubOrigin }),
   readCheckPack,
@@ -376,8 +368,6 @@ const githubPrTriage = createGithubPrTriage({
 const githubHeldDos = createGithubHeldDos({
   db: composition.db,
   cipher: composition.credentialCipher,
-  getSession: composition.getSession,
-  trustedPortalOrigins,
   authorize: authorizePortal,
   runReader: composition.runReader,
   verdicts: verdictRecordStore,
@@ -388,8 +378,6 @@ const githubHeldDos = createGithubHeldDos({
 const syncInstallations = createInstallationSync({
   db: composition.db,
   cipher: composition.credentialCipher,
-  getSession: composition.getSession,
-  trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   onSynced: triageLoop.kick,
@@ -457,7 +445,7 @@ function tenantHintFrom(req: Request, pathTenant: string | undefined): string | 
   return hint ?? req.headers.get("x-tenant-id") ?? url.searchParams.get("tenant") ?? undefined;
 }
 
-const integrations = createIntegrationsApp({
+const integrations = createIntegrationsApp({ db: composition.db, getSession: composition.getSession, requireGrant, trustedPortalOrigins, log: logJson }, {
   authMethods: authMethods(signIn, smtp !== undefined),
   manifest: githubManifest,
   syncInstallations,
@@ -469,34 +457,15 @@ const integrations = createIntegrationsApp({
   prPreview: createGithubPrPreview({
     db: composition.db,
     cipher: composition.credentialCipher,
-    getSession: composition.getSession,
-    trustedPortalOrigins,
     githubApiOrigin: githubOrigin,
     authorize: authorizePortal,
     readCheckPack,
   }),
-  triageStats: createTriageStats({
-    db: composition.db,
-    cipher: composition.credentialCipher,
-    getSession: composition.getSession,
-    trustedPortalOrigins,
-    authorize: authorizePortal,
-    verdicts: verdictRecordStore,
-    now,
-  }),
-  triageTimeline: createTriageTimeline({
-    db: composition.db,
-    cipher: composition.credentialCipher,
-    getSession: composition.getSession,
-    trustedPortalOrigins,
-    authorize: authorizePortal,
-    verdicts: verdictRecordStore,
-  }),
+  triageStats: createTriageStats({ verdicts: verdictRecordStore, now }),
+  triageTimeline: createTriageTimeline({ verdicts: verdictRecordStore }),
   triageVerdicts: createTriageVerdicts({
     db: composition.db,
     cipher: composition.credentialCipher,
-    getSession: composition.getSession,
-    trustedPortalOrigins,
     authorize: authorizePortal,
     verdicts: verdictRecordStore,
     observer: tenantObserver,
@@ -506,27 +475,11 @@ const integrations = createIntegrationsApp({
     githubApiOrigin: githubOrigin,
     now,
   }),
-  workflowDeploy: createWorkflowDeploy({
-    db: composition.db,
-    cipher: composition.credentialCipher,
-    getSession: composition.getSession,
-    trustedPortalOrigins,
-    authorize: authorizePortal,
-    allocation: composition.workflowAllocationService,
-  }),
-  workflowVersions: createWorkflowVersions({
-    db: composition.db,
-    cipher: composition.credentialCipher,
-    getSession: composition.getSession,
-    trustedPortalOrigins,
-    authorize: authorizePortal,
-    launchSpecs,
-  }),
+  workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService }),
+  workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   invitations: createInvitations({
     db: composition.db,
     cipher: composition.credentialCipher,
-    getSession: composition.getSession,
-    trustedPortalOrigins,
     authorize: authorizePortal,
     auth: composition.auth,
     stockFetch: async function stockFetch(req) {
@@ -538,7 +491,7 @@ const integrations = createIntegrationsApp({
     now,
     log: logJson,
   }),
-  sessions: createSessions({ db: composition.db, getSession: composition.getSession, trustedPortalOrigins }),
+  sessions: createSessions(composition.db),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them
 // through routeRequest before the stock logger.

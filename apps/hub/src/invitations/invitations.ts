@@ -6,8 +6,9 @@ import { type } from "arktype";
 import { and, count, eq, gt, inArray, like, notExists, sql } from "drizzle-orm";
 import { schema } from "@intx/db";
 import { isEmailAllowed, MAGIC_LINK_TTL_SECONDS, type HubAuth } from "../auth.js";
-import { readJson } from "../read-json.js";
-import { failure, fromPortal, portalMember, type PortalCredentialDeps } from "../github/portal-credential.js";
+import type { SessionUser } from "@intx/hub-api";
+import { failure, type PortalCredentialDeps } from "../github/portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import type { SendInviteEmail } from "./invite-email.js";
 
 export const INVITATIONS_PATH = "/api/integrations/invitations";
@@ -25,10 +26,7 @@ export const AcceptBody = type({ tenantId: "string > 0" });
 export const Accepted = type({ tenantId: "string" });
 const StockPrincipal = type({ id: "string" });
 
-type SessionUser = { id: string; emailVerified: boolean };
-
-export type InvitationDeps = Omit<PortalCredentialDeps, "getSession"> & {
-  getSession: (headers: Headers) => Promise<{ user: SessionUser } | null>;
+export type InvitationDeps = PortalCredentialDeps & {
   auth: HubAuth;
   stockFetch: (req: Request) => Promise<Response>;
   allowedEmails: readonly string[] | undefined;
@@ -56,16 +54,6 @@ function asCaller(req: Request, method: string, path: string, body?: unknown): R
 
 export function createInvitations(deps: InvitationDeps) {
   const { db } = deps;
-
-  /** The member's principal id when they may invite, or the error response to return. */
-  async function inviter(req: Request, tenantId: string): Promise<string | Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
-    if (!(await deps.authorize(principalId, tenantId, "principal:*", "create"))) {
-      return failure(403, "forbidden", "You may not invite people to this workspace.");
-    }
-    return principalId;
-  }
 
   /** Roles whose every granted permission the principal holds itself, so inviting into them escalates nothing. */
   async function assignableRoles(principalId: string, tenantId: string, roleIds: string[]): Promise<Set<string>> {
@@ -128,11 +116,7 @@ export function createInvitations(deps: InvitationDeps) {
     return Response.json({ principalId, email, emailed: true }, { status });
   }
 
-  async function create(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await inviter(req, tenantId);
-    if (principalId instanceof Response) return principalId;
-    const body = InviteBody(await readJson(req));
-    if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
+  async function create(body: typeof InviteBody.infer, { tenantId, principalId }: Member, req: Request): Promise<Response> {
     const email = body.email.trim().toLowerCase();
     const role = await db.query.role.findFirst({ where: and(eq(schema.role.id, body.roleId), eq(schema.role.tenantId, tenantId)) });
     if (!role) return failure(404, "not_found", "Role not found in this workspace.");
@@ -178,9 +162,7 @@ export function createInvitations(deps: InvitationDeps) {
     return row;
   }
 
-  async function resend(req: Request, tenantId: string, invitedId: string): Promise<Response> {
-    const principalId = await inviter(req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  async function resend(req: Request, { tenantId, principalId }: Member, invitedId: string): Promise<Response> {
     const row = await invitedRow(tenantId, invitedId);
     if (!row) return failure(404, "not_found", "No open invite for this person.");
     const assigned = await db.select({ roleId: schema.principalRole.roleId }).from(schema.principalRole).where(eq(schema.principalRole.principalId, invitedId));
@@ -199,9 +181,7 @@ export function createInvitations(deps: InvitationDeps) {
   }
 
   /** The stock principal delete, plus the user an invite created when nothing else holds it, so the address stays free to sign up. */
-  async function withdraw(req: Request, tenantId: string, invitedId: string): Promise<Response> {
-    const principalId = await inviter(req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  async function withdraw(req: Request, { tenantId }: Member, invitedId: string): Promise<Response> {
     const row = await invitedRow(tenantId, invitedId);
     if (!row) return failure(404, "not_found", "No open invite for this person.");
     const deleted = await deps.stockFetch(asCaller(req, "DELETE", `/api/tenants/${encodeURIComponent(tenantId)}/principals/${encodeURIComponent(invitedId)}`));
@@ -215,27 +195,20 @@ export function createInvitations(deps: InvitationDeps) {
     return new Response(null, { status: 204 });
   }
 
-  async function roles(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await inviter(req, tenantId);
-    if (principalId instanceof Response) return principalId;
+  async function roles({ tenantId, principalId }: Member): Promise<Response> {
     const rows = await db.select({ id: schema.role.id }).from(schema.role).where(eq(schema.role.tenantId, tenantId));
     return Response.json({ assignableRoleIds: [...await assignableRoles(principalId, tenantId, rows.map((row) => row.id))] });
   }
 
-  async function accept(req: Request): Promise<Response> {
-    if (!fromPortal(req, deps.trustedPortalOrigins)) return failure(403, "forbidden", "This request did not come from the portal.");
-    const session = await deps.getSession(req.headers);
-    if (!session) return failure(401, "unauthorized", `Sign in as the invited address, then open the link again. ${GOOGLE_FIRST}`);
+  async function accept(body: typeof AcceptBody.infer, user: SessionUser): Promise<Response> {
     // Matching the invited address proves nothing until its owner has verified it.
-    if (!session.user.emailVerified) {
+    if (!user.emailVerified) {
       return failure(403, "unverified_email", "Your address is not verified. Open the link in the invite email, or use Reset password on the sign-in page.");
     }
-    const body = AcceptBody(await readJson(req));
-    if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
     const [row] = await db
       .select({ id: schema.principal.id, status: schema.principal.status })
       .from(schema.principal)
-      .where(and(eq(schema.principal.tenantId, body.tenantId), eq(schema.principal.kind, "user"), eq(schema.principal.refId, session.user.id)));
+      .where(and(eq(schema.principal.tenantId, body.tenantId), eq(schema.principal.kind, "user"), eq(schema.principal.refId, user.id)));
     if (!row) return failure(404, "not_found", "You have no invite to this workspace. Ask for a new one.");
     if (row.status === "invited") {
       await db.update(schema.principal).set({ status: "active", updatedAt: deps.now() }).where(eq(schema.principal.id, row.id));

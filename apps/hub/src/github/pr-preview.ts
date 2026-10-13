@@ -17,9 +17,9 @@ import { NEEDS_JUDGE_REASON, type Verdict } from "../../../../packages/triage-wo
 import type { CheckPackRead } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation } from "./open-pulls.js";
-import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from "./portal-credential.js";
+import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import type { Member } from "../integrations/app.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
-import { readJson } from "../read-json.js";
 
 export const GITHUB_PR_PREVIEW_PATH = "/api/integrations/github-preview";
 
@@ -166,11 +166,7 @@ async function readItem(gh: GithubFetch, number: number, context: ItemContext): 
 export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
-  return async function handle(req: Request, tenantId: string): Promise<Response> {
-    const principalId = await portalMember(deps, req, tenantId);
-    if (principalId instanceof Response) return principalId;
-    const body = PreviewBody(await readJson(req));
-    if (body instanceof type.errors) return failure(400, "invalid_request", body.summary);
+  return async function handle(body: typeof PreviewBody.infer, { tenantId, principalId }: Member, signal: AbortSignal): Promise<Response> {
     const { repo, number, event = "catch-up" } = body;
     const candidate = body.pack === undefined ? undefined : candidatePack(body.pack, repo);
     if (typeof candidate === "string") return failure(400, "invalid_pack", candidate);
@@ -198,10 +194,10 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     const item = await readItem(gh, number, { repo, policy, pack, events: [event], docs: { docs: {}, rules: {} } });
     if (item instanceof Response) return item;
 
-    const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, req.signal);
+    const ruled = await rules({ items: [item], batch: false }, NO_EFFECTS, signal);
     const ruledItem = ruled.items[0]!;
     const judged = ruled.needsJudgment ? { ...ruledItem, judgeSkipped: true as const } : ruledItem;
-    const verdict = await evaluate({ items: [judged], batch: false }, NO_EFFECTS, req.signal) as Verdict;
+    const verdict = await evaluate({ items: [judged], batch: false }, NO_EFFECTS, signal) as Verdict;
     const { state, priority, labels, owner, humanGated, score, confidence, merge, degraded, reason, nextAction, actor, feedback } = verdict;
     const checks = verdict.checks.map((c) => ({
       ...c,
