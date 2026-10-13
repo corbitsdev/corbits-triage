@@ -8,7 +8,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo, errorText } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { repoPolicy, readCheckPack, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail } from "@corbits/triage-contracts";
+import { AuditLog, repoPolicy, readCheckPack, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -1026,6 +1026,12 @@ export async function approveHeldDo(transport: Transport, tenantId: string, ref:
 
 export async function loadTriageStats(transport: Transport, tenantId: string, repo: string, days: number): Promise<TriageStats> {
   return TriageStats.assert(await transport.fetch<unknown>("GET", `/api/integrations/triage-stats/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&days=${days}`));
+}
+
+/** The newest `limit` events the workspace recorded, newest first; with `repo`, only that repository's. */
+export async function loadAuditLog(transport: Transport, tenantId: string, repo: string | null, limit: number): Promise<AuditLog> {
+  const scope = repo === null ? "" : `&repo=${enc(validateRepo(repo))}`;
+  return AuditLog.assert(await transport.fetch<unknown>("GET", `/api/integrations/audit/${enc(requireTenantId(tenantId))}?limit=${limit}${scope}`));
 }
 
 export type CheckChange = { check: string; from: string | null; to: string | null };

@@ -2,7 +2,7 @@
 // and keyed by the pull request head their trigger named.
 import { and, eq, inArray } from "drizzle-orm";
 import { type } from "arktype";
-import { APPROVE_DO_KIND, triggerRequestOf } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
@@ -29,8 +29,8 @@ type Terminal = Unsettled & { status: Exclude<ObservedRun["status"], "running"> 
 type Summary = Omit<RecordedVerdict, "runId" | "repo" | "number" | "headSha" | "startedAt">;
 type Head = { trigger: Trigger; terminal?: Terminal; summary?: Summary; judged?: Judged };
 /** No heads when the trigger names no pull request head, such as a portal run typed without a sha; a catch-up mail names several. */
-/** An approval run names no head; `approved` is set once it ended, empty when it wrote nothing. */
-type Approval = { repo: string; number: number; approved?: ApprovedDo[] };
+/** An approval run names no head; `approved` is set once it ended, empty when it wrote nothing. `principalId` is who approved. */
+export type Approval = { repo: string; number: number; principalId?: string; approved?: ApprovedDo[] };
 type KnownRun = {
   anchorRunId: string;
   heads: Head[];
@@ -96,14 +96,16 @@ function triggersOf(started: Record<string, unknown>): Trigger[] {
   return (Array.isArray(items) ? items : [payload]).flatMap((item) => headOf(item, repo, startedAt, eventOf(payload)));
 }
 
-/** The pull request an approval mail names a Do of. */
+/** The pull request an approval mail from the hub's sender names a Do of; pr-triage takes any other mail as no approval. */
 function approvalOf(started: Record<string, unknown>): Approval | undefined {
-  const payload = triggerRequestOf(asRecord(started["trigger"])?.["payload"]);
+  const mail = asRecord(started["trigger"])?.["payload"];
+  const payload = triggerRequestOf(mail);
   const request = asRecord(payload?.["request"]);
   const repo = request?.["repo"];
   const number = request?.["number"];
-  if (payload?.["kind"] !== APPROVE_DO_KIND || typeof repo !== "string" || typeof number !== "number") return undefined;
-  return { repo, number };
+  const principalId = payload?.["principalId"];
+  if (payload?.["kind"] !== APPROVE_DO_KIND || !isFromTriageSender(mail) || typeof repo !== "string" || typeof number !== "number") return undefined;
+  return { repo, number, ...(typeof principalId === "string" && { principalId }) };
 }
 
 /** The approval with what its run wrote, once the run ended. */
@@ -111,6 +113,13 @@ function approvedOf(approval: Approval, events: readonly WorkflowRunEvent[]): Ap
   if (TERMINAL_EVENTS[events.at(-1)?.type ?? ""] === undefined) return approval;
   const { repo, number } = approval;
   return { ...approval, approved: [...doResults(events, APPROVED_STEPS).values()].map((result) => ({ repo, number, ...result })) };
+}
+
+/** The approval a run's events record, with what it wrote once it ended; undefined for a run that is not an approval. */
+export function approvalIn(events: readonly WorkflowRunEvent[]): Approval | undefined {
+  const started = events.find((event) => event.type === "RunStarted");
+  const approval = started && approvalOf(started.body);
+  return approval && approvedOf(approval, events);
 }
 
 /** The evaluate action on either gate branch outputs the verdict; deployments before it rendered it in a `render` step, or older still in `renderJudged`, `renderDet` or `renderAll`. */

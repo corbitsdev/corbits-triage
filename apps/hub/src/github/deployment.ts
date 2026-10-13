@@ -176,6 +176,9 @@ export type DeploymentRotationDeps = {
   mayDeploy: (principalId: string, tenantId: string) => Promise<boolean>;
 };
 
+/** Why the hub released a deployment it replaced. */
+export const ROTATION_REASON = "Replaced by a fresh deployment of the same workflow";
+
 export type Redeployed = { status: "deployed"; runId: string } | { status: "skipped"; reason: string };
 
 /**
@@ -248,7 +251,7 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
   }
 
   async function release(tenantId: string, anchorRunId: string): Promise<void> {
-    await deps.lifecycle.requestCancellation(tenantId, anchorRunId, "Replaced by a fresh deployment of the same workflow");
+    await deps.lifecycle.requestCancellation(tenantId, anchorRunId, ROTATION_REASON);
   }
 
   function claim(tenantId: string, record: RotationRecord): Promise<boolean> {

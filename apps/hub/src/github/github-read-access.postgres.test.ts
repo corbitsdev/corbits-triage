@@ -8,6 +8,7 @@ import { credentialAad } from "@intx/types";
 import { emptyPack, type ActionKind } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { guardedApp } from "../integrations/test-app.js";
+import { createAuditLog } from "../audit-log.js";
 import { createGithubHeldDos } from "./held-dos.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createGithubPrActions } from "./pr-actions.js";
@@ -187,8 +188,9 @@ test("PostgreSQL: every verdict route needs workflow-run read, which holding the
     triageVerdicts: createTriageVerdicts({ ...deps, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, now: unused }),
     triageTimeline: createTriageTimeline({ verdicts: unused }),
     triageStats: createTriageStats({ verdicts: unused, now: unused }),
+    audit: createAuditLog({ db: unused, artifacts: unused, runReader: unused, sameSource: unused, authorize: unused, workflow: "pr-triage" }),
   });
-  for (const route of ["triage-verdicts", "triage-timeline", "triage-stats"]) {
+  for (const route of ["triage-verdicts", "triage-timeline", "triage-stats", "audit"]) {
     const res = await app.request(`/api/integrations/${route}/${TENANT}?repo=${REPO}&number=8`, { headers: { "x-test-user": "usr_user" } });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: { code: "forbidden" } });
