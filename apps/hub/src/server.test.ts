@@ -232,6 +232,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/triage-stats/{tenantId}": ["get"],
     "/api/integrations/triage-timeline/{tenantId}": ["get"],
     "/api/integrations/triage-verdicts/{tenantId}": ["get"],
+    "/api/integrations/audit/{tenantId}": ["get"],
     "/api/integrations/workflow-deploy/{tenantId}": ["post"],
     "/api/integrations/workflow-versions/{tenantId}": ["get"],
     "/api/integrations/invitations/{tenantId}": ["post", "get"],
