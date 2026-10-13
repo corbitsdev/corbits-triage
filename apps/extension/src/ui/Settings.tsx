@@ -1,5 +1,5 @@
 import { Badge, Button, ConfirmButton, Select, Switch } from "@corbits/react-ui";
-import { parseCheckPack } from "@corbits/triage-contracts";
+import { readLocalPack } from "../pack-store.ts";
 import { ChevronRight } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { changesFromDefaults } from "../pack-edit.ts";
@@ -27,11 +27,12 @@ function SettingSection({ id, title, status, description, children }: { id: stri
 function ChecksSection({ pr, onManage }: { pr: PrRef | undefined; onManage: (repo: string) => void }) {
   const packs = useStorageItem(localPacks);
   if (packs === undefined) return null;
-  const changed = new Map(Object.entries(packs).flatMap(function changes([repo, raw]): Array<[string, number]> {
-    const pack = parseCheckPack(raw, repo);
-    const count = pack ? changesFromDefaults(pack) : 0;
+  const read = Object.entries(packs).map(([repo, raw]) => [repo, readLocalPack(raw, repo)] as const);
+  const changed = new Map(read.flatMap(function changes([repo, each]): Array<[string, number]> {
+    const count = "pack" in each ? changesFromDefaults(each.pack) : 0;
     return count ? [[repo, count]] : [];
   }));
+  const unreadable = read.flatMap(([repo, each]) => ("error" in each ? [[repo, each.error] as const] : []));
   const repos = [...new Set([...(pr ? [pr.repo] : []), ...changed.keys()])];
   return (
     <SettingSection id="setting-checks" title="Rules">
@@ -51,6 +52,9 @@ function ChecksSection({ pr, onManage }: { pr: PrRef | undefined; onManage: (rep
           })}
         </ul>
       ) : <p className="empty-line">Open a pull request to change its repository's rules.</p>}
+      {unreadable.map(([repo, error]) => (
+        <p key={repo} className="error" role="alert"><span className="mono">{repo}</span>: the saved rules do not read ({error}), so the defaults run until you change or reset them.</p>
+      ))}
     </SettingSection>
   );
 }

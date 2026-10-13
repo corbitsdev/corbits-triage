@@ -109,12 +109,19 @@ describe("executeDo", () => {
 
   test("a merge reads CI and reviews again, and refuses unless CI passed, or there is none and the policy allows it, with no changes requested", async () => {
     const pending = fakeGithub({ checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
-    await expect(run(pending.gh, step("merge", {}))).rejects.toThrow("CI is pending on abc");
-    await expect(run(fakeGithub({ checkRuns: [] }).gh, step("merge", {}))).rejects.toThrow("CI is none on abc");
+    await expect(run(pending.gh, step("merge", {}))).rejects.toThrow("CI has not finished on this head");
+    await expect(run(fakeGithub({ checkRuns: [] }).gh, step("merge", {}))).rejects.toThrow("There is no CI on this head");
     expect(await run(fakeGithub({ checkRuns: [] }).gh, step("merge", { ciOptional: true }))).toMatchObject({ status: "done" });
     const changes = fakeGithub({ approvals: [{ id: 9, user: { login: "maya", type: "User" }, state: "CHANGES_REQUESTED", commit_id: "abc" }] });
     await expect(run(changes.gh, step("merge", {}))).rejects.toThrow("changes are requested by maya");
     expect([...pending.writes, ...changes.writes]).toEqual([]);
+  });
+
+  test("triage's own request for changes on an earlier failing head does not stop the passing head's merge; it is taken back first", async () => {
+    const own = { id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "older", body: `${REQUEST_CHANGES_DO_MARKER}\nTriage requests changes:\n- CI: CI failed` };
+    const { gh, writes } = fakeGithub({ approvals: [own] });
+    expect(await run(gh, step("merge", {}))).toMatchObject({ status: "done", result: { merged: true } });
+    expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/reviews/7/dismissals", "PUT /repos/acme/widgets/pulls/8/merge"]);
   });
 
   test("a reviewer requested or reviewed on this head is not asked again", async () => {

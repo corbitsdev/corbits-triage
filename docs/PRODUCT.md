@@ -16,8 +16,8 @@ wakes the policy as if it were opened.
 
 - **Maintainers** use the portal: verdicts, reasons and suggested actions
   for each open pull request.
-- **Teams** share a workspace. Admins invite teammates by email; roles in a
-  repository's settings name GitHub users or teams for assignment and review.
+- **Teams** share a workspace. Admins invite teammates by email; steps name
+  GitHub users or teams for assignment and review.
 - **Authors** see only what the repository's actions write on GitHub: labels,
   review requests, assignees and comments.
 
@@ -114,7 +114,7 @@ are in [DECISION_MODEL.md](DECISION_MODEL.md).
 
 Each pull request head gets one verdict: **Pass**, **Fail** or **Unsure**.
 
-- A hard rule (every rule over GitHub data, built in or custom) that fails
+- A hard rule (every built-in rule over GitHub data) that fails
   decides **Fail** without calling the model; the reasons list the failed rules.
 - A policy with no decision-model rule on (no Focused, Docs, Is true, Score or
   Choose) never calls the model: every rule passing decides **Pass**, and any
@@ -181,9 +181,11 @@ anything but Pass; a person holding the merge grant may still approve a held
 merge from a Fail or Unsure list. Triage posts its comment when it holds Comment
 and its verdict label when it holds Labels. Approve runs only on a Pass with CI
 green. A merge waits, held with CI's state, until CI passes on the head, or runs
-with no CI only when the policy does not require CI green; when it writes, it
+with no CI only when the policy switches CI green off (a policy that never
+names CI green still requires CI); when it writes, it
 reads CI and reviews again and refuses while CI has not passed or anyone has
-requested changes. The repository's branch protection stays the backstop.
+requested changes; Triage's own standing request for changes is taken back
+first. The repository's branch protection stays the backstop.
 Where Triage posts, a later head that may not be approved has the approve Do's
 approvals dismissed. Approvals made
 from the Inbox are never dismissed. Request changes lists the failed rules the

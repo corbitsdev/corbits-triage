@@ -131,13 +131,14 @@ describe("evaluateActions", () => {
     ]);
   });
 
-  test("a merge is held with the real CI state until CI passes, and goes ahead without CI only when the policy does not require CI green", () => {
-    function merge(ci: PrFacts["checks"], ciGreen: boolean) {
-      const pack = { ...emptyPack("acme/widgets"), checks: { "ci-green": { enabled: ciGreen } }, actions: { ...defaultActions(), pass: [{ do: "merge" }] satisfies Step[] } };
+  test("a merge is held with the real CI state until CI passes, and goes ahead without CI only when the policy switched CI green off", () => {
+    function merge(ci: PrFacts["checks"], ciGreen?: boolean) {
+      const pack = { ...emptyPack("acme/widgets"), checks: ciGreen === undefined ? {} : { "ci-green": { enabled: ciGreen } }, actions: { ...defaultActions(), pass: [{ do: "merge" }] satisfies Step[] } };
       return heldApprovals(evaluateActions({ facts: { ...facts, checks: ci }, checks: [], verdict: "pass", reason: "passes", pack }), undefined, ci)[0];
     }
-    expect(merge("pending", false)).toMatchObject({ effectId: expect.any(String), held: true, reason: "CI is pending on this head." });
-    expect(merge("none", true)).toMatchObject({ held: true, reason: "This head has no CI, and the policy requires CI green." });
+    expect(merge("pending", false)).toMatchObject({ effectId: expect.any(String), held: true, reason: "CI has not finished on this head." });
+    expect(merge("none", true)).toMatchObject({ held: true, reason: "There is no CI on this head." });
+    expect(merge("none")).toMatchObject({ held: true, reason: "There is no CI on this head." });
     expect(merge("none", false)).toMatchObject({ target: { ciOptional: true }, reason: "passes" });
     expect(merge("none", false)).not.toHaveProperty("held");
     expect(merge("success", true)).not.toHaveProperty("held");
