@@ -4,6 +4,7 @@ import type {
   ReactorAction,
   ReactorCapabilities,
   ReactorDirector,
+  InboundMessage,
   ReactorInboundEvent,
   ToolCall,
   ToolResult,
@@ -30,6 +31,9 @@ export type Role = "facts" | "judge" | "execute" | "mirror";
 export interface TriageDirectorConfig {
   role: Role;
 }
+
+/** What stock hands a director: the headers it parsed, and the text body apart from them. */
+type InboundMail = Pick<InboundMessage, "headers" | "content">;
 
 /** The step input arrives as the inbound message text: the trigger mail, or the output of the action before it. */
 function parseInput(content: string | undefined): Record<string, unknown> | undefined {
@@ -149,10 +153,10 @@ function carriedAnswers(items: unknown[]): Map<number, Judged> {
   }));
 }
 
-/** The Do kinds the hub's mail says the pr-triage role is granted; only the hub's mail is trusted to grant any. */
-function automaticKinds(content: string | undefined, input: Record<string, unknown> | undefined): ActionKind[] {
+/** The Do kinds the hub's mail says the pr-triage role is granted; only the hub's mail, told by its headers, is trusted to grant any. */
+function automaticKinds(message: InboundMail, input: Record<string, unknown> | undefined): ActionKind[] {
   const kinds = input?.automatic;
-  if (!isFromTriageSender(content) || !Array.isArray(kinds)) return [];
+  if (!isFromTriageSender(message) || !Array.isArray(kinds)) return [];
   return ACTION_KINDS.filter((kind) => kinds.includes(kind));
 }
 
@@ -285,7 +289,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     });
   }
 
-  function start(message: { content?: string }) {
+  function start(message: InboundMail) {
     const input = parseInput(message.content);
     const repo = input?.repo;
     const policy = repoPolicy(input?.policy);
@@ -293,14 +297,14 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     if (!policy.enabled) return fail("Triage is disabled for this repository.");
     const pack = packFromInput(input?.checkPack);
     if (!pack) return fail(NEEDS_SETUP_REASON);
-    automatic = automaticKinds(message.content, input);
+    automatic = automaticKinds(message, input);
     if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, ["catch-up"]);
     if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
     // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.
     if (Array.isArray(input.items)) {
       const numbers = input.items.flatMap((item) => (isRecord(item) && typeof item.prNumber === "number" ? [item.prNumber] : []));
       if (numbers.length === 0) return fail("facts: batch names no pull request");
-      carried = isFromTriageSender(message.content) ? carriedAnswers(input.items) : new Map();
+      carried = isFromTriageSender(message) ? carriedAnswers(input.items) : new Map();
       return fetchListed(repo, numbers, true, policy, pack, ["catch-up"]);
     }
     const number = input.prNumber;
