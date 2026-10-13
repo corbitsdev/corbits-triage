@@ -88,11 +88,17 @@ function parseDecision(value: Record<string, unknown>): { id: string; answer: Mo
   return { id: value.id, answer: { type: "choice", choice, probabilities, confidence: value.confidence } };
 }
 
+/** The model may echo a level with other spacing or case. */
+function levelName(level: string): string {
+  return level.trim().toLowerCase();
+}
+
 /** A score answer's probabilities by the level its legend names, when those are exactly `levels`. */
 function levelsOver(answer: ModelAnswer | undefined, levels: readonly string[]): Record<string, number> | undefined {
   if (answer?.type !== "score") return undefined;
-  const byLevel = Object.fromEntries(Object.entries(answer.legend).map(([key, level]) => [level, answer.probabilities[key]!]));
-  return exactKeys(byLevel, [...levels]) && Object.keys(answer.legend).length === levels.length ? byLevel : undefined;
+  const byName = new Map(Object.entries(answer.legend).map(([key, level]) => [levelName(level), answer.probabilities[key]!]));
+  if (byName.size !== levels.length || !levels.every((level) => byName.has(levelName(level)))) return undefined;
+  return Object.fromEntries(levels.map((level) => [level, byName.get(levelName(level))!]));
 }
 
 /** The answer's probabilities when they are over exactly `options`. */
@@ -380,9 +386,11 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
     }
     const answer = invalid ? undefined : parsed.decisions[id];
     const noul = answer?.type === "noul" ? answer.noul : undefined;
+    const byLevel = row.shape === "score" ? levelsOver(answer, row.levels) : undefined;
+    const byOption = row.shape === "choose" ? choiceOver(answer, row.options) : undefined;
     if (row.shape === "is-true" && noul !== undefined) push(id, band(noul, true), scored(noul, PASS_AT, []));
-    else if (row.shape === "score" && levelsOver(answer, row.levels)) scoreCheck(row, levelsOver(answer, row.levels)!);
-    else if (row.shape === "choose" && choiceOver(answer, row.options)) chooseCheck(row, choiceOver(answer, row.options)!);
+    else if (row.shape === "score" && byLevel) scoreCheck(row, byLevel);
+    else if (row.shape === "choose" && byOption) chooseCheck(row, byOption);
     else {
       anyUnanswered = true;
       unchecked(id, unavailable);

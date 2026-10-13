@@ -335,7 +335,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_PREVIEW_PATH}/:tenantId`,
     describeRoute({
       summary: "Preview a policy on an open pull request",
-      description: "Evaluates the saved policy, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the rules it answers need it and actions on them list each branch they could take. Candidate roles apply only when the caller may manage the workspace; otherwise the saved roles are used.",
+      description: "Evaluates the saved policy, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the rules it answers need it and actions on them list each branch they could take. Team membership for a candidate policy's steps is read only when the caller may manage the workspace; otherwise those teams stay unknown.",
       tags: TAGS,
       responses: {
         200: json("Rules, verdict and each action's branch and Dos", PreviewResponse),

@@ -1,6 +1,7 @@
 import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import {
+  ciRefusal,
   codeownersForPr,
   getChecks,
   getReviews,
@@ -23,6 +24,7 @@ import {
   changesRequestedOnHead,
   createIssueComment,
   createReview,
+  dismissDoChangeRequests,
   mergePr,
   mirror,
   removeLabels,
@@ -147,9 +149,12 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (pr.merged === true) return { status: "satisfied", result: { merged: true } };
       onHead(pr.sha, request, step);
       const ci = summarizeChecks(await getChecks(gh, repo, step.headSha));
-      if (!mergeableCi(ci, "ciOptional" in target)) throw new DoNotRunnableError(`CI is ${ci} on ${step.headSha}`);
-      const requested = [...latestDecisive(await getReviews(gh, repo, number))].filter(([, state]) => state === "CHANGES_REQUESTED").map(([login]) => login);
+      if (!mergeableCi(ci, "ciOptional" in target)) throw new DoNotRunnableError(ciRefusal(ci));
+      const reviews = await getReviews(gh, repo, number, login);
+      const requested = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
       if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
+      // Execute runs before the mirror takes triage's own request back, and a protected branch would refuse the merge while it stands.
+      if (reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED")) await dismissDoChangeRequests(gh, { repo, number, login: await login() });
       return { status: "done", result: await mergePr(gh, { repo, number, sha: step.headSha }) };
     }
     default:

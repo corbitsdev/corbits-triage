@@ -481,6 +481,17 @@ describe("pr-triage body", () => {
     expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
   });
 
+  test("a head that fails requests changes; a later head that passes takes the request back and merges", async () => {
+    const { github, pack } = requesting();
+    const merging = { ...pack, actions: { ...pack.actions, pass: [{ do: "merge" as const }] } };
+    await triage(merging, { github });
+    github.pr.head = "def";
+    github.pr.ci = "success";
+    await triage(merging, { github });
+    const writes = github.requests.filter((request) => request.method === "PUT").map((request) => request.path);
+    expect(writes).toEqual([`/repos/${REPO}/pulls/8/reviews/100/dismissals`, `/repos/${REPO}/pulls/8/merge`]);
+  });
+
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {
     const { github, pack } = requesting();
     await triage(pack, { github });

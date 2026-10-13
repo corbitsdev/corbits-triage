@@ -4,7 +4,9 @@ Shared types and parsers for Corbits Triage.
 
 ## Policy
 
-A policy sets which rules run on a repository's pull requests and what happens after. `GET /api/integrations/pack-schema` returns its JSON Schema as `checkPack`, beside the repository settings as `repoPolicy`. Constraints the schema cannot state are checked when the policy is read: a rule reference must name a built-in rule or a custom rule in the policy, and an action with rules uses `yes`/`no`/`unsure` and one without uses `always`. A Do runs on its own only when the workspace's `pr-triage` system role holds `invoke` on `triage-do:<kind>:<owner>/<name>`; otherwise it waits for a person holding that grant, and `close` under `unsure`, and `close` and `agent` under `always`, always wait. The reader ignores a legacy `automatic` flag. A custom rule is a `rule` evaluated over GitHub data or a decision-model question (`model`). The reader also requires its patterns to compile as regular expressions without flags, its `options` and `failOn` not to repeat, and a `choose` row's `failOn` to be among its `options`; a custom rule that fails any of these rejects the policy with its reason. A legacy row without `kind` asks its `instruction` as an `is-true` claim. The reader ignores unknown built-in rows and blank legacy rows rather than rejecting the policy. Built-in rule ids renamed earlier (`size`, `issue`, `conflicts`, `ci`, `paths`, `draft`, `review`) are still read and mapped to their new ids by `RENAMED_RULE_IDS`; an old `size` row loads as both size limits. Stored `custom-N` ids stay as they are. A new custom rule's id is its name as lowercase words joined by hyphens, numbered past any taken id; it never starts with `docs-` or `focused-` or ends in `-file`, `-hunk` or `-slice` and numbers, as judge question ids do.
+A policy sets which rules run on a repository's pull requests and what happens after. `GET /api/integrations/pack-schema` returns its JSON Schema as `checkPack`, beside the repository settings as `repoPolicy`. Constraints the schema cannot state are checked when the policy is read: a custom rule's `options` and `failOn` must not repeat and `failOn` must be among `options`, a score's `failBelow` must be one of its levels after the first, and a custom id must not be a built-in rule's or read as a judge question's. A rule that fails any of these rejects the policy with its reason. Custom rules are decision-model questions (`kind: "model"`): `is-true`, `score` or `choose`; a stored rule over GitHub data (`kind: "rule"`) rejects the policy. The reader ignores unknown built-in rows. Built-in rule ids renamed earlier (`size`, `issue`, `conflicts`, `ci`, `paths`, `draft`, `review`) are still read and mapped to their new ids by `RENAMED_RULE_IDS`; an old `size` row loads as both size limits. A new custom rule's id is its name as lowercase words joined by hyphens, numbered past any taken id; it never starts with `docs-` or `focused-` or ends in `-file`, `-hunk` or `-slice` and numbers, as judge question ids do.
+
+`actions` holds one `when` and an ordered list of steps per verdict. Each step is `{ do, target?, for? }`; `for` is who opened the pull request (`anyone` when left out). A Do runs on its own only when the workspace's `pr-triage` system role holds `invoke` on `triage-do:<kind>:<owner>/<name>`; otherwise it waits for a person holding that grant, and `close` on `unsure` and `merge` on anything but `pass` always wait. An `actions` stored as an empty list reads as empty lists; any other list is refused. Repository roles were removed, so a step whose target is a role is left out and named in the pack's `dropped`.
 
 ```json
 {
@@ -17,29 +19,16 @@ A policy sets which rules run on a repository's pull requests and what happens a
     "max-lines-changed": { "enabled": true, "maxLines": 3000 }
   },
   "custom": [
-    { "id": "ticket", "name": "Ticket", "group": "pull-request", "kind": "model", "shape": "is-true", "claim": "The title mentions a ticket id." }
+    { "id": "ticket", "name": "Ticket", "group": "pull-request", "kind": "model", "shape": "is-true", "claim": "The title mentions a ticket id." },
+    { "id": "care", "name": "Care", "group": "pull-request", "kind": "model", "shape": "score", "subject": "how carefully the change is made", "levels": ["poor", "fair", "good", "great"], "failBelow": "fair" }
   ],
-  "actions": [
-    {
-      "id": "review-ready",
-      "when": ["opened", "ready"],
-      "checks": ["ci-green", "ticket"],
-      "branches": {
-        "yes": [{ "kind": "request-review", "target": { "to": "role", "role": "maintainers" } }],
-        "no": [{ "kind": "comment", "target": { "body": "Please fix CI and link a ticket." } }],
-        "unsure": [{ "kind": "labels", "target": { "from": "list", "labels": ["needs-triage"] } }]
-      }
-    },
-    {
-      "id": "label-type",
-      "when": "every",
-      "checks": [],
-      "branches": { "always": [{ "kind": "labels", "target": { "from": "type" } }] }
-    }
-  ]
+  "actions": {
+    "when": ["opened", "updated", "checks", "ready"],
+    "pass": [{ "do": "approve" }, { "do": "merge", "for": "maintainers" }],
+    "fail": [{ "do": "request-changes" }, { "do": "labels", "target": { "from": "rules" } }],
+    "unsure": [{ "do": "request-review", "target": { "to": "teams", "teams": ["acme/core"] } }]
+  }
 }
 ```
-
-The `maintainers` role is defined in the repository settings' `roles`, for example `{ "maintainers": { "teams": ["core"] } }`.
 
 Store the policy as a text artifact through the tenant artifact routes the hub mounts from `@corbits/artifacts`: `POST /api/tenants/{tenantId}/artifacts` with `{ "mode": "text", "title": "check-pack/<owner>/<name>", "content": "<policy JSON>" }` creates it, and `POST /api/tenants/{tenantId}/artifacts/{id}/versions` with `title`, `content` and `expectedVersion` replaces it.

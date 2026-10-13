@@ -1,11 +1,11 @@
 import { Badge, Button, ConfirmButton, Switch } from "@corbits/react-ui";
-import { CHECK_CATALOG, CUSTOM_CHECK_CAP, parseCheckPack, type CatalogId, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { CHECK_CATALOG, CUSTOM_CHECK_CAP, type CatalogId, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import { Check, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { defaultLocalPack } from "../local-pack.ts";
 import { send } from "../messages.ts";
 import { changesFromDefaults, customFormOf, isCatalogId, switchableChecks, withCheck, withoutCheck } from "../pack-edit.ts";
-import { localPackFor, resetLocalPack, saveLocalPack } from "../pack-store.ts";
+import { localPackFor, readLocalPack, resetLocalPack, saveLocalPack } from "../pack-store.ts";
 import { prKey, type PrRef } from "../pr.ts";
 import { catalogSentence, CHECK_KINDS, customSentence, type CheckKind } from "../prose.ts";
 import { localPacks, runStates, systemOne, views } from "../storage.ts";
@@ -204,7 +204,8 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
   if (packs === undefined || settings === undefined) return null;
   const stored = packs[repo];
   // The same fallback the background runs with, so the list shows what was scored.
-  const pack = (stored && parseCheckPack(stored, repo)) ?? defaultLocalPack(repo);
+  const read = stored === undefined ? undefined : readLocalPack(stored, repo);
+  const pack = read && "pack" in read ? read.pack : defaultLocalPack(repo);
   const changes = stored ? changesFromDefaults(pack) : 0;
   const rows = rowsOf(pack);
   const scoring = pr?.repo === repo ? pr : undefined;

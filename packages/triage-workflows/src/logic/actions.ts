@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, ruleLabel, stepForAuthor, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckPack, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
+import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, stepForAuthor, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckPack, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { authorFailures } from "./render.js";
 import { errorText } from "@corbits/common";
@@ -140,7 +140,8 @@ function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): Re
     case "comment":
       return step.target;
     case "merge":
-      return catalogCheckEnabled(input.pack, "ci-green") ? {} : { ciOptional: true };
+      // Only a policy that switched CI green off may merge a head with no CI; one that never names CI still requires it.
+      return input.pack.checks["ci-green"]?.enabled === false ? { ciOptional: true } : {};
     case "approve":
     case "close":
       return {};
@@ -229,10 +230,6 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
   return changesFor(input).length > 0;
 }
 
-function ciText(ci: PrFacts["checks"]): string {
-  return ci === "none" ? "This head has no CI, and the policy requires CI green." : `CI is ${ci} on this head.`;
-}
-
 /**
  * Approve Dos are skipped for `approval`, when the head may not be approved. A merge Do whose CI has not passed is
  * held with why, so a person can still approve it once CI is green; the merge reads CI again before it writes.
@@ -240,7 +237,7 @@ function ciText(ci: PrFacts["checks"]): string {
 export function heldApprovals(actions: SuggestedAction[], approval: string | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
-    if (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: ciText(ci) };
+    if (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.` };
     if (action.kind !== "approve" || approval === undefined) return action;
     const { list, index, kind } = action;
     return { list, index, kind, skipped: true, reason: approval };
