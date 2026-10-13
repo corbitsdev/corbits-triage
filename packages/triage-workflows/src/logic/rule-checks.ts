@@ -88,7 +88,7 @@ function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, R
       const changed = matching(paths, check.changed);
       const required = matching(paths, check.requires);
       const failed = changed.length > 0 && required.length === 0;
-      return { failed, reason: failed ? `changes ${changed.join(", ")} without ${check.requires.join(", ")}` : "changes paths together" };
+      return { failed, reason: failed ? `changes paths without ${check.requires.join(", ")}` : "changes paths together", evidence: failed ? changed : [] };
     }
     case "title-pattern": {
       const failed = !RE2JS.compile(check.pattern).test(facts.title);

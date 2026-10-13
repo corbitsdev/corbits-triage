@@ -182,6 +182,7 @@ const NO = 0.3;
 // A focused candidate counts as unrelated, or as part of the change, only when that side holds this much probability.
 const FOCUSED_DECIDES = 0.6;
 const MAX_FILE_EVIDENCE = 3;
+const MAX_CODE_CHARS = 200;
 /** An answer clear of the unsure band: the verdict it drives would not change were it asked again. */
 function isDecisive(answer: ModelAnswer): boolean {
   if (answer.type === "noul") return answer.noul >= YES || answer.noul <= NO;
@@ -432,9 +433,16 @@ function nextStep(all: CheckResult[], sources: Sources, reviewers: string[]): { 
   return { actor: ordered[0]!.actor, nextAction: `${actions.slice(0, MAX_ACTIONS).join("; ")}${more}` };
 }
 
-/** Labels and paths come from the pull request, so they are posted as inline code that cannot mention, link or format. */
+/**
+ * Pull request text is posted as one-line inline code that cannot mention, link or format: whitespace runs collapse so
+ * no line break ends the span, and the fence outruns any backtick run inside (CommonMark).
+ */
 function inlineCode(text: string): string {
-  return `\`${text.replace(/`/g, "'")}\``;
+  const flat = text.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
+  const chars = Array.from(flat);
+  const line = chars.length > MAX_CODE_CHARS ? `${chars.slice(0, MAX_CODE_CHARS).join("")}…` : flat;
+  const fence = "`".repeat(Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length)) + 1);
+  return /^`|`$/.test(line) ? `${fence} ${line} ${fence}` : `${fence}${line}${fence}`;
 }
 
 /** Cited lines link to the head commit; the link text stays inline code. */
