@@ -28,7 +28,7 @@ const VENDOR: CustomCheck = { id: "custom-1", name: "Vendor", group: "code-vs-ci
 
 const pack: CheckPack = {
   ...emptyPack("acme/widgets"),
-  checks: { conflicts: { enabled: true }, ci: { enabled: true } },
+  checks: { "no-merge-conflicts": { enabled: true }, "ci-green": { enabled: true } },
   actions: [{ id: "approve", when: ["opened"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", target: {} }] } }],
 };
 
@@ -55,17 +55,17 @@ describe("approving on every check", () => {
   ])("CI %s holds the approval, even with the CI check turned off", (_, checks) => {
     const held = [expect.objectContaining({ kind: "approve", skipped: true, reason: "CI has not passed on this head." })];
     expect(suggested(pack, { checks })).toEqual(held);
-    expect(suggested({ ...pack, checks: { ...pack.checks, ci: { enabled: false } } }, { checks })).toEqual(held);
+    expect(suggested({ ...pack, checks: { ...pack.checks, "ci-green": { enabled: false } } }, { checks })).toEqual(held);
   });
 
   test("a stored action on draft and CI takes the no branch on a draft with CI green", () => {
-    const wip = { id: "wip", when: ["opened"], checks: ["draft", "ci"], branches: { yes: [{ kind: "approve", target: {} }], no: [{ kind: "labels", target: { from: "list", labels: ["wip"] } }] } };
+    const wip = { id: "wip", when: ["opened"], checks: ["not-a-draft", "ci-green"], branches: { yes: [{ kind: "approve", target: {} }], no: [{ kind: "labels", target: { from: "list", labels: ["wip"] } }] } };
     const stored = readCheckPack(JSON.stringify({ ...pack, actions: [wip] }));
     expect(suggested(stored, { draft: true })).toEqual([expect.objectContaining({ id: "wip", kind: "labels", branch: "no" })]);
   });
 
   test("a check turned off no longer decides, and a custom check added later must pass", () => {
-    expect(suggested({ ...pack, checks: { ...pack.checks, conflicts: { enabled: false } } }, { mergeable: false })).toEqual([expect.objectContaining({ kind: "approve", branch: "yes" })]);
+    expect(suggested({ ...pack, checks: { ...pack.checks, "no-merge-conflicts": { enabled: false } } }, { mergeable: false })).toEqual([expect.objectContaining({ kind: "approve", branch: "yes" })]);
     const custom = { ...pack, custom: [VENDOR] };
     expect(suggested(custom)).toEqual([expect.objectContaining({ kind: "approve" })]);
     expect(suggested(custom, { paths: ["vendor/lib.ts"] })).toEqual([]);

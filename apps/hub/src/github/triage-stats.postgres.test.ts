@@ -34,11 +34,26 @@ test("PostgreSQL: only verdicts of completed runs count as triaged", async () =>
     await db.insert(schema.tenant).values({ id: TENANT, name: "Stats", slug: "stats", domain: "stats.test" });
     const verdicts = createVerdictRecordStore(db);
     // #4 was recorded before runs' ends were, when only completed runs were recorded.
-    await verdicts.record(TENANT, [verdict("run_1", 1, "completed"), verdict("run_2", 2, "failed"), verdict("run_3", 3, "running"), verdict("run_4", 4, null)]);
+    // Rows under ids from before the rules were renamed: an old size row counts for the limit its evidence names, or for both without evidence.
+    const oversized = { checks: [{ check: "size", kind: "machine", result: "fail", evidence: ["40 files (max 30)"] }] };
+    await verdicts.record(TENANT, [
+      { ...verdict("run_1", 1, "completed"), checks: [{ check: "size", result: "fail" }, { check: "ci", result: "pass" }], detail: oversized },
+      verdict("run_2", 2, "failed"),
+      verdict("run_3", 3, "running"),
+      { ...verdict("run_4", 4, null), checks: [{ check: "size", result: "pass" }] },
+    ]);
 
     const stats = createTriageStats({ verdicts, now: () => AT });
     const res = await stats(new Request(`http://hub.test/api/integrations/triage-stats/${TENANT}?repo=${REPO}`), { tenantId: TENANT, principalId: "prn_stats" });
-    expect(TriageStats.assert(await res.json())).toMatchObject({ triaged: 2, verdicts: { "ready-monitoring": 2 } });
+    expect(TriageStats.assert(await res.json())).toMatchObject({
+      triaged: 2,
+      verdicts: { "ready-monitoring": 2 },
+      checks: {
+        "max-files-changed": { pass: 1, fail: 1, unconfirmed: 0 },
+        "max-lines-changed": { pass: 1, fail: 0, unconfirmed: 0 },
+        "ci-green": { pass: 1, fail: 0, unconfirmed: 0 },
+      },
+    });
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

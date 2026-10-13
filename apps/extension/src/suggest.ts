@@ -41,40 +41,54 @@ export function suggest({ facts, checks, pack, jobs }: SuggestInput): { actions:
     actions.push({ values: [], teams: [], ...action, id: `${head}:${check.check}:${part}`, auto: false, source: "check" });
   }
 
+  function protectedPaths(check: CheckResult & { name: string }) {
+    for (const path of check.evidence) notes.push({ path, check: check.name, reason: "Touches a protected path." });
+  }
+
   for (const check of checks.filter((each) => each.result === "fail" && !each.gate)) {
     const rule = custom.get(check.check);
     const why = `${check.name} failed. ${sentence(check.reason)}`;
-    switch (rule?.kind === "rule" ? rule.rule : check.check) {
-      case "issue":
-        add(check, { kind: "edit-body", title: "Link an issue in this pull request's description", why, body: (pack.checks.issue?.tracker ?? "either") === "linear" ? "Closes " : "Closes #" });
+    // A custom rule is suggested for by its kind, a built-in one by its id, so a custom id never reads as a built-in's.
+    if (rule) {
+      if (rule.kind !== "rule") continue;
+      switch (rule.rule) {
+        case "label-required":
+          add(check, { kind: "labels", title: `Add label ${rule.label}`, why, values: [rule.label] });
+          break;
+        case "title-pattern":
+          add(check, { kind: "edit-title", title: "Edit this pull request's title", why, hint: rule.pattern });
+          break;
+        case "paths-unchanged":
+          protectedPaths(check);
+          break;
+        case "diff-excludes":
+          for (const hit of check.evidence) {
+            const at = /^(.*):(\d+)$/.exec(hit);
+            if (at) notes.push({ path: at[1]!, line: Number(at[2]), check: check.name, reason: "Added line matches the excluded pattern." });
+          }
+          break;
+      }
+      continue;
+    }
+    switch (check.check) {
+      case "linked-issue":
+        add(check, { kind: "edit-body", title: "Link an issue in this pull request's description", why, body: (pack.checks["linked-issue"]?.tracker ?? "either") === "linear" ? "Closes " : "Closes #" });
         break;
-      case "label-required":
-        if (rule?.kind === "rule" && rule.rule === "label-required") add(check, { kind: "labels", title: `Add label ${rule.label}`, why, values: [rule.label] });
-        break;
-      case "title-pattern":
-        if (rule?.kind === "rule" && rule.rule === "title-pattern") add(check, { kind: "edit-title", title: "Edit this pull request's title", why, hint: rule.pattern });
-        break;
-      case "size":
+      case "max-files-changed":
+      case "max-lines-changed":
         if (!worded.has(check.check)) add(check, { kind: "comment", title: "Ask the author to split this pull request", why, body: `This is a lot to review in one pass (${check.evidence.join(", ")}). Could you split it into smaller pull requests?` });
         break;
-      case "ci": {
+      case "ci-green": {
         const linked = (facts.failingChecks ?? []).filter((name) => jobs[name]).slice(0, MOST_JOBS);
         for (const name of linked) add(check, { kind: "link", title: `Open the log of failing job ${name}`, why: `${check.name} failed.`, href: jobs[name]! }, `link:${name}`);
         if (!linked.length) add(check, { kind: "link", title: "Open this pull request's failing checks", why, href: `${base}/checks` });
         break;
       }
-      case "conflicts":
+      case "no-merge-conflicts":
         add(check, { kind: "link", title: "Resolve this pull request's merge conflicts", why, href: `${base}/conflicts` });
         break;
-      case "paths":
-      case "paths-unchanged":
-        for (const path of check.evidence) notes.push({ path, check: check.name, reason: "Touches a protected path." });
-        break;
-      case "diff-excludes":
-        for (const hit of check.evidence) {
-          const at = /^(.*):(\d+)$/.exec(hit);
-          if (at) notes.push({ path: at[1]!, line: Number(at[2]), check: check.name, reason: "Added line matches the excluded pattern." });
-        }
+      case "no-forbidden-paths":
+        protectedPaths(check);
         break;
     }
   }

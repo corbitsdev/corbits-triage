@@ -1,7 +1,10 @@
 import {
   catalogCheckEnabled,
+  CLOSED_FINDING,
   classificationSources,
   parseCheckPack,
+  NO_CHANGES_REQUESTED,
+  NOT_A_DRAFT,
   repoPolicy,
   type AuthorKind,
   type CatalogId,
@@ -100,7 +103,7 @@ export interface DeterministicResult {
   sources?: ReturnType<typeof classificationSources>;
 }
 
-export const NEEDS_SETUP_REASON = "This repository still needs check setup.";
+export const NEEDS_SETUP_REASON = "This repository still needs a policy.";
 
 const CI_STATUS: Record<PrFacts["checks"], string> = { success: "passing", failure: "failing", pending: "pending", none: "none" };
 
@@ -128,7 +131,7 @@ function finish(findings: Finding[], checks: CheckResult[], facts: PrFacts, pack
   const state = parked ? "awaiting-review" : top?.state ?? "ready-monitoring";
   return {
     state,
-    reason: parked ? "pull request is a draft" : top?.reason ?? "all deterministic checks passed",
+    reason: parked ? "pull request is a draft" : top?.reason ?? "all deterministic rules passed",
     findings,
     checks,
     needsJudgment: facts.state === "open" && state !== "stale-unknown" && hasModelChecks(sources),
@@ -177,7 +180,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
   function add(check: string, state: WorkflowState, reason: string) {
     findings.push({ check, state, reason });
   }
-  function result(check: CatalogId | "draft" | "review", failed: boolean | null, reason: string, evidence: string[], output: CheckOutput) {
+  function result(check: CatalogId | typeof NOT_A_DRAFT | typeof NO_CHANGES_REQUESTED, failed: boolean | null, reason: string, evidence: string[], output: CheckOutput) {
     checks.push({
       check,
       kind: "machine",
@@ -189,56 +192,60 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
   }
   const on = rules.enabled;
 
-  if (facts.state === "closed") add("state", "ready-monitoring", "pull request is closed");
+  if (facts.state === "closed") add(CLOSED_FINDING, "ready-monitoring", "pull request is closed");
   else {
-    result("draft", facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", [], { kind: "values", values: { isDraft: facts.draft } });
-    if (on("ci")) {
+    result(NOT_A_DRAFT, facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", [], { kind: "values", values: { isDraft: facts.draft } });
+    if (on("ci-green")) {
       const failing = facts.checks === "failure";
-      if (failing) add("checks", "blocked", "required checks are failing");
-      result("ci", failing, failing ? "required checks are failing" : `checks are ${facts.checks}`, failing ? facts.failingChecks ?? [] : [], { kind: "values", values: { status: CI_STATUS[facts.checks] } });
+      if (failing) add("ci-green", "blocked", "required checks are failing");
+      result("ci-green", failing, failing ? "required checks are failing" : `checks are ${facts.checks}`, failing ? facts.failingChecks ?? [] : [], { kind: "values", values: { status: CI_STATUS[facts.checks] } });
     }
-    if (on("conflicts") && facts.mergeable === false) add("conflicts", "blocked", "merge conflicts with base");
+    if (on("no-merge-conflicts") && facts.mergeable === false) add("no-merge-conflicts", "blocked", "merge conflicts with base");
     const requested = facts.changesRequested ?? [];
-    if (requested.length) add("review", "needs-author-update", "a reviewer requested changes");
+    if (requested.length) add(NO_CHANGES_REQUESTED, "needs-author-update", "a reviewer requested changes");
     const requestedReason = facts.reviewAnswered === true ? REVIEW_ANSWERED_REASON : "a reviewer requested changes";
-    result("review", requested.length > 0, requested.length ? requestedReason : "no changes requested", requested.map((login) => `changes requested by @${login}`), {
+    result(NO_CHANGES_REQUESTED, requested.length > 0, requested.length ? requestedReason : "no changes requested", requested.map((login) => `changes requested by @${login}`), {
       kind: "values",
       values: { changesRequested: requested.length },
     });
-    if (on("conflicts") && !findings.length && facts.mergeable === null) add("conflicts", "stale-unknown", "mergeability not yet computed");
-    if (on("conflicts")) {
+    if (on("no-merge-conflicts") && !findings.length && facts.mergeable === null) add("no-merge-conflicts", "stale-unknown", "mergeability not yet computed");
+    if (on("no-merge-conflicts")) {
       const conflicted = facts.mergeable === null ? null : !facts.mergeable;
-      result("conflicts", conflicted, conflicted === null ? "mergeability not yet computed" : conflicted ? "merge conflicts with base" : "no merge conflicts", [], {
+      result("no-merge-conflicts", conflicted, conflicted === null ? "mergeability not yet computed" : conflicted ? "merge conflicts with base" : "no merge conflicts", [], {
         kind: "values",
         values: { hasConflicts: conflicted === true },
       });
     }
-    if (on("size")) {
+    if (on("max-files-changed")) {
       const changedFiles = facts.changedFiles ?? 0;
-      const lines = (facts.additions ?? 0) + (facts.deletions ?? 0);
-      const files = { over: rules.maxFiles !== undefined && changedFiles > rules.maxFiles, text: `${changedFiles} files (max ${rules.maxFiles})` };
-      const size = { over: rules.maxLines !== undefined && lines > rules.maxLines, text: `${lines} lines changed (max ${rules.maxLines})` };
-      if (files.over) add("size", "needs-author-update", `pull request touches ${changedFiles} files (max ${rules.maxFiles})`);
-      if (size.over) add("size", "needs-author-update", `pull request changes ${lines} lines (max ${rules.maxLines})`);
-      const measured = [...(rules.maxFiles !== undefined ? [files] : []), ...(rules.maxLines !== undefined ? [size] : [])];
-      const over = measured.filter((m) => m.over);
-      result("size", over.length > 0, over.length ? "pull request is over the size limits" : "pull request is within the size limits", (over.length ? over : measured).map((m) => m.text), {
+      const over = rules.maxFiles !== undefined && changedFiles > rules.maxFiles;
+      if (over) add("max-files-changed", "needs-author-update", `pull request touches ${changedFiles} files (max ${rules.maxFiles})`);
+      result("max-files-changed", over, over ? "pull request is over the files limit" : "pull request is within the files limit", rules.maxFiles === undefined ? [] : [`${changedFiles} files (max ${rules.maxFiles})`], {
         kind: "values",
-        values: { files: changedFiles, lines },
+        values: { files: changedFiles },
       });
     }
-    if (on("paths") && rules.forbiddenGlobs.length > 0) {
+    if (on("max-lines-changed")) {
+      const lines = (facts.additions ?? 0) + (facts.deletions ?? 0);
+      const over = rules.maxLines !== undefined && lines > rules.maxLines;
+      if (over) add("max-lines-changed", "needs-author-update", `pull request changes ${lines} lines (max ${rules.maxLines})`);
+      result("max-lines-changed", over, over ? "pull request is over the lines limit" : "pull request is within the lines limit", rules.maxLines === undefined ? [] : [`${lines} lines changed (max ${rules.maxLines})`], {
+        kind: "values",
+        values: { lines },
+      });
+    }
+    if (on("no-forbidden-paths") && rules.forbiddenGlobs.length > 0) {
       const matched = (facts.paths ?? []).filter((path) => rules.forbiddenGlobs.some((glob) => globMatch(path, glob)));
-      if (matched.length) add("paths", "needs-author-update", "pull request touches a forbidden path");
-      result("paths", matched.length > 0, matched.length ? "pull request touches a forbidden path" : "no forbidden paths touched", matched, {
+      if (matched.length) add("no-forbidden-paths", "needs-author-update", "pull request touches a forbidden path");
+      result("no-forbidden-paths", matched.length > 0, matched.length ? "pull request touches a forbidden path" : "no forbidden paths touched", matched, {
         kind: "values",
         values: { touchesForbiddenPaths: matched.length > 0 },
       });
     }
-    if (on("issue") && rules.tracker !== "off") {
+    if (on("linked-issue") && rules.tracker !== "off") {
       const ref = issueReference(facts, rules.tracker);
-      if (!ref) add("issue", "needs-author-update", "pull request does not reference an issue");
-      result("issue", ref === null, ref ? "references an issue" : "pull request does not reference an issue", ref ? [ref] : [], {
+      if (!ref) add("linked-issue", "needs-author-update", "pull request does not reference an issue");
+      result("linked-issue", ref === null, ref ? "references an issue" : "pull request does not reference an issue", ref ? [ref] : [], {
         kind: "values",
         values: { linkedIssue: ref !== null },
       });
@@ -256,10 +263,10 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
 function deriveFromPack(facts: PrFacts, pack: CheckPack, roles: Record<string, RepoRole>): DeterministicResult {
   return evaluate(facts, {
     enabled: (id) => catalogCheckEnabled(pack, id),
-    maxFiles: pack.checks.size?.maxFiles,
-    maxLines: pack.checks.size?.maxLines,
-    forbiddenGlobs: pack.checks.paths?.forbiddenGlobs ?? [],
-    tracker: pack.checks.issue?.tracker ?? "either",
+    maxFiles: pack.checks["max-files-changed"]?.maxFiles,
+    maxLines: pack.checks["max-lines-changed"]?.maxLines,
+    forbiddenGlobs: pack.checks["no-forbidden-paths"]?.forbiddenGlobs ?? [],
+    tracker: pack.checks["linked-issue"]?.tracker ?? "either",
   }, pack, roles);
 }
 
@@ -270,7 +277,8 @@ export function packFromInput(raw: unknown): CheckPack | null {
 /** Leftover boolean flags when no pack is supplied. Pack, when present, is the check source. */
 export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack | null, roles: Record<string, RepoRole> = {}): DeterministicResult {
   if (pack) return deriveFromPack(facts, pack, roles);
-  const enabled: Partial<Record<CatalogId, boolean>> = repoPolicy(policy).checks;
+  const legacy = repoPolicy(policy).checks;
+  const enabled: Partial<Record<CatalogId, boolean>> = { "ci-green": legacy.ci, "no-merge-conflicts": legacy.conflicts };
   return evaluate(facts, {
     enabled: (id) => enabled[id] === true,
     forbiddenGlobs: [],

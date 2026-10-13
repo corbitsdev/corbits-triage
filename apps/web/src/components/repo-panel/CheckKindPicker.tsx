@@ -7,7 +7,7 @@ type CheckKindPickerProps = { disabled: boolean; onPick: (kind: CheckKind) => vo
 /** The rule kinds and model shapes a new check can take. */
 export default function CheckKindPicker({ disabled, onPick, onCancel }: CheckKindPickerProps) {
   return (
-    <div className="gallery" role="group" aria-label="New check">
+    <div className="gallery" role="group" aria-label="New rule">
       {CHECK_KINDS.map((kind) => (
         <div key={kind.title} className="gallery-row">
           <span><b>{kind.title}</b> {kind.line}</span>

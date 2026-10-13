@@ -4,7 +4,7 @@ The extension runs standalone in the browser: it reads GitHub as the signed-in p
 locally, with no hub. A hub-backed mode is planned.
 
 A WXT browser extension (Chrome side panel, Firefox sidebar, MV3) that scores the GitHub pull request open in the
-current tab, using the shared triage logic from `packages/triage-workflows` and a per-repository pack kept in browser
+current tab, using the shared triage logic from `packages/triage-workflows` and a per-repository policy kept in browser
 storage.
 
 ## Prerequisites
@@ -30,7 +30,7 @@ To load a build by hand in Chrome: open `chrome://extensions`, turn on Developer
 All optional, in the side panel's settings:
 
 - GitHub token: used only when a page read fails, for 5,000 API calls an hour instead of 60.
-- Decision model: a provider preset and key; without one, model checks are left out of the score.
+- Decision model: a provider preset and key; without one, model rules are left out of the score.
 
 ## Tests
 

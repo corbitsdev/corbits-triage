@@ -99,11 +99,21 @@ describe("approval projection", () => {
 });
 
 describe("check rows", () => {
-  test("a verdict's rows for checks since removed are left out", () => {
+  test("a verdict's rows for rules since removed are left out, and rows under a renamed rule's old id read as the new one", () => {
     const rows = [{ check: "duplicate", kind: "machine", result: "pass", evidence: [] }, { check: "ci", kind: "machine", result: "pass", evidence: [] }];
     const recorded = [{ check: "drift", result: "pass" }, { check: "ci", result: "pass" }];
     const items = projectQueue([pull(8, { verdict: verdict("run-8", "ready", { checks: rows }) }), pull(9, { verdict: verdict("run-9", "ready", null, { checks: recorded }) })], [], undefined);
-    expect(items.map((item) => item.checks.map((c) => c.check))).toEqual([["ci"], ["ci"]]);
+    expect(items.map((item) => item.checks.map((c) => c.check))).toEqual([["ci-green"], ["ci-green"]]);
+  });
+
+  test("an old size row reads as the limit its evidence names, or as both limits without evidence", () => {
+    const rows = [{ check: "size", kind: "machine", result: "fail", evidence: ["40 files (max 30)"] }];
+    const recorded = [{ check: "size", result: "pass" }];
+    const items = projectQueue([pull(8, { verdict: verdict("run-8", "ready", { checks: rows }) }), pull(9, { verdict: verdict("run-9", "ready", null, { checks: recorded }) })], [], undefined);
+    expect(items.map((item) => item.checks.map((c) => [c.check, c.result, c.evidence]))).toEqual([
+      [["max-files-changed", "fail", ["40 files (max 30)"]]],
+      [["max-files-changed", "pass", []], ["max-lines-changed", "pass", []]],
+    ]);
   });
 });
 
@@ -132,7 +142,7 @@ describe("projectQueue from the hub's verdicts", () => {
       headSha: "abc123", priority: "P1", score: 0.62, merge, reason: "Mixes two changes.", evidence: ["Mixes two changes."], checks: [check], labels: ["triage:split"], feedback: "Please split this.",
       facts: { title: "Add widgets", author: "ann", draft: false, mergeable: true, checks: "pending" },
     };
-    const items = projectQueue([pull(8, { verdict: verdict("run-8", "needs-author-update", detail, { commented: true }) }), pull(9, { verdict: verdict("run-9", "needs-decision", null, { humanGated: true, checks: [{ check: "ci", result: "fail" }] }) })], [], openPulls);
+    const items = projectQueue([pull(8, { verdict: verdict("run-8", "needs-author-update", detail, { commented: true }) }), pull(9, { verdict: verdict("run-9", "needs-decision", null, { humanGated: true, checks: [{ check: "ci-green", result: "fail" }] }) })], [], openPulls);
     expect(items).toEqual([
       expect.objectContaining({
         key: "acme/widgets#8", state: "needs-author-update", priority: "P1", confidence: 0.62, merge, evidence: ["Mixes two changes."], checks: [{ ...check, gate: false }],
@@ -140,7 +150,7 @@ describe("projectQueue from the hub's verdicts", () => {
       }),
       expect.objectContaining({
         key: "acme/widgets#9", state: "needs-decision", needsHuman: true, verdictSha: null, merge: null, comment: null, title: "PR 9", author: "ada",
-        checks: [{ check: "ci", kind: null, result: "fail", reason: null, evidence: [], output: null, gate: false }],
+        checks: [{ check: "ci-green", kind: null, result: "fail", reason: null, evidence: [], output: null, gate: false }],
       }),
       expect.objectContaining({ key: "acme/widgets#10", state: "new" }),
     ]);

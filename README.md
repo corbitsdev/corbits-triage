@@ -1,13 +1,13 @@
 # Corbits Triage
 
 Pull request triage for GitHub repositories. For each pull request it gathers
-facts from GitHub, runs the repository's checks, reaches a verdict, and
+facts from GitHub, runs the repository's rules, reaches a verdict, and
 suggests or runs the repository's actions. It runs as workflows on a stock
 [Interchange](https://github.com/faremeter/interchange) hub, which owns
 identity, grants, credentials, runs and audit.
 
 Nothing runs by default: a repository is triaged only after someone sets up
-its checks and enables it.
+its rules and enables it.
 
 ## Quickstart
 
@@ -32,9 +32,9 @@ To run it for real, build the root `Dockerfile` and follow
 
 ## Read next
 
-- [docs/PRODUCT.md](docs/PRODUCT.md): what it does, the kinds of checks,
+- [docs/PRODUCT.md](docs/PRODUCT.md): what it does, the kinds of rules,
   actions, and what is not finished.
-- [docs/DECISION_MODEL.md](docs/DECISION_MODEL.md): how decision-model checks
+- [docs/DECISION_MODEL.md](docs/DECISION_MODEL.md): how decision-model rules
   are asked and judged, budgets, cost and measured accuracy.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, the triage
   pipeline, tenancy and data.

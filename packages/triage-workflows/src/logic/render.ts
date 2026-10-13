@@ -1,4 +1,4 @@
-import { citationOf, citationUrl, itemText, render, TRIAGE_LABELS, type ActionKind, type CheckItem, type CheckOutput, type Rendered, type RuleCustomCheck, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, CLOSED_FINDING, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, type ActionKind, type CheckItem, type CheckOutput, type Rendered, type RuleCustomCheck, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { SuggestedAction } from "./actions.js";
 import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
@@ -369,13 +369,14 @@ function withoutLimit(evidence: string[]): string {
 function failedStep(c: CheckResult, sources: Sources): Step {
   switch (c.check) {
     // Informational: marking a draft ready is the author's call, never asked of them.
-    case "draft": return { actor: "maintainer", action: "Review once marked ready" };
-    case "ci": return { actor: "author", action: c.evidence.length ? `Fix failing CI: ${c.evidence.join(", ")}` : "Fix failing CI" };
-    case "conflicts": return { actor: "author", action: "Resolve merge conflicts" };
-    case "paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
-    case "size": return { actor: "author", action: `Consider splitting it (${withoutLimit(c.evidence)})` };
-    case "issue": return { actor: "author", action: "Link an issue" };
-    case "review": {
+    case NOT_A_DRAFT: return { actor: "maintainer", action: "Review once marked ready" };
+    case "ci-green": return { actor: "author", action: c.evidence.length ? `Fix failing CI: ${c.evidence.join(", ")}` : "Fix failing CI" };
+    case "no-merge-conflicts": return { actor: "author", action: "Resolve merge conflicts" };
+    case "no-forbidden-paths": return { actor: "author", action: `Remove changes under ${c.evidence.join(", ")}` };
+    case "max-files-changed":
+    case "max-lines-changed": return { actor: "author", action: `Consider splitting it (${withoutLimit(c.evidence)})` };
+    case "linked-issue": return { actor: "author", action: "Link an issue" };
+    case NO_CHANGES_REQUESTED: {
       const reviewers = c.evidence.map((e) => e.replace(/^changes requested by /, "")).join(", ");
       return c.reason === REVIEW_ANSWERED_REASON
         ? { actor: "maintainer", action: `Re-review: the author responded to changes requested by ${reviewers}` }
@@ -411,14 +412,23 @@ function judged(checks: CheckResult[]): CheckResult[] {
 }
 
 function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
-  if (c.check === "conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
+  if (c.check === "no-merge-conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
   if (c.kind === "model" && sources && c.reason !== NOT_ASKED_REASON) return [{ actor: "maintainer", action: `Confirm ${passText(c.check, sources)}` }];
   return [];
 }
 
+const SIZE_RULES: readonly string[] = ["max-files-changed", "max-lines-changed"];
+
+/** Both size limits failing ask for one split, so they read as one step. */
+function oneSplit(failed: CheckResult[]): CheckResult[] {
+  const sized = failed.filter((c) => SIZE_RULES.includes(c.check));
+  if (sized.length < 2) return failed;
+  return failed.flatMap((c) => (c === sized[0] ? [{ ...c, evidence: sized.flatMap((s) => s.evidence) }] : sized.includes(c) ? [] : [c]));
+}
+
 function nextStep(all: CheckResult[], sources: Sources, reviewers: string[]): { actor: Actor; nextAction: string } {
   const checks = judged(all);
-  const failing = checks.filter((c) => c.result === "fail").map((c) => failedStep(c, sources));
+  const failing = oneSplit(checks.filter((c) => c.result === "fail")).map((c) => failedStep(c, sources));
   const steps = failing.length ? failing : checks.filter((c) => c.result === "unconfirmed").flatMap((c) => unconfirmedSteps(c, sources));
   if (!steps.length) {
     const requested = reviewers.length ? ` — ${reviewers.map((r) => `@${r}`).join(", ")} requested` : "";
@@ -483,7 +493,7 @@ function failureEvidence(c: CheckResult, repo: string, headSha: string): string 
 
 /** The failed checks that are the author's to fix; a maintainer's requested changes are already in front of the author. */
 export function authorFailures(all: CheckResult[], sources: Sources): CheckResult[] {
-  return judged(all).filter((c) => c.result === "fail" && c.check !== "review" && failedStep(c, sources).actor === "author");
+  return judged(all).filter((c) => c.result === "fail" && c.check !== NO_CHANGES_REQUESTED && failedStep(c, sources).actor === "author");
 }
 
 /**
@@ -507,10 +517,10 @@ function authorComment({ author, repo, headSha, sources }: RenderContext, all: C
   }
   if (outageCount(checks) > 0) {
     if (lines.length) lines.push("");
-    lines.push("Some checks could not run this time. Triage will re-check this pull request.");
+    lines.push("Some rules could not run this time. Triage will re-check this pull request.");
   }
   if (!lines.length) {
-    if (failing.some((c) => c.check === "review")) return "";
+    if (failing.some((c) => c.check === NO_CHANGES_REQUESTED)) return "";
     lines.push("No changes needed from you. A maintainer will review this pull request.");
   }
   return bounded(lines);
@@ -525,7 +535,7 @@ function mergeVerdict(all: CheckResult[], sources: Sources, score: number | null
   const checks = judged(all);
   const outage = outageCount(checks);
   const reasons = [
-    ...(outage > 0 ? [`Could not evaluate ${outage} ${outage === 1 ? "check" : "checks"}`] : []),
+    ...(outage > 0 ? [`Could not evaluate ${outage} ${outage === 1 ? "rule" : "rules"}`] : []),
     ...checks.flatMap((c) => {
       if (c.result === "fail") return [`Failed: ${c.reason}`];
       if (c.result !== "unconfirmed" || c.reason === NOT_ASKED_REASON || c.reason === UNAVAILABLE_REASON) return [];
@@ -570,7 +580,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   if (!det.needsJudgment || !det.sources || !JUDGED_STATES.has(det.state)) {
     const verdict = withChecks({ ...render(det.state), degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
     // Model answers do not drive this verdict, so the comment speaks only to the machine checks; a closed pull request gets none.
-    return det.findings.some((f) => f.check === "state") ? { ...verdict, feedback: "" } : verdict;
+    return det.findings.some((f) => f.check === CLOSED_FINDING) ? { ...verdict, feedback: "" } : verdict;
   }
   const failing = evaluated.checks.filter((check) => check.result === "fail");
   const unconfirmed = evaluated.checks.some((check) => check.result === "unconfirmed" && check.reason !== NOT_ASKED_REASON);

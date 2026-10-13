@@ -1,7 +1,7 @@
 import { citationOf, citationUrl } from "@corbits/triage-contracts";
 import { Check, ChevronRight, CircleHelp, Minus, X } from "lucide-react";
 import { useState } from "react";
-import { checkLabel, checkReason, RESULT_NAMES, shownChecks } from "../summary.ts";
+import { checkReason, RESULT_NAMES, shownChecks } from "../summary.ts";
 import type { TriageView, ViewCheck } from "../view.ts";
 
 const MARKS: Record<ViewCheck["result"], typeof Check> = { pass: Check, fail: X, unconfirmed: CircleHelp, "needs-judge": Minus };
@@ -33,7 +33,7 @@ function CheckRow({ check, view, expanded }: CheckListProps & { check: ViewCheck
     <>
       <span className="result-mark" data-result={check.result} role="img" aria-label={RESULT_NAMES[check.result]}><Mark aria-hidden="true" /></span>
       <span className="check-text">
-        <span className="check-name">{checkLabel(check)}</span>
+        <span className="check-name">{check.name}</span>
         <span className="check-reason">{checkReason(check)}</span>
       </span>
       <span className="kind" title={check.kind === "model" ? "Answered by a decision model" : "Computed from GitHub data"}>{check.kind === "model" ? "model" : "rule"}</span>
@@ -92,9 +92,9 @@ function CheckGroup({ group, view, expanded }: CheckListProps & { group: Group }
   );
 }
 
-/** The run's checks grouped failing, unsure and passed; each opens to its evidence. */
+/** The run's rules grouped failing, unsure and passed; each opens to its evidence. */
 export function CheckList({ view, expanded }: CheckListProps) {
   const groups = groupsOf(view);
-  if (!groups.length) return <p className="hint">No checks ran on this pull request.</p>;
+  if (!groups.length) return <p className="hint">No rules ran on this pull request.</p>;
   return <ul className="check-groups">{groups.map((group) => <CheckGroup key={group.id} group={group} view={view} expanded={expanded} />)}</ul>;
 }

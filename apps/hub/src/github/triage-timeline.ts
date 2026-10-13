@@ -1,10 +1,11 @@
 // A pull request's readiness history, from the recorded verdicts only: one
 // entry per verdict that changed the head or a check result, with the checks
 // that changed since the judged verdict before it.
+import { currentRows } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { failure } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
-import type { RecordedCheck, VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
+import { evidenceOf, type RecordedCheck, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_TIMELINE_PATH = "/api/integrations/triage-timeline";
 
@@ -46,10 +47,15 @@ function readiness(checks: readonly RecordedCheck[]): number | null {
   return Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 100);
 }
 
-function changes(previous: readonly RecordedCheck[] | undefined, current: readonly RecordedCheck[]): CheckChange[] {
+/** Results by current rule id, so a verdict from before a rule was renamed compares with one after. */
+function byCurrentId(verdict: VerdictRecord): Map<string, string> {
+  return new Map(verdict.checks.flatMap((c) => currentRows(c.check, evidenceOf(verdict, c.check)).map((row) => [row.check, c.result] as const)));
+}
+
+function changes(previous: VerdictRecord | undefined, current: VerdictRecord): CheckChange[] {
   if (!previous) return [];
-  const before = new Map(previous.map((c) => [c.check, c.result]));
-  const after = new Map(current.map((c) => [c.check, c.result]));
+  const before = byCurrentId(previous);
+  const after = byCurrentId(current);
   const checks = new Set([...before.keys(), ...after.keys()]);
   return [...checks].flatMap(function changed(check) {
     const from = before.get(check) ?? null;
@@ -59,14 +65,14 @@ function changes(previous: readonly RecordedCheck[] | undefined, current: readon
 }
 
 function sameOutcome(a: VerdictRecord, b: VerdictRecord): boolean {
-  return a.headSha === b.headSha && a.settled === b.settled && a.degraded === b.degraded && changes(a.checks, b.checks).length === 0;
+  return a.headSha === b.headSha && a.settled === b.settled && a.degraded === b.degraded && changes(a, b).length === 0;
 }
 
 /** `records` is oldest first. Degraded verdicts judged nothing, so they neither score nor serve as the baseline for the next change. */
 function timeline(records: readonly VerdictRecord[]): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
   let kept: VerdictRecord | undefined;
-  let judged: readonly RecordedCheck[] | undefined;
+  let judged: VerdictRecord | undefined;
   for (const verdict of records) {
     if (kept && sameOutcome(kept, verdict)) continue;
     kept = verdict;
@@ -80,9 +86,9 @@ function timeline(records: readonly VerdictRecord[]): TimelineEntry[] {
       settled: verdict.settled,
       degraded: verdict.degraded,
       readiness: scored ? readiness(verdict.checks) : null,
-      changed: scored ? changes(judged, verdict.checks) : [],
+      changed: scored ? changes(judged, verdict) : [],
     });
-    if (scored) judged = verdict.checks;
+    if (scored) judged = verdict;
   }
   return entries;
 }

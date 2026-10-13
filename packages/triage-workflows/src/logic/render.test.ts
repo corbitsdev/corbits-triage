@@ -19,7 +19,7 @@ describe("custom check rendering", () => {
       headSha: "abc123",
       det: {
         state: "ready-monitoring",
-        reason: "all deterministic checks passed",
+        reason: "all deterministic rules passed",
         findings: [],
         checks: [],
         needsJudgment: true,
@@ -76,7 +76,7 @@ function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).fo
 }
 
 const UNSURE_FOCUSED = "Not yet confirmed, a maintainer will check:\n- makes one focused change";
-const OUTAGE_NOTE = "Some checks could not run this time. Triage will re-check this pull request.";
+const OUTAGE_NOTE = "Some rules could not run this time. Triage will re-check this pull request.";
 const APPROVAL_NOTE = "No changes needed from you. A maintainer will review this pull request.";
 
 describe("focused rendering", () => {
@@ -148,7 +148,7 @@ describe("focused rendering", () => {
   ] as const)("a %s answer is an outage that still posts", (_name, reply) => {
     const verdict = focusedVerdict(reply);
     expect(verdict).toMatchObject({ state: "awaiting-review", mirror: true, humanGated: false, degraded: "inference-outage", feedback: OUTAGE_NOTE });
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: null, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Could not evaluate 1 check"] });
+    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: null, threshold: DEFAULT_MERGE_THRESHOLD, reasons: ["Could not evaluate 1 rule"] });
   });
 
   test("the judge budget and a judge outage both still post", () => {
@@ -250,8 +250,8 @@ describe("focused rendering", () => {
 
   test("an over-long CI name is cut to one line without replacing its CI and path verdict", () => {
     const checks = [
-      { check: "ci", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: ["界".repeat(21_000)] },
-      { check: "paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/generated.ts"] },
+      { check: "ci-green", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: ["界".repeat(21_000)] },
+      { check: "no-forbidden-paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/generated.ts"] },
     ];
     const verdict = renderVerdict({
       author: "octocat",
@@ -264,6 +264,16 @@ describe("focused rendering", () => {
     expect(verdict).toMatchObject({ state: "blocked", reason: "required checks are failing", actor: "author", mirror: true, humanGated: false, checks });
     expect(verdict.nextAction).toContain("Fix failing CI");
     expect(verdict.nextAction).toContain("Remove changes under vendor/generated.ts");
+  });
+
+  test("both size limits failing ask for one split", () => {
+    const checks = [
+      { check: "max-files-changed", kind: "machine" as const, result: "fail" as const, reason: "pull request is over the files limit", evidence: ["40 files (max 30)"] },
+      { check: "max-lines-changed", kind: "machine" as const, result: "fail" as const, reason: "pull request is over the lines limit", evidence: ["4000 lines changed (max 3000)"] },
+    ];
+    const det = { state: "needs-author-update" as const, reason: "too large", findings: [], checks, needsJudgment: false };
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, threshold: DEFAULT_MERGE_THRESHOLD });
+    expect(verdict.nextAction).toBe("Consider splitting it (40 files, 4000 lines changed)");
   });
 });
 
@@ -291,7 +301,7 @@ describe("merge verdict", () => {
   });
 
   test("a failing rule is red", () => {
-    const checks = [{ check: "paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/a.ts"] }];
+    const checks = [{ check: "no-forbidden-paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/a.ts"] }];
     const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, state: "blocked", checks }, answers: noul({ "docs-file-001": 0.1 }), plan: PLAN, threshold: 0.7 });
     expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.9, threshold: 0.7, reasons: ["Failed: touches forbidden paths"] });
   });
@@ -301,12 +311,12 @@ describe("merge verdict", () => {
     const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": 0.8 }), plan: PLAN, judgeError: "upstream 503", threshold: 0.7 });
     expect(verdict.checks.map(({ check, result }) => [check, result])).toEqual([["docs", "fail"], ["custom-1", "unconfirmed"]]);
     expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, degraded: "inference-outage" });
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.7, reasons: ["Could not evaluate 1 check", "Failed: documentation is not updated"] });
+    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.7, reasons: ["Could not evaluate 1 rule", "Failed: documentation is not updated"] });
     expect(verdict.feedback).toBe(`@octocat, please address the following:\n- documentation is not updated for \`src/a.ts\`\n\n${OUTAGE_NOTE}`);
   });
 
   test("rules only has no score and is green", () => {
-    const checks = [{ check: "ci", kind: "machine" as const, result: "pass" as const, reason: "required checks pass", evidence: [] }];
+    const checks = [{ check: "ci-green", kind: "machine" as const, result: "pass" as const, reason: "required checks pass", evidence: [] }];
     const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...FOCUSED_DET, checks, needsJudgment: false, sources: undefined }, threshold: 0.7 });
     expect(verdict.merge).toEqual({ verdict: "ready", score: null, threshold: 0.7, reasons: [] });
     expect(verdict).toMatchObject({ score: null, confidence: "unknown", mirror: true, feedback: APPROVAL_NOTE });
@@ -348,7 +358,7 @@ describe("rule custom check rendering", () => {
     const gated: DeterministicResult = {
       ...det,
       state: "ready-monitoring",
-      reason: "all deterministic checks passed",
+      reason: "all deterministic rules passed",
       findings: [],
       checks: [{ check: "custom-9", kind: "machine", result: "fail", reason: "Mine: author is not one of the people named", evidence: ["@octocat (outside)"], gate: true }],
       sources: { quality: [], custom: [], rules: [gate] },
@@ -369,7 +379,7 @@ describe("author text in the comment", () => {
       "\u202e@team\u0007 [l](https://evil.example)",
     ];
     const checks = [
-      { check: "ci", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: hostile },
+      { check: "ci-green", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: hostile },
       { check: "focused", kind: "model" as const, result: "fail" as const, reason: "unrelated changes", evidence: hostile },
     ];
     const verdict = renderVerdict({
@@ -390,12 +400,12 @@ describe("author text in the comment", () => {
 });
 
 describe("requested changes rendering", () => {
-  const review = { check: "review", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: ["changes requested by @maya"] } as const;
-  const conflicts = { check: "conflicts", kind: "machine", result: "fail", reason: "merge conflicts with base", evidence: [] } as const;
+  const review = { check: "no-changes-requested", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: ["changes requested by @maya"] } as const;
+  const conflicts = { check: "no-merge-conflicts", kind: "machine", result: "fail", reason: "merge conflicts with base", evidence: [] } as const;
   const det: DeterministicResult = {
     state: "needs-author-update",
     reason: "a reviewer requested changes",
-    findings: [{ check: "review", state: "needs-author-update", reason: "a reviewer requested changes" }],
+    findings: [{ check: "no-changes-requested", state: "needs-author-update", reason: "a reviewer requested changes" }],
     checks: [review],
     needsJudgment: false,
     sources: { quality: [], custom: [], rules: [] },

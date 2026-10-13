@@ -1,13 +1,6 @@
 import { nextStep, stateName, type TriageView, type ViewCheck } from "./view.ts";
 
-// The workflow's own check for requested changes has no catalog name.
-const NAMES: Record<string, string> = { review: "Requested changes" };
-
 const ORDER: Record<ViewCheck["result"], number> = { fail: 0, unconfirmed: 1, "needs-judge": 2, pass: 3 };
-
-export function checkLabel(check: ViewCheck): string {
-  return NAMES[check.check] ?? check.name;
-}
 
 function capitalized(text: string): string {
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
@@ -36,7 +29,7 @@ export function summaryMarkdown(view: TriageView): string {
     `**${view.pr.repo}#${view.pr.number}**: ${view.readiness ?? "–"}/100, ${stateName(view)}`,
     `Next: ${nextStep(view)}`,
     "",
-    ...shownChecks(view).map((check) => `- ${RESULT_NAMES[check.result]}: **${checkLabel(check)}**, ${checkReason(check)}`),
+    ...shownChecks(view).map((check) => `- ${RESULT_NAMES[check.result]}: **${check.name}**, ${checkReason(check)}`),
   ];
   return lines.join("\n");
 }

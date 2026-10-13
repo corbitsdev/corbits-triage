@@ -3,9 +3,9 @@ import { BRANCH_NAMES, type Branch } from "../../lib/pack-prose.ts";
 import DoEditor from "./DoEditor.tsx";
 
 const HINTS: Record<Branch, string> = {
-  yes: "every check passes",
-  no: "a check fails",
-  unsure: "a check is not confirmed",
+  yes: "every rule passes",
+  no: "a rule fails",
+  unsure: "a rule is not confirmed",
   always: "every time",
 };
 

@@ -180,8 +180,8 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     if (candidate !== undefined) pack = candidate;
     else {
       const stored = await deps.readCheckPack(tenantId, repo);
-      if (stored.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's check pack is unreadable. Replace it on the repository page.", { reason: stored.reason });
-      if (stored.status !== "ok") return failure(409, "needs_setup", "This repository still needs check setup.");
+      if (stored.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: stored.reason });
+      if (stored.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
       pack = stored.pack;
     }
     // Candidate roles name the teams whose membership is read from GitHub, so only those who may save roles can try them.

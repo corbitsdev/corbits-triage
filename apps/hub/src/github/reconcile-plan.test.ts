@@ -128,13 +128,13 @@ describe("reconcile plan", () => {
   });
 
   test("a completed run with an unsettled verdict counts as failed with its reason", () => {
-    const degraded = { ...run("run_d", "completed", 1), unsettled: "This repository still needs check setup." };
+    const degraded = { ...run("run_d", "completed", 1), unsettled: "This repository still needs a policy." };
     const result = plan([pr(1)], [], at(60), [[pr(1), [degraded]]]);
     expect(enqueued(result)).toEqual([1]);
     expect(plan([pr(1)], [], at(60), [[pr(1), [degraded]]]).enqueue[0]?.undelivered).toMatchObject({
       status: "failed",
       runId: "run_d",
-      error: "This repository still needs check setup.",
+      error: "This repository still needs a policy.",
     });
   });
 

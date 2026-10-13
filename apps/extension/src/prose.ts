@@ -2,13 +2,14 @@ import { RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, 
 import { DEBUG_LEFTOVERS, SOURCE_GLOBS, TEST_GLOBS } from "./local-pack.ts";
 import type { SuggestedDo } from "@corbits/triage-workflows/logic/actions";
 
-/** Each catalog check in the portal's words, in the order its checks panel lists them; limits read from the pack. */
+/** Each built-in rule in the portal's words, in the order its rules panel lists them; limits read from the policy. */
 const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => string> = {
-  size: (row) => `Flag pull requests over ${count(row?.maxFiles)} files or ${count(row?.maxLines)} lines changed`,
-  issue: (row) => `Require a linked issue from ${ISSUE_TRACKER_NAMES[row?.tracker && row.tracker !== "off" ? row.tracker : RECOMMENDED_ISSUE.tracker]}`,
-  conflicts: () => "Flag merge conflicts with the base branch",
-  ci: () => "CI must pass before merge",
-  paths: (row) => `Never accept changes to ${(row?.forbiddenGlobs ?? []).join(", ") || "forbidden paths"}`,
+  "max-files-changed": (row) => `Flag pull requests over ${count(row?.maxFiles)} files changed`,
+  "max-lines-changed": (row) => `Flag pull requests over ${count(row?.maxLines)} lines changed`,
+  "linked-issue": (row) => `Require a linked issue from ${ISSUE_TRACKER_NAMES[row?.tracker && row.tracker !== "off" ? row.tracker : RECOMMENDED_ISSUE.tracker]}`,
+  "no-merge-conflicts": () => "Flag merge conflicts with the base branch",
+  "ci-green": () => "CI must pass before merge",
+  "no-forbidden-paths": (row) => `Never accept changes to ${(row?.forbiddenGlobs ?? []).join(", ") || "forbidden paths"}`,
   focused: () => "Check the change is focused on one thing",
   docs: () => "Check docs are updated when behavior changes",
 };

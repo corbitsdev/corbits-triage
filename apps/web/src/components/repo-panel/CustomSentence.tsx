@@ -39,7 +39,7 @@ export default function CustomSentence({ check, draft, disabled, edit, reason, s
   return (
     <div className={reason || refused ? "sentence custom invalid" : "sentence custom"} id={`rp-custom-${check.id}`}>
       <span className="txt">
-        <input className="val name" aria-label="Check name" disabled={disabled} value={form.name} onChange={(event) => change({ ...form, name: event.target.value })} />
+        <input className="val name" aria-label="Rule name" disabled={disabled} value={form.name} onChange={(event) => change({ ...form, name: event.target.value })} />
         <CheckParams form={form} roles={Object.keys(draft.policy.roles)} disabled={disabled} onChange={change} />
         {stat ? <small>{stat}</small> : null}
         {reason ? <small className="reason">{reason}</small> : null}

@@ -87,7 +87,7 @@ export function Welcome() {
         {step === "intro" ? (
           <div className="welcome-body">
             <h1 id="welcome-title" tabIndex={-1}>Triage scores the pull request in front of you</h1>
-            <p>Its score, what to do next and the checks behind it, read from GitHub as you. Setup takes a minute.</p>
+            <p>Its score, what to do next and the rules behind it, read from GitHub as you. Setup takes a minute.</p>
             <div className="row"><Button size="lg" onClick={go("pin")}>Get started</Button></div>
           </div>
         ) : null}
@@ -107,7 +107,7 @@ export function Welcome() {
         {step === "model" ? (
           <div className="welcome-body">
             <h1 id="welcome-title" tabIndex={-1}>Add a decision model</h1>
-            <p>Optional. Answers the checks that need judgement, like whether a change is focused. You can add one later in Settings.</p>
+            <p>Optional. Answers the rules that need judgement, like whether a change is focused. You can add one later in Settings.</p>
             <DecisionModelForm current={model} variant="primary" onSaved={go("token")} />
             <div className="row">
               {model ? <Button size="lg" onClick={go("token")}>Continue</Button> : <button type="button" className="text-button" onClick={go("token")}>Skip for now</button>}

@@ -36,7 +36,7 @@ export default function CheckPopover({ id, draft, stats, onClose }: CheckPopover
       <div className="pop-h"><b>{checkName(pack, id)}</b><EvalBadge evaluation={evaluation} /></div>
       <p className="hint">{METHOD[evaluation]}</p>
       {ran && runs > 0 ? <p className="hint">Passed {ran.pass} of {runs} this week</p> : null}
-      {!BUILT_IN_CHECK_NAMES.has(id) && <button type="button" className="linkish" onClick={jump}>Change it in Checks</button>}
+      {!BUILT_IN_CHECK_NAMES.has(id) && <button type="button" className="linkish" onClick={jump}>Change it in Rules</button>}
     </div>
   );
 }

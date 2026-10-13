@@ -63,11 +63,11 @@ type Picked = { branch: Branch; dos: Do[]; reason: string } | { skipped: string 
 function pick(action: Action, { checks, pack }: ActionInput): Picked {
   if ("always" in action.branches) return { branch: "always", dos: action.branches.always, reason: "Always applies." };
   const every = action.checks.includes(ALL_CHECKS);
-  if (every && !checks.length) return { skipped: "Every check is off in this pack." };
+  if (every && !checks.length) return { skipped: "Every rule is off in this policy." };
   const ids = every ? checks.map((c) => c.check) : action.checks;
   const results = ids.map((id) => ({ name: checkName(pack, id), result: checks.find((c) => c.check === id)?.result }));
   const off = results.filter((r) => r.result === undefined);
-  if (off.length) return { skipped: `${joined(off.map((r) => r.name))} ${off.length === 1 ? "is" : "are"} off in this pack.` };
+  if (off.length) return { skipped: `${joined(off.map((r) => r.name))} ${off.length === 1 ? "is" : "are"} off in this policy.` };
   const failed = results.filter((r) => r.result === "fail").map((r) => r.name);
   const unsure = results.filter((r) => r.result === "unconfirmed").map((r) => r.name);
   if (failed.length) return { branch: "no", dos: action.branches.no ?? [], reason: `${joined(failed)} failed.` };
@@ -97,7 +97,7 @@ function people(task: Extract<Do, { kind: "assign" | "request-review" }>, { fact
       return { unresolved: "codeowners" };
     case "role": {
       const role = roles[t.role];
-      if (!role) throw new Error(`role ${t.role} is not defined in the repository policy`);
+      if (!role) throw new Error(`role ${t.role} is not defined in the repository settings`);
       return { users: role.users ?? [], teams: (role.teams ?? []).map((team) => ownTeam(team, facts.repo)) };
     }
   }

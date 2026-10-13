@@ -46,7 +46,7 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   - **Integration routes** under `/api/integrations/`: sign-in methods,
     GitHub App setup and installation sync, open pull requests, details,
     actions, Dos, previews and single pull request triage, latest verdicts,
-    triage stats and timeline, the check pack schema, invitations, and
+    triage stats and timeline, the policy schema, invitations, and
     workflow deploy and versions. Each is described in `/openapi.json`. Pull request
     actions are synchronous: a maintainer's click must not wait on a
     workflow spin-up.
@@ -74,19 +74,19 @@ deployment ids are configured anywhere.
 
 ## Triage pipeline
 
-Every run is the same steps; the repository's check pack decides what each
+Every run is the same steps; the repository's policy decides what each
 one does.
 
 1. **facts**: reads the pull requests, their files, reviews, CI, the
    repository's docs and its contribution rules from GitHub.
-2. **rules**: runs the rule checks and builds the decision-model questions.
+2. **rules**: runs the rules over GitHub data and builds the decision-model questions.
 3. **route**: skips the judge when no question needs asking.
 4. **judge**: one System One call per request of questions that no carried
    answer matches. The only step that infers; see
    [DECISION_MODEL.md](DECISION_MODEL.md).
 5. **parts**: only when focused fails, one question per file of each failing
    slice through a second judge map; no call otherwise.
-6. **evaluate**: combines rule results and answers into checks, a verdict and
+6. **evaluate**: combines rule results and answers into rules' results, a verdict and
    each action's branch.
 7. **execute**: runs the Dos whose kind the `pr-triage` role holds on GitHub.
    Every other Do is held in the verdict (`held: true`) and the run finishes.
@@ -96,7 +96,7 @@ one does.
 The hub reads which kinds the `pr-triage` system role is granted, `invoke` on
 `triage-do:<kind>:<owner>/<name>`, and mails them with each trigger; the run
 trusts them only from the hub's sender. Close on an Unsure verdict, and close
-or an agent from an action without checks, are always held. At start the hub
+or an agent from an action without rules, are always held. At start the hub
 grants the role comment and labels on each repository still set to post
 automatically, then drops that setting. A person holding the same grant approves a held Do, or one the run failed or could
 not write, from the inbox: the hub checks the grants below and mails the
@@ -116,7 +116,7 @@ step here.
 ## Tenancy and authority
 
 A user's workspace is an Interchange tenant; repositories are tenant config
-(`corbitsTriage.repos`) plus a per-repository check pack and triage state,
+(`corbitsTriage.repos`) plus a per-repository policy and triage state,
 both stored as tenant artifacts. Runs act under the grants materialized for
 their deployment. GitHub access is a tenant credential bound to the GitHub
 tool packages: the vault holds the App as `{"appId","privateKey"}` under
@@ -130,9 +130,9 @@ behalf and never return it; writes are pull request actions and triage; approvin
 A pull request action from the portal that is a Do kind (comment, labels,
 assign, request review, approve, request changes, close) also checks `invoke`
 on `triage-do:<kind>:<owner>/<name>`, the repository name in lowercase; the
-admin role holds `triage-do:*` from GitHub setup, and owners hold every grant. In a run, the repository's pack decides when to
+admin role holds `triage-do:*` from GitHub setup, and owners hold every grant. In a run, the repository's policy decides when to
 approve, and only a head ready to merge with CI green is approved, from the
-newest verdict. Where triage mirrors and its pack approves, a settled head
+newest verdict. Where triage mirrors and its policy approves, a settled head
 that may not be approved dismisses the approvals the approve Do made; one
 dismissed on a head is not made again on it. Where it does not mirror, its
 approvals are not dismissed.
@@ -142,7 +142,7 @@ Hub routes that reach GitHub for the portal use the same adapter.
 
 - Interchange's own tables, artifacts and run logs hold tenants, credentials,
   deployments and runs.
-- Artifacts: the check pack (`check-pack/{owner}/{repo}`) and the triage state
+- Artifacts: the policy (`check-pack/{owner}/{repo}`) and the triage state
   (`triage-state/{owner}/{repo}`) per repository. The triage state holds each
   open head's status (`new`, `queued`, `running`, `triaged`, `failed`,
   `stale`) and attempts.

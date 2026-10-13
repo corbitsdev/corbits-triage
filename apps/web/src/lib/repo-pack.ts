@@ -97,7 +97,7 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
       } catch (cause) {
         if (cancelled) return;
         signOutWhenRejected(cause);
-        setError(`Could not load the check pack. ${errorText(cause)}`);
+        setError(`Could not load the policy. ${errorText(cause)}`);
         setStatus("failed");
       }
     }

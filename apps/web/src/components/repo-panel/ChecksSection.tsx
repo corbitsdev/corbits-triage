@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Switch } from "@corbits/react-ui";
-import { applyRecommended, CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type CheckRef, type IssueTracker, type TriageStats } from "@corbits/triage-contracts";
+import { applyRecommended, CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type TriageStats } from "@corbits/triage-contracts";
 import { checkFormOfKind, customCheckOf, nextCustomId } from "../../lib/action-builder.ts";
 import { catalogValue, checkOn, setCatalogCheck, upsertCustom, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
 import { evaluationOf, type CheckKind } from "../../lib/pack-prose.ts";
@@ -19,11 +19,12 @@ const TRACKERS: Array<{ value: IssueTracker; label: string }> = [
 
 /** Each check in words, in the order the panel lists them. */
 const SENTENCES: Record<CatalogId, string> = {
-  size: "Flag pull requests larger than the file or line limit",
-  issue: "Require a linked issue",
-  conflicts: "Flag merge conflicts with the base branch",
-  ci: "CI must pass before merge",
-  paths: "Never accept changes to forbidden paths",
+  "max-files-changed": "Flag pull requests over the files limit",
+  "max-lines-changed": "Flag pull requests over the lines limit",
+  "linked-issue": "Require a linked issue",
+  "no-merge-conflicts": "Flag merge conflicts with the base branch",
+  "ci-green": "CI must pass before merge",
+  "no-forbidden-paths": "Never accept changes to forbidden paths",
   focused: "Check the change is focused on one thing",
   docs: "Check docs are updated when behavior changes",
 };
@@ -33,7 +34,7 @@ type ChecksSectionProps = { draft: RepoDraft; saved: CheckPack; stats: TriageSta
 /** Every check, built in or the repository's own, as one sentence with its values inline, switched on or off for the verdict. */
 export default function ChecksSection({ draft, saved, stats, disabled, edit, problem }: ChecksSectionProps) {
   const pack = draft.pack;
-  const on = [...CATALOG_IDS, ...pack.custom.map((row) => row.id as CheckRef)].filter((id) => checkOn(pack, id)).length;
+  const on = [...CATALOG_IDS, ...pack.custom.map((row) => row.id)].filter((id) => checkOn(pack, id)).length;
   const [picking, setPicking] = useState(false);
   const [added, setAdded] = useState<string | null>(null);
   const where = problem?.where;
@@ -48,8 +49,9 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
   }, [added]);
 
   function add(kind: CheckKind) {
-    const id = nextCustomId(pack);
-    edit((current) => upsertCustom(current, customCheckOf(checkFormOfKind(kind), id)));
+    const form = checkFormOfKind(kind);
+    const id = nextCustomId(pack, form.name);
+    edit((current) => upsertCustom(current, customCheckOf(form, id)));
     setPicking(false);
     setAdded(id);
   }
@@ -63,18 +65,20 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
   }
 
   function toggle(id: CatalogId, enabled: boolean) {
-    set(id, id === "issue" && enabled && pack.checks.issue?.tracker === "off" ? { enabled, tracker: RECOMMENDED_ISSUE.tracker } : { enabled });
+    set(id, id === "linked-issue" && enabled && pack.checks["linked-issue"]?.tracker === "off" ? { enabled, tracker: RECOMMENDED_ISSUE.tracker } : { enabled });
   }
 
-  const storedTracker = catalogValue(pack, "issue", "tracker");
+  const storedTracker = catalogValue(pack, "linked-issue", "tracker");
   const tracker = storedTracker === undefined || storedTracker === "off" ? RECOMMENDED_ISSUE.tracker : storedTracker;
 
   /** The sentence with its values inline; the others read as they are. */
   function words(id: CatalogId): ReactNode {
     switch (id) {
-      case "size":
-        return <>Flag pull requests over <span className="nw">{count(id, "maxFiles", "Most files", 1)} files</span> or <span className="nw">{count(id, "maxLines", "Most lines", 1)} lines changed</span></>;
-      case "issue":
+      case "max-files-changed":
+        return <>Flag pull requests over <span className="nw">{count(id, "maxFiles", "Most files", 1)} files changed</span></>;
+      case "max-lines-changed":
+        return <>Flag pull requests over <span className="nw">{count(id, "maxLines", "Most lines", 1)} lines changed</span></>;
+      case "linked-issue":
         return (
           <>Require a linked issue from
             <select className="val" aria-label="Issue tracker" disabled={disabled} value={tracker} onChange={(event) => set(id, { tracker: event.target.value as IssueTracker })}>
@@ -82,7 +86,7 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
             </select>
           </>
         );
-      case "paths":
+      case "no-forbidden-paths":
         return <>Never accept changes to <TokenList values={catalogValue(pack, id, "forbiddenGlobs") ?? []} noun="path" placeholder="path/**" mono disabled={disabled} onChange={(forbiddenGlobs) => set(id, { forbiddenGlobs })} /></>;
       default:
         return SENTENCES[id];
@@ -108,7 +112,7 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
 
   return (
     <section className="rs" aria-labelledby="rs-checks" id="rp-checks">
-      <h3 id="rs-checks">Checks <span className="n">{on} on</span></h3>
+      <h3 id="rs-checks">Rules <span className="n">{on} on</span></h3>
       <p>The rules Triage applies to every pull request. <button type="button" className="linkish" disabled={disabled} onClick={() => edit((current) => ({ ...current, pack: applyRecommended(current.pack) }))}>Reset to recommended</button></p>
       {reason ? <p className="reason">{reason}</p> : null}
       <div className="sentences">
@@ -120,8 +124,8 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
       {picking ? <CheckKindPicker disabled={disabled} onPick={add} onCancel={() => setPicking(false)} /> : (
         <div className="more">
           {pack.custom.length >= CUSTOM_CHECK_CAP
-            ? <p className="hint">Up to {CUSTOM_CHECK_CAP} checks of your own. Remove one to add another.</p>
-            : <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => setPicking(true)}>Add a check</Button>}
+            ? <p className="hint">Up to {CUSTOM_CHECK_CAP} rules of your own. Remove one to add another.</p>
+            : <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => setPicking(true)}>Add a rule</Button>}
         </div>
       )}
     </section>

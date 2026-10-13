@@ -576,7 +576,7 @@ export default function Settings() {
             {canManageGithub && (
               <>
                 <Button type="button" onClick={() => void chooseOnGithub()}>Choose repositories on GitHub</Button>
-                <p className="field-help">GitHub’s installer. New repos come back here for check setup.</p>
+                <p className="field-help">GitHub’s installer. New repos come back here for rule setup.</p>
               </>
             )}
             {deniedRepos && <DeniedNotice section="repositories" />}

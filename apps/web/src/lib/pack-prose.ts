@@ -33,7 +33,7 @@ export const EVENT_NAMES: Record<ActionEvent, string> = {
   merged: "merged",
 };
 
-export const ALL_CHECKS_NAME = "all checks";
+export const ALL_CHECKS_NAME = "all rules";
 
 export const DO_NAMES: Record<ActionKind, string> = {
   labels: "Add labels",
@@ -143,20 +143,23 @@ export function actionLabel(pack: CheckPack, id: string): string {
 }
 
 /**
- * A contract or draft message as the panel shows it: actions by their place in the list, custom checks by name.
- * An id the pack does not hold yet is the action or check being built.
+ * A contract or draft message as the panel shows it: actions by their place in the list, custom rules by name.
+ * An id the policy does not hold yet is the action or rule being built.
  */
 export function shownReason(reason: string, pack: CheckPack): string {
   function action(_: string, id: string): string {
     return actionLabel(pack, id);
   }
-  function namedCheck(_: string, id: string): string {
-    const check = pack.custom.find((row) => row.id === id);
-    return check ? `Check ${quoted(check.name)}` : "This check";
+  function namedRule(_: string, id: string): string {
+    const rule = pack.custom.find((row) => row.id === id);
+    return rule ? `Rule ${quoted(rule.name)}` : "This rule";
   }
-  function check(id: string): string {
+  function referenced(_: string, only: string | undefined, id: string): string {
     const found = pack.custom.find((row) => row.id === id);
-    return found ? quoted(found.name) : id;
+    return `checks${only ?? ""} ${found ? quoted(found.name) : id}`;
   }
-  return reason.replace(/\bAction (action-\d+)\b/g, action).replace(/\bCustom check (custom-\d+)\b/g, namedCheck).replace(/\bcustom-\d+\b/g, check);
+  return reason
+    .replace(/\bAction (action-\d+)\b/g, action)
+    .replace(/\bCustom rule ([a-z0-9]+(?:-[a-z0-9]+)*)\b/g, namedRule)
+    .replace(/\bchecks( only)? ([a-z0-9]+(?:-[a-z0-9]+)*)\b/g, referenced);
 }

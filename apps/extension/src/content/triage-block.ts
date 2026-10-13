@@ -5,7 +5,7 @@ import { githubHref } from "../github-href.ts";
 import type { PageAction } from "../page-actions.ts";
 import type { PrRef } from "../pr.ts";
 import type { Applied, RunState } from "../storage.ts";
-import { checkLabel, checkReason, shownChecks, summaryMarkdown } from "../summary.ts";
+import { checkReason, shownChecks, summaryMarkdown } from "../summary.ts";
 import { nextStep, stateName, toneOf, type TriageView } from "../view.ts";
 import type { SeedSpot } from "./seeds.ts";
 
@@ -134,7 +134,7 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
     const open = shown.filter((check) => check.result !== "pass");
     const passed = shown.length - open.length;
     const list = node("ul", "tb-checks");
-    list.setAttribute("aria-label", "Checks to look at");
+    list.setAttribute("aria-label", "Rules to look at");
     for (const check of open) {
       const item = node("li", "tb-check");
       item.dataset.result = check.result;
@@ -144,13 +144,13 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
       mark.append(icon(check.result === "fail" ? "fail" : "unsure"));
       const reason = checkReason(check);
       const text = node("span", "tb-check-text");
-      text.title = `${checkLabel(check)}: ${reason}`;
-      text.append(node("b", "", checkLabel(check)), document.createTextNode(` ${reason}`));
+      text.title = `${check.name}: ${reason}`;
+      text.append(node("b", "", check.name), document.createTextNode(` ${reason}`));
       item.append(mark, text);
       list.append(item);
     }
     const parts: HTMLElement[] = open.length ? [list] : [];
-    if (passed) parts.push(node("p", "tb-meta", open.length ? `${passed} passed` : `All ${passed} checks passed`));
+    if (passed) parts.push(node("p", "tb-meta", open.length ? `${passed} passed` : `All ${passed} rules passed`));
     return parts;
   }
 
