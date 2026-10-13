@@ -1,13 +1,10 @@
 import { deriveState, type PrFacts } from "../packages/triage-workflows/src/logic/checks.js";
-import { classifySignals, type TextSignals } from "../packages/triage-workflows/src/logic/signals.js";
 import { prepareQualityEvaluation } from "../packages/triage-workflows/src/logic/quality.js";
 import { renderVerdict, type RenderOutput } from "../packages/triage-workflows/src/logic/render.js";
 import { DEFAULT_MERGE_THRESHOLD } from "../packages/triage-contracts/src/check-pack.js";
 import type { PRRecord } from "../packages/triage-contracts/src/types.js";
 
-export { classifySignals, type TextSignals };
-
-export function toFacts(pr: PRRecord): PrFacts {
+function toFacts(pr: PRRecord): PrFacts {
   return {
     repo: pr.repo,
     number: pr.id,

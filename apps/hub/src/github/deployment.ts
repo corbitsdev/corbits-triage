@@ -120,7 +120,7 @@ export async function resolveLiveDeployment(
   return newestLive(await resolveLiveDeployments(db, tenantId, definitionName)) ?? null;
 }
 
-export type PackageVersion = { name: string; version: string };
+type PackageVersion = { name: string; version: string };
 
 function rootOf(closure: ToolPackageManifest): PackageVersion {
   const [root, ...rest] = closure.topLevel;

@@ -5,52 +5,18 @@
 // supplies the spawn so the child env is built from validated hub config.
 import fs from "node:fs/promises";
 import path from "node:path";
+import type {
+  DestroySidecarRequest,
+  DestroySidecarResult,
+  EnsureSidecarRequest,
+  EnsureSidecarResult,
+  SidecarProvisioner,
+} from "@intx/hub-sessions";
 import type { LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
-
-// Minimal structural mirror of the stock @intx/hub-sessions sidecar
-// allocation contract (see the `sidecar-allocation/contracts` module of the
-// npm 0.4.0 package). Defined locally so this prod file depends on neither
-// the vendor test harness nor a new package dependency; the shapes stay
-// assignable to the stock contract by construction.
-export interface EnsureSidecarRequest {
-  readonly signal?: AbortSignal;
-  readonly allocationId: string;
-  readonly generation: number;
-  readonly tenantId: string;
-  readonly anchorRunId: string;
-  readonly sidecarId: string;
-  readonly token: string;
-  readonly hubWebSocketUrl: string;
-}
-
-export interface DestroySidecarRequest {
-  readonly signal?: AbortSignal;
-  readonly allocationId: string;
-  readonly generation: number;
-  readonly sidecarId: string;
-  readonly externalRef?: string;
-}
-
-export type EnsureSidecarResult =
-  | { readonly kind: "accepted"; readonly externalRef?: string }
-  | { readonly kind: "rejected"; readonly code: string; readonly message: string; readonly retryable: boolean };
-
-export type DestroySidecarResult =
-  | { readonly kind: "destroyed" }
-  | { readonly kind: "rejected"; readonly code: string; readonly message: string; readonly retryable: boolean };
-
-export interface SidecarProvisioner {
-  readonly id: string;
-  readonly apiVersion: 1;
-  readonly bindingFingerprint: string;
-  readonly capabilities: readonly never[];
-  ensure(request: EnsureSidecarRequest): Promise<EnsureSidecarResult>;
-  destroy(request: DestroySidecarRequest): Promise<DestroySidecarResult>;
-}
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
 
-export interface LocalSidecarProcess {
+interface LocalSidecarProcess {
   readonly pid: number;
   readonly exited: Promise<number>;
   kill(signal: NodeJS.Signals): void;
@@ -69,7 +35,7 @@ export type CreateLocalProcessSidecarProvisionerOpts = {
 };
 
 
-export type IsLocalSidecarLive = (manifest: LocalSidecarManifest) => Promise<boolean>;
+type IsLocalSidecarLive = (manifest: LocalSidecarManifest) => Promise<boolean>;
 
 export interface LocalProcessSidecarProvisioner {
   readonly provisioner: SidecarProvisioner;

@@ -8,7 +8,7 @@ export type ModelCheck = typeof MODEL_CHECKS[number];
 export type Expected = Record<ModelCheck, Outcome>;
 
 /** What a reviewer decided about a merged pull request; snapshot.ts derives each case's expectations from it. */
-export interface Label {
+interface Label {
   needsDocs: boolean;
   note: string;
 }

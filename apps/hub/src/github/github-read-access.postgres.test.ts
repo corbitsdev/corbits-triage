@@ -6,7 +6,7 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
 import { emptyPack, type ActionKind } from "@corbits/triage-contracts";
-import { doEffectId } from "../../../../packages/triage-workflows/src/logic/actions.js";
+import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { guardedApp } from "../integrations/test-app.js";
 import { createGithubHeldDos } from "./held-dos.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./open-pulls.js";

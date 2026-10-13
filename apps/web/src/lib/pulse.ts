@@ -2,10 +2,10 @@ import type { PrItem } from "./hub-api.ts";
 import { repoOf, waitsOn, type OpenItem } from "./inbox-view.ts";
 
 /** Waiting on the maintainer longer than this makes a pull request stuck. `waitingSince` restarts with every new verdict, as in the inbox's age filter. */
-export const STUCK_MS = 3 * 86_400_000;
+const STUCK_MS = 3 * 86_400_000;
 
 /** A pull request as it stood when the last visit ended; `you` is whether it waited on the maintainer. */
-export type VisitPull = { title: string | null; you: boolean };
+type VisitPull = { title: string | null; you: boolean };
 
 /**
  * The open pull requests when the last visit ended. GitHub gives no opened or closed time, so what changed is the difference to this.

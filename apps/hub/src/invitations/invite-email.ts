@@ -1,7 +1,7 @@
 import { createTransport } from "nodemailer";
 import type { EmailSettings } from "../env.js";
 
-export type InviteEmail = { to: string; workspace: string; link: string; expiresAt: Date };
+type InviteEmail = { to: string; workspace: string; link: string; expiresAt: Date };
 
 export type SendInviteEmail = (email: InviteEmail) => Promise<void>;
 

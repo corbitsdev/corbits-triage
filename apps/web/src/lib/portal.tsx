@@ -100,7 +100,7 @@ const GITHUB_ACTION_DONE: Record<PrGithubWriteInput["action"], string> = {
   close: "Closed",
 };
 
-export const PORTAL_QUERY_KEY = ["portal"] as const;
+const PORTAL_QUERY_KEY = ["portal"] as const;
 export const RUN_IDS_QUERY_KEY = "run-ids";
 export const RUN_LOG_QUERY_KEY = "run-log";
 export const TRIAGE_VERDICTS_QUERY_KEY = "triage-verdicts";
@@ -143,7 +143,7 @@ function canChange(query: Query): boolean {
   return !isFinishedRunLogQuery(query);
 }
 
-export async function invalidateChangeable(queryClient: QueryClient, queryKeys: ReadonlyArray<readonly unknown[]>): Promise<void> {
+async function invalidateChangeable(queryClient: QueryClient, queryKeys: ReadonlyArray<readonly unknown[]>): Promise<void> {
   await Promise.all(queryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, predicate: canChange })));
 }
 

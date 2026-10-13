@@ -1,8 +1,8 @@
 // Decides, from what GitHub and the run logs say now, which open pull requests
 // to queue again. Pure, so every recovery path is decided in one place.
 import { PR_TRIAGE_STUCK_RUN_MS, type PrTriageRow } from "@corbits/triage-contracts";
-import { MODEL_NOT_ASKED } from "../../../../packages/triage-workflows/src/logic/settled.js";
-import type { Judged } from "../../../../packages/triage-workflows/src/logic/item.js";
+import { MODEL_NOT_ASKED } from "@corbits/triage-workflows/logic/settled";
+import type { Judged } from "@corbits/triage-workflows/logic/item";
 
 export type OpenPr = { number: number; headSha: string; updatedAt: string; draft: boolean };
 
@@ -66,7 +66,7 @@ export const DEFAULT_RECONCILE_POLICY: ReconcilePolicy = {
   maxInFlight: 5,
 };
 
-export type RepoPlanInput = { name: string; prs: readonly OpenPr[]; rows: readonly PrTriageRow[] };
+type RepoPlanInput = { name: string; prs: readonly OpenPr[]; rows: readonly PrTriageRow[] };
 
 export type TenantPlanInput = {
   repos: readonly RepoPlanInput[];
@@ -99,7 +99,7 @@ function ms(iso: string): number {
   return new Date(iso).getTime();
 }
 
-export function backoffMs(attempts: number, policy: ReconcilePolicy): number {
+function backoffMs(attempts: number, policy: ReconcilePolicy): number {
   if (attempts === 0) return 0;
   return Math.min(policy.backoffBaseMs * 2 ** (attempts - 1), policy.backoffMaxMs);
 }

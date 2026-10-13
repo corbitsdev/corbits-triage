@@ -126,7 +126,7 @@ export function isComposerKind(kind: PaneKind): kind is ComposerKind {
 type GithubWrite = (input: PrGithubWriteInput) => Promise<PrGithubWriteResult>;
 
 /** `replySent` records a reply the hub confirmed it wrote, so the row shows it posted until a new verdict; `approveDo` approves a held pack Do by reference. */
-export type PaneIo = { write: GithubWrite; replySent: (item: PrItem) => void; approveDo: (ref: HeldDoRef) => Promise<void> };
+type PaneIo = { write: GithubWrite; replySent: (item: PrItem) => void; approveDo: (ref: HeldDoRef) => Promise<void> };
 
 export type NumberedItem = PrItem & { number: number };
 
