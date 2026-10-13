@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { PR_TRIAGE_STUCK_RUN_MS } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, TriageVerdicts } from "@corbits/triage-contracts";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { listRepoPulls, type OpenPullsCache, type OpenPullsRead } from "./open-pulls.js";
 import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
@@ -16,7 +16,7 @@ import type { Member } from "../integrations/app.js";
 import { runKeyNumber, type ObservedRun } from "./reconcile-plan.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
 import type { TenantObservation, TenantObserver, TenantVersions } from "./tenant-observer.js";
-import { VerdictDetail, type PullRef, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
+import { type PullRef, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_VERDICTS_PATH = "/api/integrations/triage-verdicts";
 
@@ -48,52 +48,8 @@ const PullQuery = type({
   "number?": type("string.integer.parse").to("1 <= number.integer <= 2147483647"),
 });
 
-const Verdict = type({
-  runId: "string",
-  at: "string",
-  headSha: "string",
-  settled: "boolean",
-  state: "string",
-  actor: "string",
-  humanGated: "boolean",
-  degraded: "string | null",
-  commented: "boolean",
-  checks: type({ check: "string", result: "string" }).array(),
-  /** Null on verdicts recorded before it was, whose run log the hub could not read again. */
-  detail: VerdictDetail.or("null"),
-});
-
-/**
- * The pull request's latest run, when it has not completed: still going, ended early, or running longer than any run can.
- * `unknown` until the hub read the workspace's live logs since it started, when a run may be going unseen.
- */
-const Run = type({
-  runId: "string",
-  startedAt: "string",
-  status: "'running' | 'failed' | 'cancelled' | 'stuck'",
-}).or({ status: "'unknown'" });
-type Run = typeof Run.infer;
-
-const Pull = type({
-  repo: "string",
-  number: "number",
-  /** When the newest run started by author activity started. */
-  activityAt: "string | null",
-  verdict: Verdict.or("null"),
-  run: Run.or("null"),
-});
-type Pull = typeof Pull.infer;
-
-export const TriageVerdicts = type({
-  pulls: Pull.array(),
-  /** Connected repositories with any verdict recorded or a run in a live log. */
-  triaged: "string[]",
-  /** Connected repositories with a verdict in the last 14 days or a run in a live log. */
-  active: "string[]",
-  /** Whether the decision model scored any verdict. */
-  scored: "boolean",
-});
-export type TriageVerdicts = typeof TriageVerdicts.infer;
+type Pull = TriageVerdicts["pulls"][number];
+type Run = NonNullable<Pull["run"]>;
 
 export type TriageVerdictsDeps = PortalCredentialDeps & {
   verdicts: Pick<VerdictRecordStore, "latest" | "latestSince" | "latestFor" | "triggeredAt" | "reposSince" | "anyScored">;

@@ -1,15 +1,10 @@
 // The caller's own sign-ins, without their tokens: with bearer auth a raw session token is a credential.
-import { type } from "arktype";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { failure } from "./github/portal-credential.js";
 import type { Caller } from "./integrations/app.js";
 
 export const SESSIONS_PATH = "/api/integrations/sessions";
-
-export const SessionList = type({
-  sessions: type({ id: "string", userAgent: "string | null", createdAt: "string", expiresAt: "string", isCurrent: "boolean" }).array(),
-});
 
 export function createSessions(db: DB["db"]) {
   async function list(current: Caller): Promise<Response> {

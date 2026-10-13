@@ -168,6 +168,7 @@ export default function Repositories() {
           {denied && <DeniedNotice section="repositories" />}
           {error && <p role="alert" className="rt-note error">{error}</p>}
           {sync.error && <p role="alert" className="rt-note error">Could not read your repositories from GitHub. {sync.error.message}</p>}
+          {verdicts.error && <p role="alert" className="rt-note error">Could not read triage results. {verdicts.error.message}</p>}
           {sync.isFetching && repos.length === 0 && <p className="rt-empty" role="status">Reading your repositories from GitHub…</p>}
           {repos.length === 0 && !denied && !sync.isFetching && <p className="rt-empty">No repositories yet. Use Manage repositories on GitHub to add some.</p>}
           {rows.length > 0 && (

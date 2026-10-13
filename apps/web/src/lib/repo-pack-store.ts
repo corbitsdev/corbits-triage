@@ -1,7 +1,7 @@
 import type { Transport } from "@intx/hub-client";
-import type { CheckPack } from "@corbits/triage-contracts";
+import type { CheckPack, TriageStats } from "@corbits/triage-contracts";
 import { writeCheckPack } from "./check-pack.ts";
-import { loadRepoCheckPack, loadRepoPolicy, loadTriageStats, saveRepoSettings, type CheckPackArtifact, type TriageStats } from "./hub-api.ts";
+import { loadRepoCheckPack, loadRepoPolicy, loadTriageStats, saveRepoSettings, type CheckPackArtifact } from "./hub-api.ts";
 import type { DraftPolicy } from "./pack-draft.ts";
 
 /** The artifact a write must land on. */

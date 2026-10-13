@@ -7,12 +7,15 @@ type Source = { logs?: RunLog[]; runs?: HubRun[] };
 
 const catchingUp = (source: Source, repo: string) => isRepoCatchingUp(source.logs ?? [], source.runs ?? [], new Set(), repo);
 
-const backlogRun = (status: string): HubRun => ({
+const backlogRun = (status: HubRun["status"]): HubRun => ({
   id: "run-backlog",
   definitionId: "def-backlog",
   definitionName: "pr-triage-historical",
+  tenantId: "tnt",
+  address: "run-backlog",
   status,
   createdAt: "2026-03-10T00:00:00.000Z",
+  updatedAt: "2026-03-10T00:00:00.000Z",
 });
 
 const backlogLog = (repo: string): RunLog => ({
@@ -33,20 +36,8 @@ describe("isRepoCatchingUp", () => {
   test("H1: running listener parent does not keep a completed 0-PR child catching up", () => {
     const source = {
       runs: [
-        {
-          id: "deploy-backlog",
-          definitionId: "def-backlog",
-          definitionName: "pr-triage-historical",
-          status: "running",
-          createdAt: "2026-03-10T00:00:00.000Z",
-        },
-        {
-          id: "child-widgets",
-          definitionId: "def-backlog",
-          definitionName: "pr-triage-historical",
-          status: "completed",
-          createdAt: "2026-03-10T00:01:00.000Z",
-        },
+        { ...backlogRun("running"), id: "deploy-backlog" },
+        { ...backlogRun("stopped"), id: "child-widgets", createdAt: "2026-03-10T00:01:00.000Z" },
       ],
       logs: [
         {

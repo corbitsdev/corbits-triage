@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { VerdictDetail } from "@corbits/triage-contracts";
 import { ApiError, type Transport } from "@intx/hub-client";
 import { createHoldQueue, HOLD_MS } from "./held-actions.ts";
 import { approveHeldDo, projectQueue, type PrItem } from "./hub-api.ts";
@@ -15,7 +16,7 @@ function step(kind: string, target: Record<string, unknown>, index = 0): Record<
 
 /** A pr-triage verdict as the hub's triage-verdicts route answers it, read back the way the inbox reads it. */
 function verdict(actions: unknown[]): PrItem {
-  const detail = { labels: ["triage:needs-decision"], feedback: "Please split this.", actions };
+  const detail = VerdictDetail.assert({ labels: ["triage:needs-decision"], feedback: "Please split this.", actions });
   const recorded = {
     runId: "run-8", at: NOW, headSha: "abc", settled: true, state: "needs-decision", actor: "maintainer", humanGated: true,
     degraded: null, commented: false, checks: [], detail,
@@ -70,7 +71,7 @@ describe("pendingDos", () => {
   test("Dos written or not held, skipped actions and steps, unresolved targets, agents and hidden Dos are not offered; a failed automatic Do is", () => {
     const dos = pendingDos(verdict([
       { id: "off", skipped: true, reason: "CI is off in this pack." },
-      { ...step("assign", { users: ["ops"] }), target: undefined, skipped: true, reason: "Role ops is not defined." },
+      { id: "route", branch: "no", index: 0, effectId: "effect-0", kind: "assign", held: true, skipped: true, reason: "Role ops is not defined." },
       step("request-review", { unresolved: "codeowners" }),
       step("labels", { unresolved: "derive", from: "paths" }),
       step("agent", { prompt: "Review it", tools: [] }),

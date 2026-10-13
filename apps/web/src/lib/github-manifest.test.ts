@@ -33,8 +33,8 @@ describe("GitHub App manifest browser handoff", () => {
       subscribe: () => () => {},
     };
     const existing: HubCredential[] = [
-      { id: "crd_app", name: "github", status: "active", providerId: "prv" },
-      { id: "crd_hook", name: "github-hook", status: "active", providerId: "prv" },
+      { id: "crd_app", tenantId: "tnt_one", name: "github", type: "other", status: "active", providerId: "prv", createdAt: "2026-03-10T00:00:00.000Z", updatedAt: "2026-03-10T00:00:00.000Z" },
+      { id: "crd_hook", tenantId: "tnt_one", name: "github-hook", type: "other", status: "active", providerId: "prv", createdAt: "2026-03-10T00:00:00.000Z", updatedAt: "2026-03-10T00:00:00.000Z" },
     ];
     await expect(saveExistingGithubApp({
       tenantId: "tnt_one",

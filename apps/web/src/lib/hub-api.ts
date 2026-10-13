@@ -6,7 +6,8 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
+import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
+import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -94,61 +95,12 @@ export function githubAppSlugFromCredentials(credentials: HubCredential[]): stri
   return slug || null;
 }
 
-export type HubCredential = {
-  id: string;
-  name: string;
-  status: string;
-  providerId: string;
-  metadata?: Record<string, unknown> | null;
-};
-
-export type HubGrant = {
-  id: string;
-  resource: string;
-  action: string;
-  effect: string;
-  origin?: string | null;
-  principalId?: string | null;
-  principalName?: string | null;
-  roleId?: string | null;
-  roleName?: string | null;
-};
-
-export type HubPrincipal = {
-  id: string;
-  kind: string;
-  status: string;
-  displayName: string;
-  email?: string;
-  roles: Array<{ id: string; name: string }>;
-};
-
-export type HubRole = {
-  id: string;
-  name: string;
-  isSystem?: boolean;
-};
-
-export type HubApproval = {
-  id: string;
-  runId: string;
-  anchorRunId: string;
-  status: string;
-  scope: string | null;
-  toolDefinition: Record<string, unknown> | null;
-  toolArguments?: Record<string, unknown> | null;
-  correlationId: string;
-  createdAt?: string;
-  resolvedAt?: string | null;
-};
-
-export type HubRun = {
-  id: string;
-  definitionId: string;
-  definitionName: string;
-  status: string;
-  createdAt: string;
-};
+export type HubCredential = typeof CredentialResponse.infer;
+export type HubGrant = typeof GrantResponse.infer;
+export type HubPrincipal = typeof PrincipalResponse.infer;
+export type HubRole = typeof RoleResponse.infer;
+export type HubApproval = typeof ApprovalResponse.infer;
+export type HubRun = typeof WorkflowRunResponse.infer;
 
 export type RunLog = {
   runId: string;
@@ -510,12 +462,8 @@ export async function resolveWorkspace(transport: Transport, chosen: string | nu
   return chooseWorkspace(await listAll<Membership>(transport, "/api/me/principals"), user, chosen);
 }
 
-/** The invited principal, and its magic link when the hub sends no email. */
-export type InviteSent = { principalId: string; email: string; emailed: boolean; link?: string };
-
-/** Roles the caller may invite people into. */
 export async function inviteRoles(transport: Transport, tenantId: string): Promise<string[]> {
-  return (await transport.fetch<{ assignableRoleIds: string[] }>("GET", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`)).assignableRoleIds;
+  return InviteRoles.assert(await transport.fetch<unknown>("GET", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`)).assignableRoleIds;
 }
 
 export async function listInvited(transport: Transport, tenantId: string): Promise<HubPrincipal[]> {
@@ -523,11 +471,11 @@ export async function listInvited(transport: Transport, tenantId: string): Promi
 }
 
 export async function createInvitation(transport: Transport, tenantId: string, input: { email: string; roleId: string }): Promise<InviteSent> {
-  return transport.fetch("POST", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`, input);
+  return InviteSent.assert(await transport.fetch<unknown>("POST", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`, input));
 }
 
 export async function resendInvitation(transport: Transport, tenantId: string, principalId: string): Promise<InviteSent> {
-  return transport.fetch("POST", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}/${enc(requireId(principalId, "Principal id"))}/resend`, {});
+  return InviteSent.assert(await transport.fetch<unknown>("POST", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}/${enc(requireId(principalId, "Principal id"))}/resend`, {}));
 }
 
 export async function withdrawInvitation(transport: Transport, tenantId: string, principalId: string): Promise<void> {
@@ -538,10 +486,10 @@ export async function acceptInvitation(transport: Transport, tenantId: string): 
   await transport.fetch("POST", "/api/integrations/invite-accept", { tenantId: requireTenantId(tenantId) });
 }
 
-export type HubSessionRow = { id: string; userAgent: string | null; createdAt: string; expiresAt: string; isCurrent: boolean };
+export type HubSessionRow = (typeof SessionList.infer)["sessions"][number];
 
 export async function listSessions(transport: Transport): Promise<HubSessionRow[]> {
-  return (await transport.fetch<{ sessions: HubSessionRow[] }>("GET", "/api/integrations/sessions")).sessions;
+  return SessionList.assert(await transport.fetch<unknown>("GET", "/api/integrations/sessions")).sessions;
 }
 
 export async function revokeSession(transport: Transport, sessionId: string): Promise<void> {
@@ -892,23 +840,13 @@ export function isLiveDeployment(status: string): boolean {
   return LIVE_DEPLOYMENT_STATUSES.has(status);
 }
 
-export type PackageVersion = { name: string; version: string };
-
 /** A live deployment with the versions its frozen closure pins; `package` is null when it was not deployed from the package registry. */
-export type DeployedWorkflow = {
-  id: string;
-  workflow: string;
-  createdAt: string;
-  cancelling: boolean;
-  package: PackageVersion | null;
-  tools: PackageVersion[];
-};
+export type DeployedWorkflow = DeployedVersions["deployments"][number];
 
 /** Live deployments of every workflow, newest first. */
 export async function listDeployedWorkflows(transport: Transport, tenantId: string): Promise<DeployedWorkflow[]> {
   const tid = enc(requireTenantId(tenantId));
-  const { deployments } = await transport.fetch<{ deployments: DeployedWorkflow[] }>("GET", `/api/integrations/workflow-versions/${tid}`);
-  return deployments;
+  return DeployedVersions.assert(await transport.fetch<unknown>("GET", `/api/integrations/workflow-versions/${tid}`)).deployments;
 }
 
 /** The deployment a workflow's mail goes to: its newest one not being cancelled. */
@@ -1095,24 +1033,8 @@ export async function approveHeldDo(transport: Transport, tenantId: string, ref:
   }
 }
 
-/** A repository's triage over the last `days` days, as the hub's triage-stats route answers. */
-export type TriageStats = {
-  repo: string;
-  days: number;
-  /** The earliest verdict ever recorded for the repository; later than the window's start, the window is only partly covered. */
-  since: string | null;
-  triaged: number;
-  verdicts: Record<string, number>;
-  neededYou: number;
-  checks: Record<string, { pass: number; fail: number; unconfirmed: number }>;
-  actions: Record<string, { suggested: number; executed: number; failed: number }>;
-  comments: number;
-  medianTimeToVerdictMs: number | null;
-  daily: Array<{ date: string; triaged: number }>;
-};
-
 export async function loadTriageStats(transport: Transport, tenantId: string, repo: string, days: number): Promise<TriageStats> {
-  return transport.fetch<TriageStats>("GET", `/api/integrations/triage-stats/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&days=${days}`);
+  return TriageStats.assert(await transport.fetch<unknown>("GET", `/api/integrations/triage-stats/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&days=${days}`));
 }
 
 export type CheckChange = { check: string; from: string | null; to: string | null };
@@ -1138,37 +1060,17 @@ export async function loadTriageTimeline(transport: Transport, tenantId: string,
   return transport.fetch<TriageTimeline>("GET", `/api/integrations/triage-timeline/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`);
 }
 
-/** One recorded verdict of a pull request, as the hub's triage-verdicts route answers. */
-export type PullVerdict = {
-  runId: string;
-  at: string;
-  headSha: string;
-  settled: boolean;
-  state: string;
-  actor: string;
-  humanGated: boolean;
-  degraded: string | null;
-  commented: boolean;
-  checks: Array<{ check: string; result: string }>;
-  /** The verdict's own fields and the facts it read; null on verdicts the hub recorded before it kept them. */
-  detail: Record<string, unknown> | null;
-};
+export type PullTriage = TriageVerdicts["pulls"][number];
 
-/** A pull request's latest run, when it has not completed; `unknown` until the hub read the live logs since it started. */
-export type PullRun = { runId: string; startedAt: string; status: "running" | RunFailure } | { status: "unknown" };
+/** One recorded verdict of a pull request. */
+export type PullVerdict = NonNullable<PullTriage["verdict"]>;
 
-export type PullTriage = { repo: string; number: number; activityAt: string | null; verdict: PullVerdict | null; run: PullRun | null };
-
-/**
- * `triaged`: connected repositories with any verdict or a pr-triage run in flight; `active`: those with a verdict in the last 14
- * days or a run in flight; `scored`: whether the decision model scored any verdict.
- */
-export type TriageVerdicts = { pulls: PullTriage[]; triaged: string[]; active: string[]; scored: boolean };
+export type PullRun = NonNullable<PullTriage["run"]>;
 
 /** The open pull requests' latest verdicts, or with `pull` that one pull request's, open or not. */
 export async function loadTriageVerdicts(transport: Transport, tenantId: string, pull?: { repo: string; number: number }): Promise<TriageVerdicts> {
   const query = pull === undefined ? "" : `?repo=${enc(validateRepo(pull.repo))}&number=${pull.number}`;
-  return transport.fetch<TriageVerdicts>("GET", `/api/integrations/triage-verdicts/${enc(requireTenantId(tenantId))}${query}`);
+  return TriageVerdicts.assert(await transport.fetch<unknown>("GET", `/api/integrations/triage-verdicts/${enc(requireTenantId(tenantId))}${query}`));
 }
 
 export type GithubPullDetail = {
@@ -1499,12 +1401,10 @@ function isCiState(value: unknown): value is CiState {
 export type MergeVerdict = { verdict: "ready" | "not-recommended"; score: number | null; threshold: number; reasons: string[] };
 
 /** Null for a verdict rendered before it carried a merge verdict. */
-function mergeVerdict(value: unknown): MergeVerdict | null {
-  const merge = obj(value);
-  const { verdict, score, threshold } = merge;
-  if (verdict !== "ready" && verdict !== "not-recommended") return null;
-  if (typeof threshold !== "number" || (typeof score !== "number" && score !== null)) return null;
-  return { verdict, score, threshold, reasons: strings(merge.reasons) };
+function mergeVerdict(merge: VerdictDetail["merge"]): MergeVerdict | null {
+  const verdict = merge?.verdict;
+  if (!merge || (verdict !== "ready" && verdict !== "not-recommended")) return null;
+  return { verdict, score: merge.score, threshold: merge.threshold, reasons: merge.reasons };
 }
 
 export type PrItem = {
@@ -1580,15 +1480,13 @@ function isDoBranch(value: unknown): value is DoBranch {
   return (DO_BRANCHES as readonly unknown[]).includes(value);
 }
 
-function suggestedActions(value: unknown): SuggestedAction[] {
-  if (!Array.isArray(value)) return [];
+function suggestedActions(actions: NonNullable<VerdictDetail["actions"]>): SuggestedAction[] {
   const out: SuggestedAction[] = [];
-  for (const entry of value) {
-    const a = obj(entry);
-    if (a.skipped === true || typeof a.id !== "string" || typeof a.reason !== "string" || !isActionKind(a.kind) || !a.target || typeof a.target !== "object") continue;
+  for (const { id, branch, index, effectId, kind, reason, target, skipped, held, status, error } of actions) {
+    if (skipped || reason === undefined || !isActionKind(kind) || !target) continue;
     // A verdict from before Dos by reference names none the hub can run.
-    if (!isDoBranch(a.branch) || !Number.isInteger(a.index) || typeof a.effectId !== "string") continue;
-    out.push({ id: a.id, branch: a.branch, index: a.index as number, effectId: a.effectId, kind: a.kind, reason: a.reason, target: obj(a.target), held: a.held === true, ...(isDoStatus(a.status) && { status: a.status }), ...(typeof a.error === "string" && { error: a.error }) });
+    if (!isDoBranch(branch) || index === undefined || effectId === undefined) continue;
+    out.push({ id, branch, index, effectId, kind, reason, target, held: held === true, ...(isDoStatus(status) && { status }), ...(error !== undefined && { error }) });
   }
   return out;
 }
@@ -1612,16 +1510,12 @@ function isCheckResult(value: unknown): value is CheckResult["result"] {
   return value === "pass" || value === "fail" || value === "unconfirmed";
 }
 
-function checkResults(value: unknown): CheckResult[] {
-  if (!Array.isArray(value)) return [];
+function checkResults(checks: NonNullable<VerdictDetail["checks"]>): CheckResult[] {
   const out: CheckResult[] = [];
-  for (const entry of value) {
-    const c = obj(entry);
+  for (const { check, kind, result, reason, evidence, output, gate } of checks) {
     // A verdict from before a check was removed may still list it.
-    if (typeof c.check !== "string" || RETIRED_CHECK_IDS.has(c.check)) continue;
-    if (c.kind !== "machine" && c.kind !== "model") continue;
-    if (!isCheckResult(c.result)) continue;
-    out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence), output: parseCheckOutput(c.output) ?? null, gate: c.gate === true });
+    if (RETIRED_CHECK_IDS.has(check) || (kind !== "machine" && kind !== "model") || !isCheckResult(result)) continue;
+    out.push({ check, kind, result, reason: reason ?? null, evidence: evidence ?? [], output: parseCheckOutput(output) ?? null, gate: gate === true });
   }
   return out;
 }
@@ -1653,21 +1547,13 @@ const TRIAGE_TO_QUEUE: Record<string, QueueState> = {
   "stale-unknown": "stale",
 };
 
-function isPendingStatus(status: unknown): boolean {
-  return typeof status === "string" && status.toLowerCase() === "pending";
-}
-
 function isGithubWriteApproval(approval: HubApproval): boolean {
-  const tool = obj(approval.toolDefinition).name;
+  const tool = approval.toolDefinition.name;
   return tool === "github_mirror"
     || tool === "github_mirror_auto"
     || tool === "github_create_review"
     || tool === "github_create_issue_comment"
     || tool === "github_merge_pr";
-}
-
-function textOf(value: unknown): string | null {
-  return typeof value === "string" && value !== "" ? value : null;
 }
 
 /** A stuck run is a failure, not running, so its Dos stay enabled: running them again is the way out. */
@@ -1682,29 +1568,29 @@ function isRunning(run: PullRun | null): boolean {
 
 function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
   const key = `${pull.repo}#${pull.number}`;
-  const detail = obj(verdict.detail);
-  const facts = obj(detail.facts);
+  const detail: VerdictDetail = verdict.detail ?? {};
+  const facts: NonNullable<VerdictDetail["facts"]> = detail.facts ?? {};
   return {
     key,
     repo: pull.repo,
     number: pull.number,
-    title: textOf(facts.title),
-    author: textOf(facts.author),
+    title: facts.title || null,
+    author: facts.author || null,
     authorKind: null,
-    draft: typeof facts.draft === "boolean" ? facts.draft : null,
-    mergeable: typeof facts.mergeable === "boolean" ? facts.mergeable : null,
+    draft: facts.draft ?? null,
+    mergeable: facts.mergeable ?? null,
     state: TRIAGE_TO_QUEUE[verdict.state] ?? "stale",
-    priority: textOf(detail.priority),
-    owner: textOf(detail.owner),
-    nextAction: textOf(detail.nextAction),
-    confidence: typeof detail.score === "number" ? detail.score : null,
+    priority: detail.priority || null,
+    owner: detail.owner || null,
+    nextAction: detail.nextAction || null,
+    confidence: detail.score ?? null,
     merge: mergeVerdict(detail.merge),
-    evidence: strings(detail.evidence),
-    checks: verdict.detail === null ? recordedChecks(verdict.checks) : checkResults(detail.checks),
-    labels: strings(detail.labels),
-    comment: typeof detail.feedback === "string" ? detail.feedback : null,
+    evidence: detail.evidence ?? [],
+    checks: verdict.detail === null ? recordedChecks(verdict.checks) : checkResults(detail.checks ?? []),
+    labels: detail.labels ?? [],
+    comment: detail.feedback ?? null,
     sha: verdict.headSha,
-    verdictSha: typeof detail.headSha === "string" ? detail.headSha : null,
+    verdictSha: detail.headSha ?? null,
     degraded: verdict.degraded,
     needsHuman: verdict.humanGated,
     closed: false,
@@ -1719,7 +1605,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     posted: verdict.commented,
     running: isRunning(pull.run),
     failure: failureOf(pull.run),
-    actions: suggestedActions(detail.actions),
+    actions: suggestedActions(detail.actions ?? []),
     href: canonicalPrHref(pull.repo, pull.number),
   };
 }
@@ -1736,8 +1622,8 @@ export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], open
     if (pull.verdict) items.set(`${pull.repo}#${pull.number}`, verdictItem(pull, pull.verdict));
   }
   for (const approval of approvals) {
-    if (!isGithubWriteApproval(approval) || !isPendingStatus(approval.status)) continue;
-    const args = obj(approval.toolArguments);
+    if (!isGithubWriteApproval(approval) || approval.status !== "pending") continue;
+    const args = approval.toolArguments;
     const item = items.get(`${args.repo}#${args.number}`);
     if (!item) continue;
     items.set(item.key, {

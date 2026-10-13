@@ -1,5 +1,5 @@
 import { queryOptions, skipToken, useQuery, type Query } from "@tanstack/react-query";
-import type { TriageStats } from "./hub-api.ts";
+import type { TriageStats } from "@corbits/triage-contracts";
 import type { RepoPackStore } from "./repo-pack-store.ts";
 
 const REPO_STATS_QUERY_KEY = "triage-stats";

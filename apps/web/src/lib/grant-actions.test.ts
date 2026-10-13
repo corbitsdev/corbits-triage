@@ -10,6 +10,7 @@ import {
 
 const grant = (overrides: Partial<HubGrant>): HubGrant => ({
   id: "grn_1",
+  tenantId: "tnt",
   resource: "workflow-run:*",
   action: "read",
   effect: "allow",
@@ -18,17 +19,19 @@ const grant = (overrides: Partial<HubGrant>): HubGrant => ({
   principalName: null,
   roleId: null,
   roleName: null,
+  createdAt: "2026-03-10T00:00:00.000Z",
+  updatedAt: "2026-03-10T00:00:00.000Z",
   ...overrides,
 });
 
 const people: HubPrincipal[] = [
-  { id: "prn_ada", kind: "user", status: "active", displayName: "Ada", email: "ada@example.com" },
-  { id: "prn_bot", kind: "workflow", status: "active", displayName: "Bot", email: "bot@example.com" },
+  { id: "prn_ada", tenantId: "tnt", kind: "user", refId: "usr_ada", status: "active", displayName: "Ada", email: "ada@example.com", roles: [], createdAt: "2026-03-10T00:00:00.000Z", updatedAt: "2026-03-10T00:00:00.000Z" },
+  { id: "prn_bot", tenantId: "tnt", kind: "workflow", refId: "run_bot", status: "active", displayName: "Bot", email: "bot@example.com", roles: [], createdAt: "2026-03-10T00:00:00.000Z", updatedAt: "2026-03-10T00:00:00.000Z" },
 ];
 
 const roles: HubRole[] = [
-  { id: "rol_owner", name: "Owner", isSystem: true },
-  { id: "rol_custom", name: "Reviewer" },
+  { id: "rol_owner", tenantId: "tnt", name: "Owner", isSystem: true, createdAt: "2026-03-10T00:00:00.000Z", updatedAt: "2026-03-10T00:00:00.000Z" },
+  { id: "rol_custom", tenantId: "tnt", name: "Reviewer", isSystem: false, createdAt: "2026-03-10T00:00:00.000Z", updatedAt: "2026-03-10T00:00:00.000Z" },
 ];
 
 describe("system-origin grants", () => {

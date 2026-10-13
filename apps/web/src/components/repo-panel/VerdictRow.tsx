@@ -1,6 +1,5 @@
 import { Badge } from "@corbits/react-ui";
-import { CATALOG_IDS, type CheckRef } from "@corbits/triage-contracts";
-import type { TriageStats } from "../../lib/hub-api.ts";
+import { CATALOG_IDS, type CheckRef, type TriageStats } from "@corbits/triage-contracts";
 import { checkOn, type RepoDraft } from "../../lib/pack-draft.ts";
 import CheckName from "./CheckName.tsx";
 import Joined from "./Joined.tsx";

@@ -1,25 +1,11 @@
 // No stock route exposes a deployment's pin, so the portal reads the versions
 // it runs from each live deployment's frozen closure here.
-import { type } from "arktype";
 import type { DB, WorkflowRunLaunchSpecStore } from "@intx/db";
+import type { DeployedVersions } from "@corbits/triage-contracts";
 import { closureVersions, resolveLiveDeployments } from "./github/deployment.js";
 import type { Member } from "./integrations/app.js";
 
 export const WORKFLOW_VERSIONS_PATH = "/api/integrations/workflow-versions";
-
-const PackageVersion = type({ name: "string", version: "string" });
-
-export const DeployedVersions = type({
-  deployments: type({
-    id: "string",
-    workflow: "string",
-    createdAt: "string",
-    cancelling: "boolean",
-    package: PackageVersion.or("null"),
-    tools: PackageVersion.array(),
-  }).array(),
-});
-export type DeployedVersions = typeof DeployedVersions.infer;
 
 export type WorkflowVersionsDeps = {
   db: DB["db"];
