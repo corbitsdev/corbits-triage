@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { missingFrom } from "@corbits/github-tool";
 import type { ResolvedTarget } from "@corbits/github-tool/do";
 import { ALL_CHECKS, BUILT_IN_CHECK_NAMES, CHECK_CATALOG, classificationSources, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from "@corbits/triage-contracts";
@@ -27,7 +28,7 @@ function canonical(value: unknown): string {
 /** The idempotency key for one Do on one head; GitHub writes and their audit share it. */
 export function doEffectId(ref: DoRef): string {
   const parts = [ref.repo, ref.number, ref.headSha, ref.actionId, ref.branch, ref.index, ref.kind, canonical(ref.target)];
-  return createHash("sha256").update(parts.join("\x1f")).digest("hex");
+  return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
 }
 
 type Step = { id: string; branch: Branch; index: number; kind: ActionKind; automatic: boolean; reason: string };

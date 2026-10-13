@@ -20,6 +20,7 @@
     "@corbits/triage-contracts": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/workflow": "workspace:*",
+    "@noble/hashes": "^2.4.0",
     "@intx/types": "workspace:*",
     "arktype": "catalog:",
     "re2js": "2.8.6"
