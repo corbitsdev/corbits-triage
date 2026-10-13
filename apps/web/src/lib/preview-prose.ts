@@ -3,11 +3,11 @@ import { strings, type PreviewCheck, type PreviewBranch, type PreviewDo, type Pu
 import { actionLabel, BRANCH_NAMES, DO_NAMES, listed, quoted, sentence } from "./pack-prose.ts";
 import { checkValueText } from "./triage-view.ts";
 
-export type CheckLine = { result: PreviewCheck["result"]; label: string; names: string[] };
+type CheckLine = { result: PreviewCheck["result"]; label: string; names: string[] };
 
 export type BranchLine = { branch: string; reason: string; dos: string };
 
-export type ActionLine =
+type ActionLine =
   | { id: string; label: string; status: "decided"; branch: BranchLine }
   | { id: string; label: string; status: "waits-on-judge"; branches: BranchLine[] }
   | { id: string; label: string; status: "skipped"; reason: string };

@@ -1,10 +1,6 @@
-import { PRIORITIES, TRIAGE_STATES, type Priority, type WorkflowState } from "@corbits/triage-contracts";
+import type { Priority, WorkflowState } from "./types.js";
 
-export { TRIAGE_STATES, PRIORITIES };
-export type TriageState = WorkflowState;
-export type { Priority };
-
-export interface Preset {
+interface Preset {
   labels: string[];
   owner: string;
 }
@@ -13,7 +9,7 @@ const NEEDS_CHANGES = "Triage: Needs changes";
 const NEEDS_REVIEW = "Triage: Needs review";
 const READY_TO_MERGE = "Triage: Ready to merge";
 
-export const PRESETS: Record<TriageState, Preset> = {
+const PRESETS: Record<WorkflowState, Preset> = {
   "needs-decision": { labels: [NEEDS_REVIEW], owner: "Maintainer" },
   "awaiting-review": { labels: [NEEDS_REVIEW], owner: "Reviewer / Maintainer" },
   "needs-author-update": { labels: [NEEDS_CHANGES], owner: "Author" },
@@ -36,14 +32,14 @@ const RETIRED_LABELS = [
 export const TRIAGE_LABELS: readonly string[] = [...new Set([...Object.values(PRESETS).flatMap((preset) => preset.labels), ...RETIRED_LABELS])];
 
 export interface Rendered {
-  state: TriageState;
+  state: WorkflowState;
   priority: Priority;
   labels: string[];
   owner: string;
   humanGated: boolean;
 }
 
-export function render(state: TriageState, ctx: { priority?: Priority; humanGated?: boolean } = {}): Rendered {
+export function render(state: WorkflowState, ctx: { priority?: Priority; humanGated?: boolean } = {}): Rendered {
   const p = PRESETS[state];
   return {
     state,
@@ -54,7 +50,7 @@ export function render(state: TriageState, ctx: { priority?: Priority; humanGate
   };
 }
 
-export function priorityFor(state: TriageState): Priority {
+function priorityFor(state: WorkflowState): Priority {
   switch (state) {
     case "needs-decision": return "P1";
     case "blocked": return "P2";

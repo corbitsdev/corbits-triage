@@ -10,20 +10,20 @@ import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResp
 import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent, type VerdictDetail } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
-export const WORKSPACE_SLUG =
+const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
 export const BACKLOG_WORKFLOW = "pr-triage-historical";
-export const GITHUB_PROVIDER = "github";
-export const GITHUB_PROVIDER_PLUGIN = "http";
+const GITHUB_PROVIDER = "github";
+const GITHUB_PROVIDER_PLUGIN = "http";
 export const GITHUB_CREDENTIAL_NAME = "github";
 export const GITHUB_HOOK_CREDENTIAL_NAME = "github-hook";
-export const INFERENCE_PROVIDER = "corbits-system-one";
-export const INFERENCE_PROVIDER_PLUGIN = "corbits-system-one";
+const INFERENCE_PROVIDER = "corbits-system-one";
+const INFERENCE_PROVIDER_PLUGIN = "corbits-system-one";
 export const INFERENCE_CREDENTIAL_NAME = "corbits-system-one";
 /** Catalog model the triage workflows declare; its offering carries the provider's own model name. */
 export const DECISION_MODEL_ALIAS = "decision";
 
-export function githubProviderApiBaseUrl(
+function githubProviderApiBaseUrl(
   env: Record<string, string | undefined> = (import.meta as { env?: Record<string, string | undefined> }).env ?? {},
 ): string {
   const raw = env["VITE_GITHUB_API_ORIGIN"]?.trim();
@@ -31,7 +31,7 @@ export function githubProviderApiBaseUrl(
   return raw.replace(/\/+$/, "");
 }
 
-export type Workspace = {
+type Workspace = {
   tenantId: string;
   principalId: string;
   userId: string;
@@ -52,7 +52,7 @@ export type WorkspaceOption = { tenantId: string; name: string; slug: string };
 
 export type MemberAccess = { kind: "member"; workspace: Workspace; workspaces: WorkspaceOption[]; invitations: WorkspaceOption[] };
 export type InvitedAccess = { kind: "invited"; invitations: WorkspaceOption[] };
-export type WorkspaceAccess = MemberAccess | InvitedAccess | { kind: "none" };
+type WorkspaceAccess = MemberAccess | InvitedAccess | { kind: "none" };
 
 type Page<T> = { data: T[]; nextCursor: string | null };
 
@@ -108,7 +108,7 @@ export type RunLog = {
   events: WorkflowRunEvent[];
 };
 
-export type SectionDenied = {
+type SectionDenied = {
   repos: boolean;
   credentials: boolean;
 };
@@ -225,7 +225,7 @@ async function listAll<T>(transport: Transport, path: string): Promise<T[]> {
   });
 }
 
-export const CONFIG_KEY = "corbitsTriage";
+const CONFIG_KEY = "corbitsTriage";
 
 export type AppConfig = {
   repos?: unknown[];
@@ -239,7 +239,7 @@ export type AppConfig = {
   rev?: number;
 };
 
-export function appConfig(config: unknown): AppConfig {
+function appConfig(config: unknown): AppConfig {
   if (!config || typeof config !== "object") return {};
   const ns = (config as Record<string, unknown>)[CONFIG_KEY];
   return ns && typeof ns === "object" ? (ns as AppConfig) : {};
@@ -252,7 +252,7 @@ function sortedKeys(_key: string, value: unknown): unknown {
     : value;
 }
 
-export function configFingerprint(config: unknown): string {
+function configFingerprint(config: unknown): string {
   const text = JSON.stringify(appConfig(config), sortedKeys);
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i += 1) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
@@ -351,7 +351,7 @@ export async function findArtifactByTitle(transport: Transport, tenantId: string
 /** A check pack with the artifact it was read from; `version` is what a save must match. */
 export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack };
 /** The newest artifact titled for the repository holds something that is not a check pack; a save replaces it in place. */
-export type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
+type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack;
 
 export async function loadCheckPackById(transport: Transport, tenantId: string, repo: string, id: string): Promise<CheckPackArtifact> {
@@ -456,7 +456,7 @@ export function sharesName(option: WorkspaceOption, options: WorkspaceOption[]):
   return options.some((other) => other.tenantId !== option.tenantId && other.name === option.name);
 }
 
-export async function resolveWorkspace(transport: Transport, chosen: string | null): Promise<WorkspaceAccess> {
+async function resolveWorkspace(transport: Transport, chosen: string | null): Promise<WorkspaceAccess> {
   const user = await transport.fetch<HubMe | null>("GET", "/api/me");
   if (!user?.id) throw new Error("The hub did not return the signed-in user.");
   return chooseWorkspace(await listAll<Membership>(transport, "/api/me/principals"), user, chosen);
@@ -503,7 +503,7 @@ function workspaceNameFor(user: HubMe): string {
 }
 
 /** Stable per user, so a retry after a dropped response targets the same slug. */
-export function workspaceSlugFor(user: HubMe): string {
+function workspaceSlugFor(user: HubMe): string {
   const local = (user.email?.split("@")[0] ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
   const suffix = user.id.toLowerCase().replace(/[^a-z0-9]/g, "").slice(-6);
   return [WORKSPACE_SLUG, local, suffix].filter(Boolean).join("-");
@@ -532,7 +532,7 @@ export async function ensureWorkspace(transport: Transport, chosen: string | nul
 }
 
 /** Workflow the app-level hook credential targets (metadata.webhook.workflow). */
-export const HOOK_WORKFLOW = "pr-triage";
+const HOOK_WORKFLOW = "pr-triage";
 
 export function legacyHookCredentials(credentials: HubCredential[]): HubCredential[] {
   return credentials.filter((row) => row.name.startsWith(`${GITHUB_HOOK_CREDENTIAL_NAME}:`));
@@ -854,7 +854,7 @@ export function currentDeployment(deployments: readonly DeployedWorkflow[], work
   return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling);
 }
 
-export const SERVICE_NOT_RUNNING = "The service is not running. Restart the hub, then try again.";
+const SERVICE_NOT_RUNNING = "The service is not running. Restart the hub, then try again.";
 
 function isTerminalMailFailure(cause: unknown): boolean {
   if (cause instanceof ApiError && cause.code === "deployment_unreachable") return true;
@@ -1065,7 +1065,7 @@ export type PullTriage = TriageVerdicts["pulls"][number];
 /** One recorded verdict of a pull request. */
 export type PullVerdict = NonNullable<PullTriage["verdict"]>;
 
-export type PullRun = NonNullable<PullTriage["run"]>;
+type PullRun = NonNullable<PullTriage["run"]>;
 
 /** The open pull requests' latest verdicts, or with `pull` that one pull request's, open or not. */
 export async function loadTriageVerdicts(transport: Transport, tenantId: string, pull?: { repo: string; number: number }): Promise<TriageVerdicts> {
@@ -1389,7 +1389,7 @@ export const QUEUE_STATE_LABEL: Record<QueueState, string> = {
   new: "Not triaged yet",
 };
 
-export type CiState = "success" | "failure" | "pending" | "none";
+type CiState = "success" | "failure" | "pending" | "none";
 
 const CI_STATES: readonly unknown[] = ["success", "failure", "pending", "none"] satisfies CiState[];
 
@@ -1470,7 +1470,7 @@ function isDoStatus(value: unknown): value is DoStatus {
 
 const DO_BRANCHES = ["yes", "no", "unsure", "always"] as const;
 
-export type DoBranch = (typeof DO_BRANCHES)[number];
+type DoBranch = (typeof DO_BRANCHES)[number];
 
 function isActionKind(value: unknown): value is ActionKind {
   return (ACTION_KINDS as readonly unknown[]).includes(value);

@@ -1,24 +1,26 @@
 import { ACTION_KINDS, AGENT_DO, DERIVED_LABELS_DO, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import {
+  codeownersForPr,
+  getReviews,
+  listIssueComments,
+  missingFrom,
+  readPr,
+  REQUEST_CHANGES_DO_MARKER,
+  reviewedOnHead,
+  type AppLogin,
+  type GithubFetch,
+} from "@corbits/github-reads";
+import {
   addAssignees,
   addLabels,
   APPROVE_DO_MARKER,
   approvalOnHead,
   changesRequestedOnHead,
-  codeownersForPr,
   createIssueComment,
   createReview,
-  getReviews,
-  listIssueComments,
-  missingFrom,
   mirror,
-  readPr,
-  REQUEST_CHANGES_DO_MARKER,
   requestReviewers,
-  reviewedOnHead,
-  type AppLogin,
-  type GithubFetch,
   type MirrorInput,
 } from "./github";
 

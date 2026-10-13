@@ -27,7 +27,7 @@ export function triageReadyRepos(repos: RepoRecord[]): Set<string> {
 }
 
 /** What GitHub's open pull requests say about one repository, or why they could not be read. */
-export type RepoPulls =
+type RepoPulls =
   | { open: number; needsYou: number; awaiting: number; owners: string[]; lastActivity: string | null }
   | { error: string };
 

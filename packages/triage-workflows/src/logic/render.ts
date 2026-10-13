@@ -1,5 +1,4 @@
-import { render, TRIAGE_LABELS, type Rendered, type TriageState } from "@corbits/rule-packs";
-import { citationOf, citationUrl, itemText, type CheckItem, type CheckOutput, type CleanupMode, type RuleCustomCheck } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, render, TRIAGE_LABELS, type CheckItem, type CheckOutput, type CleanupMode, type Rendered, type RuleCustomCheck, type WorkflowState } from "@corbits/triage-contracts";
 import type { SuggestedAction } from "./actions.js";
 import { REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
@@ -165,7 +164,7 @@ interface Step {
 }
 
 // Only these states let model answers drive the verdict; anything worse is driven by its machine findings.
-const JUDGED_STATES = new Set<TriageState>(["ready-monitoring", "awaiting-review"]);
+const JUDGED_STATES = new Set<WorkflowState>(["ready-monitoring", "awaiting-review"]);
 const ACTOR_ORDER: Actor[] = ["author", "maintainer", "system"];
 const MAX_ACTIONS = 2;
 // Jev's yes/no answers are calibrated probabilities: decide only well clear of a coin flip, otherwise leave it unsure.

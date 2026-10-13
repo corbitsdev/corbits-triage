@@ -1,4 +1,3 @@
-import type { TriageState } from "@corbits/rule-packs";
 import {
   catalogCheckEnabled,
   classificationSources,
@@ -12,6 +11,7 @@ import {
   type RepoRole,
   type TriageEvent,
   type TrustTier,
+  type WorkflowState,
 } from "@corbits/triage-contracts";
 import { globMatch } from "./glob.js";
 import { evaluateRuleChecks } from "./rule-checks.js";
@@ -76,7 +76,7 @@ export const REVIEW_ANSWERED_REASON = "a reviewer requested changes; the author 
 
 export interface Finding {
   check: string;
-  state: TriageState;
+  state: WorkflowState;
   reason: string;
 }
 
@@ -92,7 +92,7 @@ export interface CheckResult {
 }
 
 export interface DeterministicResult {
-  state: TriageState;
+  state: WorkflowState;
   reason: string;
   findings: Finding[];
   checks: CheckResult[];
@@ -104,7 +104,7 @@ export const NEEDS_SETUP_REASON = "This repository still needs check setup.";
 
 const CI_STATUS: Record<PrFacts["checks"], string> = { success: "passing", failure: "failing", pending: "pending", none: "none" };
 
-const STATE_RANK: Record<TriageState, number> = {
+const STATE_RANK: Record<WorkflowState, number> = {
   "ready-monitoring": 0,
   "awaiting-review": 1,
   "needs-author-update": 2,
@@ -174,7 +174,7 @@ interface CheckRules {
 function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Record<string, RepoRole> = {}): DeterministicResult {
   const findings: Finding[] = [];
   const checks: CheckResult[] = [];
-  function add(check: string, state: TriageState, reason: string) {
+  function add(check: string, state: WorkflowState, reason: string) {
     findings.push({ check, state, reason });
   }
   function result(check: CatalogId | "draft" | "review", failed: boolean | null, reason: string, evidence: string[], output: CheckOutput) {

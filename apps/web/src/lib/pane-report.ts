@@ -39,7 +39,7 @@ export function passedChecks(checks: CheckResult[]): CheckResult[] {
 }
 
 /** The dot beside the status: green when it can merge, orange when it waits on the maintainer, blue when on the author. */
-export type StatusTone = "ready" | "you" | "author" | "quiet";
+type StatusTone = "ready" | "you" | "author" | "quiet";
 
 export type PaneStatus = { tone: StatusTone; text: string; live: boolean };
 
@@ -119,7 +119,7 @@ export function paneStatus({ item, detail, handled, approved, primary }: StatusI
   return status("ready", approved ? "Approved by Triage · ready for you to merge" : "Ready to merge");
 }
 
-export type BarAction = MenuEntry & { detail: string | null };
+type BarAction = MenuEntry & { detail: string | null };
 
 export type PaneBar = { primary: BarAction | null; secondary: MenuEntry[]; more: MenuEntry[] };
 

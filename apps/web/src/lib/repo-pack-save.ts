@@ -14,7 +14,7 @@ export type PackSession = {
   unlinked: boolean;
 };
 
-export type SaveFailure = { message: string; cause: unknown; stale: boolean };
+type SaveFailure = { message: string; cause: unknown; stale: boolean };
 
 /** `draft` takes on what was written as stored, so normalising it leaves no phantom changes. */
 export type SaveOutcome = { session: PackSession; draft: RepoDraft; failure: SaveFailure | null };

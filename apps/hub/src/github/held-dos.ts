@@ -9,8 +9,8 @@ import { ACTION_KINDS, APPROVE_DO_KIND, DoBranch, repoPolicy, type ResolvedTarge
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
-import { doEffectId } from "../../../../packages/triage-workflows/src/logic/actions.js";
-import { unrunnable } from "../../../../packages/triage-workflows/src/logic/execute-do.js";
+import { doEffectId } from "@corbits/triage-workflows/logic/actions";
+import { unrunnable } from "@corbits/triage-workflows/logic/execute-do";
 import { approvalRefused, failure, githubAppGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";

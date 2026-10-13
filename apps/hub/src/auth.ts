@@ -38,7 +38,7 @@ export type HubAuthConfig = SignInSettings & {
   sendResetPassword?: SendResetEmail;
 };
 
-export const deviceCode = triageSchema.table("device_code", {
+const deviceCode = triageSchema.table("device_code", {
   id: text("id").primaryKey(),
   deviceCode: text("device_code").notNull().unique(),
   userCode: text("user_code").notNull().unique(),

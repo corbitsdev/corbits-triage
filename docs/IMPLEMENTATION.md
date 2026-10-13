@@ -75,11 +75,10 @@ resolves its offering when deployed.
   (`triage-steps.ts`), directors and the deterministic logic under `logic/`.
 - `github-reads`: GitHub read helpers and types.
 - `github-tool`: the mirror write (marker-comment upsert), Dos and the sidecar
-  tool bundles; re-exports `github-reads`.
+  tool bundles.
 - `github-write-tool`: build wrapper for the write bundle.
 - `triage-contracts`: check pack schema, repository policy, triage state,
-  trigger mail and shared types.
-- `rule-packs`: verdict states and their labels.
+  verdict labels, trigger mail and shared types.
 - `openai-null-delta`: inference adapter fix for null stream deltas.
 
 ## Environment

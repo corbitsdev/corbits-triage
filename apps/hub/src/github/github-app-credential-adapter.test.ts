@@ -2,10 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import { createHttpCredentialProvider } from "@intx/harness";
 
-import {
-  githubRead,
-  githubWrite,
-} from "../../../../packages/github-tool/src/sidecar-bundle";
+import { githubRead, githubWrite } from "@corbits/github-tool";
 import { createGithubAppCredentialFetch, toRequest } from "./github-app-credential-adapter";
 
 const API = "https://api.github.com";

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { APPROVE_DO_MARKER, appLogin, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "./github";
+import { appLogin, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
+import { APPROVE_DO_MARKER } from "./github";
 import { DoNotRunnableError, doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from "./do";
 
 type FakeComment = { id: number; user: { login: string; type: string }; body: string };

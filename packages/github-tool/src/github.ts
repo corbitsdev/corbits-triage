@@ -1,7 +1,5 @@
 import { getPr, isTriageComment, json, jsonAll, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
 
-export * from "@corbits/github-reads";
-
 function send(method: string, body: unknown): RequestInit {
   return {
     method,

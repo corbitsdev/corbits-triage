@@ -26,7 +26,7 @@ export type DraftPolicy = Pick<RepoPolicy, "cleanupMode" | "enabled" | "roles">;
 export type RepoDraft = { pack: CheckPack; policy: DraftPolicy };
 
 /** Where in the panel a validation reason belongs. */
-export type DraftWhere =
+type DraftWhere =
   | { section: "actions"; id: string }
   | { section: "custom"; id?: string }
   | { section: "triage" }
@@ -62,7 +62,7 @@ function withPack(draft: RepoDraft, pack: Partial<CheckPack>): RepoDraft {
 }
 
 /** What a catalog check the pack lacks reads as, switched off; switching it on writes these values. */
-export const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>> = {
+const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>> = {
   size: RECOMMENDED_SIZE,
   issue: RECOMMENDED_ISSUE,
   paths: { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },

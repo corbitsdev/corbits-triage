@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall } from "@intx/types/runtime";
 import type { WorkflowRunEvent, WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
-import { triageDirectorFactory } from "../../../../packages/triage-workflows/src/directors.js";
-import { evaluate, rules } from "../../../../packages/triage-workflows/src/actions/index.js";
+import { triageDirectorFactory } from "@corbits/triage-workflows/directors";
+import { evaluate, rules } from "@corbits/triage-workflows/actions/index";
 import { createTriageRuns } from "./triage-runs.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
-import { QUALITY_EVALUATION_LIMIT_ERROR } from "../../../../packages/triage-workflows/src/logic/quality.js";
+import { QUALITY_EVALUATION_LIMIT_ERROR } from "@corbits/triage-workflows/logic/quality";
 
 const REPO = "acme/widgets";
 const DOMAIN = "acme.test";

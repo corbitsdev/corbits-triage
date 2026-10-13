@@ -42,7 +42,7 @@ function facetValue(item: PrItem, facet: FilterFacet, now: number): string | nul
   }
 }
 
-export function optionLabel(facet: FilterFacet, value: string): string {
+function optionLabel(facet: FilterFacet, value: string): string {
   return facet === "age" ? AGE_LABEL[value as AgeBucket] : value;
 }
 

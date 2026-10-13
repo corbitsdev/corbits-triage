@@ -8,7 +8,7 @@ import { TRIAGE_VERDICTS_QUERY_KEY, usePortal } from "./portal.tsx";
 /** The hub answers 304 while nothing changed, so polling this often costs a request and no body. */
 const VERDICTS_REFRESH_MS = 3_000;
 
-export function triageVerdictsQuery(tenantId: string | undefined) {
+function triageVerdictsQuery(tenantId: string | undefined) {
   const queryFn = tenantId === undefined ? skipToken : async function loadVerdicts() {
     return loadTriageVerdicts(createHubTransport(), tenantId);
   };

@@ -182,7 +182,7 @@ function Gate() {
   );
 }
 
-export function AppShell() {
+function AppShell() {
   return (
     <SessionProvider>
       <UserQueryCache>

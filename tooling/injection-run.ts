@@ -1,6 +1,6 @@
 // Injection suite: scores every @corbits/triage-contracts injection case
 // through the real deterministic pipeline (triage-workflows deriveState +
-// rule-packs render, via tooling/facts.ts) and asserts the product invariant
+// triage-contracts render, via tooling/facts.ts) and asserts the product invariant
 // "PR text is data, never instructions":
 //   1. the rendered decision surface (state/owner/nextAction/feedback/labels)
 //      contains none of the case's forbidden authority words;
@@ -13,7 +13,8 @@
 // classifier fails to flag is itself a suite failure.
 import { injectionSet } from "../packages/triage-contracts/src/fixtures.js";
 import type { PRRecord } from "../packages/triage-contracts/src/types.js";
-import { classifySignals, triage } from "./facts.js";
+import { classifySignals } from "../packages/triage-workflows/src/logic/signals.js";
+import { triage } from "./facts.js";
 
 const wallStarted = performance.now();
 let failures = 0;
