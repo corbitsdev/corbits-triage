@@ -1,0 +1,30 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 63,
+ "title": "Restore closing a pull request from the review UI",
+ "body": "## What\n\nThe inbox review pane could not close a normal pull request: \"Close as duplicate\" only appeared for flagged duplicates. This adds a plain **Close pull request** entry with a confirm step to the pane's More menu, so a maintainer can close any PR from the UI.\n\n## Why\n\nCL-XXXX. Filed from the redesign review: \"We lost the ability to close a PR... from the UI.\"\n\n## How\n\n- `apps/web/src/pages/Inbox.tsx`\n  - Added a `Close pull request` More-menu row, `shown: canWrite && !item.canClose`, with `window.confirm(\"Close this pull request?\")`.\n  - It reuses the existing `run(\"close\")` write path, so the close posts to GitHub carrying the suggested reply and labels when present.\n  - Close rows are exempt from the `row.kind !== primary` filter (they stay mutually exclusive via `shown`), so **Close as duplicate** still renders for flagged duplicates — this was a regression in the first version of this change, caught in review and fixed.\n- No hub/vendor/interchange changes.\n\n## Verification\n\n- `bun run check` exit 0\n- Web unit tests pass (7/7)\n- Code reviewed by an independent reviewer: all CL-XXXX outcomes verified, no remaining defects\n\nCloses CL-XXXX.",
+ "author": "TheGreatAxios",
+ "commits": [
+  "Restore closing a pull request from the review UI"
+ ],
+ "files": [
+  {
+   "filename": "apps/web/src/pages/Inbox.tsx",
+   "status": "modified",
+   "additions": 17,
+   "deletions": 3,
+   "patch": "@@ -175,12 +175,18 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {\n     return () => window.removeEventListener(\"keydown\", onKeyDown);\n   });\n \n-  const more: Array<{ kind: PrimaryAction; label: string; enabled: boolean; shown: boolean }> = [\n+  const more: Array<{ kind: PrimaryAction; label: string; enabled: boolean; shown: boolean; confirm?: string }> = [\n     { kind: \"approve\", label: \"Approve\", enabled: canWrite, shown: true },\n     { kind: \"changes\", label: \"Request changes\", enabled: canWrite, shown: true },\n     { kind: \"comment\", label: \"Comment\", enabled: canWrite, shown: true },\n     { kind: \"merge\", label: \"Merge\", enabled: canMerge, shown: true },\n     { kind: \"close\", label: \"Close as duplicate\", enabled: canWrite, shown: item.canClose },\n+    // Both close rows share kind \"close\" but are mutually exclusive: the duplicate\n+    // entry shows for flagged duplicates, the plain one for the rest. A flagged\n+    // duplicate's primary bar action is already \"close\", so the generic\n+    // row.kind !== primary filter would hide its close row; keep close rows out of\n+    // that filter so the appropriate one always renders.\n+    { kind: \"close\", label: \"Close pull request\", enabled: canWrite, shown: canWrite && !item.canClose, confirm: \"Close this pull request?\" },\n   ];\n \n   return (\n@@ -279,8 +285,16 @@ function Pane({ item, onBack }: { item: PrItem; onBack: () => void }) {\n           <button type=\"button\" className=\"btn btn-quiet\" aria-haspopup=\"menu\" aria-expanded={menu} disabled={item.running} onClick={() => setMenu(!menu)}>More <DownIcon /></button>\n           {menu ? (\n             <div className=\"menu up\" role=\"menu\">\n-              {more.filter((row) => row.shown && row.kind !== primary).map((row) => (\n-                <button key={row.kind} type=\"button\" role=\"menuitem\" disabled={!row.enabled} onClick={() => void run(row.kind)}>{row.label}</button>\n+              {more.filter((row) => row.shown && (row.kind === \"close\" || row.kind !== primary)).map((row) => (\n+                <button\n+                  key={`${row.kind}-${row.label}`}\n+                  type=\"button\"\n+                  role=\"menuitem\"\n+                  disabled={!row.enabled}\n+                  onClick={() => { if (!row.confirm || window.confirm(row.confirm)) void run(row.kind); }}\n+                >\n+                  {row.label}\n+                </button>\n               ))}\n             </div>\n           ) : null}"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "b1f8eee84f0d44d4",
+  "ARCHITECTURE.md": "333969c8ae5b643e",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "IMPLEMENTATION.md": "defc559c6786e8c8",
+  "README.md": "65a3d72f44c34d2e",
+  "docs/DEPLOY.md": "8c882a14db43d2bd",
+  "docs/DEV.md": "11d689902ba74717",
+  "docs/SELF_HOST.md": "596c16f9919dbfac"
+ }
+}

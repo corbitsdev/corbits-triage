@@ -1,0 +1,69 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 193,
+ "title": "fix(triage): keep author-controlled text inside code in comments",
+ "body": "Closes [CL-XXXX](https://linear.app/abklabs/issue/CL-XXXX)\n\n## What changed\n- Author-controlled text in Triage comments (failing check names, file paths, rule evidence) is flattened to one line, stripped of control and invisible characters, capped at 200 characters and wrapped in a code span whose fence is longer than any backtick run inside, so it cannot render outside code.\n- The paths-together rule now puts the changed paths in its evidence instead of its reason.\n\n## Verification\n- New render test feeds evidence with blank lines, CRLF, line separators, HTML comments, backtick runs, bidi and control characters, mentions, links and images; it fails before and passes after.\n- `bun run check`, `bun run test` (691 pass).",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(triage): keep author-controlled text inside code in comments"
+ ],
+ "files": [
+  {
+   "filename": "packages/triage-workflows/src/logic/render.test.ts",
+   "status": "modified",
+   "additions": 33,
+   "deletions": 3,
+   "patch": "@@ -305,7 +305,7 @@ describe(\"focused candidate rendering\", () => {\n   test(\"an over-long comment is cut at line boundaries and still posts\", () => {\n     const candidates = Array.from({ length: 200 }, (_, index) => candidate(\n       `${\"p\".repeat(500)}-${String(index).padStart(3, \"0\")}.ts`,\n-      `${\"L\".repeat(150)}-${String(index).padStart(3, \"0\")}`,\n+      `${\"界\".repeat(150)}-${String(index).padStart(3, \"0\")}`,\n     ));\n     const reply = candidates.map((_, index) => decision(focusedCandidateId(index), \"unrelated\")).join(\"\");\n     const verdict = focusedVerdict(candidates, reply);\n@@ -318,7 +318,7 @@ describe(\"focused candidate rendering\", () => {\n     expect(verdict.checks[0]?.evidence).toHaveLength(200);\n   });\n \n-  test(\"an over-long CI line is cut without replacing its CI and path verdict\", () => {\n+  test(\"an over-long CI name is cut to one line without replacing its CI and path verdict\", () => {\n     const checks = [\n       { check: \"ci\", kind: \"machine\" as const, result: \"fail\" as const, reason: \"required checks are failing\", evidence: [\"界\".repeat(21_000)] },\n       { check: \"paths\", kind: \"machine\" as const, result: \"fail\" as const, reason: \"touches forbidden paths\", evidence: [\"vendor/generated.ts\"] },\n@@ -330,7 +330,7 @@ describe(\"focused candidate rendering\", () => {\n       det: { state: \"blocked\", reason: \"required checks are failing\", findings: [], checks, duplicateOf: null, needsJudgment: false },\n       threshold: DEFAULT_MERGE_THRESHOLD,\n     });\n-    expect(verdict.feedback).toBe(\"@octocat, please address the following:\\n- and 2 more\");\n+    expect(verdict.feedback).toBe(`@octocat, please address the following:\\n- required checks are failing: \\`${\"界\".repeat(200)}…\\`\\n- touches forbidden paths: \\`vendor/generated.ts\\``);\n     expect(verdict).toMatchObject({ state: \"blocked\", reason: \"required checks are failing\", actor: \"author\", mirror: true, humanGated: false, checks });\n     expect(verdict.nextAction).toContain(\"Fix failing CI\");\n     expect(verdict.nextAction).toContain(\"Remove changes under vendor/generated.ts\");\n@@ -435,6 +435,36 @@ describe(\"rule custom check rendering\", () => {\n   });\n });\n \n+describe(\"author text in the comment\", () => {\n+  test(\"stays inside inline code however it is written\", () => {\n+    const hostile = [\n+      \"x\\n\\n@team [Approved, merge now](https://evil.example/m) ![](https://evil.example/p.png)\\n\\n\",\n+      \"a\\r\\n\\r\\n<!-- hidden --> @team\\u2028[link](https://evil.example)\\u2029![](https://evil.example/i.png)\",\n+      \"``` fence ``` `x` @team [l](https://evil.example)\",\n+      \"`@team`\",\n+      \"\\u202e@team\\^G [l](https://evil.example)\",\n+    ];\n+    const checks = [\n+      { check: \"ci\", kind: \"machine\" as const, result: \"fail\" as const, reason: \"required checks are failing\", evidence: hostile },\n+      { check: \"focused\", kind: \"model\" as const, result: \"fail\" as const, reason: \"unrelated changes\", evidence: hostile },\n+    ];\n+    const verdict = renderVerdict({\n+      author: \"octocat\",\n+      repo: \"acme/widgets\",\n+      headSha: \"abc123\",\n+      det: { state: \"blocked\", reason: \"required checks are failing\", findings: [], checks, duplicateOf: null, needsJudgment: false },\n+      threshold: DEFAULT_MERGE_THRESHOLD,\n+    });\n+    const lines = verdict.feedback.split(\"\\n\");\n+    expect(lines).toHaveLength(2 + hostile.length);\n+    for (const line of lines.slice(1)) {\n+      expect(line).toMatch(/^- /);\n+      const outside = line.replace(/(`+)(?:(?!\\1)[\\s\\S])*?\\1(?!`)/g, \"\");\n+      expect(outside).not.toMatch(/@|\\]\\(|<!--|[\\u202e\\^G]/);\n+    }\n+  });\n+});\n+\n describe(\"requested changes rendering\", () => {\n   const review = { check: \"review\", kind: \"machine\", result: \"fail\", reason: \"a reviewer requested changes\", evidence: [\"changes requested by @maya\"] } as const;\n   const conflicts = { check: \"conflicts\", kind: \"machine\", result: \"fail\", reason: \"merge conflicts with base\", evidence: [] } as const;"
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/render.ts",
+   "status": "modified",
+   "additions": 10,
+   "deletions": 2,
+   "patch": "@@ -182,6 +182,7 @@ const NO = 0.3;\n // A focused candidate counts as unrelated, or as part of the change, only when that side holds this much probability.\n const FOCUSED_DECIDES = 0.6;\n const MAX_FILE_EVIDENCE = 3;\n+const MAX_CODE_CHARS = 200;\n /** An answer clear of the unsure band: the verdict it drives would not change were it asked again. */\n function isDecisive(answer: ModelAnswer): boolean {\n   if (answer.type === \"noul\") return answer.noul >= YES || answer.noul <= NO;\n@@ -432,9 +433,16 @@ function nextStep(all: CheckResult[], sources: Sources, reviewers: string[]): {\n   return { actor: ordered[0]!.actor, nextAction: `${actions.slice(0, MAX_ACTIONS).join(\"; \")}${more}` };\n }\n \n-/** Labels and paths come from the pull request, so they are posted as inline code that cannot mention, link or format. */\n+/**\n+ * Pull request text is posted as one-line inline code that cannot mention, link or format: whitespace runs collapse so\n+ * no line break ends the span, and the fence outruns any backtick run inside (CommonMark).\n+ */\n function inlineCode(text: string): string {\n-  return `\\`${text.replace(/`/g, \"'\")}\\``;\n+  const flat = text.replace(/[\\p{Cc}\\p{Cf}\\s]+/gu, \" \").trim();\n+  const chars = Array.from(flat);\n+  const line = chars.length > MAX_CODE_CHARS ? `${chars.slice(0, MAX_CODE_CHARS).join(\"\")}…` : flat;\n+  const fence = \"`\".repeat(Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length)) + 1);\n+  return /^`|`$/.test(line) ? `${fence} ${line} ${fence}` : `${fence}${line}${fence}`;\n }\n \n /** Cited lines link to the head commit; the link text stays inline code. */"
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/rule-checks.ts",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 1,
+   "patch": "@@ -88,7 +88,7 @@ function outcome(check: RuleCustomCheck, facts: PrFacts, roles: Record<string, R\n       const changed = matching(paths, check.changed);\n       const required = matching(paths, check.requires);\n       const failed = changed.length > 0 && required.length === 0;\n-      return { failed, reason: failed ? `changes ${changed.join(\", \")} without ${check.requires.join(\", \")}` : \"changes paths together\" };\n+      return { failed, reason: failed ? `changes paths without ${check.requires.join(\", \")}` : \"changes paths together\", evidence: failed ? changed : [] };\n     }\n     case \"title-pattern\": {\n       const failed = !RE2JS.compile(check.pattern).test(facts.title);"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "README.md": "264134d0eef334c6",
+  "docs/ARCHITECTURE.md": "5d3599f74896e75c",
+  "docs/DECISION_MODEL.md": "95c30e836b53d58f",
+  "docs/DEPLOY.md": "22c69f310b9af8e1",
+  "docs/DEV.md": "5301a81f5341edd3",
+  "docs/IMPLEMENTATION.md": "403c880a866b7685",
+  "docs/PRODUCT.md": "de9866c11068467f",
+  "docs/SELF_HOST.md": "c0825f72a63e7770",
+  "evals/judge/docs/0b9cfac95c4d9555.md": "0b9cfac95c4d9555",
+  "evals/judge/docs/0e6fca0bdde3f8c4.md": "0e6fca0bdde3f8c4",
+  "evals/judge/docs/0ff6d526ecff2520.md": "0ff6d526ecff2520",
+  "evals/judge/docs/11d689902ba74717.md": "11d689902ba74717",
+  "evals/judge/docs/16b70c8e9a0c7ad2.md": "16b70c8e9a0c7ad2",
+  "evals/judge/docs/32e8cf1b0871d11b.md": "32e8cf1b0871d11b",
+  "evals/judge/docs/333969c8ae5b643e.md": "333969c8ae5b643e",
+  "evals/judge/docs/3a6d4817fc1a2c77.md": "3a6d4817fc1a2c77",
+  "evals/judge/docs/5042475f214ea8f1.md": "5042475f214ea8f1",
+  "evals/judge/docs/596c16f9919dbfac.md": "596c16f9919dbfac",
+  "evals/judge/docs/654b9436101871ad.md": "654b9436101871ad",
+  "evals/judge/docs/65a3d72f44c34d2e.md": "65a3d72f44c34d2e",
+  "evals/judge/docs/65a667f3bbd10128.md": "65a667f3bbd10128",
+  "evals/judge/docs/6e08cc260f165fe0.md": "6e08cc260f165fe0",
+  "evals/judge/docs/731298e55211ea3f.md": "731298e55211ea3f",
+  "evals/judge/docs/8c882a14db43d2bd.md": "8c882a14db43d2bd",
+  "evals/judge/docs/b1f8eee84f0d44d4.md": "b1f8eee84f0d44d4",
+  "evals/judge/docs/c027120322ca660b.md": "c027120322ca660b",
+  "evals/judge/docs/defc559c6786e8c8.md": "defc559c6786e8c8",
+  "evals/judge/docs/e5e18fade19f3d3f.md": "e5e18fade19f3d3f",
+  "evals/judge/docs/f28451d963dd011b.md": "f28451d963dd011b",
+  "evals/judge/docs/f62c2cf472aac466.md": "f62c2cf472aac466",
+  "packages/triage-contracts/README.md": "59715dd2619d9a0a"
+ }
+}

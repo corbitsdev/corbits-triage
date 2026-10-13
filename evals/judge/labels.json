@@ -219,5 +219,102 @@
       190,
       186
     ]
-  ]
+  ],
+  "conventions": {
+    "158": {
+      "score": 35,
+      "reason": "Adds `executeAgent` via `defineAgent` for Do execution its own prompt calls deterministic, which AGENTS.md forbids: \"Never wrap a deterministic step in `defineAgent`\".",
+      "proposed": true
+    },
+    "123": {
+      "score": 55,
+      "reason": "Runs a Do's GitHub writes from a hub route through `executeDo` instead of as an `action` effect under `ctx.perform` (\"Every external effect is an action effect ... GitHub writes included\"); the route is described with hono-openapi as required.",
+      "proposed": true
+    },
+    "154": {
+      "score": 75,
+      "reason": "`readAuthorTeams` swallows any membership read error and returns null instead of throwing (\"Fallbacks only where a real default value exists\"), though the comment says why unknown teams are the intended default.",
+      "proposed": true
+    },
+    "68": {
+      "score": 75,
+      "reason": "Adds a `.then(onFulfilled, onRejected)` chain in `lock-key.postgres.test.ts`, breaking \"async/await with try/catch; no `.then`/`.catch`/`.finally` chains\"; the rest follows the preferences.",
+      "proposed": true
+    },
+    "72": {
+      "score": 85,
+      "reason": "Multi-line anonymous callbacks in the new test (`afterEach(() => { ... })`) break \"no anonymous callbacks beyond one-line array methods\", a rule the existing tests routinely bend.",
+      "proposed": true
+    },
+    "106": {
+      "score": 85,
+      "reason": "Extends the hub's pr-actions route to write labels to GitHub directly rather than as an `action` effect under `ctx.perform`, an existing path AGENTS.md rules out; the code itself follows the preferences.",
+      "proposed": true
+    },
+    "63": {
+      "score": 90,
+      "reason": "Small UI change that follows the coding preferences; its non-conventional title breaks no rule in AGENTS.md or CONTRIBUTING.md.",
+      "proposed": true
+    },
+    "108": {
+      "score": 95,
+      "reason": "The only `import(` is inside a program string the test runs under Node, not a dynamic import in source, so \"No dynamic imports\" is not broken.",
+      "proposed": true
+    },
+    "137": {
+      "score": 95,
+      "reason": "Centralises GitHub refusal messages in named functions with one-line why comments; nothing breaks AGENTS.md.",
+      "proposed": true
+    },
+    "155": {
+      "score": 95,
+      "reason": "Swaps rule-pattern matching to re2js with load-bearing tests and a clear thrown error; nothing breaks AGENTS.md.",
+      "proposed": true
+    },
+    "188": {
+      "score": 95,
+      "reason": "Versions the published tool by content with named functions and thrown errors; nothing breaks AGENTS.md.",
+      "proposed": true
+    },
+    "193": {
+      "score": 95,
+      "reason": "Escapes author text with one explaining doc comment and end-to-end render tests; nothing breaks AGENTS.md.",
+      "proposed": true
+    },
+    "194": {
+      "score": 95,
+      "reason": "Caps globs with thrown errors and load-bearing tests; nothing breaks AGENTS.md.",
+      "proposed": true
+    },
+    "199": {
+      "score": 95,
+      "reason": "Adds a named grant check to every verdict route and one test covering them all; nothing breaks AGENTS.md.",
+      "proposed": true
+    },
+    "204": {
+      "score": 95,
+      "reason": "One-line config change whose comment says why, with an end-to-end rate-limit test; nothing breaks AGENTS.md.",
+      "proposed": true
+    },
+    "101": {
+      "score": 100,
+      "reason": "Small additive field with a doc comment and an end-to-end bridge test; follows AGENTS.md.",
+      "proposed": true
+    },
+    "139": {
+      "score": 100,
+      "reason": "Two-line CSS fix; no convention applies or is broken.",
+      "proposed": true
+    },
+    "197": {
+      "score": 100,
+      "reason": "Two-line guard with a why comment and an end-to-end test; follows AGENTS.md.",
+      "proposed": true
+    },
+    "200": {
+      "score": 100,
+      "reason": "Replaces node:crypto with @noble/hashes and pins the stored ids with a load-bearing test; follows AGENTS.md.",
+      "proposed": true
+    }
+  }
 }

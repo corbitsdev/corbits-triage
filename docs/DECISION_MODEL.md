@@ -167,9 +167,9 @@ These cover one repository's pull requests. Custom checks and other repositories
 
 4. **For a built-in check**, change `logic/quality.ts` (questions) and `logic/render.ts` (how answers decide).
 5. **Measure before and after** with `bun run eval:judge`. It calls OpenCode Zen with `OPENCODE_API_KEY` from the environment (Bun also reads `.env`).
-6. **To add cases**, label pull requests in `evals/judge/labels.json` (`needsTests`, `needsDocs`, a note; `mixes` for unfocused pairs). Then run `bun evals/judge/snapshot.ts`, which needs an authenticated `gh` CLI. It freezes the pull requests of the repository named in `labels.json` and regenerates `cases.jsonl`. Change the allowances only with a measured reason.
+6. **To add cases**, label pull requests in `evals/judge/labels.json` (`needsTests`, `needsDocs`, a note; `mixes` for unfocused pairs). Then run `bun evals/judge/snapshot.ts`, which needs an authenticated `gh` CLI. It freezes the pull requests of the repository named in `labels.json`, including those under `conventions`, and regenerates `cases.jsonl`. Change the allowances only with a measured reason.
 
-The eval covers focused, docs and tests only.
+The eval covers focused, docs and tests only. `conventions` in `labels.json` holds pull requests scored 0 to 100 for how well they follow the repository's written conventions, for a conventions check not yet built; no eval reads them.
 
 ## Known limits
 

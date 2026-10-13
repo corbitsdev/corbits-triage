@@ -1,0 +1,62 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 197,
+ "title": "fix(hub): refuse invites accepted from an unverified email",
+ "body": "Closes [CL-XXXX](https://linear.app/abklabs/issue/CL-XXXX)\n\n## What changed\n- Accepting an invite now requires a verified email on the session; an unverified one gets 403 `unverified_email`: \"Verify your email address before accepting this invite.\"\n\n## Verification\n- `bun run check` passes; `bun run test` passes (690).\n- The invite integration test accepts as an unverified user (refused with that message), then verifies the address and accepts (200). Without the fix the test fails.",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(hub): refuse invites accepted from an unverified email"
+ ],
+ "files": [
+  {
+   "filename": "apps/hub/src/invitations/invitations.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 0,
+   "patch": "@@ -224,6 +224,8 @@ export function createInvitations(deps: InvitationDeps) {\n   async function accept(req: Request): Promise<Response> {\n     const user = await signedInUser(req);\n     if (user instanceof Response) return user;\n+    // Matching the invited address proves nothing until its owner has verified it.\n+    if (!user.emailVerified) return failure(403, \"unverified_email\", \"Verify your email address before accepting this invite.\");\n     const body = AcceptBody(await readJson(req));\n     if (body instanceof type.errors) return failure(400, \"invalid_request\", body.summary);\n     const now = deps.now();"
+  },
+  {
+   "filename": "apps/hub/src/server.test.ts",
+   "status": "modified",
+   "additions": 4,
+   "deletions": 3,
+   "patch": "@@ -3,7 +3,7 @@ import { afterEach, expect, test } from \"bun:test\";\n import { type } from \"arktype\";\n import { createHmac, generateKeyPairSync } from \"node:crypto\";\n import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from \"node:fs\";\n-import { count, eq, sql } from \"drizzle-orm\";\n+import { count, eq, inArray, sql } from \"drizzle-orm\";\n import { createDB, schema } from \"@intx/db\";\n import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from \"@intx/hub-sessions\";\n import { formatRunAddress } from \"@intx/types\";\n@@ -795,7 +795,6 @@ test(\"an invite link lets only the invited email join, once, with the invited ro\n     expect(smtp.sent().filter((mail) => mail.text.includes(first.link))).toHaveLength(1);\n     const emailedAt = async (inviteId: string) => (await db.select({ at: invitation.emailedAt }).from(invitation).where(eq(invitation.id, inviteId)))[0]?.at;\n     expect(await emailedAt(id)).toBeInstanceOf(Date);\n-    expect(await accept(as.ann, first.link)).toMatchObject({ status: 410, body: { error: { code: \"revoked\" } } });\n \n     const bounced = await invite(as.owner, bounce);\n     expect(bounced).toMatchObject({ status: 502, body: { error: { code: \"email_failed\" } } });\n@@ -810,8 +809,10 @@ test(\"an invite link lets only the invited email join, once, with the invited ro\n       return (await fetch(`${origin}/api/integrations/my-invitations`, { headers: as.ann })).json();\n     }\n     expect(await myInvitations()).toEqual({ invitations: [] });\n-    await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.email, ann));\n+    expect(await accept(as.ann, link)).toMatchObject({ status: 403, body: { error: { code: \"unverified_email\", message: \"Verify your email address before accepting this invite.\" } } });\n+    await db.update(schema.user).set({ emailVerified: true }).where(inArray(schema.user.email, [ann, bob, cat, dee]));\n     expect(await myInvitations()).toMatchObject({ invitations: [{ tenantId }] });\n+    expect(await accept(as.ann, first.link)).toMatchObject({ status: 410, body: { error: { code: \"revoked\" } } });\n \n     const wrong = await accept(as.bob, link);\n     expect(wrong).toMatchObject({ status: 403, body: { error: { message: \"This invite is for a different email. Sign in with the invited address.\" } } });"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "README.md": "264134d0eef334c6",
+  "docs/ARCHITECTURE.md": "5d3599f74896e75c",
+  "docs/DECISION_MODEL.md": "95c30e836b53d58f",
+  "docs/DEPLOY.md": "22c69f310b9af8e1",
+  "docs/DEV.md": "5301a81f5341edd3",
+  "docs/IMPLEMENTATION.md": "403c880a866b7685",
+  "docs/PRODUCT.md": "de9866c11068467f",
+  "docs/SELF_HOST.md": "c0825f72a63e7770",
+  "evals/judge/docs/0b9cfac95c4d9555.md": "0b9cfac95c4d9555",
+  "evals/judge/docs/0e6fca0bdde3f8c4.md": "0e6fca0bdde3f8c4",
+  "evals/judge/docs/0ff6d526ecff2520.md": "0ff6d526ecff2520",
+  "evals/judge/docs/11d689902ba74717.md": "11d689902ba74717",
+  "evals/judge/docs/16b70c8e9a0c7ad2.md": "16b70c8e9a0c7ad2",
+  "evals/judge/docs/32e8cf1b0871d11b.md": "32e8cf1b0871d11b",
+  "evals/judge/docs/333969c8ae5b643e.md": "333969c8ae5b643e",
+  "evals/judge/docs/3a6d4817fc1a2c77.md": "3a6d4817fc1a2c77",
+  "evals/judge/docs/5042475f214ea8f1.md": "5042475f214ea8f1",
+  "evals/judge/docs/596c16f9919dbfac.md": "596c16f9919dbfac",
+  "evals/judge/docs/654b9436101871ad.md": "654b9436101871ad",
+  "evals/judge/docs/65a3d72f44c34d2e.md": "65a3d72f44c34d2e",
+  "evals/judge/docs/65a667f3bbd10128.md": "65a667f3bbd10128",
+  "evals/judge/docs/6e08cc260f165fe0.md": "6e08cc260f165fe0",
+  "evals/judge/docs/731298e55211ea3f.md": "731298e55211ea3f",
+  "evals/judge/docs/8c882a14db43d2bd.md": "8c882a14db43d2bd",
+  "evals/judge/docs/b1f8eee84f0d44d4.md": "b1f8eee84f0d44d4",
+  "evals/judge/docs/c027120322ca660b.md": "c027120322ca660b",
+  "evals/judge/docs/defc559c6786e8c8.md": "defc559c6786e8c8",
+  "evals/judge/docs/e5e18fade19f3d3f.md": "e5e18fade19f3d3f",
+  "evals/judge/docs/f28451d963dd011b.md": "f28451d963dd011b",
+  "evals/judge/docs/f62c2cf472aac466.md": "f62c2cf472aac466",
+  "packages/triage-contracts/README.md": "59715dd2619d9a0a"
+ }
+}

@@ -1,0 +1,62 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 204,
+ "title": "fix(hub): turn on sign-in rate limiting regardless of NODE_ENV",
+ "body": "Closes [CL-XXXX](https://linear.app/abklabs/issue/CL-XXXX)\n\n- Sets `rateLimit: { enabled: true }` in the hub's better-auth config; better-auth otherwise enables it only when `NODE_ENV=production`. Uses the default in-memory store.\n- Server tests give each signed-up member its own `x-forwarded-for` so sign-up limits apply per member.\n\nVerified: new server test gets 401, 401, 401, 429 for repeated sign-in from one client while another client still gets 401; it fails without the fix. `bun run check` and `bun run test` (691 pass) pass.",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(hub): turn on sign-in rate limiting regardless of NODE_ENV"
+ ],
+ "files": [
+  {
+   "filename": "apps/hub/src/auth.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 0,
+   "patch": "@@ -41,6 +41,8 @@ export function createHubAuth(db: DB[\"db\"], config: HubAuthConfig) {\n     trustedOrigins: config.trustedOrigins,\n     database: drizzleAdapter(db, { provider: \"pg\" }),\n     emailAndPassword: { enabled: authMethods(config).emailPassword },\n+    // better-auth only rate-limits when NODE_ENV is production, which the deployment does not set.\n+    rateLimit: { enabled: true },\n     ...(google && { socialProviders: { google } }),\n     databaseHooks: {\n       user: { create: { before: requireAllowedNewUser } },"
+  },
+  {
+   "filename": "apps/hub/src/server.test.ts",
+   "status": "modified",
+   "additions": 23,
+   "deletions": 1,
+   "patch": "@@ -145,12 +145,16 @@ async function startHub(extraEnv: Record<string, string> = {}, dataDir = tempora\n   return origin;\n }\n \n+let memberCount = 0;\n+\n /** JSON headers for a freshly signed-up member, sent from the hub's own origin. */\n async function signedIn(origin: string, email = `member-${crypto.randomUUID()}@example.com`): Promise<Record<string, string>> {\n   const headers = { \"content-type\": \"application/json\", origin };\n+  // Each member signs up from its own address so sign-up rate limits apply per member.\n+  memberCount += 1;\n   const signUp = await fetch(`${origin}/api/auth/sign-up/email`, {\n     method: \"POST\",\n-    headers,\n+    headers: { ...headers, \"x-forwarded-for\": `198.51.100.${memberCount}` },\n     body: JSON.stringify({ email, password: \"password-123456\", name: \"Member\" }),\n   });\n   expect(signUp.status).toBe(200);\n@@ -188,6 +192,24 @@ test(\"composed hub upgrades the sidecar websocket\", async () => {\n   ).resolves.toBeUndefined();\n }, 40_000);\n \n+test(\"repeated sign-in attempts from one client are rate limited\", async () => {\n+  const origin = await startHub();\n+\n+  async function signIn(clientIp: string) {\n+    const response = await fetch(`${origin}/api/auth/sign-in/email`, {\n+      method: \"POST\",\n+      headers: { \"content-type\": \"application/json\", origin, \"x-forwarded-for\": clientIp },\n+      body: JSON.stringify({ email: \"nobody@example.com\", password: \"wrong-password\" }),\n+    });\n+    return response.status;\n+  }\n+\n+  const statuses = [];\n+  for (let attempt = 0; attempt < 4; attempt++) statuses.push(await signIn(\"203.0.113.1\"));\n+  expect(statuses).toEqual([401, 401, 401, 429]);\n+  expect(await signIn(\"203.0.113.2\")).toBe(401);\n+}, 40_000);\n+\n test(\"composed hub documents the integration routes and still answers an invalid action with 400\", async () => {\n   const origin = await startHub();\n "
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "README.md": "264134d0eef334c6",
+  "docs/ARCHITECTURE.md": "5d3599f74896e75c",
+  "docs/DECISION_MODEL.md": "95c30e836b53d58f",
+  "docs/DEPLOY.md": "22c69f310b9af8e1",
+  "docs/DEV.md": "5301a81f5341edd3",
+  "docs/IMPLEMENTATION.md": "403c880a866b7685",
+  "docs/PRODUCT.md": "de9866c11068467f",
+  "docs/SELF_HOST.md": "c0825f72a63e7770",
+  "evals/judge/docs/0b9cfac95c4d9555.md": "0b9cfac95c4d9555",
+  "evals/judge/docs/0e6fca0bdde3f8c4.md": "0e6fca0bdde3f8c4",
+  "evals/judge/docs/0ff6d526ecff2520.md": "0ff6d526ecff2520",
+  "evals/judge/docs/11d689902ba74717.md": "11d689902ba74717",
+  "evals/judge/docs/16b70c8e9a0c7ad2.md": "16b70c8e9a0c7ad2",
+  "evals/judge/docs/32e8cf1b0871d11b.md": "32e8cf1b0871d11b",
+  "evals/judge/docs/333969c8ae5b643e.md": "333969c8ae5b643e",
+  "evals/judge/docs/3a6d4817fc1a2c77.md": "3a6d4817fc1a2c77",
+  "evals/judge/docs/5042475f214ea8f1.md": "5042475f214ea8f1",
+  "evals/judge/docs/596c16f9919dbfac.md": "596c16f9919dbfac",
+  "evals/judge/docs/654b9436101871ad.md": "654b9436101871ad",
+  "evals/judge/docs/65a3d72f44c34d2e.md": "65a3d72f44c34d2e",
+  "evals/judge/docs/65a667f3bbd10128.md": "65a667f3bbd10128",
+  "evals/judge/docs/6e08cc260f165fe0.md": "6e08cc260f165fe0",
+  "evals/judge/docs/731298e55211ea3f.md": "731298e55211ea3f",
+  "evals/judge/docs/8c882a14db43d2bd.md": "8c882a14db43d2bd",
+  "evals/judge/docs/b1f8eee84f0d44d4.md": "b1f8eee84f0d44d4",
+  "evals/judge/docs/c027120322ca660b.md": "c027120322ca660b",
+  "evals/judge/docs/defc559c6786e8c8.md": "defc559c6786e8c8",
+  "evals/judge/docs/e5e18fade19f3d3f.md": "e5e18fade19f3d3f",
+  "evals/judge/docs/f28451d963dd011b.md": "f28451d963dd011b",
+  "evals/judge/docs/f62c2cf472aac466.md": "f62c2cf472aac466",
+  "packages/triage-contracts/README.md": "59715dd2619d9a0a"
+ }
+}

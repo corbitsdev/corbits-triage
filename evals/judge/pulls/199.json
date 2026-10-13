@@ -1,0 +1,97 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 199,
+ "title": "fix(hub): require the run read grant on every verdict route",
+ "body": "Closes [CL-XXXX](https://linear.app/abklabs/issue/CL-XXXX)\n\n## What changed\n- One guard checks membership and the run read grant; the verdicts, timeline, stats and Do list routes all use it.\n\n## Verification\n- New Postgres test with real grants: a user without the run read grant gets 403 from all four routes.\n- `bun run check`, `bun run test` (691 pass).",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(hub): require the run read grant on every verdict route"
+ ],
+ "files": [
+  {
+   "filename": "apps/hub/src/github/github-read-access.postgres.test.ts",
+   "status": "modified",
+   "additions": 19,
+   "deletions": 0,
+   "patch": "@@ -9,7 +9,11 @@ import { emptyPack } from \"@corbits/triage-contracts\";\n import { createGithubOpenPulls, createOpenPullsCache } from \"./open-pulls.js\";\n import { createGithubPrActions } from \"./pr-actions.js\";\n import { createGithubPrDetails } from \"./pr-details.js\";\n+import { createGithubPrDos } from \"./pr-dos.js\";\n import { createGithubPrPreview } from \"./pr-preview.js\";\n+import { createTriageStats } from \"./triage-stats.js\";\n+import { createTriageTimeline } from \"./triage-timeline.js\";\n+import { createTriageVerdicts } from \"./triage-verdicts.js\";\n \n const TEST_DB = { host: \"localhost\", port: 5432, user: \"postgres\", password: \"postgres\", database: \"interchange\" };\n const TENANT = \"tnt_read_access\";\n@@ -181,3 +185,18 @@ test(\"PostgreSQL: approving needs the approve grant on top of use, and pins the\n   expect(approved.status).toBe(200);\n   expect(reviewed).toEqual([{ body: \"\", event: \"APPROVE\", commit_id: HEAD }]);\n });\n+\n+test(\"PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give\", async () => {\n+  const unused = {} as never;\n+  const routes = [\n+    createTriageVerdicts({ ...deps, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, now: unused }),\n+    createTriageTimeline({ ...deps, verdicts: unused }),\n+    createTriageStats({ ...deps, verdicts: unused, dos: unused, now: unused }),\n+    createGithubPrDos({ ...deps, runReader: unused, store: unused, verdicts: unused, log: unused }).list,\n+  ];\n+  for (const route of routes) {\n+    const res = await route(get(\"usr_user\", `/verdicts?repo=${REPO}&number=8`), TENANT);\n+    expect(res.status).toBe(403);\n+    expect(await res.json()).toEqual({ error: { code: \"forbidden\", message: \"You do not have access to this workspace's triage runs.\" } });\n+  }\n+});"
+  },
+  {
+   "filename": "apps/hub/src/github/portal-credential.ts",
+   "status": "modified",
+   "additions": 8,
+   "deletions": 0,
+   "patch": "@@ -43,6 +43,14 @@ export async function portalMember(d: PortalCredentialDeps, req: Request, tenant\n   return member.id;\n }\n \n+/** The member's principal id when they hold `workflow-run:*` read, which reading triage runs needs, or the error response to return. */\n+export async function runReadPrincipal(d: PortalCredentialDeps, req: Request, tenantId: string): Promise<string | Response> {\n+  const principalId = await portalMember(d, req, tenantId);\n+  if (principalId instanceof Response) return principalId;\n+  if (await d.authorize(principalId, tenantId, \"workflow-run:*\", \"read\")) return principalId;\n+  return failure(403, \"forbidden\", \"You do not have access to this workspace's triage runs.\");\n+}\n+\n async function holds(d: PortalCredentialDeps, principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {\n   if (await d.authorize(principalId, tenantId, resource, action)) return true;\n   return action === \"read\" && d.authorize(principalId, tenantId, resource, \"use\");"
+  },
+  {
+   "filename": "apps/hub/src/github/pr-dos.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 2,
+   "patch": "@@ -12,7 +12,7 @@ import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader }\n import { doEffectId, type SuggestedDo } from \"../../../../packages/triage-workflows/src/logic/actions.js\";\n import { unrunnable } from \"../../../../packages/triage-workflows/src/logic/execute-do.js\";\n import { createGithubAppCredentialFetch } from \"./github-app-credential-adapter.js\";\n-import { appGithubFetch, approvalRefused, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from \"./portal-credential.js\";\n+import { appGithubFetch, approvalRefused, failure, githubAppCredential, portalMember, runReadPrincipal, type PortalCredentialDeps } from \"./portal-credential.js\";\n import type { DoRun, DoRunStore } from \"./do-run-store.js\";\n import type { VerdictRecordStore } from \"./verdict-record-store.js\";\n import { repoRecords, triageNs } from \"./tenant-config.js\";\n@@ -209,7 +209,7 @@ export function createGithubPrDos(deps: GithubPrDosDeps) {\n   }\n \n   async function list(req: Request, tenantId: string): Promise<Response> {\n-    const principalId = await portalMember(deps, req, tenantId);\n+    const principalId = await runReadPrincipal(deps, req, tenantId);\n     if (principalId instanceof Response) return principalId;\n     const url = new URL(req.url);\n     const query = DoQuery(Object.fromEntries(url.searchParams));"
+  },
+  {
+   "filename": "apps/hub/src/github/triage-stats.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 2,
+   "patch": "@@ -3,7 +3,7 @@\n // for it on every view.\n import { type } from \"arktype\";\n import type { DoRun, DoRunStore } from \"./do-run-store.js\";\n-import { failure, portalMember, type PortalCredentialDeps } from \"./portal-credential.js\";\n+import { failure, runReadPrincipal, type PortalCredentialDeps } from \"./portal-credential.js\";\n import type { VerdictRecord, VerdictRecordStore } from \"./verdict-record-store.js\";\n \n export const TRIAGE_STATS_PATH = \"/api/integrations/triage-stats\";\n@@ -148,7 +148,7 @@ export function createTriageStats(deps: TriageStatsDeps) {\n   }\n \n   return async function handle(req: Request, tenantId: string): Promise<Response> {\n-    const principalId = await portalMember(deps, req, tenantId);\n+    const principalId = await runReadPrincipal(deps, req, tenantId);\n     if (principalId instanceof Response) return principalId;\n     const query = StatsQuery(Object.fromEntries(new URL(req.url).searchParams));\n     if (query instanceof type.errors) return failure(400, \"invalid_request\", query.summary);"
+  },
+  {
+   "filename": "apps/hub/src/github/triage-timeline.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 2,
+   "patch": "@@ -3,7 +3,7 @@\n // that changed since the judged verdict before it. The portal merges in the\n // pull request's Do runs, which it already reads from the github-dos route.\n import { type } from \"arktype\";\n-import { failure, portalMember, type PortalCredentialDeps } from \"./portal-credential.js\";\n+import { failure, runReadPrincipal, type PortalCredentialDeps } from \"./portal-credential.js\";\n import type { RecordedCheck, VerdictRecord, VerdictRecordStore } from \"./verdict-record-store.js\";\n \n export const TRIAGE_TIMELINE_PATH = \"/api/integrations/triage-timeline\";\n@@ -89,7 +89,7 @@ function timeline(records: readonly VerdictRecord[]): TimelineEntry[] {\n \n export function createTriageTimeline(deps: TriageTimelineDeps) {\n   return async function handle(req: Request, tenantId: string): Promise<Response> {\n-    const principalId = await portalMember(deps, req, tenantId);\n+    const principalId = await runReadPrincipal(deps, req, tenantId);\n     if (principalId instanceof Response) return principalId;\n     const url = new URL(req.url);\n     const query = TimelineQuery({ repo: url.searchParams.get(\"repo\"), number: url.searchParams.get(\"number\") });"
+  },
+  {
+   "filename": "apps/hub/src/github/triage-verdicts.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 3,
+   "patch": "@@ -11,7 +11,7 @@ import { schema } from \"@intx/db\";\n import { PR_TRIAGE_STUCK_RUN_MS } from \"@corbits/triage-contracts\";\n import { createGithubAppCredentialFetch } from \"./github-app-credential-adapter.js\";\n import { listRepoPulls, type OpenPullsCache, type OpenPullsRead } from \"./open-pulls.js\";\n-import { appGithubFetch, failure, githubAppCredential, portalMember, type PortalCredentialDeps } from \"./portal-credential.js\";\n+import { appGithubFetch, failure, githubAppCredential, runReadPrincipal, type PortalCredentialDeps } from \"./portal-credential.js\";\n import { runKeyNumber, type ObservedRun } from \"./reconcile-plan.js\";\n import { repoRecords, triageNs, type RepoRecord } from \"./tenant-config.js\";\n import type { TenantObservation, TenantObserver, TenantVersions } from \"./tenant-observer.js\";\n@@ -244,9 +244,8 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {\n   }\n \n   return async function handle(req: Request, tenantId: string): Promise<Response> {\n-    const principalId = await portalMember(deps, req, tenantId);\n+    const principalId = await runReadPrincipal(deps, req, tenantId);\n     if (principalId instanceof Response) return principalId;\n-    if (!(await deps.authorize(principalId, tenantId, \"workflow-run:*\", \"read\"))) return failure(403, \"forbidden\", \"You do not have access to this workspace's triage runs.\");\n     const query = PullQuery(Object.fromEntries(new URL(req.url).searchParams));\n     if (query instanceof type.errors) return failure(400, \"invalid_request\", query.summary);\n     if ((query.repo === undefined) !== (query.number === undefined)) return failure(400, \"invalid_request\", \"Name both repo and number, or neither.\");"
+  },
+  {
+   "filename": "apps/hub/src/integrations/app.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 2,
+   "patch": "@@ -243,6 +243,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {\n     `${GITHUB_DOS_PATH}/:tenantId`,\n     describeRoute({\n       summary: \"Recorded pack Dos of a repository, newest first\",\n+      description: \"Needs `workflow-run:*` read.\",\n       tags: TAGS,\n       parameters: [\n         { in: \"query\", name: \"repo\", required: true, schema: { type: \"string\", pattern: \"^[\\\\w.-]+\\\\/[\\\\w.-]+$\" } },\n@@ -318,7 +319,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {\n     `${TRIAGE_STATS_PATH}/:tenantId`,\n     describeRoute({\n       summary: \"Triage stats of a repository over the last whole UTC days\",\n-      description: \"From the recorded verdicts and Dos, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. Cached for a minute.\",\n+      description: \"Needs `workflow-run:*` read. From the recorded verdicts and Dos, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. Cached for a minute.\",\n       tags: TAGS,\n       parameters: [\n         { in: \"query\", name: \"repo\", required: true, schema: { type: \"string\", pattern: \"^[\\\\w.-]+\\\\/[\\\\w.-]+$\" } },\n@@ -333,7 +334,7 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {\n     `${TRIAGE_TIMELINE_PATH}/:tenantId`,\n     describeRoute({\n       summary: \"Readiness history of a pull request\",\n-      description: \"From the recorded verdicts only, oldest first; the pull request's Do runs are read from github-dos. A verdict with the same head, settled and degraded state and check results as the one before it is left out. Each scores its checks (pass 1, unconfirmed half, fail 0, out of 100) and lists the checks whose result changed since the previous judged verdict; degraded verdicts score nothing.\",\n+      description: \"Needs `workflow-run:*` read. From the recorded verdicts only, oldest first; the pull request's Do runs are read from github-dos. A verdict with the same head, settled and degraded state and check results as the one before it is left out. Each scores its checks (pass 1, unconfirmed half, fail 0, out of 100) and lists the checks whose result changed since the previous judged verdict; degraded verdicts score nothing.\",\n       tags: TAGS,\n       parameters: [\n         { in: \"query\", name: \"repo\", required: true, schema: { type: \"string\", pattern: \"^[\\\\w.-]+\\\\/[\\\\w.-]+$\" } },"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "README.md": "264134d0eef334c6",
+  "docs/ARCHITECTURE.md": "5d3599f74896e75c",
+  "docs/DECISION_MODEL.md": "95c30e836b53d58f",
+  "docs/DEPLOY.md": "22c69f310b9af8e1",
+  "docs/DEV.md": "5301a81f5341edd3",
+  "docs/IMPLEMENTATION.md": "403c880a866b7685",
+  "docs/PRODUCT.md": "de9866c11068467f",
+  "docs/SELF_HOST.md": "c0825f72a63e7770",
+  "evals/judge/docs/0b9cfac95c4d9555.md": "0b9cfac95c4d9555",
+  "evals/judge/docs/0e6fca0bdde3f8c4.md": "0e6fca0bdde3f8c4",
+  "evals/judge/docs/0ff6d526ecff2520.md": "0ff6d526ecff2520",
+  "evals/judge/docs/11d689902ba74717.md": "11d689902ba74717",
+  "evals/judge/docs/16b70c8e9a0c7ad2.md": "16b70c8e9a0c7ad2",
+  "evals/judge/docs/32e8cf1b0871d11b.md": "32e8cf1b0871d11b",
+  "evals/judge/docs/333969c8ae5b643e.md": "333969c8ae5b643e",
+  "evals/judge/docs/3a6d4817fc1a2c77.md": "3a6d4817fc1a2c77",
+  "evals/judge/docs/5042475f214ea8f1.md": "5042475f214ea8f1",
+  "evals/judge/docs/596c16f9919dbfac.md": "596c16f9919dbfac",
+  "evals/judge/docs/654b9436101871ad.md": "654b9436101871ad",
+  "evals/judge/docs/65a3d72f44c34d2e.md": "65a3d72f44c34d2e",
+  "evals/judge/docs/65a667f3bbd10128.md": "65a667f3bbd10128",
+  "evals/judge/docs/6e08cc260f165fe0.md": "6e08cc260f165fe0",
+  "evals/judge/docs/731298e55211ea3f.md": "731298e55211ea3f",
+  "evals/judge/docs/8c882a14db43d2bd.md": "8c882a14db43d2bd",
+  "evals/judge/docs/b1f8eee84f0d44d4.md": "b1f8eee84f0d44d4",
+  "evals/judge/docs/c027120322ca660b.md": "c027120322ca660b",
+  "evals/judge/docs/defc559c6786e8c8.md": "defc559c6786e8c8",
+  "evals/judge/docs/e5e18fade19f3d3f.md": "e5e18fade19f3d3f",
+  "evals/judge/docs/f28451d963dd011b.md": "f28451d963dd011b",
+  "evals/judge/docs/f62c2cf472aac466.md": "f62c2cf472aac466",
+  "packages/triage-contracts/README.md": "59715dd2619d9a0a"
+ }
+}

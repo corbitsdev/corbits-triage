@@ -14,9 +14,19 @@ export interface Label {
   note: string;
 }
 
+/** How well a pull request follows the repository's written conventions, 0 to 100; it passes at 60. */
+export interface ConventionsLabel {
+  score: number;
+  reason: string;
+  /** Proposed for the owner to correct; dropped once the owner has labelled it. */
+  proposed?: true;
+}
+
 export interface Labels {
   repo: string;
   pulls: Record<string, Label>;
+  /** Pull requests frozen for the conventions check; no eval reads them yet. */
+  conventions: Record<string, ConventionsLabel>;
   /** Pull requests whose files are merged into one unfocused pull request, the first giving the title and body. */
   mixes: Array<[number, number]>;
   /** Mixes whose title and body describe both pull requests, as an author bundling two changes would. */

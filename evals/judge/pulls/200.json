@@ -1,0 +1,98 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 200,
+ "title": "fix(triage-workflows): hash Do effect ids and judge keys without node:crypto",
+ "body": "## What changed\n\n- `logic/actions.ts` (`doEffectId`) and `logic/quality.ts` (`judgeKey`) hash with `@noble/hashes` sha256 instead of `node:crypto`, so these modules no longer need a Node built-in. Output is byte-identical.\n- `@noble/hashes` added to triage-workflows (already in the lockfile at 2.4.0 through better-auth; one copy).\n- New test pins a `doEffectId` value produced with `node:crypto`, including non-ASCII text, an emoji and a lone surrogate.\n\nThe other Node built-in reaching `logic/` (`node:timers/promises` through `@corbits/github-tool`) is removed by #196.\n\n## Verification\n\n- `bun run check`\n- `bun run test`: 690 pass, 0 fail\n- 1,006 inputs (empty, emoji, 100 KB, 1,000 random Unicode strings) hash identically with `node:crypto` and `@noble/hashes`; lone surrogates match in Bun and Node\n- `build-workflows` test passes; `@noble/hashes` is inlined into workflow bundles",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(triage-workflows): hash Do effect ids and judge keys without node:crypto",
+  "test(triage-workflows): hash a lone surrogate outside the JSON body"
+ ],
+ "files": [
+  {
+   "filename": "bun.lock",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 0,
+   "patch": "@@ -147,6 +147,7 @@\n         \"@intx/agent\": \"workspace:*\",\n         \"@intx/types\": \"workspace:*\",\n         \"@intx/workflow\": \"workspace:*\",\n+        \"@noble/hashes\": \"^2.4.0\",\n         \"arktype\": \"catalog:\",\n         \"re2js\": \"2.8.6\",\n       },"
+  },
+  {
+   "filename": "packages/triage-workflows/package.json",
+   "status": "modified",
+   "additions": 1,
+   "deletions": 0,
+   "patch": "@@ -20,6 +20,7 @@\n     \"@corbits/triage-contracts\": \"workspace:*\",\n     \"@intx/agent\": \"workspace:*\",\n     \"@intx/workflow\": \"workspace:*\",\n+    \"@noble/hashes\": \"^2.4.0\",\n     \"@intx/types\": \"workspace:*\",\n     \"arktype\": \"catalog:\",\n     \"re2js\": \"2.8.6\""
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/actions.test.ts",
+   "status": "modified",
+   "additions": 6,
+   "deletions": 0,
+   "patch": "@@ -115,6 +115,12 @@ describe(\"evaluateActions\", () => {\n     ]);\n   });\n \n+  test(\"an effect id is stable across hash implementations\", () => {\n+    // Effect ids are stored idempotency keys; this value was produced with node:crypto.\n+    const ref = { repo: \"o/r\", number: 8, headSha: \"abc123\", actionId: \"tag\\ud800\", branch: \"yes\", index: 0, kind: \"comment\", target: { body: \"xy é🚀\" } } as const;\n+    expect(doEffectId(ref)).toBe(\"fedf9f56631a9cbfed3995eb60019f5799a81b771a2e670df7d5c70a70979dac\");\n+  });\n+\n   test(\"a step keeps its index when steps before it are satisfied or skipped\", () => {\n     const behind = run([always([\n       { kind: \"labels\", automatic: false, target: { from: \"list\", labels: [\"api\"] } },"
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/actions.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 2,
+   "patch": "@@ -1,4 +1,5 @@\n-import { createHash } from \"node:crypto\";\n+import { sha256 } from \"@noble/hashes/sha2.js\";\n+import { bytesToHex, utf8ToBytes } from \"@noble/hashes/utils.js\";\n import { missingFrom } from \"@corbits/github-tool\";\n import type { ResolvedTarget } from \"@corbits/github-tool/do\";\n import { ALL_CHECKS, BUILT_IN_CHECK_NAMES, CHECK_CATALOG, classificationSources, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from \"@corbits/triage-contracts\";\n@@ -27,7 +28,7 @@ function canonical(value: unknown): string {\n /** The idempotency key for one Do on one head; GitHub writes and their audit share it. */\n export function doEffectId(ref: DoRef): string {\n   const parts = [ref.repo, ref.number, ref.headSha, ref.actionId, ref.branch, ref.index, ref.kind, canonical(ref.target)];\n-  return createHash(\"sha256\").update(parts.join(\"\\x1f\")).digest(\"hex\");\n+  return bytesToHex(sha256(utf8ToBytes(parts.join(\"\\x1f\"))));\n }\n \n type Step = { id: string; branch: Branch; index: number; kind: ActionKind; automatic: boolean; reason: string };"
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/quality.ts",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 2,
+   "patch": "@@ -1,4 +1,5 @@\n-import { createHash } from \"node:crypto\";\n+import { sha256 } from \"@noble/hashes/sha2.js\";\n+import { bytesToHex, utf8ToBytes } from \"@noble/hashes/utils.js\";\n import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from \"@corbits/triage-contracts\";\n import type { DeterministicResult, PrFacts, PrFileFacts } from \"./checks.js\";\n import { boundedPath, hunkCitations, patchHunks } from \"./hunks.js\";\n@@ -286,7 +287,7 @@ export const JUDGE_SYSTEM_PROMPT = \"The state is JSON: the deterministic PR fact\n  * between runs of the same workflow version on the same offering.\n  */\n export function judgeKey({ state, questions }: JudgeRequest): string {\n-  return createHash(\"sha256\").update(JSON.stringify({ systemPrompt: JUDGE_SYSTEM_PROMPT, state, questions })).digest(\"hex\");\n+  return bytesToHex(sha256(utf8ToBytes(JSON.stringify({ systemPrompt: JUDGE_SYSTEM_PROMPT, state, questions }))));\n }\n \n /** How focused is asked: one choice per request-sized slice of the diff. */"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "ab9ef5923085f448",
+  "README.md": "264134d0eef334c6",
+  "docs/ARCHITECTURE.md": "215b69df23d6ac52",
+  "docs/DECISION_MODEL.md": "65f68e07b3405240",
+  "docs/DEPLOY.md": "22c69f310b9af8e1",
+  "docs/DEV.md": "6822e2f79b8d4200",
+  "docs/IMPLEMENTATION.md": "f7438cc2dc021f2e",
+  "docs/PRODUCT.md": "36e5fc380fb98c23",
+  "docs/SELF_HOST.md": "218639de11b261ed",
+  "evals/judge/docs/0b9cfac95c4d9555.md": "0b9cfac95c4d9555",
+  "evals/judge/docs/0e6fca0bdde3f8c4.md": "0e6fca0bdde3f8c4",
+  "evals/judge/docs/0ff6d526ecff2520.md": "0ff6d526ecff2520",
+  "evals/judge/docs/11d689902ba74717.md": "11d689902ba74717",
+  "evals/judge/docs/15d35c839bbcc135.md": "15d35c839bbcc135",
+  "evals/judge/docs/16b70c8e9a0c7ad2.md": "16b70c8e9a0c7ad2",
+  "evals/judge/docs/22c69f310b9af8e1.md": "22c69f310b9af8e1",
+  "evals/judge/docs/264134d0eef334c6.md": "264134d0eef334c6",
+  "evals/judge/docs/32e8cf1b0871d11b.md": "32e8cf1b0871d11b",
+  "evals/judge/docs/333969c8ae5b643e.md": "333969c8ae5b643e",
+  "evals/judge/docs/3a6d4817fc1a2c77.md": "3a6d4817fc1a2c77",
+  "evals/judge/docs/403c880a866b7685.md": "403c880a866b7685",
+  "evals/judge/docs/43794a1e8f5d00dd.md": "43794a1e8f5d00dd",
+  "evals/judge/docs/5042475f214ea8f1.md": "5042475f214ea8f1",
+  "evals/judge/docs/5301a81f5341edd3.md": "5301a81f5341edd3",
+  "evals/judge/docs/596c16f9919dbfac.md": "596c16f9919dbfac",
+  "evals/judge/docs/59715dd2619d9a0a.md": "59715dd2619d9a0a",
+  "evals/judge/docs/5d3599f74896e75c.md": "5d3599f74896e75c",
+  "evals/judge/docs/654b9436101871ad.md": "654b9436101871ad",
+  "evals/judge/docs/65a3d72f44c34d2e.md": "65a3d72f44c34d2e",
+  "evals/judge/docs/65a667f3bbd10128.md": "65a667f3bbd10128",
+  "evals/judge/docs/6e08cc260f165fe0.md": "6e08cc260f165fe0",
+  "evals/judge/docs/731298e55211ea3f.md": "731298e55211ea3f",
+  "evals/judge/docs/8c882a14db43d2bd.md": "8c882a14db43d2bd",
+  "evals/judge/docs/95c30e836b53d58f.md": "95c30e836b53d58f",
+  "evals/judge/docs/b1f8eee84f0d44d4.md": "b1f8eee84f0d44d4",
+  "evals/judge/docs/c027120322ca660b.md": "c027120322ca660b",
+  "evals/judge/docs/c0825f72a63e7770.md": "c0825f72a63e7770",
+  "evals/judge/docs/cb04fe12687488fd.md": "cb04fe12687488fd",
+  "evals/judge/docs/de9866c11068467f.md": "de9866c11068467f",
+  "evals/judge/docs/defc559c6786e8c8.md": "defc559c6786e8c8",
+  "evals/judge/docs/e5e18fade19f3d3f.md": "e5e18fade19f3d3f",
+  "evals/judge/docs/e94086ce0db69b3e.md": "e94086ce0db69b3e",
+  "evals/judge/docs/ed27f936557385cd.md": "ed27f936557385cd",
+  "evals/judge/docs/f28451d963dd011b.md": "f28451d963dd011b",
+  "evals/judge/docs/f62c2cf472aac466.md": "f62c2cf472aac466",
+  "packages/triage-contracts/README.md": "59715dd2619d9a0a"
+ }
+}

@@ -1,0 +1,77 @@
+{
+ "repo": "corbitsdev/corbits-triage",
+ "number": 194,
+ "title": "fix(triage): match path globs in linear time",
+ "body": "Closes [CL-XXXX](https://linear.app/abklabs/issue/CL-XXXX)\n\n## What changed\n- Path globs compile once to cached RE2JS patterns (linear time): `**` and `*` keep their meaning, every other character is quoted and matches literally. A `?` in a stored glob is now literal; it previously acted as regex syntax.\n- Packs reject globs longer than 200 characters (after trimming) and lists of more than 50 globs.\n\n## Verification\n- New glob tests: wildcard behaviour unchanged, metacharacters literal, a many-wildcard glob matches in under 100 ms, 3000 paths × 50 globs match in under 200 ms (~37 ms).\n- `bun run check`, `bun run test` (694 pass).",
+ "author": "TheGreatAxios",
+ "commits": [
+  "fix(triage): match path globs in linear time",
+  "fix(triage): compile each path glob once"
+ ],
+ "files": [
+  {
+   "filename": "packages/triage-contracts/src/check-pack.test.ts",
+   "status": "modified",
+   "additions": 2,
+   "deletions": 0,
+   "patch": "@@ -140,6 +140,8 @@ describe(\"check pack contract\", () => {\n       [{ ...MODELS[2], options: [\"small\", \"small \"] }, \"Custom check custom-3 options must not repeat a value.\"],\n       [{ ...MODELS[2], failOn: [\"medium\"] }, \"Custom check custom-3 failOn must be among options.\"],\n       [{ ...CUSTOM[0], when: [\"migrations/**\"] }, \"Custom check custom-1 when needs a file or hunk scope.\"],\n+      [{ ...RULES[0], globs: [\"a\".repeat(201)] }, \"Custom check custom-1 globs must be globs of at most 200 characters.\"],\n+      [{ ...RULES[0], globs: Array.from({ length: 51 }, (_, i) => `dir${i}/**`) }, \"Custom check custom-1 globs must list at most 50 globs.\"],\n       [{ ...MODELS[3], scope: \"repo\" }, \"Custom check custom-4 scope must be one of\"],\n       [{ ...MODELS[1], scope: \"file\" }, \"Custom check custom-2 scope and when apply only to is-true checks.\"],\n     ];"
+  },
+  {
+   "filename": "packages/triage-contracts/src/check-pack.ts",
+   "status": "modified",
+   "additions": 18,
+   "deletions": 7,
+   "patch": "@@ -139,6 +139,8 @@ export type RuleCustomCheck = Extract<CustomCheck, { kind: \"rule\" }>;\n \n const SCORE_MAX = 10;\n const PATTERN_MAX = 200;\n+const GLOB_MAX = 200;\n+const GLOBS_MAX = 50;\n const CUSTOM_ID = /^custom-\\d+$/;\n \n export const ACTION_KINDS = [\"labels\", \"assign\", \"request-review\", \"comment\", \"approve\", \"close\", \"agent\"] as const;\n@@ -375,12 +377,21 @@ function finiteNumber(value: unknown): number | undefined {\n   return typeof value === \"number\" && Number.isFinite(value) ? value : undefined;\n }\n \n-function parseGlobs(value: unknown): string[] | undefined {\n-  if (!Array.isArray(value)) return undefined;\n-  const globs = value.flatMap((item) => (typeof item === \"string\" && item.trim().length > 0 ? [item.trim()] : []));\n+function capGlobs(globs: string[], where: string): string[] {\n+  if (globs.length > GLOBS_MAX) throw new Error(`${where} must list at most ${GLOBS_MAX} globs.`);\n+  if (globs.some((glob) => glob.length > GLOB_MAX)) throw new Error(`${where} must be globs of at most ${GLOB_MAX} characters.`);\n   return globs;\n }\n \n+function globs(value: unknown, where: string): string[] {\n+  return capGlobs(texts(value, where), where);\n+}\n+\n+function parseGlobs(value: unknown, where: string): string[] | undefined {\n+  if (!Array.isArray(value)) return undefined;\n+  return capGlobs(value.flatMap((item) => (typeof item === \"string\" && item.trim().length > 0 ? [item.trim()] : [])), where);\n+}\n+\n function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefined {\n   const row = asRecord(raw);\n   if (!row) return undefined;\n@@ -401,7 +412,7 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine\n     if (maxBehindBy !== undefined) check.maxBehindBy = maxBehindBy;\n   }\n   if (id === \"paths\") {\n-    const globs = parseGlobs(row.forbiddenGlobs);\n+    const globs = parseGlobs(row.forbiddenGlobs, \"Forbidden paths globs\");\n     if (globs) check.forbiddenGlobs = globs;\n   }\n   return check;\n@@ -474,9 +485,9 @@ function parseRule(row: Record<string, unknown>, where: string): RuleCheck {\n   const rule = oneOf(row.rule, RULE_KINDS, `${where} rule`);\n   switch (rule) {\n     case \"paths-unchanged\":\n-      return { rule, globs: texts(row.globs, `${where} globs`) };\n+      return { rule, globs: globs(row.globs, `${where} globs`) };\n     case \"paths-together\":\n-      return { rule, changed: texts(row.changed, `${where} changed`), requires: texts(row.requires, `${where} requires`) };\n+      return { rule, changed: globs(row.changed, `${where} changed`), requires: globs(row.requires, `${where} requires`) };\n     case \"title-pattern\":\n     case \"branch-pattern\":\n     case \"diff-excludes\":\n@@ -498,7 +509,7 @@ function parseScope(row: Record<string, unknown>, where: string): { scope?: Cust\n   const scope = row.scope === undefined ? undefined : oneOf(row.scope, CUSTOM_SCOPES, `${where} scope`);\n   if (row.when === undefined) return scope === undefined ? {} : { scope };\n   if (scope === undefined || scope === \"pull-request\") throw new Error(`${where} when needs a file or hunk scope.`);\n-  return { scope, when: texts(row.when, `${where} when`) };\n+  return { scope, when: globs(row.when, `${where} when`) };\n }\n \n function parseModel(row: Record<string, unknown>, where: string): ModelCheck {"
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/glob.test.ts",
+   "status": "added",
+   "additions": 29,
+   "deletions": 0,
+   "patch": "@@ -0,0 +1,29 @@\n+import { expect, test } from \"bun:test\";\n+import { globMatch } from \"./glob.js\";\n+\n+test(\"* stays within a segment and ** crosses segments\", () => {\n+  expect(globMatch(\"vendor/a/b.ts\", \"vendor/**\")).toBe(true);\n+  expect(globMatch(\"vendor/a/b.ts\", \"vendor/*\")).toBe(false);\n+  expect(globMatch(\"src/a.test.ts\", \"src/*.test.ts\")).toBe(true);\n+});\n+\n+test(\"regex metacharacters match literally\", () => {\n+  expect(globMatch(\"a?b\", \"a?b\")).toBe(true);\n+  expect(globMatch(\"b\", \"a?b\")).toBe(false);\n+  expect(globMatch(\"x(1)[2]{3}+|$^.ts\", \"x(1)[2]{3}+|$^.ts\")).toBe(true);\n+  expect(globMatch(\"xyts\", \"x.ts\")).toBe(false);\n+});\n+\n+test(\"a glob that backtracks exponentially still matches in linear time\", () => {\n+  const started = performance.now();\n+  expect(globMatch(\"a\".repeat(40), `${\"**a\".repeat(12)}**b`)).toBe(false);\n+  expect(performance.now() - started).toBeLessThan(100);\n+});\n+\n+test(\"a full pack of globs over a large pull request matches quickly\", () => {\n+  const paths = Array.from({ length: 3000 }, (_, i) => `src/module${i}/file${i}.ts`);\n+  const globs = Array.from({ length: 50 }, (_, i) => `vendor${i}/**/*.ts`);\n+  const started = performance.now();\n+  expect(paths.some((path) => globs.some((glob) => globMatch(path, glob)))).toBe(false);\n+  expect(performance.now() - started).toBeLessThan(200);\n+});"
+  },
+  {
+   "filename": "packages/triage-workflows/src/logic/glob.ts",
+   "status": "modified",
+   "additions": 21,
+   "deletions": 7,
+   "patch": "@@ -1,9 +1,23 @@\n-/** `*` matches within a path segment, `**` across segments. */\n+import { RE2JS } from \"re2js\";\n+\n+const COMPILED_MAX = 1000;\n+const compiled = new Map<string, RE2JS>();\n+\n+function compile(glob: string): RE2JS {\n+  const cached = compiled.get(glob);\n+  if (cached) return cached;\n+  if (compiled.size >= COMPILED_MAX) compiled.clear();\n+  const re = RE2JS.compile(\n+    glob\n+      .split(\"**\")\n+      .map((part) => part.split(\"*\").map(RE2JS.quote).join(\"[^/]*\"))\n+      .join(\".*\"),\n+  );\n+  compiled.set(glob, re);\n+  return re;\n+}\n+\n+/** `*` matches within a path segment, `**` across segments; everything else is literal. RE2 keeps matching linear. */\n export function globMatch(path: string, glob: string): boolean {\n-  const escaped = glob\n-    .replace(/[.+^${}()|[\\]\\\\]/g, \"\\\\$&\")\n-    .replace(/\\*\\*/g, \"\\^@\")\n-    .replace(/\\*/g, \"[^/]*\")\n-    .replace(/\\^@/g, \".*\");\n-  return new RegExp(`^${escaped}$`).test(path);\n+  return compile(glob).matches(path);\n }"
+  }
+ ],
+ "docs": {
+  "AGENTS.md": "654b9436101871ad",
+  "CONTRIBUTING.md": "0ff6d526ecff2520",
+  "DESIGN.md": "6e08cc260f165fe0",
+  "README.md": "264134d0eef334c6",
+  "docs/ARCHITECTURE.md": "5d3599f74896e75c",
+  "docs/DECISION_MODEL.md": "95c30e836b53d58f",
+  "docs/DEPLOY.md": "22c69f310b9af8e1",
+  "docs/DEV.md": "5301a81f5341edd3",
+  "docs/IMPLEMENTATION.md": "403c880a866b7685",
+  "docs/PRODUCT.md": "de9866c11068467f",
+  "docs/SELF_HOST.md": "c0825f72a63e7770",
+  "evals/judge/docs/0b9cfac95c4d9555.md": "0b9cfac95c4d9555",
+  "evals/judge/docs/0e6fca0bdde3f8c4.md": "0e6fca0bdde3f8c4",
+  "evals/judge/docs/0ff6d526ecff2520.md": "0ff6d526ecff2520",
+  "evals/judge/docs/11d689902ba74717.md": "11d689902ba74717",
+  "evals/judge/docs/16b70c8e9a0c7ad2.md": "16b70c8e9a0c7ad2",
+  "evals/judge/docs/32e8cf1b0871d11b.md": "32e8cf1b0871d11b",
+  "evals/judge/docs/333969c8ae5b643e.md": "333969c8ae5b643e",
+  "evals/judge/docs/3a6d4817fc1a2c77.md": "3a6d4817fc1a2c77",
+  "evals/judge/docs/5042475f214ea8f1.md": "5042475f214ea8f1",
+  "evals/judge/docs/596c16f9919dbfac.md": "596c16f9919dbfac",
+  "evals/judge/docs/654b9436101871ad.md": "654b9436101871ad",
+  "evals/judge/docs/65a3d72f44c34d2e.md": "65a3d72f44c34d2e",
+  "evals/judge/docs/65a667f3bbd10128.md": "65a667f3bbd10128",
+  "evals/judge/docs/6e08cc260f165fe0.md": "6e08cc260f165fe0",
+  "evals/judge/docs/731298e55211ea3f.md": "731298e55211ea3f",
+  "evals/judge/docs/8c882a14db43d2bd.md": "8c882a14db43d2bd",
+  "evals/judge/docs/b1f8eee84f0d44d4.md": "b1f8eee84f0d44d4",
+  "evals/judge/docs/c027120322ca660b.md": "c027120322ca660b",
+  "evals/judge/docs/defc559c6786e8c8.md": "defc559c6786e8c8",
+  "evals/judge/docs/e5e18fade19f3d3f.md": "e5e18fade19f3d3f",
+  "evals/judge/docs/f28451d963dd011b.md": "f28451d963dd011b",
+  "evals/judge/docs/f62c2cf472aac466.md": "f62c2cf472aac466",
+  "packages/triage-contracts/README.md": "59715dd2619d9a0a"
+ }
+}

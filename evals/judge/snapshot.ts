@@ -1,6 +1,6 @@
 // Freezes the labelled pull requests into pulls/<number>.json as GitHub serves them, with the repository's docs at the
 // base, and writes cases.jsonl: each pull request as merged, without its tests or docs where it needs them, and the
-// labelled mixes of two unrelated pull requests.
+// labelled mixes of two unrelated pull requests. Pull requests labelled for the conventions check are frozen too.
 //
 //   bun evals/judge/snapshot.ts
 import { createHash } from "node:crypto";
@@ -83,7 +83,7 @@ function stored(pr: Snapshot): StoredSnapshot {
 mkdirSync(`${here}pulls`, { recursive: true });
 mkdirSync(`${here}docs`, { recursive: true });
 const pulls = new Map<number, Snapshot>();
-for (const key of Object.keys(labels.pulls)) {
+for (const key of new Set([...Object.keys(labels.pulls), ...Object.keys(labels.conventions)])) {
   const pr = snapshot(Number(key));
   pulls.set(pr.number, pr);
   writeFileSync(`${here}pulls/${key}.json`, `${JSON.stringify(stored(pr), null, 1)}\n`);
