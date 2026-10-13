@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Button } from "@corbits/react-ui";
 import { missingPatchReason, parsePatch, splitRows, type DiffHunk, type DiffLine, type PatchedFile } from "../lib/diff.ts";
 import type { DiffLayout } from "../lib/diff-layout.ts";
 
@@ -81,7 +82,7 @@ function DiffBody({ file, layout }: { file: DiffFile; layout: DiffLayout }) {
     return (
       <div className="diff-note">
         <p>Large diff collapsed.</p>
-        <button type="button" className="btn" onClick={() => setExpanded(true)}>Expand {lineCount} lines</button>
+        <Button type="button" variant="outline" onClick={() => setExpanded(true)}>Expand {lineCount} lines</Button>
       </div>
     );
   }

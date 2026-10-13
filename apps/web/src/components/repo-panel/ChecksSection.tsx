@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Switch } from "@corbits/react-ui";
+import { Button, Switch } from "@corbits/react-ui";
 import { applyRecommended, CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type CheckRef, type IssueTracker } from "@corbits/triage-contracts";
 import type { TriageStats } from "../../lib/hub-api.ts";
 import { checkFormOfKind, customCheckOf, nextCustomId } from "../../lib/action-builder.ts";
@@ -122,7 +122,7 @@ export default function ChecksSection({ draft, saved, stats, disabled, edit, pro
         <div className="more">
           {pack.custom.length >= CUSTOM_CHECK_CAP
             ? <p className="hint">Up to {CUSTOM_CHECK_CAP} checks of your own. Remove one to add another.</p>
-            : <button type="button" className="btn btn-quiet btn-sm" disabled={disabled} onClick={() => setPicking(true)}>Add a check</button>}
+            : <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => setPicking(true)}>Add a check</Button>}
         </div>
       )}
     </section>

@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { AuthLayout, Button, Input, LoginForm } from "@corbits/react-ui";
 import { getAuthMethods, requestPasswordReset, signInWithGoogle, type AuthMethods } from "../lib/hub-auth.ts";
 import { useSession } from "../lib/session.tsx";
+
+type Mode = "sign-in" | "sign-up" | "reset";
 
 function message(cause: unknown): string {
   return (cause instanceof Error ? cause.message : String(cause)).replace(/[.\s]*$/, "");
@@ -14,9 +17,8 @@ function returnedSignInError(): string {
 
 export function Welcome() {
   const { signIn, signUp, error } = useSession();
-  const [creating, setCreating] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<Mode>("sign-in");
+  const [resetEmail, setResetEmail] = useState("");
   const [pending, setPending] = useState(false);
   const [localError, setLocalError] = useState(returnedSignInError);
   const [methods, setMethods] = useState<AuthMethods | null>(null);
@@ -33,15 +35,14 @@ export function Welcome() {
     void load();
   }, []);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submit({ name, email, password }: { name?: string; email: string; password: string }) {
     setPending(true);
     setLocalError("");
     try {
-      await (creating ? signUp : signIn)(email, password);
+      await (mode === "sign-up" ? signUp(email, password, name) : signIn(email, password));
     } catch (cause: unknown) {
       const reason = message(cause);
-      setLocalError(creating
+      setLocalError(mode === "sign-up"
         ? `Could not create the account. ${reason}.`
         : `Could not sign in. ${reason}. Check your email and password, then try again.`);
     } finally {
@@ -60,12 +61,13 @@ export function Welcome() {
     }
   }
 
-  async function resetPassword() {
+  async function resetPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setPending(true);
     setLocalError("");
     try {
-      await requestPasswordReset(email);
-      setNotice(`If an account uses ${email}, a link to set its password is on its way.`);
+      await requestPasswordReset(resetEmail);
+      setNotice(`If an account uses ${resetEmail}, a link to set its password is on its way.`);
     } catch (cause: unknown) {
       setLocalError(`Could not send the reset email. ${message(cause)}.`);
     } finally {
@@ -73,77 +75,55 @@ export function Welcome() {
     }
   }
 
-  function toggleMode() {
-    setCreating(!creating);
+  function switchTo(next: Mode) {
+    setMode(next);
     setLocalError("");
+    setNotice("");
+  }
+
+  const shownError = localError || (error ? `Could not load your session. ${error} Reload the page to try again.` : null);
+
+  if (mode === "reset") {
+    return (
+      <AuthLayout brand={<><img src="/triage-logo.svg" width="26" height="26" alt="Corbits" />Triage</>}>
+        <form className="signin-reset" aria-busy={pending} onSubmit={(event) => void resetPassword(event)}>
+          <h1>Reset your password</h1>
+          <label className="field">
+            Email
+            <Input type="email" autoComplete="email" value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} required disabled={pending} />
+          </label>
+          {notice && <p role="status" className="field-help">{notice}</p>}
+          {shownError && <p role="alert" className="field-error">{shownError}</p>}
+          <Button type="submit" size="lg" disabled={pending || !resetEmail}>{pending ? "Sending…" : "Send reset link"}</Button>
+          <Button type="button" variant="link" size="sm" onClick={() => switchTo("sign-in")}>Back to sign in</Button>
+        </form>
+      </AuthLayout>
+    );
   }
 
   return (
-    <div className="app is-auth">
-      <main className="signin">
-        <span className="onboarding-brand">
-          <img src="/triage-logo.svg" width="26" height="26" alt="Corbits" />
-          Triage
-        </span>
-        <form
-          className="signin-form"
-          aria-busy={pending}
-          onSubmit={(event) => void submit(event)}
-        >
-          <h1>{creating ? "Create your Triage account" : "Sign in to Triage"}</h1>
-          <p>Every pull request sorted by what you need to do, with the reply already written.</p>
-          {methods?.google && (
-            <button type="button" className="btn primary large" disabled={pending} onClick={() => void continueWithGoogle()}>
-              <GoogleMark /> Continue with Google
-            </button>
-          )}
-          {methods?.google && methods.emailPassword && <div className="signin-or">or with email</div>}
-          {methods?.emailPassword && <>
-            <label className="field">
-              Work email
-              <input
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                required
-                aria-invalid={Boolean(localError || error)}
-              />
-            </label>
-            <label className="field">
-              Password
-              <input
-                type="password"
-                autoComplete={creating ? "new-password" : "current-password"}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-                aria-invalid={Boolean(localError || error)}
-              />
-            </label>
-          </>}
-          {notice && <p role="status" className="field-help">{notice}</p>}
-          {(localError || error) && (
-            <p role="alert" className="field-error">
-              {localError || (error ? `Could not load your session. ${error} Reload the page to try again.` : "")}
-            </p>
-          )}
-          {methods?.emailPassword && <>
-            <button type="submit" className={methods.google ? "btn" : "btn primary large"} disabled={pending}>
-              {creating ? (pending ? "Creating account…" : "Create account") : (pending ? "Signing in…" : "Sign in")}
-            </button>
-            <button type="button" className="signin-switch" onClick={toggleMode}>
-              {creating ? "Have an account? Sign in" : "New here? Create an account"}
-            </button>
-            {methods.passwordReset && !creating && (
-              <button type="button" className="signin-switch" disabled={pending || !email} onClick={() => void resetPassword()}>
-                Reset password
-              </button>
+    <AuthLayout brand={<><img src="/triage-logo.svg" width="26" height="26" alt="Corbits" />Triage</>}>
+      <p className="signin-lede">Every pull request sorted by what you need to do, with the reply already written.</p>
+      <LoginForm
+        mode={mode}
+        heading={mode === "sign-up" ? "Create your Triage account" : "Sign in to Triage"}
+        providers={methods?.google ? [{ id: "google", label: "Continue with Google", icon: <GoogleMark /> }] : []}
+        onProvider={() => void continueWithGoogle()}
+        onSubmit={methods?.emailPassword ? (credentials) => void submit(credentials) : undefined}
+        busy={pending}
+        error={shownError}
+        footer={methods?.emailPassword ? (
+          <div className="signin-links">
+            <Button type="button" variant="link" size="sm" onClick={() => switchTo(mode === "sign-up" ? "sign-in" : "sign-up")}>
+              {mode === "sign-up" ? "Have an account? Sign in" : "New here? Create an account"}
+            </Button>
+            {methods.passwordReset && mode === "sign-in" && (
+              <Button type="button" variant="link" size="sm" onClick={() => switchTo("reset")}>Reset password</Button>
             )}
-          </>}
-        </form>
-      </main>
-    </div>
+          </div>
+        ) : undefined}
+      />
+    </AuthLayout>
   );
 }
 

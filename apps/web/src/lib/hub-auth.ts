@@ -82,9 +82,9 @@ export function signInHub(input: { email: string; password: string }): Promise<H
   return emailAuth("/sign-in/email", input, "sign in");
 }
 
-/** Creates the hub account; the display name defaults to the email's local part. */
-export function signUpHub(input: { email: string; password: string }): Promise<HubUser> {
-  return emailAuth("/sign-up/email", { ...input, name: input.email.split("@")[0] ?? input.email }, "create the account");
+/** Creates the hub account; a blank display name falls back to the email's local part. */
+export function signUpHub({ name, ...input }: { name?: string; email: string; password: string }): Promise<HubUser> {
+  return emailAuth("/sign-up/email", { ...input, name: name?.trim() || (input.email.split("@")[0] ?? input.email) }, "create the account");
 }
 
 export async function signOutHub(): Promise<void> {

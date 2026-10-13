@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import type { DraftProblem } from "../../lib/pack-draft.ts";
 
 type SaveBarProps = {
@@ -34,8 +35,8 @@ export default function SaveBar({ changes, unlinked, corrupt, problem, saving, d
         <span>{summary(changes, unlinked)}</span>
       )}
       <span className="sp" />
-      {changes > 0 ? <button type="button" className="btn btn-quiet btn-sm" disabled={saving} onClick={onDiscard}>Discard</button> : null}
-      <button type="button" className="btn btn-primary btn-sm" disabled={disabled || saving || problem !== null} onClick={onSave}>{saving ? "Saving…" : "Save changes"}</button>
+      {changes > 0 ? <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onDiscard}>Discard</Button> : null}
+      <Button type="button" size="sm" disabled={disabled || saving || problem !== null} onClick={onSave}>{saving ? "Saving…" : "Save changes"}</Button>
     </div>
   );
 }

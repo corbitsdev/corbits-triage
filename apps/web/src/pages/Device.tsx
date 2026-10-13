@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Button } from "@corbits/react-ui";
 import { useSearchParams } from "react-router-dom";
 import { claimDeviceCode, decideDeviceCode } from "../lib/hub-auth.ts";
 import { useSession } from "../lib/session.tsx";
@@ -56,14 +57,14 @@ export function Device() {
               Code
               <input value={userCode} onChange={(event) => setUserCode(event.target.value)} autoComplete="off" required disabled={pending} />
             </label>
-            <button type="submit" className="btn primary" disabled={pending}>Continue</button>
+            <Button type="submit" disabled={pending}>Continue</Button>
           </form>
         )}
         {step === "decide" && <>
           <p className="muted"><strong>{CLIENT_NAMES[clientId] ?? clientId}</strong> with code <strong>{userCode.trim().toUpperCase()}</strong> will act as {session?.email} with everything you can do. Approve only if you started it.</p>
           <div className="row">
-            <button type="button" className="btn primary" disabled={pending} onClick={() => decide("approve")}>Approve</button>
-            <button type="button" className="btn" disabled={pending} onClick={() => decide("deny")}>Deny</button>
+            <Button type="button" disabled={pending} onClick={() => decide("approve")}>Approve</Button>
+            <Button type="button" variant="outline" disabled={pending} onClick={() => decide("deny")}>Deny</Button>
           </div>
         </>}
         {step === "approved" && <p role="status">Approved. You can close this page. Sign the device out under Settings → Account.</p>}

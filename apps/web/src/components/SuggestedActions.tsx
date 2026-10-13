@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { doGroups, type PendingDo } from "../lib/pending-dos.ts";
 
 type SuggestedActionsProps = { dos: PendingDo[]; disabled: boolean; onApprove: (pending: PendingDo) => void; onSkip: (pending: PendingDo) => void };
@@ -12,8 +13,8 @@ export function SuggestedActions({ dos, disabled, onApprove, onSkip }: Suggested
           <p className="suggest-text">{group.reason}</p>
           <div className="suggest-actions">
             {group.dos.flatMap((pending) => [
-              <button key={pending.key} type="button" className="btn btn-sm" disabled={disabled} onClick={() => onApprove(pending)}>Approve: {pending.label}</button>,
-              <button key={`${pending.key}:skip`} type="button" className="btn btn-quiet btn-sm" onClick={() => onSkip(pending)}>Hide for me</button>,
+              <Button key={pending.key} type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onApprove(pending)}>Approve: {pending.label}</Button>,
+              <Button key={`${pending.key}:skip`} type="button" variant="ghost" size="sm" onClick={() => onSkip(pending)}>Hide for me</Button>,
             ])}
           </div>
           {group.dos.filter((pending) => pending.error !== null).map((pending) => <p key={pending.key} role="alert" className="error">{pending.label} failed last time: {pending.error}</p>)}

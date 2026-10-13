@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { initialsOf, listCounts } from "../lib/inbox-view.ts";
 import { useOpenWorkspaceAfterSending, useSignOutAfterSending } from "../lib/held-inbox.tsx";
@@ -10,7 +11,7 @@ import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { useSession } from "../lib/session.tsx";
 import { CheckIcon, GearIcon, InboxIcon, ListIcon, PersonIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
-function WorkspaceItems({ close }: { close: () => void }) {
+function WorkspaceItems() {
   const { snapshot } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();
   if (!snapshot || (snapshot.workspaces.length < 2 && snapshot.invitations.length === 0)) return null;
@@ -18,24 +19,23 @@ function WorkspaceItems({ close }: { close: () => void }) {
   const options = [...snapshot.workspaces, ...snapshot.invitations];
 
   async function choose(tenantId: string) {
-    close();
     if (tenantId !== current) await openWorkspace(tenantId);
   }
 
   return (
     <>
       {snapshot.workspaces.map((workspace) => (
-        <button key={workspace.tenantId} type="button" role="menuitemradio" aria-checked={workspace.tenantId === current} onClick={() => void choose(workspace.tenantId)}>
+        <MenuItem key={workspace.tenantId} aria-current={workspace.tenantId === current ? "true" : undefined} onSelect={() => void choose(workspace.tenantId)}>
           <span className="ws-option"><b>{workspace.name}</b>{sharesName(workspace, options) ? <small>{workspace.slug}</small> : null}</span>
           {workspace.tenantId === current ? <CheckIcon /> : null}
-        </button>
+        </MenuItem>
       ))}
       {snapshot.invitations.map((invitation) => (
-        <button key={invitation.tenantId} type="button" role="menuitem" disabled>
+        <MenuItem key={invitation.tenantId} disabled>
           <span className="ws-option"><b>{invitation.name}</b><small>Invited. Open the link in your invitation email to join.</small></span>
-        </button>
+        </MenuItem>
       ))}
-      <hr />
+      <MenuSeparator />
     </>
   );
 }
@@ -45,43 +45,27 @@ function UserBlock() {
   const signOut = useSignOutAfterSending();
   const location = useLocation();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
   const onSettingsOrRepos = location.pathname.startsWith("/settings") || location.pathname.startsWith("/repositories");
-
-  useEffect(function closeOnOutsideClick() {
-    if (!open) return;
-    function onPointerDown(event: PointerEvent) {
-      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
-    }
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
 
   if (!session) return null;
 
-  function go(to: string) {
-    setOpen(false);
-    navigate(to);
-  }
-
   return (
-    <div className="menu-wrap" ref={wrapRef}>
-      {open ? (
-        <div className="menu up me-menu" role="menu">
-          <WorkspaceItems close={() => setOpen(false)} />
-          <button type="button" role="menuitem" onClick={() => go("/settings")}><GearIcon />Settings</button>
-          <button type="button" role="menuitem" onClick={() => go("/repositories")}><RepoIcon />Repositories</button>
-          <hr />
-          <button type="button" role="menuitem" onClick={() => void signOut()}><SignOutIcon />Sign out</button>
-        </div>
-      ) : null}
-      <button type="button" className="me" aria-haspopup="menu" aria-expanded={open} aria-current={onSettingsOrRepos ? "true" : undefined} onClick={() => setOpen(!open)}>
-        <span className="av lg">{initialsOf(session.name || session.email)}</span>
-        <span className="me-t"><b>{session.name || session.email}</b><span>{session.email}</span></span>
-        <UpDownIcon />
-      </button>
-    </div>
+    <Menu>
+      <MenuTrigger asChild>
+        <button type="button" className="me" aria-current={onSettingsOrRepos ? "true" : undefined}>
+          <span className="av lg">{initialsOf(session.name || session.email)}</span>
+          <span className="me-t"><b>{session.name || session.email}</b><span>{session.email}</span></span>
+          <UpDownIcon />
+        </button>
+      </MenuTrigger>
+      <MenuContent side="top" align="start" className="me-menu">
+        <WorkspaceItems />
+        <MenuItem onSelect={() => navigate("/settings")}><GearIcon />Settings</MenuItem>
+        <MenuItem onSelect={() => navigate("/repositories")}><RepoIcon />Repositories</MenuItem>
+        <MenuSeparator />
+        <MenuItem onSelect={() => void signOut()}><SignOutIcon />Sign out</MenuItem>
+      </MenuContent>
+    </Menu>
   );
 }
 

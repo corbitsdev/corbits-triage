@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@intx/hub-client";
 import { DeniedNotice } from "../lib/denied.tsx";
@@ -19,7 +20,7 @@ function roleLabel(name: string): string {
 
 /** On the setup page it folds away, and is left out for whoever may not invite. */
 export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
-  const { snapshot, notify, refresh, readOnly } = usePortal();
+  const { snapshot, notify, warn, refresh, readOnly } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
   const roles = useRoles();
   const tenantId = snapshot?.workspace.tenantId;
@@ -65,7 +66,8 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
 
   function sent(result: InviteSent) {
     setLink(result.link === undefined ? null : { email: result.email, url: result.link });
-    notify(result.emailed ? `Invite emailed to ${result.email}.` : `Invited ${result.email}. Copy the link and send it to them.`);
+    if (result.emailed) notify(`Invite emailed to ${result.email}.`);
+    else warn(`Invited ${result.email}. Copy the link and send it to them.`);
   }
 
   async function invite(event: FormEvent<HTMLFormElement>) {
@@ -107,7 +109,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
     {link && (
       <div className="hook-url">
         <code>{link.url}</code>
-        <button type="button" className="btn ghost" onClick={() => void copy(link)}>Copy link</button>
+        <Button type="button" variant="ghost" onClick={() => void copy(link)}>Copy link</Button>
       </div>
     )}
     <form onSubmit={(event) => void invite(event)}>
@@ -121,40 +123,38 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
           {choices.map((role) => <option key={role.id} value={role.id}>{roleLabel(role.name)}</option>)}
         </select>
       </label>
-      <button type="submit" className="btn primary" disabled={readOnly || pending !== null || !email.trim() || !chosenRole}>
+      <Button type="submit" disabled={readOnly || pending !== null || !email.trim() || !chosenRole}>
         {pending === "invite" ? "Inviting…" : "Invite"}
-      </button>
+      </Button>
     </form>
     {invited.length > 0 && (
-      <div className="table-scroll">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Invited</th>
-              <th>Role</th>
-              <th><span className="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            {invited.map((person) => (
-              <tr key={person.id}>
-                <td>{person.email}</td>
-                <td>{person.roles.map((role) => roleLabel(role.name)).join(", ")}</td>
-                <td>
-                  {person.roles.every((role) => assignableRoleIds.includes(role.id)) && (
-                    <button type="button" className="btn ghost" disabled={readOnly || pending !== null} onClick={() => resend(person)}>
-                      {pending === `resend:${person.id}` ? "Sending…" : "Resend"}
-                    </button>
-                  )}
-                  <button type="button" className="btn ghost" disabled={readOnly || pending !== null} onClick={() => withdraw(person)}>
-                    {pending === person.id ? "Withdrawing…" : "Withdraw"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Invited</TableHead>
+            <TableHead>Role</TableHead>
+            <TableHead><span className="sr-only">Actions</span></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {invited.map((person) => (
+            <TableRow key={person.id}>
+              <TableCell>{person.email}</TableCell>
+              <TableCell>{person.roles.map((role) => roleLabel(role.name)).join(", ")}</TableCell>
+              <TableCell>
+                {person.roles.every((role) => assignableRoleIds.includes(role.id)) && (
+                  <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => resend(person)}>
+                    {pending === `resend:${person.id}` ? "Sending…" : "Resend"}
+                  </Button>
+                )}
+                <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => withdraw(person)}>
+                  {pending === person.id ? "Withdrawing…" : "Withdraw"}
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     )}
   </>;
   if (onSetupPage) {

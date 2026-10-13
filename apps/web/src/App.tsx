@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { Button } from "@corbits/react-ui";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
+import { Toaster } from "@corbits/react-ui/ui/toast";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { INVITE_PATH, PortalProvider, usePortal } from "./lib/portal.tsx";
 import { HeldInboxProvider, useSignOutAfterSending } from "./lib/held-inbox.tsx";
@@ -119,7 +120,7 @@ function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
             {invitation.name} has invited you. Open the link in your invitation email to join, or ask for a new one.
           </p>
         ))}
-        <button type="button" className="btn" onClick={() => void signOut()}>Sign out</button>
+        <Button type="button" variant="outline" onClick={() => void signOut()}>Sign out</Button>
       </section>
     </div>
   );

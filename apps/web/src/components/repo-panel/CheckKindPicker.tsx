@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { CHECK_KINDS, type CheckKind } from "../../lib/pack-prose.ts";
 import EvalBadge from "./EvalBadge.tsx";
 
@@ -11,7 +12,7 @@ export default function CheckKindPicker({ disabled, onPick, onCancel }: CheckKin
         <div key={kind.title} className="gallery-row">
           <span><b>{kind.title}</b> {kind.line}</span>
           <EvalBadge evaluation={kind.evaluation} />
-          <button type="button" className="btn btn-sm" aria-label={`Use ${kind.title}`} disabled={disabled} onClick={() => onPick(kind)}>Use</button>
+          <Button type="button" variant="outline" size="sm" aria-label={`Use ${kind.title}`} disabled={disabled} onClick={() => onPick(kind)}>Use</Button>
         </div>
       ))}
       <div className="pfoot"><span /><button type="button" className="linkish" onClick={onCancel}>Cancel</button></div>

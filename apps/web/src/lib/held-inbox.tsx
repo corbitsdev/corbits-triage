@@ -28,10 +28,10 @@ const HeldInboxContext = createContext<HeldInbox | null>(null);
 
 /**
  * Lives above the routes, so a send flushed as the inbox is left still reports how it went and a failed one's
- * draft is waiting when the user returns. While no inbox is on screen, results that need the user go to the portal's notify.
+ * draft is waiting when the user returns. While no inbox is on screen, results that need the user go to the portal's warn toast.
  */
 export function HeldInboxProvider({ children }: { children: ReactNode }) {
-  const { writeGithub, notify } = usePortal();
+  const { writeGithub, warn } = usePortal();
   const { session } = useSession();
   const userId = session?.id ?? null;
   const sessionUser = useRef(userId);
@@ -68,7 +68,7 @@ export function HeldInboxProvider({ children }: { children: ReactNode }) {
   }, [queue]);
 
   function tellIfAway(message: string): string {
-    if (inboxes.current === 0) notify(message);
+    if (inboxes.current === 0) warn(message);
     return message;
   }
 

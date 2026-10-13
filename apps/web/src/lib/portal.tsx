@@ -1,5 +1,6 @@
-import { toast } from "sonner";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { toast } from "@corbits/react-ui/ui/toast";
+import { toast as lastingToast } from "sonner";
 import { useQuery, useQueryClient, type Query, type QueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router-dom";
 import { useSession } from "./session.tsx";
@@ -60,6 +61,8 @@ interface PortalContextValue {
   invitations: WorkspaceOption[];
   loadError: string;
   notify: (message: string) => void;
+  /** A failure or an instruction, shown long enough to read. */
+  warn: (message: string) => void;
   refresh: () => void;
   refreshNow: () => Promise<PortalSnapshot | null>;
   openWorkspace: (tenantId: string) => void;
@@ -82,6 +85,7 @@ interface PortalContextValue {
 }
 
 const NO_INVITATIONS: WorkspaceOption[] = [];
+const WARNING_DURATION_MS = 8000;
 
 const PortalContext = createContext<PortalContextValue | null>(null);
 
@@ -220,6 +224,10 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const notify = useCallback(function notify(message: string) {
     toast(message);
   }, []);
+  const warn = useCallback(function warn(message: string) {
+    // react-ui's toast fixes a short confirmation duration; sonner renders this one under the same Toaster.
+    lastingToast(message, { duration: WARNING_DURATION_MS });
+  }, []);
 
   const portalQuery = useQuery({
     queryKey: PORTAL_QUERY_KEY,
@@ -260,11 +268,11 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         if (deployed.length) refresh();
       } catch (cause: unknown) {
         convergedTenants.delete(id);
-        notify(`Could not deploy triage workflows. ${cause instanceof Error ? cause.message : String(cause)}`);
+        warn(`Could not deploy triage workflows. ${cause instanceof Error ? cause.message : String(cause)}`);
       }
     }
     void deploy();
-  }, [notify, refresh]);
+  }, [refresh, warn]);
 
   useEffect(function convergeOnConnect() {
     if (tenantId && githubConnected && decisionModelConnected) convergeWorkflows(tenantId, false);
@@ -475,6 +483,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         invitations,
         loadError,
         notify,
+        warn,
         refresh,
         refreshNow,
         openWorkspace,
@@ -504,6 +513,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       invitations,
       loadError,
       notify,
+      warn,
       refresh,
       refreshNow,
       openWorkspace,

@@ -1,5 +1,4 @@
-/* Sign-in and setup screens, scoped to their roots. */
-.signin,
+/* Setup screens, scoped to their root. */
 .setup-flow {
   --white: #ffffff;
   --ink: #000000;
@@ -20,8 +19,8 @@
   font-size: 15px;
   line-height: 1.5;
 }
-body:has(.signin, .setup-flow),
-.app.is-auth:has(.signin, .setup-flow) { background: #ffffff; }
+body:has(.setup-flow),
+.app.is-auth:has(.setup-flow) { background: #ffffff; }
 
 .onboarding-brand {
   display: flex;
@@ -32,34 +31,7 @@ body:has(.signin, .setup-flow),
 }
 .onboarding-brand img { width: 26px; height: 26px; }
 
-.signin :focus-visible,
 .setup-flow :focus-visible { outline: none; box-shadow: var(--focus); }
-.signin .btn,
-.setup-flow .btn {
-  min-height: 38px;
-  padding: 0 16px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--rule-strong);
-  background: var(--white);
-  color: var(--ink);
-  font-size: 14px;
-}
-.signin .btn:hover,
-.setup-flow .btn:hover { background: var(--fill); }
-.signin .btn.primary,
-.setup-flow .btn.primary { background: var(--heat); border-color: var(--heat); color: var(--ink); }
-.signin .btn.primary:hover,
-.setup-flow .btn.primary:hover { background: var(--heat-hover); border-color: var(--heat-hover); }
-.signin .btn.ghost,
-.setup-flow .btn.ghost { border-color: transparent; background: transparent; }
-.signin .btn.ghost:hover,
-.setup-flow .btn.ghost:hover { background: var(--fill-hover); }
-.signin .btn:disabled,
-.setup-flow .btn:disabled { opacity: 0.45; background: var(--white); color: var(--ink); border-color: var(--rule-strong); }
-.signin .btn.primary:disabled,
-.setup-flow .btn.primary:disabled { background: var(--heat); border-color: var(--heat); }
-.signin .btn.large { min-height: 46px; padding: 0 22px; font-size: 15px; }
-.signin input:not(.sr-only),
 .setup-flow input:not(.sr-only),
 .setup-flow textarea {
   width: 100%;
@@ -71,43 +43,13 @@ body:has(.signin, .setup-flow),
   font-size: 14px;
 }
 .setup-flow textarea { padding: 10px 12px; min-height: 96px; }
-.signin input:focus,
 .setup-flow input:focus,
 .setup-flow textarea:focus { outline: none; border-color: var(--heat); box-shadow: var(--focus); }
-.signin input[aria-invalid="true"] { border-color: var(--bad); }
 
-/* Sign in */
-/* Fills the viewport even where the mobile .app collapses to its content, so margin: auto centres the form at every width. */
-.signin {
-  display: flex;
-  flex-direction: column;
-  min-height: 100dvh;
-  padding: 32px 56px;
-}
-.signin-form {
-  margin: auto 0;
-  width: 100%;
-  max-width: 360px;
-  display: grid;
-  gap: 14px;
-}
-.signin-form h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
-.signin-form > p { margin: -4px 0 10px; font-size: 15px; }
-.signin-form .field { font-size: 14px; font-weight: 600; }
-.signin-or { display: flex; align-items: center; gap: 12px; font-size: 12px; }
-.signin-or::before,
-.signin-or::after { content: ""; height: 1px; flex: 1; background: var(--rule); }
-.signin-switch {
-  justify-self: start;
-  min-height: 38px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font-size: 14px;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 0.2em;
-}
+.signin-lede { margin-bottom: 24px; color: var(--ink-mute); }
+.signin-links { display: flex; flex-wrap: wrap; gap: 16px; }
+.signin-reset { display: grid; gap: 16px; }
+.signin-reset h1 { font-size: 1.875rem; font-weight: 600; letter-spacing: -0.02em; }
 
 /* Setup */
 .setup-flow { padding: 24px 32px 56px; }
@@ -186,6 +128,7 @@ body:has(.signin, .setup-flow),
   font-size: 13px;
 }
 .setup-flow .install-row + .install-row { border-top: 1px solid var(--rule); }
+.setup-flow .catching-up { display: inline-flex; align-items: center; gap: 8px; }
 
 /* Decision model presets as radio cards; resets the stock radiogroup pill. */
 .setup-flow .segmented[role="radiogroup"] {
@@ -228,7 +171,6 @@ body:has(.signin, .setup-flow),
 .setup-flow .segmented[role="radiogroup"] button[aria-checked="true"]::before { border: 5px solid var(--ink); }
 
 @media (max-width: 720px) {
-  .signin { padding: 24px 16px 40px; }
   .setup-flow { padding: 20px 16px 40px; }
   .setup { padding-top: 24px; }
   .setup-step { gap: 12px; padding: 16px; }

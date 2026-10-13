@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
-import { Skeleton } from "@corbits/react-ui";
+import { Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
 import { BUILT_IN_CHECK_NAMES, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
@@ -159,17 +159,17 @@ function issueLabel(detail: GithubPullDetail): ReactNode {
 
 function Files({ files, changed }: { files: GithubPullDetail["files"]; changed: number }) {
   return (
-    <table className="tbl">
-      <tbody>
+    <Table className="tbl">
+      <TableBody>
         {files.map((file) => (
-          <tr key={file.path}>
-            <td className="mono path">{file.path}</td>
-            <td className="r mono">+{file.additions} −{file.deletions}</td>
-          </tr>
+          <TableRow key={file.path}>
+            <TableCell className="mono path">{file.path}</TableCell>
+            <TableCell className="r mono">+{file.additions} −{file.deletions}</TableCell>
+          </TableRow>
         ))}
-        {changed > files.length ? <tr><td colSpan={2}>and {changed - files.length} more</td></tr> : null}
-      </tbody>
-    </table>
+        {changed > files.length ? <TableRow><TableCell colSpan={2}>and {changed - files.length} more</TableCell></TableRow> : null}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -183,16 +183,16 @@ function passedText(check: CheckResult, pack: CheckPack | null): string {
 
 function Passed({ checks, pack }: { checks: CheckResult[]; pack: CheckPack | null }) {
   return (
-    <table className="tbl">
-      <tbody>
+    <Table className="tbl">
+      <TableBody>
         {checks.map((check) => (
-          <tr key={check.check}>
-            <td>{checkLabel(pack, check.check)}</td>
-            <td>{passedText(check, pack)}</td>
-          </tr>
+          <TableRow key={check.check}>
+            <TableCell>{checkLabel(pack, check.check)}</TableCell>
+            <TableCell>{passedText(check, pack)}</TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 

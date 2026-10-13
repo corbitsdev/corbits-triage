@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { useDismissablePopover } from "@corbits/react-ui";
+import { Tabs, useDismissablePopover } from "@corbits/react-ui";
 import type { PrItem } from "../lib/hub-api.ts";
 import {
   FACET_LABEL,
@@ -13,8 +13,6 @@ import {
 } from "../lib/inbox-filter.ts";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { FilterIcon } from "./inbox-icons.tsx";
-
-const FACET_KEY_STEP: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
 
 type FilterMenuProps = {
   /** The rows the list can show before the facet filters, so the counts match the list. */
@@ -42,13 +40,12 @@ export function FilterMenu({ items, now, filters, onChange, triggerRef }: Filter
   const popover = useDismissablePopover<HTMLDivElement, HTMLButtonElement>();
   const { open, setOpen, rootRef, close } = popover;
   const [facet, setFacet] = useState<FilterFacet>("repo");
-  const tabRefs = useRef<Partial<Record<FilterFacet, HTMLButtonElement | null>>>({});
   const id = useId();
   const active = activeFilters(filters).length;
   const options = open ? facetOptions(items, filters, facet, now) : [];
 
   useEffect(function focusFacetOnOpen() {
-    if (open) tabRefs.current[facet]?.focus();
+    if (open) rootRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
   }, [open]);
 
   useEffect(function openOnShortcut() {
@@ -66,20 +63,18 @@ export function FilterMenu({ items, now, filters, onChange, triggerRef }: Filter
     popover.triggerRef.current = element;
   }
 
-  function selectFacet(next: FilterFacet) {
-    setFacet(next);
-    tabRefs.current[next]?.focus();
-  }
-
-  function onFacetKey(event: ReactKeyboardEvent<HTMLButtonElement>) {
-    const last = FILTER_FACETS.length - 1;
-    const index = FILTER_FACETS.indexOf(facet);
-    const step = FACET_KEY_STEP[event.key];
-    const next = event.key === "Home" ? 0 : event.key === "End" ? last : step === undefined ? null : (index + step + FILTER_FACETS.length) % FILTER_FACETS.length;
-    const target = next === null ? undefined : FILTER_FACETS[next];
-    if (target === undefined) return;
-    event.preventDefault();
-    selectFacet(target);
+  function facetValues(shown: FilterFacet) {
+    return (
+      <div className="vals">
+        {options.map((option) => (
+          <label key={option.value}>
+            <input type="checkbox" checked={filters[shown].includes(option.value)} onChange={() => onChange(toggleFilter(filters, shown, option.value))} />
+            <span className="l">{option.label}</span>
+            <span className="c">{option.count}</span>
+          </label>
+        ))}
+      </div>
+    );
   }
 
   return (
@@ -100,35 +95,16 @@ export function FilterMenu({ items, now, filters, onChange, triggerRef }: Filter
         <>
           <div className="filter-scrim" onClick={close} />
           <div className="pop" id={`${id}-dialog`} role="dialog" aria-modal="true" aria-label="Filter pull requests" onKeyDown={trapTab}>
-            <div className="facets" role="tablist" aria-label="Filter by" aria-orientation="vertical">
-              {FILTER_FACETS.map((key) => (
-                <button
-                  key={key}
-                  ref={(element) => { tabRefs.current[key] = element; }}
-                  type="button"
-                  role="tab"
-                  id={`${id}-${key}`}
-                  aria-selected={key === facet}
-                  aria-controls={`${id}-panel`}
-                  tabIndex={key === facet ? 0 : -1}
-                  className={key === facet ? "on" : undefined}
-                  onClick={() => selectFacet(key)}
-                  onKeyDown={onFacetKey}
-                >
-                  {FACET_LABEL[key]}
-                  {filters[key].length > 0 ? <b>{filters[key].length}</b> : null}
-                </button>
-              ))}
-            </div>
-            <div className="vals" role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${facet}`}>
-              {options.map((option) => (
-                <label key={option.value}>
-                  <input type="checkbox" checked={filters[facet].includes(option.value)} onChange={() => onChange(toggleFilter(filters, facet, option.value))} />
-                  <span className="l">{option.label}</span>
-                  <span className="c">{option.count}</span>
-                </label>
-              ))}
-            </div>
+            <Tabs
+              className="facets"
+              variant="enclosed"
+              label="Filter by"
+              tabs={FILTER_FACETS.map((key) => ({ id: key, label: FACET_LABEL[key], ...(filters[key].length > 0 ? { count: filters[key].length } : {}) }))}
+              active={facet}
+              onChange={setFacet}
+            >
+              {facetValues}
+            </Tabs>
             <div className="pfoot">
               <span>Filters combine. Pick several in one group to widen it.</span>
               <button type="button" className="linkish" onClick={close}>Done</button>
