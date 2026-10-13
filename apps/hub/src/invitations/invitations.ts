@@ -20,8 +20,6 @@ const RESEND_INTERVAL_MS = 60 * 1000;
 const GOOGLE_FIRST = "Without email set up on this hub, invitees must sign in with Google first.";
 
 export const InviteBody = type({ email: "string.email", roleId: "string > 0" });
-export const InviteSent = type({ principalId: "string", email: "string", emailed: "boolean", "link?": "string" });
-export const InviteRoles = type({ assignableRoleIds: "string[]" });
 export const AcceptBody = type({ tenantId: "string > 0" });
 export const Accepted = type({ tenantId: "string" });
 const StockPrincipal = type({ id: "string" });

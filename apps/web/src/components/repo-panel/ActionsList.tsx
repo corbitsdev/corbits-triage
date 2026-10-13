@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Button, EmptyState } from "@corbits/react-ui";
-import { recommendedPack, type Action } from "@corbits/triage-contracts";
-import type { TriageStats } from "../../lib/hub-api.ts";
+import { recommendedPack, type Action, type TriageStats } from "@corbits/triage-contracts";
 import { moveAction, removeAction, upsertAction, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
 import ActionBuilder from "./ActionBuilder.tsx";

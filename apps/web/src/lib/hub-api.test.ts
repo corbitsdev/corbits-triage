@@ -52,13 +52,19 @@ const decided = pull(8, {
 
 const approval = (id: string): HubApproval => ({
   id,
+  tenantId: "tenant",
   runId: "run-triage",
   anchorRunId: "run-triage",
+  agentAddress: "run-triage",
   status: "pending",
   scope: null,
   toolDefinition: { name: "github_mirror" },
   toolArguments: { repo: "acme/widgets", number: 8, labels: ["needs-decision"], comment: "Needs a decision." },
   correlationId: id,
+  timeoutAt: null,
+  resolvedAt: null,
+  createdAt: "2026-03-10T00:00:00.000Z",
+  updatedAt: "2026-03-10T00:00:00.000Z",
 });
 
 const snapshot = (): PortalSnapshot => ({
@@ -256,7 +262,7 @@ describe("workspace GitHub App and repository lifecycle", () => {
       body: undefined,
     });
     const configured = snapshot();
-    configured.credentials = [{ id: "credential", name: "github", status: "active", providerId: "provider" }];
+    configured.credentials = [{ id: "credential", tenantId: "tenant", name: "github", type: "other", status: "active", providerId: "provider", createdAt: "2026-03-10T00:00:00.000Z", updatedAt: "2026-03-10T00:00:00.000Z" }];
     expect(portalConnected(configured)).toBe(true);
   });
 
@@ -708,14 +714,11 @@ describe("deployment not ready", () => {
 describe("pending maintainer write approvals", () => {
   test("overlays a parked github_merge_pr approval onto the pull request", () => {
     const merge: HubApproval = {
-      id: "merge",
+      ...approval("merge"),
       runId: "run-write",
       anchorRunId: "run-write",
-      status: "pending",
-      scope: null,
       toolDefinition: { name: "github_merge_pr" },
       toolArguments: { repo: "acme/widgets", number: 8 },
-      correlationId: "merge",
     };
     const [item] = queue([merge]);
     expect(item).toMatchObject({ pendingApprovalId: "merge", needsHuman: true });

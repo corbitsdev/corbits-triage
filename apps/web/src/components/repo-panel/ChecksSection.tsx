@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Switch } from "@corbits/react-ui";
-import { applyRecommended, CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type CheckRef, type IssueTracker } from "@corbits/triage-contracts";
-import type { TriageStats } from "../../lib/hub-api.ts";
+import { applyRecommended, CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type CheckRef, type IssueTracker, type TriageStats } from "@corbits/triage-contracts";
 import { checkFormOfKind, customCheckOf, nextCustomId } from "../../lib/action-builder.ts";
 import { catalogValue, checkOn, setCatalogCheck, upsertCustom, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
 import { evaluationOf, type CheckKind } from "../../lib/pack-prose.ts";

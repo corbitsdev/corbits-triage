@@ -1,5 +1,5 @@
 import { ApiError, type Transport } from "@intx/hub-client";
-import type { TriageStats } from "./hub-api.ts";
+import type { TriageStats } from "@corbits/triage-contracts";
 
 export type FakeArtifact = { id: string; title: string; content: string; version: number; updatedAt: number };
 

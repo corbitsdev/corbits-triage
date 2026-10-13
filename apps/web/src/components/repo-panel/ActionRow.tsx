@@ -1,7 +1,6 @@
 import { Button } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
-import { ALL_CHECKS, type Action, type Do } from "@corbits/triage-contracts";
-import type { TriageStats } from "../../lib/hub-api.ts";
+import { ALL_CHECKS, type Action, type Do, type TriageStats } from "@corbits/triage-contracts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
 import { ALL_CHECKS_NAME, BRANCH_NAMES, doText, sentence, whenText, type Branch } from "../../lib/pack-prose.ts";
 import CheckName from "./CheckName.tsx";

@@ -1,6 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
-import { BUILT_IN_CHECK_NAMES, type CheckRef } from "@corbits/triage-contracts";
-import type { TriageStats } from "../../lib/hub-api.ts";
+import { BUILT_IN_CHECK_NAMES, type CheckRef, type TriageStats } from "@corbits/triage-contracts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
 import { checkName, evaluationOf, isCatalogId } from "../../lib/pack-prose.ts";
 import EvalBadge from "./EvalBadge.tsx";

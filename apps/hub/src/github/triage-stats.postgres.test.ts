@@ -3,8 +3,9 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
+import { TriageStats } from "@corbits/triage-contracts";
 import { migrateTriageTables } from "../triage-db.js";
-import { createTriageStats, TriageStats } from "./triage-stats.js";
+import { createTriageStats } from "./triage-stats.js";
 import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };

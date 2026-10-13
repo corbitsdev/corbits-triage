@@ -1,6 +1,5 @@
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
-import { ALL_CHECKS, CATALOG_IDS, CUSTOM_CHECK_CAP, type ActionCheckRef, type CheckRef } from "@corbits/triage-contracts";
-import type { TriageStats } from "../../lib/hub-api.ts";
+import { ALL_CHECKS, CATALOG_IDS, CUSTOM_CHECK_CAP, type ActionCheckRef, type CheckRef, type TriageStats } from "@corbits/triage-contracts";
 import type { RepoDraft } from "../../lib/pack-draft.ts";
 import { ALL_CHECKS_NAME, checkName } from "../../lib/pack-prose.ts";
 import CheckName from "./CheckName.tsx";

@@ -4,62 +4,12 @@
 // window of stats reads, and what the portal shows of each pull request.
 import { and, asc, desc, eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
 import { boolean, integer, jsonb, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
-import { type } from "arktype";
 import type { DB } from "@intx/db";
+import type { VerdictDetail } from "@corbits/triage-contracts";
 import { triageSchema } from "../triage-db.js";
 
 export type RecordedCheck = { check: string; result: string };
 export type RecordedDo = { actionId: string; effectId: string };
-
-const DetailCheck = type({
-  "+": "delete",
-  check: "string",
-  kind: "string",
-  result: "string",
-  "reason?": "string",
-  "evidence?": "string[]",
-  /** What the check found, as `CheckOutput`; the portal parses it. */
-  "output?": "Record<string, unknown>",
-  "gate?": "boolean",
-});
-
-const DetailAction = type({
-  "+": "delete",
-  id: "string",
-  "branch?": "string",
-  "index?": "number",
-  "effectId?": "string",
-  "kind?": "string",
-  "reason?": "string",
-  "target?": "Record<string, unknown>",
-  "skipped?": "boolean",
-  /** Waiting for a maintainer to approve it. */
-  "held?": "boolean",
-  /** Set once the run's execute step ran the Do. */
-  "status?": "string",
-  "error?": "string",
-});
-
-/** What the portal shows of a verdict beyond the columns: the verdict's own fields, and the facts it was made from. */
-export const VerdictDetail = type({
-  "+": "delete",
-  /** The head the verdict judged, which its checks' cited lines link into; it can differ from the head its run was asked about. */
-  "headSha?": "string | null",
-  "priority?": "string | null",
-  "owner?": "string | null",
-  "nextAction?": "string",
-  "score?": "number | null",
-  "merge?": { "+": "delete", verdict: "string", score: "number | null", threshold: "number", reasons: "string[]" },
-  "reason?": "string",
-  /** The verdict's reason, or the rules step's findings when it names none. */
-  "evidence?": "string[]",
-  "checks?": DetailCheck.array(),
-  "labels?": "string[]",
-  "feedback?": "string",
-  "actions?": DetailAction.array(),
-  "facts?": { "+": "delete", "title?": "string", "author?": "string", "draft?": "boolean", "mergeable?": "boolean | null", "checks?": "string", "reviewAnswered?": "boolean" },
-});
-export type VerdictDetail = typeof VerdictDetail.infer;
 
 export const verdictRecord = triageSchema.table("verdict", {
   tenantId: text("tenant_id").notNull(),

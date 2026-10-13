@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { Button } from "@corbits/react-ui";
-import type { Action, ActionCheckRef, CheckRef, CustomCheck } from "@corbits/triage-contracts";
+import type { Action, ActionCheckRef, CheckRef, CustomCheck, TriageStats } from "@corbits/triage-contracts";
 import { actionFormOf, buildAction, type ActionForm } from "../../lib/action-builder.ts";
-import type { TriageStats } from "../../lib/hub-api.ts";
 import { removeCustom, upsertCustom, type RepoDraft } from "../../lib/pack-draft.ts";
 import { shownReason } from "../../lib/pack-prose.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";

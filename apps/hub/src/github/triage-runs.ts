@@ -11,7 +11,8 @@ import { unsettledBy } from "../../../../packages/triage-workflows/src/logic/set
 import type { Judged } from "../../../../packages/triage-workflows/src/logic/item.js";
 import type { LiveDeployment } from "./deployment.js";
 import { runKey, type ObservedRun } from "./reconcile-plan.js";
-import { VerdictDetail, type ApprovedDo, type RecordedDo, type RecordedVerdict } from "./verdict-record-store.js";
+import { VerdictDetail } from "@corbits/triage-contracts";
+import { type ApprovedDo, type RecordedDo, type RecordedVerdict } from "./verdict-record-store.js";
 
 const TERMINAL_EVENTS: Record<string, Terminal["status"]> = {
   RunCompleted: "completed",
