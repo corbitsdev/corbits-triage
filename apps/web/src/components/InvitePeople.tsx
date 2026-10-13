@@ -1,22 +1,67 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@intx/hub-client";
 import { errorText } from "@corbits/common";
 import type { InviteSent } from "@corbits/triage-contracts";
+import { isTriageRole, roleName } from "../lib/automation-grid.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
+import { initialsOf } from "../lib/inbox-view.ts";
 import { createInvitation, inviteRoles, listInvited, resendInvitation, withdrawInvitation, type HubPrincipal } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { INVITATIONS_QUERY_KEY, usePortal, useSignOutWhenRejected } from "../lib/portal.tsx";
-import { useRoles } from "../lib/tenant-entities.ts";
+import { usePrincipals, useRoles } from "../lib/tenant-entities.ts";
 
 const DEFAULT_ROLE = "member";
 
-function roleLabel(name: string): string {
-  return name.charAt(0).toUpperCase() + name.slice(1);
+function roleNames(person: HubPrincipal): string {
+  return person.roles.map(roleName).join(", ");
 }
 
-/** On the setup page it folds away, and is left out for whoever may not invite. */
+function addressOf(person: HubPrincipal): string {
+  return person.email ?? person.displayName;
+}
+
+function PeopleHeader({ first }: { first: string }) {
+  return (
+    <TableHeader>
+      <TableRow>
+        <TableHead>{first}</TableHead>
+        <TableHead>Role</TableHead>
+        <TableHead><span className="sr-only">Actions</span></TableHead>
+      </TableRow>
+    </TableHeader>
+  );
+}
+
+function MemberRow({ person, you }: { person: HubPrincipal; you: boolean }) {
+  const name = person.displayName || addressOf(person);
+  return (
+    <TableRow>
+      <TableCell><span className="person"><span className="av">{initialsOf(name)}</span>{name}{you && " (you)"}</span></TableCell>
+      <TableCell>{roleNames(person)}</TableCell>
+      <TableCell />
+    </TableRow>
+  );
+}
+
+/** Active members, then the open invites passed as `children`, once the members are known. */
+function PeopleTable({ you, children }: { you: string | undefined; children: ReactNode }) {
+  const members = usePrincipals();
+  if (members.denied) return <DeniedNotice section="people" />;
+  if (members.loading || members.unavailable) return null;
+  return (
+    <Table>
+      <PeopleHeader first="Name" />
+      <TableBody>
+        {members.rows.map((person) => <MemberRow key={person.id} person={person} you={person.id === you} />)}
+        {children}
+      </TableBody>
+    </Table>
+  );
+}
+
+/** The workspace's people and open invites; on the setup page only the invites, folded away. Left out for whoever may not invite. */
 export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   const { snapshot, notify, warn, refresh, readOnly } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
@@ -46,7 +91,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   if (denied) return onSetupPage ? null : <DeniedNotice section="invites" />;
   if (!tenantId || !query.data) return null;
   const { invited, assignableRoleIds } = query.data;
-  const choices = roles.rows.filter((role) => assignableRoleIds.includes(role.id));
+  const choices = roles.rows.filter((role) => assignableRoleIds.includes(role.id) && !isTriageRole(role));
   const chosenRole = roleId || choices.find((role) => role.name === DEFAULT_ROLE)?.id || "";
 
   async function act(key: string, run: () => Promise<void>) {
@@ -94,15 +139,15 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   }
 
   function withdraw(person: HubPrincipal) {
-    if (!tenantId || !window.confirm(`Withdraw the invite to ${person.email}? Its links stop working.`)) return;
+    if (!tenantId || !window.confirm(`Withdraw the invite to ${addressOf(person)}? Its links stop working.`)) return;
     void act(person.id, async function withdrawInvite() {
       await withdrawInvitation(createHubTransport(), tenantId, person.id);
-      notify(`Withdrew the invite to ${person.email}.`);
+      notify(`Withdrew the invite to ${addressOf(person)}.`);
     });
   }
 
-  const content = <>
-    <p className="field-help">They join with the role you pick by opening the sign-in link sent to that email. Links work once and expire after 15 minutes; resend one if it has.</p>
+  const intro = <p>Invitees join with the role you pick through a sign-in link that works once and expires after 15 minutes.</p>;
+  const notice = <>
     {error && <p role="alert" className="error">{error}</p>}
     {link && (
       <div className="hook-url">
@@ -110,7 +155,9 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
         <Button type="button" variant="ghost" onClick={() => void copy(link)}>Copy link</Button>
       </div>
     )}
-    <form onSubmit={(event) => void invite(event)}>
+  </>;
+  const form = (
+    <form className="invite" onSubmit={(event) => void invite(event)}>
       <label className="field">
         Email
         <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={readOnly || pending !== null} />
@@ -118,55 +165,52 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
       <label className="field">
         Role
         <select value={chosenRole} onChange={(event) => setRoleId(event.target.value)} disabled={readOnly || pending !== null}>
-          {choices.map((role) => <option key={role.id} value={role.id}>{roleLabel(role.name)}</option>)}
+          {choices.map((role) => <option key={role.id} value={role.id}>{roleName(role)}</option>)}
         </select>
       </label>
       <Button type="submit" disabled={readOnly || pending !== null || !email.trim() || !chosenRole}>
         {pending === "invite" ? "Inviting…" : "Invite"}
       </Button>
     </form>
-    {invited.length > 0 && (
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Invited</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead><span className="sr-only">Actions</span></TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {invited.map((person) => (
-            <TableRow key={person.id}>
-              <TableCell>{person.email}</TableCell>
-              <TableCell>{person.roles.map((role) => roleLabel(role.name)).join(", ")}</TableCell>
-              <TableCell>
-                {person.roles.every((role) => assignableRoleIds.includes(role.id)) && (
-                  <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => resend(person)}>
-                    {pending === `resend:${person.id}` ? "Sending…" : "Resend"}
-                  </Button>
-                )}
-                <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => withdraw(person)}>
-                  {pending === person.id ? "Withdrawing…" : "Withdraw"}
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    )}
-  </>;
+  );
+  const invitedRows = invited.map((person) => (
+    <TableRow key={person.id}>
+      <TableCell>{onSetupPage ? addressOf(person) : <span className="person"><span className="av none">{initialsOf(addressOf(person))}</span>{addressOf(person)} (invited)</span>}</TableCell>
+      <TableCell>{roleNames(person)}</TableCell>
+      <TableCell>
+        {person.roles.every((role) => assignableRoleIds.includes(role.id)) && (
+          <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => resend(person)}>
+            {pending === `resend:${person.id}` ? "Sending…" : "Resend"}
+          </Button>
+        )}
+        <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => withdraw(person)}>
+          {pending === person.id ? "Withdrawing…" : "Withdraw"}
+        </Button>
+      </TableCell>
+    </TableRow>
+  ));
   if (onSetupPage) {
     return (
       <details className="setup-help setup-invite">
         <summary>Invite people</summary>
-        {content}
+        {intro}
+        {notice}
+        {form}
+        {invited.length > 0 && <Table><PeopleHeader first="Invited" /><TableBody>{invitedRows}</TableBody></Table>}
       </details>
     );
   }
   return (
-    <section className="panel settings-panel" aria-label="Invite people">
-      <h2>Invite people</h2>
-      {content}
+    <section className="sec" aria-labelledby="sec-people">
+      <header>
+        <h2 id="sec-people">People</h2>
+        {intro}
+      </header>
+      <div>
+        <PeopleTable you={snapshot?.workspace.principalId}>{invitedRows}</PeopleTable>
+        {notice}
+        {form}
+      </div>
     </section>
   );
 }

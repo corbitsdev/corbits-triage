@@ -34,7 +34,15 @@ export function gridRoles(roles: readonly HubRole[]): HubRole[] {
   return [...roles].sort((a, b) => rank(a) - rank(b));
 }
 
-export function roleColumnName(role: HubRole): string {
-  return system(role, TRIAGE_ROLE) ? "Triage on its own" : role.name;
+type NamedRole = { name: string; isSystem?: boolean };
+
+/** What triage does on its own; no person holds it. */
+export function isTriageRole(role: NamedRole): boolean {
+  return role.isSystem === true && role.name === TRIAGE_ROLE;
+}
+
+export function roleName(role: NamedRole): string {
+  if (isTriageRole(role)) return "Triage on its own";
+  return role.name.charAt(0).toUpperCase() + role.name.slice(1);
 }
 

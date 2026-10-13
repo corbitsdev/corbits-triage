@@ -5,6 +5,7 @@
 import { type } from "arktype";
 import { and, count, eq, gt, inArray, like, notExists, sql } from "drizzle-orm";
 import { schema } from "@intx/db";
+import { TRIAGE_ROLE } from "@corbits/triage-contracts";
 import { isEmailAllowed, MAGIC_LINK_TTL_SECONDS, type HubAuth } from "../auth.js";
 import type { SessionUser } from "@intx/hub-api";
 import { failure, type PortalCredentialDeps } from "../github/portal-credential.js";
@@ -23,6 +24,11 @@ export const InviteBody = type({ email: "string.email", roleId: "string > 0" });
 export const AcceptBody = type({ tenantId: "string > 0" });
 export const Accepted = type({ tenantId: "string" });
 const StockPrincipal = type({ id: "string" });
+
+/** Triage's own role holds what it does unattended; no person is given it. */
+function isTriageRole(role: { name: string; isSystem: boolean }): boolean {
+  return role.isSystem && role.name === TRIAGE_ROLE;
+}
 
 export type InvitationDeps = PortalCredentialDeps & {
   auth: HubAuth;
@@ -118,6 +124,7 @@ export function createInvitations(deps: InvitationDeps) {
     const email = body.email.trim().toLowerCase();
     const role = await db.query.role.findFirst({ where: and(eq(schema.role.id, body.roleId), eq(schema.role.tenantId, tenantId)) });
     if (!role) return failure(404, "not_found", "Role not found in this workspace.");
+    if (isTriageRole(role)) return failure(403, "forbidden", "Triage's own role cannot be given to a person.");
     if (!(await assignableRoles(principalId, tenantId, [role.id])).has(role.id)) {
       return failure(403, "forbidden", "You may not invite people into a role with permissions you do not hold.");
     }
@@ -194,8 +201,9 @@ export function createInvitations(deps: InvitationDeps) {
   }
 
   async function roles({ tenantId, principalId }: Member): Promise<Response> {
-    const rows = await db.select({ id: schema.role.id }).from(schema.role).where(eq(schema.role.tenantId, tenantId));
-    return Response.json({ assignableRoleIds: [...await assignableRoles(principalId, tenantId, rows.map((row) => row.id))] });
+    const rows = await db.select({ id: schema.role.id, name: schema.role.name, isSystem: schema.role.isSystem }).from(schema.role).where(eq(schema.role.tenantId, tenantId));
+    const people = rows.filter((row) => !isTriageRole(row)).map((row) => row.id);
+    return Response.json({ assignableRoleIds: [...await assignableRoles(principalId, tenantId, people)] });
   }
 
   async function accept(body: typeof AcceptBody.infer, user: SessionUser): Promise<Response> {

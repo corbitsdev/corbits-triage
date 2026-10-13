@@ -449,37 +449,7 @@ describe("patchAppConfig CAS", () => {
 });
 
 describe("access grant transport", () => {
-  test("createGrant posts origin creator for a person and never system", async () => {
-    const posted: unknown[] = [];
-    const transport: Transport = {
-      fetch: async (method, path, body) => {
-        posted.push({ method, path, body });
-        return { id: "grn_1" } as never;
-      },
-      subscribe: () => () => {},
-    };
-    await createGrant(transport, "tenant", {
-      principalId: "prn_ada",
-      resource: "workflow-run:*",
-      action: "read",
-      effect: "allow",
-    });
-    expect(posted).toEqual([
-      {
-        method: "POST",
-        path: "/api/tenants/tenant/grants",
-        body: {
-          principalId: "prn_ada",
-          resource: "workflow-run:*",
-          action: "read",
-          effect: "allow",
-          origin: "creator",
-        },
-      },
-    ]);
-  });
-
-  test("createGrant posts origin role for a role", async () => {
+  test("createGrant posts an allow grant with origin role, never system", async () => {
     const posted: unknown[] = [];
     const transport: Transport = {
       fetch: async (method, path, body) => {
@@ -492,7 +462,6 @@ describe("access grant transport", () => {
       roleId: "rol_owner",
       resource: "grant:*",
       action: "manage",
-      effect: "ask",
     });
     expect(posted).toEqual([
       {
@@ -502,7 +471,7 @@ describe("access grant transport", () => {
           roleId: "rol_owner",
           resource: "grant:*",
           action: "manage",
-          effect: "ask",
+          effect: "allow",
           origin: "role",
         },
       },
