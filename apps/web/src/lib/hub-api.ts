@@ -1669,8 +1669,6 @@ export type PrItem = {
   activityAt: string | null;
   /** The verdict saw the author push, comment or reply in a review after the newest standing request for changes. */
   reviewAnswered: boolean;
-  canClose: boolean;
-  pendingClose: boolean;
   /** The verdict's reply is on GitHub: the run's mirror step wrote non-empty feedback, or this portal sent it (see `useQueueItems`). */
   posted: boolean;
   /** A pr-triage run for this pull request has started and has not rendered its verdict yet. */
@@ -1857,8 +1855,6 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     headSha: null,
     activityAt: pull.activityAt,
     reviewAnswered: facts.reviewAnswered === true,
-    canClose: detail.duplicate === true,
-    pendingClose: false,
     posted: verdict.commented,
     running: isRunning(pull.run),
     failure: failureOf(pull.run),
@@ -1883,13 +1879,10 @@ export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], open
     const args = obj(approval.toolArguments);
     const item = items.get(`${args.repo}#${args.number}`);
     if (!item) continue;
-    const close = args.close === true;
-    if (item.pendingClose && !close) continue;
     items.set(item.key, {
       ...item,
       needsHuman: true,
       pendingApprovalId: approval.id,
-      pendingClose: close,
       waitingSince: approval.createdAt ?? item.waitingSince,
     });
   }
@@ -1945,8 +1938,6 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         headSha: pr.sha,
         activityAt: pull?.activityAt ?? null,
         reviewAnswered: false,
-        canClose: false,
-        pendingClose: false,
         posted: false,
         running: isRunning(pull?.run ?? null),
         failure: failureOf(pull?.run ?? null),

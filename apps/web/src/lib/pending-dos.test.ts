@@ -14,8 +14,8 @@ function step(kind: string, target: Record<string, unknown>, index = 0): Record<
 }
 
 /** A pr-triage verdict as the hub's triage-verdicts route answers it, read back the way the inbox reads it. */
-function verdict(actions: unknown[], extra: Record<string, unknown> = {}): PrItem {
-  const detail = { labels: ["triage:needs-decision"], feedback: "Please split this.", actions, ...extra };
+function verdict(actions: unknown[]): PrItem {
+  const detail = { labels: ["triage:needs-decision"], feedback: "Please split this.", actions };
   const recorded = {
     runId: "run-8", at: NOW, headSha: "abc", settled: true, state: "needs-decision", actor: "maintainer", humanGated: true,
     degraded: null, commented: false, checks: [], detail,
@@ -79,12 +79,6 @@ describe("pendingDos", () => {
       { id: "old", branch: "no", kind: "assign", automatic: false, reason: "Before Dos by reference.", target: { users: ["bob"] } },
     ]), [], NONE);
     expect(labels(dos)).toEqual(["Assign alice"]);
-  });
-
-  test("a flagged duplicate offers no second close", () => {
-    const actions = [step("close", {}), step("comment", { body: "Duplicate of #2." })];
-    expect(pendingDos(verdict(actions, { duplicate: true }), [], NONE).map((d) => d.kind)).toEqual(["comment"]);
-    expect(pendingDos(verdict(actions), [], NONE).map((d) => d.kind)).toEqual(["close", "comment"]);
   });
 });
 

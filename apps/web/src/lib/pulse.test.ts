@@ -9,7 +9,7 @@ const READ = new Set(["acme/api", "acme/web"]);
 function open(key: string, overrides: Partial<PrItem> = {}, handled: OpenItem["handled"] = null): OpenItem {
   const item = {
     key, repo: key.slice(0, key.indexOf("#")), number: Number(key.slice(key.indexOf("#") + 1)), title: `Title ${key}`, state: "needs-decision",
-    canClose: false, draft: false, pendingApprovalId: null, ci: null, failure: null, waitingSince: "2026-10-09T12:00:00.000Z", ...overrides,
+    draft: false, pendingApprovalId: null, ci: null, failure: null, waitingSince: "2026-10-09T12:00:00.000Z", ...overrides,
   } as PrItem;
   return { item, handled };
 }

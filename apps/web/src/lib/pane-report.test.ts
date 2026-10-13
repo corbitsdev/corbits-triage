@@ -36,8 +36,6 @@ function item(overrides: Partial<PrItem>): PrItem {
     headSha: "head-1",
     activityAt: null,
     reviewAnswered: false,
-    canClose: false,
-    pendingClose: false,
     posted: false,
     running: false,
     failure: null,
@@ -156,7 +154,6 @@ describe("paneBar", () => {
     expect(barOf(item({ comment: "Please add a test." })).primary).toMatchObject({ kind: "reply", label: "Send feedback", detail: "to @ada" });
     expect(barOf(item({ state: "awaiting-review" })).primary).toMatchObject({ kind: "approve", label: "Approve", detail: null });
     expect(barOf(item({ state: "needs-author-update", posted: true, comment: "Fix it." })).primary).toMatchObject({ kind: "comment", label: "Reply", detail: "to @ada" });
-    expect(barOf(item({ canClose: true })).primary).toMatchObject({ kind: "close", label: "Close as duplicate" });
   });
 
   test("at most two runnable secondaries; the rest, and anything blocked, wait in More", () => {

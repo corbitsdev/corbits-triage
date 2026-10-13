@@ -54,7 +54,6 @@ export const VerdictDetail = type({
   "checks?": DetailCheck.array(),
   "labels?": "string[]",
   "feedback?": "string",
-  "duplicate?": "boolean",
   "actions?": DetailAction.array(),
   "facts?": { "+": "delete", "title?": "string", "author?": "string", "draft?": "boolean", "mergeable?": "boolean | null", "checks?": "string", "reviewAnswered?": "boolean" },
 });

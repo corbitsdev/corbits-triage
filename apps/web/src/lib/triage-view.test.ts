@@ -45,8 +45,6 @@ function item(repo: string, number: number): PrItem {
     runId: `run-${repo}`,
     waitingSince: null,
     updatedAt: null,
-    canClose: true,
-    pendingClose: false,
     posted: false,
     running: false,
     failure: null,

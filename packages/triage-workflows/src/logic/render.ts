@@ -147,8 +147,7 @@ export interface MergeVerdict {
 
 export interface RenderOutput extends Rendered {
   mirror: boolean;
-  duplicate: boolean;
-  /** Only a human-confirmed duplicate closes a PR; no automated path sets this. */
+  /** No automated path sets this. */
   close: boolean;
   /** The weakest model answer's confidence; null when no model check was asked. */
   score: number | null;
@@ -563,7 +562,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const checks = [...det.checks, ...evaluated.checks];
   const score = scoreOf(evaluated.scores);
   if (!det.needsJudgment || !det.sources || !JUDGED_STATES.has(det.state)) {
-    const verdict = withChecks({ ...render(det.state), duplicate: false, close: false, degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
+    const verdict = withChecks({ ...render(det.state), close: false, degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
     // Model answers do not drive this verdict, so the comment speaks only to the machine checks; a closed pull request gets none.
     return det.findings.some((f) => f.check === "state") ? { ...verdict, feedback: "" } : verdict;
   }
@@ -579,14 +578,13 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     : judgeSkipped === true ? NEEDS_JUDGE_REASON
       : outage ? `${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`
         : reasons.length ? reasons.join("; ") : det.reason;
-  return withChecks({ ...render(state), duplicate: false, close: false, degraded: outage ? "inference-outage" : null, reason }, checks, score, ctx);
+  return withChecks({ ...render(state), close: false, degraded: outage ? "inference-outage" : null, reason }, checks, score, ctx);
 }
 
 export function degradedVerdict(reason: string, threshold: number): RenderOutput {
   return {
     ...render("stale-unknown"),
     mirror: false,
-    duplicate: false,
     close: false,
     score: null,
     confidence: "unknown",

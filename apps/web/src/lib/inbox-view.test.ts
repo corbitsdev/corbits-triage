@@ -36,8 +36,6 @@ function item(overrides: Partial<PrItem>): PrItem {
     headSha: null,
     activityAt: null,
     reviewAnswered: false,
-    canClose: false,
-    pendingClose: false,
     posted: false,
     running: false,
     failure: null,
@@ -53,7 +51,6 @@ describe("groupInbox", () => {
       item({ key: "a", state: "ready", priority: "P3" }),
       item({ key: "b", state: "needs-author-update", draft: true }),
       item({ key: "c", state: "blocked", priority: "P1" }),
-      item({ key: "d", state: "awaiting-review", canClose: true }),
       item({ key: "e", state: "new", runId: null }),
       item({ key: "f", state: "needs-decision", comment: "Looks wanted." }),
       item({ key: "g", state: "stale" }),
@@ -62,7 +59,6 @@ describe("groupInbox", () => {
     expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([
       ["decide", ["f", "g"]],
       ["unblock", ["c", "b"]],
-      ["duplicate", ["d"]],
       ["merge", ["a"]],
       ["failed", ["h"]],
     ]);
@@ -112,7 +108,6 @@ describe("primaryAction", () => {
   test("a decision with a drafted reply posts it; without one it opens the composer", () => {
     expect(primaryAction(item({ comment: "Thanks" }), "decide")).toBe("reply");
     expect(primaryAction(item({}), "decide")).toBe("comment");
-    expect(inboxAction(item({ state: "ready", canClose: true }))).toBe("duplicate");
   });
 
   test("an author's verdict sends its unposted reply and has nothing left once the mirror posted it", () => {

@@ -250,7 +250,7 @@ function RecommendedComment({ item, posted, onPosted, onDismiss }: {
 
 export default function PRDetail() {
   const params = useParams();
-  const { snapshot, decide, closeDuplicate, writeGithub, notify, readOnly } = usePortal();
+  const { snapshot, decide, writeGithub, notify, readOnly } = usePortal();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<SliverTab>("about");
@@ -298,19 +298,6 @@ export default function PRDetail() {
       await decide(approval.id, decision);
     } catch (cause) {
       setError(`Could not update the approval. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function requestClose() {
-    if (!item) return;
-    setBusy(true);
-    try {
-      setError("");
-      await closeDuplicate(item);
-    } catch (cause) {
-      setError(`Could not request the close. ${cause instanceof Error ? cause.message : String(cause)} Try again.`);
     } finally {
       setBusy(false);
     }
@@ -492,9 +479,6 @@ export default function PRDetail() {
               ) : null}
               {closed ? null : (
                 <>
-                  {item.canClose ? (
-                    <button type="button" className="btn" disabled={item.pendingClose || busy || readOnly} onClick={() => void requestClose()}>Close as duplicate</button>
-                  ) : null}
                   <button type="button" className="btn" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</button>
                   <button type="button" className={`btn${canMerge && !gated ? " primary" : ""}`} disabled={!item.number || !canMerge || busy || readOnly} onClick={() => void requestWrite("merge")}>Merge</button>
                   <details className="more-menu" ref={moreRef}>
