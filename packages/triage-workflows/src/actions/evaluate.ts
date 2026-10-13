@@ -1,7 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { packMergeThreshold } from "@corbits/triage-contracts";
 import { type } from "arktype";
-import { approvalHeldBy, evaluateActions, heldApprovals, packApproves } from "../logic/actions.js";
+import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, packApproves } from "../logic/actions.js";
 import type { PrFacts } from "../logic/checks.js";
 import { errorText } from "../logic/extract.js";
 import type { Item, Judged } from "../logic/item.js";
@@ -83,11 +83,13 @@ function verdictOf(it: Item, replies: unknown[]): Verdict {
     const answers = judge !== undefined ? parseAnswers(judge) : null;
     const rendered = renderVerdict({ author: it.facts.author, repo: it.facts.repo, headSha: it.facts.headSha, det: it.det, answers, candidates, plan, judgeError, judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, threshold: packMergeThreshold(it.pack) });
     // A degraded verdict is incomplete, so nothing is suggested from it.
-    const suggested = it.pack && rendered.degraded === null ? evaluateActions({ facts: it.facts, checks: rendered.checks, pack: it.pack, roles: it.roles ?? {} }) : [];
+    const actionInput = it.pack && rendered.degraded === null ? { facts: it.facts, checks: rendered.checks, pack: it.pack, roles: it.roles ?? {} } : undefined;
+    const suggested = actionInput ? evaluateActions(actionInput) : [];
+    const wanted = actionInput && changesWanted(actionInput);
     const held = approvalHeldBy(rendered.merge.verdict, it.facts.checks);
     const actions = heldApprovals(suggested, held);
     const judged = reusable(answered);
-    const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }) };
+    const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
     return { ...verdict, request: toMirrorRequest(verdict) };
   } catch (e) {
     const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`, packMergeThreshold(it.pack)), cleanupMode: it.cleanupMode, actions: [] };

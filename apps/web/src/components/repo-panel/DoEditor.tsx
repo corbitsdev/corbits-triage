@@ -72,6 +72,7 @@ export default function DoEditor({ step, branch, roles, disabled, onChange, onRe
       case "agent":
         return <textarea className="val w body" aria-label="Agent prompt" rows={2} disabled={disabled} value={step.prompt ?? ""} onChange={(event) => set({ prompt: event.target.value })} />;
       case "approve":
+      case "request-changes":
       case "close":
         return null;
     }

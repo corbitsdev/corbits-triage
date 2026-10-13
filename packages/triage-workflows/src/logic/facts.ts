@@ -45,11 +45,11 @@ export function summarizeChecks(runs: CheckRun[]): PrFacts["checks"] {
   return "success";
 }
 
-/** Each reviewer's latest decisive review state, by login. */
+/** Each reviewer's latest decisive review state, by login; triage's own requests for changes are its verdict, not a reviewer's. */
 function latestDecisive(reviews: Review[]): Map<string, string> {
   const latest = new Map<string, string>();
   for (const r of reviews) {
-    if (r.reviewer && r.state && r.state !== "COMMENTED" && r.state !== "PENDING") latest.set(r.reviewer, r.state);
+    if (r.reviewer && r.state && r.state !== "COMMENTED" && r.state !== "PENDING" && !r.triageRequest) latest.set(r.reviewer, r.state);
   }
   return latest;
 }
@@ -60,7 +60,7 @@ function reviewersWith(latest: Map<string, string>, state: string): string[] {
 
 /** The author answered the newest standing request for changes: the head moved past it, or the author commented or reviewed since. */
 function reviewAnswered(reviews: Review[], comments: IssueComment[], author: string, headSha: string, requested: string[]): boolean {
-  const asked = reviews.filter((r) => r.state === "CHANGES_REQUESTED" && r.reviewer !== undefined && requested.includes(r.reviewer) && r.submittedAt);
+  const asked = reviews.filter((r) => r.state === "CHANGES_REQUESTED" && !r.triageRequest && r.reviewer !== undefined && requested.includes(r.reviewer) && r.submittedAt);
   const newest = asked.reduce<Review | undefined>((latest, r) => (latest === undefined || r.submittedAt! > latest.submittedAt! ? r : latest), undefined);
   if (newest === undefined) return false;
   if (newest.commitId !== undefined && newest.commitId !== headSha) return true;
@@ -99,6 +99,7 @@ export function buildFacts(
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,
+    triageRequested: reviews.some((r) => r.triageRequest && r.state === "CHANGES_REQUESTED"),
     reviewAnswered: reviewAnswered(reviews, comments, author, pr.sha ?? "", changesRequested),
     reviewedBy: reviewedOnHead(reviews, pr.sha ?? ""),
     labels: pr.labels ?? [],
