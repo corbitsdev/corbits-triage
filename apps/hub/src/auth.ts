@@ -2,7 +2,7 @@
 // origin when the portal is hosted on another origin, and device-code sign-in
 // for agents acting as a person, who then call the hub with a bearer token.
 import { schema, type DB } from "@intx/db";
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { makeSignature } from "better-auth/crypto";
@@ -33,6 +33,21 @@ export const deviceCode = triageSchema.table("device_code", {
 });
 
 type AuthMiddlewareContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
+
+// bearer() hands every new session to page JS as `set-auth-token`; only the device flow needs a bearer token, in its body.
+async function stripSetAuthToken(ctx: AuthMiddlewareContext) {
+  const headers = ctx.context.responseHeaders;
+  if (!headers?.has("set-auth-token")) return;
+  headers.delete("set-auth-token");
+  const exposed = (headers.get("access-control-expose-headers") ?? "").split(",").map((name) => name.trim()).filter((name) => name.length > 0 && name.toLowerCase() !== "set-auth-token");
+  if (exposed.length > 0) headers.set("access-control-expose-headers", exposed.join(", "));
+  else headers.delete("access-control-expose-headers");
+}
+
+const withoutSetAuthToken: BetterAuthPlugin = {
+  id: "without-set-auth-token",
+  hooks: { after: [{ matcher: () => true, handler: createAuthMiddleware(stripSetAuthToken) }] },
+};
 
 function isDeviceToken(body: unknown): body is { access_token: string } {
   return typeof body === "object" && body !== null && "access_token" in body && typeof body.access_token === "string";
@@ -85,6 +100,7 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     ...(google && { socialProviders: { google } }),
     plugins: [
       bearer({ requireSignature: true }),
+      withoutSetAuthToken,
       deviceAuthorization({
         validateClient: (clientId) => clientId === DEVICE_CLIENT_ID,
         verificationUri: new URL("/device", config.portalOrigin).toString(),
