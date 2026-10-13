@@ -1400,6 +1400,19 @@ details.setup-help[open] { display: grid; gap: 12px; }
   display: grid;
   gap: 16px;
 }
+.sec { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px; padding: 26px 0; border-top: 1px solid var(--rule); }
+[role="tabpanel"] > div > .sec:first-child { border-top: 0; }
+.sec > header h2 { font-size: 16px; margin: 0 0 4px; }
+.sec > header p { font-size: 13px; margin: 0; }
+.sec > div { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.sec .person { display: flex; align-items: center; gap: 8px; }
+.sec .repos { white-space: nowrap; margin-left: 6px; }
+.sec .invite { display: flex; align-items: end; gap: 8px; }
+.sec .invite label:first-child { flex: 1; }
+@media (max-width: 720px) {
+  .sec { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .sec .invite { flex-wrap: wrap; }
+}
 .gate, .loading-gate {
   min-height: 100dvh;
   display: grid;

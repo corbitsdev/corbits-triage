@@ -14,6 +14,7 @@ import type { ResolvedTarget } from "@corbits/triage-contracts";
 import { doEffectId, type Branch } from "@corbits/triage-workflows/logic/actions";
 import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage";
 import { verdictRecord } from "./github/verdict-record-store.js";
+import { ensureTriageRole } from "./github/automation.js";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -818,6 +819,12 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     expect(await refusal(annIn.headers, "POST", `/${annId}/resend`)).toEqual(noGrant);
     expect(await refusal(annIn.headers, "DELETE", `/${annId}`)).toEqual(noGrant);
     expect(await refusal(await signedIn(origin), "GET", "")).toEqual({ status: 403, body: { error: { code: "forbidden", message: "Not a member of this tenant" } } });
+    // Triage's own role is never offered to, or given to, a person.
+    const triageRole = await db.transaction(async function addTriageRole(tx) {
+      return ensureTriageRole(tx, tenantId, new Date());
+    });
+    expect((await refusal(owner, "GET", "")).body).toMatchObject({ assignableRoleIds: expect.not.arrayContaining([triageRole]) });
+    expect(await refusal({ ...owner, origin }, "POST", "", { email: emailOf("tri"), roleId: triageRole })).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
     const malformed = await fetch(invitations, { method: "POST", headers: { ...owner, origin }, body: "{" });
     expect({ status: malformed.status, body: await malformed.json() }).toMatchObject({ status: 400, body: { error: { code: "invalid_request" } } });
     expect(await follow(annLink)).toMatchObject({ location: `${fromEmail}&error=INVALID_TOKEN` });
