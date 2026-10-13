@@ -55,11 +55,11 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   package manifest and files (`tooling/pack-tarball.ts`), so any change to
   the tool or a workflow publishes a new version.
 - `src/lib/hub-api.ts`: typed calls over the hub routes.
-- `src/lib/decision-models.ts`: presets (TypeSafe, Vercel AI Gateway,
-  OpenCode Zen, all serving Jev) plus a custom provider. Saving stores the key
-  as a vault credential, sets the `corbits-system-one` provider `baseURL`, and
-  points the `decision` catalog model's offering at the provider's own model
-  name (`quirks.model`).
+- Decision model presets (`@corbits/triage-contracts`): TypeSafe, Vercel AI
+  Gateway, OpenCode Zen, all serving Jev, plus a custom provider. Saving
+  stores the key as a vault credential, sets the `corbits-system-one` provider
+  `baseURL`, and points the `decision` catalog model's offering at the
+  provider's own model name (`quirks.model`).
 
 ### Decision model
 
@@ -68,6 +68,10 @@ their source is identical for every tenant. The tenant's offering for
 `decision` picks the provider (`baseURL` + `/systemone`) and wire model
 (`@corbits/system-one` 0.3.1). Saving a model redeploys, because a deployment
 resolves its offering when deployed.
+
+## Extension (`apps/extension`)
+
+A WXT browser extension that triages the open GitHub pull request locally; see `apps/extension/README.md`.
 
 ## Packages
 

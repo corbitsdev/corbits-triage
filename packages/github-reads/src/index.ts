@@ -1,4 +1,3 @@
-import { setTimeout as sleep } from "node:timers/promises";
 import { minimatch } from "minimatch";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
@@ -148,6 +147,10 @@ export async function authorTeams(gh: GithubFetch, input: { repo: string; author
 
 const MERGEABLE_RETRIES = 5;
 const MERGEABLE_BACKOFF_MS = 1500;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function prFields(p: any) {
   return {
@@ -383,15 +386,15 @@ function docRank(path: string): number {
   return path.includes("/") ? 3 : 2;
 }
 
-function byPath(a: DocBlob, b: DocBlob): number {
+function byPath(a: Pick<DocBlob, "path">, b: Pick<DocBlob, "path">): number {
   return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
 }
 
-function byDocOrder(a: DocBlob, b: DocBlob): number {
+function byDocOrder(a: Pick<DocBlob, "path">, b: Pick<DocBlob, "path">): number {
   return docRank(a.path) - docRank(b.path) || byPath(a, b);
 }
 
-function byRuleOrder(a: DocBlob, b: DocBlob): number {
+function byRuleOrder(a: Pick<DocBlob, "path">, b: Pick<DocBlob, "path">): number {
   return contributionRuleRank(a.path)! - contributionRuleRank(b.path)! || byPath(a, b);
 }
 
@@ -514,6 +517,32 @@ const utf8Encoder = new TextEncoder();
 function leadingBytes(text: string, limit: number): string {
   const bytes = utf8Encoder.encode(text);
   return limit >= bytes.length ? text : utf8.decode(bytes.subarray(0, charStart(bytes, limit)));
+}
+
+/**
+ * What `repoDocs` makes of the pages of `readRepoDocsPage`, from a tree's file paths and a reader of a file's bytes,
+ * for a reader that lists a tree without its blobs' sizes.
+ */
+export async function readRepoDocs(paths: string[], read: (path: string) => Promise<Uint8Array>): Promise<{ docs: Record<string, string>; rules: Record<string, string> }> {
+  const files = new Map<string, Uint8Array>();
+  async function leading(ordered: Pick<DocBlob, "path">[], max: number): Promise<Record<string, string>> {
+    const texts: Record<string, string> = {};
+    let start = 0;
+    for (const { path } of ordered) {
+      if (start >= max) break;
+      const bytes = files.get(path) ?? await read(path);
+      files.set(path, bytes);
+      const size = Math.min(bytes.length, max - start);
+      if (size <= 0) break;
+      texts[path] = utf8.decode(bytes.subarray(0, charStart(bytes, size)));
+      start += size;
+    }
+    return texts;
+  }
+  const blobs = paths.filter(isDocPath).map((path) => ({ path })).sort(byDocOrder);
+  const docs = Object.fromEntries(Object.entries(await leading(blobs, REPO_DOCS_MAX_BYTES)).filter(([, text]) => text));
+  const rules = await leading(blobs.filter((blob) => contributionRuleRank(blob.path) !== undefined).sort(byRuleOrder), REPO_RULES_MAX_BYTES);
+  return { docs, rules };
 }
 
 export async function listIssueComments(gh: GithubFetch, repo: string, number: number): Promise<IssueComment[]> {
