@@ -1,5 +1,5 @@
 import { StatGrid, StatGridItem } from "@corbits/react-ui";
-import type { TriageStats } from "../../lib/hub-api.ts";
+import type { TriageStats } from "@corbits/triage-contracts";
 import { actedOn, medianText } from "../../lib/repo-stats.ts";
 
 function plural(count: number, noun: string): string {

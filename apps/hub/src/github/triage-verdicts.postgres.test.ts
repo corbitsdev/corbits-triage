@@ -5,12 +5,13 @@ import { sql } from "drizzle-orm";
 import { createInMemoryGrantStore, type GrantRule } from "@intx/authz";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
+import { TriageVerdicts } from "@corbits/triage-contracts";
 import { guardedApp } from "../integrations/test-app.js";
 import { migrateTriageTables } from "../triage-db.js";
 import { createOpenPullsCache, type RepoPulls } from "./open-pulls.js";
 import type { ObservedRun } from "./reconcile-plan.js";
 import { createTenantVersions, type TenantObservation } from "./tenant-observer.js";
-import { createTriageVerdicts, TriageVerdicts } from "./triage-verdicts.js";
+import { createTriageVerdicts } from "./triage-verdicts.js";
 import { createVerdictRecordStore, type RecordedVerdict } from "./verdict-record-store.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };

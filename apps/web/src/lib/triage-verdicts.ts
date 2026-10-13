@@ -1,6 +1,7 @@
 import { queryOptions, skipToken, useQuery, type Query } from "@tanstack/react-query";
 import { ApiError } from "@intx/hub-client";
-import { loadTriageVerdicts, type TriageVerdicts } from "./hub-api.ts";
+import type { TriageVerdicts } from "@corbits/triage-contracts";
+import { loadTriageVerdicts } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { TRIAGE_VERDICTS_QUERY_KEY, usePortal } from "./portal.tsx";
 
@@ -27,14 +28,12 @@ export function isTriageVerdictsQuery(query: Query): boolean {
   return query.queryKey[0] === TRIAGE_VERDICTS_QUERY_KEY;
 }
 
-export function useTriageVerdicts(): { data: TriageVerdicts | undefined; pending: boolean; denied: boolean } {
+/** `error` is a failed read other than a refusal, such as a body that does not match the hub's schema; `data` may then be stale. */
+export function useTriageVerdicts(): { data: TriageVerdicts | undefined; pending: boolean; denied: boolean; error: Error | null } {
   const { snapshot } = usePortal();
   const verdicts = useQuery(triageVerdictsQuery(snapshot?.workspace.tenantId));
-  return {
-    data: verdicts.data,
-    pending: verdicts.isLoading,
-    denied: verdicts.error instanceof ApiError && verdicts.error.status === 403,
-  };
+  const denied = verdicts.error instanceof ApiError && verdicts.error.status === 403;
+  return { data: verdicts.data, pending: verdicts.isLoading, denied, error: denied ? null : verdicts.error };
 }
 
 /** Read only while `enabled`, as when the pull request is not in the open list. */

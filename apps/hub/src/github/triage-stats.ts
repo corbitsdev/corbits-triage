@@ -2,6 +2,7 @@
 // only: no run log or GitHub read, so the portal and the extension can ask
 // for it on every view.
 import { type } from "arktype";
+import { TriageStats } from "@corbits/triage-contracts";
 import { failure } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
@@ -17,25 +18,6 @@ const StatsQuery = type({
   repo: /^[\w.-]+\/[\w.-]+$/,
   "days?": type("string.integer.parse").to("1 <= number.integer <= 30"),
 });
-
-const CheckStats = type({ pass: "number", fail: "number", unconfirmed: "number" });
-const ActionStats = type({ suggested: "number", executed: "number", failed: "number" });
-
-export const TriageStats = type({
-  repo: "string",
-  days: "number",
-  /** The earliest verdict ever recorded for the repository; later than the window's start, the window is only partly covered. */
-  since: "string | null",
-  triaged: "number",
-  verdicts: "Record<string, number>",
-  neededYou: "number",
-  checks: type({ "[string]": CheckStats }),
-  actions: type({ "[string]": ActionStats }),
-  comments: "number",
-  medianTimeToVerdictMs: "number | null",
-  daily: type({ date: "string", triaged: "number" }).array(),
-});
-export type TriageStats = typeof TriageStats.infer;
 
 export type TriageStatsDeps = {
   verdicts: Pick<VerdictRecordStore, "since" | "earliest">;

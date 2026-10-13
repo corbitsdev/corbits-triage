@@ -6,13 +6,19 @@ import { approvalHeadline, checkValueText, findPrItem, mergeText } from "./triag
 function approval(): HubApproval {
   return {
     id: "approval-1",
+    tenantId: "tenant",
     runId: "run-1",
     anchorRunId: "run-1",
+    agentAddress: "run-1",
     status: "pending",
     scope: null,
     toolDefinition: { name: "github_mirror" },
     toolArguments: { repo: "acme/widgets", number: 8 },
     correlationId: "approval-1",
+    timeoutAt: null,
+    resolvedAt: null,
+    createdAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-10T00:00:00.000Z",
   };
 }
 

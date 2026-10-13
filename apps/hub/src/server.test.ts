@@ -9,11 +9,10 @@ import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-session
 import { formatRunAddress } from "@intx/types";
 import { PreviewResponse } from "./github/pr-preview.js";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
-import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName } from "@corbits/triage-contracts";
+import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget } from "@corbits/triage-contracts";
 import { doEffectId, type Branch } from "../../../packages/triage-workflows/src/logic/actions.js";
 import { workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
-import { TriageStats } from "./github/triage-stats.js";
 import { verdictRecord } from "./github/verdict-record-store.js";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";

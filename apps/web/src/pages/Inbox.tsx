@@ -537,7 +537,7 @@ export default function Inbox({ view }: { view: ListView }) {
   const open = useOpenItems();
   const loading = useQueueLoading();
   const openPullsUnanswered = useOpenPullsUnanswered();
-  const { denied } = useTriageVerdicts();
+  const { denied, error: verdictsError } = useTriageVerdicts();
   const [query, setQuery] = useState("");
   const [needsYouGrouping, setNeedsYouGrouping] = useState<InboxGrouping>("action");
   const [openGrouping, setOpenGrouping] = useState<OpenGrouping>("repo");
@@ -678,6 +678,7 @@ export default function Inbox({ view }: { view: ListView }) {
           <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} />
         </div>
         <div className="scroll" id="main">
+          {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
           {flat.length === 0 ? (
             <EmptyList view={view} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
           ) : (
