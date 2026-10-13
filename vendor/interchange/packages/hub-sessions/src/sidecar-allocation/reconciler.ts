@@ -1,7 +1,12 @@
 import { type } from "arktype";
 
 import { sha256 } from "@intx/crypto";
-import type { SidecarAllocation, SidecarAllocationStore } from "@intx/db";
+import {
+  SIDECAR_DEPLOYMENT_STOPPED_FAILURE_CODE,
+  SidecarReuseRejectedError,
+  type SidecarAllocation,
+  type SidecarAllocationStore,
+} from "@intx/db";
 import { getLogger } from "@intx/log";
 import { hexEncode } from "@intx/types";
 
@@ -21,6 +26,10 @@ import type { SidecarPluginRegistry } from "./plugin-registry";
 import {
   DEFAULT_SIDECAR_OPERATION_TIMEOUT_MS,
   runSidecarOperation,
+  SidecarDeploymentHistoryPendingError,
+  SidecarDeploymentMissingError,
+  SidecarDeploymentStoppedError,
+  SidecarFirstDeployError,
   SidecarOperationTimeoutError,
   type SidecarReconciliationContext,
 } from "./operation";
@@ -32,6 +41,7 @@ type AllocationStore = Pick<
   | "beginReplacement"
   | "beginRelease"
   | "beginUnrecoverableRelease"
+  | "failStoppedDeployment"
   | "bindInitialSidecar"
   | "bindReplacementSidecar"
   | "claimNextReconcilable"
@@ -46,6 +56,7 @@ type AllocationStore = Pick<
   | "markDestroyFailed"
   | "markReleased"
   | "parkReconciliation"
+  | "scheduleReconnectAfterHubStart"
   | "scheduleReconnectIfUnscheduled"
   | "scheduleRetry"
   | "wakeReconciliation"
@@ -57,8 +68,11 @@ export type SidecarAllocationReconcilerDeps = {
   readonly router: Pick<
     SidecarAllocationRouter,
     | "fenceAllocation"
+    | "holdsAllocatedBinding"
     | "isAllocatedSidecarReady"
+    | "reportedDeploymentFailure"
     | "retireAllocation"
+    | "syncSidecar"
     | "waitForAllocatedSidecar"
   >;
   readonly hubWebSocketUrl: string;
@@ -70,18 +84,20 @@ export type SidecarAllocationReconcilerDeps = {
     allocation: SidecarAllocation,
     reconciliation: SidecarReconciliationContext,
   ) => Promise<void>;
-  /** Idempotently restores and deploys one connected allocation generation. */
+  /** Idempotently runs a connected allocation generation's first deploy. */
   readonly onReady?: (
     allocation: SidecarAllocation,
     reconciliation: SidecarReconciliationContext,
   ) => Promise<void>;
   /**
-   * Replace an allocated worker after its reconnect grace expires. Disabled by
-   * default because Hub recovery does not restore arbitrary sidecar or
-   * isolation-container filesystem state, so automatic continuation could run
-   * without state the previous worker produced.
+   * Asked only after an allocated worker misses its connect deadline.
+   * A parked verdict replaces that worker. Anything else releases it.
+   * Initialization-lease and leaked-launch releases do not ask.
    */
-  readonly enableAutomaticReplacementRecovery?: boolean;
+  readonly classifyParkedRun?: (allocation: SidecarAllocation) => Promise<{
+    readonly verdict: "parked" | "not-parked" | "unknown";
+    readonly reason: string;
+  }>;
   readonly leaseDurationMs?: number;
   readonly connectTimeoutMs?: number;
   readonly operationTimeoutMs?: number;
@@ -100,7 +116,10 @@ export type SidecarAllocationReconcilerDeps = {
 export type SidecarAllocationReconciler = {
   /** Rebuild all trust fences before accepting allocated connections. */
   initialize(): Promise<void>;
-  /** Starts a durable reconnect grace period for the exact lost generation. */
+  /**
+   * Gives the exact lost generation as long as its allocation allows to
+   * reconnect before it is failed.
+   */
   handleDisconnect(target: AllocatedSidecarTarget): Promise<void>;
   /** Wakes recovery as soon as the exact generation reconnects. */
   handleConnected(target: AllocatedSidecarTarget): Promise<void>;
@@ -124,6 +143,9 @@ class ReconciliationLeaseLostError extends Error {
 const DEFAULT_LEASE_DURATION_MS = 60_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 120_000;
 const MAX_RETRY_BACKOFF_ATTEMPT = 5;
+// How long a first deploy that keeps failing before its deploy frame is sent
+// is retried, from its first failure.
+const FIRST_DEPLOY_RETRY_LIMIT_MS = 60_000;
 
 function randomHex(bytes: number): string {
   return hexEncode(crypto.getRandomValues(new Uint8Array(bytes)));
@@ -163,7 +185,7 @@ export function createSidecarAllocationReconciler({
   hubWebSocketUrl,
   onInitializationRecovery,
   onReady,
-  enableAutomaticReplacementRecovery = false,
+  classifyParkedRun,
   leaseDurationMs = DEFAULT_LEASE_DURATION_MS,
   connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
   operationTimeoutMs = DEFAULT_SIDECAR_OPERATION_TIMEOUT_MS,
@@ -317,16 +339,25 @@ export function createSidecarAllocationReconciler({
     const active = activeAllocations.get(allocation.id);
     if (active === undefined)
       throw new ReconciliationLeaseLostError(allocation.id);
+    const sidecarId = allocation.sidecarId;
     return runSidecarOperation(
       "Sidecar readiness",
       operationTimeoutMs,
       () =>
-        trackAllocationQuery(allocation.id, () =>
-          router.isAllocatedSidecarReady({
+        trackAllocationQuery(allocation.id, async () => {
+          const target = {
             allocationId: allocation.id,
             generation: allocation.generation,
-          }),
-        ),
+          };
+          // The allocation may have been placed on a sidecar that stayed
+          // connected, which registered before this binding existed. The sync
+          // waits behind the sidecar's other frames, such as another
+          // deployment's pack ingest, so it runs only for a binding not yet
+          // attached rather than hold a claim slot for one that is.
+          if (sidecarId !== undefined && !router.holdsAllocatedBinding(target))
+            await router.syncSidecar(sidecarId);
+          return router.isAllocatedSidecarReady(target);
+        }),
       active.controller.signal,
     );
   }
@@ -338,7 +369,11 @@ export function createSidecarAllocationReconciler({
     message: string,
     {
       onlyIfInitializationIncomplete = false,
-    }: { onlyIfInitializationIncomplete?: boolean } = {},
+      replaceParked = false,
+    }: {
+      onlyIfInitializationIncomplete?: boolean;
+      replaceParked?: boolean;
+    } = {},
   ): Promise<void> {
     const initializationCheck = onlyIfInitializationIncomplete
       ? {
@@ -354,16 +389,19 @@ export function createSidecarAllocationReconciler({
     await queueReconciliationStep(
       { allocationId: allocation.id, generation: allocation.generation },
       async () => {
+        // An allocated worker is released unless its committed run is parked.
+        // It may still be running, and the Hub cannot restore sidecar-local
+        // files. A parked run continues from the committed log. Provisioning
+        // ran nothing yet, so a new generation replaces it.
         const updated =
-          allocation.status === "allocated" &&
-          !enableAutomaticReplacementRecovery
+          allocation.status === "allocated" && !replaceParked
             ? await allocationStore.beginUnrecoverableRelease({
                 ...initializationCheck,
                 allocationId: allocation.id,
                 expectedGeneration: allocation.generation,
                 expectedLeaseId: leaseId,
                 failureCode: code,
-                failureMessage: `Automatic recovery is disabled: ${message}`,
+                failureMessage: message,
                 now: now(),
               })
             : await allocationStore.beginReplacement({
@@ -465,11 +503,38 @@ export function createSidecarAllocationReconciler({
         error instanceof SidecarIdentityValidationError
       )
         throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      // A sidecar that reported the deployment stopped and then stayed away
+      // fails it for the reason it gave, unless a Hub restart has since
+      // dropped that report. A stopped copy is not replaced.
+      const stopped = router.reportedDeploymentFailure(target);
+      let replaceParked = false;
+      if (stopped === undefined && classifyParkedRun !== undefined) {
+        let classification: {
+          verdict: "parked" | "not-parked" | "unknown";
+          reason: string;
+        };
+        try {
+          classification = await classifyParkedRun(allocation);
+        } catch (cause) {
+          classification = {
+            verdict: "unknown",
+            reason: cause instanceof Error ? cause.message : String(cause),
+          };
+        }
+        logger.warn`Allocation ${allocation.id} anchor ${allocation.anchorRunId} connect loss classified ${classification.verdict}: ${classification.reason}`;
+        replaceParked = classification.verdict === "parked";
+      }
       await replaceAfterFailure(
         allocation,
         leaseId,
-        "sidecar_connect_failed",
-        error instanceof Error ? error.message : String(error),
+        stopped === undefined
+          ? "sidecar_connect_failed"
+          : SIDECAR_DEPLOYMENT_STOPPED_FAILURE_CODE,
+        stopped === undefined
+          ? message
+          : `${stopped}; its sidecar disconnected, and history the Hub never received may be lost`,
+        { replaceParked },
       );
       return;
     }
@@ -495,6 +560,44 @@ export function createSidecarAllocationReconciler({
         );
       } catch (error) {
         if (error instanceof ReconciliationLeaseLostError) throw error;
+        if (error instanceof SidecarDeploymentMissingError) {
+          await replaceAfterFailure(
+            allocation,
+            leaseId,
+            "sidecar_deployment_missing",
+            error.message,
+          );
+          return;
+        }
+        if (error instanceof SidecarDeploymentHistoryPendingError) {
+          // A report that landed meanwhile may carry the tips the Hub holds.
+          await finishReconciliation(allocation.id, (pendingConnect) =>
+            allocationStore.scheduleRetry({
+              allocationId: allocation.id,
+              expectedStatus: "allocated",
+              expectedGeneration: allocation.generation,
+              expectedLeaseId: leaseId,
+              nextAttemptAt: pendingConnect ? now() : error.retryAt,
+              now: now(),
+            }),
+          );
+          return;
+        }
+        if (error instanceof SidecarDeploymentStoppedError) {
+          // The capacity stays: the stopped copy's files are kept for
+          // inspection until the retention for failed runs releases them.
+          await finishReconciliation(allocation.id, () =>
+            allocationStore.failStoppedDeployment({
+              allocationId: allocation.id,
+              expectedGeneration: allocation.generation,
+              expectedLeaseId: leaseId,
+              failureCode: SIDECAR_DEPLOYMENT_STOPPED_FAILURE_CODE,
+              failureMessage: error.message,
+              now: now(),
+            }),
+          );
+          return;
+        }
         if (error instanceof SessionLaunchError && error.leakedAgent) {
           await replaceAfterFailure(
             allocation,
@@ -502,6 +605,27 @@ export function createSidecarAllocationReconciler({
             "sidecar_initialization_uncertain",
             error.message,
             { onlyIfInitializationIncomplete: true },
+          );
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        // Only a first deploy is given up on: a failure around a deployment
+        // that already runs, such as an unreachable database, says nothing
+        // about the deployment.
+        const firstDeployFailedAt =
+          error instanceof SidecarFirstDeployError
+            ? (allocation.firstDeployFailedAt ?? now())
+            : undefined;
+        if (
+          firstDeployFailedAt !== undefined &&
+          now().getTime() - firstDeployFailedAt.getTime() >=
+            FIRST_DEPLOY_RETRY_LIMIT_MS
+        ) {
+          await replaceAfterFailure(
+            allocation,
+            leaseId,
+            "sidecar_initialization_failed",
+            `The first deploy kept failing for ${String(FIRST_DEPLOY_RETRY_LIMIT_MS / 1000)} seconds: ${message}`,
           );
           return;
         }
@@ -514,10 +638,10 @@ export function createSidecarAllocationReconciler({
             // capped delay so a persistent launch error cannot create a hot loop.
             nextAttemptAt: retryAt(MAX_RETRY_BACKOFF_ATTEMPT),
             expectedLeaseId: leaseId,
-            failure: {
-              code: "sidecar_initialization_failed",
-              message: error instanceof Error ? error.message : String(error),
-            },
+            failure: { code: "sidecar_initialization_failed", message },
+            ...(firstDeployFailedAt !== undefined
+              ? { firstDeployFailedAt }
+              : {}),
             now: now(),
           }),
         );
@@ -528,9 +652,9 @@ export function createSidecarAllocationReconciler({
     // A connect that lands during initialization schedules an immediate
     // follow-up even on success: the new socket may be a restarted worker
     // with an empty inventory (takeover suppresses the disconnect event), in
-    // which case the follow-up redeploys and restores it. When the worker is
-    // unchanged the follow-up is a no-op: deployReadyAllocation returns early
-    // once the workflow is active and its key is recorded.
+    // which case the follow-up fails the deployment it no longer holds. When
+    // the worker is unchanged the follow-up is a no-op: deployReadyAllocation
+    // returns early once the workflow is active and its key is recorded.
     await finishReconciliation(allocation.id, (pendingConnect) =>
       pendingConnect
         ? allocationStore.scheduleRetry({
@@ -619,15 +743,30 @@ export function createSidecarAllocationReconciler({
       return;
     }
 
-    const allocated = await allocationStore.markAllocated({
-      allocationId: allocation.id,
-      generation: allocation.generation,
-      ...(result.externalRef !== undefined
-        ? { externalRef: result.externalRef }
-        : {}),
-      expectedLeaseId: leaseId,
-      now: now(),
-    });
+    let allocated: SidecarAllocation | null;
+    try {
+      allocated = await allocationStore.markAllocated({
+        allocationId: allocation.id,
+        generation: allocation.generation,
+        ...(result.sidecarId !== undefined
+          ? { sidecarId: result.sidecarId }
+          : {}),
+        ...(result.externalRef !== undefined
+          ? { externalRef: result.externalRef }
+          : {}),
+        expectedLeaseId: leaseId,
+        now: now(),
+      });
+    } catch (error) {
+      if (!(error instanceof SidecarReuseRejectedError)) throw error;
+      await replaceAfterFailure(
+        allocation,
+        leaseId,
+        "sidecar_reuse_rejected",
+        error.message,
+      );
+      return;
+    }
     if (allocated !== null) {
       trackAllocation(allocated);
       if (await isSidecarReady(allocated)) {
@@ -906,16 +1045,17 @@ export function createSidecarAllocationReconciler({
   }
 
   async function initialize(): Promise<void> {
+    const startedAt = now();
     for (const allocation of await allocationStore.listActive()) {
       router.fenceAllocation(allocation.id, allocation.generation);
       if (allocation.status === "allocated") {
-        await allocationStore.markConnectionLost({
+        await allocationStore.scheduleReconnectAfterHubStart({
           allocationId: allocation.id,
           generation: allocation.generation,
-          connectDeadline:
-            allocation.connectDeadline ??
-            new Date(now().getTime() + connectTimeoutMs),
-          now: now(),
+          now: startedAt,
+          firstConnectDeadline: new Date(
+            startedAt.getTime() + connectTimeoutMs,
+          ),
         });
       } else if (allocation.nextAttemptAt === undefined) {
         // Scheduled retries are durable state. Only repair an unscheduled
@@ -1004,11 +1144,12 @@ export function createSidecarAllocationReconciler({
   function handleDisconnect(target: AllocatedSidecarTarget): Promise<void> {
     noteDisconnect(target);
     return queueConnectionEvent(target, async () => {
+      const lostAt = now();
       const disconnected = await allocationStore.markConnectionLost({
         allocationId: target.allocationId,
         generation: target.generation,
-        connectDeadline: new Date(now().getTime() + connectTimeoutMs),
-        now: now(),
+        now: lostAt,
+        firstConnectDeadline: new Date(lostAt.getTime() + connectTimeoutMs),
       });
       noteDisconnect(target, disconnected !== null);
     });
@@ -1039,8 +1180,9 @@ export function createSidecarAllocationReconciler({
         allocationId: allocation.id,
         generation: allocation.generation,
       };
+      let ready: boolean;
       try {
-        if (await router.isAllocatedSidecarReady(target)) continue;
+        ready = await router.isAllocatedSidecarReady(target);
       } catch (error) {
         // Unknown readiness is not absence. Leave the allocation for the next
         // repair sweep instead of scheduling a reconnect the worker may hold.
@@ -1048,15 +1190,34 @@ export function createSidecarAllocationReconciler({
         throw error;
       }
       try {
-        await allocationStore.scheduleReconnectIfUnscheduled({
-          ...target,
-          connectDeadline:
-            allocation.connectDeadline ??
-            new Date(now().getTime() + connectTimeoutMs),
-          now: now(),
-        });
+        if (!ready) {
+          const repairedAt = now();
+          await allocationStore.scheduleReconnectIfUnscheduled({
+            ...target,
+            now: repairedAt,
+            firstConnectDeadline: new Date(
+              repairedAt.getTime() + connectTimeoutMs,
+            ),
+          });
+        } else if (
+          router.reportedDeploymentFailure(target) !== undefined &&
+          allocation.failureCode !== SIDECAR_DEPLOYMENT_STOPPED_FAILURE_CODE &&
+          (await allocationStore.hasRunnableAnchor(
+            allocation.anchorRunId,
+            now(),
+          ))
+        ) {
+          // A stop the sidecar reported is acted on by one wake. If that wake
+          // was lost, the allocation rests on its ready connection with the
+          // stop not yet recorded. Once the anchor can no longer run, a wake
+          // has nothing left to fail, so none is made.
+          await allocationStore.wakeReconciliation(
+            allocation.id,
+            allocation.generation,
+          );
+        }
       } catch (error) {
-        logger.warn`Failed to repair allocation ${allocation.id} reconnect schedule: ${error instanceof Error ? error.message : String(error)}`;
+        logger.warn`Failed to repair allocation ${allocation.id} schedule: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
   }
@@ -1185,28 +1346,40 @@ export function createSidecarAllocationReconciler({
       }
     };
     checkLeaseExpiry();
+    // The durable schedule survives the claim. Stop renewing and let the
+    // lease expire; handling a lease failure must not require another write.
+    const stopForLeaseLoss = (error: ReconciliationLeaseLostError): void => {
+      const cause = error.cause;
+      if (cause === undefined) {
+        logger.info`Allocation ${allocation.id} reconciliation stopped: lease ${leaseId} is no longer current`;
+      } else {
+        logger.warn`Allocation ${allocation.id} reconciliation stopped because lease ${leaseId} could not be confirmed: ${cause instanceof Error ? cause.message : String(cause)}`;
+      }
+    };
     try {
       active.controller.signal.throwIfAborted();
       await reconcile(allocation, leaseId);
     } catch (error) {
       if (error instanceof ReconciliationLeaseLostError) {
-        const cause = error.cause;
-        if (cause === undefined) {
-          logger.info`Allocation ${allocation.id} reconciliation stopped: lease ${leaseId} is no longer current`;
-        } else {
-          logger.warn`Allocation ${allocation.id} reconciliation stopped because lease ${leaseId} could not be confirmed: ${cause instanceof Error ? cause.message : String(cause)}`;
-        }
-        // The durable schedule survives the claim. Stop renewing and let the
-        // lease expire; handling a lease failure must not require another write.
+        stopForLeaseLoss(error);
         return true;
       }
       logger.error`Allocation ${allocation.id} reconciliation failed: ${error instanceof Error ? error.message : String(error)}`;
-      await finishReconciliation(allocation.id, () =>
-        allocationStore.parkReconciliation(allocation.id, leaseId, {
-          kind: "retry-after-error",
-          notBefore: retryAt(MAX_RETRY_BACKOFF_ATTEMPT),
-        }),
-      );
+      try {
+        await finishReconciliation(allocation.id, () =>
+          allocationStore.parkReconciliation(allocation.id, leaseId, {
+            kind: "retry-after-error",
+            notBefore: retryAt(MAX_RETRY_BACKOFF_ATTEMPT),
+          }),
+        );
+      } catch (parkError) {
+        // The park waits behind the same stalled query. Losing the lease
+        // here is the same stop as above: another write cannot clear it.
+        if (!(parkError instanceof ReconciliationLeaseLostError)) {
+          throw parkError;
+        }
+        stopForLeaseLoss(parkError);
+      }
     } finally {
       finished = true;
       clearInterval(heartbeat);

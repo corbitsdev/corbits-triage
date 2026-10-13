@@ -98,10 +98,11 @@ where marked. Durations are whole numbers ending in `s`, `m`, `h` or `d`.
 | `HUB_AGENT_GC_LOOSE_THRESHOLD` | 2048 |
 | `HUB_AGENT_GC_WARN_BYTES` | 268435456 |
 | `HUB_PROBE_TIMEOUT_MS` | 60000 |
-| `HUB_DISCONNECT_QUEUE_TTL_MS` | 900000 (hub default) |
+| `HUB_MAIL_HOLD_TTL_MS` | 900000 (hub default) |
 | `HUB_MAIL_ACK_RETRY_INTERVAL_MS` | 30000 (hub default) |
 | `HUB_MAIL_ACK_MAX_RETRIES` | 10 (hub default) |
 | `WORKFLOW_DEFAULT_MAX_LIFETIME` | `7d` (above zero) |
+| `WORKFLOW_DEFAULT_MAX_DISCONNECTED` | `15m` (above zero) |
 | `WORKFLOW_DEFAULT_RETENTION_COMPLETED` | `30m` |
 | `WORKFLOW_DEFAULT_RETENTION_FAILED` | `24h` |
 | `WORKFLOW_DEFAULT_RETENTION_CANCELLED` | `1h` |

@@ -677,6 +677,48 @@ describe("acyclicity validation", () => {
   });
 });
 
+describe("loop primitive", () => {
+  test("omits onIterationFailure when the author does not opt in", () => {
+    // Unlike drainBehavior, an absent policy is NOT resolved to a default.
+    // The field must stay off the primitive so a default loop's hash is
+    // unchanged. `in`, not `=== undefined`: a present-but-undefined key
+    // would still change the canonical bytes.
+    const prim = loop({
+      body: simpleBody(),
+      while: "cont",
+      carry: "next",
+      maxIterations: 2,
+      onExhausted: "done",
+    });
+    expect("onIterationFailure" in prim).toBe(false);
+  });
+
+  test("honors an explicit onIterationFailure, including end", () => {
+    const tolerate = loop({
+      body: simpleBody(),
+      while: "cont",
+      carry: "next",
+      maxIterations: 2,
+      onExhausted: "done",
+      onIterationFailure: "tolerate",
+    });
+    expect(tolerate.onIterationFailure).toBe("tolerate");
+    const explicitEnd = loop({
+      body: simpleBody(),
+      while: "cont",
+      carry: "next",
+      maxIterations: 2,
+      onExhausted: "done",
+      onIterationFailure: "end",
+    });
+    // An explicit "end" is not normalized off the object. Absence is the
+    // only form that means "default", and it hashes differently from a
+    // present "end".
+    expect(explicitEnd.onIterationFailure).toBe("end");
+    expect("onIterationFailure" in explicitEnd).toBe(true);
+  });
+});
+
 describe("loop validation", () => {
   test("accepts a loop with a valid body and onExhausted target", () => {
     expect(() =>
@@ -1411,7 +1453,7 @@ describe("concurrent awaitSignal name validation", () => {
     ).toThrow(/can concurrently await signal name go/);
   });
 
-  test("rejects an inline onTrigger body awaiting a name concurrent with a parent gate", () => {
+  test("accepts an inline onTrigger body awaiting a name concurrent with a parent gate", () => {
     expect(() =>
       defineWorkflow({
         id: "wf",
@@ -1424,6 +1466,55 @@ describe("concurrent awaitSignal name validation", () => {
               id: "section-body",
               trigger: { type: "manual" },
               steps: { w: awaitSignal({ name: "go" }) },
+            }),
+          }),
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  test("accepts two inline onTrigger sections awaiting the same name", () => {
+    expect(() =>
+      defineWorkflow({
+        id: "wf",
+        trigger: { type: "manual" },
+        steps: {
+          left: onTrigger({
+            on: { type: "manual" },
+            body: defineWorkflow({
+              id: "left-body",
+              trigger: { type: "manual" },
+              steps: { w: awaitSignal({ name: "go" }) },
+            }),
+          }),
+          right: onTrigger({
+            on: { type: "manual" },
+            body: defineWorkflow({
+              id: "right-body",
+              trigger: { type: "manual" },
+              steps: { w: awaitSignal({ name: "go" }) },
+            }),
+          }),
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  test("rejects two same-name gates inside one onTrigger body", () => {
+    expect(() =>
+      defineWorkflow({
+        id: "wf",
+        trigger: { type: "manual" },
+        steps: {
+          section: onTrigger({
+            on: { type: "manual" },
+            body: defineWorkflow({
+              id: "section-body",
+              trigger: { type: "manual" },
+              steps: {
+                gateA: awaitSignal({ name: "go" }),
+                gateB: awaitSignal({ name: "go" }),
+              },
             }),
           }),
         },

@@ -12,7 +12,7 @@ const positiveInteger = type("string.integer").narrow((value, ctx) =>
 
 const lifecycleDuration = type("string.trim").pipe(LifecycleDuration);
 
-const maxLifetime = lifecycleDuration.narrow((value, ctx) =>
+const positiveDuration = lifecycleDuration.narrow((value, ctx) =>
   lifecycleDurationMs(value) > 0 || ctx.mustBe("greater than zero"));
 
 const HubEnvSchema = type({
@@ -47,10 +47,11 @@ const HubEnvSchema = type({
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
   "HUB_PROBE_TIMEOUT_MS?": positiveInteger,
-  "HUB_DISCONNECT_QUEUE_TTL_MS?": positiveInteger,
+  "HUB_MAIL_HOLD_TTL_MS?": positiveInteger,
   "HUB_MAIL_ACK_RETRY_INTERVAL_MS?": positiveInteger,
   "HUB_MAIL_ACK_MAX_RETRIES?": positiveInteger,
-  "WORKFLOW_DEFAULT_MAX_LIFETIME?": maxLifetime,
+  "WORKFLOW_DEFAULT_MAX_LIFETIME?": positiveDuration,
+  "WORKFLOW_DEFAULT_MAX_DISCONNECTED?": positiveDuration,
   "WORKFLOW_DEFAULT_RETENTION_COMPLETED?": lifecycleDuration,
   "WORKFLOW_DEFAULT_RETENTION_FAILED?": lifecycleDuration,
   "WORKFLOW_DEFAULT_RETENTION_CANCELLED?": lifecycleDuration,
@@ -206,7 +207,7 @@ export type InterchangeSettings = {
   maxTarballBytes: number;
   agentGc: { packThreshold: number; looseThreshold: number; warnBytes: number };
   probeTimeoutMs?: number;
-  sidecarLink: { disconnectQueueTTLMs: number; mailAckRetryIntervalMs: number; mailAckMaxRetries: number };
+  sidecarLink: { mailHoldTTLMs: number; mailAckRetryIntervalMs: number; mailAckMaxRetries: number };
   sidecarWebSocketUrl: string;
   defaultLifecyclePolicy: ResolvedWorkflowLifecyclePolicy;
 };
@@ -234,13 +235,14 @@ export function interchangeSettings(env: HubEnv): InterchangeSettings {
     // Triage mail is routed, not dispatched, so only the router's ack retries keep it alive. A
     // pack receive holds the connection queue for minutes and the stock 5 x 10 s give-up drops it.
     sidecarLink: {
-      disconnectQueueTTLMs: numberOr(env.HUB_DISCONNECT_QUEUE_TTL_MS, 15 * 60_000),
+      mailHoldTTLMs: numberOr(env.HUB_MAIL_HOLD_TTL_MS, 15 * 60_000),
       mailAckRetryIntervalMs: numberOr(env.HUB_MAIL_ACK_RETRY_INTERVAL_MS, 30_000),
       mailAckMaxRetries: numberOr(env.HUB_MAIL_ACK_MAX_RETRIES, 10),
     },
     sidecarWebSocketUrl: env.HUB_SIDECAR_WEBSOCKET_URL ?? `ws://127.0.0.1:${port}/api/sidecars/ws`,
     defaultLifecyclePolicy: {
       maxLifetime: env.WORKFLOW_DEFAULT_MAX_LIFETIME ?? "7d",
+      maxDisconnected: env.WORKFLOW_DEFAULT_MAX_DISCONNECTED ?? "15m",
       capacityRetention: {
         completed: env.WORKFLOW_DEFAULT_RETENTION_COMPLETED ?? "30m",
         failed: env.WORKFLOW_DEFAULT_RETENTION_FAILED ?? "24h",

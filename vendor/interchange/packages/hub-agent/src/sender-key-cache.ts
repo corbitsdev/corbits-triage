@@ -41,13 +41,9 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { type } from "arktype";
 import { getLogger } from "@intx/log";
-import {
-  hasCode,
-  hexDecode,
-  hexEncode,
-  isRunAddress,
-  parseAddress,
-} from "@intx/types";
+import { hasCode } from "@intx/types/has-code";
+import { hexDecode, hexEncode } from "@intx/types/hex";
+import { isRunAddress, parseAddress } from "@intx/types/agent-address";
 
 const logger = getLogger(["interchange", "hub-agent", "sender-key-cache"]);
 
@@ -71,6 +67,15 @@ const StoredSenderKey = type({
   address: "string",
   publicKey: "string",
 });
+
+/** Whether `hex` encodes a key the cache can hold: a raw Ed25519 public key. */
+export function isSenderPublicKeyHex(hex: string): boolean {
+  try {
+    return hexDecode(hex).length === ED25519_PUBLIC_KEY_BYTES;
+  } catch {
+    return false;
+  }
+}
 
 export type SenderKeyCacheDeps = {
   dataDir: string;
