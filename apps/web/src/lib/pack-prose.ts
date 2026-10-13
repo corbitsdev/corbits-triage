@@ -42,7 +42,6 @@ export const DO_NAMES: Record<ActionKind, string> = {
   comment: "Comment",
   approve: "Approve",
   "request-changes": "Request changes on the pull request",
-  "convert-to-draft": "Convert the pull request to draft",
   close: "Close",
   agent: "Run an agent",
 };
@@ -148,8 +147,6 @@ function doAction(step: Do): string {
       return "approve the pull request";
     case "request-changes":
       return "request changes on the pull request";
-    case "convert-to-draft":
-      return "convert the pull request to draft";
     case "close":
       return "close it";
     case "agent":

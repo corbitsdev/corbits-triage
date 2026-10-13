@@ -3,7 +3,7 @@
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
-import { getChecks, getPr, listOpenPrs, type GithubFetch } from "@corbits/github-reads";
+import { getChecks, getPr, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation } from "./open-pulls.js";
 import { appGithubFetch } from "./portal-credential.js";
@@ -11,6 +11,8 @@ import type { OpenPr } from "./reconcile-plan.js";
 import type { RepoRecord } from "./tenant-config.js";
 
 export type OpenHeadsReader = (record: RepoRecord) => Promise<OpenPr[]>;
+/** One pull request's head and whether it is a draft, or undefined when it is not open. */
+export type OpenHeadReader = (record: RepoRecord, number: number) => Promise<Pick<OpenPr, "headSha" | "draft"> | undefined>;
 /** One pull request's head sha, or undefined when it is not open. */
 export type PullHeadReader = (appJson: string, record: RepoRecord, number: number) => Promise<string | undefined>;
 
@@ -48,6 +50,20 @@ export function createTenantOpenHeads(deps: TenantGithubDeps) {
     return async function openHeads(record) {
       const prs = await listOpenPrs(forInstallation(gh, record.installationId), record.name);
       return prs.flatMap((pr) => (typeof pr.sha === "string" && pr.sha !== "" ? [{ number: pr.number, headSha: pr.sha, updatedAt: pr.updatedAt, draft: pr.draft }] : []));
+    };
+  };
+}
+
+export function createTenantOpenHead(deps: TenantGithubDeps) {
+  const tenantGithub = createTenantGithub(deps);
+
+  /** Undefined when the tenant has no active GitHub App credential. */
+  return async function openHeadFor(tenantId: string): Promise<OpenHeadReader | undefined> {
+    const gh = await tenantGithub(tenantId);
+    if (!gh) return undefined;
+    return async function openHead(record, number) {
+      const pr = await readPr(forInstallation(gh, record.installationId), record.name, number);
+      return pr.state === "open" && typeof pr.sha === "string" && pr.sha !== "" ? { headSha: pr.sha, draft: pr.draft === true } : undefined;
     };
   };
 }

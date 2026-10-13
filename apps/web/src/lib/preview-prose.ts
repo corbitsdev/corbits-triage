@@ -60,8 +60,6 @@ function resolvedAction(step: PreviewDo, target: Record<string, unknown>, repo: 
       return "approve the pull request";
     case "request-changes":
       return "request changes on the pull request";
-    case "convert-to-draft":
-      return "convert the pull request to draft";
     case "close":
       return "close it";
     case "agent":

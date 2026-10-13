@@ -7,7 +7,10 @@ repository defines.
 
 Nothing runs by default. Installing the GitHub App records repositories with
 triage off; a repository is triaged only after someone turns on **Triage pull
-requests in this repository** and saves.
+requests in this repository** and saves. Draft pull requests are skipped
+until they are marked ready for review, except for one run when one is
+converted to draft. A pull request marked ready before any triage run also
+wakes the actions that run when it is opened.
 
 ## Who it is for
 
@@ -111,9 +114,8 @@ An action is **When → Checks → Yes / No / Unsure → Dos**:
 - **Checks**: the checks whose combined verdict picks the branch. Any
   unconfirmed check makes it Unsure. With no checks, the action always runs.
 - **Dos**: labels, assign, request review, comment, approve, request changes,
-  convert to draft, close, agent. Each Do
-  has its own automatic flag: automatic Dos run on GitHub during triage, the
-  rest wait in the Inbox for a click.
+  close, agent. Each Do has its own automatic flag: automatic Dos run on
+  GitHub during triage, the rest wait in the Inbox for a click.
 
 Close never runs automatically on Unsure or without checks. Approve runs only
 for a head that is ready to merge with CI green; in a repository that posts

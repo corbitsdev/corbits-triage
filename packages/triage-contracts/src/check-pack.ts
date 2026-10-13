@@ -124,8 +124,11 @@ const GLOB_MAX = 200;
 const GLOBS_MAX = 50;
 const CUSTOM_ID = /^custom-\d+$/;
 
-export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "convert-to-draft", "close", "agent"] as const;
+export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "agent"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
+
+/** Do kinds since removed; stored packs may still name them. */
+const RETIRED_DO_KINDS: ReadonlySet<unknown> = new Set(["convert-to-draft"]);
 
 export const TRIAGE_EVENTS = [
   "opened",
@@ -170,7 +173,6 @@ export type Do = { automatic: boolean } & (
   | { kind: "comment"; target: CommentTarget }
   | { kind: "approve"; target: CloseTarget }
   | { kind: "request-changes"; target: CloseTarget }
-  | { kind: "convert-to-draft"; target: CloseTarget }
   | { kind: "close"; target: CloseTarget }
   | { kind: "agent"; target: AgentTarget }
 );
@@ -220,7 +222,7 @@ const DoSchema = type({
   .or({ kind: "'assign'", automatic: "boolean", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
   .or({ kind: "'request-review'", automatic: "boolean", target: ReviewTargetSchema })
   .or({ kind: "'comment'", automatic: "boolean", target: { "+": "reject", body: Text } })
-  .or({ kind: "'approve' | 'request-changes' | 'convert-to-draft' | 'close'", automatic: "boolean", target: { "+": "reject" } })
+  .or({ kind: "'approve' | 'request-changes' | 'close'", automatic: "boolean", target: { "+": "reject" } })
   .or({ kind: "'agent'", automatic: "boolean", target: { "+": "reject", prompt: Text, tools: Text.array() } });
 
 const ActionSchema = type({
@@ -331,7 +333,7 @@ export function recommendedPack(repo: string): CheckPack {
       ci: { enabled: true },
       paths: { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
     },
-    actions: [{ id: "approve", when: ["opened", "updated", "checks"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } }],
+    actions: [{ id: "approve", when: ["opened", "updated", "ready", "checks"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } }],
   };
 }
 
@@ -582,7 +584,6 @@ function parseDo(raw: unknown, where: string): Do {
     }
     case "approve":
     case "request-changes":
-    case "convert-to-draft":
     case "close":
       exactKeys(target, [], at);
       return { kind, automatic, target: {} };
@@ -600,6 +601,7 @@ function parseBranch(raw: unknown, manualOnly: readonly ActionKind[], where: str
   if (!Array.isArray(raw)) throw new Error(`${where} must be a list.`);
   const dos: Do[] = [];
   for (const [i, item] of raw.entries()) {
+    if (RETIRED_DO_KINDS.has(record(item, `${where} ${i + 1}`).kind)) continue;
     const step = parseDo(item, `${where} ${i + 1}`);
     if (step.automatic && manualOnly.includes(step.kind)) throw new Error(`${where} ${i + 1} cannot ${step.kind} automatically.`);
     dos.push(step);
@@ -607,12 +609,20 @@ function parseBranch(raw: unknown, manualOnly: readonly ActionKind[], where: str
   return dos;
 }
 
-function parseBranches(raw: unknown, hasChecks: boolean, where: string): Branches {
+function listed(raw: unknown): boolean {
+  return Array.isArray(raw) && raw.length > 0;
+}
+
+/** Branches that named only retired Dos have nothing left to run, so their action is dropped. */
+function parseBranches(raw: unknown, hasChecks: boolean, where: string): Branches | undefined {
   const row = record(raw, where);
   if (!hasChecks) {
     exactKeys(row, ["always"], where);
     const always = parseBranch(row.always, ["close", "agent"], `${where} always`);
-    if (always.length === 0) throw new Error(`${where} always must not be empty.`);
+    if (always.length === 0) {
+      if (listed(row.always)) return undefined;
+      throw new Error(`${where} always must not be empty.`);
+    }
     return { always };
   }
   const keys = Object.keys(row).filter((key) => row[key] !== undefined);
@@ -623,7 +633,10 @@ function parseBranches(raw: unknown, hasChecks: boolean, where: string): Branche
   if (row.yes !== undefined) branches.yes = parseBranch(row.yes, [], `${where} yes`);
   if (row.no !== undefined) branches.no = parseBranch(row.no, [], `${where} no`);
   if (row.unsure !== undefined) branches.unsure = parseBranch(row.unsure, ["close"], `${where} unsure`);
-  if (Object.values(branches).every((dos) => dos.length === 0)) throw new Error(`${where} must set at least one step.`);
+  if (Object.values(branches).every((dos) => dos.length === 0)) {
+    if (listed(row.yes) || listed(row.no) || listed(row.unsure)) return undefined;
+    throw new Error(`${where} must set at least one step.`);
+  }
   return branches;
 }
 
@@ -663,8 +676,9 @@ function parseAction(raw: unknown, index: number, customIds: ReadonlySet<string>
   const where = `Action ${id}`;
   const when = parseWhen(row.when, `${where} when`);
   const checks = parseCheckRefs(row.checks, customIds, `${where} checks`);
-  if (checks.length === 0 && Array.isArray(row.checks) && row.checks.length > 0) return undefined;
-  return { id, when, checks, branches: parseBranches(row.branches, checks.length > 0, `${where} branches`) };
+  if (checks.length === 0 && listed(row.checks)) return undefined;
+  const branches = parseBranches(row.branches, checks.length > 0, `${where} branches`);
+  return branches && { id, when, checks, branches };
 }
 
 function parseActions(raw: unknown, customIds: ReadonlySet<string>): Action[] {

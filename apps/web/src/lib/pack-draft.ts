@@ -20,7 +20,7 @@ import {
 } from "@corbits/triage-contracts";
 import { isCatalogId } from "./pack-prose.ts";
 
-export type DraftPolicy = Pick<RepoPolicy, "cleanupMode" | "enabled" | "triageDrafts" | "roles">;
+export type DraftPolicy = Pick<RepoPolicy, "cleanupMode" | "enabled" | "roles">;
 
 /** Everything the repository panel edits, as the contracts store it. */
 export type RepoDraft = { pack: CheckPack; policy: DraftPolicy };
@@ -49,8 +49,8 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 export function fromPack(pack: CheckPack, policy: DraftPolicy): RepoDraft {
-  const { cleanupMode, enabled, triageDrafts, roles } = policy;
-  return { pack, policy: { cleanupMode, enabled, triageDrafts, roles } };
+  const { cleanupMode, enabled, roles } = policy;
+  return { pack, policy: { cleanupMode, enabled, roles } };
 }
 
 export function toPack(draft: RepoDraft): CheckPack {
@@ -185,7 +185,6 @@ export function policyChanges(saved: DraftPolicy, draft: DraftPolicy): number {
   const roles = new Set([...Object.keys(saved.roles), ...Object.keys(draft.roles)]);
   return Number(saved.cleanupMode !== draft.cleanupMode)
     + Number(saved.enabled !== draft.enabled)
-    + Number(saved.triageDrafts !== draft.triageDrafts)
     + [...roles].filter((name) => !same(saved.roles[name], draft.roles[name])).length;
 }
 

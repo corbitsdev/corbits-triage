@@ -267,7 +267,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       const list = data<{ prs: Array<{ number: number; draft?: boolean }> }>(r.get("github_list_open_prs"));
       if (!list && targets === undefined) return fail("github_list_open_prs failed");
       const listed = list?.prs ?? [];
-      const triageable = listed.filter((p) => policy.triageDrafts || p.draft !== true).map((p) => p.number);
+      const triageable = listed.filter((p) => p.draft !== true).map((p) => p.number);
       function withDocs(docs: RepoDocs | string) {
         return fetchTargets(repo, targets ?? triageable, batch, policy, pack, events, docs);
       }

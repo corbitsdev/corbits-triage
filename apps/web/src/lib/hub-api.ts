@@ -453,12 +453,12 @@ export async function saveRepoSettings(
   transport: Transport,
   tenantId: string,
   repo: string,
-  settings: Pick<RepoPolicy, "cleanupMode" | "enabled" | "triageDrafts" | "roles">,
+  settings: Pick<RepoPolicy, "cleanupMode" | "enabled" | "roles">,
   linked: boolean,
 ): Promise<void> {
   const clean = validateRepo(repo);
-  const { cleanupMode, enabled, triageDrafts, roles } = settings;
-  const next = { cleanupMode, enabled, triageDrafts, roles, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
+  const { cleanupMode, enabled, roles } = settings;
+  const next = { cleanupMode, enabled, roles, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
   await patchAppConfig(transport, tenantId, function applySettings(current) {
     const repos = current.repos ?? [];
     if (!repos.some((row) => rowName(row) === clean)) throw new Error("Repository not found.");
