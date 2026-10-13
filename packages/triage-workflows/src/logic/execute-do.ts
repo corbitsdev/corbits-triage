@@ -1,4 +1,4 @@
-import { AGENT_DO, DERIVED_LABELS_DO } from "@corbits/github-tool";
+import { AGENT_DO, DERIVED_LABELS_DO } from "@corbits/triage-contracts";
 import type { SuggestedDo } from "./actions.js";
 
 /** Why a Do can never run as the verdict recorded it, known without asking GitHub. */

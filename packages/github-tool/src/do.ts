@@ -1,4 +1,4 @@
-import { ACTION_KINDS, type ActionKind, type LabelsTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, AGENT_DO, DERIVED_LABELS_DO, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import {
   addAssignees,
@@ -24,15 +24,6 @@ import {
   type MirrorInput,
 } from "./github";
 
-export type ResolvedTarget =
-  | { labels: string[] }
-  | { users: string[] }
-  | { users: string[]; teams: string[] }
-  | { body: string }
-  | Record<string, never>
-  | { prompt: string; tools: string[] }
-  | { unresolved: "codeowners" }
-  | { unresolved: "derive"; from: Exclude<LabelsTarget["from"], "list"> };
 
 export class DoNotRunnableError extends Error {}
 export class HeadMovedError extends DoNotRunnableError {}
@@ -70,9 +61,6 @@ export function parseDoInput(args: unknown): DoInput {
   if (parsed instanceof type.errors) throw new Error(`invalid Do: ${parsed.summary}`);
   return { request: parsed.request, step: { ...parsed.step, target: parsed.step.target as ResolvedTarget } };
 }
-
-export const AGENT_DO = "agent Dos cannot run yet";
-export const DERIVED_LABELS_DO = "labels derived from the pull request cannot run yet";
 
 type People = { users: string[]; teams: string[] };
 

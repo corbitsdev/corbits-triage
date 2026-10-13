@@ -1,4 +1,4 @@
-import { reviewedOnHead, type IssueComment, type Review } from "@corbits/github-tool";
+import { reviewedOnHead, type IssueComment, type Review } from "@corbits/github-reads";
 import { authorAssociation, authorKindOf, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";

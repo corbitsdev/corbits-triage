@@ -6,7 +6,7 @@
 import { EvalFailure, evaluate, type CheckFn, type Report } from "@corbits/evals";
 import { evaluate as systemOne, type FallbackResult } from "@corbits/system-one";
 import { readFileSync } from "node:fs";
-import { readRepoDocsPage, repoDocs, type RepoDocsPage } from "../../packages/github-tool/src/github.js";
+import { readRepoDocsPage, repoDocs, type RepoDocsPage } from "../../packages/github-reads/src/index.js";
 import { listFiles } from "../../apps/hub/src/github/pr-preview.js";
 import { DEFAULT_REPO_POLICY, emptyPack, type CheckPack } from "../../packages/triage-contracts/src/index.js";
 import { evaluate as evaluateStep } from "../../packages/triage-workflows/src/actions/evaluate.js";
