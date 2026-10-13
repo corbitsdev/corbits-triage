@@ -139,7 +139,6 @@ export default function Repositories() {
         </td>
         <td className="c-n mono">{pulls && live(pulls.open)}</td>
         <td className="c-n mono">{"error" in row.pulls ? <span title={row.pulls.error}>GitHub error</span> : live(row.pulls.needsYou)}</td>
-        <td className="c-post">{row.posting}</td>
         <td className="c-checks">{checksLabel(row, packs.get(row.name))}</td>
         <td className="c-own" title={pulls?.owners.join(", ")}>{pulls && live(ownersLabel(pulls.owners))}</td>
         <td className="c-act">{pulls && live(pulls.lastActivity ? relativeTime(pulls.lastActivity) : "None")}</td>
@@ -180,7 +179,6 @@ export default function Repositories() {
                     <th className="c-name">Repository</th>
                     <th className="c-n">Open</th>
                     <th className="c-n">Needs you</th>
-                    <th className="c-post">Posting</th>
                     <th className="c-checks">Checks</th>
                     <th className="c-own">Owners</th>
                     <th className="c-act">Last activity</th>
@@ -189,7 +187,7 @@ export default function Repositories() {
                 </thead>
                 <tbody>{rows.map(renderRow)}</tbody>
               </table>
-              <p className="rt-note">Triage sees the repositories its GitHub app is installed on, in {listed(accounts)}. Open one to change its posting, triage and checks.</p>
+              <p className="rt-note">Triage sees the repositories its GitHub app is installed on, in {listed(accounts)}. Open one to change its triage and checks.</p>
             </>
           )}
         </main>

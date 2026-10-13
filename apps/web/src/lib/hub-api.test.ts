@@ -545,7 +545,6 @@ describe("repository policy config", () => {
     })).toEqual([expect.objectContaining({
       name: "acme/widgets",
       connected: true,
-      cleanupMode: "human-approved",
       enabled: false,
       checks: {
         ci: true,
@@ -561,7 +560,7 @@ describe("repository policy config", () => {
         confidenceFloor: 0.7,
         repos: [
           { name: "acme/one", connected: true, installationId: 9 },
-          { name: "acme/two", connected: true, cleanupMode: "automated" },
+          { name: "acme/two", connected: true, installationId: 3 },
         ],
       },
     };
@@ -580,7 +579,6 @@ describe("repository policy config", () => {
     };
 
     await saveRepoSettings(transport, "tenant", "acme/one", {
-      cleanupMode: "automated",
       enabled: false,
       roles: {},
     }, false);
@@ -592,12 +590,11 @@ describe("repository policy config", () => {
       name: "acme/one",
       connected: true,
       installationId: 9,
-      cleanupMode: "automated",
       enabled: false,
       roles: {},
     });
     expect(ns.repos[0]).not.toHaveProperty("checkPack");
-    expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, cleanupMode: "automated" });
+    expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, installationId: 3 });
   });
 });
 
@@ -734,7 +731,7 @@ test("a preview posts the draft pack and roles, so unsaved edits are previewed",
     },
     subscribe: () => () => {},
   };
-  const pack = { ...recommendedPack("acme/widgets"), actions: [{ id: "action-1", when: "every" as const, checks: [], branches: { always: [{ kind: "close" as const, automatic: false, target: {} }] } }] };
+  const pack = { ...recommendedPack("acme/widgets"), actions: [{ id: "action-1", when: "every" as const, checks: [], branches: { always: [{ kind: "close" as const, target: {} }] } }] };
   const roles = { maintainers: { users: ["ada"] } };
   await previewPull(transport, "tenant", { repo: "acme/widgets", number: 12, pack, roles });
   expect(sent).toEqual([{ method: "POST", path: "/api/integrations/github-preview/tenant", body: { repo: "acme/widgets", number: 12, pack, roles } }]);

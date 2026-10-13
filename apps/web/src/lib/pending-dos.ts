@@ -55,7 +55,7 @@ function offeredDos(item: PrItem): PendingDo[] {
   for (const action of item.actions) {
     const text = awaitsApproval(action) ? label(action, repo) : null;
     if (text === null) continue;
-    const ref = { runId, repo, number, effectId: action.effectId };
+    const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind };
     const sentKey = `${action.effectId}:${action.status ?? "held"}`;
     out.push({ key: action.effectId, sentKey, label: text, actionId: action.id, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
   }

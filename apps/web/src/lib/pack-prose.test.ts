@@ -3,7 +3,7 @@ import { recommendedPack } from "@corbits/triage-contracts";
 import { shownReason } from "./pack-prose.ts";
 
 test("messages name actions by place and custom checks by name; unknown ids are the one being built", () => {
-  const always = { always: [{ kind: "close" as const, automatic: false, target: {} }] };
+  const always = { always: [{ kind: "close" as const, target: {} }] };
   const pack = {
     ...recommendedPack("acme/widgets"),
     custom: [{ id: "custom-1", name: "Conventional title", group: "pull-request" as const, kind: "rule" as const, rule: "title-pattern" as const, pattern: "^feat" }],

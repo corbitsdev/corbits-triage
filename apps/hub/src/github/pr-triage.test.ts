@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkPackName, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { checkPackName, emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { DeploymentNotReadyError } from "./deployment.js";
 import { createGithubPrTriage, type GithubPrTriageDeps } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
@@ -10,7 +10,7 @@ const MEMBER = { tenantId: TENANT_ID, principalId: "member-1" };
 const REPO = "acme/widgets";
 const CREDENTIAL_ID = "crd_github";
 const NOW = new Date("2026-10-08T12:00:00Z");
-const PACK: CheckPack = { name: checkPackName(REPO), schemaVersion: 1, repo: REPO, checks: [] } as unknown as CheckPack;
+const PACK = emptyPack(REPO);
 const ENABLED = { name: REPO, connected: true, enabled: true };
 const ANCHOR = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
 
@@ -67,7 +67,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
       return true;
     },
     pullHead: async (_app, _record, number) => (number === 8 ? "abc123" : undefined),
-    readCheckPack: async () => ({ status: "ok", pack: PACK }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [] }),
     liveDeployments: async () => [ANCHOR],
     observeRuns: observed([]),
     store: stored([], s.saved),

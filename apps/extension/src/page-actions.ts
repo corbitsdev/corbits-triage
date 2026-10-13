@@ -46,8 +46,8 @@ function fromDo(step: SuggestedDo, repo: string, settled: boolean): PageAction[]
   if (title === null || !onPage(step.kind) || step.kind === "comment") return [];
   const target = step.target as Record<string, unknown>;
   const values = step.kind === "labels" ? strings(target.labels) : strings(target.users);
-  // Only what the pack marks automatic runs on its own, on a verdict that decides Dos; a close, which a click cannot undo, only on a clear no.
-  const auto = settled && step.automatic && (step.kind !== "close" || step.branch === "no");
+  // Only labels run on its own, on a verdict that decides Dos; every other Do waits for a click.
+  const auto = settled && step.kind === "labels";
   return [{ id: step.effectId, kind: step.kind, title, why: step.reason, values, teams: strings(target.teams), auto, source: "do" }];
 }
 

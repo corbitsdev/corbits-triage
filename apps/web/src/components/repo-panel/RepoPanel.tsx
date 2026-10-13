@@ -12,7 +12,6 @@ import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import ActionsList from "./ActionsList.tsx";
 import ChecksSection from "./ChecksSection.tsx";
 import MergeThreshold from "./MergeThreshold.tsx";
-import PostingChoice from "./PostingChoice.tsx";
 import PreviewRow from "./PreviewRow.tsx";
 import RepoByline from "./RepoByline.tsx";
 import RolesEditor from "./RolesEditor.tsx";
@@ -37,7 +36,7 @@ function anchorOf(problem: DraftProblem): string {
   }
 }
 
-/** A repository's posting, triage, checks, actions and roles, edited as one draft and saved through the store. */
+/** A repository's triage, checks, actions and roles, edited as one draft and saved through the store. */
 export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanelProps) {
   const { readOnly, snapshot } = usePortal();
   const settings = useRepoPack(store, repo.name);
@@ -81,7 +80,6 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     const where = problem?.where;
     return (
       <>
-        <PostingChoice mode={draft.policy.cleanupMode} disabled={disabled} onChange={(cleanupMode) => settings.edit((current) => ({ ...current, policy: { ...current.policy, cleanupMode } }))} />
         <TriageSwitches repo={repo.name} policy={draft.policy} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} reason={where?.section === "triage" ? problem?.reason : undefined} />
         <ChecksSection draft={draft} saved={settings.saved.pack} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />
         <ActionsList draft={draft} stats={stats} disabled={disabled} edit={settings.edit} problem={problem} />

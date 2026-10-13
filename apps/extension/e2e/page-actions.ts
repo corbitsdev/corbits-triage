@@ -37,10 +37,10 @@ const pack: CheckPack = {
       checks: ["size"],
       branches: {
         no: [
-          { kind: "labels", automatic: true, target: { from: "list", labels: ["triage:too-large"] } },
-          { kind: "assign", automatic: false, target: { to: "author" } },
-          { kind: "request-review", automatic: false, target: { to: "users", users: [owner] } },
-          { kind: "close", automatic: false, target: {} },
+          { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
+          { kind: "assign", target: { to: "author" } },
+          { kind: "request-review", target: { to: "users", users: [owner] } },
+          { kind: "close", target: {} },
         ],
       },
     },
@@ -227,8 +227,7 @@ try {
   console.log(`close, first click: "${confirming}"`);
   if (confirming !== "Confirm: close this pull request") process.exitCode = 1;
 
-  // Auto-apply on: only the label, the one Do the pack marks automatic, is tried once on open; the comment is never
-  // posted and the close, not marked automatic, is never tried.
+  // Auto-apply on: only the label is tried once on open; the comment is never posted and the close is never tried.
   // Switched on away from the page, so only the page opened afterwards applies anything.
   await page.goto("about:blank");
   await worker.evaluate((repo) => chrome.storage.local.set({ applied: {}, "auto-apply": { [repo]: true } }), repo);

@@ -14,7 +14,8 @@ export interface MirrorInput {
   labels: string[];
   /** Labels the caller owns; the mirror removes only these. Optional so requests built before it existed remove nothing. */
   owned?: readonly string[];
-  comment: string;
+  /** Absent leaves the triage comment as it is. */
+  comment?: string;
   close: boolean;
 }
 
@@ -22,7 +23,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   // An empty comment means nothing is asked of the author, so an earlier one on an open pull request would be stale instructions.
-  if (!i.comment && pr.state === "open") await deleteTriageComments(gh, repo, number);
+  if (i.comment === "" && pr.state === "open") await deleteTriageComments(gh, repo, number);
   const posted = i.comment ? await upsertTriageComment(gh, { repo, number, body: i.comment }) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   // GitHub label names are case-insensitive.

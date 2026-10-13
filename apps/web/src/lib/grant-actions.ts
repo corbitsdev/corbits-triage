@@ -135,6 +135,7 @@ const RESOURCE_KIND_LABELS: Record<string, string> = {
   asset: "Asset",
   grant: "Access rule",
   role: "Role",
+  "triage-do": "Do",
 };
 
 export function grantResourceLabel(resource: string): { label: string; detail: string } {

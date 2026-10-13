@@ -24,6 +24,7 @@ import { useAllowed, useDeployedWorkflows, useGrants, usePrincipals, useRoles, t
 import { WORKFLOW_PACKAGES } from "../lib/workflow-packages.ts";
 import { useSession } from "../lib/session.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
+import AutomationGrid from "../components/AutomationGrid.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { SignedInDevices } from "../components/SignedInDevices.tsx";
 import { DECISION_MODEL_INTRO } from "@corbits/triage-contracts";
@@ -620,6 +621,16 @@ export default function Settings() {
               addRole={addRole}
               renameRole={renameRole}
               removeRole={removeRole}
+              onError={setError}
+            />
+            <AutomationGrid
+              roles={roles.rows}
+              grants={grants.rows}
+              loading={[grants, roles].some((section) => section.loading || section.unavailable)}
+              denied={grants.denied || roles.denied}
+              disabled={readOnly || !canCreateGrants || !canManageGrants}
+              addGrant={addGrant}
+              removeGrant={removeGrant}
               onError={setError}
             />
             <AccessRules

@@ -35,7 +35,6 @@ export type RepoRow = {
   name: string;
   href: string;
   needsSetup: boolean;
-  posting: "Ask me" | "Post automatically";
   pulls: RepoPulls;
   health: RepoHealth;
 };
@@ -74,7 +73,6 @@ export function repoRows(
       name: repo.name,
       href: `/repositories/${repo.name}`,
       needsSetup,
-      posting: policy.cleanupMode === "automated" ? "Post automatically" : "Ask me",
       pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), triageReady(repo)) : { error },
       health: repoHealth({ needsSetup, enabled: policy.enabled, catchingUp: catchingUp.has(repo.name), receivingEvents: active.has(repo.name) }),
     };

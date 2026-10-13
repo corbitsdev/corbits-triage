@@ -69,7 +69,7 @@ function delivery(event: TriageEvent, headSha: string): CoalescedEvent {
   };
   return {
     tenantId: TENANT_ID, workflow: "pr-triage", record: { name: REPO, connected: true }, policy: repoPolicy({ enabled: true }),
-    pack: emptyPack(REPO), mail, number: 8, headSha, event,
+    pack: emptyPack(REPO), automatic: [], mail, number: 8, headSha, event,
   };
 }
 

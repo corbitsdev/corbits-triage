@@ -3,13 +3,13 @@ import { recommendedPack, type CheckPack } from "@corbits/triage-contracts";
 import type { PreviewAction, PullPreview } from "./hub-api.ts";
 import { previewProse } from "./preview-prose.ts";
 
-const close = [{ kind: "close" as const, automatic: false, target: {} }];
+const close = [{ kind: "close" as const, target: {} }];
 const pack: CheckPack = {
   ...recommendedPack("acme/widgets"),
   actions: ["action-1", "action-2", "action-3", "action-4"].map((id) => ({ id, when: "every" as const, checks: [], branches: { always: close } })),
 };
 
-const base = { id: "action-1", index: 0, automatic: false, effectId: "e" };
+const base = { id: "action-1", index: 0, effectId: "e" };
 
 function preview(actions: PreviewAction[]): PullPreview {
   return {
@@ -34,16 +34,16 @@ test.each<[string, PreviewAction[], Pick<ReturnType<typeof previewProse>, "actio
     "decided",
     [{ id: "action-1", status: "decided", branch: "no", reason: "No vendor changes failed.", dos: [
       { ...base, branch: "no", kind: "comment", reason: "No vendor changes failed.", target: { body: "Please leave vendor/ alone." } },
-      { ...base, branch: "no", index: 1, kind: "request-review", automatic: true, reason: "No vendor changes failed.", target: { users: ["ada"], teams: ["core"] } },
+      { ...base, branch: "no", index: 1, kind: "request-review", reason: "No vendor changes failed.", target: { users: ["ada"], teams: ["core"] } },
     ] }],
-    { actions: [{ id: "action-1", label: "Action 1", status: "decided", branch: { branch: "No", reason: "No vendor changes failed.", dos: "comment “Please leave vendor/ alone.”, then request review from @ada and @acme/core automatically." } }], notWoken: null },
+    { actions: [{ id: "action-1", label: "Action 1", status: "decided", branch: { branch: "No", reason: "No vendor changes failed.", dos: "comment “Please leave vendor/ alone.”, then request review from @ada and @acme/core." } }], notWoken: null },
   ],
   [
     "waits-on-judge",
     [{ id: "action-2", status: "waits-on-judge", branches: [
       { branch: "yes", reason: "Clear intent passed.", dos: [{ ...base, id: "action-2", branch: "yes", kind: "labels", reason: "Clear intent passed.", target: { labels: ["ready"] } }] },
       { branch: "no", reason: "Clear intent failed.", dos: [] },
-      { branch: "unsure", reason: "Clear intent not confirmed.", dos: [{ id: "action-2", branch: "unsure", index: 0, kind: "assign", automatic: false, reason: "Assignees must be users and this target names none.", skipped: true }] },
+      { branch: "unsure", reason: "Clear intent not confirmed.", dos: [{ id: "action-2", branch: "unsure", index: 0, kind: "assign", reason: "Assignees must be users and this target names none.", skipped: true }] },
     ] }],
     { actions: [{ id: "action-2", label: "Action 2", status: "waits-on-judge", branches: [
       { branch: "Yes", reason: "Clear intent passed.", dos: "add the label ready." },

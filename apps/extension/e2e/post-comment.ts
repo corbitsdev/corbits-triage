@@ -30,8 +30,8 @@ const extension = resolve(import.meta.dir, "../.output/chrome-mv3");
 const shots = resolve(import.meta.dir, "../.output/e2e");
 const SIGN_IN = "Sign in to GitHub";
 
-// The size check fails on any pull request of more than one file; its comment Dos give several drafts, one marked
-// automatic, beside an automatic label that shows auto-apply ran. The checks whose failures add steps of their own are
+// The size check fails on any pull request of more than one file; its comment Dos give several drafts, beside a
+// label that shows auto-apply ran. The checks whose failures add steps of their own are
 // off and the default actions left out, so every draft fits the sidebar block whatever else the pull request fails.
 const base = defaultLocalPack(repo);
 const pack: CheckPack = {
@@ -44,10 +44,10 @@ const pack: CheckPack = {
       checks: ["size"],
       branches: {
         no: [
-          { kind: "labels", automatic: true, target: { from: "list", labels: ["triage:too-large"] } },
-          { kind: "comment", automatic: true, target: { body: "Automatic or not, this is only ever posted by a click." } },
-          { kind: "comment", automatic: false, target: { body: "Another draft, to post over Triage's own seed." } },
-          { kind: "comment", automatic: false, target: { body: "One more draft, to post from the banner." } },
+          { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
+          { kind: "comment", target: { body: "This is only ever posted by a click." } },
+          { kind: "comment", target: { body: "Another draft, to post over Triage's own seed." } },
+          { kind: "comment", target: { body: "One more draft, to post from the banner." } },
         ],
       },
     },

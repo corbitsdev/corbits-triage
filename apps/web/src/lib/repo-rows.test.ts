@@ -13,7 +13,7 @@ function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
 }
 
 const repos = [
-  { name: "acme/api", connected: true, enabled: true, cleanupMode: "automated" as const, checkPack: { name: "check-pack/acme/api" } },
+  { name: "acme/api", connected: true, enabled: true, checkPack: { name: "check-pack/acme/api" } },
   { name: "acme/web", connected: true },
 ];
 
@@ -29,7 +29,6 @@ describe("repository rows", () => {
     const [api] = repoRows(repos, items, new Set(), new Set(), { repos: [{ repo: "acme/api", prs: [] }] }, null);
     expect(api).toMatchObject({
       href: "/repositories/acme/api",
-      posting: "Post automatically",
       pulls: { open: 4, needsYou: pile?.items.length, awaiting: 1, owners: ["Maintainer", "Unassigned"], lastActivity: "2026-10-03T00:00:00Z" },
     });
     expect(pile?.items).toHaveLength(3);
@@ -54,7 +53,7 @@ describe("repository rows", () => {
     const listing = { repos: [{ repo: "acme/api", prs: [] }, { repo: "acme/web", prs: [], error: "rate limited" }] };
     const [api, web] = repoRows(repos, [], new Set(), new Set(), listing, null);
     expect(api?.pulls).toMatchObject({ open: 0 });
-    expect(web).toMatchObject({ href: "/repositories/acme/web", posting: "Ask me", pulls: { error: "rate limited" }, health: { label: "Needs setup" } });
+    expect(web).toMatchObject({ href: "/repositories/acme/web", pulls: { error: "rate limited" }, health: { label: "Needs setup" } });
     const failed = repoRows(repos, [], new Set(), new Set(["acme/api"]), undefined, new Error("offline"));
     expect(failed.map((row) => row.pulls)).toEqual([{ error: "offline" }, { error: "offline" }]);
     expect(failed[0]?.health.label).toBe("Catching up");

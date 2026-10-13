@@ -93,7 +93,7 @@ export function partsOf(sources: DeterministicResult["sources"], { plan, focused
 /** Takes the item's own chunk replies off the front of `replies` and `partReplies`; requests an earlier run answered took none. */
 function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdict {
   if (it.error !== undefined) {
-    const verdict = { ...stamp(undefined), ...degradedVerdict(it.error, packMergeThreshold(it.pack)), cleanupMode: it.cleanupMode, actions: [] };
+    const verdict = { ...stamp(undefined), ...degradedVerdict(it.error, packMergeThreshold(it.pack)), automatic: it.automatic ?? [], actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
   }
   try {
@@ -113,12 +113,13 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const suggested = actionInput ? evaluateActions(actionInput) : [];
     const wanted = actionInput && changesWanted(actionInput);
     const held = approvalHeldBy(rendered.merge.verdict, it.facts.checks);
-    const actions = holdDos(heldApprovals(suggested, held), it.cleanupMode);
+    const automatic = it.automatic ?? [];
+    const actions = holdDos(heldApprovals(suggested, held), automatic);
     const judged = reusable([...first, ...later]);
-    const verdict = { ...stamp(it.facts), ...rendered, cleanupMode: it.cleanupMode, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
+    const verdict = { ...stamp(it.facts), ...rendered, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
     return { ...verdict, request: toMirrorRequest(verdict) };
   } catch (e) {
-    const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`, packMergeThreshold(it.pack)), cleanupMode: it.cleanupMode, actions: [] };
+    const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`, packMergeThreshold(it.pack)), automatic: it.automatic ?? [], actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
   }
 }

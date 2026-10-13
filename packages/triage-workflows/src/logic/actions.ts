@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { missingFrom } from "@corbits/github-reads";
-import { ALL_CHECKS, checkName, classificationSources, type Action, type ActionKind, type CheckPack, type CleanupMode, type Do, type RepoRole, type ResolvedTarget, teamSlug } from "@corbits/triage-contracts";
+import { ALL_CHECKS, alwaysHeld, checkName, classificationSources, type Action, type ActionKind, type CheckPack, type Do, type RepoRole, type ResolvedTarget, teamSlug } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { authorFailures, type MergeVerdict } from "./render.js";
 import { errorText } from "@corbits/common";
@@ -31,9 +31,9 @@ export function doEffectId(ref: DoRef): string {
   return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
 }
 
-type Step = { id: string; branch: Branch; index: number; kind: ActionKind; automatic: boolean; reason: string };
+type Step = { id: string; branch: Branch; index: number; kind: ActionKind; reason: string };
 
-/** `held` marks a Do the run does not write unattended: it waits for a maintainer's approval mail. */
+/** `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant. */
 export type SuggestedDo = Step & { effectId: string; target: ResolvedTarget; held?: true };
 
 /** A step resolves to a target or is skipped; an action whose checks are off in the pack is skipped whole. */
@@ -181,7 +181,7 @@ export function evaluateAction(action: Action, input: ActionInput): ActionOutcom
   const { branch, dos, reason } = picked;
   const out: SuggestedAction[] = [];
   for (const [index, task] of dos.entries()) {
-    const base = { id: action.id, branch, index, kind: task.kind, automatic: task.automatic };
+    const base = { id: action.id, branch, index, kind: task.kind };
     try {
       const target = resolve(task, action, input);
       const { repo, number, headSha } = input.facts;
@@ -228,20 +228,21 @@ export function heldApprovals(actions: SuggestedAction[], reason: string | undef
   if (reason === undefined) return actions;
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action) || action.kind !== "approve") return action;
-    const { id, branch, index, kind, automatic } = action;
-    return { id, branch, index, kind, automatic, skipped: true, reason };
+    const { id, branch, index, kind } = action;
+    return { id, branch, index, kind, skipped: true, reason };
   });
 }
 
-/** Marks each runnable Do the run will not write unattended, so it is held for a maintainer. */
-export function holdDos(actions: SuggestedAction[], cleanupMode: CleanupMode | undefined): SuggestedAction[] {
+/** Holds each runnable Do the run may not write unattended: `automatic` is the kinds the pr-triage role is granted on the repository. */
+export function holdDos(actions: SuggestedAction[], automatic: readonly ActionKind[]): SuggestedAction[] {
   return actions.map(function hold(action): SuggestedAction {
-    if (!("effectId" in action) || (cleanupMode === "automated" && action.automatic) || unrunnable(action) !== undefined) return action;
+    if (!("effectId" in action) || unrunnable(action) !== undefined) return action;
+    if (automatic.includes(action.kind) && !alwaysHeld(action.branch, action.kind)) return action;
     return { ...action, held: true };
   });
 }
 
-/** Suggest only: nothing here writes to GitHub, and automatic steps are suggested like the rest. */
+/** Suggest only: nothing here writes to GitHub. */
 export function evaluateActions(input: ActionInput): SuggestedAction[] {
   return input.pack.actions.flatMap(function suggested(action): SuggestedAction[] {
     const outcome = evaluateAction(action, input);

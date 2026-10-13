@@ -126,7 +126,7 @@ function PageSection({ pr }: { pr: PrRef | undefined }) {
               </li>
             ))}
           </ul>
-          <p className="hint">Comments are never posted automatically. A close applies only on a clear no.</p>
+          <p className="hint">Only labels are applied on their own; every other action waits for a click.</p>
         </>
       ) : null}
       {error ? <p className="error" role="alert">{error}</p> : null}

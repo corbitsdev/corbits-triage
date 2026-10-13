@@ -32,8 +32,8 @@ wakes the actions that run when it is opened.
   triage again); the rest and the pack's Dos are under More. Merging from the
   portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
-- **Repositories**: per repository, its checks, its actions, its roles,
-  whether Triage posts automatically or asks first, the merge score threshold,
+- **Repositories**: per repository, its checks, its actions, its roles, the
+  merge score threshold,
   a preview against an open pull request, recent stats, the triage switch and
   **Triage open pull requests again**.
 - **Settings**: the deployed workflow versions, the GitHub App, the decision
@@ -114,13 +114,16 @@ An action is **When → Checks → Yes / No / Unsure → Dos**:
 - **Checks**: the checks whose combined verdict picks the branch. Any
   unconfirmed check makes it Unsure. With no checks, the action always runs.
 - **Dos**: labels, assign, request review, comment, approve, request changes,
-  close, agent. Each Do has its own automatic flag: automatic Dos run on
-  GitHub during triage, the rest wait in the Inbox for a click.
+  close, agent. Settings → Access holds one grid, Do kind by role: a role's
+  people may approve held Dos of the kinds it holds, and Dos of the kinds
+  Triage holds run on GitHub during triage; the rest wait in the Inbox for a
+  click. New workspaces automate nothing.
 
-Close never runs automatically on Unsure or without checks. Approve runs only
-for a head that is ready to merge with CI green; in a repository that posts
-automatically, a later head that may not be approved has the approve Do's
-approvals dismissed. Approvals made from the Inbox are never dismissed.
+Close never runs on its own on Unsure or without checks, nor does an agent
+without checks. Triage posts its reply when it holds Comment and its labels
+when it holds Labels. Approve runs only for a head that is
+ready to merge with CI green; where Triage posts, a later head that may not be
+approved has the approve Do's approvals dismissed. Approvals made from the Inbox are never dismissed.
 Request changes lists only the failed checks the author must fix, once per
 head; the automatic mirror dismisses it once none still fails.
 

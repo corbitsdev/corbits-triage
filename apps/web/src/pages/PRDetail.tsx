@@ -85,7 +85,6 @@ function CheckList({ repo, sha, checks, fallback }: { repo: string; sha: string 
 }
 
 function About({ item }: { item: PrItem }) {
-  const { snapshot } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const pr = pull.data?.pr;
   const facts = paneFacts(item, pull.data);
@@ -100,7 +99,6 @@ function About({ item }: { item: PrItem }) {
   const wait = checks.filter((row) => /pend|wait|progress|queued/i.test(row.status)).length;
   const pass = checks.filter((row) => /pass|success/i.test(row.status)).length;
   const pending = pull.isPending && pull.fetchStatus !== "idle";
-  const repo = snapshot?.repos.find((row) => row.name === item.repo);
   return (
     <article className="pr-overview" aria-label="About">
       <header className="brief brief-lead">
@@ -131,7 +129,6 @@ function About({ item }: { item: PrItem }) {
         <h2>Repository</h2>
         <dl className="facts">
           <div><dt>Repo</dt><dd className="mono">{item.repo}</dd></div>
-          <div><dt>Posting</dt><dd>{repo?.cleanupMode === "automated" ? "Automated" : "Human approved"}</dd></div>
         </dl>
       </section>
       <section className="brief">
@@ -281,10 +278,9 @@ export default function PRDetail() {
   const [handled, setHandled] = useState<Record<string, "posted" | "dismissed">>({});
   const head = pull.data?.pr.sha ?? item?.sha ?? "";
   const handledKey = `${item?.key}@${head}`;
-  const repoRecord = snapshot?.repos.find((row) => row.name === item?.repo);
   const recommended = item?.comment?.trim() ?? "";
   const showRecommended = Boolean(
-    recommended && item?.number && !closed && !readOnly && repoRecord?.cleanupMode !== "automated" && handled[handledKey] !== "dismissed",
+    recommended && item?.number && !closed && !readOnly && !item.automatic.includes("comment") && handled[handledKey] !== "dismissed",
   );
   const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
   const dos = usePendingDos(item);

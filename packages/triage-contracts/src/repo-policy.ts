@@ -2,9 +2,6 @@ import { type } from "arktype";
 import { asRecord } from "@corbits/common";
 import type { TrustTier } from "./types.js";
 
-export const CLEANUP_MODES = ["human-approved", "automated"] as const;
-export type CleanupMode = (typeof CLEANUP_MODES)[number];
-
 export const AUTHOR_ASSOCIATIONS = [
   "OWNER",
   "MEMBER",
@@ -25,7 +22,6 @@ export type RepoCheckFlags = {
 export type RepoRole = { users?: string[]; teams?: string[] };
 
 export type RepoPolicy = {
-  cleanupMode: CleanupMode;
   enabled: boolean;
   checks: RepoCheckFlags;
   /** Named reviewer groups that pack actions target by role. */
@@ -42,7 +38,6 @@ export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
 };
 
 export const DEFAULT_REPO_POLICY: RepoPolicy = {
-  cleanupMode: "human-approved",
   enabled: false,
   checks: { ...DEFAULT_REPO_CHECKS },
   roles: {},
@@ -51,7 +46,6 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
 
 /** The policy as clients write it; `repoPolicy` defaults whatever is missing. */
 export const repoPolicySchema = type({
-  "cleanupMode?": type.enumerated(...CLEANUP_MODES),
   "enabled?": "boolean",
   "checks?": {
     "ci?": "boolean",
@@ -113,7 +107,6 @@ export function repoPolicy(raw: unknown): RepoPolicy {
   const pointer = asRecord(source.checkPack) ?? {};
   const pointerName = typeof pointer.name === "string" ? pointer.name.trim() : "";
   return {
-    cleanupMode: source.cleanupMode === "automated" ? "automated" : "human-approved",
     enabled: flag(source.enabled, false),
     checks: {
       ci: flag(checks.ci, true),

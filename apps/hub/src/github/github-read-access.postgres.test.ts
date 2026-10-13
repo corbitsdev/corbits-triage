@@ -69,7 +69,7 @@ const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigi
 const openPulls = createGithubOpenPulls({ ...deps, cache: createOpenPullsCache(() => new Date()) });
 const prDetails = createGithubPrDetails(deps);
 const prActions = createGithubPrActions(deps);
-const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO) } as const; } });
+const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO), automatic: [] } as const; } });
 
 function member(user: string) {
   return { tenantId: TENANT, principalId: user.replace("usr_", "prn_") };
@@ -111,7 +111,8 @@ beforeAll(async () => {
     { id: "grt_admin_manage", tenantId: TENANT, roleId: "rol_admin", resource: "*", action: "manage", effect: "allow", origin: "system" },
     { id: "grt_user_use", tenantId: TENANT, principalId: "prn_user", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
     { id: "grt_approver_use", tenantId: TENANT, principalId: "prn_approver", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
-    { id: "grt_approver_approve", tenantId: TENANT, principalId: "prn_approver", resource: "github-review:*", action: "approve", effect: "allow", origin: "system" },
+    { id: "grt_approver_approve", tenantId: TENANT, principalId: "prn_approver", resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "system" },
+    { id: "grt_approver_labels", tenantId: TENANT, principalId: "prn_approver", resource: `triage-do:labels:${REPO}`, action: "invoke", effect: "allow", origin: "system" },
   ]);
   await db.insert(schema.provider).values({ id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: githubApiOrigin });
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
@@ -168,11 +169,11 @@ test("PostgreSQL: only a member who may save roles previews candidate roles, so 
   expect(await probeResult(admin)).toBe("pass");
 });
 
-test("PostgreSQL: approving needs the approve grant on top of use, and pins the review to the head shown", async () => {
+test("PostgreSQL: approving needs the approve Do grant on top of use, and pins the review to the head shown", async () => {
   const approve = { action: "review", event: "APPROVE", repo: REPO, number: 8, body: "", headSha: HEAD } as const;
   const refused = await prActions(approve, member("usr_user"));
   expect(refused.status).toBe(403);
-  expect(await refused.json()).toEqual({ error: { code: "forbidden", message: "You do not have the grant to approve pull requests in this repository." } });
+  expect(await refused.json()).toEqual({ error: { code: "forbidden", message: "You do not have the grant for this kind of Do in this repository." } });
   expect(reviewed).toEqual([]);
 
   const approved = await prActions(approve, member("usr_approver"));
@@ -194,21 +195,21 @@ test("PostgreSQL: every verdict route needs workflow-run read, which holding the
   }
 });
 
-test("PostgreSQL: approving a held Do mails pr-triage who approved it; an approve Do needs the approve grant and stands only on the newest judged verdict; a written or unrunnable Do is refused", async () => {
+test("PostgreSQL: approving a held Do needs its kind's grant and mails pr-triage who approved it; it stands only on the newest judged verdict; a written or unrunnable Do is refused", async () => {
   await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_triage", tenantId: TENANT, name: "pr-triage", status: "stopped" });
   await handle.db.insert(schema.workflowRun).values([
     { id: "wfr_anchor", definitionId: "wfd_triage", anchorRunId: "wfr_anchor", tenantId: TENANT, status: "deployed" },
     { id: "wfr_verdict", definitionId: "wfd_triage", anchorRunId: "wfr_anchor", tenantId: TENANT, status: "completed" },
   ]);
   function held(id: string, kind: ActionKind, target: Record<string, unknown>) {
-    const step = { id, branch: "always" as const, index: 0, kind, automatic: false, reason: "Always applies.", target, held: true };
+    const step = { id, branch: "always" as const, index: 0, kind, reason: "Always applies.", target, held: true };
     return { ...step, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, actionId: id, branch: step.branch, index: 0, kind, target: target as never }) };
   }
   const ship = held("ship", "approve", {});
   const tag = held("tag", "labels", { labels: ["api"] });
   const written = { ...held("written", "labels", { labels: ["done"] }), status: "done" };
-  const agent = held("agent", "agent", { prompt: "Review", tools: [] });
-  const verdict = { repo: REPO, number: 8, headSha: HEAD, request: { repo: REPO, number: 8, labels: [], owned: [], comment: "" }, actions: [ship, tag, written, agent] };
+  const derived = held("derived", "labels", { unresolved: "derive", from: "type" });
+  const verdict = { repo: REPO, number: 8, headSha: HEAD, request: { repo: REPO, number: 8, labels: [], owned: [], comment: "" }, actions: [ship, tag, written, derived] };
   const events = [{ seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } } }];
   const mailed: Array<{ address: string; payload: unknown }> = [];
   let recorded: Array<Pick<VerdictRecord, "runId" | "degraded" | "runStatus">> = [];
@@ -220,26 +221,28 @@ test("PostgreSQL: approving a held Do mails pr-triage who approved it; an approv
     async deliver(_tenantId, address, payload) { mailed.push({ address, payload }); },
     log() {},
   });
-  async function approve(user: string, effectId: string) {
-    const res = await heldDos({ runId: "wfr_verdict", repo: REPO, number: 8, effectId }, member(user));
+  async function approve(user: string, step: { effectId: string; kind: ActionKind }, runId = "wfr_verdict") {
+    const res = await heldDos({ runId, repo: REPO, number: 8, effectId: step.effectId, kind: step.kind }, member(user));
     return { status: res.status, body: await res.json() };
   }
 
-  expect(await approve("usr_user", ship.effectId)).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
-  expect(await approve("usr_user", written.effectId)).toMatchObject({ status: 409, body: { error: { code: "do_not_held" } } });
-  expect(await approve("usr_user", agent.effectId)).toMatchObject({ status: 409, body: { error: { code: "do_not_runnable" } } });
-  expect(await approve("usr_user", tag.effectId)).toEqual({ status: 202, body: { status: "sent" } });
+  expect(await approve("usr_user", ship, "wfr_missing")).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
+  expect(await approve("usr_approver", { ...tag, kind: "approve" })).toMatchObject({ status: 409, body: { error: { code: "kind_mismatch" } } });
+  expect(await approve("usr_approver", written)).toMatchObject({ status: 409, body: { error: { code: "do_not_held" } } });
+  expect(await approve("usr_approver", derived)).toMatchObject({ status: 409, body: { error: { code: "do_not_runnable" } } });
+  expect(await approve("usr_user", tag)).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
+  expect(await approve("usr_approver", tag)).toEqual({ status: 202, body: { status: "sent" } });
   expect(mailed).toEqual([{
     address: "wfr_anchor@read-access.test",
     payload: {
-      kind: "approve-do", runId: "wfr_verdict", principalId: "prn_user", actionId: "tag", branch: "always", index: 0,
+      kind: "approve-do", runId: "wfr_verdict", principalId: "prn_approver", actionId: "tag", branch: "always", index: 0,
       request: verdict.request, step: { effectId: tag.effectId, headSha: HEAD, kind: "labels", target: { labels: ["api"] } },
     },
   }]);
 
   recorded = [{ runId: "wfr_verdict", degraded: null, runStatus: "completed" }, { runId: "wfr_degraded", degraded: "error", runStatus: "completed" }, { runId: "wfr_failed", degraded: null, runStatus: "failed" }];
-  expect((await approve("usr_approver", ship.effectId)).status).toBe(202);
+  expect((await approve("usr_approver", ship)).status).toBe(202);
   recorded.push({ runId: "wfr_newer", degraded: null, runStatus: "completed" });
-  expect(await approve("usr_approver", ship.effectId)).toMatchObject({ status: 409, body: { error: { code: "verdict_superseded" } } });
+  expect(await approve("usr_approver", ship)).toMatchObject({ status: 409, body: { error: { code: "verdict_superseded" } } });
   expect(mailed).toHaveLength(2);
 });

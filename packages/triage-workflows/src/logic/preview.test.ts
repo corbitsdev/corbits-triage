@@ -17,7 +17,7 @@ const checks: ActionInput["checks"] = [
 ];
 
 function branching(id: string, when: Action["when"], refs: CheckRef[]): Action {
-  const say = (body: string) => [{ kind: "comment" as const, automatic: false, target: { body } }];
+  const say = (body: string) => [{ kind: "comment" as const, target: { body } }];
   return { id, when, checks: refs, branches: { yes: say("yes"), no: say("no"), unsure: say("unsure") } };
 }
 

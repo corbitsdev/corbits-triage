@@ -339,7 +339,7 @@ describe("judge on a blocked pull request", () => {
     const checkPack = {
       ...emptyPack("acme/widgets"),
       checks: { ci: { enabled: true } },
-      actions: [{ id: "greet", when: ["opened"], checks: ["ci"], branches: { yes: [{ kind: "comment", automatic: false, target: { body: "Welcome" } }] } }],
+      actions: [{ id: "greet", when: ["opened"], checks: ["ci"], branches: { yes: [{ kind: "comment", target: { body: "Welcome" } }] } }],
     };
     const latest = { checkPack, event: "check_run", action: "completed" };
     async function actionIds(setup: Record<string, unknown>): Promise<string[]> {
@@ -380,7 +380,7 @@ describe("judge on a blocked pull request", () => {
   });
 
   test("a degraded verdict suggests no actions", async () => {
-    const checkPack = { ...recommendedPack("acme/widgets"), actions: [{ id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", automatic: false, target: { body: "hi" } }] } }] };
+    const checkPack = { ...recommendedPack("acme/widgets"), actions: [{ id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", target: { body: "hi" } }] } }] };
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code), "upstream 503");
     expect(verdict.degraded).toBe("inference-outage");
     expect(verdict.actions).toEqual([]);
@@ -389,13 +389,13 @@ describe("judge on a blocked pull request", () => {
   test("suggests a pack action matched on a model check, resolved through the policy's roles", async () => {
     const checkPack = {
       ...recommendedPack("acme/widgets"),
-      actions: [{ id: "ask-leads", when: "every", checks: ["focused"], branches: { no: [{ kind: "request-review", automatic: true, target: { to: "role", role: "leads" } }] } }],
+      actions: [{ id: "ask-leads", when: "every", checks: ["focused"], branches: { no: [{ kind: "request-review", target: { to: "role", role: "leads" } }] } }],
     };
     const policy = { enabled: true, roles: { leads: { users: ["dave"] } } };
     const files = [{ filename: "src/flag.ts", patch: "@@ -0,0 +1 @@\n+export const flag = true;" }];
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { policy, checkPack }, files));
     expect(verdict.actions).toEqual([
-      { id: "ask-leads", branch: "no", index: 0, effectId: expect.any(String), kind: "request-review", automatic: true, target: { users: ["dave"], teams: [] }, reason: "Focused change failed.", held: true },
+      { id: "ask-leads", branch: "no", index: 0, effectId: expect.any(String), kind: "request-review", target: { users: ["dave"], teams: [] }, reason: "Focused change failed.", held: true },
     ]);
   });
 
@@ -407,13 +407,13 @@ describe("judge on a blocked pull request", () => {
         { id: "custom-3", name: "Changelog", group: "pull-request", instruction: "The changelog is updated." },
       ],
       actions: [
-        { id: "on-2", when: "every", checks: ["custom-2"], branches: { no: [{ kind: "comment", automatic: false, target: { body: "secrets" } }] } },
-        { id: "on-3", when: "every", checks: ["custom-3"], branches: { no: [{ kind: "comment", automatic: false, target: { body: "changelog" } }] } },
+        { id: "on-2", when: "every", checks: ["custom-2"], branches: { no: [{ kind: "comment", target: { body: "secrets" } }] } },
+        { id: "on-3", when: "every", checks: ["custom-3"], branches: { no: [{ kind: "comment", target: { body: "changelog" } }] } },
       ],
     };
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }), undefined, ["custom-3"]);
     expect(verdict.actions).toEqual([
-      { id: "on-3", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", automatic: false, target: { body: "changelog" }, reason: "Changelog failed.", held: true },
+      { id: "on-3", branch: "no", index: 0, effectId: expect.any(String), kind: "comment", target: { body: "changelog" }, reason: "Changelog failed.", held: true },
     ]);
   });
 
@@ -570,7 +570,7 @@ describe("focused judge input", () => {
   });
 });
 
-describe("mirror director cleanup mode", () => {
+describe("mirror director grants", () => {
   const request = { repo: "acme/widgets", number: 8, labels: ["ready-monitoring"], owned: TRIAGE_LABELS, comment: "Looks good" };
   const verdict = {
     repo: "acme/widgets",
@@ -599,8 +599,8 @@ describe("mirror director cleanup mode", () => {
     return calls;
   }
 
-  test("automated high-confidence posts with the no-ask tool", async () => {
-    expect(await mirrorCalls({ ...verdict, cleanupMode: "automated" })).toEqual([[
+  test("a role granted comment and labels posts with the no-ask tool", async () => {
+    expect(await mirrorCalls({ ...verdict, automatic: ["comment", "labels"] })).toEqual([[
       {
         id: "mirror:acme--widgets:8",
         name: "github_mirror_auto",
@@ -609,8 +609,11 @@ describe("mirror director cleanup mode", () => {
     ]]);
   });
 
-  test("human-approved never calls a tool", async () => {
-    expect(await mirrorCalls({ ...verdict, cleanupMode: "human-approved" })).toEqual([]);
+  test("comment alone posts the reply and leaves labels alone; approve alone still runs it to take approvals back", async () => {
+    const { labels: _labels, owned: _owned, comment: _comment, ...pull } = request;
+    expect(await mirrorCalls({ ...verdict, automatic: ["comment"] })).toEqual([[{ id: "mirror:acme--widgets:8", name: "github_mirror_auto", arguments: { ...pull, comment: request.comment, labels: [], owned: [] } }]]);
+    expect(await mirrorCalls({ ...verdict, automatic: ["approve"] })).toEqual([[{ id: "mirror:acme--widgets:8", name: "github_mirror_auto", arguments: { ...pull, labels: [], owned: [] } }]]);
+    expect(await mirrorCalls({ ...verdict, automatic: ["assign"] })).toEqual([]);
   });
 });
 
@@ -618,7 +621,7 @@ describe("execute", () => {
   const REQUEST = { repo: "acme/widgets", number: 8, labels: [], owned: [], comment: "" };
 
   function comment(index: number) {
-    return { id: "hi", branch: "always", index, kind: "comment", automatic: true, reason: "Always applies.", effectId: `e${index}`, target: { body: "hi" } };
+    return { id: "hi", branch: "always", index, kind: "comment", reason: "Always applies.", effectId: `e${index}`, target: { body: "hi" } };
   }
 
   /** Answers every Do call done, one at a time as the director asks, and returns the calls and its reply. */
@@ -640,11 +643,16 @@ describe("execute", () => {
     return { calls, dos: reply.dos };
   }
 
-  const verdict = { repo: "acme/widgets", number: 8, headSha: "abc", degraded: null, state: "ready", cleanupMode: "automated", request: REQUEST, checks: [], actions: [comment(0)] };
+  const verdict = { repo: "acme/widgets", number: 8, headSha: "abc", degraded: null, state: "ready", automatic: ["comment"], request: REQUEST, checks: [], actions: [comment(0)] };
 
   test("a verdict whose judge was skipped runs no Do", async () => {
     const skipped = { ...verdict, checks: [{ check: "focused", kind: "model", result: "unconfirmed", reason: NEEDS_JUDGE_REASON }] };
     expect(await execute(skipped)).toEqual({ calls: [], dos: [{ effectId: "e0", status: "skipped", error: "verdict not settled" }] });
+  });
+
+  test("a Do whose kind the role is not granted is neither attempted nor recorded", async () => {
+    const derived = { id: "tag", branch: "always", index: 0, kind: "labels", reason: "Always applies.", effectId: "e-tag", target: { unresolved: "derive", from: "type" } };
+    expect(await execute({ ...verdict, actions: [comment(0), derived] })).toEqual({ calls: [expect.objectContaining({ id: "e0" })], dos: [{ effectId: "e0", status: "done" }] });
   });
 
   test("Dos run one at a time, and those past the per-run cap stay pending", async () => {

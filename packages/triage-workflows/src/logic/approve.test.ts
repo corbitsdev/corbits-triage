@@ -29,7 +29,7 @@ const VENDOR: CustomCheck = { id: "custom-1", name: "Vendor", group: "code-vs-ci
 const pack: CheckPack = {
   ...emptyPack("acme/widgets"),
   checks: { conflicts: { enabled: true }, ci: { enabled: true } },
-  actions: [{ id: "approve", when: ["opened"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } }],
+  actions: [{ id: "approve", when: ["opened"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", target: {} }] } }],
 };
 
 /** The actions a run suggests for `over` on `facts`, as the evaluate step derives, renders and holds them. */
@@ -42,7 +42,7 @@ function suggested(using: CheckPack, over: Partial<PrFacts> = {}) {
 
 describe("approving on every check", () => {
   test("approves once every check the pack runs passes and CI is green", () => {
-    expect(suggested(pack)).toEqual([expect.objectContaining({ kind: "approve", branch: "yes", automatic: true })]);
+    expect(suggested(pack)).toEqual([expect.objectContaining({ kind: "approve", branch: "yes" })]);
   });
 
   test("a failing check approves nothing", () => {
@@ -59,7 +59,7 @@ describe("approving on every check", () => {
   });
 
   test("a stored action on draft and CI takes the no branch on a draft with CI green", () => {
-    const wip = { id: "wip", when: ["opened"], checks: ["draft", "ci"], branches: { yes: [{ kind: "approve", automatic: true, target: {} }], no: [{ kind: "labels", automatic: true, target: { from: "list", labels: ["wip"] } }] } };
+    const wip = { id: "wip", when: ["opened"], checks: ["draft", "ci"], branches: { yes: [{ kind: "approve", target: {} }], no: [{ kind: "labels", target: { from: "list", labels: ["wip"] } }] } };
     const stored = readCheckPack(JSON.stringify({ ...pack, actions: [wip] }));
     expect(suggested(stored, { draft: true })).toEqual([expect.objectContaining({ id: "wip", kind: "labels", branch: "no" })]);
   });

@@ -1,4 +1,4 @@
-import type { CheckPack, CleanupMode, RepoRole } from "@corbits/triage-contracts";
+import type { ActionKind, CheckPack, RepoRole } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 
 /** Judge answers by the `judgeKey` of the request each answered. */
@@ -15,7 +15,8 @@ export interface Item {
   judgeSkipped?: true;
   /** Answers an earlier run of this head got, by `judgeKey`; their requests are not asked again. */
   judged?: Judged;
-  cleanupMode?: CleanupMode;
+  /** The Do kinds the pr-triage role is granted on the repository, as the hub's mail said. */
+  automatic?: ActionKind[];
   pack?: CheckPack;
   roles?: Record<string, RepoRole>;
   /** Why no facts were gathered; the verdict is then degraded with this reason. */
