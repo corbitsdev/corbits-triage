@@ -13,7 +13,7 @@ import { classificationSources, isFromTriageSender, repoPolicy, triageEventsOf, 
 import type { DoOutcome } from "@corbits/github-tool/do";
 import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-tool";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
-import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "./logic/checks.js";
+import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "./logic/checks.js";
 import { unrunnable } from "./logic/execute-do.js";
 import { asText, isRecord, parseJsonText } from "./logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, roleTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "./logic/facts.js";
@@ -157,7 +157,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return reply([{ error: reason }], false);
   }
 
-  function fetchTargets(repo: string, numbers: number[], openPrs: PrFacts["openPrs"], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[], docs: RepoDocs | string) {
+  function fetchTargets(repo: string, numbers: number[], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[], docs: RepoDocs | string) {
     function prCalls(n: number): ToolCall[] {
       return [
         call("github_get_pr", { repo, number: n }, `pr:${n}`),
@@ -228,7 +228,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
             commits: data<{ commits: Array<{ message?: string }> }>(r1.get(`commits:${n}`))?.commits ?? [],
             files: filesErrors.get(n) ?? listed.get(n)?.files ?? [],
             authorTeams: data<NonNullable<PullData["authorTeams"]>>(r2.get(`teams:${prs.get(n)?.author}`)),
-          }, { repo, openPrs, policy, pack, events, docs });
+          }, { repo, policy, pack, events, docs });
           const judged = carried.get(n);
           return judged === undefined || "error" in item ? item : { ...item, judged };
         }
@@ -263,13 +263,12 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[]) {
     const judged = hasModelChecks(classificationSources(pack));
     return b.run([call("github_list_open_prs", { repo }), ...(judged ? [docsCall(repo, 0)] : [])], function onPrList(r) {
-      const list = data<{ prs: Array<{ number: number; title: string; draft?: boolean }> }>(r.get("github_list_open_prs"));
+      const list = data<{ prs: Array<{ number: number; draft?: boolean }> }>(r.get("github_list_open_prs"));
       if (!list && targets === undefined) return fail("github_list_open_prs failed");
       const listed = list?.prs ?? [];
-      const openPrs = listed.map(({ number, title }) => ({ number, title }));
       const triageable = listed.filter((p) => policy.triageDrafts || p.draft !== true).map((p) => p.number);
       function withDocs(docs: RepoDocs | string) {
-        return fetchTargets(repo, targets ?? triageable, openPrs, batch, policy, pack, events, docs);
+        return fetchTargets(repo, targets ?? triageable, batch, policy, pack, events, docs);
       }
       return judged ? readDocs(repo, 0, r.get("docs:0"), [], withDocs) : withDocs({ docs: {}, rules: {} });
     });

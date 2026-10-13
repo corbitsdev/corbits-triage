@@ -571,12 +571,8 @@ describe("repository policy config", () => {
       cleanupMode: "human-approved",
       enabled: false,
       checks: {
-        draft: true,
         ci: true,
-        duplicate: true,
         conflicts: true,
-        reviewers: false,
-        drift: true,
       },
     })]);
   });

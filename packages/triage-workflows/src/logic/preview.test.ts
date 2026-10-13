@@ -7,7 +7,7 @@ import { NEEDS_JUDGE_REASON } from "./render.js";
 
 const facts: PrFacts = {
   repo: "acme/widgets", number: 8, title: "Add search", author: "octocat", tier: "external", headSha: "abc", state: "open", draft: false,
-  mergeable: true, baseBehindBy: 0, checks: "success", requestedReviewers: 0, approvals: 0, openPrs: [], events: ["opened"],
+  mergeable: true, checks: "success", approvals: 0, events: ["opened"],
 };
 
 const checks: ActionInput["checks"] = [
@@ -27,7 +27,7 @@ test("previewActions decides what the judge cannot change and lists the branches
     branching("judged", ["opened"], ["ci", "focused"]),
     branching("failing", ["opened"], ["size", "focused"]),
     branching("asleep", ["updated"], ["ci"]),
-    branching("off", ["opened"], ["drift"]),
+    branching("off", ["opened"], ["paths"]),
   ];
   const preview = previewActions({ facts, checks, pack: { ...emptyPack("acme/widgets"), actions }, roles: {} });
   expect(preview.map((p) => [p.id, p.status, "branch" in p ? p.branch : "branches" in p ? p.branches.map((b) => b.branch) : null])).toEqual([

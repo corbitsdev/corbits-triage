@@ -12,11 +12,8 @@ const noisy: PrFacts = {
   state: "open",
   draft: true,
   mergeable: false,
-  baseBehindBy: 50,
   checks: "failure",
-  requestedReviewers: 0,
   approvals: 0,
-  openPrs: [{ number: 7, title: "Fix login" }],
 };
 
 const allOff: RepoPolicy = {
@@ -24,12 +21,8 @@ const allOff: RepoPolicy = {
   enabled: true,
   triageDrafts: true,
   checks: {
-    draft: false,
     ci: false,
-    duplicate: false,
     conflicts: false,
-    reviewers: false,
-    drift: false,
   },
   approvedAuthors: [],
 };
@@ -39,31 +32,21 @@ function only(check: keyof RepoPolicy["checks"]): RepoPolicy {
 }
 
 describe("deriveState policy", () => {
-  test("default policy runs every check but reviewers", () => {
+  test("default policy runs every check", () => {
     expect(deriveState(noisy)).toEqual(deriveState(noisy, DEFAULT_REPO_POLICY));
     expect(deriveState(noisy)).toEqual(deriveState(noisy, repoPolicy(undefined)));
     expect(deriveState(noisy).findings.map((finding) => finding.check)).toEqual([
       "checks",
-      "duplicate",
       "conflicts",
-      "drift",
     ]);
   });
 
-  test("skips a finding when that check is disabled", () => {
-    const draft = deriveState(noisy, only("draft"));
-    expect(draft.findings).toEqual([]);
-    expect(draft.checks).toEqual([{ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } }, expect.objectContaining({ check: "review" })]);
+  test("skips a finding when that check is disabled; the draft check always runs", () => {
+    const off = deriveState(noisy, allOff);
+    expect(off.findings).toEqual([]);
+    expect(off.checks).toEqual([{ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } }, expect.objectContaining({ check: "review" })]);
     expect(deriveState(noisy, only("ci")).findings.map((finding) => finding.check)).toEqual(["checks"]);
-    expect(deriveState(noisy, only("duplicate")).findings.map((finding) => finding.check)).toEqual(["duplicate"]);
     expect(deriveState(noisy, only("conflicts")).findings.map((finding) => finding.check)).toEqual(["conflicts"]);
-    expect(deriveState(noisy, only("reviewers")).findings.map((finding) => finding.check)).toEqual(["reviewers"]);
-    expect(deriveState(noisy, only("drift")).findings.map((finding) => finding.check)).toEqual(["drift"]);
-  });
-
-  test("disabled duplicate does not set duplicateOf", () => {
-    expect(deriveState(noisy).duplicateOf).toBe(7);
-    expect(deriveState(noisy, { ...allOff, checks: { ...allOff.checks, duplicate: false } }).duplicateOf).toBeNull();
   });
 
   test("closed state check always runs", () => {
@@ -76,11 +59,8 @@ describe("deriveState policy", () => {
       ...noisy,
       draft: false,
       mergeable: null,
-      baseBehindBy: 0,
       checks: "success",
-      requestedReviewers: 1,
       approvals: 1,
-      openPrs: [],
     };
     expect(deriveState(unknown).findings.map((finding) => finding.check)).toEqual(["conflicts"]);
     expect(deriveState(unknown).checks.find((check) => check.check === "conflicts")?.output).toEqual({ kind: "could-not-check", reason: "mergeability not yet computed" });
@@ -92,7 +72,6 @@ describe("deriveState check pack", () => {
   test("empty valid pack classifies with no catalog findings", () => {
     const result = deriveState(noisy, DEFAULT_REPO_POLICY, emptyPack("acme/widgets"));
     expect(result.findings).toEqual([]);
-    expect(result.duplicateOf).toBeNull();
     expect(result.sources).toEqual({ quality: [], custom: [], rules: [] });
   });
 
@@ -110,9 +89,7 @@ describe("deriveState check pack", () => {
     const result = deriveState(sized, allOff, pack);
     expect(result.findings.map((finding) => finding.check)).toEqual([
       "checks",
-      "duplicate",
       "conflicts",
-      "drift",
       "review",
       "size",
       "issue",
@@ -248,7 +225,6 @@ describe("deriveState check output", () => {
     expect(outputs).toMatchObject({
       draft: { kind: "values", values: { isDraft: true } },
       ci: { kind: "values", values: { status: "pending" } },
-      duplicate: { kind: "values", values: { isDuplicate: true, duplicateOf: 7 } },
       conflicts: { kind: "values", values: { hasConflicts: false } },
       paths: { kind: "values", values: { touchesForbiddenPaths: true } },
       size: { kind: "values", values: { files: 1, lines: 1 } },

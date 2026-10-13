@@ -134,7 +134,7 @@ async function readAuthorTeams(gh: GithubFetch, repo: string, author: string, te
 }
 
 /** The rules step's item for an open pull request, read as the facts director reads it, or the error response to return. */
-async function readItem(gh: GithubFetch, number: number, context: Omit<ItemContext, "openPrs">): Promise<RulesItem | Response> {
+async function readItem(gh: GithubFetch, number: number, context: ItemContext): Promise<RulesItem | Response> {
   const { repo } = context;
   try {
     const open = await listOpenPrs(gh, repo);
@@ -154,8 +154,7 @@ async function readItem(gh: GithubFetch, number: number, context: Omit<ItemConte
     ]);
     const checks = pr.sha ? await getChecks(gh, repo, pr.sha) : [];
     const membership = pr.author ? await readAuthorTeams(gh, repo, pr.author, roleTeams(context.policy, repo)) : null;
-    const openPrs = open.map((p) => ({ number: p.number, title: p.title }));
-    return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: membership }, { ...context, openPrs });
+    return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: membership }, context);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return failure(502, "github_failed", `Could not read ${repo}#${number} from GitHub: ${message}.`);

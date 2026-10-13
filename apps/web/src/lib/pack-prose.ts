@@ -82,18 +82,18 @@ export function isCatalogId(id: string): id is CatalogId {
   return (CATALOG_IDS as readonly string[]).includes(id);
 }
 
-/** pr-triage always runs this one; it is in no pack, so it has no name there. */
-const REVIEW_CHECK = { id: "review", name: "Changes requested" };
+/** pr-triage always runs these; they are in no pack, so they have no name there. */
+const BUILT_IN_NAMES: Record<string, string> = { review: "Changes requested", draft: "Draft" };
 
 export function checkName(pack: CheckPack, id: string): string {
-  if (id === REVIEW_CHECK.id) return REVIEW_CHECK.name;
+  if (Object.hasOwn(BUILT_IN_NAMES, id)) return BUILT_IN_NAMES[id]!;
   return isCatalogId(id) ? CHECK_CATALOG[id].name : pack.custom.find((row) => row.id === id)?.name ?? id;
 }
 
 /** A check's name; a custom check's waits for its pack. */
 export function checkLabel(pack: CheckPack | null, id: string): string | null {
   if (pack) return checkName(pack, id);
-  if (id === REVIEW_CHECK.id) return REVIEW_CHECK.name;
+  if (Object.hasOwn(BUILT_IN_NAMES, id)) return BUILT_IN_NAMES[id]!;
   return isCatalogId(id) ? CHECK_CATALOG[id].name : null;
 }
 

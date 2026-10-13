@@ -17,12 +17,8 @@ export const AUTHOR_ASSOCIATIONS = [
 export type AuthorAssociation = (typeof AUTHOR_ASSOCIATIONS)[number];
 
 export type RepoCheckFlags = {
-  draft: boolean;
   ci: boolean;
-  duplicate: boolean;
   conflicts: boolean;
-  reviewers: boolean;
-  drift: boolean;
 };
 
 export type RepoRole = { users?: string[]; teams?: string[] };
@@ -42,12 +38,8 @@ export type RepoPolicy = {
 };
 
 export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
-  draft: true,
   ci: true,
-  duplicate: true,
   conflicts: true,
-  reviewers: false,
-  drift: true,
 };
 
 export const DEFAULT_REPO_POLICY: RepoPolicy = {
@@ -65,12 +57,8 @@ export const repoPolicySchema = type({
   "enabled?": "boolean",
   "triageDrafts?": "boolean",
   "checks?": {
-    "draft?": "boolean",
     "ci?": "boolean",
-    "duplicate?": "boolean",
     "conflicts?": "boolean",
-    "reviewers?": "boolean",
-    "drift?": "boolean",
   },
   "roles?": { "[string]": { "users?": "string[]", "teams?": "string[]" } },
   "checkPack?": { name: "string" },
@@ -136,12 +124,8 @@ export function repoPolicy(raw: unknown): RepoPolicy {
     enabled: flag(source.enabled, false),
     triageDrafts: flag(source.triageDrafts, true),
     checks: {
-      draft: flag(checks.draft, true),
       ci: flag(checks.ci, true),
-      duplicate: flag(checks.duplicate, true),
       conflicts: flag(checks.conflicts, true),
-      reviewers: flag(checks.reviewers, false),
-      drift: flag(checks.drift, true),
     },
     roles: roles(source.roles),
     approvedAuthors: logins(source.approvedAuthors),

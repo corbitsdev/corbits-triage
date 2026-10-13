@@ -223,7 +223,7 @@ describe("bridge handler", () => {
       policy: expect.objectContaining({
         cleanupMode: "human-approved",
         enabled: true,
-        checks: { draft: true, ci: true, duplicate: true, conflicts: true, reviewers: false, drift: true },
+        checks: { ci: true, conflicts: true },
       }),
     })]);
   });

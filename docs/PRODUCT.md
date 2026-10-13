@@ -50,8 +50,9 @@ Deterministic: the same pull request and pack give the same result. A rule is
 unconfirmed only when GitHub has not computed what it needs yet, such as
 mergeability or CI.
 
-Built in: Draft, Size, Duplicate, Linked issue, Reviewers, Merge conflicts,
-Base drift, CI, Forbidden paths.
+Built in: Size, Linked issue, Merge conflicts, CI, Forbidden paths. Two run on
+every pull request without a switch: a draft is never ready, and a requested
+change waits on the author.
 
 Custom rules: paths unchanged, paths changed together, title pattern, branch
 pattern, required label, diff excludes a pattern, minimum approvals, and

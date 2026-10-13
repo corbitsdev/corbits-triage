@@ -14,13 +14,10 @@ const facts: PrFacts = {
   state: "open",
   draft: false,
   mergeable: true,
-  baseBehindBy: 0,
   checks: "success",
-  requestedReviewers: 1,
   reviewers: ["alice"],
   reviewedBy: [],
   approvals: 0,
-  openPrs: [],
   labels: [],
   assignees: [],
   paths: ["src/search.ts"],
@@ -31,7 +28,7 @@ const VENDOR: CustomCheck = { id: "custom-1", name: "Vendor", group: "code-vs-ci
 
 const pack: CheckPack = {
   ...emptyPack("acme/widgets"),
-  checks: { draft: { enabled: true }, conflicts: { enabled: true }, ci: { enabled: true } },
+  checks: { conflicts: { enabled: true }, ci: { enabled: true } },
   actions: [{ id: "approve", when: ["opened"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } }],
 };
 
@@ -62,7 +59,7 @@ describe("approving on every check", () => {
   });
 
   test("a check turned off no longer decides, and a custom check added later must pass", () => {
-    expect(suggested({ ...pack, checks: { ...pack.checks, draft: { enabled: false } } }, { draft: true })).toEqual([expect.objectContaining({ kind: "approve", branch: "yes" })]);
+    expect(suggested({ ...pack, checks: { ...pack.checks, conflicts: { enabled: false } } }, { mergeable: false })).toEqual([expect.objectContaining({ kind: "approve", branch: "yes" })]);
     const custom = { ...pack, custom: [VENDOR] };
     expect(suggested(custom)).toEqual([expect.objectContaining({ kind: "approve" })]);
     expect(suggested(custom, { paths: ["vendor/lib.ts"] })).toEqual([]);

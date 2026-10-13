@@ -38,10 +38,8 @@ export interface PrFacts {
   state: "open" | "closed";
   draft: boolean;
   mergeable: boolean | null;
-  baseBehindBy: number;
   checks: "success" | "failure" | "pending" | "none";
   failingChecks?: string[];
-  requestedReviewers: number;
   reviewers?: string[];
   approvals: number;
   changesRequested?: string[];
@@ -51,7 +49,6 @@ export interface PrFacts {
   reviewedBy?: string[];
   labels?: string[];
   assignees?: string[];
-  openPrs: Array<{ number: number; title: string }>;
   changedFiles?: number;
   additions?: number;
   deletions?: number;
@@ -97,13 +94,10 @@ export interface DeterministicResult {
   reason: string;
   findings: Finding[];
   checks: CheckResult[];
-  duplicateOf: number | null;
   needsJudgment: boolean;
   sources?: ReturnType<typeof classificationSources>;
 }
 
-export const DUPLICATE_THRESHOLD = 0.85;
-export const DRIFT_THRESHOLD = 50;
 export const NEEDS_SETUP_REASON = "This repository still needs check setup.";
 
 const CI_STATUS: Record<PrFacts["checks"], string> = { success: "passing", failure: "failing", pending: "pending", none: "none" };
@@ -117,30 +111,6 @@ const STATE_RANK: Record<TriageState, number> = {
   "stale-unknown": 5,
 };
 
-function tokens(s: string) {
-  return new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1));
-}
-
-export function titleSimilarity(a: string, b: string): number {
-  const ta = tokens(a);
-  const tb = tokens(b);
-  if (!ta.size || !tb.size) return 0;
-  let shared = 0;
-  for (const t of ta) if (tb.has(t)) shared++;
-  return shared / (ta.size + tb.size - shared);
-}
-
-/** Only the later PR (higher number) is a duplicate of an earlier one; the earlier is never flagged. */
-export function findDuplicate(facts: Pick<PrFacts, "number" | "title" | "openPrs">): { number: number; score: number } | null {
-  let best: { number: number; score: number } | null = null;
-  for (const other of facts.openPrs) {
-    if (other.number >= facts.number) continue;
-    const score = titleSimilarity(facts.title, other.title);
-    if (score >= DUPLICATE_THRESHOLD && (!best || score > best.score)) best = { number: other.number, score };
-  }
-  return best;
-}
-
 function rankTop(findings: Finding[]): Finding | null {
   return findings.reduce<Finding | null>(
     (w, f) => (!w || STATE_RANK[f.state] > STATE_RANK[w.state] ? f : w),
@@ -148,7 +118,7 @@ function rankTop(findings: Finding[]): Finding | null {
   );
 }
 
-function finish(findings: Finding[], checks: CheckResult[], duplicateOf: number | null, facts: PrFacts, pack?: CheckPack): DeterministicResult {
+function finish(findings: Finding[], checks: CheckResult[], facts: PrFacts, pack?: CheckPack): DeterministicResult {
   const top = rankTop(findings);
   const sources = pack ? classificationSources(pack) : undefined;
   // A draft cannot be merged, so it is never ready.
@@ -159,7 +129,6 @@ function finish(findings: Finding[], checks: CheckResult[], duplicateOf: number 
     reason: parked ? "pull request is a draft" : top?.reason ?? "all deterministic checks passed",
     findings,
     checks,
-    duplicateOf,
     needsJudgment: facts.state === "open" && state !== "stale-unknown" && hasModelChecks(sources),
     ...(sources ? { sources } : {}),
   };
@@ -194,7 +163,6 @@ export function issueReference(facts: Pick<PrFacts, "title" | "body" | "commits"
 
 interface CheckRules {
   enabled(id: CatalogId): boolean;
-  maxBehindBy: number;
   maxFiles?: number;
   maxLines?: number;
   forbiddenGlobs: string[];
@@ -207,7 +175,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
   function add(check: string, state: TriageState, reason: string) {
     findings.push({ check, state, reason });
   }
-  function result(check: CatalogId | "review", failed: boolean | null, reason: string, evidence: string[], output: CheckOutput) {
+  function result(check: CatalogId | "draft" | "review", failed: boolean | null, reason: string, evidence: string[], output: CheckOutput) {
     checks.push({
       check,
       kind: "machine",
@@ -218,39 +186,16 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
     });
   }
   const on = rules.enabled;
-  const dup = on("duplicate") ? findDuplicate(facts) : null;
 
   if (facts.state === "closed") add("state", "ready-monitoring", "pull request is closed");
   else {
-    if (on("draft")) {
-      result("draft", facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", [], { kind: "values", values: { isDraft: facts.draft } });
-    }
+    result("draft", facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", [], { kind: "values", values: { isDraft: facts.draft } });
     if (on("ci")) {
       const failing = facts.checks === "failure";
       if (failing) add("checks", "blocked", "required checks are failing");
       result("ci", failing, failing ? "required checks are failing" : `checks are ${facts.checks}`, failing ? facts.failingChecks ?? [] : [], { kind: "values", values: { status: CI_STATUS[facts.checks] } });
     }
-    if (on("duplicate")) {
-      if (dup) add("duplicate", "needs-decision", `possible duplicate of #${dup.number}`);
-      result("duplicate", dup !== null, dup ? "possible duplicate" : "no duplicate found", dup ? [`#${dup.number}`] : [], { kind: "values", values: dup ? { isDuplicate: true, duplicateOf: dup.number } : { isDuplicate: false } });
-    }
     if (on("conflicts") && facts.mergeable === false) add("conflicts", "blocked", "merge conflicts with base");
-    const unreviewed = facts.requestedReviewers === 0 && facts.approvals === 0;
-    if (on("reviewers")) {
-      if (unreviewed) add("reviewers", "awaiting-review", "no reviewers assigned");
-      result("reviewers", unreviewed, unreviewed ? "no reviewers assigned" : "reviewers assigned", [`${facts.requestedReviewers} requested, ${facts.approvals} approved`], {
-        kind: "values",
-        values: { requested: facts.requestedReviewers, approvals: facts.approvals },
-      });
-    }
-    const drifted = facts.baseBehindBy >= rules.maxBehindBy;
-    if (on("drift")) {
-      if (drifted) add("drift", "needs-decision", `base has drifted ${facts.baseBehindBy} commits`);
-      result("drift", drifted, drifted ? "base has drifted" : "base is current", [`${facts.baseBehindBy} commits behind (max ${rules.maxBehindBy})`], {
-        kind: "values",
-        values: { behindBy: facts.baseBehindBy },
-      });
-    }
     const requested = facts.changesRequested ?? [];
     if (requested.length) add("review", "needs-author-update", "a reviewer requested changes");
     const requestedReason = facts.reviewAnswered === true ? REVIEW_ANSWERED_REASON : "a reviewer requested changes";
@@ -303,13 +248,12 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack, roles: Re
     }
   }
 
-  return finish(findings, checks, dup?.number ?? null, facts, pack);
+  return finish(findings, checks, facts, pack);
 }
 
 function deriveFromPack(facts: PrFacts, pack: CheckPack, roles: Record<string, RepoRole>): DeterministicResult {
   return evaluate(facts, {
     enabled: (id) => catalogCheckEnabled(pack, id),
-    maxBehindBy: pack.checks.drift?.maxBehindBy ?? DRIFT_THRESHOLD,
     maxFiles: pack.checks.size?.maxFiles,
     maxLines: pack.checks.size?.maxLines,
     forbiddenGlobs: pack.checks.paths?.forbiddenGlobs ?? [],
@@ -327,7 +271,6 @@ export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack |
   const enabled: Partial<Record<CatalogId, boolean>> = repoPolicy(policy).checks;
   return evaluate(facts, {
     enabled: (id) => enabled[id] === true,
-    maxBehindBy: DRIFT_THRESHOLD,
     forbiddenGlobs: [],
     tracker: "off",
   });

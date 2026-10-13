@@ -75,19 +75,38 @@ describe("check pack contract", () => {
       schemaVersion: 1,
       repo: REPO,
       checks: {
-        draft: { enabled: true },
+        conflicts: { enabled: true },
         notACheck: { enabled: true },
         size: { enabled: false, maxFiles: 10, maxLines: 100 },
       },
     });
     expect(parsed?.checks).toEqual({
-      draft: { enabled: true },
+      conflicts: { enabled: true },
       size: { enabled: false, maxFiles: 10, maxLines: 100 },
     });
     expect(parsed?.custom).toEqual([]);
-    expect(catalogCheckEnabled(parsed!, "draft")).toBe(true);
+    expect(catalogCheckEnabled(parsed!, "conflicts")).toBe(true);
     expect(catalogCheckEnabled(parsed!, "size")).toBe(false);
     expect(catalogCheckEnabled(parsed!, "ci")).toBe(false);
+  });
+
+  test("a stored pack naming removed checks loads without them", () => {
+    const read = readCheckPack({
+      ...emptyPack(REPO),
+      checks: {
+        draft: { enabled: true },
+        duplicate: { enabled: true },
+        reviewers: { enabled: true },
+        drift: { enabled: true, maxBehindBy: 50 },
+        issue: { enabled: true, tracker: "github", requireLabel: true, label: "linked" },
+      },
+      actions: [
+        { ...BASE, checks: ["drift", "ci", "reviewers"] },
+        { ...BASE, id: "b", checks: ["draft", "duplicate"] },
+      ],
+    });
+    expect(read.checks).toEqual({ issue: { enabled: true, tracker: "github" } });
+    expect(read.actions).toEqual([{ ...BASE, checks: ["ci"] }]);
   });
 
   test("legacy custom round-trip; blanks dropped; last duplicate id wins", () => {
@@ -229,7 +248,7 @@ describe("check pack contract", () => {
       custom: CUSTOM,
     };
     const next = applyRecommended(started);
-    expect(next.checks.draft?.enabled).toBe(true);
+    expect(next.checks.size?.enabled).toBe(true);
     expect(next.custom).toEqual(started.custom);
   });
 });

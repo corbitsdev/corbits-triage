@@ -443,11 +443,8 @@ describe("focused candidate judge input", () => {
       state: "open",
       draft: false,
       mergeable: true,
-      baseBehindBy: 0,
       checks: "success",
-      requestedReviewers: 0,
       approvals: 0,
-      openPrs: [],
       files,
     };
   }

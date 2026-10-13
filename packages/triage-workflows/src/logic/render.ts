@@ -381,9 +381,6 @@ function failedStep(c: CheckResult, sources: Sources): Step {
         ? { actor: "maintainer", action: `Re-review: the author responded to changes requested by ${reviewers}` }
         : { actor: "author", action: `Address requested changes from ${reviewers}` };
     }
-    case "duplicate": return { actor: "maintainer", action: `Confirm duplicate of ${c.evidence.join(", ")} or keep` };
-    case "reviewers": return { actor: "maintainer", action: "Assign a reviewer" };
-    case "drift": return { actor: "maintainer", action: `Decide on base drift (${withoutLimit(c.evidence)})` };
     case "focused": return { actor: "author", action: `Split out unrelated change: ${c.evidence.join("; ")}` };
     default: {
       const rule = sources?.rules.find((r) => r.id === c.check);
@@ -566,8 +563,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const checks = [...det.checks, ...evaluated.checks];
   const score = scoreOf(evaluated.scores);
   if (!det.needsJudgment || !det.sources || !JUDGED_STATES.has(det.state)) {
-    const duplicate = det.duplicateOf !== null && det.state === "needs-decision";
-    const verdict = withChecks({ ...render(det.state), duplicate, close: false, degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
+    const verdict = withChecks({ ...render(det.state), duplicate: false, close: false, degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
     // Model answers do not drive this verdict, so the comment speaks only to the machine checks; a closed pull request gets none.
     return det.findings.some((f) => f.check === "state") ? { ...verdict, feedback: "" } : verdict;
   }

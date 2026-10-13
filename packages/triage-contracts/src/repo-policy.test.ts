@@ -14,12 +14,8 @@ describe("repoPolicy", () => {
       enabled: false,
       triageDrafts: true,
       checks: {
-        draft: true,
         ci: false,
-        duplicate: true,
         conflicts: true,
-        reviewers: false,
-        drift: true,
       },
       roles: {},
       approvedAuthors: [],
@@ -29,7 +25,7 @@ describe("repoPolicy", () => {
       policy: {
         enabled: false,
         triageDrafts: false,
-        checks: { draft: false, drift: false },
+        checks: { draft: false, conflicts: false },
         roles: {
           " maintainers ": { teams: ["core", " core "], users: [] },
           "": { users: ["ghost"] },
@@ -42,12 +38,8 @@ describe("repoPolicy", () => {
       enabled: false,
       triageDrafts: false,
       checks: {
-        draft: false,
         ci: true,
-        duplicate: true,
-        conflicts: true,
-        reviewers: false,
-        drift: false,
+        conflicts: false,
       },
       roles: { maintainers: { teams: ["core"] } },
       approvedAuthors: [],

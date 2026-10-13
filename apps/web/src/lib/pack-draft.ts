@@ -4,7 +4,6 @@ import {
   customCheckEnabled,
   packMergeThreshold,
   readCheckPack,
-  RECOMMENDED_DRIFT,
   RECOMMENDED_ISSUE,
   RECOMMENDED_PATHS,
   RECOMMENDED_SIZE,
@@ -65,7 +64,6 @@ function withPack(draft: RepoDraft, pack: Partial<CheckPack>): RepoDraft {
 export const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>> = {
   size: RECOMMENDED_SIZE,
   issue: RECOMMENDED_ISSUE,
-  drift: RECOMMENDED_DRIFT,
   paths: { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
 };
 

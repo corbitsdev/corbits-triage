@@ -9,23 +9,10 @@ export const CUSTOM_CHECK_CAP = 8;
 export const CHECK_PACK_GROUPS = ["pull-request", "issue", "around", "code-vs-ci"] as const;
 export type CheckPackGroup = (typeof CHECK_PACK_GROUPS)[number];
 
-export const CATALOG_IDS = [
-  "draft",
-  "size",
-  "duplicate",
-  "focused",
-  "docs",
-  "issue",
-  "reviewers",
-  "conflicts",
-  "drift",
-  "ci",
-  "tests",
-  "paths",
-] as const;
+export const CATALOG_IDS = ["size", "focused", "docs", "issue", "conflicts", "ci", "tests", "paths"] as const;
 export type CatalogId = (typeof CATALOG_IDS)[number];
 
-export const MACHINE_CHECK_IDS = ["draft", "size", "duplicate", "issue", "reviewers", "conflicts", "drift", "ci", "paths"] as const;
+export const MACHINE_CHECK_IDS = ["size", "issue", "conflicts", "ci", "paths"] as const;
 export type MachineCheckId = (typeof MACHINE_CHECK_IDS)[number];
 
 export const QUALITY_CHECK_IDS = ["focused", "docs", "tests"] as const;
@@ -35,33 +22,25 @@ export const ISSUE_TRACKERS = ["github", "linear", "either", "off"] as const;
 export type IssueTracker = (typeof ISSUE_TRACKERS)[number];
 
 export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGroup; kind: "machine" | "quality" }> = {
-  draft: { name: "Draft", group: "pull-request", kind: "machine" },
   size: { name: "Size", group: "pull-request", kind: "machine" },
-  duplicate: { name: "Duplicate", group: "pull-request", kind: "machine" },
   focused: { name: "Focused change", group: "pull-request", kind: "quality" },
   docs: { name: "Docs", group: "pull-request", kind: "quality" },
   issue: { name: "Linked issue", group: "issue", kind: "machine" },
-  reviewers: { name: "Reviewers", group: "around", kind: "machine" },
   conflicts: { name: "Merge conflicts", group: "around", kind: "machine" },
-  drift: { name: "Base drift", group: "around", kind: "machine" },
   ci: { name: "CI", group: "code-vs-ci", kind: "machine" },
   tests: { name: "Tests", group: "code-vs-ci", kind: "quality" },
   paths: { name: "Forbidden paths", group: "code-vs-ci", kind: "machine" },
 };
 
 export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
-export const RECOMMENDED_DRIFT = { maxBehindBy: 50 } as const;
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**"] } as const;
-export const RECOMMENDED_ISSUE = { tracker: "either", requireLabel: false, label: "" } as const;
+export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
 
 export type CatalogCheck = {
   enabled: boolean;
   maxFiles?: number;
   maxLines?: number;
   tracker?: IssueTracker;
-  requireLabel?: boolean;
-  label?: string;
-  maxBehindBy?: number;
   forbiddenGlobs?: string[];
 };
 
@@ -257,9 +236,6 @@ const CatalogCheckSchema = type({
   "maxFiles?": "number",
   "maxLines?": "number",
   "tracker?": type.enumerated(...ISSUE_TRACKERS),
-  "requireLabel?": "boolean",
-  "label?": "string",
-  "maxBehindBy?": "number",
   "forbiddenGlobs?": "string[]",
 });
 
@@ -298,6 +274,8 @@ export const checkPackSchema = type({
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
+/** Catalog checks since removed; stored packs may still name them, and they are dropped on read. */
+const RETIRED_IDS = new Set(["draft", "duplicate", "reviewers", "drift"]);
 const GROUP_SET = new Set<string>(CHECK_PACK_GROUPS);
 const TRACKER_SET = new Set<string>(ISSUE_TRACKERS);
 
@@ -342,20 +320,11 @@ export function recommendedPack(repo: string): CheckPack {
   return {
     ...base,
     checks: {
-      draft: { enabled: true },
       size: { enabled: true, maxFiles: RECOMMENDED_SIZE.maxFiles, maxLines: RECOMMENDED_SIZE.maxLines },
-      duplicate: { enabled: true },
       focused: { enabled: true },
       docs: { enabled: true },
-      issue: {
-        enabled: true,
-        tracker: RECOMMENDED_ISSUE.tracker,
-        requireLabel: RECOMMENDED_ISSUE.requireLabel,
-        label: RECOMMENDED_ISSUE.label,
-      },
-      reviewers: { enabled: false },
+      issue: { enabled: true, tracker: RECOMMENDED_ISSUE.tracker },
       conflicts: { enabled: true },
-      drift: { enabled: true, maxBehindBy: RECOMMENDED_DRIFT.maxBehindBy },
       ci: { enabled: true },
       tests: { enabled: true },
       paths: { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
@@ -404,12 +373,6 @@ function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefine
   }
   if (id === "issue") {
     if (typeof row.tracker === "string" && TRACKER_SET.has(row.tracker)) check.tracker = row.tracker as IssueTracker;
-    if (typeof row.requireLabel === "boolean") check.requireLabel = row.requireLabel;
-    if (typeof row.label === "string") check.label = row.label;
-  }
-  if (id === "drift") {
-    const maxBehindBy = finiteNumber(row.maxBehindBy);
-    if (maxBehindBy !== undefined) check.maxBehindBy = maxBehindBy;
   }
   if (id === "paths") {
     const globs = parseGlobs(row.forbiddenGlobs, "Forbidden paths globs");
@@ -680,6 +643,7 @@ function parseCheckRefs(raw: unknown, customIds: ReadonlySet<string>, where: str
   const refs = new Set<CheckRef>();
   for (const item of raw) {
     const id = text(item, where);
+    if (RETIRED_IDS.has(id)) continue;
     if (!CATALOG_SET.has(id) && !customIds.has(id)) {
       throw new Error(`${where} ${id} must be a catalog check or a custom check in this pack.`);
     }
@@ -688,12 +652,14 @@ function parseCheckRefs(raw: unknown, customIds: ReadonlySet<string>, where: str
   return [...refs];
 }
 
-function parseAction(raw: unknown, index: number, customIds: ReadonlySet<string>): Action {
+/** An action that checked only retired checks has no branch left to choose, so it is dropped. */
+function parseAction(raw: unknown, index: number, customIds: ReadonlySet<string>): Action | undefined {
   const row = record(raw, `Action ${index + 1}`);
   const id = text(row.id, `Action ${index + 1} id`);
   const where = `Action ${id}`;
   const when = parseWhen(row.when, `${where} when`);
   const checks = parseCheckRefs(row.checks, customIds, `${where} checks`);
+  if (checks.length === 0 && Array.isArray(row.checks) && row.checks.length > 0) return undefined;
   return { id, when, checks, branches: parseBranches(row.branches, checks.length > 0, `${where} branches`) };
 }
 
@@ -704,6 +670,7 @@ function parseActions(raw: unknown, customIds: ReadonlySet<string>): Action[] {
   const seen = new Set<string>();
   for (const [index, item] of raw.entries()) {
     const action = parseAction(item, index, customIds);
+    if (!action) continue;
     if (seen.has(action.id)) throw new Error(`Action ${action.id} is defined more than once.`);
     seen.add(action.id);
     actions.push(action);
