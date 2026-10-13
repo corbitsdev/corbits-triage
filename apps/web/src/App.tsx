@@ -15,6 +15,7 @@ import { OtherWorkspaces } from "./components/OtherWorkspaces.tsx";
 import { hasDecisionModelCredential } from "./lib/decision-models.ts";
 import { useGithubSync } from "./lib/github-sync.ts";
 import { AcceptInvite } from "./pages/AcceptInvite.tsx";
+import { Device, DEVICE_PATH } from "./pages/Device.tsx";
 import { Welcome } from "./pages/Welcome.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
@@ -131,6 +132,7 @@ function Gate() {
   if (!configured) return <NotConfigured />;
   if (!ready) return <LoadingGate />;
   if (!session) return <Welcome />;
+  if (path === DEVICE_PATH) return <Device />;
   if (path.startsWith(INVITE_PATH)) return <AcceptInvite token={path.slice(INVITE_PATH.length)} />;
   if (!snapshot) {
     if (invitations.length > 0) return <InvitationGate invitations={invitations} />;

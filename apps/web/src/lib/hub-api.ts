@@ -554,6 +554,16 @@ export async function revokeInvitation(transport: Transport, tenantId: string, i
   await transport.fetch("DELETE", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}/${enc(requireId(invitationId, "Invite id"))}`, {});
 }
 
+export type HubSessionRow = { id: string; userAgent: string | null; createdAt: string; expiresAt: string; isCurrent: boolean };
+
+export async function listSessions(transport: Transport): Promise<HubSessionRow[]> {
+  return (await transport.fetch<{ sessions: HubSessionRow[] }>("GET", "/api/integrations/sessions")).sessions;
+}
+
+export async function revokeSession(transport: Transport, sessionId: string): Promise<void> {
+  await transport.fetch("DELETE", `/api/integrations/sessions/${enc(requireId(sessionId, "Session id"))}`, {});
+}
+
 export async function listMyInvitations(transport: Transport): Promise<MyInvitation[]> {
   return (await transport.fetch<{ invitations: MyInvitation[] }>("GET", "/api/integrations/my-invitations")).invitations;
 }
