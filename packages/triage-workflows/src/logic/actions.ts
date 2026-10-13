@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { missingFrom } from "@corbits/github-tool";
 import type { ResolvedTarget } from "@corbits/github-tool/do";
-import { ALL_CHECKS, CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from "@corbits/triage-contracts";
+import { ALL_CHECKS, BUILT_IN_CHECK_NAMES, CHECK_CATALOG, type Action, type ActionKind, type CatalogId, type CheckPack, type Do, type RepoRole, teamSlug } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import type { MergeVerdict } from "./render.js";
 import { errorText } from "./extract.js";
@@ -46,7 +46,7 @@ export interface ActionInput {
 }
 
 export function checkName(id: string, pack: CheckPack): string {
-  return CHECK_CATALOG[id as CatalogId]?.name ?? pack.custom.find((c) => c.id === id)?.name ?? id;
+  return BUILT_IN_CHECK_NAMES.get(id) ?? CHECK_CATALOG[id as CatalogId]?.name ?? pack.custom.find((c) => c.id === id)?.name ?? id;
 }
 
 function joined(names: string[]): string {

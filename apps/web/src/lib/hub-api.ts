@@ -7,7 +7,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
+import { repoPolicy, readCheckPack, checkPackName, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type RepoRole, type TriageEvent } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 export const WORKSPACE_SLUG =
@@ -1731,7 +1731,8 @@ function checkResults(value: unknown): CheckResult[] {
   const out: CheckResult[] = [];
   for (const entry of value) {
     const c = obj(entry);
-    if (typeof c.check !== "string") continue;
+    // A verdict from before a check was removed may still list it.
+    if (typeof c.check !== "string" || RETIRED_CHECK_IDS.has(c.check)) continue;
     if (c.kind !== "machine" && c.kind !== "model") continue;
     if (!isCheckResult(c.result)) continue;
     out.push({ check: c.check, kind: c.kind, result: c.result, reason: typeof c.reason === "string" ? c.reason : null, evidence: strings(c.evidence), output: parseCheckOutput(c.output) ?? null, gate: c.gate === true });
@@ -1741,7 +1742,7 @@ function checkResults(value: unknown): CheckResult[] {
 
 /** A verdict recorded before the hub kept its detail still has each check's result. */
 function recordedChecks(checks: PullVerdict["checks"]): CheckResult[] {
-  return checks.flatMap(({ check, result }) => (isCheckResult(result) ? [{ check, kind: null, result, reason: null, evidence: [], output: null, gate: false }] : []));
+  return checks.flatMap(({ check, result }) => (isCheckResult(result) && !RETIRED_CHECK_IDS.has(check) ? [{ check, kind: null, result, reason: null, evidence: [], output: null, gate: false }] : []));
 }
 
 function canonicalPrHref(repo: string, number: number): string {

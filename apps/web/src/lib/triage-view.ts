@@ -115,7 +115,6 @@ export function approvalHeadline(approval: HubApproval): string {
   const repo = typeof args.repo === "string" ? args.repo : null;
   const number = typeof args.number === "number" ? `#${args.number}` : null;
   const target = [repo, number].filter(Boolean).join("");
-  if (target && args.close === true) return `An agent wants to post a triage comment and labels, then close ${target}`;
   return target ? `An agent wants to post a triage comment and labels on ${target}` : "An agent is waiting for your approval";
 }
 

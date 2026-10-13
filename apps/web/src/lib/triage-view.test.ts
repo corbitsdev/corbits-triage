@@ -3,7 +3,7 @@ import type { CheckOutput } from "@corbits/triage-contracts";
 import type { HubApproval, MergeVerdict, PrItem } from "./hub-api.ts";
 import { approvalHeadline, checkValueText, findPrItem, mergeText } from "./triage-view.ts";
 
-function approval(close: boolean): HubApproval {
+function approval(): HubApproval {
   return {
     id: "approval-1",
     runId: "run-1",
@@ -11,7 +11,7 @@ function approval(close: boolean): HubApproval {
     status: "pending",
     scope: null,
     toolDefinition: { name: "github_mirror" },
-    toolArguments: { repo: "acme/widgets", number: 8, close },
+    toolArguments: { repo: "acme/widgets", number: 8 },
     correlationId: "approval-1",
   };
 }
@@ -54,14 +54,8 @@ function item(repo: string, number: number): PrItem {
 }
 
 describe("approvalHeadline", () => {
-  test("states explicitly that approving close:true closes the pull request", () => {
-    expect(approvalHeadline(approval(true))).toBe(
-      "An agent wants to post a triage comment and labels, then close acme/widgets#8",
-    );
-  });
-
-  test("does not claim an ordinary mirror approval closes the pull request", () => {
-    expect(approvalHeadline(approval(false))).toBe(
+  test("names the pull request a mirror approval writes to", () => {
+    expect(approvalHeadline(approval())).toBe(
       "An agent wants to post a triage comment and labels on acme/widgets#8",
     );
   });

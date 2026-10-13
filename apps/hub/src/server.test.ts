@@ -395,7 +395,7 @@ async function seedDeployment(db: Db, dataDir: string, tenantId: string, runs: S
 async function seedRun(db: Db, dataDir: string, tenantId: string, dos: SeededDo[], headSha = HEAD): Promise<string> {
   const verdict = {
     repo: REPO, number: 8, headSha,
-    request: { repo: REPO, number: 8, labels: [], owned: [], comment: "", close: false },
+    request: { repo: REPO, number: 8, labels: [], owned: [], comment: "" },
     actions: dos.map((step) => verdictStep(step, headSha)),
   };
   const [runId] = await seedDeployment(db, dataDir, tenantId, [[
@@ -572,7 +572,7 @@ function timedRun(started: Date, tookMs: number, verdict: Record<string, unknown
 function statsVerdict(number: number, headSha: string, fields: Record<string, unknown>) {
   return {
     repo: REPO, number, headSha, state: "ready-monitoring", actor: "author", humanGated: false, degraded: null, checks: [], actions: [],
-    request: { repo: REPO, number, labels: [], owned: [], comment: "", close: false },
+    request: { repo: REPO, number, labels: [], owned: [], comment: "" },
     ...fields,
   };
 }
@@ -593,7 +593,7 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
     const ci = (result: string) => ({ check: "ci", kind: "machine", result, reason: "", evidence: [] });
     const started = new Date(Date.now() - 3_600_000);
     const [, unconfirmed] = await seedDeployment(db, dataDir, tenantId, [
-      timedRun(started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good", close: false } }), true),
+      timedRun(started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good" } }), true),
       timedRun(new Date(started.getTime() + 600_000), 180_000, statsVerdict(8, HEAD, {
         state: "awaiting-review", actor: "maintainer", checks: [ci("unconfirmed")], actions: [verdictStep(label, HEAD), verdictStep(note, HEAD)],
       })),

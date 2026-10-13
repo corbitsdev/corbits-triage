@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ALL_CHECKS, emptyPack, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { ALL_CHECKS, emptyPack, readCheckPack, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import { approvalHeldBy, evaluateActions, heldApprovals } from "./actions.js";
 import { deriveState, type PrFacts } from "./checks.js";
 import { renderVerdict } from "./render.js";
@@ -56,6 +56,12 @@ describe("approving on every check", () => {
     const held = [expect.objectContaining({ kind: "approve", skipped: true, reason: "CI has not passed on this head." })];
     expect(suggested(pack, { checks })).toEqual(held);
     expect(suggested({ ...pack, checks: { ...pack.checks, ci: { enabled: false } } }, { checks })).toEqual(held);
+  });
+
+  test("a stored action on draft and CI takes the no branch on a draft with CI green", () => {
+    const wip = { id: "wip", when: ["opened"], checks: ["draft", "ci"], branches: { yes: [{ kind: "approve", automatic: true, target: {} }], no: [{ kind: "labels", automatic: true, target: { from: "list", labels: ["wip"] } }] } };
+    const stored = readCheckPack(JSON.stringify({ ...pack, actions: [wip] }));
+    expect(suggested(stored, { draft: true })).toEqual([expect.objectContaining({ id: "wip", kind: "labels", branch: "no" })]);
   });
 
   test("a check turned off no longer decides, and a custom check added later must pass", () => {

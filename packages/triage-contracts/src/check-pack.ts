@@ -32,6 +32,12 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
   paths: { name: "Forbidden paths", group: "code-vs-ci", kind: "machine" },
 };
 
+/** Checks pr-triage runs on every pull request, outside any pack's switches. */
+export const BUILT_IN_CHECK_NAMES: ReadonlyMap<string, string> = new Map([["draft", "Draft"], ["review", "Changes requested"]]);
+
+/** Catalog checks since removed; stored packs and verdicts may still name them. */
+export const RETIRED_CHECK_IDS: ReadonlySet<string> = new Set(["duplicate", "reviewers", "drift"]);
+
 export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
@@ -143,7 +149,7 @@ export type TriageEvent = (typeof TRIAGE_EVENTS)[number];
 
 const COMMENT_BODY_MAX = 65536;
 
-export type CheckRef = CatalogId | `custom-${number}`;
+export type CheckRef = CatalogId | "draft" | `custom-${number}`;
 /** An action's reference to every check the pack runs, catalog and custom, as they are when it is evaluated. */
 export const ALL_CHECKS = "all";
 export type ActionCheckRef = CheckRef | typeof ALL_CHECKS;
@@ -274,8 +280,7 @@ export const checkPackSchema = type({
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
-/** Catalog checks since removed; stored packs may still name them, and they are dropped on read. */
-const RETIRED_IDS = new Set(["draft", "duplicate", "reviewers", "drift"]);
+const REFERENCEABLE = new Set<string>([...CATALOG_IDS, "draft"]);
 const GROUP_SET = new Set<string>(CHECK_PACK_GROUPS);
 const TRACKER_SET = new Set<string>(ISSUE_TRACKERS);
 
@@ -643,8 +648,8 @@ function parseCheckRefs(raw: unknown, customIds: ReadonlySet<string>, where: str
   const refs = new Set<CheckRef>();
   for (const item of raw) {
     const id = text(item, where);
-    if (RETIRED_IDS.has(id)) continue;
-    if (!CATALOG_SET.has(id) && !customIds.has(id)) {
+    if (RETIRED_CHECK_IDS.has(id)) continue;
+    if (!REFERENCEABLE.has(id) && !customIds.has(id)) {
       throw new Error(`${where} ${id} must be a catalog check or a custom check in this pack.`);
     }
     refs.add(id as CheckRef);

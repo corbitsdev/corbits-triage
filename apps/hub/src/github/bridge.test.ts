@@ -465,7 +465,7 @@ describe("bridge installation events", () => {
           installationId: 42,
           cleanupMode: "automated",
           enabled: false,
-          checks: { draft: false, ci: true, duplicate: true, conflicts: true, reviewers: true, drift: true },
+          checks: { ci: true, conflicts: false },
         }],
       },
     });
@@ -485,7 +485,7 @@ describe("bridge installation events", () => {
         selection: "selected",
         cleanupMode: "automated",
         enabled: false,
-        checks: expect.objectContaining({ draft: false }),
+        checks: expect.objectContaining({ conflicts: false }),
       }),
       expect.objectContaining({ name: "octocat/world", connected: true, installationId: 42, account: "octocat", selection: "selected" }),
     ]);

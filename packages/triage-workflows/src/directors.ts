@@ -355,7 +355,7 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   function mirrorCall(v: Verdict): ToolCall {
     const r = v.request;
     const stale = v.approvable === false && v.headSha !== null && decidesDos(v) ? { notReadyHead: v.headSha } : {};
-    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, close: false, ...stale }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
+    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, ...stale }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
   return {

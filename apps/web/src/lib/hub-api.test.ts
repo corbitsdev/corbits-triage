@@ -52,14 +52,14 @@ const decided = pull(8, {
   verdict: verdict("run-triage", "needs-decision", { labels: ["needs-decision"], feedback: "Needs a decision.", nextAction: "Decide" }, { humanGated: true }),
 });
 
-const approval = (id: string, close: boolean): HubApproval => ({
+const approval = (id: string): HubApproval => ({
   id,
-  runId: close ? "run-close" : "run-triage",
-  anchorRunId: close ? "run-close" : "run-triage",
+  runId: "run-triage",
+  anchorRunId: "run-triage",
   status: "pending",
   scope: null,
   toolDefinition: { name: "github_mirror" },
-  toolArguments: { repo: "acme/widgets", number: 8, labels: ["needs-decision"], comment: "Duplicate of #7", close },
+  toolArguments: { repo: "acme/widgets", number: 8, labels: ["needs-decision"], comment: "Needs a decision." },
   correlationId: id,
 });
 
@@ -78,25 +78,34 @@ const queue = (approvals: HubApproval[], pulls: PullTriage[] = [decided], openPu
 
 describe("approval projection", () => {
   test("a pending mirror approval needs a human", () => {
-    const [item] = queue([approval("mirror", false)]);
+    const [item] = queue([approval("mirror")]);
     expect(item).toMatchObject({ pendingApprovalId: "mirror", needsHuman: true });
   });
 
   test("a pull request that is no longer open is closed and needs no human", () => {
-    const [item] = queue([approval("mirror", false)], [decided], { repos: [{ repo: "acme/widgets", prs: [] }] });
+    const [item] = queue([approval("mirror")], [decided], { repos: [{ repo: "acme/widgets", prs: [] }] });
     expect(item).toMatchObject({ closed: true, needsHuman: false });
   });
 
   test("keeps the canonical pull request href when an approval is pending", () => {
-    const [item] = queue([approval("mirror", false)]);
+    const [item] = queue([approval("mirror")]);
     expect(item?.href).toBe("/triage/pr/acme/widgets/8");
     expect(item?.runId).toBe("run-triage");
   });
 });
 
+describe("check rows", () => {
+  test("a verdict's rows for checks since removed are left out", () => {
+    const rows = [{ check: "duplicate", kind: "machine", result: "pass", evidence: [] }, { check: "ci", kind: "machine", result: "pass", evidence: [] }];
+    const recorded = [{ check: "drift", result: "pass" }, { check: "ci", result: "pass" }];
+    const items = projectQueue([pull(8, { verdict: verdict("run-8", "ready", { checks: rows }) }), pull(9, { verdict: verdict("run-9", "ready", null, { checks: recorded }) })], [], undefined);
+    expect(items.map((item) => item.checks.map((c) => c.check))).toEqual([["ci"], ["ci"]]);
+  });
+});
+
 describe("needs-human queue sources", () => {
   test("includes pending approvals and awaited signals while human-gated PRs remain projected", () => {
-    const approvals = [approval("mirror", false)];
+    const approvals = [approval("mirror")];
     const waiting: RunLog = {
       runId: "run-waiting",
       anchorRunId: "run-waiting",
@@ -120,7 +129,7 @@ describe("All-view queue sources", () => {
       anchorRunId: "run-waiting",
       events: [{ seq: 4, type: "SignalAwaited", body: { signalName: "maintainer" } }],
     };
-    expect(queueRows([waiting], [approval("mirror", false)], true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
+    expect(queueRows([waiting], [approval("mirror")], true).map((row) => row.id)).toEqual(["mirror", "run-waiting:maintainer"]);
   });
 });
 

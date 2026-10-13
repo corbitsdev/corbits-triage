@@ -51,7 +51,7 @@ const VerdictStep = type({
   target: "object",
 });
 
-const MirrorRequest = type({ repo: "string", number: "number", labels: "string[]", owned: "string[]", comment: "string", close: "boolean" });
+const MirrorRequest = type({ repo: "string", number: "number", labels: "string[]", owned: "string[]", comment: "string" });
 
 export const DoRunView = type({
   effectId: "string",

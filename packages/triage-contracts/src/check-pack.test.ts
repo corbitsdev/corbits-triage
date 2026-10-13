@@ -103,10 +103,11 @@ describe("check pack contract", () => {
       actions: [
         { ...BASE, checks: ["drift", "ci", "reviewers"] },
         { ...BASE, id: "b", checks: ["draft", "duplicate"] },
+        { ...BASE, id: "c", checks: ["duplicate"] },
       ],
     });
     expect(read.checks).toEqual({ issue: { enabled: true, tracker: "github" } });
-    expect(read.actions).toEqual([{ ...BASE, checks: ["ci"] }]);
+    expect(read.actions).toEqual([{ ...BASE, checks: ["ci"] }, { ...BASE, id: "b", checks: ["draft"] }]);
   });
 
   test("legacy custom round-trip; blanks dropped; last duplicate id wins", () => {

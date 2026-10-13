@@ -382,7 +382,7 @@ describe("judge on a blocked pull request", () => {
     expect(verdict).toMatchObject({ state: "awaiting-review", degraded: null, mirror: true, humanGated: false, feedback, actor: "maintainer", nextAction: "Review once marked ready" });
     expect(verdict.merge.reasons).toEqual(["Failed: pull request is a draft", "Not confirmed: makes one focused change"]);
     expect(verdict.checks.find((c) => c.check === "draft")).toEqual({ check: "draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } });
-    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: feedback, close: false });
+    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: feedback });
   });
 
   test("a degraded verdict suggests no actions", async () => {
@@ -559,7 +559,7 @@ describe("focused candidate judge input", () => {
 });
 
 describe("mirror director cleanup mode", () => {
-  const request = { repo: "acme/widgets", number: 8, labels: ["ready-monitoring"], owned: TRIAGE_LABELS, comment: "Looks good", close: false };
+  const request = { repo: "acme/widgets", number: 8, labels: ["ready-monitoring"], owned: TRIAGE_LABELS, comment: "Looks good" };
   const verdict = {
     repo: "acme/widgets",
     number: 8,
@@ -603,7 +603,7 @@ describe("mirror director cleanup mode", () => {
 });
 
 describe("execute", () => {
-  const REQUEST = { repo: "acme/widgets", number: 8, labels: [], owned: [], comment: "", close: false };
+  const REQUEST = { repo: "acme/widgets", number: 8, labels: [], owned: [], comment: "" };
 
   function comment(index: number) {
     return { id: "hi", branch: "always", index, kind: "comment", automatic: true, reason: "Always applies.", effectId: `e${index}`, target: { body: "hi" } };

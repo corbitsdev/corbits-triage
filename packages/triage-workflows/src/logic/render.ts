@@ -147,8 +147,6 @@ export interface MergeVerdict {
 
 export interface RenderOutput extends Rendered {
   mirror: boolean;
-  /** No automated path sets this. */
-  close: boolean;
   /** The weakest model answer's confidence; null when no model check was asked. */
   score: number | null;
   /** @deprecated Read `score`; kept for one release because old run logs carry it. */
@@ -562,7 +560,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const checks = [...det.checks, ...evaluated.checks];
   const score = scoreOf(evaluated.scores);
   if (!det.needsJudgment || !det.sources || !JUDGED_STATES.has(det.state)) {
-    const verdict = withChecks({ ...render(det.state), close: false, degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
+    const verdict = withChecks({ ...render(det.state), degraded: null, reason: det.reason }, checks, score, ctx, det.checks);
     // Model answers do not drive this verdict, so the comment speaks only to the machine checks; a closed pull request gets none.
     return det.findings.some((f) => f.check === "state") ? { ...verdict, feedback: "" } : verdict;
   }
@@ -578,14 +576,13 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     : judgeSkipped === true ? NEEDS_JUDGE_REASON
       : outage ? `${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`
         : reasons.length ? reasons.join("; ") : det.reason;
-  return withChecks({ ...render(state), close: false, degraded: outage ? "inference-outage" : null, reason }, checks, score, ctx);
+  return withChecks({ ...render(state), degraded: outage ? "inference-outage" : null, reason }, checks, score, ctx);
 }
 
 export function degradedVerdict(reason: string, threshold: number): RenderOutput {
   return {
     ...render("stale-unknown"),
     mirror: false,
-    close: false,
     score: null,
     confidence: "unknown",
     merge: { verdict: "not-recommended", score: null, threshold, reasons: ["Could not evaluate"] },
@@ -604,7 +601,6 @@ export interface MirrorRequest {
   labels: string[];
   owned: readonly string[];
   comment: string;
-  close: boolean;
 }
 
 export type Verdict = RenderOutput & {
@@ -627,7 +623,6 @@ export function toMirrorRequest(v: RenderOutput & { repo: string; number: number
     labels: v.labels,
     owned: TRIAGE_LABELS,
     comment: v.feedback,
-    close: v.close,
   };
 }
 
