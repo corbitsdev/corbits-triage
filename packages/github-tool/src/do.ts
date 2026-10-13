@@ -5,6 +5,7 @@ import {
   addLabels,
   APPROVE_DO_MARKER,
   approvalOnHead,
+  changesRequestedOnHead,
   codeownersForPr,
   createIssueComment,
   createReview,
@@ -13,6 +14,7 @@ import {
   missingFrom,
   mirror,
   readPr,
+  REQUEST_CHANGES_DO_MARKER,
   requestReviewers,
   reviewedOnHead,
   type AppLogin,
@@ -72,7 +74,7 @@ export const DERIVED_LABELS_DO = "labels derived from the pull request cannot ru
 
 type People = { users: string[]; teams: string[] };
 
-/** A close, comment or approval reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
+/** A close, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
 function onHead(sha: string, { repo, number }: DoInput["request"], step: DoStep): void {
   if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);
 }
@@ -117,6 +119,14 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       const reviewId = await approvalOnHead(gh, { repo, number, sha: step.headSha, login: await login() });
       if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
       return { status: "done", result: await createReview(gh, { repo, number, body: APPROVE_DO_MARKER, event: "APPROVE", commitId: step.headSha }) };
+    }
+    case "request-changes": {
+      if (!("body" in target)) throw new Error("this request-changes Do has no body");
+      onHead((await readPr(gh, repo, number)).sha, request, step);
+      const reviewId = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login: await login() });
+      if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
+      const body = `${REQUEST_CHANGES_DO_MARKER}\n${target.body}`;
+      return { status: "done", result: await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha }) };
     }
     case "close": {
       const pr = await readPr(gh, repo, number);

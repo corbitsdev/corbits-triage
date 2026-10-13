@@ -17,6 +17,7 @@ const REPO = "acme/widgets";
 const HELLO: Action = { id: "hello", when: "every", checks: [], branches: { always: [{ kind: "comment", automatic: false, target: { body: "hi" } }] } };
 const AUTO_HELLO: Action = { ...HELLO, id: "auto-hello", branches: { always: [{ kind: "comment", automatic: true, target: { body: "hi" } }] } };
 const APPROVE: Action = { id: "approve", when: ["opened", "updated"], checks: [ALL_CHECKS], branches: { yes: [{ kind: "approve", automatic: true, target: {} }] } };
+const REQUEST_CHANGES: Action = { id: "ci-gate", when: "every", checks: ["ci"], branches: { no: [{ kind: "request-changes", automatic: true, target: {} }] } };
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 type Recorded = { method: string; path: string };
@@ -56,7 +57,7 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: { type: "Bot" }, body: prior }];
   const reviews: Review[] = [];
-  const pr: { head: string; draft: boolean; ci: Ci } = { head: "abc", draft: false, ci: "none" };
+  const pr: { head: string; draft: boolean; ci: Ci; dismissible: boolean } = { head: "abc", draft: false, ci: "none", dismissible: true };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
@@ -82,12 +83,13 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
     if (path === "/app") return Response.json({ slug: "corbits-triage" });
     if (path.startsWith(`/repos/${REPO}/pulls/8/reviews?`)) return Response.json(reviews);
     if (method === "POST" && path === `/repos/${REPO}/pulls/8/reviews`) {
-      const { commit_id, body } = JSON.parse(String(init?.body));
-      reviews.push({ id: reviews.length + 100, user: APP, state: "APPROVED", commit_id, body });
+      const { commit_id, body, event } = JSON.parse(String(init?.body));
+      reviews.push({ id: reviews.length + 100, user: APP, state: event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "APPROVED", commit_id, body });
       return Response.json(reviews.at(-1));
     }
     const dismissal = /^\/repos\/acme\/widgets\/pulls\/8\/reviews\/(\d+)\/dismissals$/.exec(path);
     if (method === "PUT" && dismissal) {
+      if (!pr.dismissible) return Response.json({ message: "Forbidden" }, { status: 403 });
       const review = reviews.find((row) => row.id === Number(dismissal[1]));
       if (review) review.state = "DISMISSED";
       return Response.json(review);
@@ -171,7 +173,7 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
   expect(terminalStatus).toBe("completed");
   const mirrors = Object.keys(outputs).filter((id) => id.startsWith("mirror"));
   const executed = (outputs["execute"] ?? outputs["executeRules"]) as { reply: string };
-  return { path: { invoked, mirrors }, requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
+  return { path: { invoked, mirrors }, mirrored: mirrors.map((id) => outputs[id]), requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
 }
 
 describe("pr-triage body", () => {
@@ -364,6 +366,34 @@ describe("pr-triage body", () => {
     const green = await triage(pack, { github });
     expect(green.dos).toEqual([expect.objectContaining({ status: "satisfied" })]);
     expect(github.reviews).toHaveLength(1);
+  });
+
+  function requesting() {
+    const github = fakeGithub();
+    github.pr.ci = "failure";
+    return { github, pack: { ...emptyPack(REPO), checks: { ci: { enabled: true } }, actions: [REQUEST_CHANGES] } };
+  }
+
+  test("failing CI requests changes on the head once; a later head with CI fixed takes the request back", async () => {
+    const { github, pack } = requesting();
+    await triage(pack, { github });
+    await triage(pack, { github });
+    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "CHANGES_REQUESTED", body: expect.stringContaining("Triage requests changes:\n- ") })]);
+    github.pr.head = "def";
+    github.pr.ci = "success";
+    await triage(pack, { github });
+    expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
+  });
+
+  test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {
+    const { github, pack } = requesting();
+    await triage(pack, { github });
+    github.pr.head = "def";
+    github.pr.ci = "success";
+    github.pr.dismissible = false;
+    const { mirrored } = await triage(pack, { github });
+    expect(JSON.stringify(mirrored)).toContain("changeRequestsKept");
+    expect(github.reviews).toEqual([expect.objectContaining({ state: "CHANGES_REQUESTED" })]);
   });
 
   test.each<[string, CheckPack]>([

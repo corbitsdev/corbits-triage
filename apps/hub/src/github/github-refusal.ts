@@ -9,6 +9,7 @@ export const GITHUB_VERB = {
   "request-review": "request reviewers on",
   review: "review",
   approve: "approve",
+  "request-changes": "request changes on",
   merge: "merge",
   close: "close",
 } as const;

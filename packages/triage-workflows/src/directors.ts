@@ -347,15 +347,23 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   let batch = false;
 
   function finish(results: BatchResults) {
-    const outcomes = [...results.values()].map((r) => ({ call: r.callId, ok: !r.isError, ...(r.isError ? { error: asText(r.content) } : {}) }));
+    const outcomes = [...results.values()].map(function outcome(r) {
+      const kept = data<{ changeRequestsKept?: unknown }>(r)?.changeRequestsKept;
+      return { call: r.callId, ok: !r.isError, ...(r.isError ? { error: asText(r.content) } : {}), ...(typeof kept === "string" ? { changeRequestsKept: kept } : {}) };
+    });
     return caps.reply(JSON.stringify(batch ? { results: outcomes } : (outcomes[0] ?? { skipped: true })));
   }
 
-  /** A settled head that may not be approved takes back the approve Do's approvals, of it or earlier heads, in a pack that approves. */
+  /**
+   * A settled head that may not be approved takes back the approve Do's approvals, of it or earlier heads, in a pack that approves;
+   * one with nothing left for the author to fix takes back the request-changes Do's requests, in a pack that requests changes.
+   */
   function mirrorCall(v: Verdict): ToolCall {
     const r = v.request;
-    const stale = v.approvable === false && v.headSha !== null && decidesDos(v) ? { notReadyHead: v.headSha } : {};
-    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, ...stale }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
+    const settled = v.headSha !== null && decidesDos(v);
+    const stale = settled && v.approvable === false ? { notReadyHead: v.headSha } : {};
+    const fixed = settled && v.changesWanted === false ? { fixedHead: v.headSha } : {};
+    return call("github_mirror_auto", { repo: r.repo, number: r.number, labels: r.labels, owned: r.owned, comment: r.comment, ...stale, ...fixed }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
   return {

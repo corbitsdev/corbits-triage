@@ -41,6 +41,7 @@ export const DO_NAMES: Record<ActionKind, string> = {
   "request-review": "Request review",
   comment: "Comment",
   approve: "Approve",
+  "request-changes": "Request changes on the pull request",
   close: "Close",
   agent: "Run an agent",
 };
@@ -52,6 +53,7 @@ export const DONE_DO_NAMES: Record<ActionKind, string> = {
   "request-review": "Requested review",
   comment: "Posted comment",
   approve: "Approved the pull request",
+  "request-changes": "Requested changes on the pull request",
   close: "Closed the pull request",
   agent: "Ran an agent",
 };
@@ -155,6 +157,8 @@ function doAction(step: Do): string {
       return `comment ${quoted(step.target.body)}`;
     case "approve":
       return "approve the pull request";
+    case "request-changes":
+      return "request changes on the pull request";
     case "close":
       return "close it";
     case "agent":
