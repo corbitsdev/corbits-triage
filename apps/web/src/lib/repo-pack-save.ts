@@ -1,6 +1,6 @@
 import { emptyPack, repoPolicy, type CheckPack } from "@corbits/triage-contracts";
 import { StaleCheckPackError } from "./check-pack.ts";
-import { fromPack, packChanges, policyChange, policyChanges, toPack, type RepoDraft } from "./pack-draft.ts";
+import { fromPack, packChanges, policyChanges, toPack, type RepoDraft } from "./pack-draft.ts";
 import { draftPolicy, type LoadedRepoPack, type PackRef, type RepoPackStore } from "./repo-pack-store.ts";
 
 /** What the hub holds for the repository, as far as the panel knows. */
@@ -61,7 +61,7 @@ export async function saveDraft(store: RepoPackStore, repo: string, session: Pac
   if (!current.unlinked && policyChanges(current.saved.policy, draft.policy) === 0) return { session: current, draft: shown, failure: null };
   const policy = draftPolicy(repoPolicy(draft.policy));
   try {
-    await store.writePolicy(repo, policyChange(current.saved.policy, policy), current.loaded !== null && current.corrupt === null);
+    await store.writePolicy(repo, policy, current.loaded !== null && current.corrupt === null);
   } catch (cause) {
     const message = current.unlinked
       ? `The checks are saved and in effect, but could not be linked to the repository. Save again to link them. ${messageOf(cause)}`

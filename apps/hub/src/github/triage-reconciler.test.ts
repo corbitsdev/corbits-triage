@@ -453,12 +453,12 @@ describe("triage reconciler", () => {
   });
 
   test("verdicts on another commit or with unconfirmed checks are queued again with their reason", async () => {
-    const unconfirmed = [{ check: "conflicts", kind: "machine", result: "unconfirmed" }, { check: "tests", kind: "model", result: "unconfirmed" }];
+    const unconfirmed = [{ check: "conflicts", kind: "machine", result: "unconfirmed" }, { check: "docs", kind: "model", result: "unconfirmed" }];
     const logs: Logs = {
       [repoKey(LIVE.runId)]: {
         run_other_head: [started(2), rendered({ ...current(2), headSha: "sha2-pushed" }), completed],
         run_unconfirmed: [started(3), rendered({ ...current(3), checks: unconfirmed }), completed],
-        run_not_asked: [started(4), rendered({ ...current(4), checks: [{ check: "tests", kind: "model", result: "unconfirmed" }] }), completed],
+        run_not_asked: [started(4), rendered({ ...current(4), checks: [{ check: "docs", kind: "model", result: "unconfirmed" }] }), completed],
       },
     };
     const { reconcile, delivered, saved, logged } = harness(logs, [head(2), head(3), head(4)]);

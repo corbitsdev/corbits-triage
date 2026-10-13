@@ -305,7 +305,7 @@ describe("workspace GitHub App and repository lifecycle", () => {
         if (method === "GET" && path === "/api/tenants/tenant") {
           return { id: "tenant", config: { corbitsTriage: { repos: [{ name: "acme/one", connected: true }, { name: "acme/two", connected: true }] } } } as never;
         }
-        if (method === "PUT" || method === "DELETE") return undefined as never;
+        if (method === "PATCH" || method === "DELETE") return undefined as never;
         throw new Error(`unexpected ${method} ${path}`);
       },
       subscribe: () => () => {},
@@ -316,9 +316,9 @@ describe("workspace GitHub App and repository lifecycle", () => {
     expect(calls).toEqual([
       { method: "GET", path: "/api/tenants/tenant", body: undefined },
       {
-        method: "PUT",
-        path: "/api/integrations/triage-config/tenant",
-        body: { rev: 0, config: { repos: [{ name: "acme/two", connected: true }] } },
+        method: "PATCH",
+        path: "/api/tenants/tenant",
+        body: { config: { corbitsTriage: { rev: 0, repos: [{ name: "acme/two", connected: true }] } } },
       },
     ]);
   });
@@ -340,7 +340,7 @@ describe("workspace GitHub App and repository lifecycle", () => {
         if (method === "GET" && path === "/api/tenants/tenant") {
           return { id: "tenant", name: "Acme", slug: "acme", config: {} } as never;
         }
-        if (method === "PUT" && path === "/api/integrations/triage-config/tenant") return undefined as never;
+        if (method === "PATCH" && path === "/api/tenants/tenant") return undefined as never;
         throw new Error(`unexpected ${method} ${path}`);
       },
       subscribe: () => () => {},
@@ -382,26 +382,32 @@ describe("workspace GitHub App and repository lifecycle", () => {
         secret: "sk-test",
       }),
     });
-    const configSave = calls.find((call) => call.method === "PUT" && call.path === "/api/integrations/triage-config/tenant");
-    expect(configSave?.body).toMatchObject({
-      config: { inference: { endpoint: "https://inference.example/v1", model: "triage-large" } },
+    const configPatch = calls.find((call) => call.method === "PATCH" && call.path === "/api/tenants/tenant");
+    expect(configPatch?.body).toMatchObject({
+      config: { corbitsTriage: { inference: { endpoint: "https://inference.example/v1", model: "triage-large" } } },
     });
   });
 });
 
 describe("patchAppConfig CAS", () => {
-  test("on a conflict re-reads and re-applies the update to the newer settings", async () => {
+  test("retries 409 then PATCHes the observed rev", async () => {
     let gets = 0;
-    const saves: unknown[] = [];
+    const patches: unknown[] = [];
     const transport: Transport = {
       fetch: async (method, path, body) => {
         if (method === "GET" && path === "/api/tenants/tenant") {
           gets += 1;
-          return { id: "tenant", config: { other: 1, corbitsTriage: { rev: gets, labelMap: { at: gets } } } } as never;
+          return {
+            id: "tenant",
+            name: "Tenant",
+            slug: "tenant",
+            config: { other: 1, corbitsTriage: { rev: gets, repos: [{ name: "acme/one", connected: true }] } },
+          } as never;
         }
-        if (method === "PUT" && path === "/api/integrations/triage-config/tenant") {
-          saves.push(body);
-          if ((body as { rev: number }).rev !== 2) throw new ApiError(409, "config_conflict", "config_conflict");
+        if (method === "PATCH" && path === "/api/tenants/tenant") {
+          patches.push(body);
+          const rev = (body as { config: { corbitsTriage: { rev?: number } } }).config.corbitsTriage.rev;
+          if (rev !== 2) throw new ApiError(409, "config_conflict", "config_conflict");
           return undefined as never;
         }
         throw new Error(`unexpected ${method} ${path}`);
@@ -409,21 +415,31 @@ describe("patchAppConfig CAS", () => {
       subscribe: () => () => {},
     };
 
-    await patchAppConfig(transport, "tenant", (current) => ({ ...current, repos: [{ name: "acme/two", connected: true }] }));
+    await patchAppConfig(transport, "tenant", (current) => ({
+      ...current,
+      repos: [{ name: "acme/two", connected: true }],
+    }));
 
-    expect(saves).toEqual([
-      { rev: 1, config: { rev: 1, labelMap: { at: 1 }, repos: [{ name: "acme/two", connected: true }] } },
-      { rev: 2, config: { rev: 2, labelMap: { at: 2 }, repos: [{ name: "acme/two", connected: true }] } },
-    ]);
+    expect(gets).toBe(2);
+    expect(patches).toHaveLength(2);
+    expect(patches[0]).toMatchObject({ config: { corbitsTriage: { rev: 1 } } });
+    expect(patches[1]).toEqual({
+      config: {
+        other: 1,
+        corbitsTriage: { rev: 2, repos: [{ name: "acme/two", connected: true }] },
+      },
+    });
   });
 
-  test("gives up after 3 conflicts", async () => {
-    let saves = 0;
+  test("gives up after 8 conflicts", async () => {
+    let patches = 0;
     const transport: Transport = {
       fetch: async (method, path) => {
-        if (method === "GET" && path === "/api/tenants/tenant") return { id: "tenant", config: { corbitsTriage: { rev: 1 } } } as never;
-        if (method === "PUT") {
-          saves += 1;
+        if (method === "GET" && path === "/api/tenants/tenant") {
+          return { id: "tenant", config: { corbitsTriage: { rev: 1 } } } as never;
+        }
+        if (method === "PATCH") {
+          patches += 1;
           throw new ApiError(409, "config_conflict", "config_conflict");
         }
         throw new Error(`unexpected ${method} ${path}`);
@@ -431,7 +447,7 @@ describe("patchAppConfig CAS", () => {
       subscribe: () => () => {},
     };
     await expect(patchAppConfig(transport, "tenant", (current) => current)).rejects.toBeInstanceOf(ApiError);
-    expect(saves).toBe(3);
+    expect(patches).toBe(8);
   });
 });
 
@@ -541,13 +557,13 @@ describe("repository policy config", () => {
     })]);
   });
 
-  test("saveRepoSettings writes only the changed settings and roles onto the stored row", async () => {
+  test("saveRepoSettings PATCHes only that repo and spreads other fields", async () => {
     let config: Record<string, unknown> = {
       other: 1,
       corbitsTriage: {
         confidenceFloor: 0.7,
         repos: [
-          { name: "acme/one", connected: true, installationId: 9, cleanupMode: "automated", roles: { reviewers: { users: ["ada"] }, gone: { users: ["eve"] } } },
+          { name: "acme/one", connected: true, installationId: 9 },
           { name: "acme/two", connected: true, cleanupMode: "automated" },
         ],
       },
@@ -557,8 +573,8 @@ describe("repository policy config", () => {
         if (method === "GET" && path === "/api/tenants/tenant") {
           return { id: "tenant", name: "Tenant", slug: "tenant", config } as never;
         }
-        if (method === "PUT" && path === "/api/integrations/triage-config/tenant") {
-          config = { ...config, corbitsTriage: (body as { config: Record<string, unknown> }).config };
+        if (method === "PATCH" && path === "/api/tenants/tenant") {
+          config = (body as { config: Record<string, unknown> }).config;
           return undefined as never;
         }
         throw new Error(`unexpected ${method} ${path}`);
@@ -566,7 +582,12 @@ describe("repository policy config", () => {
       subscribe: () => () => {},
     };
 
-    await saveRepoSettings(transport, "tenant", "acme/one", { enabled: false, roles: { owners: { users: ["bob"] }, gone: null } }, false);
+    await saveRepoSettings(transport, "tenant", "acme/one", {
+      cleanupMode: "automated",
+      enabled: false,
+      triageDrafts: false,
+      roles: {},
+    }, false);
 
     expect(config.other).toBe(1);
     const ns = config.corbitsTriage as { confidenceFloor: number; repos: Array<Record<string, unknown>> };
@@ -577,9 +598,9 @@ describe("repository policy config", () => {
       installationId: 9,
       cleanupMode: "automated",
       enabled: false,
+      triageDrafts: false,
+      roles: {},
     });
-    expect(ns.repos[0]!.roles).toEqual({ reviewers: { users: ["ada"] }, owners: { users: ["bob"] } });
-    expect(ns.repos[0]).not.toHaveProperty("triageDrafts");
     expect(ns.repos[0]).not.toHaveProperty("checkPack");
     expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, cleanupMode: "automated" });
   });

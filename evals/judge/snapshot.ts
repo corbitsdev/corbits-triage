@@ -1,11 +1,11 @@
 // Freezes the labelled pull requests into pulls/<number>.json as GitHub serves them, with the repository's docs at the
-// base, and writes cases.jsonl: each pull request as merged, without its tests or docs where it needs them, and the
+// base, and writes cases.jsonl: each pull request as merged, without its docs where it needs them, and the
 // labelled mixes of two unrelated pull requests.
 //
 //   bun evals/judge/snapshot.ts
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isDocPath, isTestPath } from "../../packages/triage-contracts/src/paths.js";
+import { isDocPath } from "../../packages/triage-contracts/src/paths.js";
 import { variant, type CaseInput, type Expected, type FileRow, type JudgeCase, type Labels, type Snapshot, type StoredSnapshot } from "./cases.js";
 
 const here = new URL(".", import.meta.url).pathname;
@@ -65,9 +65,8 @@ function snapshot(number: number): Snapshot {
   };
 }
 
-function expected(pr: Snapshot, needsTests: boolean, needsDocs: boolean, focused: Expected["focused"]): Expected {
-  const has = (match: (path: string) => boolean) => pr.files.some((file) => match(file.filename));
-  return { tests: needsTests && !has(isTestPath) ? "fail" : "pass", docs: needsDocs && !has(isDocPath) ? "fail" : "pass", focused };
+function expected(pr: Snapshot, needsDocs: boolean, focused: Expected["focused"]): Expected {
+  return { docs: needsDocs && !pr.files.some((file) => isDocPath(file.filename)) ? "fail" : "pass", focused };
 }
 
 /** Writes each doc once under its content hash and points the snapshot at it. */
@@ -91,25 +90,22 @@ for (const key of Object.keys(labels.pulls)) {
 }
 
 const cases: JudgeCase[] = [];
-function add(id: string, input: CaseInput, label: { needsTests: boolean; needsDocs: boolean }, focused: Expected["focused"]) {
+function add(id: string, input: CaseInput, needsDocs: boolean, focused: Expected["focused"]) {
   const base = pulls.get(input.pull)!;
   const pr = variant(base, input, input.mix === undefined ? undefined : pulls.get(input.mix));
-  cases.push({ name: id, input, expect: expected(pr, label.needsTests, label.needsDocs, focused) });
+  cases.push({ name: id, input, expect: expected(pr, needsDocs, focused) });
 }
 for (const [key, label] of Object.entries(labels.pulls)) {
   const pull = Number(key);
   const pr = pulls.get(pull)!;
-  add(key, { pull }, label, "pass");
-  if (label.needsTests && pr.files.some((file) => isTestPath(file.filename))) add(`${key}-no-tests`, { pull, drop: "tests" }, label, "pass");
-  if (label.needsDocs && pr.files.some((file) => isDocPath(file.filename))) add(`${key}-no-docs`, { pull, drop: "docs" }, label, "pass");
+  add(key, { pull }, label.needsDocs, "pass");
+  if (label.needsDocs && pr.files.some((file) => isDocPath(file.filename))) add(`${key}-no-docs`, { pull, drop: "docs" }, true, "pass");
 }
 for (const [pull, mix] of labels.mixes) {
-  const [a, b] = [labels.pulls[pull]!, labels.pulls[mix]!];
-  add(`${pull}+${mix}`, { pull, mix }, { needsTests: a.needsTests || b.needsTests, needsDocs: a.needsDocs || b.needsDocs }, "fail");
+  add(`${pull}+${mix}`, { pull, mix }, labels.pulls[pull]!.needsDocs || labels.pulls[mix]!.needsDocs, "fail");
 }
 for (const [pull, mix] of labels.describedMixes) {
-  const [a, b] = [labels.pulls[pull]!, labels.pulls[mix]!];
-  add(`${pull}+${mix}-described`, { pull, mix, described: true }, { needsTests: a.needsTests || b.needsTests, needsDocs: a.needsDocs || b.needsDocs }, "fail");
+  add(`${pull}+${mix}-described`, { pull, mix, described: true }, labels.pulls[pull]!.needsDocs || labels.pulls[mix]!.needsDocs, "fail");
 }
 writeFileSync(`${here}cases.jsonl`, `${cases.map((row) => JSON.stringify(row)).join("\n")}\n`);
 console.log(`${cases.length} cases`);

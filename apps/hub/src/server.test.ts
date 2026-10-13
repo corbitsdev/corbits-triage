@@ -234,7 +234,6 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/triage-stats/{tenantId}": ["get"],
     "/api/integrations/triage-timeline/{tenantId}": ["get"],
     "/api/integrations/triage-verdicts/{tenantId}": ["get"],
-    "/api/integrations/triage-config/{tenantId}": ["put"],
     "/api/integrations/workflow-deploy/{tenantId}": ["post"],
     "/api/integrations/workflow-versions/{tenantId}": ["get"],
     "/api/integrations/invitations/{tenantId}": ["post", "get"],
@@ -342,8 +341,8 @@ async function connectGithub(origin: string, headers: Record<string, string>, te
     body: JSON.stringify({ providerId, name: "github", type: "api_key", secret: JSON.stringify({ appId: "1", privateKey }), metadata: { appSlug: "corbits" } }),
   });
   expect(credential.status).toBe(201);
-  const enable = await fetch(`${origin}/api/integrations/triage-config/${tenantId}`, {
-    method: "PUT", headers, body: JSON.stringify({ rev: 0, config: { repos: [{ name: REPO, connected: true, enabled: true }] } }),
+  const enable = await fetch(`${origin}/api/tenants/${tenantId}`, {
+    method: "PATCH", headers, body: JSON.stringify({ config: { corbitsTriage: { rev: 0, repos: [{ name: REPO, connected: true, enabled: true }] } } }),
   });
   expect(enable.status).toBe(200);
   return providerId;

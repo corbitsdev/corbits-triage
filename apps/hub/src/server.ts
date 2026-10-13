@@ -46,7 +46,6 @@ import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.j
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpInviteEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
-import { createTriageConfig } from "./triage-config.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
@@ -78,7 +77,7 @@ import { createSettledStatusReader, createTriageRuns } from "./github/triage-run
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { guardTenantPatch, migrateRepoEnabledFlag, tenantManagerRefusal } from "./github/tenant-config.js";
+import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManagerRefusal } from "./github/tenant-config.js";
 import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "../../../packages/triage-workflows/src/pr-triage.js";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "../../../packages/triage-workflows/src/pr-triage-historical.js";
 import { githubRead, githubWrite } from "../../../packages/github-tool/src/index.js";
@@ -509,13 +508,6 @@ const integrations = createIntegrationsApp({
     githubApiOrigin: githubOrigin,
     now,
   }),
-  triageConfig: createTriageConfig({
-    db: composition.db,
-    cipher: composition.credentialCipher,
-    getSession: composition.getSession,
-    trustedPortalOrigins,
-    authorize: authorizePortal,
-  }),
   workflowDeploy: createWorkflowDeploy({
     db: composition.db,
     cipher: composition.credentialCipher,
@@ -590,7 +582,7 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       }
       const refused = await tenantManagerRefusal({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
       if (refused) return refused;
-      const prepared = await guardTenantPatch(req);
+      const prepared = await prepareCorbitsTriagePatch(composition.db, tenantId, req);
       if (prepared instanceof Response) return prepared;
       return stock.fetch(prepared, server);
     }

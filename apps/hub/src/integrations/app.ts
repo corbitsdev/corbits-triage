@@ -20,7 +20,6 @@ import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.
 import { TRIAGE_VERDICTS_PATH, TriageVerdicts } from "../github/triage-verdicts.js";
 import { AcceptBody, Accepted, INVITATIONS_PATH, InvitationCreated, InvitationList, InviteBody, MY_INVITATIONS_PATH, MyInvitations } from "../invitations/invitations.js";
 import { SESSIONS_PATH, SessionList } from "../sessions.js";
-import { TRIAGE_CONFIG_PATH, TriageConfigBody, TriageConfigSaved } from "../triage-config.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { DeployedVersions, WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
@@ -43,7 +42,6 @@ export type IntegrationHandlers = {
   triageStats: TenantHandler;
   triageTimeline: TenantHandler;
   triageVerdicts: TenantHandler;
-  triageConfig: TenantHandler;
   workflowDeploy: TenantHandler;
   workflowVersions: TenantHandler;
   invitations: {
@@ -373,25 +371,6 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
       },
     }),
     tenantRoute(handlers.triageVerdicts),
-  );
-
-  app.put(
-    `${TRIAGE_CONFIG_PATH}/:tenantId`,
-    describeRoute({
-      summary: "Save the workspace's triage settings",
-      description: "Needs `tenant:<id>` manage. Replaces `config.corbitsTriage` when `rev` is still the stored revision and stores it at `rev + 1`; otherwise answers 409, and the caller re-reads the settings, re-applies its change and saves again.",
-      tags: TAGS,
-      requestBody: body(TriageConfigBody),
-      responses: {
-        200: json("Saved revision and settings", TriageConfigSaved),
-        ...invalid,
-        401: failures[401],
-        403: failures[403],
-        404: json("Workspace not found", Failure),
-        409: json("The settings changed since `rev`", Failure),
-      },
-    }),
-    tenantRoute(handlers.triageConfig),
   );
 
   app.post(

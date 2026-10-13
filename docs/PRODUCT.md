@@ -48,7 +48,7 @@ Each check says how it is evaluated. There are three kinds; two exist today.
 | Kind | Evaluates | Cost | Use it for |
 | --- | --- | --- | --- |
 | Rule | GitHub data only: files, diff, title, branch, labels, reviews, CI, author. No inference. | GitHub API calls. | Anything GitHub already knows. |
-| Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs or tests. |
+| Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs. |
 | Agent | Planned, not built. | | |
 
 ### Rules
@@ -80,14 +80,14 @@ a choice, never free text:
 Score and Choose are each asked as one yes or no question.
 
 Built in: Focused change (each change is classified against the primary
-change), Docs and Tests (each changed file is asked whether it needs them;
-changing a doc or test file satisfies the check).
+change) and Docs (each changed file is asked whether it needs docs;
+changing a doc file satisfies the check).
 
 Answers are probabilities, and each check decides only clear of a band
 around a coin flip:
 
-- **Is true, Score, Choose, Docs, Tests**: yes at 0.7 or above, no at 0.3 or
-  below. Docs and Tests ask per file; one file that needs them fails the check.
+- **Is true, Score, Choose, Docs**: yes at 0.7 or above, no at 0.3 or
+  below. Docs asks per file; one file that needs docs fails the check.
 - **Focused change**: a change is unrelated at 0.6 or above for unrelated,
   and part of the change at 0.6 or above for the other choices combined.
 

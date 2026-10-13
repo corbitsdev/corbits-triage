@@ -177,23 +177,23 @@ describe("focused rendering", () => {
     const det: DeterministicResult = {
       ...FOCUSED_DET,
       sources: {
-        quality: [{ id: "tests", group: "code-vs-ci" }],
+        quality: [{ id: "docs", group: "code-vs-ci" }],
         custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "Keeps boundaries" }],
         rules: [],
       },
     };
-    const plan: QualityPlan = { tests: { changed: [], asked: { "tests-file-001": "src/a.ts" }, unread: [] } };
-    function results(tests: number, custom: number) {
-      const answers = noul({ "tests-file-001": tests, "custom-1": custom });
+    const plan: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] } };
+    function results(docs: number, custom: number) {
+      const answers = noul({ "docs-file-001": docs, "custom-1": custom });
       return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ check, result, evidence }) => [check, result, evidence]);
     }
-    expect(results(0.9, 0.2)).toEqual([["tests", "fail", ["src/a.ts"]], ["custom-1", "fail", []]]);
-    expect(results(0.5, 0.5)).toEqual([["tests", "unconfirmed", []], ["custom-1", "unconfirmed", []]]);
-    expect(results(0.2, 0.9)).toEqual([["tests", "pass", []], ["custom-1", "pass", []]]);
+    expect(results(0.9, 0.2)).toEqual([["docs", "fail", ["src/a.ts"]], ["custom-1", "fail", []]]);
+    expect(results(0.5, 0.5)).toEqual([["docs", "unconfirmed", []], ["custom-1", "unconfirmed", []]]);
+    expect(results(0.2, 0.9)).toEqual([["docs", "pass", []], ["custom-1", "pass", []]]);
 
     const duplicate = parseAnswers('{"id":"custom-1","type":"noul","noul":0.9}{"id":"custom-1","type":"noul","noul":0.9}');
     expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: duplicate, plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
-    const unknown = parseAnswers('{"id":"tests","type":"noul","noul":0.9}');
+    const unknown = parseAnswers('{"id":"docs","type":"noul","noul":0.9}');
     expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: unknown, plan, threshold: DEFAULT_MERGE_THRESHOLD })).toMatchObject({ mirror: true, degraded: "inference-outage" });
   });
 
@@ -201,15 +201,15 @@ describe("focused rendering", () => {
     const det: DeterministicResult = {
       ...FOCUSED_DET,
       sources: {
-        quality: [{ id: "tests", group: "code-vs-ci" }],
+        quality: [{ id: "docs", group: "code-vs-ci" }],
         custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "Keeps boundaries" }],
         rules: [],
       },
     };
-    const asked = { "tests-file-001": "src/a.ts", "tests-file-002": "src/b.ts" };
+    const asked = { "docs-file-001": "src/a.ts", "docs-file-002": "src/b.ts" };
     function outputs(unread: string[]) {
-      const plan: QualityPlan = { tests: { changed: [], asked, unread } };
-      const answers = noul({ "tests-file-001": 0.2, "tests-file-002": 0.41, "custom-1": 0.55 });
+      const plan: QualityPlan = { docs: { changed: [], asked, unread } };
+      const answers = noul({ "docs-file-001": 0.2, "docs-file-002": 0.41, "custom-1": 0.55 });
       return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers, plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks.map(({ result, output }) => [result, output]);
     }
     expect(outputs([])).toEqual([
@@ -223,14 +223,14 @@ describe("focused rendering", () => {
     const det: DeterministicResult = {
       ...FOCUSED_DET,
       sources: {
-        quality: [{ id: "tests", group: "code-vs-ci" }],
+        quality: [{ id: "docs", group: "code-vs-ci" }],
         custom: [{ id: "custom-1", name: "Architecture", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "Keeps boundaries" }],
         rules: [],
       },
     };
-    const plan: QualityPlan = { tests: { changed: [], asked: { "tests-file-001": "src/a.ts" }, unread: [] } };
+    const plan: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] } };
     function modelChecks(answer: number) {
-      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "tests-file-001": answer, "custom-1": answer }), plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks;
+      return renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": answer, "custom-1": answer }), plan, threshold: DEFAULT_MERGE_THRESHOLD }).checks;
     }
     function focusedCheck(one: number) {
       return focusedVerdict(focusedAnswer(one, 0.2)).checks;
@@ -276,9 +276,9 @@ describe("focused rendering", () => {
 
 const MODEL_DET: DeterministicResult = {
   ...FOCUSED_DET,
-  sources: { quality: [{ id: "docs", group: "code-vs-ci" }, { id: "tests", group: "code-vs-ci" }], custom: [], rules: [] },
+  sources: { quality: [{ id: "docs", group: "code-vs-ci" }], custom: [], rules: [] },
 };
-const PLAN: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] }, tests: { changed: [], asked: { "tests-file-001": "src/a.ts" }, unread: [] } };
+const PLAN: QualityPlan = { docs: { changed: [], asked: { "docs-file-001": "src/a.ts" }, unread: [] } };
 
 function noul(answers: Record<string, number>) {
   return parseAnswers(Object.entries(answers).map(([id, value]) => JSON.stringify({ id, type: "noul", noul: value })).join(""));
@@ -286,29 +286,29 @@ function noul(answers: Record<string, number>) {
 
 describe("merge verdict", () => {
   test("every check passing at or above the threshold is ready", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.1, "tests-file-001": 0.2 }), plan: PLAN, threshold: 0.7 });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.2 }), plan: PLAN, threshold: 0.7 });
     expect(verdict.merge).toEqual({ verdict: "ready", score: 0.8, threshold: 0.7, reasons: [] });
     expect(verdict).toMatchObject({ state: "ready-monitoring", mirror: true, feedback: APPROVAL_NOTE });
   });
 
   test("every check passing below the threshold is red with the score reason", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.1, "tests-file-001": 0.2 }), plan: PLAN, threshold: 0.85 });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: MODEL_DET, answers: noul({ "docs-file-001": 0.2 }), plan: PLAN, threshold: 0.85 });
     expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.85, reasons: ["Score 0.8 is below the threshold 0.85"] });
     expect(verdict.feedback).toBe(APPROVAL_NOTE);
   });
 
   test("a failing rule is red", () => {
     const checks = [{ check: "paths", kind: "machine" as const, result: "fail" as const, reason: "touches forbidden paths", evidence: ["vendor/a.ts"] }];
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, state: "blocked", checks }, answers: noul({ "docs-file-001": 0.1, "tests-file-001": 0.1 }), plan: PLAN, threshold: 0.7 });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, state: "blocked", checks }, answers: noul({ "docs-file-001": 0.1 }), plan: PLAN, threshold: 0.7 });
     expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.9, threshold: 0.7, reasons: ["Failed: touches forbidden paths"] });
   });
 
   test("a failed chunk is red with the count of checks it could not evaluate and keeps the answered ones", () => {
     const det: DeterministicResult = { ...MODEL_DET, sources: { ...MODEL_DET.sources!, custom: [{ id: "custom-1", name: "Ticket", group: "pull-request", kind: "model", shape: "is-true", claim: "Names a ticket." }] } };
     const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul({ "docs-file-001": 0.8 }), plan: PLAN, judgeError: "upstream 503", threshold: 0.7 });
-    expect(verdict.checks.map(({ check, result }) => [check, result])).toEqual([["docs", "fail"], ["tests", "unconfirmed"], ["custom-1", "unconfirmed"]]);
+    expect(verdict.checks.map(({ check, result }) => [check, result])).toEqual([["docs", "fail"], ["custom-1", "unconfirmed"]]);
     expect(verdict).toMatchObject({ state: "needs-author-update", mirror: true, degraded: "inference-outage" });
-    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.7, reasons: ["Could not evaluate 2 checks", "Failed: documentation is not updated"] });
+    expect(verdict.merge).toEqual({ verdict: "not-recommended", score: 0.8, threshold: 0.7, reasons: ["Could not evaluate 1 check", "Failed: documentation is not updated"] });
     expect(verdict.feedback).toBe(`@octocat, please address the following:\n- documentation is not updated for \`src/a.ts\`\n\n${OUTAGE_NOTE}`);
   });
 
