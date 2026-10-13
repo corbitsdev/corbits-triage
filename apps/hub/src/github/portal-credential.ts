@@ -22,7 +22,9 @@ export function failure(status: number, code: string, message: string, details?:
 
 /** The signed-in member's principal id, or the error response to return. */
 // Browsers omit Origin on same-origin GETs, and reads change nothing, so they only need to not be cross-site.
+// A bearer token without a cookie is an agent's device-code session; browsers never attach one on their own.
 export function fromPortal(req: Request, trustedOrigins: readonly string[]): boolean {
+  if (req.headers.get("authorization")?.toLowerCase().startsWith("bearer ") && !req.headers.has("cookie")) return true;
   if (req.method === "GET") return req.headers.get("sec-fetch-site")?.toLowerCase() !== "cross-site";
   return validManifestMutationRequest(req, new Set([new URL(req.url).origin, ...trustedOrigins]));
 }

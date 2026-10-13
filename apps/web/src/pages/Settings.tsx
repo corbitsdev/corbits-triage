@@ -23,6 +23,7 @@ import { WORKFLOW_PACKAGES } from "../lib/workflow-packages.ts";
 import { useSession } from "../lib/session.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
+import { SignedInDevices } from "../components/SignedInDevices.tsx";
 import { DECISION_MODEL_INTRO, hasDecisionModelCredential } from "../lib/decision-models.ts";
 
 const TABS = ["Triage", "GitHub", "Integrations", "Model", "Access", "Account"] as const;
@@ -672,6 +673,7 @@ export default function Settings() {
                 <h2>{session?.email ?? "Signed in"}</h2>
                 <p className="muted">Signed in to this app.</p>
                 <button type="button" className="btn" onClick={() => void signOut()}>Sign out</button>
+                {tab === "Account" && <SignedInDevices />}
                 {credentials.length > 0 && (
                   <div>
                     {credentials.map((credential) => (

@@ -112,7 +112,7 @@ export async function getAuthMethods(): Promise<AuthMethods> {
 
 /** Leaves the page for Google; the hub returns the browser to this page, with `?error=` on failure. */
 export async function signInWithGoogle(): Promise<void> {
-  const returnTo = `${window.location.origin}${window.location.pathname}`;
+  const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
   const { response, parsed } = await hubAuth("/sign-in/social", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -123,4 +123,21 @@ export async function signInWithGoogle(): Promise<void> {
     throw new ApiError(response.status, "unknown", messageOf(parsed, "Could not start Google sign-in."));
   }
   window.location.assign(url);
+}
+
+/** Claims the code an agent shows for this user, so it can then be approved or denied. Returns the asking client's id. */
+export async function claimDeviceCode(userCode: string): Promise<string> {
+  const { response, parsed } = await hubAuth(`/device?user_code=${encodeURIComponent(userCode)}`, { method: "GET" });
+  const clientId = (parsed as { client_id?: unknown } | undefined)?.client_id;
+  if (!response.ok || typeof clientId !== "string") throw new ApiError(response.status, "unknown", messageOf(parsed, "That code is not valid."));
+  return clientId;
+}
+
+export async function decideDeviceCode(userCode: string, decision: "approve" | "deny"): Promise<void> {
+  const { response, parsed } = await hubAuth(`/device/${decision}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ userCode }),
+  });
+  if (!response.ok) throw new ApiError(response.status, "unknown", messageOf(parsed, `Could not ${decision} the device.`));
 }

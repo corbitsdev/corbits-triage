@@ -19,6 +19,7 @@ import { TRIAGE_STATS_PATH, TriageStats } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { TRIAGE_VERDICTS_PATH, TriageVerdicts } from "../github/triage-verdicts.js";
 import { AcceptBody, Accepted, INVITATIONS_PATH, InvitationCreated, InvitationList, InviteBody, MY_INVITATIONS_PATH, MyInvitations } from "../invitations/invitations.js";
+import { SESSIONS_PATH, SessionList } from "../sessions.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { DeployedVersions, WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
@@ -49,6 +50,10 @@ export type IntegrationHandlers = {
     revoke: (req: Request, tenantId: string, invitationId: string) => Promise<Response>;
     mine: (req: Request) => Promise<Response>;
     accept: (req: Request) => Promise<Response>;
+  };
+  sessions: {
+    list: (req: Request) => Promise<Response>;
+    revoke: (req: Request, sessionId: string) => Promise<Response>;
   };
 };
 
@@ -480,6 +485,31 @@ export function createIntegrationsApp(handlers: IntegrationHandlers) {
     }),
     function acceptInvitation(c) {
       return handlers.invitations.accept(c.req.raw);
+    },
+  );
+
+  app.get(
+    SESSIONS_PATH,
+    describeRoute({
+      summary: "The signed-in user's sessions",
+      description: "Browsers and devices signed in as this user, without their tokens. `isCurrent` marks the session making the request.",
+      tags: TAGS,
+      responses: { 200: json("Unexpired sessions, oldest first", SessionList), 401: failures[401], 403: failures[403] },
+    }),
+    function listSessions(c) {
+      return handlers.sessions.list(c.req.raw);
+    },
+  );
+
+  app.delete(
+    `${SESSIONS_PATH}/:sessionId`,
+    describeRoute({
+      summary: "Sign out one of the signed-in user's sessions",
+      tags: TAGS,
+      responses: { 204: { description: "Signed out" }, 401: failures[401], 403: failures[403], 404: json("Not one of this user's sessions", Failure) },
+    }),
+    function revokeSession(c) {
+      return handlers.sessions.revoke(c.req.raw, c.req.param("sessionId"));
     },
   );
 
