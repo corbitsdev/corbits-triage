@@ -72,7 +72,7 @@ resolves its offering when deployed.
 
 - `triage-workflows`: `pr-triage`, `pr-triage-historical`, their steps
   (`triage-steps.ts`), directors and the deterministic logic under `logic/`.
-- `github-reads`: GitHub read helpers and types, browser-safe.
+- `github-reads`: GitHub read helpers and types.
 - `github-tool`: the mirror write (marker-comment upsert), Dos and the sidecar
   tool bundles; re-exports `github-reads`.
 - `github-write-tool`: build wrapper for the write bundle.

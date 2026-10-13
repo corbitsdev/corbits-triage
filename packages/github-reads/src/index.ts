@@ -559,7 +559,7 @@ export async function listReferencedIssues(gh: GithubFetch, repo: string, number
   return issues;
 }
 
-function lowercase(name: string): string {
+export function lowercase(name: string): string {
   return name.toLowerCase();
 }
 

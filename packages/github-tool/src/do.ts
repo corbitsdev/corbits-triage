@@ -24,7 +24,6 @@ import {
   type MirrorInput,
 } from "./github";
 
-export { AGENT_DO, DERIVED_LABELS_DO, type ResolvedTarget };
 
 export class DoNotRunnableError extends Error {}
 export class HeadMovedError extends DoNotRunnableError {}

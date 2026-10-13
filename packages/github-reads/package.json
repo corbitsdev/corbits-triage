@@ -13,5 +13,5 @@
     "@corbits/triage-contracts": "workspace:*",
     "minimatch": "^10.2.6"
   },
-  "description": "Browser-safe GitHub REST read helpers and types"
+  "description": "GitHub REST read helpers and types"
 }

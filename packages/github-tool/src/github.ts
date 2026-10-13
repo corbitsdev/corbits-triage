@@ -1,4 +1,4 @@
-import { getPr, isTriageComment, json, jsonAll, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
+import { getPr, isTriageComment, json, jsonAll, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
 
 export * from "@corbits/github-reads";
 
@@ -232,6 +232,3 @@ export async function mergePr(gh: GithubFetch, input: MergePrInput) {
   return { merged: merged.merged === true, sha: merged.sha ?? pr.sha };
 }
 
-function lowercase(name: string): string {
-  return name.toLowerCase();
-}
