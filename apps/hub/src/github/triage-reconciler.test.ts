@@ -12,7 +12,7 @@ import { readyMaterializer, type LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
 import { createRunRecorder } from "./run-recorder.js";
 import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
-import type { RecordedVerdict } from "./verdict-record-store.js";
+import type { ApprovedDo, RecordedVerdict } from "./verdict-record-store.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
 import { markBaseMoved } from "./triage-queue.js";
 import { createTriageRuns, verdictFor } from "./triage-runs.js";
@@ -242,8 +242,8 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
   const now = options.now ?? (() => NOW);
   const deployments = (options.deployments ?? [LIVE]).map((live) => ({ ...live }));
   const released: string[] = [];
-  const dos: Array<{ effectId: string; source: string; status: string; error?: string; result?: unknown }> = [];
   const verdicts: RecordedVerdict[] = [];
+  const approved: ApprovedDo[] = [];
   async function liveDeployments() {
     if (failNextList) {
       failNextList = false;
@@ -259,10 +259,8 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
         async record(_tenantId, recorded) {
           verdicts.push(...recorded);
         },
-      },
-      dos: {
-        async record(claim, outcome) {
-          dos.push({ effectId: claim.effectId, source: claim.source, ...outcome });
+        async recordApproved(_tenantId, outcomes) {
+          approved.push(...outcomes);
         },
       },
       log: () => {},
@@ -344,7 +342,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     const stopped = deployments.filter((live) => live.cancelling);
     for (const live of stopped) deployments.splice(deployments.indexOf(live), 1);
   }
-  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, dos, verdicts, store: store() };
+  return { reconcile, delivered, saved, logged, reads, latestOf, deployments, released, sweep, records, verdicts, approved, store: store() };
 }
 
 function settled(from: number, count: number): Record<string, WorkflowRunEvent[]> {
@@ -371,20 +369,32 @@ describe("triage reconciler", () => {
     expect(delivered[0]).toMatchObject({ address: LIVE.address, payload: { kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] } });
   });
 
-  test("the Dos a run executed are recorded once as the workflow's", async () => {
+  test("the Dos a run executed are recorded on its verdict", async () => {
     const comment = { id: "hello", branch: "always", index: 0, kind: "comment", automatic: true, reason: "", effectId: "e-comment", target: { body: "hi" } };
     const label = { ...comment, index: 1, kind: "labels", effectId: "e-label", target: { labels: ["x"] } };
     const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [comment, label] };
     const executed = replied("execute", { dos: [{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }] });
     const log = [started(1), rendered(verdict), executed, completed];
-    const { reconcile, dos } = harness({ [repoKey(LIVE.runId)]: { run_1: log } }, [head(1)]);
+    const { reconcile, verdicts } = harness({ [repoKey(LIVE.runId)]: { run_1: log } }, [head(1)]);
+    await reconcile();
+    const outcomes = [{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }];
+    expect(verdictFor(log, REPO, 1)?.["actions"]).toMatchObject(outcomes);
+    expect(verdicts.at(-1)?.detail?.actions).toMatchObject(outcomes);
+  });
+
+  test("a held Do's approval run puts its outcome on the verdicts of its head, once", async () => {
+    const held = { id: "hello", branch: "always", index: 0, kind: "comment", automatic: false, reason: "", effectId: "e-comment", target: { body: "hi" }, held: true };
+    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [held] };
+    const mail = stockTriggerMail({ kind: "approve-do", runId: "run_1", request: { repo: REPO, number: 1 } });
+    const approval = [startedBy(mail, "2026-10-07T02:00:00.000Z"), replied("executeApproved", { dos: [{ effectId: "e-comment", status: "done" }] }), completed];
+    const retriaged = [started(1, "2026-10-07T03:00:00.000Z"), rendered(verdict), completed];
+    const { reconcile, verdicts, approved } = harness({ [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(verdict), completed], run_2: approval, run_3: retriaged } }, [head(1)]);
     await reconcile();
     await reconcile();
-    expect(dos).toEqual([
-      { effectId: "e-comment", source: "workflow", status: "done", result: null },
-      { effectId: "e-label", source: "workflow", status: "failed", error: "github POST -> 500" },
-    ]);
-    expect(verdictFor(log, REPO, 1)?.["actions"]).toMatchObject([{ effectId: "e-comment", status: "done" }, { effectId: "e-label", status: "failed", error: "github POST -> 500" }]);
+    const latest = new Map(verdicts.map((recorded) => [recorded.runId, recorded]));
+    expect([...latest.keys()].sort()).toEqual(["run_1", "run_3"]);
+    for (const recorded of latest.values()) expect(recorded.detail?.actions).toMatchObject([{ effectId: "e-comment", held: true, status: "done" }]);
+    expect(approved).toEqual([{ repo: REPO, number: 1, effectId: "e-comment", status: "done" }]);
   });
 
   test("a verdict is recorded with what the portal shows of it: its own fields, the facts it read and the webhook event that started it", async () => {
@@ -416,15 +426,6 @@ describe("triage reconciler", () => {
       { runId: "run_1", state: "ready-monitoring", runStatus: "running" },
       { runId: "run_1", state: "ready-monitoring", runStatus: "failed" },
     ]);
-  });
-
-  test("the Dos of a run that failed after executing them are recorded", async () => {
-    const verdict = { ...current(1), repo: REPO, number: 1, state: "ready", actor: "maintainer", humanGated: false, actions: [{ id: "hello", branch: "always", index: 0, kind: "comment", effectId: "e-comment" }] };
-    const failed: WorkflowRunEvent = { seq: 3, type: "RunFailed", body: { type: "RunFailed", seq: 3 } };
-    const log = [started(1), rendered(verdict), replied("execute", { dos: [{ effectId: "e-comment", status: "done" }] }), failed];
-    const { reconcile, dos } = harness({ [repoKey(LIVE.runId)]: { run_1: log } }, [head(1)]);
-    await reconcile();
-    expect(dos).toEqual([{ effectId: "e-comment", source: "workflow", status: "done", result: null }]);
   });
 
   test("draft heads are queued only while the repository triages drafts", async () => {

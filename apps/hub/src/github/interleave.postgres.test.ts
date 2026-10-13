@@ -44,7 +44,7 @@ function request(): Request {
 }
 
 async function noRuns(): Promise<ObservedRuns> {
-  return { byRepo: new Map(), runCount: 0, verdicts: [], executed: [] };
+  return { byRepo: new Map(), runCount: 0, verdicts: [], approved: [] };
 }
 
 function route(store: TriageStateStore, deliver: Deliver) {

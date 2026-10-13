@@ -56,8 +56,7 @@ import { DeliveryCache } from "./github/dedupe.js";
 import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
-import { createGithubPrDos } from "./github/pr-dos.js";
-import { createDoRunStore } from "./github/do-run-store.js";
+import { createGithubHeldDos } from "./github/held-dos.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { createSessions } from "./sessions.js";
 import { migrateTriageTables } from "./triage-db.js";
@@ -213,7 +212,6 @@ cronTicker = createCronTicker({
 cronTicker.start();
 await migrateRepoEnabledFlag(composition.db);
 await migrateTriageTables(composition.db, database.schema ?? "public");
-const doRunStore = createDoRunStore(composition.db);
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
@@ -238,18 +236,6 @@ const githubPrActions = createGithubPrActions({
   trustedPortalOrigins,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
-});
-const githubPrDos = createGithubPrDos({
-  db: composition.db,
-  cipher: composition.credentialCipher,
-  getSession: composition.getSession,
-  trustedPortalOrigins,
-  githubApiOrigin: githubOrigin,
-  authorize: authorizePortal,
-  runReader: composition.runReader,
-  store: doRunStore,
-  verdicts: verdictRecordStore,
-  log: logJson,
 });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,
@@ -335,7 +321,7 @@ const tenantVersions = createTenantVersions();
 const tenantObserver = createTenantObserver({
   liveDeployments: livePrTriageDeployments,
   observeRuns: observeTriageRuns,
-  recordRuns: createRunRecorder({ verdicts: verdictRecordStore, dos: doRunStore, log: logJson }),
+  recordRuns: createRunRecorder({ verdicts: verdictRecordStore, log: logJson }),
   versions: tenantVersions,
   minIntervalMs: TRIAGE_RECORD_MS,
   now,
@@ -384,6 +370,18 @@ const githubPrTriage = createGithubPrTriage({
   deliver: deliverToDeployment,
   policy: reconcilePolicy,
   now,
+  log: logJson,
+});
+const githubHeldDos = createGithubHeldDos({
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  getSession: composition.getSession,
+  trustedPortalOrigins,
+  authorize: authorizePortal,
+  runReader: composition.runReader,
+  verdicts: verdictRecordStore,
+  liveDeployments: livePrTriageDeployments,
+  deliver: deliverToDeployment,
   log: logJson,
 });
 const syncInstallations = createInstallationSync({
@@ -463,7 +461,7 @@ const integrations = createIntegrationsApp({
   manifest: githubManifest,
   syncInstallations,
   prActions: githubPrActions,
-  dos: githubPrDos,
+  heldDos: githubHeldDos,
   prTriage: githubPrTriage,
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,
@@ -483,7 +481,6 @@ const integrations = createIntegrationsApp({
     trustedPortalOrigins,
     authorize: authorizePortal,
     verdicts: verdictRecordStore,
-    dos: doRunStore,
     now,
   }),
   triageTimeline: createTriageTimeline({

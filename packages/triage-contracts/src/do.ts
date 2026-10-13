@@ -1,4 +1,8 @@
+import { type } from "arktype";
 import type { LabelsTarget } from "./check-pack.js";
+
+/** The branch of an action a Do is on: the checks' combined verdict, or `always`. */
+export const DoBranch = type("'yes' | 'no' | 'unsure' | 'always'");
 
 export type ResolvedTarget =
   | { labels: string[] }

@@ -107,7 +107,7 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     openHeadsFor: async () => async () => [{ number: 8, headSha: "abc123", updatedAt: ago(60 * MINUTE).toISOString(), draft: false }],
     observeTenant: async function observeTenant() {
       const deployments = await live();
-      return { deployments, observed: deployments.map(() => ({ byRepo: new Map(), runCount: 0, verdicts: [], executed: [] })) };
+      return { deployments, observed: deployments.map(() => ({ byRepo: new Map(), runCount: 0, verdicts: [], approved: [] })) };
     },
     store: {
       async load(_tenantId, repo) {

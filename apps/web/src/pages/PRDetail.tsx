@@ -11,7 +11,7 @@ import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "../lib/error-text.ts";
 import { approvedHead, checkedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { offersClose, type PendingDo } from "../lib/pending-dos.ts";
-import { usePendingDos, useRunDo } from "../lib/do-runs.ts";
+import { useApproveDo, useHeldDoKeys, usePendingDos } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import { MergeChip } from "../components/MergeChip.tsx";
 import { PrTimeline } from "../components/PrTimeline.tsx";
@@ -287,7 +287,8 @@ export default function PRDetail() {
   const recommendedPosted = handled[handledKey] === "posted" || comments.some((comment) => comment.body.includes(recommended));
   const moreRef = useRef<HTMLDetailsElement>(null);
   const dos = usePendingDos(item);
-  const runPackDo = useRunDo();
+  const approvePackDo = useApproveDo();
+  const heldDoKeys = useHeldDoKeys();
   const diffLayout = useDiffLayout();
 
   async function act(decision: "once" | "deny") {
@@ -331,13 +332,14 @@ export default function PRDetail() {
     }
   }
 
-  async function runDo(pending: PendingDo) {
+  async function approveDo(pending: PendingDo) {
     if (!item || item.number === null || item.running) return;
     setBusy(true);
     try {
       setError("");
-      await runPackDo(pending.ref, false);
-      notify(`${pending.label}: done on ${item.key}.`);
+      await approvePackDo(pending.ref, false);
+      heldDoKeys.hold(pending.sentKey);
+      notify(`Approved ${pending.label} on ${item.key}; Triage will run it.`);
     } catch (cause) {
       setError(errorText(cause));
     } finally {
@@ -520,7 +522,7 @@ export default function PRDetail() {
         ) : null}
         {closed || dos.length === 0 ? null : (
           <div className="pr-composer">
-            <SuggestedActions dos={dos} disabled={!item.number || item.running || busy || readOnly} onRun={(pending) => void runDo(pending)} />
+            <SuggestedActions dos={dos} disabled={!item.number || item.running || busy || readOnly} onApprove={(pending) => void approveDo(pending)} onSkip={(pending) => heldDoKeys.hide(pending.key)} />
           </div>
         )}
         {error && <p role="alert" className="error">{error}</p>}

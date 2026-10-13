@@ -174,7 +174,7 @@ interface Env extends BaseEnv {
 
 type ToolCallInput = { id: string; name: string; arguments: Record<string, any> };
 
-/** A Do that cannot run is reported, not failed, so it stays pending for a person. */
+/** A Do that cannot run is reported, not failed, so the run goes on. */
 async function runDo(gh: GithubFetch, args: unknown, login: AppLogin) {
   try {
     const { status } = await executeDo(gh, parseDoInput(args), login);
