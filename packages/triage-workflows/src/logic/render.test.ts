@@ -100,13 +100,6 @@ describe("focused rendering", () => {
     ]);
   });
 
-  test("names a file split across failing slices once", () => {
-    const focused: FocusedPlan = { slices: { "focused-slice-001": ["src/a.ts"], "focused-slice-002": ["src/a.ts"] }, unread: [], parts: { "focused-slice-001-file-001": "src/a.ts", "focused-slice-002-file-001": "src/a.ts" } };
-    const nouls = Object.keys(focused.parts).map((id) => JSON.stringify({ id, type: "noul", noul: 0.9 })).join("");
-    const verdict = focusedVerdict(sliceAnswer("focused-slice-001", 0.1, 0.8) + sliceAnswer("focused-slice-002", 0.1, 0.8) + nouls, focused);
-    expect(verdict.checks[0]).toMatchObject({ result: "fail", evidence: ["src/a.ts"], output: { items: ["src/a.ts"] } });
-  });
-
   test("still fails when no file is clearly the separate change", () => {
     const { focused, nouls } = focusedPlan({ "src/a.ts": 0.5 });
     const verdict = focusedVerdict(focusedAnswer(0.2, 0.8) + nouls, focused);

@@ -28,6 +28,11 @@ function compactHunks(count: number, offset = 0): string {
   ].join("\n")).join("\n");
 }
 
+/** A patch of wide hunks, about 180 KB of state: more than two requests hold. */
+function widePatch(): string {
+  return Array.from({ length: 20 }, (_, index) => `@@ -${index + 1} +${index + 1} @@\n+// ${"設".repeat(3_000)}`).join("\n");
+}
+
 function withinBudget({ state, questions }: JudgeRequest): boolean {
   return questions.length <= MAX_SYSTEM_ONE_QUESTIONS && new TextEncoder().encode(JSON.stringify(state)).byteLength <= MAX_SYSTEM_ONE_STATE_BYTES;
 }
@@ -96,7 +101,8 @@ test("quality preflight never lets the changed paths crowd out the diff, and say
   expect(evaluation.judgeError).toBeUndefined();
   expect(evaluation.requests.every(withinBudget)).toBe(true);
   const { paths, directories } = evaluation.requests[0]!.state.pullRequest;
-  expect(paths).toHaveLength(200);
+  expect(paths.length).toBeLessThan(3_000);
+  expect(new TextEncoder().encode(JSON.stringify(paths)).byteLength).toBeLessThanOrEqual(8 * 1024);
   expect(Object.values(directories!).reduce((total, row) => total + row.files, 0)).toBe(3_000);
   expect(new TextEncoder().encode(JSON.stringify(directories)).byteLength).toBeLessThanOrEqual(8 * 1024);
   expect(Object.values(evaluation.focused!.slices).flat()).toHaveLength(3_000);
@@ -115,6 +121,29 @@ test("quality preflight shows focused a hunk too large for any request in pieces
   expect(evaluation.focused!.unread).toEqual([]);
 });
 
+test("quality preflight lists only the changed paths that fit focused's share, with directories when any is left out", () => {
+  const files = Array.from({ length: 100 }, (_, index) => ({ path: `src/${"nested/".repeat(30)}${index}.ts`, patch: compactHunks(1, index) }));
+  const { paths, directories } = prepareQualityEvaluation({ ...facts(files), paths: files.map((file) => file.path) }, SOURCES).requests[0]!.state.pullRequest;
+  expect(new TextEncoder().encode(JSON.stringify(paths)).byteLength).toBeLessThanOrEqual(8 * 1024);
+  expect(Object.values(directories!).reduce((total, row) => total + row.files, 0)).toBe(100);
+});
+
+test("quality preflight refuses metadata that leaves too little room for files, and more requests than the cap, instead of asking thousands", () => {
+  const patch = compactHunks(1);
+  const subject = prepareQualityEvaluation({ ...facts([{ path: "src/a.ts", patch }]), commits: ["x".repeat(90_000)] }, SOURCES);
+  expect(subject.requests[0]!.state.pullRequest.commits).toEqual(["x".repeat(200)]);
+  const crowded = prepareQualityEvaluation({ ...facts([{ path: "src/a.ts", patch }]), docs: { "README.md": "d".repeat(85_000) } }, SOURCES);
+  expect(crowded).toMatchObject({ requests: [], judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ KB\)$/) });
+  const wide = prepareQualityEvaluation(facts(Array.from({ length: 40 }, (_, index) => ({ path: `src/wide${index}.ts`, patch: widePatch() }))), SOURCES);
+  expect(wide).toMatchObject({ requests: [], judgeError: expect.stringMatching(/^pull request too large for the decision model \(\d+ requests\)$/) });
+});
+
+test("quality preflight leaves a cut patch unread for focused even when its first hunk is read in pieces", () => {
+  const patch = ["@@ -0,0 +1,60 @@", ...Array.from({ length: 60 }, () => `+// ${"設".repeat(1_000)}`)].join("\n");
+  const { focused } = prepareQualityEvaluation(facts([{ path: "src/big.ts", additions: 60, deletions: 0, patch, patchTruncated: true }]), SOURCES);
+  expect(focused!.unread).toEqual(["src/big.ts"]);
+});
+
 test("focused's follow-up asks a failing slice's request again, one question per file it holds, at most 30 in all", () => {
   const files = Array.from({ length: 60 }, (_, index) => ({
     path: `src/file${index}.ts`,
@@ -127,6 +156,12 @@ test("focused's follow-up asks a failing slice's request again, one question per
   expect(Object.values(parts.asked)).toEqual(focused!.slices[second]);
   expect(parts.requests[0]!.questions.map((question) => question.instructions)).toEqual(focused!.slices[second]!.map((_, index) => expect.stringContaining(`\`pullRequest.files[${index}]\``)));
   expect(Object.keys(focusedPartRequests(requests, Object.keys(focused!.slices)).asked)).toHaveLength(30);
+});
+
+test("focused's follow-up asks about a file split across failing slices once", () => {
+  const { focused, requests } = prepareQualityEvaluation(facts([{ path: "src/wide.ts", patch: widePatch() }]), SOURCES);
+  expect(requests.length).toBeGreaterThan(1);
+  expect(Object.values(focusedPartRequests(requests, Object.keys(focused!.slices)).asked)).toEqual(["src/wide.ts"]);
 });
 
 test("quality preflight asks whole pull request questions in the first request and file questions with their file, splitting at the question cap", () => {
@@ -149,7 +184,7 @@ test("quality preflight asks whole pull request questions in the first request a
 });
 
 test("quality preflight shows focused a file too large for one request in slices of its hunks", () => {
-  const patch = Array.from({ length: 20 }, (_, index) => `@@ -${index + 1} +${index + 1} @@\n+// ${"設".repeat(3_000)}`).join("\n");
+  const patch = widePatch();
   const evaluation = prepareQualityEvaluation(facts([{ path: "src/wide.ts", patch }]), SOURCES);
   expect(evaluation.judgeError).toBeUndefined();
   expect(evaluation.requests.length).toBeGreaterThan(1);

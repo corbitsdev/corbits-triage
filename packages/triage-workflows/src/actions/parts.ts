@@ -17,8 +17,8 @@ export async function parts(input: unknown, _ctx: EffectContext, _signal: AbortS
   const replies = [...(judge?.output ?? [])];
   const chunks = items.flatMap(function partChunks(it, item): JudgeChunk[] {
     if (it.error !== undefined || !it.det.needsJudgment) return [];
-    const { focused, requests } = prepareQualityEvaluation(it.facts, it.det.sources);
-    const asked = partsOf(focused, requests, repliesTo(it, requests, replies))?.requests ?? [];
+    const evaluation = prepareQualityEvaluation(it.facts, it.det.sources);
+    const asked = partsOf(it.det.sources, evaluation, repliesTo(it, evaluation.requests, replies))?.requests ?? [];
     return asked.filter((request) => it.judged?.[judgeKey(request)] === undefined).map(({ state, questions }) => ({ item, state, questions }));
   });
   return { chunks };

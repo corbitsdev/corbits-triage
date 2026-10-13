@@ -521,6 +521,27 @@ describe("focused judge input", () => {
     expect(failed.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: slices[1]!.slice(0, 3) });
   });
 
+  test("a malformed slice reply, or a malformed or failed follow-up reply, costs only its own answers", async () => {
+    const ruled = await ruledFor(largeFiles("large", 24));
+    const split = await judgeChunks(ruled, (questions, call) => questions.map(({ id }) => JSON.stringify(call === 1 ? focusedAnswer(id, 0.1, 0.8) : focusedAnswer(id, 0.9, 0.05))).join(""));
+    const { chunks } = await parts(split.judged, ctx, signal);
+    for (const reply of ["not json", { error: "upstream 503" }]) {
+      const named = await judgeChunks({ ...ruled, chunks }, () => reply);
+      const verdict = await evaluate({ ...split.judged, judgeParts: named.judged.judge }, ctx, signal) as Verdict;
+      expect(verdict.degraded).toBeNull();
+      expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: [] });
+    }
+
+    const garbled = await judgeChunks(ruled, (questions, call) => (call === 0 ? "not json" : questions.map(({ id }) => JSON.stringify(call === 1 ? focusedAnswer(id, 0.1, 0.8) : focusedAnswer(id, 0.9, 0.05))).join("")));
+    expect((await parts(garbled.judged, ctx, signal)).chunks).toHaveLength(1);
+    const verdict = await evaluate(garbled.judged, ctx, signal) as Verdict;
+    expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail" });
+
+    const echoing = await judgeChunks(ruled, (questions, call) => [...questions.map(({ id }) => focusedAnswer(id, 0.9, 0.05)), ...(call === 1 ? [focusedAnswer("focused-slice-001", 0.1, 0.8)] : [])].map((answer) => JSON.stringify(answer)).join(""));
+    const echoed = await evaluate(echoing.judged, ctx, signal) as Verdict;
+    expect(echoed.checks.find((check) => check.check === "focused")).toMatchObject({ result: "unconfirmed" });
+  });
+
   test("a batch asks per pull request, and a failed chunk degrades only its own pull request", async () => {
     const items = Array.from({ length: 3 }, (_, index) => ({ facts: { ...prFacts(largeFiles(`batch${index}x`, 24)), number: index + 1 }, pack }));
     const ruled = await rules({ items, batch: true }, ctx, signal);
@@ -538,11 +559,11 @@ describe("focused judge input", () => {
   });
 
   test("an evaluation whose metadata alone is over the budget skips the judge and leaves focused and docs to a maintainer without accusation", async () => {
-    const files = Array.from({ length: 200 }, (_, index) => ({ path: `src/${"nested/".repeat(80)}${index}.ts` }));
+    const files = [{ path: "src/a.ts" }];
     const withDocs = { ...pack, checks: { ...pack.checks, docs: { enabled: true } } };
-    const ruled = await rules({ items: [{ facts: { ...prFacts(files), paths: files.map((file) => file.path) }, pack: withDocs }], batch: false }, ctx, signal);
+    const ruled = await rules({ items: [{ facts: { ...prFacts(files), paths: ["src/a.ts"], docs: { "README.md": "d".repeat(100_000) } }, pack: withDocs }], batch: false }, ctx, signal);
     expect(ruled.needsJudgment).toBe(false);
-    const tooLarge = "pull request too large for the decision model (112 KB)";
+    const tooLarge = "pull request too large for the decision model (98 KB)";
     expect(ruled.items[0]).toMatchObject({ judgeError: tooLarge, judgeLimitExceeded: true });
 
     const verdict = await evaluate(ruled, ctx, signal) as Verdict;
