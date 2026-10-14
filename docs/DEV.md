@@ -74,6 +74,8 @@ bun run check    # typecheck web, tooling, hub
 bun run lint
 ```
 
+Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` and ignore `DATABASE_URL`.
+
 Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
 ## Troubleshooting

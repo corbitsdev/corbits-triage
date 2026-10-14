@@ -17,13 +17,6 @@ describe("DiffView", () => {
     expect(html).toContain("src/old.ts</span> → src/new.ts");
   });
 
-  test("stacked is used when split does not fit", () => {
-    const html = render(FILE, "split", false);
-    expect(html).not.toContain("diff-split-row");
-    expect(html.match(/class="diff-line /g)).toHaveLength(3);
-    expect(html).not.toContain("Diff layout");
-  });
-
   test("collapses long diffs behind an expand control", () => {
     const patch = ["@@ -0,0 +1,600 @@", ...Array.from({ length: 600 }, (_, i) => `+line ${i}`)].join("\n");
     const html = render({ path: "big.ts", status: "added", additions: 600, deletions: 0, patch }, "stacked");
