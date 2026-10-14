@@ -1,0 +1,30 @@
+{
+  "size": 1,
+  "limit": 100,
+  "isLastPage": true,
+  "values": [
+    {
+      "name": "admin",
+      "emailAddress": "admin@example.com",
+      "active": true,
+      "displayName": "admin",
+      "id": 3,
+      "slug": "admin",
+      "type": "NORMAL",
+      "createdTimestamp": 1791997743356,
+      "deletable": true,
+      "directoryName": "Bitbucket Internal Directory",
+      "lastAuthenticationTimestamp": 1791999835357,
+      "mutableDetails": true,
+      "mutableGroups": true,
+      "links": {
+        "self": [
+          {
+            "href": "https://bitbucket.example/users/admin"
+          }
+        ]
+      }
+    }
+  ],
+  "start": 0
+}
