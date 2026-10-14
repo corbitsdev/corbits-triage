@@ -10,6 +10,7 @@ import {
   RECOMMENDED_ISSUE,
   RECOMMENDED_PATHS,
   RECOMMENDED_SIZE,
+  teamSlug,
   VERDICTS,
   type CatalogCheck,
   type CatalogId,
@@ -24,8 +25,30 @@ import {
 
 export type DraftPolicy = Pick<RepoPolicy, "enabled">;
 
-/** Everything the repository panel edits, as the contracts store it. */
-export type RepoDraft = { pack: CheckPack; policy: DraftPolicy };
+/**
+ * Everything the repository panel edits, as the contracts store it. `stepIds` names each verdict's steps by position,
+ * so a step keeps its identity across edits, saves and a merge with another writer's pack.
+ */
+export type RepoDraft = {
+  pack: CheckPack;
+  policy: DraftPolicy;
+  stepIds: Record<VerdictWord, string[]>;
+  /** The id a rule was added under, by its id now, once a first save named it from its text; it keys the row on screen. */
+  ruleKeys?: Record<string, string>;
+};
+
+export type StepEntry = { id: string; step: Step };
+
+let lastStepId = 0;
+
+export function freshStepId(): string {
+  lastStepId += 1;
+  return `step-${lastStepId}`;
+}
+
+export function freshStepIds(pack: CheckPack): Record<VerdictWord, string[]> {
+  return { pass: pack.actions.pass.map(freshStepId), fail: pack.actions.fail.map(freshStepId), unsure: pack.actions.unsure.map(freshStepId) };
+}
 
 /** Where in the panel a validation reason belongs. */
 type DraftWhere =
@@ -36,7 +59,7 @@ type DraftWhere =
 
 export type DraftProblem = { reason: string; where: DraftWhere };
 
-function same(a: unknown, b: unknown): boolean {
+export function same(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (Array.isArray(a) || Array.isArray(b)) {
     return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => same(item, b[i]));
@@ -49,7 +72,7 @@ function same(a: unknown, b: unknown): boolean {
 
 export function fromPack(pack: CheckPack, policy: DraftPolicy): RepoDraft {
   const { enabled } = policy;
-  return { pack, policy: { enabled } };
+  return { pack, policy: { enabled }, stepIds: freshStepIds(pack) };
 }
 
 export function toPack(draft: RepoDraft): CheckPack {
@@ -111,12 +134,13 @@ export function removeCustom(draft: RepoDraft, id: string): RepoDraft {
   return withPack(draft, { custom: draft.pack.custom.filter((row) => row.id !== id) });
 }
 
-function withActions(draft: RepoDraft, actions: Partial<PolicyActions>): RepoDraft {
-  return withPack(draft, { actions: { ...draft.pack.actions, ...actions } });
+export function stepEntries(draft: RepoDraft, list: VerdictWord): StepEntry[] {
+  return draft.pack.actions[list].map((step, i) => ({ id: draft.stepIds[list][i]!, step }));
 }
 
-export function setList(draft: RepoDraft, list: VerdictWord, steps: Step[]): RepoDraft {
-  return withActions(draft, { [list]: steps });
+export function setSteps(draft: RepoDraft, list: VerdictWord, entries: StepEntry[]): RepoDraft {
+  const actions: PolicyActions = { ...draft.pack.actions, [list]: entries.map((entry) => entry.step) };
+  return { ...draft, pack: { ...draft.pack, actions }, stepIds: { ...draft.stepIds, [list]: entries.map((entry) => entry.id) } };
 }
 
 function changedIds<T extends { id: string }>(saved: T[], draft: T[]): number {
@@ -168,7 +192,12 @@ function contractProblem(raw: unknown): string | null {
 
 /** Why one step cannot be saved yet, in the contract's words; null when it can. */
 export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step): string | null {
-  return contractProblem({ ...emptyPack(draft.pack.repo), actions: { ...defaultActions(), [list]: [step] } });
+  const found = contractProblem({ ...emptyPack(draft.pack.repo), actions: { ...defaultActions(), [list]: [step] } });
+  if (found) return found;
+  // GitHub resolves a team only inside the repository's own organization.
+  const teams = [...(typeof step.for === "object" && "team" in step.for ? [step.for.team] : []), ...("target" in step && "teams" in step.target ? step.target.teams : [])];
+  const outside = teams.find((team) => teamSlug(team, draft.pack.repo) === null);
+  return outside === undefined ? null : `Team ${outside} is not in ${draft.pack.repo.split("/", 1)[0]}.`;
 }
 
 /** Why one custom rule cannot be saved yet, in the contract's words; null when it can. */
@@ -181,24 +210,41 @@ function catalogReadable(pack: CheckPack, id: CatalogId, row: CatalogCheck): boo
   return counts && contractProblem({ ...emptyPack(pack.repo), checks: { [id]: row } }) === null;
 }
 
+/** The saved step under each id, or the step itself when it can be saved; a new unfinished step waits. The same step twice is written once, as the contract runs it once. */
+function savableSteps(draft: RepoDraft, saved: RepoDraft, list: VerdictWord): StepEntry[] {
+  const before = new Map(stepEntries(saved, list).map((entry) => [entry.id, entry.step]));
+  const seen = new Set<string>();
+  return stepEntries(draft, list).flatMap(function written(entry): StepEntry[] {
+    const step = stepProblem(draft, list, entry.step) === null ? entry.step : before.get(entry.id);
+    if (!step || seen.has(JSON.stringify(step))) return [];
+    seen.add(JSON.stringify(step));
+    return [{ id: entry.id, step }];
+  });
+}
+
 /**
- * What of the draft can be saved now: an unfinished step or rule waits in the draft until it is filled, and a built-in
- * rule mid-edit keeps its saved value, so one half-typed row never holds back the rest.
+ * What of the draft can be saved now. A step or rule mid-edit keeps its saved version until it can be saved again, a new
+ * one waits in the draft until it is filled, and a built-in rule mid-edit keeps its saved value, so one half-typed row
+ * never holds back or loses the rest.
  */
-export function savable(draft: RepoDraft, saved: CheckPack): RepoDraft {
+export function savable(draft: RepoDraft, saved: RepoDraft): RepoDraft {
   const pack = draft.pack;
-  const checks = Object.fromEntries(CATALOG_IDS.flatMap((id) => {
+  const checks = Object.fromEntries(CATALOG_IDS.flatMap(function kept(id) {
     const row = pack.checks[id];
-    const kept = row && catalogReadable(pack, id, row) ? row : saved.checks[id];
-    return kept ? [[id, kept]] : [];
+    const value = row && catalogReadable(pack, id, row) ? row : saved.pack.checks[id];
+    return value ? [[id, value]] : [];
   }));
-  const lists = Object.fromEntries(VERDICTS.map((list) => [list, pack.actions[list].filter((step) => stepProblem(draft, list, step) === null)]));
-  const custom = pack.custom.filter((row) => customProblem(draft, row) === null);
-  return { ...draft, pack: { ...pack, checks, custom, actions: { ...pack.actions, ...lists } } };
+  const custom = pack.custom.flatMap(function written(row) {
+    if (customProblem(draft, row) === null) return [row];
+    return saved.pack.custom.filter((stored) => stored.id === row.id);
+  });
+  let result: RepoDraft = { ...draft, pack: { ...pack, checks, custom } };
+  for (const list of VERDICTS) result = setSteps(result, list, savableSteps(draft, saved, list));
+  return result;
 }
 
 /** Why what can be saved still cannot be, in the contract's words, and where that belongs; null when it can. */
-export function validate(draft: RepoDraft, saved: CheckPack): DraftProblem | null {
+export function validate(draft: RepoDraft, saved: RepoDraft): DraftProblem | null {
   let pack: CheckPack;
   try {
     pack = toPack(savable(draft, saved));

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CATALOG_IDS, catalogCheckEnabled, classificationSources, DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type PolicyActions, type Step } from "@corbits/triage-contracts";
-import { fromPack, packChanges, savable, setCatalogCheck, setCustomEnabled, setList, stepProblem, toPack, validate } from "./pack-draft.ts";
+import { freshStepId, fromPack, packChanges, savable, setCatalogCheck, setCustomEnabled, setSteps, stepEntries, toPack, validate } from "./pack-draft.ts";
 
 const repo = "acme/widgets";
 
@@ -45,7 +45,7 @@ describe("pack draft", () => {
       const draft = fromPack(stored, policy);
       expect(readCheckPack(toPack(draft))).toEqual(stored);
       expect(packChanges(draft.pack, readCheckPack(JSON.stringify(stored)))).toBe(0);
-      expect(validate(draft, stored)).toBeNull();
+      expect(validate(draft, draft)).toBeNull();
     });
   }
 
@@ -60,12 +60,22 @@ describe("pack draft", () => {
     }
   });
 
-  test("each verdict list is one change, and an unfinished step waits unsaved", () => {
+  test("each verdict list is one change; a new unfinished step waits, and a saved one mid-edit keeps its saved version", () => {
     const saved = fromPack(packs["every Do target"]!, policy);
-    expect(packChanges(saved.pack, setList(setList(saved, "pass", []), "fail", []).pack)).toBe(2);
-    const unfinished = setList(saved, "unsure", [{ do: "comment", target: { body: " " } }]);
-    expect(stepProblem(unfinished, "unsure", unfinished.pack.actions.unsure[0]!)).not.toBeNull();
-    expect(savable(unfinished, saved.pack).pack.actions.unsure).toEqual([]);
+    expect(packChanges(saved.pack, setSteps(setSteps(saved, "pass", []), "fail", []).pack)).toBe(2);
+    const added = setSteps(saved, "unsure", [...stepEntries(saved, "unsure"), { id: freshStepId(), step: { do: "comment", target: { body: " " } } }]);
+    expect(savable(added, saved).pack.actions.unsure).toEqual(saved.pack.actions.unsure);
+    const [first, ...rest] = stepEntries(saved, "pass");
+    const emptied = setSteps(saved, "pass", [{ id: first!.id, step: { do: "comment", target: { body: "" } } }, ...rest]);
+    expect(savable(emptied, saved).pack.actions.pass).toEqual(saved.pack.actions.pass);
+  });
+
+  test("an unfinished rule mid-edit keeps its saved version", () => {
+    const stored = pack({ custom });
+    const saved = fromPack(stored, policy);
+    const row = stored.custom[0]!;
+    const emptied = { ...saved, pack: { ...stored, custom: stored.custom.map((item) => (item.id === row.id && item.shape === "is-true" ? { ...item, claim: "" } : item)) } };
+    expect(savable(emptied, saved).pack.custom).toEqual(stored.custom);
   });
 
   test("switching a custom check off keeps it in the pack but out of evaluation, and back on restores the saved row", () => {

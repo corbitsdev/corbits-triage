@@ -1,7 +1,7 @@
 import { errorText } from "@corbits/common";
-import { emptyPack, repoPolicy, type CheckPack } from "@corbits/triage-contracts";
+import { customRuleId, emptyPack, repoPolicy, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import { ExtendedPolicyError, StaleCheckPackError } from "./check-pack.ts";
-import { fromPack, packChanges, policyChanges, savable, toPack, type DraftPolicy, type RepoDraft } from "./pack-draft.ts";
+import { freshStepId, fromPack, packChanges, policyChanges, savable, toPack, type RepoDraft } from "./pack-draft.ts";
 import { draftPolicy, type LoadedRepoPack, type PackRef, type RepoPackStore } from "./repo-pack-store.ts";
 
 /** What the hub holds for the repository, as far as the panel knows. */
@@ -17,8 +17,11 @@ export type PackSession = {
 
 type SaveFailure = { message: string; cause: unknown; stale: boolean };
 
-/** The draft stays as typed; `session.saved` takes on what was written, as stored. */
-export type SaveOutcome = { session: PackSession; failure: SaveFailure | null };
+/**
+ * The draft stays as typed; `session.saved` takes on what was written, as stored. `renamed` maps the ids of rules saved
+ * for the first time to the ids they were saved under.
+ */
+export type SaveOutcome = { session: PackSession; renamed: Record<string, string>; failure: SaveFailure | null };
 
 export function openSession(repo: string, found: LoadedRepoPack): PackSession {
   const artifact = found.artifact;
@@ -31,15 +34,37 @@ export function openSession(repo: string, found: LoadedRepoPack): PackSession {
   };
 }
 
-/** What a save of `draft` would write, as stored; throws the contract's reason when it cannot be written. */
-function stored(session: PackSession, draft: RepoDraft): { pack: CheckPack; policy: DraftPolicy } {
-  return { pack: toPack(savable(draft, session.saved.pack)), policy: draftPolicy(repoPolicy(draft.policy)) };
+/**
+ * A rule saved for the first time takes its id from its text, as the `rule: <id>` label shows it on GitHub; a saved
+ * rule keeps its id whatever it is renamed to.
+ */
+function namedNewRules(pack: CheckPack, saved: CheckPack): { pack: CheckPack; renamed: Record<string, string> } {
+  const kept = new Set(saved.custom.map((row) => row.id));
+  const taken = pack.custom.filter((row) => kept.has(row.id)).map((row) => row.id);
+  const renamed: Record<string, string> = {};
+  for (const row of pack.custom) {
+    if (kept.has(row.id)) continue;
+    const id = customRuleId(row.name, taken);
+    taken.push(id);
+    if (id !== row.id) renamed[row.id] = id;
+  }
+  return { pack: { ...pack, custom: pack.custom.map((row) => ({ ...row, id: renamed[row.id] ?? row.id })) }, renamed };
+}
+
+/** What a save of `draft` would write, as stored, with its steps' ids; throws the contract's reason when it cannot be written. */
+function stored(session: PackSession, draft: RepoDraft): { draft: RepoDraft; renamed: Record<string, string> } {
+  const next = savable(draft, session.saved);
+  const named = namedNewRules(toPack(next), session.saved.pack);
+  const stepIds = Object.fromEntries(VERDICTS.map(function ids(list) {
+    return [list, named.pack.actions[list].length === next.stepIds[list].length ? next.stepIds[list] : named.pack.actions[list].map(freshStepId)];
+  })) as RepoDraft["stepIds"];
+  return { draft: { pack: named.pack, policy: draftPolicy(repoPolicy(draft.policy)), stepIds }, renamed: named.renamed };
 }
 
 /** Changes a save of `draft` would write; unfinished rows and spacing the contract trims are not changes. */
 export function unsavedChanges(session: PackSession, draft: RepoDraft): number {
   try {
-    const next = stored(session, draft);
+    const next = stored(session, draft).draft;
     return packChanges(session.saved.pack, next.pack) + policyChanges(session.saved.policy, next.policy) + Number(session.unlinked);
   } catch {
     return 1;
@@ -52,31 +77,32 @@ function checksFailed(cause: unknown): SaveFailure {
 
 /** Writes what of the draft can be saved: the pack when it changed or the stored one is corrupt, then one config write when anything is left to point at or change. */
 export async function saveDraft(store: RepoPackStore, repo: string, session: PackSession, draft: RepoDraft): Promise<SaveOutcome> {
-  let next: { pack: CheckPack; policy: DraftPolicy };
+  let next: RepoDraft;
+  let renamed: Record<string, string>;
   try {
-    next = stored(session, draft);
+    ({ draft: next, renamed } = stored(session, draft));
   } catch (cause) {
-    return { session, failure: checksFailed(cause) };
+    return { session, renamed: {}, failure: checksFailed(cause) };
   }
   let current = session;
   if (packChanges(session.saved.pack, next.pack) > 0 || session.corrupt !== null) {
     try {
       const loaded = await store.writePack(next.pack, session.loaded);
-      current = { loaded, corrupt: null, saved: { ...session.saved, pack: next.pack }, unlinked: true };
+      current = { loaded, corrupt: null, saved: { ...session.saved, pack: next.pack, stepIds: next.stepIds }, unlinked: true };
     } catch (cause) {
-      if (cause instanceof StaleCheckPackError) return { session, failure: { message: cause.message, cause, stale: true } };
-      if (cause instanceof ExtendedPolicyError) return { session, failure: { message: cause.message, cause, stale: false } };
-      return { session, failure: checksFailed(cause) };
+      if (cause instanceof StaleCheckPackError) return { session, renamed: {}, failure: { message: cause.message, cause, stale: true } };
+      if (cause instanceof ExtendedPolicyError) return { session, renamed: {}, failure: { message: cause.message, cause, stale: false } };
+      return { session, renamed: {}, failure: checksFailed(cause) };
     }
   }
-  if (!current.unlinked && policyChanges(current.saved.policy, next.policy) === 0) return { session: current, failure: null };
+  if (!current.unlinked && policyChanges(current.saved.policy, next.policy) === 0) return { session: current, renamed, failure: null };
   try {
     await store.writePolicy(repo, next.policy, current.corrupt === null && current.loaded !== null ? current.loaded.id : null);
   } catch (cause) {
     const message = current.unlinked
       ? `The policy is saved and in effect, but could not be linked to the repository. ${errorText(cause)}`
       : `Could not save the triage settings. ${errorText(cause)}`;
-    return { session: current, failure: { message, cause, stale: false } };
+    return { session: current, renamed, failure: { message, cause, stale: false } };
   }
-  return { session: { ...current, saved: { pack: current.saved.pack, policy: next.policy }, unlinked: false }, failure: null };
+  return { session: { ...current, saved: { ...current.saved, policy: next.policy }, unlinked: false }, renamed, failure: null };
 }

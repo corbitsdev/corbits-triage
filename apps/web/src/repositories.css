@@ -84,6 +84,7 @@
 .repos .add-row { min-height: 36px; padding-top: 8px; gap: 16px; }
 .repos .levels { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 2px; font-size: 12px; }
 .repos .val.lbl { width: auto; min-width: 120px; field-sizing: content; height: 24px; font-size: 12px; padding: 0 6px; text-align: left; }
+.repos .fb, .repos .lbl-field { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-mute); white-space: nowrap; }
 .repos .lbl-code { font: 400 12px var(--mono); color: var(--ink-mute); }
 .repos .labels-card { margin-top: 28px; }
 

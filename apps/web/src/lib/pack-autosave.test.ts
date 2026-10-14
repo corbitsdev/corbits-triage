@@ -1,56 +1,101 @@
 import { expect, test } from "bun:test";
-import { readCheckPack, recommendedPack } from "@corbits/triage-contracts";
-import { fakeHub } from "./fake-hub.ts";
-import { createAutosave } from "./pack-autosave.ts";
-import { setCatalogCheck, setList } from "./pack-draft.ts";
-import { openSession } from "./repo-pack-save.ts";
+import { readCheckPack, recommendedPack, type CheckPack, type Step, type VerdictWord } from "@corbits/triage-contracts";
+import { fakeHub, type FakeHub } from "./fake-hub.ts";
+import { createAutosave, type Autosave } from "./pack-autosave.ts";
+import { freshStepId, setCatalogCheck, setSteps, stepEntries, type RepoDraft } from "./pack-draft.ts";
+import { openSession, saveDraft, type PackSession } from "./repo-pack-save.ts";
 import { transportRepoPackStore } from "./repo-pack-store.ts";
 
 const repo = "acme/widgets";
-const config = { corbitsTriage: { repos: [{ name: repo, connected: true, installationId: 9, enabled: true, checkPack: { name: `check-pack/${repo}` } }] } };
+const title = `check-pack/${repo}`;
 
-test("edits made around a conflicting save are replayed onto the other writer's pack; unfinished steps wait and typed text keeps its spacing", async () => {
-  const stored = recommendedPack(repo);
-  const hub = fakeHub([{ id: "art_1", title: `check-pack/${repo}`, content: JSON.stringify(stored), version: 1, updatedAt: 1 }], config);
+function append(draft: RepoDraft, list: VerdictWord, step: Step, id = freshStepId()): RepoDraft {
+  return setSteps(draft, list, [...stepEntries(draft, list), { id, step }]);
+}
+
+async function open(stored: CheckPack | null): Promise<{ hub: FakeHub; session: PackSession; autosave: Autosave }> {
+  const linked = stored ? { enabled: true, checkPack: { name: title } } : {};
+  const hub = fakeHub(stored ? [{ id: "art_1", title, content: JSON.stringify(stored), version: 1, updatedAt: 1 }] : [], { corbitsTriage: { repos: [{ name: repo, connected: true, installationId: 9, ...linked }] } });
   const store = transportRepoPackStore(hub.transport, "t");
   const session = openSession(repo, await store.load(repo, false));
-  const autosave = createAutosave({ store, repo, session, delayMs: 60_000, changed: () => undefined, saved: async () => undefined });
+  const autosave = createAutosave({
+    session,
+    delayMs: 60_000,
+    write: (current, draft) => saveDraft(store, repo, current, draft),
+    reread: async () => openSession(repo, await store.load(repo, true)),
+    changed: () => undefined,
+    afterSave: async () => undefined,
+    failed: () => undefined,
+  });
+  return { hub, session, autosave };
+}
 
-  // Someone else switches CI off after this panel loaded.
-  hub.artifacts[0]!.content = JSON.stringify({ ...stored, checks: { ...stored.checks, "ci-green": { enabled: false } } });
-  hub.artifacts[0]!.version = 2;
+/** Another writer saves over the pack this panel loaded. */
+function writeElsewhere(hub: FakeHub, change: (pack: CheckPack) => CheckPack) {
+  const row = hub.artifacts[0]!;
+  row.content = JSON.stringify(change(readCheckPack(JSON.parse(row.content))));
+  row.version += 1;
+}
 
-  autosave.edit((draft) => setList(draft, "pass", [...draft.pack.actions.pass, { do: "comment" as const, target: { body: "Thanks!  " } }]));
+function stored(hub: FakeHub): CheckPack {
+  return readCheckPack(JSON.parse(hub.artifacts[0]!.content));
+}
+
+test("edits made around a conflicting save land on the other writer's pack; typed text keeps its spacing", async () => {
+  const { hub, session, autosave } = await open(recommendedPack(repo));
+  writeElsewhere(hub, (pack) => ({ ...pack, checks: { ...pack.checks, "ci-green": { enabled: false } } }));
+
+  autosave.edit((draft) => append(draft, "pass", { do: "comment", target: { body: "Thanks!  " } }));
   const saving = autosave.flush();
   autosave.edit((draft) => setCatalogCheck(draft, session.saved.pack, "max-files-changed", { maxFiles: 10 }));
-  autosave.edit((draft) => setList(draft, "fail", [...draft.pack.actions.fail, { do: "comment" as const, target: { body: "" } }]));
   await saving;
   await autosave.flush();
 
-  const saved = readCheckPack(JSON.parse(hub.artifacts[0]!.content));
+  const saved = stored(hub);
   expect(saved.checks["ci-green"]).toEqual({ enabled: false });
   expect(saved.checks["max-files-changed"]?.maxFiles).toBe(10);
   expect(saved.actions.pass).toEqual([{ do: "approve" }, { do: "comment", target: { body: "Thanks!" } }]);
-  expect(saved.actions.fail).toEqual([]);
-
-  const { draft, error } = autosave.state();
-  expect(error).toBe("");
-  expect(draft.pack.actions.pass[1]).toEqual({ do: "comment", target: { body: "Thanks!  " } });
-  expect(draft.pack.actions.fail).toEqual([{ do: "comment", target: { body: "" } }]);
+  expect(autosave.state().draft.pack.actions.pass[1]).toEqual({ do: "comment", target: { body: "Thanks!  " } });
 });
 
-test("a save held back by an unfinished draft does not stop the next one", async () => {
-  const hub = fakeHub([], { corbitsTriage: { repos: [{ name: repo, connected: true, installationId: 9 }] } });
-  const store = transportRepoPackStore(hub.transport, "t");
-  const session = openSession(repo, await store.load(repo, false));
-  const autosave = createAutosave({ store, repo, session, delayMs: 60_000, changed: () => undefined, saved: async () => undefined });
+test("an unfinished step survives another writer's save and is written once it is filled", async () => {
+  const { hub, autosave } = await open(recommendedPack(repo));
+  const id = freshStepId();
+  autosave.edit((draft) => append(draft, "fail", { do: "comment", target: { body: "" } }, id));
+  await autosave.flush();
+  expect(stored(hub).actions.fail).toEqual([]);
+
+  writeElsewhere(hub, (pack) => ({ ...pack, checks: { ...pack.checks, docs: { enabled: false } } }));
+  autosave.edit((draft) => setSteps(draft, "fail", stepEntries(draft, "fail").map((entry) => (entry.id === id ? { id, step: { do: "comment", target: { body: "Split it." } } } : entry))));
+  await autosave.flush();
+
+  expect(stored(hub).actions.fail).toEqual([{ do: "comment", target: { body: "Split it." } }]);
+  expect(stored(hub).checks.docs).toEqual({ enabled: false });
+});
+
+test("a step the other writer added stays when this panel edits a step it had", async () => {
+  const { hub, session, autosave } = await open(recommendedPack(repo));
+  writeElsewhere(hub, (pack) => ({ ...pack, actions: { ...pack.actions, pass: [{ do: "close" }, ...pack.actions.pass] } }));
+
+  const [approve] = stepEntries(session.saved, "pass");
+  autosave.edit((draft) => setSteps(draft, "pass", stepEntries(draft, "pass").map((entry) => (entry.id === approve!.id ? { id: entry.id, step: { do: "merge" } } : entry))));
+  await autosave.flush();
+
+  expect(stored(hub).actions.pass).toEqual([{ do: "close" }, { do: "merge" }]);
+});
+
+test("a save held back by an unfinished draft does not stop the next one, and a new rule is saved under an id from its text", async () => {
+  const { hub, session, autosave } = await open(null);
 
   autosave.edit((draft) => ({ ...draft, policy: { ...draft.policy, enabled: true } }));
   await autosave.flush();
   expect(hub.artifacts).toEqual([]);
 
   autosave.edit((draft) => setCatalogCheck(draft, session.saved.pack, "ci-green", { enabled: true }));
+  autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [{ id: "is-it-true", name: "the title says what changed", group: "pull-request", kind: "model", shape: "is-true", claim: "the title says what changed" }] } }));
   await autosave.flush();
-  expect(readCheckPack(JSON.parse(hub.artifacts[0]!.content)).checks["ci-green"]).toEqual({ enabled: true });
+  expect(stored(hub).checks["ci-green"]).toEqual({ enabled: true });
+  expect(stored(hub).custom.map((row) => row.id)).toEqual(["the-title-says-what-changed"]);
+  expect(autosave.state().draft.pack.custom.map((row) => row.id)).toEqual(["the-title-says-what-changed"]);
   expect(autosave.state().session.saved.policy.enabled).toBe(true);
 });

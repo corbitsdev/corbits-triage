@@ -5,7 +5,7 @@ export const STEP_DOS = ["approve", "merge", "close", "comment", "request-change
 
 export const STEP_DO_NAMES: Record<StepKind, string> = {
   approve: "Approve",
-  merge: "Approve and merge",
+  merge: "Merge",
   close: "Close",
   comment: "Comment",
   "request-changes": "Request changes",
@@ -33,12 +33,23 @@ export function forChoice(step: Step): ForChoice {
   return "team" in step.for ? "team" : "users";
 }
 
+/** A team or people start empty, to be filled in. */
+function audienceOf(choice: Exclude<ForChoice, "anyone">): StepFor {
+  switch (choice) {
+    case "team":
+      return { team: "" };
+    case "users":
+      return { users: [] };
+    default:
+      return choice;
+  }
+}
+
 /** The step for `choice`; anyone is the default, so it is not stored. */
 export function withFor(step: Step, choice: ForChoice): Step {
   const { for: _was, ...rest } = step;
   if (choice === "anyone") return rest as Step;
-  const audience: StepFor = choice === "team" ? { team: "" } : choice === "users" ? { users: [] } : choice;
-  return { ...rest, for: audience } as Step;
+  return { ...rest, for: audienceOf(choice) } as Step;
 }
 
 /** A step after its Do changes: keeps who it is for and starts the new Do's values empty. */
@@ -56,9 +67,4 @@ export function freshStep(step: Step, next: StepKind): Step {
     default:
       return { do: next, ...audience };
   }
-}
-
-/** A labels step the Labels card owns: the verdict's label or the failed rules' labels. */
-export function isHandoffLabels(step: Step): boolean {
-  return step.do === "labels" && step.target.from !== "list";
 }
