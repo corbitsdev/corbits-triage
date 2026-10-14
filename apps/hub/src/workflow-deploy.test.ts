@@ -24,6 +24,7 @@ const db = {
     tenant: { async findFirst() { return { id: TENANT_ID, domain: "tenant.example" }; } },
     asset: { async findFirst() { return { id: "asset" }; } },
     workflowRun: { async findFirst() { return { createdAt: CREATED_AT }; } },
+    credential: { async findMany() { return [{ name: "github" }]; } },
   },
 } as never;
 
@@ -86,4 +87,22 @@ describe("createWorkflowDeploy", () => {
       createdAt: CREATED_AT.toISOString(),
     });
   });
+});
+
+function withCredentials(names: string[]) {
+  return { query: { ...(db as { query: Record<string, unknown> }).query, credential: { async findMany() { return names.map((name) => ({ name })); } } } } as never;
+}
+
+test("deploys the pr-triage entry of the hosts the workspace connected, and refuses when none is", async () => {
+  const both: Calls = { prepared: [] };
+  expect((await handler(both, { db: withCredentials(["github", "bitbucket-datacenter"]) })(BODY, MEMBER)).status).toBe(201);
+  expect(both.prepared[0]!.entry).toBe("./pr-triage-github-bitbucket-datacenter.mjs");
+  const bitbucket: Calls = { prepared: [] };
+  expect((await handler(bitbucket, { db: withCredentials(["bitbucket-datacenter"]) })(BODY, MEMBER)).status).toBe(201);
+  expect(bitbucket.prepared[0]!.entry).toBe("./pr-triage-bitbucket-datacenter.mjs");
+  const none: Calls = { prepared: [] };
+  const res = await handler(none, { db: withCredentials([]) })(BODY, MEMBER);
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({ error: { code: "source_not_connected" } });
+  expect(none.prepared).toHaveLength(0);
 });

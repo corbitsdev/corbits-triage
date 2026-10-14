@@ -8,6 +8,7 @@ import type { CheckPackRead } from "./check-pack-store.js";
 import { DeploymentNotReadyError, NoLiveDeploymentError } from "./deployment.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
 import { readyToTriage } from "./pr-triage.js";
+import { sourceOf } from "./tenant-config.js";
 import type { Member } from "../integrations/app.js";
 
 export const BacklogBody = type({ repo: /^[\w.-]+\/[\w.-]+$/ });
@@ -23,6 +24,8 @@ export function createGithubBacklog(deps: GithubBacklogDeps) {
     const ready = await readyToTriage(deps, member, repo);
     if (ready instanceof Response) return ready;
     const { tenantId, principalId } = member;
+    // pr-triage-historical binds the GitHub App only.
+    if (sourceOf(ready.record) !== "github") return failure(409, "backlog_unsupported", `${repo} is not on GitHub; its open pull requests are triaged by the reconciler instead.`);
     try {
       await deps.sendMail(tenantId, { ...mailPayload(ready.record, ready.policy, ready.pack, {}), kind: "backlog" });
     } catch (err) {

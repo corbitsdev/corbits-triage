@@ -46,6 +46,8 @@ export type BitbucketDeps = PortalCredentialDeps & {
   fetchImpl: typeof fetch;
   /** Called once a repository is enabled, so its open pull requests are triaged without waiting for the next pass. */
   onEnabled: (tenantId: string) => void;
+  /** Called after connect and disconnect: the deployed pr-triage entry follows the connected hosts. */
+  onConnectionChanged: (tenantId: string) => Promise<void>;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -204,6 +206,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       return { ...next, bitbucketDatacenter: { baseUrl } };
     });
     if (!written) return failure(404, "not_found", "Workspace not found.");
+    await deps.onConnectionChanged(member.tenantId);
     return Response.json({ baseUrl, hookUrl: hookUrl(member.tenantId), hookSecretSet: true });
   }
 
@@ -242,6 +245,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       if (removeFailed) return removeFailed;
     }
     await patchCorbitsTriage(db, member.tenantId, disconnect);
+    await deps.onConnectionChanged(member.tenantId);
     return Response.json({ webhooksLeft });
   }
 

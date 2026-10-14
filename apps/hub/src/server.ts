@@ -47,6 +47,7 @@ import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX, PACK_SCHEMA_PATH } from "./integrations/app.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
+import { connectedSources, triageEntryFor } from "./github/triage-entry.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -59,7 +60,7 @@ import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, latestDeployments, newestLive, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
@@ -403,12 +404,41 @@ const githubHeldDos = createGithubHeldDos({
   deliver: deliverToDeployment,
   log: logJson,
 });
+/**
+ * The deployed pr-triage entry follows the hosts the workspace connected: the live deployment is replaced by one of the
+ * right entry, as a rotation is, and the old one released; without a live deployment the next portal deploy picks it.
+ */
+async function redeployTriageEntry(tenantId: string): Promise<void> {
+  const live = newestLive(await livePrTriageDeployments(tenantId));
+  const entry = triageEntryFor(await connectedSources(composition.db, tenantId));
+  if (!live || entry === undefined) return;
+  const spec = await launchSpecs.get(live.runId);
+  if (!spec || spec.frozenApprovalBundle.entry === entry) return;
+  const redeployed = await deploymentRotation.redeploy(tenantId, live.runId, entry);
+  if (redeployed.status === "skipped") {
+    logJson({ level: "warn", msg: "triage_entry_redeploy_skipped", tenantId, deployment: live.runId, entry, reason: redeployed.reason });
+    return;
+  }
+  await deploymentRotation.release(tenantId, live.runId);
+  logJson({ level: "info", msg: "triage_entry_redeployed", tenantId, deployment: live.runId, replacedBy: redeployed.runId, entry });
+}
+const kickTriage = triageLoop.kick;
+async function onSourcesChanged(tenantId: string): Promise<void> {
+  try {
+    await redeployTriageEntry(tenantId);
+  } catch (err) {
+    logJson({ level: "error", msg: "triage_entry_redeploy_failed", tenantId, error: String(err) });
+  }
+  kickTriage();
+}
 const syncInstallations = createInstallationSync({
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
-  onSynced: triageLoop.kick,
+  onSynced: function installationsSynced(tenantId) {
+    void onSourcesChanged(tenantId);
+  },
 });
 function setTimer(fire: () => Promise<void>, ms: number): () => void {
   const handle = setTimeout(fire, ms);
@@ -425,7 +455,6 @@ coalescer = createCoalescer({
   now,
   log: logJson,
 });
-const kickTriage = triageLoop.kick;
 async function recheckOpenPulls(tenantId: string, repo: string, except: number): Promise<number> {
   const due = await markBaseMoved(triageStateStore, tenantId, repo, except, now(), reconcilePolicy);
   if (due > 0) kickTriage();
@@ -576,6 +605,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     publicOrigin: new URL(env.BETTER_AUTH_BASE_URL).origin,
     fetchImpl: fetch,
     onEnabled: triageLoop.kick,
+    onConnectionChanged: onSourcesChanged,
     now,
     log: logJson,
   }),
