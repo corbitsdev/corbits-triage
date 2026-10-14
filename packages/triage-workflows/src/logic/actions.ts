@@ -219,17 +219,13 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
   return changesFor(input).length > 0;
 }
 
-/**
- * Approve Dos are skipped for `approval`, when the head may not be approved. A merge Do whose CI has not passed is
- * held with why, so a person can still approve it once CI is green; the merge reads CI again before it writes.
- */
+/** An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. */
 export function heldApprovals(actions: SuggestedAction[], approval: string | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
-    if (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.` };
-    if (action.kind !== "approve" || approval === undefined) return action;
-    const { list, index, kind } = action;
-    return { list, index, kind, skipped: true, reason: approval };
+    if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, reason: approval };
+    if (ci === "pending" || (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target))) return { ...action, held: true, reason: `${ciRefusal(ci)}.` };
+    return action;
   });
 }
 

@@ -17,8 +17,9 @@ function checksOf(verdict: VerdictFields): Array<Record<string, unknown>> {
 }
 
 function isUnconfirmedMachineCheck(check: Record<string, unknown>): boolean {
-  // `gate` marks an author rule on a verdict recorded before author rules were removed.
-  return check["kind"] === "machine" && check["result"] === "unconfirmed" && check["gate"] !== true;
+  // `gate` marks an author rule on a verdict recorded before author rules were removed. Running checks are not
+  // retried: the completed check_run webhook triages the head again.
+  return check["kind"] === "machine" && check["result"] === "unconfirmed" && check["gate"] !== true && check["check"] !== "ci-green";
 }
 
 /** Every model check of the verdict was skipped, outside a stale-unknown verdict, a failed hard rule or a draft, which skip them by design. */

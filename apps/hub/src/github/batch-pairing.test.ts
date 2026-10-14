@@ -160,7 +160,7 @@ describe("verdicts the decision model was never asked about", () => {
   test("unknown mergeability keeps its own reason though the judge was asked", async () => {
     const reply = await batchVerdicts([1], new Set(), { pack, pr: { mergeable: null } });
     const verdict = JSON.parse(reply).items[0] as { verdict: string; checks: Array<{ kind: string; result: string }> };
-    expect(verdict.verdict).toBe("pass");
+    expect(verdict.verdict).toBe("unsure");
     expect(verdict.checks.filter((check) => check.kind === "model").map((check) => check.result)).toEqual(["pass"]);
     const [run] = (await observe([1], reply)).get("1@sha1")!;
     expect(run).toMatchObject({ unsettled: "unconfirmed checks: no-merge-conflicts", unconfirmed: true });
