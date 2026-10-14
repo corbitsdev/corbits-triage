@@ -17,6 +17,12 @@ function triageReady(repo: RepoRecord): boolean {
   return !repoNeedsCheckSetup(repo) && repoPolicy(repo).enabled;
 }
 
+/** The stored repositories, then the Bitbucket Data Center repositories not recorded yet. */
+export function mergeRepositories(stored: RepoRecord[], listed: RepoRecord[] | undefined): RepoRecord[] {
+  const names = new Set(stored.map((repo) => repo.name));
+  return [...stored, ...(listed ?? []).filter((repo) => !names.has(repo.name))];
+}
+
 export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
   return new Set(repos.filter((repo) => repoPolicy(repo).enabled).map((repo) => repo.name));
 }

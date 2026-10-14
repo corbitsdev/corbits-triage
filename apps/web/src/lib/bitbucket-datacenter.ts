@@ -12,6 +12,7 @@ import {
 } from "./hub-api.ts";
 import { createHubTransport, type Transport } from "./hub-transport.ts";
 import { BITBUCKET_DATACENTER_QUERY_KEY, usePortal } from "./portal.tsx";
+import { mergeRepositories } from "./repo-rows.ts";
 
 function connectionKey(tenantId: string | undefined) {
   return [BITBUCKET_DATACENTER_QUERY_KEY, tenantId, "connection"] as const;
@@ -42,12 +43,6 @@ export function useBitbucketDatacenterRepositories() {
       return listBitbucketDatacenterRepositories(createHubTransport(), tenantId);
     },
   });
-}
-
-/** The stored repositories, then the Bitbucket Data Center repositories not recorded yet. */
-export function mergeRepositories(stored: RepoRecord[], listed: RepoRecord[] | undefined): RepoRecord[] {
-  const names = new Set(stored.map((repo) => repo.name));
-  return [...stored, ...(listed ?? []).filter((repo) => !names.has(repo.name))];
 }
 
 /** `pending` until the Bitbucket Data Center repositories are known, or known to be none. */
