@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 import { checkPackName, emptyPack } from "@corbits/triage-contracts";
+
+/** One rule on; with every rule off the hub starts no run. */
+const PACK = { ...emptyPack("octocat/hello"), checks: { "no-merge-conflicts": { enabled: true } } };
 import { createGithubBacklog } from "./backlog-triage.js";
 import { NoLiveDeploymentError } from "./deployment.js";
 
@@ -22,7 +25,7 @@ function backlog(repo: Record<string, unknown>, sent: unknown[], sendMail = asyn
       return true;
     },
     async readCheckPack() {
-      return { status: "ok", pack: emptyPack(REPO), automatic: ["labels"], source: SOURCE };
+      return { status: "ok", pack: PACK, automatic: ["labels"], source: SOURCE };
     },
     sendMail,
     log() {},
@@ -33,7 +36,7 @@ test("a backlog request mails pr-triage-historical the bridge's payload as a bac
   const sent: unknown[] = [];
   const started = await backlog({ name: REPO, connected: true, enabled: true }, sent)({ repo: REPO }, MEMBER);
   expect(started.status).toBe(202);
-  expect(sent).toEqual([expect.objectContaining({ kind: "backlog", repo: REPO, pack: emptyPack(REPO), automatic: ["labels"], policy: expect.objectContaining({ checkPack: { name: checkPackName(REPO) }, source: SOURCE }) })]);
+  expect(sent).toEqual([expect.objectContaining({ kind: "backlog", repo: REPO, pack: PACK, automatic: ["labels"], policy: expect.objectContaining({ checkPack: { name: checkPackName(REPO) }, source: SOURCE }) })]);
 
   const disabled = await backlog({ name: REPO, connected: true, enabled: false }, sent)({ repo: REPO }, MEMBER);
   expect(await disabled.json()).toMatchObject({ error: { code: "repo_not_enabled" } });
