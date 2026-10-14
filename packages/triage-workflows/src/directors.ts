@@ -530,7 +530,9 @@ function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDir
   };
 }
 
-const workflowPackageName = process.env.TRIAGE_WORKFLOW_PACKAGE_NAME ?? "@corbits/triage-workflows";
+/** Set by the workflow build to the published package name; source runs use the workspace package. */
+declare const TRIAGE_WORKFLOW_PACKAGE_NAME: string | undefined;
+const workflowPackageName = typeof TRIAGE_WORKFLOW_PACKAGE_NAME === "undefined" ? "@corbits/triage-workflows" : TRIAGE_WORKFLOW_PACKAGE_NAME;
 
 export const triageDirector = defineDirector<TriageDirectorConfig>({
   id: `${workflowPackageName}/triage`,

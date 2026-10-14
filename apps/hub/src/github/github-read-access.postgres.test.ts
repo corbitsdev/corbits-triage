@@ -68,7 +68,7 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
 
 const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigin };
 const openPulls = createGithubOpenPulls({ ...deps, cache: createOpenPullsCache(() => new Date()) });
-const prDetails = createGithubPrDetails(deps);
+const prDetails = createGithubPrDetails({ ...deps, log() {} });
 const prActions = createGithubPrActions({ ...deps, log() {}, async readCheckPack() { return { status: "missing" } as const; } });
 const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO), automatic: [], source: { repo: { id: "art_pack", version: 1 } } } as const; } });
 

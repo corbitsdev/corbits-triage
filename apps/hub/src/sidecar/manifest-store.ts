@@ -27,6 +27,7 @@ export interface LocalSidecarManifestStore {
 export type CreateLocalSidecarManifestStoreOpts = {
   readonly dataRoot: string;
   readonly cipher: CredentialCipher;
+  readonly log: (entry: Record<string, unknown>) => void;
 };
 
 /** `token` holds the cipher blob, not the plaintext. */
@@ -44,6 +45,7 @@ function isMissing(error: unknown): boolean {
 export function createLocalSidecarManifestStore({
   dataRoot,
   cipher,
+  log,
 }: CreateLocalSidecarManifestStoreOpts): LocalSidecarManifestStore {
   const dir = path.join(dataRoot, "manifests");
 
@@ -96,13 +98,12 @@ export function createLocalSidecarManifestStore({
       if (typeof stored?.dataDir === "string" && path.dirname(path.resolve(stored.dataDir)) === path.resolve(dataRoot)) {
         await fs.rm(stored.dataDir, { recursive: true, force: true });
       }
-      console.log(JSON.stringify({
-        ts: new Date().toISOString(),
+      log({
         level: "warn",
         msg: "local_sidecar_manifest_unreadable_removed",
         file,
         error: errorText(error),
-      }));
+      });
       return null;
     }
   }
