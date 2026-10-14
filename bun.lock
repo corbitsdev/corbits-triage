@@ -55,6 +55,8 @@
       "version": "0.1.0",
       "dependencies": {
         "@corbits/artifacts": "0.2.0",
+        "@corbits/bitbucket-datacenter-reads": "workspace:*",
+        "@corbits/bitbucket-datacenter-tool": "workspace:*",
         "@corbits/common": "workspace:*",
         "@corbits/cron": "0.2.1",
         "@corbits/github-reads": "workspace:*",
