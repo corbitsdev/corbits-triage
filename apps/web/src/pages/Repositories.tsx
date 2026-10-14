@@ -106,7 +106,8 @@ export default function Repositories() {
     if (closed && !selectedRow) document.querySelector<HTMLElement>(`[data-repo-link="${CSS.escape(closed)}"]`)?.focus();
   }, [selectedRow]);
 
-  const sync = useGithubSync(Boolean(snapshot && hasActiveGithubCredential(snapshot.credentials)));
+  const githubConnected = Boolean(snapshot && hasActiveGithubCredential(snapshot.credentials));
+  const sync = useGithubSync(githubConnected);
 
   async function manageOnGithub() {
     if (!snapshot) return;
@@ -167,10 +168,12 @@ export default function Repositories() {
             <h1>Repositories</h1>
             {snapshot && <span className="n">{repos.length}</span>}
             <span className="sp" />
-            <Button type="button" variant="outline" size="sm" disabled={readOnly || denied || opening || !snapshot} onClick={() => void manageOnGithub()}>
-              {opening ? "Opening GitHub…" : "Manage repositories on GitHub"}
-              <ExternalLink size={13} strokeWidth={1.6} aria-hidden="true" />
-            </Button>
+            {githubConnected && (
+              <Button type="button" variant="outline" size="sm" disabled={readOnly || denied || opening || !snapshot} onClick={() => void manageOnGithub()}>
+                {opening ? "Opening GitHub…" : "Manage repositories on GitHub"}
+                <ExternalLink size={13} strokeWidth={1.6} aria-hidden="true" />
+              </Button>
+            )}
           </div>
         </div>
         <main id="main" className="scroll">
@@ -180,7 +183,7 @@ export default function Repositories() {
           {bitbucket.error && <p role="alert" className="rt-note error">Could not read your repositories from Bitbucket Data Center. {bitbucket.error.message}</p>}
           {verdicts.error && <p role="alert" className="rt-note error">Could not read triage results. {verdicts.error.message}</p>}
           {sync.isFetching && repos.length === 0 && <p className="rt-empty" role="status">Reading your repositories from GitHub…</p>}
-          {repos.length === 0 && !denied && !sync.isFetching && <p className="rt-empty">No repositories yet. Use Manage repositories on GitHub to add some.</p>}
+          {repos.length === 0 && !denied && !sync.isFetching && !reposPending && <p className="rt-empty">{githubConnected ? "No repositories yet. Use Manage repositories on GitHub to add some." : <>No repositories yet. <Link to="/settings/sources">Connect a source in Settings.</Link></>}</p>}
           {rows.length > 0 && (
             <>
               <table className="rt">
