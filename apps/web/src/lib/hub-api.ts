@@ -5,7 +5,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, PolicyRead, readCheckPack, repoPolicy, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, PolicySynced, readCheckPack, repoPolicy, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -851,6 +851,21 @@ export async function untilDeploymentReady<T>(
 export async function startBacklogTriage(transport: Transport, tenantId: string, repo: string): Promise<void> {
   const clean = validateRepo(repo);
   BacklogStarted.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/backlog`, { repo: clean }));
+}
+
+export async function loadPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicyFileStatus | null> {
+  const clean = validateRepo(repo);
+  return PolicyFileRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/file?repo=${enc(clean)}`)).file;
+}
+
+export async function syncPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicySynced> {
+  const clean = validateRepo(repo);
+  return PolicySynced.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/sync`, { repo: clean }));
+}
+
+export async function exportPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicyExported> {
+  const clean = validateRepo(repo);
+  return PolicyExported.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/export`, { repo: clean }));
 }
 
 export async function triagePullRequest(transport: Transport, tenantId: string, repo: string, number: number): Promise<void> {

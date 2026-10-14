@@ -11,7 +11,9 @@ import type { RepoRow } from "../../lib/repo-rows.ts";
 import { useGrants, useRoles } from "../../lib/tenant-entities.ts";
 import { usePolicyView } from "../../lib/use-policy-view.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
+import { usePolicyFile } from "../../lib/policy-file.ts";
 import LabelsCard from "./LabelsCard.tsx";
+import PolicyCard from "./PolicyCard.tsx";
 import RepoByline from "./RepoByline.tsx";
 import RulesSection from "./RulesSection.tsx";
 import StepsSection from "./StepsSection.tsx";
@@ -30,6 +32,9 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const stats = useRepoStats(store, repo.name);
   const { draft, problem } = settings;
   const view = usePolicyView(draft, settings.edit);
+  const policyFile = usePolicyFile(repo.name, settings.reload);
+  // The file is the policy: an edit here would be replaced by the next push.
+  const fromFile = Boolean(policyFile.file.data);
   const grants = useGrants();
   const roles = useRoles();
   const grantsKnown = ![grants, roles].some((section) => section.loading || section.unavailable || section.denied);
@@ -37,6 +42,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const [closing, setClosing] = useState(false);
   const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready";
   const gated = !draft.policy.enabled;
+  const locked = disabled || gated || fromFile;
   const unfinished = VERDICTS.some((verdict) => view.steps[verdict].some((step) => step.problem) || view.labels[verdict].problem) || view.rules.some((rule) => rule.problem);
 
   /** Unfinished steps and rules are never saved, so the first close says so and the second discards them. */
@@ -74,10 +80,11 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     return (
       <>
         <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} reason={problem?.where.section === "triage" ? problem.reason : undefined} />
+        <PolicyCard repo={repo.name} policyFile={policyFile} disabled={disabled} />
         <div className={gated ? "gated" : undefined} inert={gated}>
-          <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={disabled || gated} edit={settings.edit} problem={problem} />
-          <StepsSection view={view} automatic={grantsKnown ? runsAlone : undefined} disabled={disabled || gated} />
-          <LabelsCard view={view} automatic={grantsKnown ? runsAlone("labels") : undefined} disabled={disabled || gated} />
+          <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={locked} edit={settings.edit} problem={problem} />
+          <StepsSection view={view} automatic={grantsKnown ? runsAlone : undefined} disabled={locked} />
+          <LabelsCard view={view} automatic={grantsKnown ? runsAlone("labels") : undefined} disabled={locked} />
         </div>
       </>
     );

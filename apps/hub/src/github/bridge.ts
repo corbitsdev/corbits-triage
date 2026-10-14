@@ -14,11 +14,12 @@
 // through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, legacyCheckPack, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
-import { asRecord, isRecord } from "@corbits/common";
+import { checkPackName, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
+import { asRecord, errorText, isRecord } from "@corbits/common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
-import { baseMoveOf, normalize, type BaseMove } from "./normalize.js";
+import { baseMoveOf, normalize, policyPushOf, type BaseMove } from "./normalize.js";
+import type { PolicyFileSync } from "./policy-file.js";
 import { readCappedBody } from "../read-json.js";
 import { verifySignature } from "./signature.js";
 import {
@@ -63,6 +64,8 @@ export interface BridgeDeps {
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   /** Has the repository's open pull requests but `except` triaged again; resolves to how many were due. */
   recheckOpenPulls: (tenantId: string, repo: string, except: number) => Promise<number>;
+  /** Reads the repository's policy file into its policy; undefined when the repository is not connected. */
+  syncPolicyFile: (tenantId: string, repo: string) => Promise<PolicyFileSync | undefined>;
 }
 
 function repoRows(config: unknown): Array<Record<string, unknown>> {
@@ -371,6 +374,31 @@ async function handleBaseMove(
   return json(202, { status: "accepted" });
 }
 
+/** A failed read is 500 so GitHub redelivers; a file that is not a valid policy is logged and leaves the policy as it was. */
+async function handlePolicyPush(
+  d: BridgeDeps,
+  log: (entry: Record<string, unknown>) => void,
+  loaded: BridgeHook,
+  delivery: string,
+  event: string,
+  repo: string,
+): Promise<Response> {
+  let synced: PolicyFileSync | undefined;
+  try {
+    synced = await d.syncPolicyFile(loaded.tenantId, repo);
+  } catch (err) {
+    d.cache.forget(`${loaded.credentialId}:${delivery}`);
+    log({ level: "error", msg: "policy_file_sync_failed", delivery, event, repo, error: errorText(err) });
+    return json(500, { error: "policy_file_sync_failed" });
+  }
+  if (!synced) {
+    log({ level: "info", msg: "ignored", delivery, event, repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
+    return json(202, { status: "ignored" });
+  }
+  log({ level: "info", msg: "policy_file_pushed", delivery, event, repo, status: synced.status, hook: loaded.credentialId });
+  return json(202, { status: "accepted" });
+}
+
 export function logJson(entry: Record<string, unknown>): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
 }
@@ -414,6 +442,8 @@ export function createBridgeHandler(d: BridgeDeps) {
     if (INSTALL_EVENTS.has(event) && isRecord(payload)) {
       return handleInstallEvent(d, log, loaded, delivery, event, payload);
     }
+    const pushed = policyPushOf(event, payload as Record<string, unknown>, POLICY_FILE_PATH);
+    if (pushed) return handlePolicyPush(d, log, loaded, delivery, event, pushed);
     const moved = baseMoveOf(event, payload as Record<string, unknown>);
     if (moved) return handleBaseMove(d, log, loaded, delivery, event, moved);
     const mail = normalize(event, delivery, payload as Record<string, unknown>);

@@ -23,9 +23,9 @@ export function createPullHeadReader(deps: { githubApiOrigin: string }): PullHea
   };
 }
 
-type TenantGithubDeps = { db: DB["db"]; cipher: CredentialCipher; githubApiOrigin: string };
+export type TenantGithubDeps = { db: DB["db"]; cipher: CredentialCipher; githubApiOrigin: string };
 
-function createTenantGithub(deps: TenantGithubDeps) {
+export function createTenantGithub(deps: TenantGithubDeps) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
   return async function tenantGithub(tenantId: string): Promise<GithubFetch | undefined> {
     const credential = await deps.db.query.credential.findFirst({
