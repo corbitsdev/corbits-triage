@@ -8,7 +8,6 @@ import { useSession } from "./session.tsx";
 
 const idbStorage: AsyncStorage<string> = { getItem: get, setItem: set, removeItem: del };
 
-/** Follows the session: the signed-in user's cache is restored and kept; a known sign-out removes it and the saved visits. */
 export function UserQueryCache({ children }: { children: ReactNode }) {
   const { ready, session, error } = useSession();
   const queryClient = useQueryClient();

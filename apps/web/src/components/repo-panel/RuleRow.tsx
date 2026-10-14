@@ -6,22 +6,17 @@ type RuleRowProps = {
   id: string;
   label: string;
   on: boolean;
-  /** The sentence, with its inputs while the rule is on. */
   words: ReactNode;
   tip: string;
   model?: boolean;
-  /** Weekly pass count, shown while the rule is on. */
   stat?: string | null;
-  /** More values under the sentence, such as when a score fails. */
   more?: ReactNode;
-  /** Why the rule is not saved yet. */
   reason?: string | null;
   disabled: boolean;
   onToggle: (on: boolean) => void;
   onRemove?: () => void;
 };
 
-/** One rule as a sentence and a switch; off rows are one muted line. */
 export default function RuleRow({ id, label, on, words, tip, model, stat, more, reason, disabled, onToggle, onRemove }: RuleRowProps) {
   return (
     <div className={`sentence rule${on ? "" : " off"}${reason ? " invalid" : ""}`} id={`rp-rule-${id}`}>

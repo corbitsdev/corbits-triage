@@ -7,10 +7,9 @@ import { NEEDS_JUDGE_REASON, NOT_ASKED_REASON } from "./render.js";
 /** A verdict whose model checks were all skipped; the hub triages a settled head again for it once, whatever attempts it spent. */
 export const MODEL_NOT_ASKED = "model not asked";
 
-/** Why a verdict leaves its head untriaged; `unconfirmed` when GitHub had not computed a machine check yet. */
+/** `unconfirmed` when GitHub had not computed a machine check yet. */
 export type Unsettled = { unsettled?: string; unconfirmed?: true };
 
-/** A verdict as the workflow outputs it or as the hub reads it back from the run log. */
 type VerdictFields = { degraded?: unknown; reason?: unknown; headSha?: unknown; state?: unknown; checks?: unknown };
 
 function checksOf(verdict: VerdictFields): Array<Record<string, unknown>> {
@@ -55,7 +54,7 @@ function modelUnanswered(verdict: VerdictFields, checks: Array<Record<string, un
   return unasked(verdict.reason) || checks.some((check) => check["kind"] === "model" && check["result"] === "unconfirmed" && unasked(check["reason"]));
 }
 
-/** Dos run unattended only on a verdict that settles its head with every model check answered. */
+/** Only a verdict that settles its head with every model check answered runs Dos unattended. */
 export function decidesDos(verdict: VerdictFields): boolean {
   return unsettledBy(verdict).unsettled === undefined && !modelUnanswered(verdict, checksOf(verdict));
 }

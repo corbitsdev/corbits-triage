@@ -14,7 +14,6 @@ async function finishOnExample() {
   await finish();
 }
 
-/** The first-run steps in the side panel, until they are finished or skipped here or on the welcome page. */
 export function Onboarding() {
   const [step, setStep] = useState<Step>("intro");
   const stepRef = useRef<HTMLElement>(null);

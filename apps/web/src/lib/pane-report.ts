@@ -7,7 +7,6 @@ import { upperFirst } from "./triage-view.ts";
 /** A failed check is something to fix; a model check the judge did not settle is the maintainer's call; anything else unconfirmed could not be checked. */
 export type Severity = "fail" | "unsure" | "cant";
 
-/** `cited` are evidence lines the check's output links to changed lines; `notes` are the rest of its evidence. */
 export type Problem = { check: CheckResult; severity: Severity; text: string | null; cited: string[]; notes: string[] };
 
 /** An author rule never fails a pull request, so it is a problem only when it could not be decided. */
@@ -33,12 +32,10 @@ export function paneProblems(checks: CheckResult[]): Problem[] {
   return SEVERITY_ORDER.flatMap((severity) => problems.filter((problem) => problem.severity === severity));
 }
 
-/** A gate counts as passed only when it matched. */
 export function passedChecks(checks: CheckResult[]): CheckResult[] {
   return checks.filter((check) => check.result === "pass");
 }
 
-/** The dot beside the status: green when it can merge, orange when it waits on the maintainer, blue when on the author. */
 type StatusTone = "ready" | "you" | "author" | "quiet";
 
 export type PaneStatus = { tone: StatusTone; text: string; live: boolean };
@@ -64,13 +61,11 @@ function status(tone: StatusTone, text: string): PaneStatus {
   return { tone, text, live: false };
 }
 
-/** The App approved the head Triage is looking at, through the pack's approve Do. */
 export function approvedByTriage(item: PrItem): boolean {
   const head = currentHead(item);
   return head !== null && head === item.verdictSha && item.actions.some((action) => action.kind === "approve" && (action.status === "done" || action.status === "satisfied"));
 }
 
-/** Merged or closed on GitHub, or by the maintainer from the inbox; nothing more can be written to it. */
 export function endedText(item: PrItem, detail: GithubPullDetail | undefined, handled: HandledMark | null): string | null {
   if (detail?.pr.merged || handled?.kind === "merge") return "Merged";
   if (detail?.pr.state === "closed" || item.closed || handled?.kind === "close") return "Closed";

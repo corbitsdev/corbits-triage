@@ -4,11 +4,9 @@ import { ExtendedPolicyError, StaleCheckPackError } from "./check-pack.ts";
 import { freshStepId, fromPack, packChanges, policyChanges, savable, stepEntries, storedStepKey, toPack, type RepoDraft } from "./pack-draft.ts";
 import { draftPolicy, type LoadedRepoPack, type PackRef, type RepoPackStore } from "./repo-pack-store.ts";
 
-/** What the hub holds for the repository, as far as the panel knows. */
 export type PackSession = {
   /** The artifact the next pack write must land on. */
   loaded: PackRef | null;
-  /** Why the newest artifact for the repository is not a check pack; a write replaces it in place. */
   corrupt: string | null;
   saved: RepoDraft;
   /** The pack was written but the config write that points at it failed; saving again redoes only that write. */
@@ -53,7 +51,6 @@ function namedNewRules(pack: CheckPack, saved: CheckPack, draft: CheckPack): { p
   return { pack: { ...pack, custom: pack.custom.map((row) => ({ ...row, id: renamed[row.id] ?? row.id })) }, renamed };
 }
 
-/** What a save of `draft` would write, as stored, with its steps' ids; throws the contract's reason when it cannot be written. */
 function stored(session: PackSession, draft: RepoDraft): { draft: RepoDraft; renamed: Record<string, string> } {
   const next = savable(draft, session.saved);
   const named = namedNewRules(toPack(next), session.saved.pack, draft.pack);
@@ -68,7 +65,6 @@ function stored(session: PackSession, draft: RepoDraft): { draft: RepoDraft; ren
   return { draft: { pack: named.pack, policy: draftPolicy(repoPolicy(draft.policy)), stepIds }, renamed: named.renamed };
 }
 
-/** Changes a save of `draft` would write; unfinished rows and spacing the contract trims are not changes. */
 export function unsavedChanges(session: PackSession, draft: RepoDraft): number {
   try {
     const next = stored(session, draft).draft;

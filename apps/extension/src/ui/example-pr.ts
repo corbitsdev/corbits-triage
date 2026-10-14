@@ -1,7 +1,6 @@
 import { prFromUrl, prKey } from "../pr.ts";
 import { tourPending } from "../storage.ts";
 
-/** A public repository whose pull requests triage runs on without any setup, for a first look. */
 const EXAMPLE_REPO = "corbitsdev/corbits-triage";
 /** Shown when the repository has no open pull request, or GitHub cannot list them right now. */
 const KNOWN_EXAMPLE = 158;
@@ -22,7 +21,6 @@ async function exampleUrl(): Promise<string> {
   return `https://github.com/${EXAMPLE_REPO}/pull/${KNOWN_EXAMPLE}`;
 }
 
-/** Opens an example pull request with the guided tour waiting for it. */
 export async function openExamplePr(): Promise<void> {
   const url = await exampleUrl();
   await tourPending.setValue(prKey(prFromUrl(url)!));

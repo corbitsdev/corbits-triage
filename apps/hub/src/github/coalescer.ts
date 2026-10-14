@@ -19,7 +19,6 @@ import { TriageStateConflictError, type TriageStateStore } from "./triage-state-
 
 export type CoalesceWindow = { quietMs: number; maxWaitMs: number; burstMs: number };
 
-/** Schedules `fire` after `ms`; the returned function cancels it. */
 type SetTimer = (fire: () => Promise<void>, ms: number) => () => void;
 
 export type CoalescedEvent = {
@@ -50,7 +49,6 @@ export type CoalescerDeps = {
 };
 
 export type Coalescer = {
-  /** Throws when the head could not be marked queued. */
   accept: (input: CoalescedEvent) => Promise<Accepted>;
   /** Cancels every window's timers; their heads stay queued for the reconciler. */
   stop: () => void;

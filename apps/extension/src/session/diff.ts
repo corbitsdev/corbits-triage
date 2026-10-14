@@ -1,4 +1,3 @@
-/** A file of a pull request's `.diff`, in the shape GitHub's REST API lists a pull request's files. */
 export type DiffFile = { filename: string; previous_filename?: string; status: string; additions: number; deletions: number; patch?: string };
 
 const FILE_START = "diff --git ";
@@ -64,7 +63,6 @@ function parseFile(lines: string[]): DiffFile {
   return file;
 }
 
-/** Every file of a unified diff as `git diff` writes it for a pull request, in order. */
 export function parseDiff(text: string): DiffFile[] {
   const lines = text.split("\n");
   if (lines.at(-1) === "") lines.pop();

@@ -94,7 +94,6 @@ function temporaryDirectory(): string {
   return directory;
 }
 
-/** Appends each line of `stream` to `lines` as it arrives; resolves with the whole text once the stream ends. */
 async function collectLines(stream: ReadableStream<Uint8Array>, lines: string[]): Promise<string> {
   const decoder = new TextDecoder();
   let text = "";
@@ -146,7 +145,6 @@ async function startHub(extraEnv: Record<string, string> = {}, dataDir = tempora
 
 let memberCount = 0;
 
-/** JSON headers for a freshly signed-up member, sent from the hub's own origin. */
 async function signedIn(origin: string, email = `member-${crypto.randomUUID()}@example.com`): Promise<Record<string, string>> {
   const headers = { "content-type": "application/json", origin };
   // Each member signs up from its own address so sign-up rate limits apply per member.
@@ -281,7 +279,6 @@ const REPO = "acme/widgets";
 const HEAD = "abc";
 const APP_BOT = { login: "corbits[bot]", type: "Bot" };
 
-/** GitHub holding open pull request 8 and closed pull request 9 of REPO; a label named `boom` is refused with 422. */
 function fakeGithub() {
   const labels: string[] = [];
   const comments: Array<{ id: number; user: typeof APP_BOT; body: string }> = [];
@@ -328,7 +325,6 @@ function fakeGithub() {
   return { origin: `http://127.0.0.1:${server.port}`, comments, writes, repoRequests, stop: () => server.stop(true) };
 }
 
-/** Connects the tenant's GitHub App to `githubOrigin` with REPO connected and triage enabled; returns the provider's id. */
 async function connectGithub(origin: string, headers: Record<string, string>, tenantId: string, githubOrigin: string): Promise<string> {
   const provider = await fetch(`${origin}/api/tenants/${tenantId}/providers`, {
     method: "POST", headers, body: JSON.stringify({ name: "github", plugin: "http", apiBaseUrl: githubOrigin }),
@@ -364,7 +360,6 @@ function verdictStep(step: SeededDo, headSha: string) {
 type Db = ReturnType<typeof createDB>["db"];
 type SeededEvent = { type: string; seq: number } & Record<string, unknown>;
 
-/** A deployment, its completed runs and their committed logs; one named `workflow` is live. */
 async function seedDeployment(db: Db, dataDir: string, tenantId: string, runs: SeededEvent[][], workflow = "seeded-pr-triage"): Promise<string[]> {
   const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
   const suffix = crypto.randomUUID().replaceAll("-", "");
@@ -391,7 +386,6 @@ async function seedDeployment(db: Db, dataDir: string, tenantId: string, runs: S
   return runIds;
 }
 
-/** A completed run whose committed log holds a verdict for REPO#8, as the workflow writes it. */
 async function seedRun(db: Db, dataDir: string, tenantId: string, dos: SeededDo[], headSha = HEAD): Promise<string> {
   const verdict = {
     repo: REPO, number: 8, headSha,
@@ -522,7 +516,6 @@ test("a pack preview evaluates an open pull request without writing anything", a
   }
 }, 60_000);
 
-/** A completed run of the live deployment: its verdict for one head, then the mirror's outcome. */
 function timedRun(started: Date, tookMs: number, verdict: Record<string, unknown>, mirrored = false): SeededEvent[] {
   const at = (offsetMs: number) => new Date(started.getTime() + offsetMs).toISOString();
   const number = Number(verdict["number"]);
@@ -680,7 +673,6 @@ test("a burst of webhook deliveries for one pull request queues its head once an
   }
 }, 60_000);
 
-/** An SMTP server keeping each message, refusing any recipient starting with `bounce`. */
 function smtpSink() {
   const messages: string[] = [];
   const server = Bun.listen<{ pending: string; message: string[] | undefined }>({
@@ -711,7 +703,6 @@ function smtpSink() {
       },
     },
   });
-  /** Headers by lowercase name, and the quoted-printable body decoded. */
   function parse(message: string) {
     const [head = "", ...body] = message.split("\n\n");
     const headers = Object.fromEntries(head.replace(/\n\s+/g, " ").split("\n").map((line) => {
@@ -754,7 +745,6 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
       return smtp.sent().filter((mail) => mail.headers.to === email).map((mail) => pattern.exec(mail.text)?.[0]).filter((link) => link !== undefined);
     }
     let follows = 0;
-    /** Where the magic link redirects, and the session cookie it set; each from its own client, under the per-client rate limit. */
     async function follow(link: string) {
       follows += 1;
       const res = await fetch(link, { redirect: "manual", headers: { "x-forwarded-for": `203.0.113.${follows}` } });
@@ -773,7 +763,6 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     async function withdraw(principalId: string) {
       return (await fetch(`${origin}/api/integrations/invitations/${tenantId}/${principalId}`, { method: "DELETE", headers: owner })).status;
     }
-    /** Sets a password through the stock reset email, from its own client. */
     async function resetPassword(email: string, password: string, ip: string) {
       const headers = { "content-type": "application/json", origin, "x-forwarded-for": ip };
       const asked = await fetch(`${origin}/api/auth/request-password-reset`, { method: "POST", headers, body: JSON.stringify({ email, redirectTo: `${portal}/reset-password` }) });

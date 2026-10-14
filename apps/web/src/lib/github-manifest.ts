@@ -94,7 +94,6 @@ export async function saveExistingGithubApp(input: {
 const SyncResult = type({ repos: "string[]" });
 export type SyncResult = typeof SyncResult.infer;
 
-/** Asks the hub to read the App's installations from GitHub and store the repositories it can see. */
 export async function syncGithubInstallations(tenantId: string): Promise<SyncResult> {
   const response = await fetch(`${requestOrigin()}/api/integrations/github-installations/${encodeURIComponent(tenantId)}/sync`, {
     method: "POST",
@@ -110,7 +109,6 @@ export async function syncGithubInstallations(tenantId: string): Promise<SyncRes
   return SyncResult.assert(body);
 }
 
-/** Lists the open pull requests of every connected repository, read live from GitHub. */
 export async function loadOpenPulls(tenantId: string): Promise<OpenPulls> {
   const response = await fetch(`${requestOrigin()}/api/integrations/github-open-pulls/${encodeURIComponent(tenantId)}`, {
     credentials: "include",

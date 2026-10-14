@@ -28,7 +28,6 @@ function EvalBadge({ model }: { model: boolean }) {
   return <span className="eval">{model ? <Badge tone="info">Decision model</Badge> : <Badge tone="neutral">Rule</Badge>}</span>;
 }
 
-/** Applies a change to the repository's latest saved pack; false when it was refused or not saved. */
 type Save = (change: (pack: CheckPack) => CheckPack, message: string) => Promise<boolean>;
 
 type RowProps = {
@@ -37,11 +36,9 @@ type RowProps = {
   editing: boolean;
   onEdit: (id: string | null) => void;
   onSave: Save;
-  /** A model check without a decision model to answer it: shown, and switched off. */
   locked: boolean;
 };
 
-/** One check as one sentence and its switch, like the portal's checks panel; a custom check also has its name and a remove. */
 function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
   const editRef = useRef<HTMLButtonElement>(null);
   const wasEditing = useRef(editing);
@@ -102,7 +99,6 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
   );
 }
 
-/** The portal's new-check gallery: every model shape, then that shape's editor. */
 function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<CheckKind | null>(null);
@@ -180,10 +176,8 @@ function LiveScore({ pr }: { pr: PrRef }) {
 // Long enough to read the note, short enough that an old one never describes a newer state.
 const NOTE_MS = 5000;
 
-/** `onAddModel` opens the decision model's setting, which the model checks need. */
 type CheckManagerProps = { repo: string; pr: PrRef | undefined; onAddModel: () => void };
 
-/** Every check local mode runs on one repository: switch it, set its limits, add checks of its own, or go back to the defaults. */
 export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
   const packs = useStorageItem(localPacks);
   const settings = useStorageItem(systemOne);

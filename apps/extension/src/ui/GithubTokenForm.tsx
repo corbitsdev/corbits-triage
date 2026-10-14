@@ -18,7 +18,7 @@ async function checkToken(token: string): Promise<void> {
   if (!res.ok) throw new Error(`GitHub answered ${res.status} when checking the token. Try again in a moment.`);
 }
 
-/** An optional fine-grained token raises GitHub's limit from 60 calls an hour to 5,000; it stays in this browser. */
+/** Stays in this browser. */
 export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFormProps) {
   const saved = useStorageItem(githubToken);
   const [token, setToken] = useState("");

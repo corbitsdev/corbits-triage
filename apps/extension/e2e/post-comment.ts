@@ -144,7 +144,6 @@ async function boxValue(page: Page): Promise<string> {
   return page.locator(".stand-in-composer textarea").inputValue();
 }
 
-/** A fresh page: nothing posted from it yet, the stand-in composer in place, the drafts' records cleared. */
 async function reload(page: Page, worker: Worker, picker = false): Promise<void> {
   await store(worker, { applied: {}, "seeds-offered": {} });
   await page.reload({ waitUntil: "domcontentloaded" });

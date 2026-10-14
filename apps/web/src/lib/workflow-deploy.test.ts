@@ -17,7 +17,6 @@ function packageOf(pin: string) {
   return { name: pin.slice(0, at), version: pin.slice(at + 1) };
 }
 
-/** The stock asset, tarball and deployment routes plus the hub's workflow-deploy and workflow-versions routes, as the portal calls them. */
 function fakeHub(tarballSeed: Record<string, string> = {}) {
   const assets: Asset[] = [];
   const tarballs = new Map(Object.entries(tarballSeed));

@@ -89,7 +89,6 @@ function DiffBody({ file, layout }: { file: DiffFile; layout: DiffLayout }) {
   return <>{hunks.map((hunk, index) => <Hunk key={index} hunk={hunk} layout={layout} />)}</>;
 }
 
-/** One changed file's patch, stacked (one column) or split (old left, new right). */
 export function DiffView({ file, layout, canSplit, onLayout }: {
   file: DiffFile;
   layout: DiffLayout;

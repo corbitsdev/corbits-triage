@@ -15,7 +15,6 @@ export function failure(status: number, code: string, message: string, details?:
   return Response.json({ error: { ...details, code, message } }, { status });
 }
 
-/** The user's active principal id in the tenant. */
 export async function memberPrincipal(db: DB["db"], tenantId: string, userId: string): Promise<string | undefined> {
   const member = await db.query.principal.findFirst({
     where: and(
@@ -47,7 +46,6 @@ export async function githubAppGrant(d: PortalCredentialDeps, principalId: strin
   return credential;
 }
 
-/** The decrypted App credential when the member holds `action` on it, or the error response to return. */
 export async function githubAppCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction): Promise<string | Response> {
   const credential = await githubAppGrant(d, principalId, tenantId, action);
   if (credential instanceof Response) return credential;
@@ -82,7 +80,6 @@ export async function doRefused(
   return failure(403, "forbidden", "You do not have the grant for this kind of Do in this repository.");
 }
 
-/** GitHub fetch that the App credential adapter turns into App-JWT or installation-token calls. */
 export function appGithubFetch(
   appFetch: (input: string, init?: RequestInit) => Promise<Response>,
   apiOrigin: string,

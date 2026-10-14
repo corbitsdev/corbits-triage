@@ -15,7 +15,6 @@ function headerShows(pr: PrRef): boolean {
   return [...document.querySelectorAll(HEADER_NUMBER)].some((node) => number.test(node.textContent ?? ""));
 }
 
-/** Whether GitHub's page shows the pull request yet: in-page navigation changes the address before the page. */
 export function pageShows(pr: PrRef): boolean {
   return titleShows(pr) || headerShows(pr);
 }
@@ -24,7 +23,7 @@ export function pageShows(pr: PrRef): boolean {
 const SHOWN_WAIT_MS = 1500;
 const SHOWN_POLL_MS = 100;
 
-/** Waits briefly for the page to show the pull request the address names, then goes ahead either way. */
+/** Then goes ahead either way. */
 export async function untilPageShows(pr: PrRef): Promise<void> {
   const end = Date.now() + SHOWN_WAIT_MS;
   while (!pageShows(pr) && Date.now() < end) await new Promise((done) => setTimeout(done, SHOWN_POLL_MS));

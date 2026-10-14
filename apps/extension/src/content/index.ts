@@ -46,7 +46,7 @@ const TITLE_ANCHOR = '[class*="titleWithAction"] > [class*="titleSuffix"], .gh-h
 const HEADER_ANCHOR = '[data-component="PageHeader"], #partial-discussion-header';
 const SIDEBAR_ANCHOR = "#partial-discussion-sidebar";
 
-/** The menu sits above the whole comment form, so it never lands inside GitHub's editor toolbar. */
+/** Above the whole comment form, so it never lands inside GitHub's editor toolbar. */
 function draftsAnchor(): Element | undefined {
   const box = findCommentBox();
   return box?.closest("form") ?? box;
@@ -61,7 +61,7 @@ function bodyFormAnchor(): Element | undefined {
 const READERS = 4;
 const readers = new Map<string, PageReads>();
 
-/** One run's reads share a reader, so a page its paths both need is fetched once. */
+/** A page its paths both need is fetched once. */
 async function sessionRead(run: string, path: string, sendResponse: (reply: Reply<SessionAnswer | null>) => void): Promise<void> {
   let reads = readers.get(run);
   if (!reads) {
@@ -76,7 +76,6 @@ async function sessionRead(run: string, path: string, sendResponse: (reply: Repl
   }
 }
 
-/** A part of the page Triage keeps in place: where it goes, whether it is there, and whether this layout wants it. */
 type Slot = { ui: ShadowRootContentScriptUi<void>; anchor: () => Element | null | undefined; placed: () => boolean; wanted: () => boolean };
 
 type Derived = { view: TriageView | undefined; drafts: Draft[]; actions: PageAction[]; notes: Map<string, FileNote[]> };
@@ -87,7 +86,6 @@ function derive(view: TriageView | undefined): Derived {
   return { view, drafts: view ? draftsOf(view) : [], actions: view ? pageActions(view) : [], notes };
 }
 
-/** A file's marker on the Files tab; its shadow root is made once, the first time the file's header shows. */
 type Marker = { marker: FileMarker; ui?: ShadowRootContentScriptUi<void>; shown?: FileNote[] };
 
 export async function startContentScript(ctx: ContentScriptContext): Promise<void> {
@@ -267,7 +265,6 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
     return derived;
   }
 
-  /** Whether the chosen placement finds where it goes on this page; when not, the sidebar block shows instead. */
   function placementShows(): boolean {
     switch (layout) {
       case "sidebar":
@@ -306,7 +303,6 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
     keepMarkers();
   }
 
-  /** Markers in the Files tab's headers, one per file a failing check points at; GitHub's diff loads files as it scrolls. */
   function keepMarkers() {
     const notes = current && onFilesTab() ? forView().notes : new Map<string, FileNote[]>();
     for (const [path, { ui }] of markers) if (!notes.has(path) && ui?.shadowHost.isConnected) ui.remove();

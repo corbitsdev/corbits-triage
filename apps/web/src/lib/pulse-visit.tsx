@@ -44,11 +44,8 @@ function writeSaved(key: string, saved: SavedPulse) {
 export type Pulse = { visit: Visit; firstVisit: boolean; since: SinceVisit; stuck: PrItem[]; acted: number };
 
 type PulseState = {
-  /** Null until GitHub answered on this page load and the last visit is read. */
   pulse: Pulse | null;
-  /** Ends the visit: what is open now becomes what the next one is compared to. */
   endVisit: () => void;
-  /** Saves what is open now, so a reload or a restored tab soon after carries this visit on. */
   saveVisit: () => void;
 };
 
@@ -62,7 +59,6 @@ function visitArea(path: string): VisitArea | null {
   return null;
 }
 
-/** What changed since the user's last visit ended, projected once from the open pull requests the layout already holds. */
 function usePulseState(open: OpenItem[]): PulseState {
   const { session } = useSession();
   const { snapshot } = usePortal();

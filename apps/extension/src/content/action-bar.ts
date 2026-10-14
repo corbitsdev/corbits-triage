@@ -5,7 +5,6 @@ import type { Applied } from "../storage.ts";
 import { shownChecks } from "../summary.ts";
 import { nextStep, stateName, toneOf, type TriageView } from "../view.ts";
 
-/** Where on GitHub's page the actions sit as a bar: fixed to the bottom, under GitHub's header, or beside the title. */
 export type BarPlace = "banner" | "top-bar" | "title";
 
 export type BarState = { view: TriageView; actions: PageAction[]; applied: Record<string, Applied | undefined> };
@@ -22,7 +21,6 @@ function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, 
   return made;
 }
 
-/** The Corbits mark and name, as the sidebar block's header carries them, so each bar says whose it is. */
 function brand(): HTMLElement {
   const label = node("span", "bar-brand");
   label.innerHTML = `<svg viewBox="32 115 437 270" aria-hidden="true"><path fill="currentColor" d="${CORBITS_MARK_PATH}"/></svg>`;
@@ -30,7 +28,6 @@ function brand(): HTMLElement {
   return label;
 }
 
-/** `post` posts a comment as the person; `apply` applies anything else, or puts a comment in the box to edit first. */
 export type BarHandlers = { apply(action: PageAction): void; post(action: PageAction): void };
 
 /**
@@ -61,7 +58,6 @@ export function actionBar(place: BarPlace, handlers: BarHandlers): ActionBar {
     render(last);
   }
 
-  /** A comment's pair: post it as the person, or put it in the comment box to edit first; once posted, it says so. */
   function commentButtons(action: PageAction, applied: Applied | undefined): HTMLElement {
     const pair = node("span", "bar-pair");
     const posted = applied?.post === true && applied.state === "done";
@@ -102,7 +98,6 @@ export function actionBar(place: BarPlace, handlers: BarHandlers): ActionBar {
     return button;
   }
 
-  /** Score and state, how many checks need a look, and the next step. */
   function summary(view: TriageView): HTMLElement {
     const head = node("p", "bar-summary");
     head.dataset.tone = toneOf(view);

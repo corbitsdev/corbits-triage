@@ -15,7 +15,7 @@ export function isOpenPullsQuery(query: Query): boolean {
   return query.queryKey[0] === OPEN_PULLS_QUERY_KEY;
 }
 
-/** Reads the open pull requests from GitHub, so PRs without a verdict still show up. */
+/** So PRs without a verdict still show up. */
 export function useOpenPulls() {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
@@ -46,7 +46,6 @@ function useSentReplies(): SentReplies {
   return data ?? {};
 }
 
-/** Marks a pull request's current verdict posted once the hub confirmed it wrote the reply. */
 export function useMarkReplySent(): (item: PrItem) => void {
   const { snapshot } = usePortal();
   const queryClient = useQueryClient();
@@ -75,7 +74,6 @@ const ACTED_PULLS_QUERY_KEY = "acted-pulls";
 /** Merged and closed pull requests leave every list, not just the inbox. */
 const LEAVING: ReadonlySet<HandledKind | null> = new Set(["merge", "close"]);
 
-/** All open keeps a pull request selected after an action, unless the action takes it out of the list. */
 export function leavesOpen(kind: HandledKind): boolean {
   return LEAVING.has(kind);
 }
@@ -96,7 +94,6 @@ function noneActed(): string[] {
   return [];
 }
 
-/** Keys of the pull requests acted on since the last visit ended, and a way to set them when a visit starts or carries on. */
 export function useActedPulls(): { acted: string[]; replace: (keys: string[]) => void } {
   const { snapshot } = usePortal();
   const queryClient = useQueryClient();
@@ -140,7 +137,6 @@ function isOtherHead(entry: HandledEntry, item: PrItem): boolean {
   return entry.headSha !== null && item.headSha !== null && entry.headSha !== item.headSha;
 }
 
-/** The mark that keeps a pull request handled, while no author activity or push came after the entry. */
 function handledMark(handled: Handled, item: PrItem): HandledMark | null {
   if (!Object.hasOwn(handled, item.key)) return null;
   const entry = handled[item.key];
@@ -209,7 +205,6 @@ export function useHandledPulls(): HandledPulls {
   }, [queryClient, tenantId]);
 }
 
-/** Every open pull request, and with `pulls` the ones the pull request page read on its own, open or not. */
 function usePullRequestItems(pulls: PullTriage[] = NO_PULLS): PrItem[] {
   const verdicts = useTriageVerdicts();
   const approvals = useApprovals();
@@ -223,7 +218,6 @@ function usePullRequestItems(pulls: PullTriage[] = NO_PULLS): PrItem[] {
   }, [verdicts.data, pulls, approvals.rows, data, sent]);
 }
 
-/** The pull request page's items: the open ones, and the one it shows read on its own once it is neither open nor listed, as after a merge. */
 export function usePullPageItems(repo: string | null, number: number | null): PrItem[] {
   const verdicts = useTriageVerdicts();
   const openPulls = useOpenPulls();
@@ -247,7 +241,7 @@ export function useOpenPullsUnanswered(): boolean {
   return openPulls.isEnabled && !isOpenPullsAnswered(openPulls);
 }
 
-/** True until every source the queue is projected from has loaded; the lists are not meaningful before that. */
+/** The lists are not meaningful before that. */
 export function useQueueLoading(): boolean {
   const { pending } = useTriageVerdicts();
   const approvals = useApprovals();
@@ -263,7 +257,6 @@ export function useQueueLoadingPulse(): boolean {
   return pending || approvalsLoading || openPullsUnanswered;
 }
 
-/** Open pull requests with their handled mark, held or sent; merged and closed ones are gone. */
 export function openItems(items: PrItem[], handled: Handled, held: Handled): OpenItem[] {
   return items
     .filter((item) => !item.closed)
@@ -271,7 +264,6 @@ export function openItems(items: PrItem[], handled: Handled, held: Handled): Ope
     .filter((open) => !LEAVING.has(open.handled?.kind ?? null));
 }
 
-/** Every open pull request, once GitHub has answered; the views apply their own rules on top. */
 export function useOpenItems(): OpenItem[] {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
@@ -285,7 +277,6 @@ export function useOpenItems(): OpenItem[] {
   }, [items, openPullsUnanswered, handled, held]);
 }
 
-/** The inbox: every open pull request, with its verdict when it has one, until it is acted on. */
 export function useQueueItems(): PrItem[] {
   const open = useOpenItems();
   return useMemo(() => open.filter((entry) => entry.handled === null).map((entry) => entry.item), [open]);

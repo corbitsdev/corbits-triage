@@ -24,16 +24,13 @@ const INBOX_STATUS_LABEL: Record<QueueState, string> = {
   new: "Not triaged yet",
 };
 
-/** What the status line reads: the run, the verdict's state and whether requested changes were answered. */
 export type StatusFields = Pick<PrItem, "running" | "state" | "comment" | "checks" | "reviewAnswered">;
 
-/** A running pull request says so; it keeps its previous verdict for grouping. */
 export function inboxStatus(item: StatusFields): string {
   if (item.running) return "Running";
   return INBOX_STATUS_LABEL[isReReview(item) ? "awaiting-review" : item.state];
 }
 
-/** The row's one-line reason: the running status, else the verdict's first piece of evidence. */
 export function rowWhy(item: StatusFields & Pick<PrItem, "evidence">): string | null {
   return item.running ? inboxStatus(item) : (item.evidence[0] ?? null);
 }
@@ -62,7 +59,6 @@ const ROW_LABEL: Record<PrimaryAction, string> = {
   triage: "Retry",
 };
 
-/** The pile a pull request lands in; null means it is still awaiting its first verdict and is only counted. */
 export function inboxAction(item: PrItem): InboxAction | null {
   switch (item.state) {
     case "needs-decision":
@@ -81,27 +77,22 @@ export function inboxAction(item: PrItem): InboxAction | null {
   }
 }
 
-/** The author must act and the App already told them so; there is nothing left to send. */
 export function isPostedToAuthor(item: PrItem): boolean {
   return item.state === "needs-author-update" && item.posted;
 }
 
-/** A maintainer's requested changes are all the verdict holds against the pull request; triage has nothing to add to them. */
 function onlyRequestedChanges(item: Omit<StatusFields, "running">): boolean {
   return item.state === "needs-author-update" && !hasDraftComment(item.comment) && item.checks.some((c) => c.check === NO_CHANGES_REQUESTED && c.result === "fail");
 }
 
-/** The author answered the requested changes, so they wait on the reviewer again. */
 export function isReReview(item: Omit<StatusFields, "running">): boolean {
   return onlyRequestedChanges(item) && item.reviewAnswered;
 }
 
-/** The author has yet to answer the requested changes, and no approval waits on the maintainer. */
 function awaitsReviewFix(item: PrItem): boolean {
   return onlyRequestedChanges(item) && !item.reviewAnswered && item.pendingApprovalId === null;
 }
 
-/** Needs you holds what waits on the maintainer. */
 export function inNeedsYou(item: PrItem): boolean {
   return inboxAction(item) !== null && !awaitsReviewFix(item);
 }
@@ -130,10 +121,9 @@ export function primaryAction(item: PrItem, action: InboxAction | null): Primary
   }
 }
 
-/** A write that settles a pull request for now; merge and close settle it for good. */
 export type HandledKind = Exclude<PrimaryAction, "triage">;
 
-/** What the maintainer did to a pull request that is still handled; `kind` is null for an entry stored before kinds were recorded. */
+/** `kind` is null for an entry stored before kinds were recorded. */
 export type HandledMark = { kind: HandledKind | null };
 
 export type WaitsOn = "maintainer" | "author" | "ci" | "nobody";
@@ -166,7 +156,6 @@ const POSTED_LABEL: Record<HandledKind, string> = {
   close: "Closed",
 };
 
-/** What is on GitHub for the pull request: what the maintainer did, else the verdict's reply. */
 export function postedLabel(item: Pick<PrItem, "posted">, entry: HandledMark | null): string | null {
   if (entry?.kind) return POSTED_LABEL[entry.kind];
   return item.posted ? "Posted" : null;
@@ -184,7 +173,6 @@ function waitingSince(item: PrItem): number {
   return item.waitingSince ? Date.parse(item.waitingSince) : Number.MAX_SAFE_INTEGER;
 }
 
-/** Priority first, then humans first, then whoever has waited longest. */
 function compareInboxItems(a: PrItem, b: PrItem): number {
   const byPriority = priorityRank(a.priority) - priorityRank(b.priority);
   if (byPriority !== 0) return byPriority;
@@ -194,10 +182,8 @@ function compareInboxItems(a: PrItem, b: PrItem): number {
 
 type InboxGroup = { action: InboxAction; label: string; items: PrItem[] };
 
-/** `awaiting` counts the pull requests with no verdict and no failed run in repositories that can be triaged; they are not rows. */
 export type InboxView = { groups: InboxGroup[]; awaiting: number };
 
-/** `ready` names the repositories that are enabled and set up; no other repository's pull requests can be triaged. */
 export function groupInbox(items: PrItem[], ready: ReadonlySet<string>): InboxView {
   const sorted = [...items].sort(compareInboxItems);
   const groups = INBOX_ACTION_ORDER
@@ -216,7 +202,6 @@ export function matchesQuery(item: PrItem, query: string): boolean {
   return `${item.title ?? ""} #${item.number ?? ""} ${item.repo} ${item.author ?? ""} ${item.owner ?? ""}`.toLowerCase().includes(normalized);
 }
 
-/** Needs you is the inbox proper; All open lists every open pull request with who it waits on; First-timers narrows All open to first-timers. */
 export type ListView = "needs-you" | "all-open" | "first-timers";
 
 const LIST_ROOT: Record<ListView, string> = { "needs-you": "/inbox", "all-open": "/open", "first-timers": "/first-timers" };
@@ -229,15 +214,12 @@ export function listHref(view: ListView, item: Pick<PrItem, "repo" | "number">):
   return `${LIST_ROOT[view]}/${item.repo}/${item.number ?? ""}`;
 }
 
-/** The `owner/repo` of a pull request key. */
 export function repoOf(key: string): string {
   return key.slice(0, key.lastIndexOf("#"));
 }
 
-/** An open pull request with its handled mark, held or sent; null while it is in Needs you. */
 export type OpenItem = { item: PrItem; handled: HandledMark | null };
 
-/** All open lists the open pull requests of the repositories with triage enabled. */
 export function allOpen(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
   return open.filter((entry) => enabled.has(entry.item.repo));
 }
@@ -246,7 +228,6 @@ export function firstTimers(open: OpenItem[], enabled: ReadonlySet<string>): Ope
   return allOpen(open, enabled).filter((entry) => entry.item.authorKind === "first-timer");
 }
 
-/** The rail counts: Needs you counts its rows, so not pull requests still awaiting their first verdict; the other views count their lists. */
 export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Record<ListView, number> {
   return {
     "needs-you": open.filter((entry) => entry.handled === null && inNeedsYou(entry.item)).length,
@@ -301,7 +282,6 @@ function ownerOf(item: PrItem): string {
   return item.owner ?? UNASSIGNED;
 }
 
-/** The actionable pull requests regrouped by repository or owner; the action pile order is kept inside each group. */
 export function regroupInbox(view: InboxView, grouping: InboxGrouping): InboxPile[] {
   if (grouping === "action") return view.groups.map((group) => ({ key: group.action, label: group.label, action: group.action, items: group.items }));
   const ordered = view.groups.flatMap((group) => group.items);
@@ -310,7 +290,6 @@ export function regroupInbox(view: InboxView, grouping: InboxGrouping): InboxPil
 
 export type OpenPile = { key: string; label: string; items: OpenItem[] };
 
-/** Every open pull request by repository, who it waits on, or owner, in inbox order inside each group. */
 export function groupOpen(open: OpenItem[], grouping: OpenGrouping): OpenPile[] {
   const sorted = [...open].sort((a, b) => compareInboxItems(a.item, b.item));
   if (grouping === "waits") {

@@ -43,7 +43,6 @@ const PUBLIC_TABLES = [
     VALUES ('inv_1', '${TENANT}', 'ann@move.test', 'rol_move', 'hash', 'token', now() + interval '1 day')`,
 ];
 
-/** Columns, constraints and indexes of the `corbits_triage` schema, and what is left of the old tables. */
 async function shape(db: Db) {
   const columns = await db.execute(sql`
     SELECT table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns

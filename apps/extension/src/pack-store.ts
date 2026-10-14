@@ -3,7 +3,6 @@ import { errorText } from "./error-text.ts";
 import { defaultLocalPack } from "./local-pack.ts";
 import { localPacks } from "./storage.ts";
 
-/** A stored pack, or why it does not read; one from an earlier version reads as this one, as the hub reads it. */
 export function readLocalPack(stored: unknown, repo: string): { pack: CheckPack } | { error: string } {
   try {
     return { pack: readCheckPack(stored, repo) };

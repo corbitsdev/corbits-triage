@@ -1,4 +1,4 @@
-/** Accept the two PEM envelopes GitHub emits for App private keys. */
+/** The two PEM envelopes GitHub emits. */
 export function isPrivateKeyPem(value: string): boolean {
   const pem = value.trim();
   return /^-----BEGIN PRIVATE KEY-----\n[\s\S]+\n-----END PRIVATE KEY-----$/.test(pem) ||

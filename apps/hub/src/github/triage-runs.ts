@@ -40,13 +40,11 @@ type KnownRun = {
 };
 
 export type ObservedRuns = {
-  /** Runs by repository, then by `runKey`. */
   byRepo: Map<string, Map<string, ObservedRun[]>>;
   /** Runs in the log, one per mail it received, including those that name no pull request head. */
   runCount: number;
   /** One per head a run made a verdict for, from when its verdict step completed, however the run then ends. */
   verdicts: RecordedVerdict[];
-  /** Held Dos the ended approval runs wrote, found written or refused. */
   approved: ApprovedDo[];
 };
 
@@ -108,14 +106,12 @@ function approvalOf(started: Record<string, unknown>): Approval | undefined {
   return { repo, number, ...(typeof principalId === "string" && { principalId }) };
 }
 
-/** The approval with what its run wrote, once the run ended. */
 function approvedOf(approval: Approval, events: readonly WorkflowRunEvent[]): Approval {
   if (TERMINAL_EVENTS[events.at(-1)?.type ?? ""] === undefined) return approval;
   const { repo, number } = approval;
   return { ...approval, approved: [...doResults(events, APPROVED_STEPS).values()].map((result) => ({ repo, number, ...result })) };
 }
 
-/** The approval a run's events record, with what it wrote once it ended; undefined for a run that is not an approval. */
 export function approvalIn(events: readonly WorkflowRunEvent[]): Approval | undefined {
   const started = events.find((event) => event.type === "RunStarted");
   const approval = started && approvalOf(started.body);
@@ -143,7 +139,6 @@ function inlineOutput(event: WorkflowRunEvent | undefined): Record<string, unkno
 
 const DoResult = type({ effectId: "string", status: "string", "error?": "string" });
 
-/** The execute step's outcome of each Do it was given, by effect id. */
 function doResults(events: readonly WorkflowRunEvent[], steps = EXECUTE_STEPS): Map<string, typeof DoResult.infer> {
   const dos = inlineOutput(lastCompleted(events, steps))?.["dos"];
   return new Map((Array.isArray(dos) ? dos : []).flatMap(function parsed(result): Array<[string, typeof DoResult.infer]> {
@@ -152,7 +147,6 @@ function doResults(events: readonly WorkflowRunEvent[], steps = EXECUTE_STEPS): 
   }));
 }
 
-/** The verdict with each executed Do carrying its `status`, and `error` when it failed or could not run. */
 function withResults(verdict: Record<string, unknown> | undefined, results: ReadonlyMap<string, typeof DoResult.infer>): Record<string, unknown> | undefined {
   const actions = verdict?.["actions"];
   if (!verdict || !Array.isArray(actions) || results.size === 0) return verdict;
@@ -202,7 +196,6 @@ function mirroredCalls(events: readonly WorkflowRunEvent[]): Set<string> {
   return new Set(outcomes.map(asRecord).flatMap((outcome) => outcome?.["ok"] === true && typeof outcome["call"] === "string" ? [outcome["call"]] : []));
 }
 
-/** The mirror director's call id for one pull request. */
 function mirrorCallId(repo: string, number: number): string {
   return `mirror:${repo.replace("/", "--")}:${number}`;
 }
@@ -225,7 +218,6 @@ function suggestedDos(actions: readonly unknown[]): RecordedDo[] {
   });
 }
 
-/** The verdict as the portal shows it; none when it does not read as one. */
 function detailOf(verdict: Record<string, unknown>, ruled: Ruled | undefined): VerdictDetail | undefined {
   const reason = verdict["reason"];
   const evidence = typeof reason === "string" && reason !== "" ? [reason] : (ruled?.evidence ?? []);
@@ -253,7 +245,6 @@ function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger: Trigg
   };
 }
 
-/** The verdict a run made for one pull request; a batch run holds one per head. */
 export function verdictFor(events: readonly WorkflowRunEvent[], repo: string, number: number): Record<string, unknown> | undefined {
   return verdictsOf(events).find((verdict) => verdict?.["repo"] === repo && verdict["number"] === number);
 }
@@ -313,7 +304,6 @@ export async function observeDeployments(observe: ObserveRuns, deployments: read
   return observed;
 }
 
-/** Runs of several deployments of the same workflow, as if from one log. */
 export function mergeObservedRuns(observed: readonly ObservedRuns[]): ObservedRuns {
   const byRepo: ObservedRuns["byRepo"] = new Map();
   for (const runs of observed) {

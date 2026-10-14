@@ -71,7 +71,6 @@ function isLayout(value: string): value is PageLayout {
   return (PAGE_LAYOUTS as string[]).includes(value);
 }
 
-/** Where the page shows the suggested actions, and whether they apply on their own, for the open pull request's repository. */
 function PageSection({ pr }: { pr: PrRef | undefined }) {
   const layout = useStorageItem(pageLayout);
   const auto = useStorageItem(autoApply);

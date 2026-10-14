@@ -60,7 +60,6 @@ export interface BridgeDeps {
   coalescer: Pick<Coalescer, "accept">;
   log?: (entry: Record<string, unknown>) => void;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
-  /** Tells a pull request's head and whether it is a draft when its event does not say. */
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   /** Has the repository's open pull requests but `except` triaged again; resolves to how many were due. */
   recheckOpenPulls: (tenantId: string, repo: string, except: number) => Promise<number>;
@@ -150,7 +149,6 @@ function json(status: number, body: unknown): Response {
 const INSTALL_EVENTS = new Set(["installation", "installation_repositories"]);
 const REPO_LIST_CAP = 50;
 
-/** Undefined when the pull request is no longer open. */
 async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, number: number) {
   const read = await d.openHeadFor(tenantId);
   if (!read) throw new Error("no active github credential");
@@ -229,7 +227,6 @@ export type InstallationListing =
   | { fields: InstallationFields; suspended: false; names: string[] }
   | { fields: InstallationFields; suspended: true };
 
-/** Makes the stored repositories match what GitHub reports. */
 export function applyInstallationListing(ns: CorbitsTriageNs, listings: readonly InstallationListing[]): CorbitsTriageNs {
   const live = new Set(listings.map((listing) => listing.fields.installationId));
   let next = ns;

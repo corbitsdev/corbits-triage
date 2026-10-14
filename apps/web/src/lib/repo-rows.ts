@@ -21,12 +21,10 @@ export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
   return new Set(repos.filter((repo) => repoPolicy(repo).enabled).map((repo) => repo.name));
 }
 
-/** The repositories whose pull requests can be triaged. */
 export function triageReadyRepos(repos: RepoRecord[]): Set<string> {
   return new Set(repos.filter(triageReady).map((repo) => repo.name));
 }
 
-/** What GitHub's open pull requests say about one repository, or why they could not be read. */
 type RepoPulls =
   | { open: number; needsYou: number; awaiting: number; owners: string[]; lastActivity: string | null }
   | { error: string };

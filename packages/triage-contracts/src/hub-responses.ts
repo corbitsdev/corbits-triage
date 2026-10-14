@@ -11,7 +11,6 @@ const DetailCheck = type({
   result: "string",
   "reason?": "string",
   "evidence?": "string[]",
-  /** What the check found, as `CheckOutput`; the portal parses it. */
   "output?": "Record<string, unknown>",
   /** Marks an author rule, on verdicts recorded before author rules were removed. */
   "gate?": "boolean",
@@ -19,7 +18,6 @@ const DetailCheck = type({
 
 const DetailAction = type({
   "+": "delete",
-  /** The verdict's list the Do is on. */
   "list?": VerdictWord,
   "index?": "number",
   "effectId?": "string",
@@ -27,9 +25,7 @@ const DetailAction = type({
   "reason?": "string",
   "target?": "Record<string, unknown>",
   "skipped?": "boolean",
-  /** Waiting for a maintainer to approve it. */
   "held?": "boolean",
-  /** Set once the run's execute step ran the Do. */
   "status?": "string",
   "error?": "string",
 });
@@ -43,18 +39,14 @@ export const VerdictDetail = type({
   "owner?": "string | null",
   "nextAction?": "string",
   "verdict?": VerdictWord,
-  /** How likely the pull request passes its policy, as the verdict question answered. */
   "score?": "number | null",
-  /** The failed hard rules, then the judged rules that failed or were not confirmed. */
   "reasons?": "string[]",
   "reason?": "string",
-  /** The verdict's reason, or the rules step's findings when it names none. */
   "evidence?": "string[]",
   "checks?": DetailCheck.array(),
   "labels?": "string[]",
   "feedback?": "string",
   "actions?": DetailAction.array(),
-  /** The Do kinds the pr-triage role was granted on the repository when the verdict was made. */
   "automatic?": "string[]",
   "facts?": { "+": "delete", "title?": "string", "author?": "string", "draft?": "boolean", "mergeable?": "boolean | null", "checks?": "string", "reviewAnswered?": "boolean" },
 });
@@ -98,16 +90,13 @@ const Pull = type({
 
 export const TriageVerdicts = type({
   pulls: Pull.array(),
-  /** Connected repositories with any verdict recorded or a run in a live log. */
   triaged: "string[]",
   /** Connected repositories with a verdict in the last 14 days or a run in a live log. */
   active: "string[]",
-  /** Whether the decision model scored any verdict. */
   scored: "boolean",
 });
 export type TriageVerdicts = typeof TriageVerdicts.infer;
 
-/** `levels` counts a score rule's heads by the level each was rated. */
 const CheckStats = type({ pass: "number", fail: "number", unconfirmed: "number", "levels?": "Record<string, number>" });
 const ActionStats = type({ suggested: "number", executed: "number", failed: "number" });
 
@@ -120,7 +109,6 @@ export const TriageStats = type({
   verdicts: "Record<string, number>",
   neededYou: "number",
   checks: type({ "[string]": CheckStats }),
-  /** By the verdict's list the Dos were on. */
   actions: type({ "[string]": ActionStats }),
   comments: "number",
   medianTimeToVerdictMs: "number | null",
@@ -128,13 +116,9 @@ export const TriageStats = type({
 });
 export type TriageStats = typeof TriageStats.infer;
 
-/** The invited principal, and its magic link when the hub sends no email. */
 export const InviteSent = type({ principalId: "string", email: "string", emailed: "boolean", "link?": "string" });
 export type InviteSent = typeof InviteSent.infer;
-/**
- * Roles the caller may invite people into, whether the hub emails the invite, and the sign-in allowlist: its
- * `@domain` entries, and only whether it also names single addresses, which stay private. `null` when anyone may sign in.
- */
+/** Only whether the allowlist names single addresses, which stay private. `null` when anyone may sign in. */
 export const InviteRoles = type({
   assignableRoleIds: "string[]",
   sendsEmail: "boolean",
@@ -149,7 +133,6 @@ export type SessionList = typeof SessionList.infer;
 
 const PackageVersion = type({ name: "string", version: "string" });
 
-/** Live deployments with the versions each frozen closure pins; `package` is null when it was not deployed from the package registry. */
 export const DeployedVersions = type({
   deployments: type({
     id: "string",
@@ -170,10 +153,8 @@ export type AuditLog = typeof AuditLog.infer;
 
 const ArtifactRefShape = type({ id: "string", version: "number" });
 
-/** The policy artifact versions a run's pack was resolved from, as the hub's mail names them. */
 export const PolicySourceShape = type({ repo: ArtifactRefShape, "shared?": ArtifactRefShape });
 
-/** A repository's policy as triage reads it; a corrupt one names its artifact, which a save replaces in place. */
 export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape })
   .or({ status: "'missing'" })
   .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape });

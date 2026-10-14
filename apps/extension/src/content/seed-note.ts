@@ -7,7 +7,6 @@ const WHERE: Record<Seed["spot"], string> = {
   body: "Nothing saves until you press Update.",
 };
 
-/** The line beside one of GitHub's fields that says Triage put text in it, with Undo to take that text back out. */
 export function seedNote(onUndo: () => void): SeedNote {
   const element = document.createElement("p");
   element.className = "seed-note";

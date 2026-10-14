@@ -16,7 +16,6 @@ export interface MirrorInput {
   labels: string[];
   /** Labels the caller owns; the mirror removes only these. Optional so requests built before it existed remove nothing. */
   owned?: readonly string[];
-  /** Absent leaves the triage comment as it is. */
   comment?: string;
   /** What the comment is written for; without it the comment is written whatever it said before. */
   header?: TriageHeader;
@@ -158,7 +157,6 @@ async function postComment(gh: GithubFetch, { repo, number, body }: TriageCommen
   return { commentId: posted.id, updated: false };
 }
 
-/** Edits the first current Triage comment GitHub lets this App edit, creating one only when there is none. */
 async function upsert(gh: GithubFetch, input: TriageCommentInput, current: MarkedComment[]): Promise<WrittenComment> {
   for (const candidate of current) {
     const edited = await editComment(gh, input.repo, candidate.id, input.body);
@@ -167,13 +165,11 @@ async function upsert(gh: GithubFetch, input: TriageCommentInput, current: Marke
   return postComment(gh, input);
 }
 
-/** Edits the App's one Triage comment on the pull request, creating it only when none exists. */
 export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput): Promise<WrittenComment> {
   const current = marked(await issueComments(gh, input.repo, input.number)).filter((c) => !isSuperseded(c.body));
   return upsert(gh, { ...input, body: `${TRIAGE_COMMENT_MARKER}\n${input.body}` }, current);
 }
 
-/** When the comment last said exactly this for this head, policy versions and verdict; undefined when anything differs. */
 function unchangedSince(latest: MarkedComment, header: TriageHeader, text: string): string | undefined {
   const before = headerOf(latest.body);
   if (!before || before.head !== header.head || before.verdict !== header.verdict || !samePolicy(before.policy, header.policy)) return undefined;

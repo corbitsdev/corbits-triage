@@ -10,7 +10,7 @@ export const PR_TRIAGE_STUCK_RUN_MS = 90 * 60_000;
 export const PR_TRIAGE_STATUSES = ["new", "queued", "running", "triaged", "failed", "stale"] as const;
 export type PrTriageStatus = (typeof PR_TRIAGE_STATUSES)[number];
 
-/** One open pull request at one head commit. Timestamps are ISO-8601. */
+/** Timestamps are ISO-8601. */
 export type PrTriageRow = {
   number: number;
   headSha: string;
@@ -18,7 +18,7 @@ export type PrTriageRow = {
   runId?: string;
   /** Runs the hub queued for this head; webhook and portal runs do not count. */
   attempts: number;
-  /** Times the hub reset `attempts` on a head capped by runs that never started. */
+  /** On a head capped by runs that never started. */
   cappedRetries?: number;
   /** Workflow package version of the deployment the row was created, reset or last run under; an integer on rows from before versions were read from deployments, absent on rows older still. */
   workflowVersion?: string | number;
@@ -84,7 +84,6 @@ function parseRow(raw: unknown): PrTriageRow | null {
   };
 }
 
-/** Null when the content is not this repository's triage state. */
 export function parseTriageState(raw: unknown, repo: string): TriageState | null {
   let body: Record<string, unknown> | undefined;
   try {

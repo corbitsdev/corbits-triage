@@ -6,7 +6,6 @@ const COMMENT_BOXES = [
   'textarea[name="comment[body]"]',
 ];
 
-/** The pull request's own new-comment box, not an inline review reply: the last match on the page. */
 export function findCommentBox(): HTMLTextAreaElement | undefined {
   for (const selector of COMMENT_BOXES) {
     const boxes = [...document.querySelectorAll<HTMLTextAreaElement>(selector)].filter((box) => !box.disabled && !box.closest('[hidden], .js-inline-comment-form, [data-testid="inline-comment"]'));

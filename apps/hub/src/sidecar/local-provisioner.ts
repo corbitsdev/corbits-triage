@@ -41,7 +41,6 @@ type IsLocalSidecarLive = (manifest: LocalSidecarManifest) => Promise<boolean>;
 
 export interface LocalProcessSidecarProvisioner {
   readonly provisioner: SidecarProvisioner;
-  /** Respawns every manifest `isLive` accepts and removes the rest. */
   restore(isLive: IsLocalSidecarLive): Promise<void>;
   shutdown(): Promise<void>;
 }

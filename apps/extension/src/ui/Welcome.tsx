@@ -32,7 +32,6 @@ function Progress({ step }: { step: Step }) {
   );
 }
 
-/** The full-page first run, opened in a tab on install; finishing it in the panel brings this tab to its last step. */
 export function Welcome() {
   const done = useStorageItem(onboarded);
   const model = useStorageItem(systemOne);

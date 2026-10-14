@@ -22,9 +22,8 @@ export type RepoCheckFlags = {
 export type RepoPolicy = {
   enabled: boolean;
   checks: RepoCheckFlags;
-  /** GitHub logins trusted as approved authors without org membership. */
   approvedAuthors: string[];
-  /** Pointer at the per-repo check-pack artifact: its title, and its id once pinned. Not params. */
+  /** Not params. */
   checkPack?: { name: string; id?: string };
 };
 
@@ -39,7 +38,6 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
   approvedAuthors: [],
 };
 
-/** The policy as clients write it; `repoPolicy` defaults whatever is missing. */
 export const repoPolicySchema = type({
   "enabled?": "boolean",
   "checks?": {
@@ -71,7 +69,7 @@ export function tierOf(association: AuthorAssociation | null, author: string, ap
   return approvedAuthors.includes(author.toLowerCase()) ? "approved" : "external";
 }
 
-/** Defaults missing fields so pre-policy tenant config keeps all checks on. */
+/** Keeps all checks on for pre-policy tenant config. */
 export function repoPolicy(raw: unknown): RepoPolicy {
   const row = asRecord(raw) ?? {};
   const nested = asRecord(row.policy) ?? {};

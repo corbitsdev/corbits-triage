@@ -4,7 +4,6 @@ import { loadAuditLog } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { usePortal } from "./portal.tsx";
 
-/** Events the page shows. */
 export const AUDIT_LIMIT = 100;
 
 function auditLogQuery(tenantId: string | undefined, repo: string | null) {
@@ -19,7 +18,6 @@ export function useAuditLog(repo: string | null) {
   return useQuery(auditLogQuery(snapshot?.workspace.tenantId, repo));
 }
 
-/** Entries any of whose fields contains `search`, ignoring case. */
 export function matchingEntries(entries: readonly AuditEntry[], search: string): AuditEntry[] {
   const term = search.trim().toLowerCase();
   if (term === "") return [...entries];

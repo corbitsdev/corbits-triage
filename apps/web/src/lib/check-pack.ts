@@ -11,7 +11,6 @@ function collection(tenantId: string): string {
   return `/api/tenants/${enc(tenantId)}/artifacts`;
 }
 
-/** The tenant's newest check pack artifact per title, from one listing of its check-pack artifacts. */
 export async function listCheckPacks(transport: Transport, tenantId: string): Promise<Map<string, ArtifactListItem>> {
   const rows = await listArtifacts(transport, tenantId, CHECK_PACK_TITLE_PREFIX);
   return newestByTitle(rows.filter((row) => row.title.startsWith(CHECK_PACK_TITLE_PREFIX)));
@@ -23,7 +22,6 @@ export class StaleCheckPackError extends Error {
   }
 }
 
-/** The artifact a draft was read from. */
 export type LoadedCheckPack = Pick<StoredCheckPack, "id" | "version">;
 
 function versionOf(body: { version?: number } | undefined, what: string): number {

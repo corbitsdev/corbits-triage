@@ -18,7 +18,6 @@ type VerdictOptions = { pack?: CheckPack; pr?: Record<string, unknown>; skipJudg
 const ctx = {} as never;
 const signal = new AbortController().signal;
 
-/** Every question answered decisively: the verdict passes, focused is one thing. */
 function decisive(questions: Array<{ id: string }>): ReactorInboundEvent {
   const probabilities: Record<string, Record<string, number>> = {
     verdict: { pass: 0.9, fail: 0.05, cant_tell: 0.05 },
@@ -28,7 +27,6 @@ function decisive(questions: Array<{ id: string }>): ReactorInboundEvent {
   return { type: "inference.done", turn: { content: [{ type: "text", text }] } } as ReactorInboundEvent;
 }
 
-/** One judge director call per chunk, answered by `answer`, as the workflow's map runs them. */
 async function judge(chunks: JudgeChunk[], answer: (questions: Array<{ id: string }>) => ReactorInboundEvent): Promise<Array<{ reply: string }>> {
   const output: Array<{ reply: string }> = [];
   for (const chunk of chunks) {
@@ -45,7 +43,6 @@ async function judge(chunks: JudgeChunk[], answer: (questions: Array<{ id: strin
   return output;
 }
 
-/** Both judge rounds and evaluate, as the workflow runs them when the gate asks the judge; the first round's answers come from `first`. */
 async function judgeAndEvaluate(ruled: RulesOutput, first: (questions: Array<{ id: string }>) => ReactorInboundEvent = decisive) {
   if (!ruled.needsJudgment) return { output: undefined, reply: JSON.stringify(await evaluate(ruled, ctx, signal)) };
   const output = await judge(ruled.chunks, first);
@@ -179,7 +176,6 @@ describe("verdicts the decision model was never asked about", () => {
         paths: files.map((file) => file.path),
       };
     }
-    /** Rules, the judge with the first round answered by `event`, and evaluate, as the workflow runs them. */
     async function triage(files: Array<{ path: string; patch?: string }>, event?: ReactorInboundEvent) {
       const ruled = await rules({ items: [{ facts: facts(files), pack }], batch: true }, ctx, signal);
       const { output, reply } = await judgeAndEvaluate(ruled, () => event!);

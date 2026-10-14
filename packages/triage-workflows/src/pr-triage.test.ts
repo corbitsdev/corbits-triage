@@ -49,10 +49,6 @@ const RUNS: Record<Ci, unknown[]> = {
 };
 type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; prior?: string; failComments?: boolean };
 
-/**
- * GitHub serving open pull request 8 at `pr.head`, a draft when `pr.draft` and with CI `pr.ci`, changing `files` and carrying `labels`, failing every read of it when `missing`,
- * keeping the comments and reviews posted on it, `prior` first, and refusing new comments when `failComments`.
- */
 function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
@@ -106,10 +102,6 @@ const allow: WorkflowAuthorizeFn = async () => ({ effect: "allow", matchingGrant
 
 type SystemOne = { questions: Array<{ id: string; instructions: string }>; state: { repository: { docs: Record<string, string>; rules?: Record<string, string> }; policy?: { rules: Array<Record<string, unknown>> } } };
 
-/**
- * Calls the pull request and each slice of it a separate change, says no change meets a custom rule, and answers every
- * other question yes, so each asked file is a separate change and needs docs. The verdict fails when a rule failed.
- */
 function judgeText({ questions, state }: SystemOne) {
   function answer({ id }: { id: string }) {
     if (id === "verdict") {
@@ -124,7 +116,7 @@ function judgeText({ questions, state }: SystemOne) {
   return questions.map((q) => JSON.stringify(answer(q))).join("");
 }
 
-/** Runs each agent step's real director against the fake GitHub and a canned decision model, failing when `judgeFails`, as the reactor would, under Interchange's tool-result cap. */
+/** Under Interchange's tool-result cap. */
 function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], judgeFails: boolean): StepInvoker {
   const env = { capabilities: { resolve: () => ({ resolve: async () => ({ kind: "http", fetch: gh }) }) } };
   const sizeCap = createSizeCapTransform({ maxChars: 10_000, contextStore: { writeBlob: async () => {} } });
@@ -167,7 +159,6 @@ const VERDICT_PATH = { invoked: ["triage-facts", "triage-judge", "triage-execute
 // `judgeText` fails focused, so the judge is called again for its file questions; a failed judged rule decides Fail without the verdict question.
 const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
 
-/** `automatic` is the Do kinds the hub's mail says the pr-triage role is granted, and `from` who sent the mail. */
 type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
 
 async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, automatic = ACTION_KINDS, from = "github@acme.test", github, source, ...seed }: TriageOptions = {}) {
@@ -190,18 +181,16 @@ async function triage(checkPack: CheckPack, { backlog = false, judgeFails = fals
   return { path: { invoked, mirrors }, mirrored: mirrors.map((id) => outputs[id]), requests, judged, verdict: outputs["evaluate"] ?? outputs["evaluateRules"], dos: (JSON.parse(executed.reply) as { dos: DoResult[] }).dos };
 }
 
-/** `request` as stock delivers a mail from `from` to the deployment. */
 function hubMail(request: Record<string, unknown>, from: string) {
   return { headers: { from, to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
 }
 
-/** What stock hands the director for a mail: the parsed headers, and the text part alone as `content`. */
+/** The parsed headers, and the text part alone as `content`. */
 function delivered(mail: Record<string, unknown>) {
   const parts = Array.isArray(mail.parts) ? mail.parts as Array<{ text?: string }> : [];
   return { headers: mail.headers, content: parts[0]?.text ?? JSON.stringify(mail) };
 }
 
-/** The mail the hub sends, as `from`, when a person approves the held Do `step` of `verdict`. */
 function approvalMail(verdict: Verdict, step: SuggestedDo, from = "github@acme.test") {
   return hubMail({
     kind: "approve-do", runId: "run_1", principalId: "prn_ann", list: step.list, index: step.index,
@@ -425,7 +414,6 @@ describe("pr-triage body", () => {
     expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([]);
   });
 
-  /** GitHub with CI green on head abc, for a pack that approves on every check. */
   function approving() {
     const github = fakeGithub();
     github.pr.ci = "success";

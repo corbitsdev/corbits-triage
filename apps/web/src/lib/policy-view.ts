@@ -52,7 +52,6 @@ export function withFor(step: Step, choice: ForChoice): Step {
   return { ...rest, for: audienceOf(choice) } as Step;
 }
 
-/** A step after its Do changes: keeps who it is for and starts the new Do's values empty. */
 export function freshStep(step: Step, next: StepKind): Step {
   const audience = step.for === undefined ? {} : { for: step.for };
   switch (next) {

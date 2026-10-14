@@ -3,7 +3,6 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { LocalProcessSidecarProvisioner } from "./local-provisioner.js";
 import type { LocalSidecarManifest } from "./manifest-store.js";
 
-/** Respawns local sidecars whose allocation the hub still holds; removes the rest. */
 export async function restoreLocalSidecars(
   db: DB["db"],
   local: LocalProcessSidecarProvisioner,

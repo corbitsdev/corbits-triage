@@ -2,7 +2,6 @@ import { evaluate } from "@corbits/system-one";
 import type { JudgeChunk } from "@corbits/triage-workflows/actions/rules";
 import { errorText } from "./error-text.ts";
 
-/** A decision model as the portal saves one: a System One–compatible base URL, its model and the key for it. */
 export type SystemOneSettings = { endpoint: string; model: string; key: string };
 
 function systemOneUrl(endpoint: string): string {
@@ -35,7 +34,6 @@ const BROWSER_DEPS = {
   },
 };
 
-/** One chunk's reply as the judge step records it: the decisions as concatenated JSON, or why there are none. */
 export async function askChunk(chunk: JudgeChunk, settings: SystemOneSettings): Promise<{ judge: string } | { judgeError: string }> {
   let result: Awaited<ReturnType<typeof evaluate>>;
   try {

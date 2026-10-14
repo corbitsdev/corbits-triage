@@ -14,7 +14,7 @@ export type StoredPack = { pack: CheckPack; automatic: ActionKind[]; source: Pol
 /** A corrupt policy names its artifact, which a save replaces in place. */
 export type CheckPackRead = ({ status: "ok" } & StoredPack) | { status: "missing" } | { status: "corrupt"; reason: string; repo: ArtifactRef };
 
-/** `db` and `artifacts` are one database, typed for Interchange and for the artifact package. */
+/** One database, typed for Interchange and for the artifact package. */
 export type CheckPackStoreDeps = {
   db: DB["db"];
   artifacts: ArtifactDb;

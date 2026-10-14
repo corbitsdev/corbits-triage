@@ -7,7 +7,6 @@ import { errorText, isRecord } from "@corbits/common";
 
 export type ApprovalOutput = { approved: false } | ({ approved: true; principalId: string } & DoInput) | { approved: true; effectId: string; refused: string };
 
-/** Names the Do on its verdict, so its effect id can be computed again; `principalId` is who approved it. */
 const Approval = type({
   runId: "string",
   principalId: "string",

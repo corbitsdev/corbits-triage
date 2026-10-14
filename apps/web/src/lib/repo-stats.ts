@@ -4,7 +4,6 @@ import type { RepoPackStore } from "./repo-pack-store.ts";
 
 const REPO_STATS_QUERY_KEY = "triage-stats";
 
-/** The window the portal shows a repository's stats over. */
 export const WEEK_DAYS = 7;
 
 /** The hub caches the stats for a minute, so reading sooner returns the same answer. */
@@ -19,7 +18,6 @@ export function isRepoStatsQuery(query: Query): boolean {
   return query.queryKey[0] === REPO_STATS_QUERY_KEY;
 }
 
-/** Undefined while loading or after a failure. */
 export function useRepoStats(store: RepoPackStore | null, repo: string, days = WEEK_DAYS): TriageStats | undefined {
   return useQuery(repoStatsQuery(store, repo, days)).data;
 }
@@ -36,7 +34,6 @@ export function medianText(ms: number | null): string {
   return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
 }
 
-/** Dos the hub ran for the repository's verdicts. */
 export function actedOn(stats: TriageStats): number {
   return Object.values(stats.actions).reduce((sum, action) => sum + action.executed, 0);
 }

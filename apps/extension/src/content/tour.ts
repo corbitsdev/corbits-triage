@@ -43,13 +43,10 @@ const THEME = `
 @media (prefers-reduced-motion: reduce) { .driver-popover.corbits-tour, .driver-overlay { animation: none !important; transition: none !important; } }
 `;
 
-/** A part of the page, found again each time a step shows it, since GitHub's page and Triage's parts redraw. */
 type Find = () => Element | null | undefined;
 
-/** The parts of the page the tour points at; one not on the page when the tour starts is left out. */
 export type TourParts = { chip: Find; block: Find; actions: Find; draft: Find; openPanel(): void };
 
-/** `refresh` places the spotlight and popover again after the page redraws the part a step points at. */
 export type Tour = { active(): boolean; start(parts: TourParts): void; refresh(): void };
 
 // GitHub restores a page's scroll after it loads; for this long after a step shows, a scroll that takes its part out of

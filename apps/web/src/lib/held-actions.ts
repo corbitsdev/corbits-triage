@@ -21,7 +21,6 @@ export type HeldAction = {
   failText: (error: string) => string;
 };
 
-/** `held` can still be undone; `sending` is past Undo and waits on GitHub. */
 type Phase = "held" | "sending";
 
 type Entry = { id: number; action: HeldAction; phase: Phase; timer: number | null; delivery: Promise<void> | null };
@@ -40,7 +39,6 @@ export type HoldQueue = {
   hold: (action: HeldAction) => void;
   undo: () => boolean;
   flush: () => Promise<void>;
-  /** Discards what is held without sending it and clears the notices, for a session that ended without a chance to send. */
   drop: () => void;
   notices: () => Notices;
   subscribe: (listener: () => void) => () => void;

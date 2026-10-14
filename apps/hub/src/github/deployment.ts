@@ -13,7 +13,6 @@ export class NoLiveDeploymentError extends Error {
   }
 }
 
-/** The materializer's `notReady` outcome: the deployment has not recorded its credential resolution yet. */
 export class DeploymentNotReadyError extends Error {
   readonly code = "deployment_not_ready";
   constructor() {
@@ -77,7 +76,6 @@ export async function resolveLiveDeployments(
 /** A deployment in any status: `cancelling` tells one released on purpose from one Interchange failed. */
 export type DeploymentRecord = { runId: string; status: (typeof schema.workflowRun.$inferSelect)["status"]; endedAt: Date | null; cancelling: boolean };
 
-/** The tenant's newest `limit` deployments of the workflow, live or ended, newest first. */
 export async function latestDeployments(db: DB["db"], tenantId: string, definitionName: string, limit: number): Promise<DeploymentRecord[]> {
   const { workflowRun, workflowDefinition } = schema;
   const rows = await db
@@ -92,7 +90,6 @@ export async function latestDeployments(db: DB["db"], tenantId: string, definiti
 
 export type ActiveTenant = { id: string; domain: string };
 
-/** Tenants with a run of the workflow in flight, or with `deployments` one with a live deployment of it. */
 export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments"): Promise<ActiveTenant[]> {
   const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
   return db
@@ -107,7 +104,6 @@ export async function activeTenants(db: DB["db"], definitionName: string, what: 
     ));
 }
 
-/** The deployment new mail goes to: the newest one not being cancelled. */
 export function newestLive(deployments: readonly LiveDeployment[]): LiveDeployment | undefined {
   return deployments.find((live) => !live.cancelling);
 }
@@ -136,7 +132,6 @@ export function pinOf(closure: ToolPackageManifest): string {
 
 export type ClosureVersions = { workflow: PackageVersion; tools: PackageVersion[] };
 
-/** The pinned workflow package and the packages its closure carries; null for a deployment not pinned from a tarball. */
 export function closureVersions(bundle: FrozenApprovalBundle): ClosureVersions | null {
   if (pinFor(bundle) === undefined) return null;
   const workflow = rootOf(bundle.closure);
@@ -152,7 +147,6 @@ function pinFor(bundle: FrozenApprovalBundle): string | undefined {
   return pinOf(bundle.closure);
 }
 
-/** Each deployment with the workflow package version its frozen closure pins and the decision-model offering it resolved. */
 export async function withWorkflowVersions<T extends LiveDeployment>(
   launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">,
   deployments: readonly T[],
@@ -172,11 +166,10 @@ export type DeploymentRotationDeps = {
   launchSpecs: Pick<WorkflowRunLaunchSpecStore, "get">;
   allocation: WorkflowAllocationService;
   lifecycle: WorkflowLifecycleService;
-  /** Whether the principal may still deploy workflows, as the stock deploy route requires. */
+  /** As the stock deploy route requires. */
   mayDeploy: (principalId: string, tenantId: string) => Promise<boolean>;
 };
 
-/** Why the hub released a deployment it replaced. */
 export const ROTATION_REASON = "Replaced by a fresh deployment of the same workflow";
 
 export type Redeployed = { status: "deployed"; runId: string } | { status: "skipped"; reason: string };
@@ -238,7 +231,6 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
     return { status: "deployed", runId: prepared.anchorRunId };
   }
 
-  /** Whether both deployments run the same workflow asset, package, pin and entry. */
   async function sameSource(anchorRunId: string, otherAnchorRunId: string): Promise<boolean> {
     const [spec, other] = await Promise.all([deps.launchSpecs.get(anchorRunId), deps.launchSpecs.get(otherAnchorRunId)]);
     if (!spec || !other) return false;

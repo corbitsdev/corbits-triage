@@ -30,7 +30,6 @@ function safeInline(value: string, limit: number): string {
   return safeText(value).replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
-/** A path as the judge's state carries it. */
 export function boundedPath(value: string): string {
   return safeInline(value, MAX_PATH_CHARS);
 }
@@ -47,7 +46,6 @@ function readablePatch(patch: string): string {
   return safeText(patch.slice(0, MAX_PATCH_INPUT_CHARS));
 }
 
-/** A file's patch as the judge reads it: split at hunk headers, whole when it has none, empty when it is. */
 export function patchHunks(patch: string): string[] {
   const readable = readablePatch(patch);
   if (!readable) return [];
@@ -55,7 +53,6 @@ export function patchHunks(patch: string): string[] {
   return hunks.length > 0 ? hunks.map((hunk) => hunk.lines.join("\n")) : [readable];
 }
 
-/** The lines each hunk of a file's patch changes, in `patchHunks` order; empty when the patch has no hunk headers. */
 export function hunkCitations(path: string, patch: string, previousPath = path): LineCitation[] {
   return hunksOf(readablePatch(patch)).map((hunk) => citation(path, previousPath, hunk));
 }
@@ -64,7 +61,6 @@ function range(lines: number[]): { start: number; end: number } | undefined {
   return lines.length > 0 ? { start: lines[0]!, end: lines.at(-1)! } : undefined;
 }
 
-/** A hunk's added lines in the head file and removed lines in the base file, each first to last. */
 function citation(path: string, previousPath: string, hunk: Hunk): LineCitation {
   const added: number[] = [];
   const removed: number[] = [];

@@ -43,7 +43,7 @@ export const CHECK_CATALOG: Record<CatalogId, { name: string; group: CheckPackGr
 export const NOT_A_DRAFT = "not-a-draft";
 export const NO_CHANGES_REQUESTED = "no-changes-requested";
 
-/** Rules pr-triage runs on every pull request, outside any policy's switches. */
+/** Outside any policy's switches. */
 export const BUILT_IN_CHECK_NAMES: ReadonlyMap<string, string> = new Map([[NOT_A_DRAFT, "Not a draft"], [NO_CHANGES_REQUESTED, "No changes requested"]]);
 
 export function isCatalogId(id: string): id is CatalogId {
@@ -70,7 +70,7 @@ export const RENAMED_RULE_IDS: ReadonlyMap<string, readonly string[]> = new Map(
   ["review", [NO_CHANGES_REQUESTED]],
 ]);
 
-/** The current ids of a rule id as stored, which may predate a rename. */
+/** May predate a rename. */
 export function currentRuleIds(id: string): readonly string[] {
   return RENAMED_RULE_IDS.get(id) ?? [id];
 }
@@ -108,7 +108,6 @@ export type CatalogCheck = {
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
 export type ModelShape = (typeof MODEL_SHAPES)[number];
 
-/** What an is-true check asks about: the whole pull request, or each changed file or hunk under its `when` globs. */
 export const CUSTOM_SCOPES = ["pull-request", "file", "hunk"] as const;
 export type CustomScope = (typeof CUSTOM_SCOPES)[number];
 
@@ -155,15 +154,13 @@ const GLOBS_MAX = 50;
 const CUSTOM_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CUSTOM_ID_MAX = 64;
 
-/** What a policy step does; `nothing` writes nothing. */
 export const STEP_KINDS = ["approve", "merge", "close", "comment", "request-changes", "request-review", "assign", "labels", "nothing"] as const;
 export type StepKind = (typeof STEP_KINDS)[number];
 
-/** The Do kinds a step writes to GitHub, each granted on its own. */
+/** Each is granted on its own. */
 export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "merge"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
-/** Who a step is for, by the pull request's author: a group, the members of a team, or named people. */
 export const AUTHOR_GROUPS = ["anyone", "first-timers", "maintainers", "external", "bots"] as const;
 export type AuthorGroup = (typeof AUTHOR_GROUPS)[number];
 export type StepFor = AuthorGroup | { team: string } | { users: string[] };
@@ -199,18 +196,15 @@ export const LABEL_MAX = 50;
 const LIST_MAX = 50;
 const STEPS_MAX = 20;
 
-/** A built-in rule, the not-a-draft rule or a custom rule's id. */
 export type CheckRef = string;
 
 /** The events a policy's actions wake on; a catch-up run wakes them whatever its policy names. */
 export const POLICY_EVENTS = ["opened", "updated", "checks", "ready"] as const satisfies readonly TriageEvent[];
 export type PolicyEvent = (typeof POLICY_EVENTS)[number];
 
-/** What triage decides about each pull request head; each names the action list that runs on it. */
 export const VERDICTS = ["pass", "fail", "unsure"] as const;
 export type VerdictWord = (typeof VERDICTS)[number];
 
-/** Each verdict's label unless the policy names its own. */
 export const VERDICT_LABELS: Record<VerdictWord, string> = { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" };
 
 /** `rules` labels each failed rule (`ruleLabel`); the verdict's label is the policy's `labels`, which the mirror writes. */
@@ -223,7 +217,6 @@ export type PeopleTarget =
 export type ReviewTarget = Exclude<PeopleTarget, { to: "author" }>;
 export type CommentTarget = { body: string };
 
-/** One step of a verdict's list: what it does, and for which authors; no `for` means anyone. */
 export type Step = (
   | { do: "labels"; target: LabelsTarget }
   | { do: "assign"; target: PeopleTarget }
@@ -236,7 +229,6 @@ export type Step = (
   | { do: "nothing" }
 ) & { for?: StepFor };
 
-/** One list of steps per verdict, run in order when an event in `when` wakes the policy. */
 export type PolicyActions = { when: PolicyEvent[] } & Record<VerdictWord, Step[]>;
 
 export type CheckPack = {
@@ -246,7 +238,7 @@ export type CheckPack = {
   checks: Partial<Record<CatalogId, CatalogCheck>>;
   custom: CustomCheck[];
   actions: PolicyActions;
-  /** The label the mirror writes for each verdict, so tools watching GitHub can react to it. */
+  /** So tools watching GitHub can react to it. */
   labels: Record<VerdictWord, string>;
   /** What reading the stored policy left out because it no longer runs; each verdict says so. Never read back. */
   dropped?: string[];
@@ -324,14 +316,14 @@ export const checkPackSchema = type({
   "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
 });
 
-/** A workspace policy as published: a check pack held by no repository. `readSharedPolicy` stays the authority. */
+/** `readSharedPolicy` stays the authority. */
 export const sharedPolicySchema = checkPackSchema.omit("repo");
 
 const OverrideChecksSchema = type(
   Object.fromEntries(CATALOG_IDS.map((id) => [`${id}?`, CatalogCheckSchema.partial()])) as Record<`${CatalogId}?`, ReturnType<typeof CatalogCheckSchema.partial>>,
 );
 
-/** A repository policy that extends a workspace policy, as published. `readPolicyOverride` stays the authority. */
+/** `readPolicyOverride` stays the authority. */
 export const policyOverrideSchema = checkPackSchema.omit("checks", "actions").and({
   extends: Text,
   "checks?": OverrideChecksSchema,
@@ -672,7 +664,6 @@ function distinctSteps(steps: Step[]): Step[] {
   });
 }
 
-/** A verdict the policy names no label for keeps its default. */
 function parseLabels(raw: unknown): Record<VerdictWord, string> {
   if (raw === undefined) return { ...VERDICT_LABELS };
   const row = record(raw, "labels");
@@ -806,10 +797,8 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
 /** Workspace policy titles start with this, so the stock artifact list finds them with `?query=`. */
 export const WORKSPACE_POLICY_TITLE_PREFIX = "workspace-policy/";
 
-/** A workspace policy repositories extend: a check pack's rules, actions and labels, held by no one repository. */
 export type SharedPolicy = Omit<CheckPack, "repo">;
 
-/** What a repository sets over the shared policy it extends; `when`, each verdict's steps and each label only when it names them. */
 export type PolicyOverride = Pick<CheckPack, "repo" | "custom"> & {
   extends: string;
   checks: Partial<Record<CatalogId, Partial<CatalogCheck>>>;
@@ -824,7 +813,6 @@ export function extendsOf(raw: unknown): string | undefined {
   return value.trim();
 }
 
-/** Reads a stored workspace policy, throwing an Error whose message says why it is rejected. */
 export function readSharedPolicy(raw: unknown): SharedPolicy {
   const body = policyObject(raw);
   currentVersion(body);
@@ -867,7 +855,6 @@ function parseOverrideLabels(row: Partial<Record<VerdictWord, unknown>> | undefi
   return labels;
 }
 
-/** Reads a stored repository policy that extends a shared one, throwing an Error whose message says why it is rejected. */
 export function readPolicyOverride(raw: unknown, expectedRepo?: string): PolicyOverride {
   const body = policyOverrideSchema(parseJson(raw));
   if (body instanceof type.errors) throw new Error(body.summary);
@@ -888,7 +875,6 @@ export function ruleLabel(id: string): string {
   return `${RULE_LABEL_PREFIX}${id}`;
 }
 
-/** Whether the author is one a step is for; undefined, with why, when the facts cannot tell. */
 export function stepForAuthor(
   audience: StepFor | undefined,
   author: { login: string; kind?: AuthorKind; teams?: readonly string[]; teamsUnknown?: readonly string[] },
@@ -908,7 +894,6 @@ export function stepForAuthor(
   return { matches: false, reason: `the author is not in ${audience.team}` };
 }
 
-/** Every team a pack's steps are for, as the steps write them. */
 export function stepTeams(pack: CheckPack): string[] {
   return [...new Set(VERDICTS.flatMap((list) => pack.actions[list].flatMap((step) => (typeof step.for === "object" && "team" in step.for ? [step.for.team] : []))))];
 }
@@ -925,7 +910,6 @@ export function customCheckEnabled(row: CustomCheck): boolean {
   return row.enabled !== false;
 }
 
-/** The judged rules that are switched on. */
 export function classificationSources(pack: CheckPack): { quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>; custom: CustomCheck[] } {
   return {
     quality: QUALITY_CHECK_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id) => ({ id, group: CHECK_CATALOG[id].group })),
