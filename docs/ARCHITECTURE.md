@@ -24,8 +24,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     branch marks the repository's other triaged heads `stale`. Temporary
     until `@corbits/webhooks` verifies GitHub signatures.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
-    mail to the tenant's live `pr-triage` deployment, as the tenant system
-    sender, the same path cron uses. A new commit or a newly opened pull
+    mail to the tenant's live pr-triage deployment of the repository's host
+    (`pr-triage-github` or `pr-triage-bitbucket-datacenter`), as the tenant
+    system sender, the same path cron uses. The mail names the host as
+    `repoSource`. A new commit or a newly opened pull
     request waits only a few seconds.
   - **Reconciler**: on an interval, compares each enabled repository's open
     pull requests with the run logs and stored state, and re-queues every
@@ -33,11 +35,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     in batches and under a per-tenant in-flight cap. A catch-up mail carries
     the decision-model answers recorded in the head's last verdict (from its
     run log) when the deployment runs the
-    same workflow version and decision-model offering. It also replaces a
-    `pr-triage` deployment with a fresh copy once its run log grows past a
+    same workflow version and decision-model offering. One reconciler runs
+    per host over that host's repositories and deployment. It also replaces a
+    pr-triage deployment with a fresh copy once its run log grows past a
     limit, and redeploys one that Interchange failed, after two minutes and
     at most three times an hour.
-  - **Run recorder**: reads the live logs of tenants with a `pr-triage` run in
+  - **Run recorder**: reads the live logs of tenants with a pr-triage run in
     flight and records each verdict and executed Do.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
     exchanged server side, so the private key never reaches the browser. The
@@ -68,8 +71,14 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
 Both are `onTrigger` mail listeners: each mail spawns a child run that
 executes and ends.
 
-- `pr-triage`: one mail names one pull request, or a batch of heads from
-  the reconciler, and triages them.
+- `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
+  pull request, or a batch of heads from the reconciler, and triages them.
+  Both are built by the shared `prTriage({ sources })` library in
+  `@corbits/triage-workflows` (`pr-triage`, not deployed itself); each binds
+  only its host's credential, because an unresolved binding fails a
+  deployment, so a workspace deploys the packages of the hosts it connected
+  and one with both hosts runs both. A deployment of the earlier `pr-triage`
+  workflow is released once `pr-triage-github` is live.
 - `pr-triage-historical`: one run that triages every open pull request of a
   repository. The hub mails it through its backlog route when a user turns
   triage on for the repository, or clicks **Triage open pull requests again**.

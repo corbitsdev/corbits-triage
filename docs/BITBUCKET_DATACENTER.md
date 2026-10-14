@@ -8,7 +8,8 @@ is a wrapper over them.
 ## What is stored where
 
 - The instance URL is `bitbucketDatacenter.baseUrl` in the workspace's `corbitsTriage`
-  config. One connection per workspace.
+  config, with `bitbucketDatacenter.user`, the slug the token acts as, whose
+  own webhook events never wake triage. One connection per workspace.
 - The token is the stock credential `bitbucket-datacenter` (type `api_key`) on the stock
   provider `bitbucket-datacenter` (plugin `http`, `apiBaseUrl` = the instance URL).
 - The webhook secret is the stock credential `bitbucket-datacenter-hook`, with
@@ -16,6 +17,20 @@ is a wrapper over them.
 - Repositories are records in `corbitsTriage.repos` with `source: "bitbucket-datacenter"`,
   named `PROJECTKEY/slug` (for example `TRI/widgets`), with `defaultBranch` and,
   when triage created the webhook, `webhookId`.
+
+## Workflow
+
+Bitbucket repositories are triaged by the `pr-triage-bitbucket-datacenter`
+workflow, the same steps as `pr-triage-github` built over the Bitbucket tools
+(`@corbits/triage-workflows`'s `prTriage({ sources })`). It binds only the
+`bitbucket-datacenter` credential, so the hub deploys it once the instance is
+connected (`POST /api/integrations/workflow-deploy` answers 409
+`source_not_connected` before that); a workspace with GitHub as well runs both.
+Disconnecting releases the deployment. The webhook credential names this
+workflow, and every mail carries `repoSource: "bitbucket-datacenter"`.
+
+Triage with every rule switched off starts no run and writes nothing to the
+pull request (`triage_skipped_no_rules` in the hub log), on either host.
 
 ## Token
 
@@ -37,6 +52,12 @@ Needs `manage` on the workspace, and stock `credential:*` and `provider:*`
 grants for the writes.
 
 Body: `{ "baseUrl": "https://bitbucket.example.com", "token": "..." }`.
+
+`baseUrl` may name a private-network or localhost host, since Data Center
+commonly lives on a private network. Link-local hosts (`169.254.0.0/16`),
+`fd00::/8` addresses and `metadata.google.internal` are refused: a cloud
+runtime answers its own metadata there, and the hub's token check would reach
+it.
 
 The token is tried once against `GET /rest/api/1.0/application-properties`
 and stored only if the instance signs it in. A webhook secret is generated
@@ -91,9 +112,11 @@ the one it created before.
 
 ### `POST /repositories/{project}/{slug}/disable`
 
-Needs `manage` on the workspace. Disables the repository and removes the
-webhook triage created. 200 `{ "repository", "webhookLeft" }`; `webhookLeft`
-is true when it could not be removed. 404 when no such repository is recorded.
+Needs `manage` on the workspace, and `use` on the `bitbucket-datacenter`
+credential to remove the webhook triage created. Disables the repository and
+removes the webhook. 200 `{ "repository", "webhookLeft" }`; `webhookLeft` is
+true when the webhook could not be removed, including when the caller lacks
+`use` on the credential. 404 when no such repository is recorded.
 
 ## Webhook
 
