@@ -104,8 +104,9 @@ const BUILD_STATUS_CHANGED = "build_status_changed";
 
 type BuildPoll = { polls: number; at: number };
 
+/** A verdict CI decided, or is still to decide: both change when the builds do, so both are polled on a host without build webhooks. */
 function waitsOnCi(verdict: { checks: ReadonlyArray<{ check: string; result: string }> }): boolean {
-  return verdict.checks.some((check) => check.check === "ci-green" && check.result === "unconfirmed");
+  return verdict.checks.some((check) => check.check === "ci-green" && (check.result === "unconfirmed" || check.result === "fail"));
 }
 
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
@@ -140,7 +141,9 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
         continue;
       }
-      if (ci === "pending") {
+      const decided = verdict.checks.find((check) => check.check === "ci-green")!.result;
+      // Pending stays pending and failed stays failed until a build changes; a red build turning green is the change worth a run.
+      if (ci === "pending" || (decided === "fail" && ci === "failure")) {
         buildPolls.set(key, { polls: poll.polls + 1, at: now });
         continue;
       }

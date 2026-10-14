@@ -372,6 +372,15 @@ describe("triage reconciler", () => {
     await finished.reconcile();
     expect(mailedNumbers(finished.delivered)).toEqual([1]);
     expect(finished.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "build_status_changed" }));
+    // A verdict that failed on CI is polled too: red turning green is caught without another event.
+    const failed = { ...waiting, checks: [{ check: "ci-green", kind: "machine", result: "fail" }] };
+    const red = { [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(failed), completed] } };
+    const stillRed = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "failure" }] });
+    await stillRed.reconcile();
+    expect(stillRed.delivered).toHaveLength(0);
+    const green = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    await green.reconcile();
+    expect(mailedNumbers(green.delivered)).toEqual([1]);
     // GitHub's check_run webhook triages the head; without a reader the head is left alone.
     const github = harness(logs, [head(1)]);
     await github.reconcile();
