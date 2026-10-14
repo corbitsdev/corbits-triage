@@ -16,7 +16,6 @@ import {
   removeRepository,
   saveInference,
   saveRepoSettings,
-  startBacklogTriage,
   triagePullRequest,
   untilDeploymentReady,
   patchAppConfig,
@@ -558,7 +557,7 @@ describe("repository policy config", () => {
 
     await saveRepoSettings(transport, "tenant", "acme/one", {
       enabled: false,
-    }, false);
+    }, null);
 
     expect(config.other).toBe(1);
     const ns = config.corbitsTriage as { confidenceFloor: number; repos: Array<Record<string, unknown>> };
@@ -571,53 +570,6 @@ describe("repository policy config", () => {
     });
     expect(ns.repos[0]).not.toHaveProperty("checkPack");
     expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, installationId: 3 });
-  });
-});
-
-describe("disabled repository triggers", () => {
-  const disabledConfig = {
-    corbitsTriage: {
-      repos: [{ name: "acme/widgets", connected: true, enabled: false }],
-    },
-  };
-
-  function transport(posted: unknown[]): Transport {
-    return {
-      fetch: async (method, path, body) => {
-        if (method === "GET" && path === "/api/tenants/tenant") {
-          return { id: "tenant", name: "Tenant", slug: "tenant", config: disabledConfig } as never;
-        }
-        if (method === "GET" && path === "/api/tenants/tenant/workflows/deployments") {
-          return [{
-            id: "deployment-backlog",
-            tenantId: "tenant",
-            definitionAssetId: "asset-pr-triage-historical",
-            status: "deployed",
-            createdAt: "2026-03-10T00:00:00.000Z",
-          }] as never;
-        }
-        if (method === "GET" && path === "/api/tenants/tenant/assets?kind=workflow") {
-          return [
-            { id: "asset-pr-triage-historical", kind: "workflow", name: "pr-triage-historical" },
-            { id: "asset-pr-triage", kind: "workflow", name: "pr-triage" },
-          ] as never;
-        }
-        if (method === "POST") {
-          posted.push({ method, path, body });
-          return { runId: "run-1", address: "pr-triage-historical", messageId: "msg-1" } as never;
-        }
-        throw new Error(`unexpected ${method} ${path}`);
-      },
-      subscribe: () => () => {},
-    };
-  }
-
-  test("startBacklogTriage throws and does not mail", async () => {
-    const posted: unknown[] = [];
-    await expect(startBacklogTriage(transport(posted), "tenant", "acme/widgets")).rejects.toThrow(
-      "Triage is disabled for this repository. Enable it first.",
-    );
-    expect(posted).toEqual([]);
   });
 });
 

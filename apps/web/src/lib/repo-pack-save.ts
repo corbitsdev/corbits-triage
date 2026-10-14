@@ -1,6 +1,6 @@
 import { errorText } from "@corbits/common";
 import { emptyPack, repoPolicy, type CheckPack } from "@corbits/triage-contracts";
-import { StaleCheckPackError } from "./check-pack.ts";
+import { ExtendedPolicyError, StaleCheckPackError } from "./check-pack.ts";
 import { fromPack, namedNewRules, packChanges, policyChanges, toPack, type RepoDraft } from "./pack-draft.ts";
 import { draftPolicy, type LoadedRepoPack, type PackRef, type RepoPackStore } from "./repo-pack-store.ts";
 
@@ -52,13 +52,14 @@ export async function saveDraft(store: RepoPackStore, repo: string, session: Pac
       shown = { ...draft, pack };
     } catch (cause) {
       if (cause instanceof StaleCheckPackError) return { session, draft, failure: { message: cause.message, cause, stale: true } };
+      if (cause instanceof ExtendedPolicyError) return { session, draft, failure: { message: cause.message, cause, stale: false } };
       return { session, draft, failure: checksFailed(cause) };
     }
   }
   if (!current.unlinked && policyChanges(current.saved.policy, draft.policy) === 0) return { session: current, draft: shown, failure: null };
   const policy = draftPolicy(repoPolicy(draft.policy));
   try {
-    await store.writePolicy(repo, policy, current.loaded !== null && current.corrupt === null);
+    await store.writePolicy(repo, policy, current.corrupt === null && current.loaded !== null ? current.loaded.id : null);
   } catch (cause) {
     const message = current.unlinked
       ? `The policy is saved and in effect, but could not be linked to the repository. Save again to link it. ${errorText(cause)}`
