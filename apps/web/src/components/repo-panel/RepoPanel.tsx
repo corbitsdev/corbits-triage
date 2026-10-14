@@ -91,7 +91,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     if (settings.status === "failed") return <div className="rs"><Button type="button" variant="outline" size="sm" onClick={settings.reload}>Retry</Button></div>;
     return (
       <>
-        <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} />
+        <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} rerunnable={repo.source === "github"} />
         {manualWebhook && settings.saved.policy.enabled ? <BitbucketDatacenterWebhook webhook={manualWebhook} /> : null}
         <PolicyCard repo={repo.name} source={repo.source} policyFile={policyFile} disabled={disabled} />
         <div className={gated ? "gated" : undefined} inert={gated}>
