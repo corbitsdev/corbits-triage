@@ -106,10 +106,11 @@ one does.
 6. **evaluate**: decides the verdict: Fail on a failed hard rule, Pass when every rule passes in a policy with no decision-model rule, otherwise
    Pass, Fail or Unsure from the verdict question. It renders the one comment
    and resolves the verdict's list of steps when the policy's When is woken, skipping each step not for the pull request's author.
-7. **execute**: runs the Dos whose kind the `pr-triage` role holds on GitHub.
+7. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`; on Bitbucket the
+   `Corbits Triage` build status) when the `pr-triage` role holds the labels grant, and one marker comment when it holds the comment
+   grant. It runs before execute so a merge or close finds the final verdict on the head it closes.
+8. **execute**: runs the Dos whose kind the `pr-triage` role holds on the host.
    Every other Do is held in the verdict (`held: true`) and the run finishes.
-8. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`) when the `pr-triage` role holds the
-   labels grant, and one marker comment when it holds the comment grant.
 
 The hub reads which kinds the `pr-triage` system role is granted, `invoke` on
 `triage-do:<kind>:<owner>/<name>`, and mails them with each trigger; the run
