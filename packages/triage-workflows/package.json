@@ -19,6 +19,7 @@
   "dependencies": {
     "@corbits/common": "workspace:*",
     "@corbits/github-reads": "workspace:*",
+    "@corbits/bitbucket-datacenter-tool": "workspace:*",
     "@corbits/github-tool": "workspace:*",
     "@corbits/system-one": "0.3.1",
     "@corbits/triage-contracts": "workspace:*",

@@ -1,4 +1,4 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type PolicySource, type Rendered, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type PolicySource, type Rendered, type RepoSource, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { TriageHeader } from "@corbits/github-tool/github";
 import { Decision } from "@corbits/system-one";
@@ -664,6 +664,8 @@ export type Verdict = RenderOutput & {
   repo: string;
   number: number;
   headSha: string | null;
+  /** Where the pull request lives; absent on GitHub. */
+  repoSource?: RepoSource;
   request: MirrorRequest;
   automatic: ActionKind[];
   actions: SuggestedAction[];

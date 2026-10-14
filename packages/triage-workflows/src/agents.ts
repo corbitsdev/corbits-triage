@@ -1,4 +1,5 @@
 import { defineAgent } from "@intx/agent";
+import { bitbucketRead, bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
 import { githubRead, githubWrite } from "@corbits/github-tool";
 import { triageDirector } from "./directors.js";
 import { JUDGE_SYSTEM_PROMPT } from "./logic/quality.js";
@@ -8,7 +9,9 @@ import { JUDGE_SYSTEM_PROMPT } from "./logic/quality.js";
 const inference = { sources: [{ provider: "corbits-system-one", model: "decision" }] };
 
 // Source-ref lineage keys the credential consumer on the tool bundle id (factory.id), not the published package name.
-const CONSUMERS = [githubRead.id, githubWrite.id];
+const GITHUB_CONSUMERS = [githubRead.id, githubWrite.id];
+const BITBUCKET_CONSUMERS = [bitbucketRead.id, bitbucketWrite.id];
+const CONSUMERS = [...GITHUB_CONSUMERS, ...BITBUCKET_CONSUMERS];
 
 // Verified against interchange (packages/authz, workflow-deploy, hub-api, docs/AUTH.md, CREDENTIALS.md):
 // - Resource grammar is `type:identifier` with globs; tool gates are `tool:<bundleId>:<toolName>` with action `invoke`.
@@ -19,17 +22,20 @@ const CONSUMERS = [githubRead.id, githubWrite.id];
 // - Because the consumer identity is the package name, read and write need separate packages to get separate credential grants.
 // - `conditions.tool` is only evaluated on the credential-use path (CREDENTIAL_USE_CONDITIONS); on `tool:` requirements it is
 //   not a bundle scoper, so tool requirements are scoped by the bundle id in the resource itself.
-function credentialBinding(pkg: string) {
+function credentialBinding(pkg: string, credential: "github" | "bitbucket-datacenter") {
   return {
     package: pkg,
-    handle: "github",
-    provider: "github",
-    name: "github",
+    handle: credential,
+    provider: credential,
+    name: credential,
     locator: "tenant",
   } as const;
 }
 
-export const credentialBindings = CONSUMERS.map(credentialBinding);
+export const credentialBindings = [
+  ...GITHUB_CONSUMERS.map((pkg) => credentialBinding(pkg, "github")),
+  ...BITBUCKET_CONSUMERS.map((pkg) => credentialBinding(pkg, "bitbucket-datacenter")),
+];
 
 // This hub does not stamp credential-use grants from bindings (verified: runs/<id>/grants.json had none and the tool failed
 // closed), so each package gets an explicit creator-sourced `credential:*` / `use` requirement scoped by `{ tool }`.
@@ -47,12 +53,15 @@ export const grantRequirements = [
   { resource: `tool:${githubRead.id}:*`, action: "invoke", source: "creator" },
   { resource: `tool:${githubWrite.id}:github_mirror_auto`, action: "invoke", source: "creator" },
   { resource: `tool:${githubWrite.id}:github_execute_do_auto`, action: "invoke", source: "creator" },
+  { resource: `tool:${bitbucketRead.id}:*`, action: "invoke", source: "creator" },
+  { resource: `tool:${bitbucketWrite.id}:bitbucket_datacenter_mirror_auto`, action: "invoke", source: "creator" },
+  { resource: `tool:${bitbucketWrite.id}:bitbucket_datacenter_execute_action_auto`, action: "invoke", source: "creator" },
 ] as const;
 
 export const factsAgent = defineAgent({
   id: "triage-facts",
-  systemPrompt: "Deterministic GitHub fact gathering. No inference.",
-  tools: [githubRead],
+  systemPrompt: "Deterministic fact gathering from the pull request's host. No inference.",
+  tools: [githubRead, bitbucketRead],
   capabilities: [],
   inference,
   director: triageDirector.build({ role: "facts" }),
@@ -72,8 +81,8 @@ export const judgeAgent = defineAgent({
 
 export const executeAgent = defineAgent({
   id: "triage-execute",
-  systemPrompt: "Deterministic execution of unattended pack Dos. No inference.",
-  tools: [githubWrite],
+  systemPrompt: "Deterministic execution of unattended policy actions. No inference.",
+  tools: [githubWrite, bitbucketWrite],
   capabilities: [],
   inference,
   director: triageDirector.build({ role: "execute" }),
@@ -81,8 +90,8 @@ export const executeAgent = defineAgent({
 
 export const mirrorAgent = defineAgent({
   id: "triage-mirror",
-  systemPrompt: "Deterministic GitHub mirror. No inference.",
-  tools: [githubWrite],
+  systemPrompt: "Deterministic mirror onto the pull request's host. No inference.",
+  tools: [githubWrite, bitbucketWrite],
   capabilities: [],
   inference,
   director: triageDirector.build({ role: "mirror" }),

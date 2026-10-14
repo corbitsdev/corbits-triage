@@ -1,11 +1,11 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { APPROVE_DO_KIND, DoList, isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, DoList, isFromTriageSender, repoSourceOf, triggerRequestOf, type RepoSource } from "@corbits/triage-contracts";
 import { parseDoInput, type DoInput } from "@corbits/github-tool";
 import { doEffectId } from "../logic/actions.js";
 import { errorText, isRecord } from "@corbits/common";
 
-export type ApprovalOutput = { approved: false } | ({ approved: true; principalId: string } & DoInput) | { approved: true; effectId: string; refused: string };
+export type ApprovalOutput = { approved: false } | ({ approved: true; principalId: string; repoSource?: RepoSource } & DoInput) | { approved: true; effectId: string; refused: string };
 
 const Approval = type({
   runId: "string",
@@ -32,5 +32,6 @@ export async function approval(input: unknown, _ctx: EffectContext, _signal: Abo
   const { repo, number } = approved.request;
   const { list, index, principalId } = named;
   if (doEffectId({ repo, number, headSha, list, index, kind, target }) !== effectId) return { approved: true, effectId, refused: "the approval's effect id does not match its Do" };
-  return { approved: true, principalId, ...approved };
+  const repoSource = repoSourceOf(request["repoSource"]);
+  return { approved: true, principalId, ...approved, ...(repoSource !== "github" && { repoSource }) };
 }

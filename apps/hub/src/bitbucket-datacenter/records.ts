@@ -5,7 +5,7 @@ import { repoRecords, type CorbitsTriageNs, type RepoRecord } from "../github/te
 export type BitbucketConnection = { baseUrl: string };
 
 export function bitbucketConnection(ns: CorbitsTriageNs): BitbucketConnection | undefined {
-  const baseUrl = asRecord(ns.bitbucket)?.["baseUrl"];
+  const baseUrl = asRecord(ns.bitbucketDatacenter)?.["baseUrl"];
   return typeof baseUrl === "string" ? { baseUrl } : undefined;
 }
 
