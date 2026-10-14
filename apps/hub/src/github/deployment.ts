@@ -91,13 +91,14 @@ export async function latestDeployments(db: DB["db"], tenantId: string, definiti
 export type ActiveTenant = { id: string; domain: string };
 
 /**
- * Tenants with a child run of the definition in flight, or ended since `endedSince`: a host whose runs are inserted already
- * completed is seen only through the latter, so its verdicts are recorded within a pass of the run's end.
+ * Tenants with a child run of the definition in flight, or ended or created since `endedSince`: a run inserted already
+ * completed, as a Bitbucket run is, keeps a null `endedAt` (stock leaves a terminal run routable that way), so its
+ * creation time is what says it just ended, and its verdict is recorded within a pass.
  */
 export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments", endedSince?: Date): Promise<ActiveTenant[]> {
   const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
   const running = eq(workflowRun.status, "running");
-  const childRuns = endedSince === undefined ? running : or(running, gt(workflowRun.endedAt, endedSince));
+  const childRuns = endedSince === undefined ? running : or(running, gt(workflowRun.endedAt, endedSince), gt(workflowRun.createdAt, endedSince));
   return db
     .selectDistinct({ id: tenant.id, domain: tenant.domain })
     .from(workflowRun)
