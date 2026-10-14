@@ -47,6 +47,7 @@ function prFields(pr: PullRequest, association: Association) {
     reviewers: pr.reviewers.map((reviewer) => reviewer.user.slug),
     createdAt: isoTime(pr.createdDate),
     updatedAt: isoTime(pr.updatedDate),
+    ...(pr.links?.self[0] && { url: pr.links.self[0].href }),
   };
 }
 

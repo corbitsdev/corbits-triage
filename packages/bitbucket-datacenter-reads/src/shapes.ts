@@ -23,6 +23,8 @@ export const PullRequest = type({
   updatedDate: "number",
   fromRef: Ref,
   toRef: Ref,
+  /** The pull request's page on the instance; a recorded shape trimmed for tests may leave it out. */
+  "links?": { self: type({ href: "string" }).array() },
   author: Participant,
   reviewers: Participant.array(),
   /** Anyone else who approved or marked needs work without being asked, Triage's own token user included. */
