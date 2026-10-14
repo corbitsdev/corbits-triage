@@ -92,7 +92,11 @@ function doKind(body: typeof ActionBody.infer): ActionKind {
   }
 }
 
-export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOrigin: string; readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead> }) {
+export function createGithubPrActions(deps: PortalCredentialDeps & {
+  githubApiOrigin: string;
+  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
+  log: (entry: Record<string, unknown>) => void;
+}) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
   return async function handle(body: typeof ActionBody.infer, { tenantId, principalId }: Member): Promise<Response> {

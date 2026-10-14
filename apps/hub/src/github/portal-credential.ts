@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
-import { DO_GRANT_ACTION, doResource, type ActionKind } from "@corbits/triage-contracts";
+import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
 
 export type PortalCredentialDeps = {
   db: DB["db"];
@@ -54,8 +54,30 @@ export async function githubAppCredential(d: PortalCredentialDeps, principalId: 
   return d.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
 }
 
-/** The response to return when the member does not hold the grant for Dos of `kind` in `repo`. */
-export async function doRefused(d: PortalCredentialDeps, principalId: string, tenantId: string, repo: string, kind: ActionKind): Promise<Response | undefined> {
+async function holdsTriageRole(db: DB["db"], principalId: string, tenantId: string): Promise<boolean> {
+  const { principalRole, role } = schema;
+  const [held] = await db.select({ roleId: principalRole.roleId }).from(principalRole)
+    .innerJoin(role, eq(role.id, principalRole.roleId))
+    .where(and(eq(principalRole.principalId, principalId), eq(role.tenantId, tenantId), eq(role.name, TRIAGE_ROLE), eq(role.isSystem, true)));
+  return held !== undefined;
+}
+
+/**
+ * The response to return when the member does not hold the grant for Dos of `kind` in `repo`. Stock lets an admin
+ * assign any role, so a member given triage's own role is refused every Do until it is removed: what triage may do
+ * unattended never becomes what a person may do.
+ */
+export async function doRefused(
+  d: PortalCredentialDeps & { log: (entry: Record<string, unknown>) => void },
+  principalId: string,
+  tenantId: string,
+  repo: string,
+  kind: ActionKind,
+): Promise<Response | undefined> {
+  if (await holdsTriageRole(d.db, principalId, tenantId)) {
+    d.log({ level: "warn", msg: "do_refused_triage_role", tenantId, principalId, repo, kind });
+    return failure(403, "forbidden", "Triage's own role cannot act for a person. Remove it from this member first.");
+  }
   if (await d.authorize(principalId, tenantId, doResource(kind, repo), DO_GRANT_ACTION)) return undefined;
   return failure(403, "forbidden", "You do not have the grant for this kind of Do in this repository.");
 }

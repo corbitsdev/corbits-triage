@@ -110,7 +110,7 @@ function packsFor(repos: string[]): BridgeDeps["readCheckPack"] {
   const packs = new Map(repos.map((repo) => [repo, emptyPack(repo)]));
   return async function readCheckPack(_tenant, repo) {
     const pack = packs.get(repo);
-    return pack ? { status: "ok", pack, automatic: [] } : { status: "missing" };
+    return pack ? { status: "ok", pack, automatic: [], source: { repo: { id: "art_pack", version: 1 } } } : { status: "missing" };
   };
 }
 
@@ -618,7 +618,7 @@ test("installation listing mirrors GitHub", () => {
   expect(repoRecords(next).find((row) => row.name === "paused/repo")?.connected).toBe(false);
 });
 
-test("mailPayload mails the pack whole as `pack`, and as `checkPack` only the steps a deployment built before steps runs as the policy means", () => {
+test("mailPayload mails the pack whole as `pack`, as `checkPack` only the steps a deployment built before steps runs as the policy means, and the versions it was resolved from", () => {
   const base = recommendedPack("octocat/hello");
   const score: CustomCheck = { id: "care", name: "Care", group: "pull-request", kind: "model", shape: "score", subject: "care", levels: ["poor", "fair", "good", "great"], failBelow: "good" };
   const pack: CheckPack = {
@@ -626,7 +626,9 @@ test("mailPayload mails the pack whole as `pack`, and as `checkPack` only the st
     custom: [score],
     actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, for: "first-timers" }, { do: "labels", target: { from: "rules" } }] },
   };
-  const mail = mailPayload("octocat/hello", repoPolicy({ enabled: true }), { pack, automatic: [] }, {});
+  const source = { repo: { id: "art_pack", version: 3 }, shared: { id: "art_shared", version: 7 } };
+  const mail = mailPayload("octocat/hello", repoPolicy({ enabled: true }), { pack, automatic: [], source }, {});
+  expect(mail.policy.source).toEqual(source);
   expect(mail.pack).toBe(pack);
   expect(mail.checkPack).toMatchObject({ schemaVersion: 1 });
   expect(mail.checkPack).not.toHaveProperty("labels");

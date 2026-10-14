@@ -7,6 +7,7 @@ import { createArtifact, runArtifactMigrations } from "@corbits/artifacts";
 import { APPROVE_DO_KIND, AuditLog, checkPackName, emptyPack, stockTriggerMail } from "@corbits/triage-contracts";
 import type { WorkflowRunEvent } from "@intx/hub-sessions";
 import { createAuditLog } from "./audit-log.js";
+import { loadCheckPack } from "./github/check-pack-store.js";
 import { migrateTriageTables } from "./triage-db.js";
 import { ROTATION_REASON } from "./github/deployment.js";
 import { createVerdictRecordStore, type RecordedVerdict } from "./github/verdict-record-store.js";
@@ -93,6 +94,9 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
       return createAuditLog({
         db,
         artifacts: db,
+        readCheckPack(tenantId, repo) {
+          return loadCheckPack({ db, artifacts: db, async automaticKinds() { return []; }, log() {} }, tenantId, repo);
+        },
         workflow: "pr-triage",
         runReader: {
           async readRunEvents(_repoId, _ref, runId) {

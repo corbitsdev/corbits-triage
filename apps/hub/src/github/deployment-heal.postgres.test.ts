@@ -118,7 +118,7 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
         return null;
       },
     },
-    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [] }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
     deliver: async function deliver(_tenantId, address, payload) {
       delivered.push({ address, payload });
     },

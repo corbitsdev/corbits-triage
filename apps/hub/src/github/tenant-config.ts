@@ -17,6 +17,8 @@ export type RepoRecord = {
   selection?: "all" | "selected";
   enabled?: boolean;
   checks?: RepoPolicy["checks"];
+  /** The repository's policy artifact: its title, and its id once the hub has pinned it. */
+  checkPack?: RepoPolicy["checkPack"];
 };
 
 export type InstallationFields = {

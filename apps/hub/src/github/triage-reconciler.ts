@@ -100,7 +100,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     if (read.status !== "ok") return undefined;
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
     const stored = await deps.store.load(pass.tenantId, repo.record.name);
-    return { ...repo, pack: read.pack, automatic: read.automatic, prs, stored };
+    return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored };
   }
 
   /**
