@@ -1,31 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "@corbits/common";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { queryOptions, skipToken, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { emptyPack, repoPolicy } from "@corbits/triage-contracts";
 import { writeCheckPack } from "./check-pack.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import { loadRepoPolicy } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
-import { changeCount, fromPack, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
+import { createAutosave, type Autosave, type AutosaveState, type DraftUpdate } from "./pack-autosave.ts";
+import { fromPack, validate, type DraftProblem, type RepoDraft } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
 import { usePortal, useSignOutWhenRejected } from "./portal.tsx";
-import { openSession, saveDraft, type PackSession } from "./repo-pack-save.ts";
-import { draftPolicy, packArtifact, transportRepoPackStore, type RepoPackStore } from "./repo-pack-store.ts";
+import { openSession, saveDraft, unsavedChanges, type PackSession } from "./repo-pack-save.ts";
+import { draftPolicy, packArtifact, transportRepoPackStore, type LoadedRepoPack, type RepoPackStore } from "./repo-pack-store.ts";
 
-/** The hub store, reading packs through the query cache the repositories table shares. */
+const REPO_POLICY_QUERY_KEY = "repo-policy";
+
+/** The hub store, reading packs and settings through the query cache the repositories table shares. */
 function hubRepoPackStore(queryClient: QueryClient, tenantId: string): RepoPackStore {
   const transport = createHubTransport();
   const direct = transportRepoPackStore(transport, tenantId);
   return {
     ...direct,
     async load(repo, fresh) {
-      const query = checkPackQuery(tenantId, repo);
+      const pack = checkPackQuery(tenantId, repo);
+      const policy = queryOptions({ queryKey: [REPO_POLICY_QUERY_KEY, tenantId, repo], queryFn: () => loadRepoPolicy(transport, tenantId, repo) });
       if (fresh) {
         await queryClient.invalidateQueries({ queryKey: [CHECK_PACK_INDEX_QUERY_KEY, tenantId] });
-        await queryClient.invalidateQueries({ queryKey: query.queryKey });
+        await queryClient.invalidateQueries({ queryKey: pack.queryKey });
+        await queryClient.invalidateQueries({ queryKey: policy.queryKey });
       }
-      const [found, policy] = await Promise.all([queryClient.fetchQuery(query), loadRepoPolicy(transport, tenantId, repo)]);
-      return { artifact: packArtifact(found), policy: draftPolicy(policy) };
+      const [found, settings] = await Promise.all([queryClient.fetchQuery(pack), queryClient.fetchQuery(policy)]);
+      return { artifact: packArtifact(found), policy: draftPolicy(settings) };
     },
     async writePack(pack, loaded) {
       const written = await writeCheckPack(transport, tenantId, pack.repo, pack, loaded);
@@ -44,127 +49,141 @@ export function useHubRepoPackStore(): RepoPackStore | null {
   }, [queryClient, tenantId]);
 }
 
+/** What the panel shows before the pack has loaded. */
 function emptySession(repo: string): PackSession {
   return { loaded: null, corrupt: null, saved: fromPack(emptyPack(repo), draftPolicy(repoPolicy(undefined))), unlinked: false };
 }
+
+/** Typing settles for this long before the draft is saved. */
+const SAVE_AFTER_MS = 500;
+
+export type SaveState = "saved" | "saving" | "not-saved";
 
 export type RepoPack = {
   status: "loading" | "ready" | "failed";
   draft: RepoDraft;
   saved: RepoDraft;
-  changes: number;
-  /** The checks were written but the repository does not point at them yet; Save redoes the link. */
-  unlinked: boolean;
-  /** Why the draft cannot be saved as it stands, and where. */
+  save: SaveState;
+  /** Why what can be saved still cannot be, and where. */
   problem: DraftProblem | null;
-  /** Why the newest artifact for the repository is not a check pack; saving replaces it in place. */
+  /** Why the newest artifact for the repository is not a check pack; the next save replaces it in place. */
   corrupt: string | null;
-  /** The pack changed on the hub since it was loaded; only a reload can save again. */
-  stale: boolean;
-  saving: boolean;
   error: string;
-  edit: (update: (draft: RepoDraft) => RepoDraft) => void;
-  save: () => Promise<void>;
-  discard: () => void;
+  /** What another writer also changed while this panel kept its own version. */
+  conflicts: string[];
+  edit: (update: DraftUpdate) => void;
+  /** Saves now; also how a failed save is tried again. */
+  flush: () => void;
   reload: () => void;
 };
 
-/** Loads a repository's pack and settings from the store and saves the panel's edits back through it. */
+type SaveInput = { session: PackSession; draft: RepoDraft };
+
+/** Loads a repository's pack and settings and saves each edit shortly after it is made. */
 export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack {
-  const { refreshNow, runBacklog, notify } = usePortal();
+  const { refreshNow, runBacklog } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
-  const [session, setSession] = useState<PackSession>(() => emptySession(repo));
-  const [draft, setDraft] = useState<RepoDraft>(session.saved);
-  const [status, setStatus] = useState<RepoPack["status"]>("loading");
-  const [stale, setStale] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<AutosaveState | null>(null);
+  const [opened, setOpened] = useState<{ from: LoadedRepoPack; autosave: Autosave } | null>(null);
+  const [afterError, setAfterError] = useState("");
 
-  useEffect(function loadPack() {
-    let cancelled = false;
-    setStatus("loading");
-    setError("");
-    setStale(false);
-    if (!store) return;
-    async function load(from: RepoPackStore) {
-      try {
-        const next = openSession(repo, await from.load(repo, attempt > 0));
-        if (cancelled) return;
-        setSession(next);
-        setDraft(next.saved);
-        setStatus("ready");
-      } catch (cause) {
-        if (cancelled) return;
-        signOutWhenRejected(cause);
-        setError(`Could not load the policy. ${errorText(cause)}`);
-        setStatus("failed");
-      }
-    }
-    void load(store);
-    return function cancel() {
-      cancelled = true;
-    };
-  }, [store, repo, attempt]);
-
-  async function startTriage() {
+  async function loadPack(from: RepoPackStore, fresh: boolean): Promise<LoadedRepoPack> {
     try {
-      await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
+      return await from.load(repo, fresh);
     } catch (cause) {
-      setError(`Triage enabled. Could not start triage of open pull requests. ${errorText(cause)}`);
+      signOutWhenRejected(cause);
+      throw cause;
     }
   }
 
-  async function save() {
-    if (!store || problem) return;
-    setSaving(true);
-    setError("");
-    setStale(false);
-    const { session: next, draft: shown, failure } = await saveDraft(store, repo, session, draft);
-    setSession(next);
-    setDraft(shown);
-    setSaving(false);
-    if (failure) {
-      signOutWhenRejected(failure.cause);
-      setStale(failure.stale);
-      setError(failure.message);
-      return;
-    }
-    notify("Saved. Applies to the next pull request.");
-    if (!session.saved.policy.enabled && draft.policy.enabled) await startTriage();
+  const loaded = useQuery({
+    queryKey: ["repo-pack-session", store?.tenantId, repo, attempt],
+    queryFn: store ? () => loadPack(store, attempt > 0) : skipToken,
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+
+  async function writeDraft({ session, draft }: SaveInput) {
+    if (!store) throw new Error("The workspace is not known yet.");
+    return saveDraft(store, repo, session, draft);
+  }
+
+  const save = useMutation({ mutationFn: writeDraft });
+
+  async function reread(): Promise<PackSession> {
+    if (!store) throw new Error("The workspace is not known yet.");
+    return openSession(repo, await loadPack(store, true));
+  }
+
+  /** Turning triage on starts triage of the open pull requests; every save refreshes the portal. */
+  async function afterSave(before: PackSession, after: PackSession) {
+    setAfterError("");
     try {
+      if (!before.saved.policy.enabled && after.saved.policy.enabled) await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
       await refreshNow();
     } catch (cause) {
       signOutWhenRejected(cause);
-      setError(`Saved, but could not refresh. ${errorText(cause)}`);
+      setAfterError(`Saved, but ${errorText(cause)}`);
     }
   }
 
-  function discard() {
-    setDraft(session.saved);
+  // The autosave outlives this render, so it calls the newest portal callbacks and store rather than the first ones.
+  const latest = useRef({ write: save.mutateAsync, reread, afterSave, failed: signOutWhenRejected });
+  latest.current = { write: save.mutateAsync, reread, afterSave, failed: signOutWhenRejected };
+
+  // A newly loaded pack starts a new autosave, set while rendering so the first frame already shows it.
+  if (loaded.data && opened?.from !== loaded.data) {
+    const autosave = createAutosave({
+      session: openSession(repo, loaded.data),
+      delayMs: SAVE_AFTER_MS,
+      write: (session, draft) => latest.current.write({ session, draft }),
+      reread: () => latest.current.reread(),
+      changed: setState,
+      afterSave: (before, after) => latest.current.afterSave(before, after),
+      failed: (cause) => latest.current.failed(cause),
+    });
+    setOpened({ from: loaded.data, autosave });
+    setState(autosave.state());
+  }
+
+  // Closing the panel or reloading saves what is still waiting rather than dropping it.
+  useEffect(function saveWhatIsWaiting() {
+    const autosave = opened?.autosave;
+    return function flushOnClose() {
+      if (autosave?.state().waiting) void autosave.flush();
+    };
+  }, [opened]);
+
+  const session = state?.session ?? emptySession(repo);
+  const draft = state?.draft ?? session.saved;
+  const found = validate(draft, session.saved);
+  const problem = found && { ...found, reason: shownReason(found.reason, draft.pack) };
+  const loadError = loaded.error ? `Could not load the policy. ${errorText(loaded.error)}` : "";
+
+  function status(): RepoPack["status"] {
+    if (loaded.isError) return "failed";
+    return opened && opened.from === loaded.data ? "ready" : "loading";
+  }
+
+  function saveState(): SaveState {
+    if (state?.saving) return "saving";
+    if (problem || state?.error) return "not-saved";
+    return state?.waiting || unsavedChanges(session, draft) > 0 ? "saving" : "saved";
+  }
+
+  function edit(update: DraftUpdate) {
+    opened?.autosave.edit(update);
+  }
+
+  function flush() {
+    void opened?.autosave.flush();
   }
 
   function reload() {
     setAttempt((count) => count + 1);
   }
 
-  const found = validate(draft);
-  const problem = found && { ...found, reason: shownReason(found.reason, draft.pack) };
-
-  return {
-    status,
-    draft,
-    saved: session.saved,
-    changes: changeCount(session.saved, draft),
-    unlinked: session.unlinked,
-    problem,
-    corrupt: session.corrupt,
-    stale,
-    saving,
-    error,
-    edit: setDraft,
-    save,
-    discard,
-    reload,
-  };
+  return { status: status(), draft, saved: session.saved, save: saveState(), problem, corrupt: session.corrupt, error: loadError || state?.error || afterError, conflicts: state?.conflicts ?? [], edit, flush, reload };
 }

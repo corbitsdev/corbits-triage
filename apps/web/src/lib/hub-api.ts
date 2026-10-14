@@ -5,7 +5,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, PolicyRead, readCheckPack, repoPolicy, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, PolicyRead, readCheckPack, repoPolicy, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -1009,56 +1009,6 @@ export async function loadGithubPull(
     "GET",
     `/api/integrations/github-pull/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`,
   );
-}
-
-/** One Do as a preview resolves it; `skipped` ones carry why instead of an effect id. */
-export type PreviewDo = { list: VerdictWord; index: number; kind: ActionKind; reason: string; effectId?: string; target?: Record<string, unknown>; skipped?: true; held?: true };
-
-export type PreviewList = { verdict: VerdictWord; dos: PreviewDo[] };
-
-/** The policy's actions on the head: the verdict's list, or every list while the verdict waits on the judge. */
-export type PreviewActions =
-  | { status: "not-woken" }
-  | ({ status: "decided" } & PreviewList)
-  | { status: "waits-on-judge"; lists: PreviewList[] };
-
-export type PreviewCheck = { check: string; name: string; kind: "machine" | "model"; result: "pass" | "fail" | "unconfirmed" | "needs-judge"; reason: string; evidence: string[]; output: CheckOutput };
-
-export type PullPreview = {
-  repo: string;
-  number: number;
-  headSha: string;
-  event: TriageEvent;
-  pack: "saved" | "candidate";
-  judge: "not-needed" | "not-run";
-  verdict: {
-    state: string;
-    priority: string;
-    labels: string[];
-    owner: string;
-    humanGated: boolean;
-    verdict: VerdictWord;
-    score: number | null;
-    reasons: string[];
-    degraded: "inference-outage" | "error" | null;
-    reason: string;
-    nextAction: string;
-    actor: "author" | "maintainer" | "system";
-    feedback: string;
-  };
-  checks: PreviewCheck[];
-  actions: PreviewActions;
-};
-
-/** Evaluates `pack`, saved or not, against one open pull request; the hub writes nothing and does not run the judge. */
-export async function previewPull(
-  transport: Transport,
-  tenantId: string,
-  input: { repo: string; number: number; pack: CheckPack },
-): Promise<PullPreview> {
-  const repo = validateRepo(input.repo);
-  if (!Number.isInteger(input.number) || input.number < 1) throw new Error("Pull request number must be a positive integer.");
-  return transport.fetch<PullPreview>("POST", `/api/integrations/github-preview/${enc(requireTenantId(tenantId))}`, { ...input, repo });
 }
 
 const connectChains = new Map<string, Promise<unknown>>();
