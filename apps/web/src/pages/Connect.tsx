@@ -279,12 +279,13 @@ export default function Connect() {
   }
 
   function renderModelBody() {
+    const waitingNote = githubReady ? "Waiting for the first triage run." : githubConnected && "Waiting for GitHub to deliver a webhook.";
     return <>
       <p>{DECISION_MODEL_INTRO}</p>
       {modelStored
         ? <div className="success-callout" role="status"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>Decision model connected</strong><p>Triage starts on the next pull request event.</p></div></div>
         : <DecisionModelForm />}
-      {modelStored && !liveReady && <p role="status" className="muted">{githubReady ? "Waiting for the first triage run." : "Waiting for GitHub to deliver a webhook."}</p>}
+      {modelStored && !liveReady && waitingNote && <p role="status" className="muted">{waitingNote}</p>}
       <div className="task-actions">
         {modelStored && <Button type="button" disabled={!liveReady} onClick={() => navigate("/inbox")}>Open triage</Button>}
         {githubConnected && <Button type="button" variant="ghost" onClick={() => setStep("select")}>Back to repositories</Button>}
