@@ -75,15 +75,20 @@ function levelName(level: string): string {
 
 /** A score answer's probabilities by the level its legend names, when those are exactly `levels`. */
 function levelsOver(answer: ModelAnswer | undefined, levels: readonly string[]): Record<string, number> | undefined {
-  if (answer?.type !== "score") return undefined;
+  if (answer?.type !== "score" || Math.abs(Object.values(answer.probabilities).reduce((total, value) => total + value, 0) - 1) > SUM_TOLERANCE) return undefined;
   const byName = new Map(Object.entries(answer.legend).map(([key, level]) => [levelName(level), answer.probabilities[key]]));
   if (byName.size !== levels.length || !levels.every((level) => byName.get(levelName(level)) !== undefined)) return undefined;
   return Object.fromEntries(levels.map((level) => [level, byName.get(levelName(level))!]));
 }
 
-/** The answer's probabilities when they are over exactly `options`. */
+// The backend rounds each probability to two places; System One's client checks sums at this tolerance but does not export it.
+const SUM_TOLERANCE = 0.02;
+
+/** The answer's probabilities when they are over exactly `options` and sum to about 1. */
 export function choiceOver<T extends string>(answer: ModelAnswer | undefined, options: readonly T[]): Record<T, number> | undefined {
-  return answer?.type === "choice" && exactKeys(answer.probabilities, [...options]) ? (answer.probabilities as Record<T, number>) : undefined;
+  if (answer?.type !== "choice" || !exactKeys(answer.probabilities, [...options])) return undefined;
+  const sum = Object.values(answer.probabilities).reduce((total, value) => total + value, 0);
+  return Math.abs(sum - 1) <= SUM_TOLERANCE ? (answer.probabilities as Record<T, number>) : undefined;
 }
 
 /** The most likely key, the first of equals. */

@@ -82,6 +82,19 @@ async function people(gh: GithubFetch, repo: string, number: number, target: Res
   return owners;
 }
 
+/**
+ * Takes back triage's own request for changes on the merging head, or says why it stands: a repository may restrict who
+ * dismisses reviews, and the merge is then GitHub's to refuse.
+ */
+async function takeBackOwnRequest(gh: GithubFetch, input: { repo: string; number: number; login: string; sha: string }): Promise<string | undefined> {
+  try {
+    await dismissDoChangeRequests(gh, input);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 /** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's own reviews. */
 export async function executeDo(gh: GithubFetch, { request, step }: DoInput, login: AppLogin): Promise<DoOutcome> {
   const { repo, number } = request;
@@ -148,8 +161,9 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       const requested = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
       if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
       // Execute runs before the mirror, and a protected branch refuses the merge while triage's own request on this head stands; one on an earlier head is the mirror's to take back.
-      if (reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha)) await dismissDoChangeRequests(gh, { repo, number, login: await login(), sha: step.headSha });
-      return { status: "done", result: await mergePr(gh, { repo, number, sha: step.headSha }) };
+      const ownRequest = reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha);
+      const kept = ownRequest ? await takeBackOwnRequest(gh, { repo, number, login: await login(), sha: step.headSha }) : undefined;
+      return { status: "done", result: { ...(await mergePr(gh, { repo, number, sha: step.headSha })), ...(kept && { changeRequestsKept: kept }) } };
     }
     default:
       throw new DoNotRunnableError(`unknown Do kind ${(step as { kind: unknown }).kind}`);

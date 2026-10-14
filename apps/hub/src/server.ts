@@ -239,6 +239,7 @@ const githubPrActions = createGithubPrActions({
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
+  readCheckPack,
 });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,

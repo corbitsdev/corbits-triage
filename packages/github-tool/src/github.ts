@@ -170,8 +170,9 @@ export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: st
   const reviews = await reviewsBy(gh, repo, number, input.login);
   const standing = reviews.filter((review) => review.state === "CHANGES_REQUESTED" && review.body?.includes(REQUEST_CHANGES_DO_MARKER) && (sha === undefined || review.commit_id === sha));
   for (const review of standing) {
-    await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}/dismissals`, send("PUT", { message: "Nothing triage asked to change still fails, so this request no longer stands.", event: "DISMISS" }));
+    // Marked first, so a failure part-way never leaves a dismissal that reads as a person's.
     await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}`, send("PUT", { body: `${review.body}\n${DISMISSED_BY_TRIAGE_MARKER}` }));
+    await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}/dismissals`, send("PUT", { message: "Nothing triage asked to change still fails, so this request no longer stands.", event: "DISMISS" }));
   }
   return standing.map((review) => review.id);
 }

@@ -15,7 +15,8 @@ import {
   upsertTriageComment,
 } from "@corbits/github-tool/github";
 import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
-import { TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
+import { ownedLabels, TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
+import type { CheckPackRead } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
@@ -47,7 +48,8 @@ export const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.int
     .or({ action: "'close'", labels: "string[]", comment: "string" }),
 );
 
-async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
+/** `owned` is the labels a close takes back: triage's own and the policy's verdict labels. */
+async function runAction(gh: GithubFetch, body: typeof ActionBody.infer, owned: readonly string[]) {
   const { repo, number } = body;
   switch (body.action) {
     case "comment":
@@ -69,7 +71,7 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
     case "merge":
       return mergePr(gh, { repo, number, ...(body.headSha ? { sha: body.headSha } : {}) });
     case "close":
-      return mirror(gh, { repo, number, labels: body.labels, owned: TRIAGE_LABELS, comment: body.comment, close: true });
+      return mirror(gh, { repo, number, labels: body.labels, owned, comment: body.comment, close: true });
   }
 }
 
@@ -90,7 +92,7 @@ function doKind(body: typeof ActionBody.infer): ActionKind {
   }
 }
 
-export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOrigin: string }) {
+export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOrigin: string; readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead> }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
   return async function handle(body: typeof ActionBody.infer, { tenantId, principalId }: Member): Promise<Response> {
@@ -102,7 +104,8 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
 
     try {
       const { repo, number } = body;
-      const result = await runAction(gh, body);
+      const read = body.action === "close" ? await deps.readCheckPack(tenantId, repo) : undefined;
+      const result = await runAction(gh, body, read?.status === "ok" ? ownedLabels(read.pack.labels) : TRIAGE_LABELS);
       if (result instanceof Response) return result;
       logJson({ level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number });
       return Response.json(result);

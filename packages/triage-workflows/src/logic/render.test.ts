@@ -347,9 +347,10 @@ describe("score and choose rules", () => {
     expect(checks[1]!.output).toEqual({ kind: "level", level: "poor", levels, failBelow: "good" });
   });
 
-  test("a score answer over other levels, or a choice over other options, is unanswered", () => {
+  test("a score answer over other levels, or probabilities that do not sum to 1, is unanswered", () => {
     const style = JSON.stringify({ id: "style", type: "score", score: 1, legend: { 0: "bad", 1: "fair", 2: "good", 3: "great" }, probabilities: { 0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4 }, confidence: 0.5 });
-    const answers = parseAnswers([style, JSON.stringify({ id: "kind", type: "choice", choice: "fix", probabilities: { fix: 1 }, confidence: 1 })].join("\n"));
+    const care = JSON.stringify({ id: "care", type: "score", score: 1, legend: { 0: "poor", 1: "fair", 2: "good", 3: "great" }, probabilities: { 0: 0.9, 1: 0.9, 2: 0.9, 3: 0.9 }, confidence: 0.5 });
+    const answers = parseAnswers([style, care, JSON.stringify({ id: "kind", type: "choice", choice: "fix", probabilities: { fix: 0.9, feature: 0.9, chore: 0.9 }, confidence: 1 })].join("\n"));
     const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
     expect(checks.map((c) => c.result)).toEqual(["unconfirmed", "unconfirmed", "unconfirmed"]);
   });
