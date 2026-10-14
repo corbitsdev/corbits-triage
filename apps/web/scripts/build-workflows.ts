@@ -27,7 +27,7 @@ async function bundle(workflow: WorkflowPackage, outdir: string): Promise<void> 
       target: "node",
       format: "esm",
       conditions: ["intx-src"],
-      define: { "process.env.TRIAGE_WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
+      define: { "TRIAGE_WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
       // The packed tool exports only its root, so a subpath import would not resolve at run time.
       external: [tool.name],
       // Strips the per-module path comments: the version hash must not depend on the lockfile layout.
@@ -65,6 +65,9 @@ async function packWorkflow(workflow: WorkflowPackage, toolVersion: string, outD
       interchange: interchangeEntries(workflow),
       files: [workflow.entry.slice(2), DIRECTORS, ACTIONS, "package.json"],
     };
+    if (!(await readFile(files[`./${DIRECTORS}`], "utf8")).includes(workflow.packageName)) {
+      throw new Error(`${workflow.packageName} directors bundle lacks its package name; the build define was dropped.`);
+    }
     for (const file of Object.values(files)) assertOnlyToolImports(workflow, await readFile(file, "utf8"));
     const version = await contentVersion("0.1.0", { name: workflow.packageName, ...manifest }, files);
     return await packPackage({ name: workflow.packageName, version, ...manifest }, files, outDir);

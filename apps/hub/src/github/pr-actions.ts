@@ -20,7 +20,6 @@ import type { CheckPackRead } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
-import { logJson } from "./bridge.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
@@ -111,11 +110,11 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
       const read = body.action === "close" ? await deps.readCheckPack(tenantId, repo) : undefined;
       const result = await runAction(gh, body, read?.status === "ok" ? ownedLabels(read.pack.labels) : TRIAGE_LABELS);
       if (result instanceof Response) return result;
-      logJson({ level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number });
+      deps.log({ level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number });
       return Response.json(result);
     } catch (err) {
       const message = errorText(err);
-      logJson({ level: "warn", msg: "github_pr_action_failed", tenantId, action: body.action, repo: body.repo, number: body.number, error: message });
+      deps.log({ level: "warn", msg: "github_pr_action_failed", tenantId, action: body.action, repo: body.repo, number: body.number, error: message });
       return githubFailed(`${GITHUB_VERB[body.action]} ${body.repo}#${body.number}`, err);
     }
   };
