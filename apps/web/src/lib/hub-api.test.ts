@@ -646,3 +646,10 @@ describe("pending maintainer write approvals", () => {
     expect(item).toMatchObject({ pendingApprovalId: "merge", needsHuman: true });
   });
 });
+
+describe("stored repositories", () => {
+  test("a record without a source is a GitHub repository", () => {
+    const config = { corbitsTriage: { repos: [{ name: "acme/api", connected: true }, { name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" }] } };
+    expect(reposFromConfig(config).map((repo) => repo.source)).toEqual(["github", "bitbucket-datacenter"]);
+  });
+});

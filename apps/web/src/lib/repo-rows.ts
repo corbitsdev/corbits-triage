@@ -1,4 +1,4 @@
-import { repoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { repoNeedsCheckSetup } from "./check-pack.ts";
 import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
@@ -17,6 +17,12 @@ function triageReady(repo: RepoRecord): boolean {
   return !repoNeedsCheckSetup(repo) && repoPolicy(repo).enabled;
 }
 
+/** The stored repositories, then the Bitbucket Data Center repositories not recorded yet. */
+export function mergeRepositories(stored: RepoRecord[], listed: RepoRecord[] | undefined): RepoRecord[] {
+  const names = new Set(stored.map((repo) => repo.name));
+  return [...stored, ...(listed ?? []).filter((repo) => !names.has(repo.name))];
+}
+
 export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
   return new Set(repos.filter((repo) => repoPolicy(repo).enabled).map((repo) => repo.name));
 }
@@ -31,6 +37,7 @@ type RepoPulls =
 
 export type RepoRow = {
   name: string;
+  source: RepoSource;
   href: string;
   needsSetup: boolean;
   pulls: RepoPulls;
@@ -69,6 +76,7 @@ export function repoRows(
     const error = pullsError?.message ?? errors.get(repo.name);
     return {
       name: repo.name,
+      source: repo.source,
       href: `/repositories/${repo.name}`,
       needsSetup,
       pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), triageReady(repo)) : { error },
