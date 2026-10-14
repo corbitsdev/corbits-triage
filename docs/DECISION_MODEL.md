@@ -49,7 +49,7 @@ Questions point into the state by path, such as `` `pullRequest.files[3].hunks[0
 - **Docs**: path rules decide in code first. Changing (not removing) any doc file passes docs with no question asked.
   - A doc file is `*.md` or `*.mdx` outside `vendor/`, `node_modules/`, `dist/` and `build/`, legal notices excluded.
   - A test file is under `test/`, `tests/` or `__tests__/`, or named `*.test.*` or `*.spec.*` with a JS or TS extension (`[cm]?[jt]sx?`). It is not asked about.
-  - Otherwise each file gets one Noul: does the change in this file make a statement in `repository.docs` wrong or incomplete, or add setup, configuration, permissions or commands the docs must describe? Code combines the answers: any file that needs docs fails the rule, and at most 3 files are named.
+  - Otherwise each file gets one Choice, "How does the change in `pullRequest.files[N]` leave `repository.docs`?", with options in this order: `unaffected` (the docs stay correct and complete), `now_wrong` (a statement the docs make, such as a name, table, route, file, setting or behaviour, is contradicted because the change renames, removes or changes it) and `now_incomplete` (the change adds setup, configuration, permissions or commands the docs must describe). P(needs docs) is 1 − P(`unaffected`), on the Noul band: a file at 0.7 or above needs docs and fails the rule, one at 0.3 or below does not, and anything between leaves the rule unconfirmed. At most 3 files are named.
 - **Custom model rules** (`packages/triage-contracts/src/check-pack.ts`):
   - `is-true` with scope `pull-request` (the default): one Noul, `<name>: <claim>`.
   - `is-true` with scope `file` or `hunk`, optionally limited by `when` globs: one Noul per file or hunk in scope, "Does the change in … meet this rule: <claim>?". At most 3 items are named on failure.
@@ -159,6 +159,8 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 | author rules removed from the verdict question (CL-10611) | 2026-10-13 | 5 | 0 | 2 (186-no-docs, 187-no-docs), none unsure |
 | a failed judged rule decides Fail, an unconfirmed one blocks Pass, run 1 | 2026-10-13 | 5 | 0 | 4, all unsure (108, 113, 186-no-docs, 187-no-docs) |
 | same, run 2 | 2026-10-13 | 6 | 0 | 5, all unsure (106, 108, 186-no-docs, 187-no-docs, 190) |
+| docs as one Choice per file, `unaffected` first, run 1 | 2026-10-13 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 3, unsure (186-no-docs, 187-no-docs, 190) |
+| same, run 2 | 2026-10-13 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 2, unsure (186-no-docs, 187-no-docs) |
 
 These cover one repository's pull requests. Custom rules and other repositories are unmeasured.
 

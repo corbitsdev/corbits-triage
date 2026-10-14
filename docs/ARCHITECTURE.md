@@ -45,7 +45,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     user who started setup, so no setup state is stored.
   - **Integration routes** under `/api/integrations/`: sign-in methods,
     GitHub App setup and installation sync, open pull requests, details,
-    actions, Dos, previews and single pull request triage, latest verdicts,
+    actions, Dos, previews (API only; the portal no longer calls it) and single
+    pull request triage, latest verdicts,
     triage stats and timeline, the policy schema, invitations, and
     workflow deploy and versions. Each is described in `/openapi.json`. Pull request
     actions are synchronous: a maintainer's click must not wait on a
@@ -129,10 +130,10 @@ trusted sidecar adapter turns the App key into short-lived
 installation tokens at the fetch boundary, so workflow and tool code never
 hold it. Hub routes that read GitHub check the caller's `read` (or `use`)
 grant on the same credential; routes that write to GitHub check `use`. Reads
-(open pull requests, details, previews) use the secret on the caller's
+(open pull requests, details, and the API-only preview) use the secret on the caller's
 behalf and never return it; writes are pull request actions and triage; approving a held Do checks only its kind's grant.
 A pull request action from the portal that is a Do kind (comment, labels,
-assign, request review, approve, request changes, close) also checks `invoke`
+assign, request review, approve, request changes, close, merge) also checks `invoke`
 on `triage-do:<kind>:<owner>/<name>`, the repository name in lowercase; the
 admin role holds `triage-do:*` from GitHub setup, and owners hold every grant. In a run, the repository's policy decides when to
 approve, and only a head that passes with CI green is approved, from the

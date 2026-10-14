@@ -3,7 +3,7 @@
 Corbits Triage triages GitHub pull requests. For every pull request on a
 repository with triage on, it gathers facts from GitHub, runs the
 repository's rules, decides Pass, Fail or Unsure, and suggests or runs the
-actions the repository's policy lists for that verdict.
+steps the repository's policy lists for that verdict.
 
 Nothing runs by default. Installing the GitHub App records repositories with
 triage off; a repository is triaged only after someone turns on **Triage pull
@@ -33,14 +33,22 @@ wakes the policy as if it were opened.
   portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
 - **Repositories**: per repository, its rules, how the verdict is decided,
-  its actions, a preview against an open pull request, recent
+  its steps, its verdict labels, recent
   stats, the triage switch and **Triage open pull requests again**.
 - **Settings**: the deployed workflow versions, the GitHub App, the decision
-  model, invitations, workspace roles and access rules, and the account.
+  model, invitations, workspace roles, the grid of Do kinds by role, and the
+  account.
 
 The portal shows the verdict, its score and the reasons. Evidence for a file or a change
 cites its changed lines (`src/router.ts:40-58`) and links them at the commit
 that was judged. GitHub sees only the actions.
+
+## Policy
+
+Each repository has one policy: its rules, how they decide a verdict, the
+steps that run for each verdict, and the verdict labels. It is stored as the
+tenant artifact `check-pack/<owner>/<name>` and edited on the Repositories
+page. The sections below follow it in that order.
 
 ## Rules
 
@@ -66,7 +74,7 @@ requested change waits on the author). The recommended forbidden paths are
 workflows can change which checks run and turn CI green.
 
 Custom rules are decision-model rules only (below). Who opened the pull request
-is a step's **for** (see [Actions](#actions)), not a rule.
+is a step's **for** (see [Steps](#steps)), not a rule.
 
 ### Decision models
 
@@ -138,7 +146,7 @@ Triage posts one comment per head: the verdict, the reasons (failed hard rules
 first, then judged rules with their evidence), and what Triage did or what
 waits on a maintainer.
 
-## Actions
+## Steps
 
 The policy holds one **When** and three ordered lists of steps: **On Pass**,
 **On Fail** and **On Unsure**. The verdict picks the list. Each step names a
