@@ -31,6 +31,7 @@ const db = {
 function handler(calls: Calls, overrides: Partial<WorkflowDeployDeps> = {}) {
   return createWorkflowDeploy({
     db,
+    onDeployed: async () => {},
     allocation: {
       async prepareProvisionedDeployment(args) {
         calls.prepared.push(args);

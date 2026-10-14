@@ -40,6 +40,8 @@ export const DeployBody = type({
 export type WorkflowDeployDeps = {
   db: DB["db"];
   allocation: Pick<WorkflowAllocationService, "prepareProvisionedDeployment">;
+  /** After a deployment: the hub releases what the new one supersedes, such as the pre-host `pr-triage` deployment, and keeps the host deployments to the connected hosts. */
+  onDeployed: (tenantId: string) => Promise<void>;
 };
 
 export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
@@ -96,6 +98,7 @@ export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
       status: prepared.status,
       createdAt: run.createdAt.toISOString(),
     };
+    await deps.onDeployed(tenantId);
     return Response.json(deployment, { status: 201 });
   };
 }
