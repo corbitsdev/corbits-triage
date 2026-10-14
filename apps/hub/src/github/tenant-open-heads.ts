@@ -19,21 +19,31 @@ export type TenantGithubDeps = { db: DB["db"]; cipher: CredentialCipher; githubA
 
 export type TenantSourcesDeps = TenantGithubDeps & { tenantBitbucket: TenantBitbucket };
 
-/** The credential the record's host needs, when the tenant holds it. */
-type SourceFetches = { github: GithubFetch | undefined; bitbucket: bitbucket.BitbucketFetch | undefined };
+/** Each host's credential, read once per tenant lookup and only when a record of that host asks for it. */
+type SourceFetches = { github: () => Promise<GithubFetch | undefined>; bitbucket: () => Promise<bitbucket.BitbucketFetch | undefined> };
 
 function missingCredential(record: RepoRecord): Error {
   return new Error(`no active ${sourceOf(record)} credential for ${record.name}`);
 }
 
-function githubOf(fetches: SourceFetches, record: RepoRecord): GithubFetch {
-  if (!fetches.github) throw missingCredential(record);
-  return forInstallation(fetches.github, record.installationId);
+async function githubOf(fetches: SourceFetches, record: RepoRecord): Promise<GithubFetch> {
+  const gh = await fetches.github();
+  if (!gh) throw missingCredential(record);
+  return forInstallation(gh, record.installationId);
 }
 
-function bitbucketOf(fetches: SourceFetches, record: RepoRecord): bitbucket.BitbucketFetch {
-  if (!fetches.bitbucket) throw missingCredential(record);
-  return fetches.bitbucket;
+async function bitbucketOf(fetches: SourceFetches, record: RepoRecord): Promise<bitbucket.BitbucketFetch> {
+  const bb = await fetches.bitbucket();
+  if (!bb) throw missingCredential(record);
+  return bb;
+}
+
+function once<T>(read: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | undefined;
+  return function memoized() {
+    pending ??= read();
+    return pending;
+  };
 }
 
 function openHeadsOf(prs: Array<{ number: number; sha?: string; updatedAt: string; draft: boolean }>): OpenPr[] {
@@ -46,8 +56,8 @@ function openHeadOf(pr: { state: string; sha?: string; draft?: boolean }) {
 
 function createTenantSources(deps: TenantSourcesDeps) {
   const tenantGithub = createTenantGithub(deps);
-  return async function tenantSources(tenantId: string): Promise<SourceFetches> {
-    return { github: await tenantGithub(tenantId), bitbucket: await deps.tenantBitbucket(tenantId) };
+  return function tenantSources(tenantId: string): SourceFetches {
+    return { github: once(() => tenantGithub(tenantId)), bitbucket: once(() => deps.tenantBitbucket(tenantId)) };
   };
 }
 
@@ -67,9 +77,9 @@ export function createTenantGithub(deps: TenantGithubDeps) {
 export function createTenantOpenPrs(deps: TenantSourcesDeps): OpenPrsLister {
   const tenantSources = createTenantSources(deps);
   return async function openPrs(tenantId, record) {
-    const fetches = await tenantSources(tenantId);
-    if (sourceOf(record) === "bitbucket-datacenter") return bitbucket.listOpenPrs(bitbucketOf(fetches, record), record.name);
-    return listOpenPrs(githubOf(fetches, record), record.name);
+    const fetches = tenantSources(tenantId);
+    if (sourceOf(record) === "bitbucket-datacenter") return bitbucket.listOpenPrs(await bitbucketOf(fetches, record), record.name);
+    return listOpenPrs(await githubOf(fetches, record), record.name);
   };
 }
 
@@ -78,11 +88,11 @@ export function createTenantOpenHeads(deps: TenantSourcesDeps) {
   const tenantSources = createTenantSources(deps);
 
   return async function openHeadsFor(tenantId: string): Promise<OpenHeadsReader | undefined> {
-    const fetches = await tenantSources(tenantId);
-    if (!fetches.github && !fetches.bitbucket) return undefined;
+    const fetches = tenantSources(tenantId);
+    if (!(await fetches.github()) && !(await fetches.bitbucket())) return undefined;
     return async function openHeads(record) {
-      if (sourceOf(record) === "bitbucket-datacenter") return openHeadsOf(await bitbucket.listOpenPrs(bitbucketOf(fetches, record), record.name));
-      return openHeadsOf(await listOpenPrs(githubOf(fetches, record), record.name));
+      if (sourceOf(record) === "bitbucket-datacenter") return openHeadsOf(await bitbucket.listOpenPrs(await bitbucketOf(fetches, record), record.name));
+      return openHeadsOf(await listOpenPrs(await githubOf(fetches, record), record.name));
     };
   };
 }
@@ -91,11 +101,11 @@ export function createTenantOpenHead(deps: TenantSourcesDeps) {
   const tenantSources = createTenantSources(deps);
 
   return async function openHeadFor(tenantId: string): Promise<OpenHeadReader | undefined> {
-    const fetches = await tenantSources(tenantId);
-    if (!fetches.github && !fetches.bitbucket) return undefined;
+    const fetches = tenantSources(tenantId);
+    if (!(await fetches.github()) && !(await fetches.bitbucket())) return undefined;
     return async function openHead(record, number) {
-      if (sourceOf(record) === "bitbucket-datacenter") return openHeadOf(await bitbucket.getPr(bitbucketOf(fetches, record), record.name, number));
-      return openHeadOf(await readPr(githubOf(fetches, record), record.name, number));
+      if (sourceOf(record) === "bitbucket-datacenter") return openHeadOf(await bitbucket.getPr(await bitbucketOf(fetches, record), record.name, number));
+      return openHeadOf(await readPr(await githubOf(fetches, record), record.name, number));
     };
   };
 }
@@ -105,8 +115,8 @@ export type HeadChecksReader = (tenantId: string, record: RepoRecord, headSha: s
 export function createTenantHeadChecks(deps: TenantSourcesDeps): HeadChecksReader {
   const tenantSources = createTenantSources(deps);
   return async function headChecks(tenantId, record, headSha) {
-    const fetches = await tenantSources(tenantId);
-    if (sourceOf(record) === "bitbucket-datacenter") return bitbucket.getChecks(bitbucketOf(fetches, record), headSha);
-    return getChecks(githubOf(fetches, record), record.name, headSha);
+    const fetches = tenantSources(tenantId);
+    if (sourceOf(record) === "bitbucket-datacenter") return bitbucket.getChecks(await bitbucketOf(fetches, record), headSha);
+    return getChecks(await githubOf(fetches, record), record.name, headSha);
   };
 }
