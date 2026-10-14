@@ -46,9 +46,10 @@ that was judged. GitHub sees only the actions.
 ## Policy
 
 Each repository has one policy: its rules, how they decide a verdict, the
-steps that run for each verdict, and the verdict labels. It is stored as the
-tenant artifact `check-pack/<owner>/<name>` and edited on the Repositories
-page. The sections below follow it in that order.
+steps that run for each verdict, and the verdict labels. It is stored as a
+tenant artifact that the repository's record pins by id when the portal saves
+it (until then, the newest artifact titled `check-pack/<owner>/<name>`), may
+extend a workspace policy, and is edited on the Repositories page. The sections below follow it in that order.
 
 ## Rules
 
@@ -252,6 +253,20 @@ levels, options, labels, teams and people are kept to one line (line breaks and
 control characters become spaces), up to 500 characters, 50 for a label. A
 comment keeps its line breaks and drops other control characters. A verdict
 list holds at most 20 steps, and a list of labels, people or teams at most 50.
+
+### Workspace policies
+
+A repository's policy may extend a workspace policy. The workspace policy is a
+default, not a floor: the repository may switch off or replace any of its
+rules, its When, any verdict's steps and any verdict's label. Only a policy's
+creator, the workspace's admins and its owners can change either policy.
+Archiving a workspace policy does not stop it: repositories that extend it
+keep using it.
+
+Today a workspace policy is written through the hub's artifact route as an
+artifact titled `workspace-policy/<name>`, and a repository policy extends it
+by setting `extends` to that artifact's id. The portal shows an extending
+policy resolved but cannot edit it yet.
 
 ## Triage over time
 

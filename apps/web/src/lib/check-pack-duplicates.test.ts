@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
-import { listCheckPacks, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
+import { ExtendedPolicyError, listCheckPacks, StaleCheckPackError, writeCheckPack } from "./check-pack.ts";
 import { fakeHub, type FakeArtifact } from "./fake-hub.ts";
 import { findArtifactByTitle, loadRepoCheckPack } from "./hub-api.ts";
 
@@ -13,12 +13,6 @@ function row(id: string, at: number, extra: Partial<FakeArtifact> = {}): FakeArt
 }
 
 describe("duplicate check-pack titles", () => {
-  test("the direct read resolves to the newest artifact", async () => {
-    const hub = fakeHub([row("old", 1, { content: JSON.stringify(older) }), row("new", 2, { content: JSON.stringify(newer) })]);
-    expect((await findArtifactByTitle(hub.transport, "t", title))?.id).toBe("new");
-    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "new", version: 1, pack: newer });
-  });
-
   test("findArtifactByTitle stops once the exact title is on page one", async () => {
     const hub = fakeHub([row("a", 300), ...Array.from({ length: 250 }, (_, i) => row(`n${i}`, i, { title: `${title}${i}` }))]);
     await findArtifactByTitle(hub.transport, "t", title);
@@ -31,13 +25,22 @@ describe("duplicate check-pack titles", () => {
     expect((await listCheckPacks(hub.transport, "t")).has(title)).toBe(true);
   });
 
-  test("a draft loaded from one artifact cannot save while a newer one carries the title", async () => {
+  test("a draft saves onto the artifact triage reads, and is refused once triage reads another", async () => {
     const hub = fakeHub([row("X", 1, { content: JSON.stringify(newer) })]);
     const opened = await loadRepoCheckPack(hub.transport, "t", "acme/widgets");
     expect(opened).toMatchObject({ id: "X", version: 1 });
-    hub.artifacts.push(row("Y", 2, { content: JSON.stringify(older) }));
-    const save = writeCheckPack(hub.transport, "t", "acme/widgets", older, opened?.kind === "pack" ? opened : null);
-    await expect(save).rejects.toBeInstanceOf(StaleCheckPackError);
-    expect(hub.artifacts.map((item) => item.version)).toEqual([1, 1]);
+    const saved = await writeCheckPack(hub.transport, "t", "acme/widgets", older, { id: "X", version: 1 });
+    expect(saved).toMatchObject({ id: "X", version: 2 });
+    hub.artifacts.push(row("Y", 9, { content: JSON.stringify(older) }));
+    await expect(writeCheckPack(hub.transport, "t", "acme/widgets", newer, saved)).rejects.toBeInstanceOf(StaleCheckPackError);
+    expect(hub.artifacts.map((item) => item.version)).toEqual([2, 1]);
+  });
+
+  test("a policy that extends a workspace policy is not saved over", async () => {
+    const hub = fakeHub([row("O", 1, { version: 4 })]);
+    hub.policies["acme/widgets"] = { status: "ok", pack: newer, source: { repo: { id: "O", version: 4 }, shared: { id: "S", version: 1 } } };
+    expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "O", version: 4, pack: newer, shared: { id: "S", version: 1 } });
+    await expect(writeCheckPack(hub.transport, "t", "acme/widgets", older, { id: "O", version: 4 })).rejects.toBeInstanceOf(ExtendedPolicyError);
+    expect(hub.artifacts.map((item) => item.version)).toEqual([4]);
   });
 });

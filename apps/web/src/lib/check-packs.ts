@@ -1,8 +1,8 @@
-import { queryOptions, skipToken, useQueries, useQuery, useQueryClient, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { CATALOG_IDS, catalogCheckEnabled, checkPackName, type CheckPack } from "@corbits/triage-contracts";
+import { queryOptions, skipToken, useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { CATALOG_IDS, catalogCheckEnabled, type CheckPack } from "@corbits/triage-contracts";
 import { listCheckPacks } from "./check-pack.ts";
 import { createHubTransport } from "./hub-transport.ts";
-import { loadCheckPackById, type CheckPackArtifact } from "./hub-api.ts";
+import { loadRepoCheckPack, type CheckPackArtifact } from "./hub-api.ts";
 import { usePortal } from "./portal.tsx";
 
 export const CHECK_PACK_INDEX_QUERY_KEY = "check-pack-index";
@@ -16,15 +16,14 @@ export function checkPackIndexQuery(tenantId: string) {
   });
 }
 
-/** A repository's check pack, found through the index; the repositories table and the repository page share it. */
-export function checkPackQuery(queryClient: QueryClient, tenantId: string | undefined, repo: string) {
+/** A repository's check pack as the hub reads it for triage; the repositories table and the repository page share it. */
+export function checkPackQuery(tenantId: string | undefined, repo: string) {
   return queryOptions({
     queryKey: ["check-pack", tenantId, repo],
     queryFn: tenantId === undefined
       ? skipToken
-      : async function readCheckPack(): Promise<CheckPackArtifact | null> {
-        const listed = (await queryClient.fetchQuery(checkPackIndexQuery(tenantId))).get(checkPackName(repo));
-        return listed ? loadCheckPackById(createHubTransport(), tenantId, repo, listed.id) : null;
+      : function readCheckPack(): Promise<CheckPackArtifact | null> {
+        return loadRepoCheckPack(createHubTransport(), tenantId, repo);
       },
     staleTime: 60_000,
   });
@@ -33,8 +32,7 @@ export function checkPackQuery(queryClient: QueryClient, tenantId: string | unde
 /** The repository's check pack once loaded; null while it loads or when the repository has none. */
 export function useRepoPack(repo: string): CheckPack | null {
   const { snapshot } = usePortal();
-  const queryClient = useQueryClient();
-  const found = useQuery(checkPackQuery(queryClient, snapshot?.workspace.tenantId, repo)).data;
+  const found = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo)).data;
   return found?.kind === "pack" ? found.pack : null;
 }
 
@@ -47,10 +45,9 @@ export type PackState = { found: CheckPackArtifact | null; pending: boolean; err
 
 export function useCheckPacks(repos: string[]): Map<string, PackState> {
   const { snapshot } = usePortal();
-  const queryClient = useQueryClient();
   const tenantId = snapshot?.workspace.tenantId;
   function byRepo(results: Array<UseQueryResult<CheckPackArtifact | null>>): Map<string, PackState> {
     return new Map(results.map((result, i) => [repos[i]!, { found: result.data ?? null, pending: result.isLoading, error: result.error }]));
   }
-  return useQueries({ queries: repos.map((repo) => checkPackQuery(queryClient, tenantId, repo)), combine: byRepo });
+  return useQueries({ queries: repos.map((repo) => checkPackQuery(tenantId, repo)), combine: byRepo });
 }

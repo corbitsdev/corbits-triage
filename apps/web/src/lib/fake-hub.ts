@@ -1,7 +1,7 @@
 import { ApiError, type Transport } from "@intx/hub-client";
-import type { TriageStats } from "@corbits/triage-contracts";
+import { checkPackName, readCheckPack, type TriageStats } from "@corbits/triage-contracts";
 
-export type FakeArtifact = { id: string; title: string; content: string; version: number; updatedAt: number };
+export type FakeArtifact = { id: string; title: string; content: string; version: number; updatedAt: number; archivedAt?: string };
 
 export type FakeHub = {
   transport: Transport;
@@ -9,23 +9,37 @@ export type FakeHub = {
   config: Record<string, unknown>;
   /** What the triage-stats route answers, for any repository and window. */
   stats: TriageStats | null;
+  /** What the policy route answers for a repository, in place of reading its newest titled artifact. */
+  policies: Record<string, unknown>;
   /** Every request, as `METHOD path`. */
   requests: string[];
 };
 
 /**
  * The artifact routes as the hub serves them: listings ordered newest first,
- * `query` matched against title or content, `limit` paging with `nextCursor`,
- * create never refuses a duplicate title, and `expectedVersion` answers 409.
+ * `query` matched against title or content, archived ones left out, `limit` paging with `nextCursor`,
+ * create never refuses a duplicate title, and `expectedVersion` answers 409. The policy route reads the newest
+ * artifact titled for the repository; pins and workspace policies are the hub's, set through `policies`.
  */
 export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, unknown> = {}): FakeHub {
-  const hub: FakeHub = { artifacts, config, stats: null, requests: [], transport: { fetch, subscribe: () => () => {} } };
+  const hub: FakeHub = { artifacts, config, stats: null, policies: {}, requests: [], transport: { fetch, subscribe: () => () => {} } };
   let clock = Math.max(0, ...artifacts.map((row) => row.updatedAt));
   let created = 0;
   function freshId(): string {
     let id = `art_${++created}`;
     while (hub.artifacts.some((row) => row.id === id)) id = `art_${++created}`;
     return id;
+  }
+  function policyRead(repo: string): unknown {
+    const row = [...hub.artifacts]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .find((item) => item.archivedAt === undefined && item.title === checkPackName(repo));
+    if (!row) return { status: "missing" };
+    try {
+      return { status: "ok", pack: readCheckPack(row.content, repo), source: { repo: { id: row.id, version: row.version } } };
+    } catch (error) {
+      return { status: "corrupt", reason: (error as Error).message, repo: { id: row.id, version: row.version } };
+    }
   }
   async function fetch<T>(method: string, path: string, body?: unknown): Promise<T> {
     hub.requests.push(`${method} ${path}`);
@@ -35,12 +49,17 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
       return undefined as T;
     }
     if (method === "GET" && path.startsWith("/api/integrations/triage-stats/t?") && hub.stats) return hub.stats as T;
+    if (method === "GET" && path.startsWith("/api/integrations/github-triage/t/policy?")) {
+      const repo = new URL(path, "http://hub").searchParams.get("repo");
+      if (repo === null) throw new ApiError(400, "invalid_request", "repo is required.");
+      return (repo in hub.policies ? hub.policies[repo] : policyRead(repo)) as T;
+    }
     if (method === "GET" && path.startsWith("/api/tenants/t/artifacts?")) {
       const url = new URL(path, "http://hub");
       const query = (url.searchParams.get("query") ?? "").toLowerCase();
       const hits = [...hub.artifacts]
         .sort((a, b) => b.updatedAt - a.updatedAt)
-        .filter((row) => row.title.toLowerCase().includes(query) || row.content.toLowerCase().includes(query));
+        .filter((row) => row.archivedAt === undefined && (row.title.toLowerCase().includes(query) || row.content.toLowerCase().includes(query)));
       const at = Number(url.searchParams.get("cursor") ?? 0);
       const limit = Number(url.searchParams.get("limit"));
       return {
@@ -50,7 +69,9 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
     }
     if (method === "GET" && path.startsWith("/api/tenants/t/artifacts/")) {
       const id = decodeURIComponent(path.split("/").at(-1) ?? "");
-      return { artifact: hub.artifacts.find((row) => row.id === id) } as T;
+      const row = hub.artifacts.find((item) => item.id === id);
+      if (!row) throw new ApiError(404, "not_found", "No such artifact.");
+      return { artifact: { ...row, archivedAt: row.archivedAt ?? null } } as T;
     }
     if (method === "POST" && path === "/api/tenants/t/artifacts") {
       const posted = body as { title: string; content: string };

@@ -91,7 +91,7 @@ describe("saving the repository pack", () => {
     const { failure } = await saveDraft(store, repo, session, { pack: recommendedPack(repo), policy });
     expect(failure).toBeNull();
     expect(writes(hub)).toEqual(["POST /api/tenants/t/artifacts", "PATCH /api/tenants/t"]);
-    expect(repoRow(hub)).toEqual({ name: repo, connected: true, installationId: 9, ...policy, checkPack: { name: title } });
+    expect(repoRow(hub)).toEqual({ name: repo, connected: true, installationId: 9, ...policy, checkPack: { name: title, id: "art_1" } });
   });
 
   test("a saved draft takes on the normalised pack, so nothing reads as unsaved", async () => {

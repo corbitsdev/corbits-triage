@@ -168,7 +168,7 @@ These cover one repository's pull requests. Custom rules and other repositories 
 
 1. **Prefer a built-in rule.** If GitHub data decides it, a built-in rule over GitHub data (size, linked issue, conflicts, CI, forbidden paths) costs no model call. Who opened the pull request is a step's `for`, not a rule.
 2. **Write the question** by the rules above.
-3. **Add it to the repository's policy.** Use the rules section of the repository panel in the portal, or write the policy through the hub's stock artifact route: the artifact titled `check-pack/<owner>/<repo>` under `/api/tenants/{tenantId}/artifacts`, with each save a new version. A file-scoped rule in `custom`:
+3. **Add it to the repository's policy.** Use the rules section of the repository panel in the portal, or write the policy through the hub's stock artifact route: the artifact the repository's record pins by id under `/api/tenants/{tenantId}/artifacts`, with each save a new version. The portal pins the id when it saves; until then the newest artifact titled `check-pack/<owner>/<repo>` is read. A file-scoped rule in `custom`:
 
    ```json
    {

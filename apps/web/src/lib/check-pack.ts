@@ -5,7 +5,7 @@ import {
   readCheckPack,
   type CheckPack,
 } from "@corbits/triage-contracts";
-import { enc, findArtifactByTitle, listArtifacts, newestByTitle, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
+import { enc, findArtifactByTitle, listArtifacts, loadRepoCheckPack, newestByTitle, validateRepo, type ArtifactListItem, type StoredCheckPack } from "./hub-api.ts";
 
 function collection(tenantId: string): string {
   return `/api/tenants/${enc(tenantId)}/artifacts`;
@@ -31,9 +31,19 @@ function versionOf(body: { version?: number } | undefined, what: string): number
   return body.version;
 }
 
-async function versionCheckPack(transport: Transport, tenantId: string, title: string, content: string, loaded: LoadedCheckPack): Promise<number> {
-  const newest = await findArtifactByTitle(transport, tenantId, title);
-  if (newest?.id !== loaded.id) throw new StaleCheckPackError();
+/** Editing a policy that extends a workspace policy is not built yet, so a save would replace the override with a whole pack. */
+export class ExtendedPolicyError extends Error {
+  constructor() {
+    super("This repository's policy extends a workspace policy and cannot be edited here yet.");
+  }
+}
+
+/** Versions the artifact the draft was loaded from while triage still reads it; `expectedVersion` refuses it when anyone wrote since. */
+async function versionCheckPack(transport: Transport, tenantId: string, repo: string, content: string, loaded: LoadedCheckPack): Promise<number> {
+  const current = await loadRepoCheckPack(transport, tenantId, repo);
+  if (current?.id !== loaded.id) throw new StaleCheckPackError();
+  if (current.kind === "pack" && current.shared) throw new ExtendedPolicyError();
+  const title = checkPackName(repo);
   try {
     const revised = await transport.fetch<{ version?: number }>("POST", `${collection(tenantId)}/${enc(loaded.id)}/versions`, {
       content,
@@ -49,8 +59,8 @@ async function versionCheckPack(transport: Transport, tenantId: string, title: s
 
 /**
  * The stock artifact route has no title uniqueness, so two first saves at the
- * same moment can both succeed; the newest wins, and the loser's next save is
- * refused as stale because its artifact no longer resolves for the title.
+ * same moment can both succeed; each save then pins its artifact on the
+ * repository's record, and the last pin is the policy triage reads.
  */
 async function createCheckPack(transport: Transport, tenantId: string, title: string, content: string): Promise<LoadedCheckPack> {
   if (await findArtifactByTitle(transport, tenantId, title)) throw new StaleCheckPackError();
@@ -72,7 +82,7 @@ export async function writeCheckPack(transport: Transport, tenantId: string, rep
   const title = checkPackName(clean);
   const content = JSON.stringify(parsed);
   const stored = loaded
-    ? { id: loaded.id, version: await versionCheckPack(transport, tenantId, title, content, loaded) }
+    ? { id: loaded.id, version: await versionCheckPack(transport, tenantId, clean, content, loaded) }
     : await createCheckPack(transport, tenantId, title, content);
   return { kind: "pack", ...stored, pack: parsed };
 }

@@ -9,7 +9,7 @@
 // even on a head already queued: a queued row does not say whether its run
 // has read facts yet. The window map lives in process: the hub runs as one
 // replica.
-import type { ActionKind, CheckPack, PrTriageRow, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
+import type { ActionKind, CheckPack, PolicySource, PrTriageRow, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { PrMail } from "./normalize.js";
 import type { RepoRecord } from "./tenant-config.js";
@@ -29,6 +29,8 @@ export type CoalescedEvent = {
   policy: RepoPolicy;
   pack: CheckPack;
   automatic: ActionKind[];
+  /** Read with `pack` when the event was accepted, shared policy included, so the mail names the versions it carries. */
+  source: PolicySource;
   mail: PrMail;
   number: number;
   headSha: string;

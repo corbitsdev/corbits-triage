@@ -19,8 +19,8 @@ export type RepoPackStore = {
   load: (repo: string, fresh: boolean) => Promise<LoadedRepoPack>;
   /** Writes onto the artifact the pack was loaded from, or creates one when there was none; throws StaleCheckPackError otherwise. */
   writePack: (pack: CheckPack, loaded: PackRef | null) => Promise<PackRef>;
-  /** One config write with the settings, pointing the repository at its pack when `linked`. */
-  writePolicy: (repo: string, policy: DraftPolicy, linked: boolean) => Promise<void>;
+  /** One config write with the settings, pinning the repository to the pack artifact `packId` when it has one. */
+  writePolicy: (repo: string, policy: DraftPolicy, packId: string | null) => Promise<void>;
   loadStats: (repo: string, days: number) => Promise<TriageStats>;
 };
 
@@ -46,8 +46,8 @@ export function transportRepoPackStore(transport: Transport, tenantId: string): 
       const { id, version } = await writeCheckPack(transport, tenantId, pack.repo, pack, loaded);
       return { id, version };
     },
-    async writePolicy(repo, policy, linked) {
-      await saveRepoSettings(transport, tenantId, repo, policy, linked);
+    async writePolicy(repo, policy, packId) {
+      await saveRepoSettings(transport, tenantId, repo, policy, packId);
     },
     async loadStats(repo, days) {
       return loadTriageStats(transport, tenantId, repo, days);

@@ -37,20 +37,32 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   log: (entry: Record<string, unknown>) => void;
 };
 
-export function createGithubPrTriage(deps: GithubPrTriageDeps) {
-  return async function handle({ repo, number }: typeof TriageBody.infer, { tenantId, principalId }: Member): Promise<Response> {
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
-    if (appJson instanceof Response) return appJson;
+/** What a maintainer's triage request needs: `use` on the App, a connected and enabled repository and a readable policy. */
+export async function readyToTriage(
+  deps: PortalCredentialDeps & { readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead> },
+  { tenantId, principalId }: Member,
+  repo: string,
+) {
+  const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
+  if (appJson instanceof Response) return appJson;
+  const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true, config: true } });
+  if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
+  const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected);
+  if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
+  const policy = repoPolicy(record);
+  if (!policy.enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
+  const pack = await deps.readCheckPack(tenantId, repo);
+  if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: pack.reason });
+  if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
+  return { appJson, tenant, record, policy, pack };
+}
 
-    const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true, config: true } });
-    if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
-    const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected);
-    if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
-    const policy = repoPolicy(record);
-    if (!policy.enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
-    const pack = await deps.readCheckPack(tenantId, repo);
-    if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: pack.reason });
-    if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
+export function createGithubPrTriage(deps: GithubPrTriageDeps) {
+  return async function handle({ repo, number }: typeof TriageBody.infer, member: Member): Promise<Response> {
+    const { tenantId, principalId } = member;
+    const ready = await readyToTriage(deps, member, repo);
+    if (ready instanceof Response) return ready;
+    const { appJson, tenant, record, policy, pack } = ready;
     const deployments = await deps.liveDeployments(tenantId);
     const deployment = newestLive(deployments);
     if (!deployment) return failure(503, "service_not_running", "The pr-triage service is not running.");
