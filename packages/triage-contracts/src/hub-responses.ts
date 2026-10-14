@@ -160,3 +160,12 @@ export const AuditEntry = type({ time: "string", actor: "string", action: "strin
 export type AuditEntry = typeof AuditEntry.infer;
 export const AuditLog = type({ entries: AuditEntry.array() });
 export type AuditLog = typeof AuditLog.infer;
+
+const ArtifactRefShape = type({ id: "string", version: "number" });
+
+/** A repository's policy as triage reads it; a corrupt one names its artifact, which a save replaces in place. */
+export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: { repo: ArtifactRefShape, "shared?": ArtifactRefShape } })
+  .or({ status: "'missing'" })
+  .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape });
+
+export const BacklogStarted = type({ status: "'started'" });

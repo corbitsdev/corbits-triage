@@ -23,7 +23,7 @@ describe("check-pack client", () => {
     expect(new Set((await listCheckPacks(hub.transport, "t")).keys())).toEqual(new Set(["check-pack/acme/widgets", "check-pack/acme/gadgets"]));
   });
 
-  test("a repository's pack is read with its artifact and version; a missing title reads nothing", async () => {
+  test("a repository's pack is read with its artifact and version; a repository without one reads nothing", async () => {
     const hub = fakeHub([row("art_1", "check-pack/acme/widgets", widgets, 1, 3)]);
     expect(await loadRepoCheckPack(hub.transport, "t", "acme/widgets")).toEqual({ kind: "pack", id: "art_1", version: 3, pack: widgets });
     expect(await loadRepoCheckPack(hub.transport, "t", "acme/gadgets")).toBeNull();

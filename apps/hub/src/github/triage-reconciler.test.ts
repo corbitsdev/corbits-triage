@@ -319,7 +319,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     observeTenant: observer.observe,
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
-      return { status: "ok", pack: options.pack ?? emptyPack(repo), automatic: [] };
+      return { status: "ok", pack: options.pack ?? emptyPack(repo), automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
     },
     deliver: async function deliver(tenantId, address, payload) {
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");

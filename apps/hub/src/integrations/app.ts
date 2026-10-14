@@ -6,7 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import type { DB } from "@intx/db";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, checkPackSchema, DeployedVersions, InviteRoles, InviteSent, repoPolicySchema, SessionList, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, PolicyRead, DeployedVersions, InviteRoles, InviteSent, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
@@ -19,6 +19,8 @@ import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
+import { PolicyQuery } from "../github/policy-read.js";
+import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
@@ -29,7 +31,12 @@ import { WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
 export const INTEGRATIONS_PREFIX = "/api/integrations/";
 const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
-const packSchemas = { checkPack: checkPackSchema.toJsonSchema(), repoPolicy: repoPolicySchema.toJsonSchema() };
+const packSchemas = {
+  checkPack: checkPackSchema.toJsonSchema(),
+  sharedPolicy: sharedPolicySchema.toJsonSchema(),
+  policyOverride: policyOverrideSchema.toJsonSchema(),
+  repoPolicy: repoPolicySchema.toJsonSchema(),
+};
 
 export type Member = { tenantId: string; principalId: string };
 export type Caller = { user: SessionUser; session: SessionInfo };
@@ -51,6 +58,8 @@ export type IntegrationHandlers = {
   prActions: BodyHandler<typeof ActionBody.infer>;
   heldDos: BodyHandler<typeof HeldDoBody.infer>;
   prTriage: BodyHandler<typeof TriageBody.infer>;
+  policyRead: BodyHandler<typeof PolicyQuery.infer>;
+  backlog: BodyHandler<typeof BacklogBody.infer>;
   openPulls: (member: Member) => Promise<Response>;
   prDetails: MemberHandler;
   prPreview: (body: typeof PreviewBody.infer, member: Member, signal: AbortSignal) => Promise<Response>;
@@ -78,7 +87,7 @@ const TAGS = ["integrations"];
 const Failure = type({ error: { code: "string", message: "string" } });
 const ManifestFailure = type({ error: "string" });
 const AuthMethods = type({ google: "boolean", emailPassword: "boolean", passwordReset: "boolean" });
-const PackSchemas = type({ checkPack: "Record<string, unknown>", repoPolicy: "Record<string, unknown>" });
+const PackSchemas = type({ checkPack: "Record<string, unknown>", sharedPolicy: "Record<string, unknown>", policyOverride: "Record<string, unknown>", repoPolicy: "Record<string, unknown>" });
 const ManifestStart = type({ manifest: "Record<string, unknown>", state: "string" });
 const InstallationsSynced = type({ installations: "number", repos: "string[]" });
 const TriageQueued = type({ status: "'queued'", headSha: "string" });
@@ -180,7 +189,8 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.get(
     PACK_SCHEMA_PATH,
     describeRoute({
-      summary: "JSON Schemas of the policy and repository settings",
+      summary: "JSON Schemas of the policy, workspace policy, repository override and repository settings",
+      description: "`checkPack`, `sharedPolicy`, `policyOverride` and `repoPolicy`.",
       tags: TAGS,
       responses: { 200: json("Policy and repository settings JSON Schemas", PackSchemas) },
     }),
@@ -286,6 +296,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId`,
     describeRoute({
       summary: "Queue a pull request for triage",
+      description: "Needs `use` on the workspace's GitHub App credential, a connected and enabled repository and a readable policy.",
       tags: TAGS,
       responses: {
         202: json("Queued", TriageQueued),
@@ -299,6 +310,43 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     body(TriageBody),
     function prTriage(c) {
       return handlers.prTriage(c.req.valid("json"), memberOf(c));
+    },
+  );
+
+  app.get(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy`,
+    describeRoute({
+      summary: "A repository's policy as triage reads it",
+      description: "Any member of the workspace. Answers `ok` with the resolved pack and the policy versions it came from, `missing`, or `corrupt` with the reason and the artifact a save replaces.",
+      tags: TAGS,
+      parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
+      responses: { 200: json("The resolved pack and the policy versions it was read from, or why there is none", PolicyRead), ...invalid, ...failures },
+    }),
+    member,
+    validator("query", PolicyQuery, refuseInvalid),
+    function policyRead(c) {
+      return handlers.policyRead(c.req.valid("query"), memberOf(c));
+    },
+  );
+
+  app.post(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/backlog`,
+    describeRoute({
+      summary: "Triage a repository's open pull requests again",
+      description: "Needs `use` on the workspace's GitHub App credential, a connected and enabled repository and a readable policy. Mails pr-triage-historical the payload pr-triage gets.",
+      tags: TAGS,
+      responses: {
+        202: json("Started", BacklogStarted),
+        ...invalid,
+        ...failures,
+        502: json("The run trigger failed", Failure),
+        503: json("The pr-triage-historical service is not running", Failure),
+      },
+    }),
+    member,
+    body(BacklogBody),
+    function backlog(c) {
+      return handlers.backlog(c.req.valid("json"), memberOf(c));
     },
   );
 

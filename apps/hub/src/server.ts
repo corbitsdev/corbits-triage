@@ -33,6 +33,7 @@ import {
 } from "@corbits/cron";
 import { runCronMigrations } from "@corbits/cron/migrations";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
+import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
@@ -69,6 +70,8 @@ import { createTriageVerdicts } from "./github/triage-verdicts.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
+import { createGithubPolicyRead } from "./github/policy-read.js";
+import { createGithubBacklog } from "./github/backlog-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { createAutomation } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
@@ -181,6 +184,7 @@ composition.app.route("/api/tenants/:tenantId", createArtifactRoutes({
   db: composition.db,
   contentStore: InlineContentStore,
   requireGrant,
+  onArtifactCreated: createArtifactGrants(now),
 }));
 composition.app.route("/api/tenants/:tenantId/cron", createCronRoutes({ db: composition.db, requireGrant }));
 async function tenantDomain(tenantId: string): Promise<string> {
@@ -217,6 +221,7 @@ await migrateRepoEnabledFlag(composition.db);
 await migrateTriageTables(composition.db, database.schema ?? "public");
 const automation = createAutomation({ db: composition.db, now });
 await automation.startUp();
+await grantAdminsPolicyWrites(composition.db, now, logJson);
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
@@ -240,6 +245,7 @@ const githubPrActions = createGithubPrActions({
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
   readCheckPack,
+  log: logJson,
 });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,
@@ -275,7 +281,7 @@ async function sendBridgeMail(tenantId: string, workflow: string, payload: unkno
   await deliverToDeployment(tenantId, live.address, payload);
 }
 function readCheckPack(tenantId: string, repo: string) {
-  return loadCheckPack(composition.db, tenantId, repo, automation.automaticKinds);
+  return loadCheckPack({ db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson }, tenantId, repo);
 }
 // A tenant's system principal never changes once minted.
 const githubSenderPrincipals = new Map<string, string>();
@@ -457,6 +463,17 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   prActions: githubPrActions,
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
+  policyRead: createGithubPolicyRead({ readCheckPack }),
+  backlog: createGithubBacklog({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    authorize: authorizePortal,
+    readCheckPack,
+    sendMail: function sendBacklogMail(tenantId, payload) {
+      return sendBridgeMail(tenantId, prTriageHistoricalWorkflow.id, payload);
+    },
+    log: logJson,
+  }),
   openPulls: githubOpenPulls,
   prDetails: githubPrDetails,
   prPreview: createGithubPrPreview({
@@ -483,6 +500,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   audit: createAuditLog({
     db: composition.db,
     artifacts: composition.db,
+    readCheckPack,
     runReader: composition.runReader,
     sameSource: deploymentRotation.sameSource,
     authorize: authorizePortal,

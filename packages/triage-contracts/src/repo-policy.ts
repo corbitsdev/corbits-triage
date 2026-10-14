@@ -24,8 +24,8 @@ export type RepoPolicy = {
   checks: RepoCheckFlags;
   /** GitHub logins trusted as approved authors without org membership. */
   approvedAuthors: string[];
-  /** Pointer at the per-repo check-pack artifact. Not params. */
-  checkPack?: { name: string };
+  /** Pointer at the per-repo check-pack artifact: its title, and its id once pinned. Not params. */
+  checkPack?: { name: string; id?: string };
 };
 
 export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
@@ -46,7 +46,7 @@ export const repoPolicySchema = type({
     "ci?": "boolean",
     "conflicts?": "boolean",
   },
-  "checkPack?": { name: "string" },
+  "checkPack?": { name: "string", "id?": "string" },
 });
 
 function flag(value: unknown, fallback: boolean): boolean {
@@ -86,6 +86,6 @@ export function repoPolicy(raw: unknown): RepoPolicy {
       conflicts: flag(checks.conflicts, true),
     },
     approvedAuthors: logins(source.approvedAuthors),
-    ...(pointerName.length > 0 ? { checkPack: { name: pointerName } } : {}),
+    ...(pointerName.length > 0 ? { checkPack: { name: pointerName, ...(typeof pointer.id === "string" && { id: pointer.id }) } } : {}),
   };
 }
