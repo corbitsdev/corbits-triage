@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, ne, or } from "drizzle-orm";
 import { schema, type DB, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
@@ -90,8 +90,13 @@ export async function latestDeployments(db: DB["db"], tenantId: string, definiti
 
 export type ActiveTenant = { id: string; domain: string };
 
-export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments"): Promise<ActiveTenant[]> {
+/**
+ * Tenants with a child run of the definition in flight, or ended since `endedSince`: a host whose runs are inserted already
+ * completed is seen only through the latter, so its verdicts are recorded within a pass of the run's end.
+ */
+export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments", endedSince?: Date): Promise<ActiveTenant[]> {
   const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
+  const recent = endedSince === undefined ? undefined : gt(workflowRun.endedAt, endedSince);
   return db
     .selectDistinct({ id: tenant.id, domain: tenant.domain })
     .from(workflowRun)
@@ -100,7 +105,7 @@ export async function activeTenants(db: DB["db"], definitionName: string, what: 
     .where(and(
       eq(workflowDefinition.name, definitionName),
       what === "runs" ? ne(workflowRun.id, workflowRun.anchorRunId) : eq(workflowRun.id, workflowRun.anchorRunId),
-      what === "runs" ? eq(workflowRun.status, "running") : inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
+      what === "runs" ? (recent ? or(eq(workflowRun.status, "running"), recent) : eq(workflowRun.status, "running")) : inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
     ));
 }
 
