@@ -84,7 +84,10 @@ export function createTenantObserver(deps: TenantObserverDeps): TenantObserver {
 
 export type RecordPassDeps = {
   observer: Pick<TenantObserver, "observe">;
-  activeTenants: (what: "runs" | "deployments") => Promise<ActiveTenant[]>;
+  /** With `endedSince`, tenants whose child run ended since then count as active: a host's runs may be inserted already completed. */
+  activeTenants: (what: "runs" | "deployments", endedSince?: Date) => Promise<ActiveTenant[]>;
+  /** How far back an ended run still makes its tenant active; at least a pass interval, so no run's end is missed between passes. */
+  endedWithinMs: number;
   backoffMs: number;
   maxBackoffMs: number;
   now: () => Date;
@@ -127,7 +130,7 @@ export function createRecordPass(deps: RecordPassDeps): RecordPass {
 
   async function pass() {
     unread ??= new Map((await deps.activeTenants("deployments")).map((tenant) => [tenant.id, tenant]));
-    const active = await deps.activeTenants("runs");
+    const active = await deps.activeTenants("runs", new Date(deps.now().getTime() - deps.endedWithinMs));
     const tenants = new Map([...unread, ...watching, ...active.map((tenant) => [tenant.id, tenant] as const)]);
     const running = new Map<string, ActiveTenant>();
     for (const tenant of tenants.values()) {
