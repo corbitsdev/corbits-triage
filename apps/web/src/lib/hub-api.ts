@@ -94,6 +94,11 @@ export function githubAppSlugFromCredentials(credentials: HubCredential[]): stri
 export type HubCredential = typeof CredentialResponse.infer;
 export type HubGrant = typeof GrantResponse.infer;
 export type HubPrincipal = typeof PrincipalResponse.infer;
+
+/** A sign-in account backs every person, and gives them an email; system senders such as the GitHub bridge have none. */
+export function isPerson(principal: HubPrincipal): boolean {
+  return principal.email !== undefined;
+}
 export type HubRole = typeof RoleResponse.infer;
 export type HubApproval = typeof ApprovalResponse.infer;
 export type HubRun = typeof WorkflowRunResponse.infer;

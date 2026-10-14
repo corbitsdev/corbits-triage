@@ -48,7 +48,6 @@ function ScopeRow({ kind, scope, repos, disabled, add, remove }: ScopeRowProps) 
   const listed = new Set(scope.repos.map((entry) => entry.repo));
   const addable = repos.filter((repo) => !listed.has(repo.toLowerCase()));
   const { everywhere } = scope;
-  const nowhere = !scope.locked && everywhere === undefined && scope.repos.length === 0;
 
   function pick(event: ChangeEvent<HTMLSelectElement>) {
     add(kind, event.target.value);
@@ -66,7 +65,6 @@ function ScopeRow({ kind, scope, repos, disabled, add, remove }: ScopeRowProps) 
           {scope.locked && <span className="glob">All repositories, through a grant of every action</span>}
           {everywhere && <GrantChip label="All repositories" action={name} grant={everywhere} disabled={disabled} onRemove={removeGrant} />}
           {scope.repos.map((entry) => <GrantChip key={entry.repo} label={entry.repo} action={name} grant={entry.grant} disabled={disabled} onRemove={removeGrant} />)}
-          {nowhere && <span className="muted small-text">Waits for approval everywhere</span>}
           {!scope.locked && (
             <Select className="add-repo" aria-label={`Add a repository where Triage does ${name} on its own`} value="" disabled={disabled} onChange={pick}>
               <option value="" disabled>Add repository…</option>
@@ -113,7 +111,7 @@ export default function TriageOnItsOwn({ roles, grants, repos, loading, denied, 
     <section className="sec" aria-labelledby="sec-triage-alone">
       <header>
         <h2 id="sec-triage-alone">What Triage does on its own</h2>
-        <p>Triage performs this without asking in the repositories listed; everywhere else it waits for approval.</p>
+        <p>Triage performs this without asking in the repositories listed. An action with none listed waits for approval everywhere.</p>
       </header>
       <div>
         {denied && <DeniedNotice section="access rules" />}
