@@ -910,6 +910,11 @@ export function customCheckEnabled(row: CustomCheck): boolean {
   return row.enabled !== false;
 }
 
+/** Whether any rule is switched on; with none, triage has nothing to decide and the hub starts no run. */
+export function hasEnabledRules(pack: CheckPack): boolean {
+  return CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
+}
+
 export function classificationSources(pack: CheckPack): { quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>; custom: CustomCheck[] } {
   return {
     quality: QUALITY_CHECK_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id) => ({ id, group: CHECK_CATALOG[id].group })),

@@ -8,6 +8,15 @@ test("an instance URL keeps its context path and drops a trailing slash; anythin
   expect(instanceBaseUrl("ftp://git.example")).toBeUndefined();
 });
 
+test("private-network and localhost instances are allowed; link-local and cloud metadata hosts are not", () => {
+  expect(instanceBaseUrl("http://localhost:7990")).toBe("http://localhost:7990");
+  expect(instanceBaseUrl("http://10.0.0.5:7990")).toBe("http://10.0.0.5:7990");
+  expect(instanceBaseUrl("http://169.254.169.254/latest")).toBeUndefined();
+  expect(instanceBaseUrl("http://169.254.0.1")).toBeUndefined();
+  expect(instanceBaseUrl("http://[fd00:ec2::254]")).toBeUndefined();
+  expect(instanceBaseUrl("http://metadata.google.internal")).toBeUndefined();
+});
+
 test("pages follow nextPageStart with the bearer token until the last page", async () => {
   const seen: string[] = [];
   async function instance(input: string | URL | Request, init?: RequestInit): Promise<Response> {

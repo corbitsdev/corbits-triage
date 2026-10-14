@@ -105,8 +105,13 @@ const stubCipher = {
   },
 } as never;
 
-function packsFor(repos: string[]): BridgeDeps["readCheckPack"] {
-  const packs = new Map(repos.map((repo) => [repo, emptyPack(repo)]));
+/** One rule on, so the hub starts runs; `emptyPack` alone has every rule off. */
+function rulePack(repo: string): CheckPack {
+  return { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } };
+}
+
+function packsFor(repos: string[], pack = rulePack): BridgeDeps["readCheckPack"] {
+  const packs = new Map(repos.map((repo) => [repo, pack(repo)]));
   return async function readCheckPack(_tenant, repo) {
     const pack = packs.get(repo);
     return pack ? { status: "ok", pack, automatic: [], source: { repo: { id: "art_pack", version: 1 } } } : { status: "missing" };
@@ -452,6 +457,15 @@ describe("bridge handler", () => {
     const handle = bridge({ sent, openHeadFor: openHeadOf([7]) });
     expect(await (await handle(githubRequest(converted, { delivery: "d1" }), TARGET)).json()).toEqual({ status: "queued" });
     expect(sent.map(({ event, headSha }) => [event, headSha])).toEqual([["drafted", "abc"]]);
+  });
+
+  test("a policy with every rule off starts no run and writes nothing", async () => {
+    const sent: Sent[] = [];
+    const logged: Array<Record<string, unknown>> = [];
+    const res = await bridge({ sent, readCheckPack: packsFor(["octocat/hello"], emptyPack), log: (entry) => logged.push(entry) })(githubRequest(prPayload), TARGET);
+    expect(await res.json()).toEqual({ status: "ignored" });
+    expect(sent).toHaveLength(0);
+    expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_skipped_no_rules", repo: "octocat/hello" }));
   });
 
   test("a repo without a check pack is needs-setup and does not mail", async () => {

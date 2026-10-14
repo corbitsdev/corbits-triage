@@ -75,7 +75,7 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
     },
     log() {},
     async readCheckPack(_tenant, repo) {
-      return { status: "ok", pack: emptyPack(repo), automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
+      return { status: "ok", pack: { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
     },
     async recheckOpenPulls(_tenant, repo, except) {
       rechecked.push([repo, except]);

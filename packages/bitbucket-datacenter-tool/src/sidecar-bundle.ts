@@ -3,6 +3,7 @@ import type { ToolDefinition } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import {
   authorTeams,
+  createDocsReader,
   defaultReviewers,
   getChecks,
   getPr,
@@ -114,7 +115,9 @@ async function takeBack(bb: BitbucketFetch, a: Record<string, any>, sha: string,
   return [status];
 }
 
-async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: BitbucketUser): Promise<unknown> {
+type Reads = { docs: ReturnType<typeof createDocsReader> };
+
+async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: BitbucketUser, reads: Reads): Promise<unknown> {
   const a = call.arguments;
   switch (call.name) {
     case "bitbucket_datacenter_list_open_prs":
@@ -130,7 +133,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
     case "bitbucket_datacenter_list_pr_files":
       return listPrFilesPage(bb, a.repo, a.number, a.offset);
     case "bitbucket_datacenter_read_repo_docs":
-      return readRepoDocsPage(bb, a.repo, { ref: a.ref, offset: a.offset });
+      return readRepoDocsPage(bb, a.repo, { ref: a.ref, offset: a.offset, docs: reads.docs });
     case "bitbucket_datacenter_list_issue_comments":
       return { comments: await listIssueComments(bb, a.repo, a.number) };
     case "bitbucket_datacenter_codeowners_for_pr":
@@ -151,17 +154,19 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
   }
 }
 
-/** The token user is asked of Bitbucket once per tool instance, so once per step of a run. */
+/** The token user, and each head's docs listing, are asked of Bitbucket once per tool instance, so once per step of a run. */
 function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Promise<BitbucketFetch>) {
   let known: TokenUser | undefined;
+  let reads: Reads | undefined;
   async function run(call: ToolCallInput) {
     try {
       const bb = await getFetch();
+      reads ??= { docs: createDocsReader(bb) };
       async function user() {
         known ??= await tokenUser(bb);
         return known;
       }
-      const content = await dispatch(bb, call, user);
+      const content = await dispatch(bb, call, user, reads);
       return { callId: call.id, content: content as Record<string, unknown> };
     } catch (err) {
       return { callId: call.id, content: err instanceof Error ? err.message : String(err), isError: true };

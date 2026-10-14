@@ -122,6 +122,16 @@ describe("getReviews", () => {
     expect(await getReviews(recordedReview(pullRequestUnapproved, activitiesUnapproved), "TRI/widgets", 1)).toEqual([]);
   });
 
+  test("a status set by someone not asked to review is a review too, as Data Center lists it under participants", async () => {
+    const participant = { user: { name: "triage-bot", slug: "triage-bot", type: "SERVICE" }, role: "PARTICIPANT", approved: false, status: "NEEDS_WORK", lastReviewedCommit: HEAD };
+    const pr = { ...pullRequestApproved, participants: [participant] };
+    const reviews = await getReviews(recordedReview(pr, activitiesApproved), "TRI/widgets", 1, "triage-bot");
+    expect(reviews).toEqual([
+      { reviewer: "reviewer", state: "APPROVED", submittedAt: "2026-10-14T17:52:27.884Z", commitId: HEAD },
+      { reviewer: "triage-bot", state: "CHANGES_REQUESTED", commitId: HEAD, triageRequest: true },
+    ]);
+  });
+
   test("needs work from the triage user is triage's own request, not a reviewer's", async () => {
     const reviews = await getReviews(recordedReview(pullRequestNeedsWork, activitiesNeedsWork), "TRI/widgets", 1, "reviewer");
     expect(latestDecisive(reviews).size).toBe(0);

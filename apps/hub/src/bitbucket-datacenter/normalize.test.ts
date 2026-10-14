@@ -42,6 +42,7 @@ describe("normalizeBitbucket", () => {
       deliveryId: "8c8f041c",
       event: "pull_request",
       action: "opened",
+      actor: "rev",
       headSha: "3e1552b0",
       author: "admin",
       title: "Add subtract",
@@ -65,11 +66,15 @@ describe("normalizeBitbucket", () => {
     expect(triageEventOf(mailOf(eventKey, prEvent(eventKey, extra)))).toBe(expected);
   });
 
-  test("triage's own comment and closed pull requests are ignored", () => {
-    expect(normalizeBitbucket("pr:comment:added", "d", prEvent("pr:comment:added", { comment: { text: "<!-- corbits-triage -->\nTriage: looks fine." } }))).toBeNull();
-    expect(normalizeBitbucket("pr:declined", "d", prEvent("pr:declined", { pullRequest: pullRequest({ state: "DECLINED" }) }))).toBeNull();
-    expect(normalizeBitbucket("pr:deleted", "d", prEvent("pr:deleted"))).toBeNull();
+  test("triage's own comments and comments on a pull request no longer open are ignored", () => {
+    expect(normalizeBitbucket("pr:comment:added", "d", prEvent("pr:comment:added", { comment: { text: "[corbits-triage]: #%7B%7D\nTriage: looks fine." } }))).toBeNull();
+    expect(normalizeBitbucket("pr:comment:added", "d", prEvent("pr:comment:added", { comment: { text: "[corbits-action]: #e1\nHello" } }))).toBeNull();
     expect(normalizeBitbucket("pr:comment:added", "d", prEvent("pr:comment:added", { pullRequest: pullRequest({ state: "MERGED" }), comment: { text: "late" } }))).toBeNull();
+  });
+
+  test("a declined or deleted pull request closes unmerged, as GitHub's closed does", () => {
+    expect(mailOf("pr:declined", prEvent("pr:declined", { pullRequest: pullRequest({ state: "DECLINED" }) }))).toMatchObject({ event: "pull_request", action: "closed", prNumber: 1 });
+    expect(triageEventOf(mailOf("pr:deleted", prEvent("pr:deleted")))).toBe("closed");
   });
 
   test("a merge moves the base for the repository's other pull requests", () => {

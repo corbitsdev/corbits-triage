@@ -2,12 +2,12 @@
 // tenant credential holds its hook secret, which headers carry the signature, event and delivery id, and a pure
 // normaliser that turns its payload into the shapes the GitHub bridge produces. Everything after verification is
 // shared and has no provider branches. A failed queue write is 500 so the provider retries.
-import { repoPolicy, triageEventOf } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy, triageEventOf } from "@corbits/triage-contracts";
 import { errorText, isRecord } from "@corbits/common";
 import { loadBridgeHook, logJson, resolvedPack, tenantConfigOf, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
 import type { Accepted } from "../github/coalescer.js";
 import type { BaseMove, PolicyPush, PrMail } from "../github/normalize.js";
-import { repoRecords, triageNs, triageStateKey, type RepoRecord, type RepoSource } from "../github/tenant-config.js";
+import { repoRecords, sourceOf, triageNs, triageStateKey, type CorbitsTriageNs, type RepoRecord, type RepoSource } from "../github/tenant-config.js";
 import { readCappedBody } from "../read-json.js";
 
 export type HookIntake =
@@ -25,11 +25,13 @@ export type ProviderHook = {
   eventHeader: string;
   deliveryHeader: string;
   normalize: (event: string, deliveryId: string, payload: Record<string, unknown>) => HookIntake | null;
+  /** The user the tenant's token acts as, whose own events must not wake triage. */
+  ownUser?: (ns: CorbitsTriageNs) => string | undefined;
 };
 
 export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "log" | "readCheckPack" | "recheckOpenPulls" | "syncPolicyFile">;
 
-type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord };
+type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord; ns: CorbitsTriageNs };
 
 function json(status: number, body: unknown): Response {
   return Response.json(body, { status });
@@ -39,10 +41,6 @@ function repoOf(intake: HookIntake): string {
   if (intake.kind === "pr") return intake.mail.repo;
   if (intake.kind === "base-move") return intake.move.repo;
   return intake.push.repo;
-}
-
-function sourceOf(record: RepoRecord): RepoSource {
-  return record.source ?? "github";
 }
 
 export function createProviderHookHandler(d: ProviderHookDeps) {
@@ -83,9 +81,10 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     return json(202, { status: "accepted" });
   }
 
-  async function pullRequest(at: Delivery, mail: PrMail): Promise<Response> {
+  async function pullRequest(at: Delivery, mail: PrMail, provider: ProviderHook): Promise<Response> {
     const triageEvent = triageEventOf(mail);
     if (mail.prNumber === null || triageEvent === null) return ignored(at, "no_triage_event", { action: mail.action });
+    if (mail.actor && provider.ownUser?.(at.ns) === mail.actor) return ignored(at, "own_actor", { actor: mail.actor });
     // Its conversion to draft is triaged once, so the verdict stops offering it as ready.
     if (mail.draft === true && mail.action !== "converted_to_draft") return ignored(at, "draft", { pr: mail.prNumber });
     if (mail.headSha === null) return ignored(at, "not_open", { pr: mail.prNumber });
@@ -93,6 +92,10 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     if (!stored) {
       log({ level: "info", msg: "needs_setup", delivery: at.delivery, event: at.event, repo: at.record.name, hook: at.hook.credentialId });
       return json(202, { status: "needs-setup" });
+    }
+    if (!hasEnabledRules(stored.pack)) {
+      log({ level: "info", msg: "triage_skipped_no_rules", delivery: at.delivery, event: at.event, repo: at.record.name, pr: mail.prNumber, headSha: mail.headSha, hook: at.hook.credentialId });
+      return json(202, { status: "ignored" });
     }
     let accepted: Accepted;
     try {
@@ -164,18 +167,19 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       return json(500, { error: "tenant_config_unavailable" });
     }
     const repo = repoOf(intake);
-    const record = repoRecords(triageNs(tenantConfig)).find((row) => sourceOf(row) === provider.source && row.name === repo && row.connected);
+    const ns = triageNs(tenantConfig);
+    const record = repoRecords(ns).find((row) => sourceOf(row) === provider.source && row.name === repo && row.connected);
     if (!record) {
       log({ level: "info", msg: "unknown_repo", delivery, event, repo, hook: hook.credentialId });
       return json(404, { error: "unknown_repo" });
     }
-    const at = { hook, delivery, event, record };
+    const at = { hook, delivery, event, record, ns };
     if (intake.kind === "policy-push") {
       if (intake.branches && (record.defaultBranch === undefined || !intake.branches.includes(record.defaultBranch))) return ignored(at, "not_default_branch", { branches: intake.branches });
       return policyPush(at, intake.push);
     }
     if (!repoPolicy(record).enabled) return ignored(at, "repo_not_enabled");
     if (intake.kind === "base-move") return baseMove(at, intake.move);
-    return pullRequest(at, intake.mail);
+    return pullRequest(at, intake.mail, provider);
   };
 }

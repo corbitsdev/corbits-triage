@@ -47,7 +47,7 @@ import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX, PACK_SCHEMA_PATH } from "./integrations/app.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { connectedSources, triageEntryFor } from "./github/triage-entry.js";
+import { connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -60,7 +60,7 @@ import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, latestDeployments, newestLive, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
@@ -83,25 +83,32 @@ import { loadCheckPack } from "./github/check-pack-store.js";
 import { createAutomation } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
-import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads } from "./github/tenant-open-heads.js";
+import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
 import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManagerRefusal } from "./github/tenant-config.js";
-import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage";
+import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead, githubWrite } from "@corbits/github-tool";
 import { bitbucketRead, bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
 
+// Per host: a workspace deploys a host's workflow and tools once that host's credential exists; pr-triage-historical
+// reads GitHub only. A workspace with both hosts runs both pr-triage workflows.
 const EXPECTED_DEPLOYMENT_SET = {
-  workflows: [
-    { address: PR_TRIAGE_ADDRESS, id: prTriageWorkflow.id },
-    { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
-  ],
-  tools: [githubRead.id, githubWrite.id, bitbucketRead.id, bitbucketWrite.id],
+  github: {
+    workflows: [
+      { address: triageWorkflowFor("github").address, id: prTriageGithub.id },
+      { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
+    ],
+    tools: [githubRead.id, githubWrite.id],
+  },
+  "bitbucket-datacenter": {
+    workflows: [{ address: triageWorkflowFor("bitbucket-datacenter").address, id: triageWorkflowFor("bitbucket-datacenter").id }],
+    tools: [bitbucketRead.id, bitbucketWrite.id],
+  },
 };
-
 // Runs whose trigger and outcome the reconciler remembers between passes.
 const TRIAGE_KNOWN_RUNS = 10_000;
 const TRIAGE_RETRY_MS = 15_000;
@@ -266,14 +273,6 @@ const githubPrDetails = createGithubPrDetails({
   log: logJson,
 });
 
-const openPullsCache = createOpenPullsCache(now);
-const githubOpenPulls = createGithubOpenPulls({
-  cache: openPullsCache,
-  db: composition.db,
-  cipher: composition.credentialCipher,
-  githubApiOrigin: githubOrigin,
-  authorize: authorizePortal,
-});
 
 const hookDeps = { db: composition.db, cipher: composition.credentialCipher };
 const hookApp = createStockHookApp(
@@ -287,9 +286,11 @@ const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
   await githubDeliverer.to(address, JSON.stringify(payload), tenantId, undefined);
 }
+/** A hook credential written before hosts names `pr-triage`; its mail goes to the GitHub workflow that replaced it. */
 async function sendBridgeMail(tenantId: string, workflow: string, payload: unknown): Promise<void> {
-  const live = await resolveLiveDeployment(composition.db, tenantId, workflow);
-  if (!live) throw new NoLiveDeploymentError(workflow);
+  const id = triageWorkflowOf(workflow)?.id ?? workflow;
+  const live = await resolveLiveDeployment(composition.db, tenantId, id);
+  if (!live) throw new NoLiveDeploymentError(id);
   await deliverToDeployment(tenantId, live.address, payload);
 }
 function readCheckPack(tenantId: string, repo: string) {
@@ -315,22 +316,22 @@ function reconcileTenants() {
   return composition.db.select({ id: schema.tenant.id, domain: schema.tenant.domain, config: schema.tenant.config }).from(schema.tenant);
 }
 const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
-async function livePrTriageDeployments(tenantId: string) {
-  return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, prTriageWorkflow.id));
+async function liveTriageDeployments(tenantId: string, workflow: string) {
+  return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, workflow));
 }
-const deploymentRotation = createDeploymentRotation({
-  db: composition.db,
-  launchSpecs,
-  allocation: composition.workflowAllocationService,
-  lifecycle: composition.workflowLifecycleService,
-  mayDeploy: function mayDeploy(principalId, tenantId) {
-    return authorizePortal(principalId, tenantId, "workflow:*", "create");
-  },
-});
 const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch });
 const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
 const tenantOpenHeads = createTenantOpenHeads(tenantSources);
 const tenantOpenHead = createTenantOpenHead(tenantSources);
+const tenantOpenPrs = createTenantOpenPrs(tenantSources);
+const openPullsCache = createOpenPullsCache(now);
+const githubOpenPulls = createGithubOpenPulls({
+  cache: openPullsCache,
+  db: composition.db,
+  cipher: composition.credentialCipher,
+  list: tenantOpenPrs,
+  authorize: authorizePortal,
+});
 const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
 const observeTriageRuns = createTriageRuns({
   runReader: composition.runReader,
@@ -338,44 +339,81 @@ const observeTriageRuns = createTriageRuns({
   maxKnownRuns: TRIAGE_KNOWN_RUNS,
 });
 const tenantVersions = createTenantVersions();
-const tenantObserver = createTenantObserver({
-  liveDeployments: livePrTriageDeployments,
-  observeRuns: observeTriageRuns,
-  recordRuns: createRunRecorder({ verdicts: verdictRecordStore, log: logJson }),
-  versions: tenantVersions,
-  minIntervalMs: TRIAGE_RECORD_MS,
-  now,
-});
-const recordPass = createRecordPass({
-  observer: tenantObserver,
-  activeTenants: function activePrTriageTenants(what) {
-    return activeTenants(composition.db, prTriageWorkflow.id, what);
-  },
-  backoffMs: TRIAGE_RECORD_MS,
-  maxBackoffMs: TRIAGE_RECORD_MAX_BACKOFF_MS,
-  now,
-  log: logJson,
-});
-recordLoop = createReconcileLoop(recordPass.pass, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
 const reconcilePolicy = triageReconcilePolicy(env);
-const reconcileTriage = createTriageReconciler({
-  tenants: reconcileTenants,
-  liveDeployments: livePrTriageDeployments,
-  latestDeployments: function latestPrTriageDeployments(tenantId, limit) {
-    return latestDeployments(composition.db, tenantId, prTriageWorkflow.id, limit);
-  },
-  rotation: { afterRuns: triageRotateAfterRuns(env), ...deploymentRotation },
-  openHeadsFor: tenantOpenHeads,
-  observeTenant: tenantObserver.observe,
-  store: triageStateStore,
-  readCheckPack,
-  deliver: deliverToDeployment,
-  policy: reconcilePolicy,
-  batchSize: triageBatchSize(env),
-  now,
-  log: logJson,
-});
-triageLoop = createReconcileLoop(reconcileTriage, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
+const runRecorder = createRunRecorder({ verdicts: verdictRecordStore, log: logJson });
+
+/** One host's observer, run recorder, rotation and reconciler over its own workflow's deployments. */
+function triageStack(triage: TriageWorkflow) {
+  function liveDeployments(tenantId: string) {
+    return liveTriageDeployments(tenantId, triage.id);
+  }
+  const observer = createTenantObserver({
+    liveDeployments,
+    observeRuns: observeTriageRuns,
+    recordRuns: runRecorder,
+    versions: tenantVersions,
+    minIntervalMs: TRIAGE_RECORD_MS,
+    now,
+  });
+  const recordPass = createRecordPass({
+    observer,
+    activeTenants: function activeTriageTenants(what) {
+      return activeTenants(composition.db, triage.id, what);
+    },
+    backoffMs: TRIAGE_RECORD_MS,
+    maxBackoffMs: TRIAGE_RECORD_MAX_BACKOFF_MS,
+    now,
+    log: logJson,
+  });
+  const rotation = createDeploymentRotation({
+    db: composition.db,
+    launchSpecs,
+    allocation: composition.workflowAllocationService,
+    lifecycle: composition.workflowLifecycleService,
+    mayDeploy: function mayDeploy(principalId, tenantId) {
+      return authorizePortal(principalId, tenantId, "workflow:*", "create");
+    },
+    rotationKey: triage.rotationKey,
+  });
+  const reconcile = createTriageReconciler({
+    source: triage.source,
+    rotationKey: triage.rotationKey,
+    tenants: reconcileTenants,
+    liveDeployments,
+    latestDeployments: function latestTriageDeployments(tenantId, limit) {
+      return latestDeployments(composition.db, tenantId, triage.id, limit);
+    },
+    rotation: { afterRuns: triageRotateAfterRuns(env), ...rotation },
+    openHeadsFor: tenantOpenHeads,
+    observeTenant: observer.observe,
+    store: triageStateStore,
+    readCheckPack,
+    deliver: deliverToDeployment,
+    policy: reconcilePolicy,
+    batchSize: triageBatchSize(env),
+    now,
+    log: logJson,
+  });
+  return { triage, observer, recordPass, rotation, reconcile };
+}
+
+const stacks = TRIAGE_WORKFLOWS.map(triageStack);
+// The portal's verdict listing and audit read the GitHub workflow's, as before other hosts.
+const github = stacks.find((stack) => stack.triage.source === "github")!;
+const tenantObserver = github.observer;
+const recordPass = github.recordPass;
+const deploymentRotation = github.rotation;
+async function recordAll() {
+  for (const stack of stacks) await stack.recordPass.pass();
+  return { retry: false };
+}
+async function reconcileAll() {
+  let retry = false;
+  for (const stack of stacks) if ((await stack.reconcile()).retry) retry = true;
+  return { retry };
+}
+recordLoop = createReconcileLoop(recordAll, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
+triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
 const githubPrTriage = createGithubPrTriage({
   db: composition.db,
   cipher: composition.credentialCipher,
@@ -386,7 +424,7 @@ const githubPrTriage = createGithubPrTriage({
     return (await openHead(record, number))?.headSha;
   },
   readCheckPack,
-  liveDeployments: livePrTriageDeployments,
+  liveDeployments: liveTriageDeployments,
   observeRuns: observeTriageRuns,
   store: triageStateStore,
   deliver: deliverToDeployment,
@@ -400,34 +438,26 @@ const githubHeldDos = createGithubHeldDos({
   authorize: authorizePortal,
   runReader: composition.runReader,
   verdicts: verdictRecordStore,
-  liveDeployments: livePrTriageDeployments,
+  liveDeployments: liveTriageDeployments,
   deliver: deliverToDeployment,
   log: logJson,
 });
-/**
- * The deployed pr-triage entry follows the hosts the workspace connected: the live deployment is replaced by one of the
- * right entry, as a rotation is, and the old one released; without a live deployment the next portal deploy picks it.
- */
-async function redeployTriageEntry(tenantId: string): Promise<void> {
-  const live = newestLive(await livePrTriageDeployments(tenantId));
-  const entry = triageEntryFor(await connectedSources(composition.db, tenantId));
-  if (!live || entry === undefined) return;
-  const spec = await launchSpecs.get(live.runId);
-  if (!spec || spec.frozenApprovalBundle.entry === entry) return;
-  const redeployed = await deploymentRotation.redeploy(tenantId, live.runId, entry);
-  if (redeployed.status === "skipped") {
-    logJson({ level: "warn", msg: "triage_entry_redeploy_skipped", tenantId, deployment: live.runId, entry, reason: redeployed.reason });
-    return;
-  }
-  await deploymentRotation.release(tenantId, live.runId);
-  logJson({ level: "info", msg: "triage_entry_redeployed", tenantId, deployment: live.runId, replacedBy: redeployed.runId, entry });
-}
+const reconcileSourceDeployments = createSourceDeployments({
+  connectedSources: function connectedSourcesOf(tenantId) {
+    return connectedSources(composition.db, tenantId);
+  },
+  liveDeployments: function liveOf(tenantId, workflow) {
+    return resolveLiveDeployments(composition.db, tenantId, workflow);
+  },
+  release: deploymentRotation.release,
+  log: logJson,
+});
 const kickTriage = triageLoop.kick;
 async function onSourcesChanged(tenantId: string): Promise<void> {
   try {
-    await redeployTriageEntry(tenantId);
+    await reconcileSourceDeployments(tenantId);
   } catch (err) {
-    logJson({ level: "error", msg: "triage_entry_redeploy_failed", tenantId, error: String(err) });
+    logJson({ level: "error", msg: "triage_source_deployments_failed", tenantId, error: String(err) });
   }
   kickTriage();
 }
@@ -567,7 +597,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     ready: recordPass.ready,
     versions: tenantVersions,
     openPulls: openPullsCache,
-    githubApiOrigin: githubOrigin,
+    list: tenantOpenPrs,
     now,
   }),
   audit: createAuditLog({
@@ -577,7 +607,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     runReader: composition.runReader,
     sameSource: deploymentRotation.sameSource,
     authorize: authorizePortal,
-    workflow: prTriageWorkflow.id,
+    workflow: prTriageGithub.id,
   }),
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
@@ -670,8 +700,7 @@ recordLoop.start();
 logJson({
   level: "info",
   msg: "hub_composition",
-  workflows: EXPECTED_DEPLOYMENT_SET.workflows,
-  tools: EXPECTED_DEPLOYMENT_SET.tools,
+  deployments: EXPECTED_DEPLOYMENT_SET,
   webhookMount: HOOK_MOUNT_PATH,
 });
 

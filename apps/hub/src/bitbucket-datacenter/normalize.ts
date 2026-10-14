@@ -2,7 +2,8 @@
 // names so triage events and coalescing read them unchanged. Payloads name neither the default branch nor the files a
 // push changed, so every merge counts as a moved base and every branch update as a possible policy file change; the
 // policy sync re-reads the file and compares.
-import { isTriageComment } from "@corbits/github-reads";
+import { isTriageComment } from "@corbits/bitbucket-datacenter-reads";
+import { actionMarker } from "@corbits/bitbucket-datacenter-tool/action";
 import type { PrMail } from "../github/normalize.js";
 import type { HookIntake } from "../provider-hooks/intake.js";
 
@@ -17,7 +18,19 @@ const PULL_REQUEST: Record<string, Mapped> = {
   "pr:reviewer:needs_work": { event: "pull_request_review", action: "submitted", review: { state: "changes_requested" } },
   "pr:reviewer:unapproved": { event: "pull_request_review", action: "dismissed", review: { state: "dismissed" } },
   "pr:comment:added": { event: "issue_comment", action: "created", review: null },
+  // A declined or deleted pull request closes unmerged, as GitHub's `closed` does, so its state row is settled.
+  "pr:declined": { event: "pull_request", action: "closed", review: null },
+  "pr:deleted": { event: "pull_request", action: "closed", review: null },
 };
+
+const CLOSING = new Set(["pr:declined", "pr:deleted"]);
+
+const ACTION_COMMENT = actionMarker("").slice(0, -1);
+
+/** Triage's own comments, whichever marker they carry, never wake triage again. */
+function ownComment(text: string): boolean {
+  return isTriageComment(text) || text.startsWith(ACTION_COMMENT);
+}
 
 /** `PROJECTKEY/slug`, how Bitbucket repositories are named in the tenant's repository records. */
 export function repoNameOf(repository: Json | undefined): string | null {
@@ -36,8 +49,8 @@ function modifiedAction(p: Json): string {
 function prMail(eventKey: string, deliveryId: string, p: Json, { event, action, review }: Mapped): PrMail | null {
   const pr = p.pullRequest;
   const repo = repoNameOf(pr?.toRef?.repository);
-  if (repo === null || typeof pr.id !== "number" || pr.state !== "OPEN") return null;
-  if (eventKey === "pr:comment:added" && isTriageComment(String(p.comment?.text ?? ""))) return null;
+  if (repo === null || typeof pr.id !== "number" || (pr.state !== "OPEN" && !CLOSING.has(eventKey))) return null;
+  if (eventKey === "pr:comment:added" && ownComment(String(p.comment?.text ?? ""))) return null;
   return {
     kind: "pr",
     repo,
@@ -45,6 +58,7 @@ function prMail(eventKey: string, deliveryId: string, p: Json, { event, action, 
     deliveryId,
     event,
     action: eventKey === "pr:modified" ? modifiedAction(p) : action,
+    actor: p.actor?.slug ?? null,
     headSha: pr.fromRef?.latestCommit ?? null,
     author: pr.author?.user?.slug ?? null,
     title: pr.title ?? null,

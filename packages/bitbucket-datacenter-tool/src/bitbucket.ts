@@ -1,4 +1,4 @@
-import { TRIAGE_BUILD_KEY } from "@corbits/bitbucket-datacenter-reads";
+import { repoPath, TRIAGE_BUILD_KEY } from "@corbits/bitbucket-datacenter-reads";
 import { isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 /** Pinned to the Bitbucket Data Center instance origin, with auth added by the mediated credential. */
@@ -60,13 +60,6 @@ export async function jsonAll<T>(bb: BitbucketFetch, path: string): Promise<T[]>
     if (page.isLastPage || page.nextPageStart === undefined) return all;
     start = page.nextPageStart;
   }
-}
-
-/** `PROJECTKEY/slug` as the REST path of that repository. */
-export function repoPath(repo: string): string {
-  const parts = repo.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) throw new Error(`repository must be PROJECTKEY/slug, got ${repo}`);
-  return `/rest/api/1.0/projects/${encodeURIComponent(parts[0])}/repos/${encodeURIComponent(parts[1])}`;
 }
 
 function prPath(repo: string, number: number): string {

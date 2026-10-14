@@ -2,11 +2,11 @@
 // without relying on any webhook, sidecar or portal visit having survived:
 // reads GitHub's open pull requests, the live deployments' run logs and the
 // stored state, then queues what the plan says to the newest deployment.
-import { repoPolicy, type PrTriageRow, type RepoPolicy } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
-import { repoRecords, rotationRecord, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
+import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
@@ -26,6 +26,9 @@ type DeploymentRotation = {
 };
 
 export type TriageReconcilerDeps = {
+  /** The host whose repositories this reconciler brings to a triaged head; the deployment deps below are its workflow's. */
+  source: RepoSource;
+  rotationKey: string;
   tenants: () => Promise<ReconcileTenant[]>;
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
   latestDeployments: (tenantId: string, limit: number) => Promise<DeploymentRecord[]>;
@@ -62,10 +65,10 @@ function failedByInterchange(deployment: DeploymentRecord): deployment is Deploy
   return deployment.status === "failed" && !deployment.cancelling && deployment.endedAt !== null;
 }
 
-function enabledRepos(config: unknown): EnabledRepo[] {
+function enabledRepos(config: unknown, source: RepoSource): EnabledRepo[] {
   return repoRecords(triageNs(config)).flatMap(function enabled(record) {
     const policy = repoPolicy(record);
-    return record.connected && policy.enabled ? [{ record, policy }] : [];
+    return sourceOf(record) === source && record.connected && policy.enabled ? [{ record, policy }] : [];
   });
 }
 
@@ -94,8 +97,14 @@ function mergeRows(theirs: readonly PrTriageRow[], ours: readonly PrTriageRow[])
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
-    if (read.status !== "ok") return undefined;
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
+    // Without a policy, or with every rule off, triage has nothing to decide: no run starts and nothing is written to the pull request.
+    const skipped = read.status !== "ok" ? "triage_skipped_no_policy" : hasEnabledRules(read.pack) ? undefined : "triage_skipped_no_rules";
+    if (skipped !== undefined) {
+      for (const pr of prs) deps.log({ level: "info", msg: skipped, tenantId: pass.tenantId, repo: repo.record.name, pr: pr.number, headSha: pr.headSha });
+      return undefined;
+    }
+    if (read.status !== "ok") return undefined;
     const stored = await deps.store.load(pass.tenantId, triageStateKey(repo.record));
     return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored };
   }
@@ -248,7 +257,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   async function route(tenant: ReconcileTenant, deployments: readonly LiveDeployment[], observed: readonly ObservedRuns[]): Promise<LiveDeployment | undefined> {
     const now = deps.now();
     const runningOn = new Set(deployments.filter((_live, index) => isRunning(observed[index]!)).map((live) => live.runId));
-    const recorded = rotationRecord(triageNs(tenant.config));
+    const recorded = rotationRecord(triageNs(tenant.config), deps.rotationKey);
     if (recorded) return settle(tenant.id, recorded, deployments, runningOn, now);
     const adopted = await adopt(tenant.id, deployments, now);
     if (adopted) return settle(tenant.id, adopted, deployments, runningOn, now);
@@ -322,7 +331,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
 
   /** True when the pass is worth repeating soon: a delivery failed because the deployment was not routable yet, or a failed one is being redeployed. */
   async function reconcileTenant(tenant: ReconcileTenant): Promise<boolean> {
-    const repos = enabledRepos(tenant.config);
+    const repos = enabledRepos(tenant.config, deps.source);
     if (repos.length === 0) return false;
     // Only live deployments' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
     const { deployments, observed } = await deps.observeTenant(tenant.id, tenant.domain);

@@ -7,7 +7,7 @@ import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { forInstallation } from "./open-pulls.js";
+import { forInstallation, type OpenPrsLister } from "./open-pulls.js";
 import { appGithubFetch } from "./portal-credential.js";
 import type { OpenPr } from "./reconcile-plan.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
@@ -60,6 +60,16 @@ export function createTenantGithub(deps: TenantGithubDeps) {
     if (!credential) return undefined;
     const appJson = await deps.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
     return appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
+  };
+}
+
+/** The portal's listing of a repository's open pull requests, on its host. */
+export function createTenantOpenPrs(deps: TenantSourcesDeps): OpenPrsLister {
+  const tenantSources = createTenantSources(deps);
+  return async function openPrs(tenantId, record) {
+    const fetches = await tenantSources(tenantId);
+    if (sourceOf(record) === "bitbucket-datacenter") return bitbucket.listOpenPrs(bitbucketOf(fetches, record), record.name);
+    return listOpenPrs(githubOf(fetches, record), record.name);
   };
 }
 

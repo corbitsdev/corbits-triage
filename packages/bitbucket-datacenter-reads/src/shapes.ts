@@ -25,6 +25,8 @@ export const PullRequest = type({
   toRef: Ref,
   author: Participant,
   reviewers: Participant.array(),
+  /** Anyone else who approved or marked needs work without being asked, Triage's own token user included. */
+  "participants?": Participant.array(),
 });
 
 export type PullRequest = typeof PullRequest.infer;

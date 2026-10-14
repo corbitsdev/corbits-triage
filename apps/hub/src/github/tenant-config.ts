@@ -104,27 +104,30 @@ export async function patchCorbitsTriage(
 
 export type RotationRecord = { from: string; to: string; at: string };
 
-export function rotationRecord(ns: CorbitsTriageNs): RotationRecord | undefined {
-  const value = asRecord(ns["rotation"]);
+export const ROTATION_KEY = "rotation";
+
+/** `key` names the deployment the record is of; the GitHub one keeps the original key. */
+export function rotationRecord(ns: CorbitsTriageNs, key = ROTATION_KEY): RotationRecord | undefined {
+  const value = asRecord(ns[key]);
   const { from, to, at } = value ?? {};
   return typeof from === "string" && typeof to === "string" && typeof at === "string" ? { from, to, at } : undefined;
 }
 
-export async function claimRotation(db: DB["db"], tenantId: string, record: RotationRecord): Promise<boolean> {
+export async function claimRotation(db: DB["db"], tenantId: string, record: RotationRecord, key = ROTATION_KEY): Promise<boolean> {
   let claimed = false;
   await patchCorbitsTriage(db, tenantId, function claim(ns) {
-    if (rotationRecord(ns) !== undefined) return undefined;
+    if (rotationRecord(ns, key) !== undefined) return undefined;
     claimed = true;
-    return { ...ns, rotation: record };
+    return { ...ns, [key]: record };
   });
   return claimed;
 }
 
-export async function clearRotation(db: DB["db"], tenantId: string, record: RotationRecord): Promise<void> {
+export async function clearRotation(db: DB["db"], tenantId: string, record: RotationRecord, key = ROTATION_KEY): Promise<void> {
   await patchCorbitsTriage(db, tenantId, function clear(ns) {
-    const current = rotationRecord(ns);
+    const current = rotationRecord(ns, key);
     if (current?.from !== record.from || current.to !== record.to) return undefined;
-    const { rotation: _rotation, ...rest } = ns;
+    const { [key]: _rotation, ...rest } = ns;
     return rest;
   });
 }
