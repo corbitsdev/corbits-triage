@@ -1,23 +1,15 @@
-export type WorkflowEntry = { entry: `./${string}.mjs`; src: `src/${string}.ts` };
-
-export type WorkflowPackage = WorkflowEntry & {
+export type WorkflowPackage = {
   name: string;
   packageName: string;
-  /** The same definition built for other sets of pull request hosts; the hub deploys the one for the hosts a workspace connected. */
-  variants?: readonly WorkflowEntry[];
+  entry: `./${string}.mjs`;
+  src: `src/${string}.ts`;
 };
 
+// One pr-triage package per pull request host: each binds only its host's credential, and the hub deploys those of the
+// hosts a workspace connected. pr-triage-historical reads GitHub only.
 export const WORKFLOW_PACKAGES = [
-  {
-    name: "pr-triage",
-    packageName: "@corbits/pr-triage-workflow",
-    entry: "./pr-triage.mjs",
-    src: "src/pr-triage.ts",
-    variants: [
-      { entry: "./pr-triage-bitbucket-datacenter.mjs", src: "src/pr-triage-bitbucket-datacenter.ts" },
-      { entry: "./pr-triage-github-bitbucket-datacenter.mjs", src: "src/pr-triage-github-bitbucket-datacenter.ts" },
-    ],
-  },
+  { name: "pr-triage-github", packageName: "@corbits/pr-triage-github-workflow", entry: "./pr-triage-github.mjs", src: "src/pr-triage-github.ts" },
+  { name: "pr-triage-bitbucket-datacenter", packageName: "@corbits/pr-triage-bitbucket-datacenter-workflow", entry: "./pr-triage-bitbucket-datacenter.mjs", src: "src/pr-triage-bitbucket-datacenter.ts" },
   { name: "pr-triage-historical", packageName: "@corbits/pr-triage-historical-workflow", entry: "./pr-triage-historical.mjs", src: "src/pr-triage-historical.ts" },
 ] as const satisfies readonly WorkflowPackage[];
 
