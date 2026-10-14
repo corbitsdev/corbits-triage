@@ -1,11 +1,12 @@
 import type { PrItem } from "./hub-api.ts";
 import { repoOf, waitsOn, type OpenItem } from "./inbox-view.ts";
+import { pullUrl } from "./pull-link.ts";
 
 /** Waiting on the maintainer longer than this makes a pull request stuck. `waitingSince` restarts with every new verdict, as in the inbox's age filter. */
 const STUCK_MS = 3 * 86_400_000;
 
 /** A pull request as it stood when the last visit ended; `you` is whether it waited on the maintainer. */
-type VisitPull = { title: string | null; you: boolean };
+type VisitPull = { title: string | null; you: boolean; url?: string | null };
 
 /**
  * The open pull requests when the last visit ended. GitHub gives no opened or closed time, so what changed is the difference to this.
@@ -13,7 +14,7 @@ type VisitPull = { title: string | null; you: boolean };
  */
 export type Visit = { at: string; repos: string[]; pulls: Record<string, VisitPull> };
 
-export type ResolvedPull = { key: string; repo: string; number: number; title: string | null };
+export type ResolvedPull = { key: string; repo: string; number: number; title: string | null; url: string | null };
 
 export type SinceVisit = { fresh: PrItem[]; resolved: ResolvedPull[]; turned: PrItem[] };
 
@@ -24,7 +25,7 @@ function waitsOnYou(entry: OpenItem): boolean {
 export function visitOf(open: OpenItem[], read: ReadonlySet<string>, now: Date): Visit {
   const pulls = Object.fromEntries(open
     .filter((entry) => read.has(entry.item.repo))
-    .map((entry) => [entry.item.key, { title: entry.item.title, you: waitsOnYou(entry) }]));
+    .map((entry) => [entry.item.key, { title: entry.item.title, you: waitsOnYou(entry), url: pullUrl(entry.item) }]));
   return { at: now.toISOString(), repos: [...read], pulls };
 }
 
@@ -39,7 +40,7 @@ export function sinceVisit(visit: Visit, open: OpenItem[], read: ReadonlySet<str
   const turned = open.filter((entry) => visit.pulls[entry.item.key]?.you === false && waitsOnYou(entry));
   const resolved = Object.entries(visit.pulls)
     .filter(([key]) => read.has(repoOf(key)) && !now.has(key))
-    .map(([key, pull]) => ({ key, repo: repoOf(key), number: Number(key.slice(key.lastIndexOf("#") + 1)), title: pull.title }));
+    .map(([key, pull]) => ({ key, repo: repoOf(key), number: Number(key.slice(key.lastIndexOf("#") + 1)), title: pull.title, url: pull.url ?? null }));
   return { fresh: fresh.map((entry) => entry.item), resolved, turned: turned.map((entry) => entry.item) };
 }
 

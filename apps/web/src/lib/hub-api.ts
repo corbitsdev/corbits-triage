@@ -888,7 +888,9 @@ export async function triagePullRequest(transport: Transport, tenantId: string, 
 export type OpenPulls = {
   repos: Array<{
     repo: string;
-    prs: Array<{ number: number; title: string; author: string | null; authorKind?: AuthorKind; draft: boolean; sha: string; updatedAt: string; labels: string[] }>;
+    /** The host the pull requests are on; absent from a hub that predates other hosts, which listed GitHub only. */
+    source?: RepoSource;
+    prs: Array<{ number: number; title: string; author: string | null; authorKind?: AuthorKind; draft: boolean; sha: string; updatedAt: string; labels: string[]; url?: string | null }>;
     error?: string;
   }>;
 };
@@ -1297,6 +1299,9 @@ export type PrItem = {
   actions: SuggestedAction[];
   automatic: ActionKind[];
   href: string;
+  /** The host the pull request is on and its page there, known once the open pull requests have loaded. */
+  source: RepoSource;
+  url: string | null;
 };
 
 // The portal reads verdict JSON and does not import the workflow package, so this keeps only the fields it uses.
@@ -1438,6 +1443,8 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     actions: suggestedActions(detail.actions ?? []),
     automatic: ACTION_KINDS.filter((kind) => detail.automatic?.includes(kind)),
     href: canonicalPrHref(pull.repo, pull.number),
+    source: "github",
+    url: null,
   };
 }
 
@@ -1469,7 +1476,7 @@ export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], open
 }
 
 function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage: Map<string, PullTriage>): void {
-  for (const { repo, prs, error } of openPulls.repos) {
+  for (const { repo, source, prs, error } of openPulls.repos) {
     if (error) continue;
     const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
     for (const item of items.values()) {
@@ -1480,7 +1487,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
       const known = items.get(key);
       if (known) {
         // A verdict recorded before the hub kept its facts takes the pull request's from GitHub.
-        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: known.draft ?? pr.draft, authorKind: pr.authorKind ?? null, updatedAt: pr.updatedAt, headSha: pr.sha });
+        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: known.draft ?? pr.draft, authorKind: pr.authorKind ?? null, updatedAt: pr.updatedAt, headSha: pr.sha, source: repoSourceOf(source), url: pr.url ?? null });
         continue;
       }
       const pull = triage.get(key);
@@ -1523,6 +1530,8 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         actions: [],
         automatic: [],
         href: canonicalPrHref(repo, pr.number),
+        source: repoSourceOf(source),
+        url: pr.url ?? null,
       });
     }
   }

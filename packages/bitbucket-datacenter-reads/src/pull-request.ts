@@ -71,6 +71,7 @@ function openPr(row: unknown) {
     sha: pr.fromRef.latestCommit,
     updatedAt: isoTime(pr.updatedDate),
     labels: [],
+    url: pr.links?.self[0]?.href ?? null,
   };
 }
 

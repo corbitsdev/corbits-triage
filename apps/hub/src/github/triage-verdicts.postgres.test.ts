@@ -58,8 +58,8 @@ const OBSERVATION: TenantObservation = {
 };
 
 const OPEN: RepoPulls[] = [
-  { repo: REPO, prs: [6, 7, 8, 9, 10].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, updatedAt: minutes(0).toISOString(), labels: [] })) },
-  { repo: UNREAD, prs: [], error: "rate limited" },
+  { repo: REPO, source: "github", prs: [6, 7, 8, 9, 10].map((number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, updatedAt: minutes(0).toISOString(), labels: [], url: null })) },
+  { repo: UNREAD, source: "github", prs: [], error: "rate limited" },
 ];
 
 test("PostgreSQL: the latest verdict of each open pull request, with the run in flight for it, answered from memory while nothing changed", async () => {
