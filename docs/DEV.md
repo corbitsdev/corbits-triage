@@ -70,16 +70,18 @@ Restarting the emulator regenerates the App key; reconnect the App after each re
 
 ```sh
 bun run test     # unit + integration; hub tests need Postgres
-bun run check    # typecheck web, tooling, hub
+bun run check    # typecheck web, tooling, extension, hub; bundle the hub
 bun run lint
 ```
+
+Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` and ignore `DATABASE_URL`.
 
 Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
 ## Troubleshooting
 
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
-- **"No decision model offering found"**: save Settings → Model.
+- **"No decision model offering found"**: save the **Decision model** section of Settings.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
 - **New PRs never reach triage**: the hub logs `stale_deployment` when the tenant has no live pr-triage deployment for the repository's host (`pr-triage-github` or `pr-triage-bitbucket-datacenter`). Reload the portal, or wait about two minutes for the hub to redeploy it.
 - **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.

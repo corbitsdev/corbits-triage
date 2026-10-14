@@ -1,6 +1,6 @@
 import { evaluate } from "@corbits/system-one";
 import type { JudgeChunk } from "@corbits/triage-workflows/actions/rules";
-import { errorText } from "./error-text.ts";
+import { errorText } from "@corbits/common";
 
 export type SystemOneSettings = { endpoint: string; model: string; key: string };
 

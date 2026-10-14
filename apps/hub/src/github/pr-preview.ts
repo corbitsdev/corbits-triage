@@ -5,13 +5,12 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { appLogin, authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFilesPage, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-reads";
+import { appLogin, authorTeams, getChecks, getReviews, listIssueComments, listOpenPrs, listPrCommits, readPr, type AuthorTeams, type GithubFetch } from "@corbits/github-reads";
 import { CheckOutputSchema, checkName, checkPackSchema, emptyPack, readCheckPack, repoPolicy, TRIAGE_EVENTS, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import { errorText } from "@corbits/common";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { rules, type RulesItem } from "@corbits/triage-workflows/actions/rules";
-import type { PrFileFacts } from "@corbits/triage-workflows/logic/checks";
-import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, namedTeams, type FilesCursor, type ItemContext, type ListedFiles } from "@corbits/triage-workflows/logic/facts";
+import { assembleItem, listFiles, namedTeams, type ItemContext } from "@corbits/triage-workflows/logic/facts";
 import { previewActions } from "@corbits/triage-workflows/logic/preview";
 import { NEEDS_JUDGE_REASON, type Verdict } from "@corbits/triage-workflows/logic/render";
 import type { CheckPackRead } from "./check-pack-store.js";
@@ -93,18 +92,6 @@ const NO_EFFECTS: EffectContext = {
     throw new Error("a preview performs no effects");
   },
 };
-
-export async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
-  const listed: ListedFiles = { files: [], patchChars: 0 };
-  let cursor: FilesCursor | undefined = FIRST_FILES_PAGE;
-  while (cursor !== undefined) {
-    const page = await listPrFilesPage(gh, repo, number, cursor);
-    const next = addFilesPage(listed, cursor, { ...page, files: page.files.flatMap(fileFacts) });
-    if (typeof next === "string") throw new Error(`${next} for #${number}`);
-    cursor = next;
-  }
-  return listed.files;
-}
 
 function candidatePack(raw: unknown, repo: string): CheckPack | string {
   try {

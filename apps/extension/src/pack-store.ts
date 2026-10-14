@@ -1,6 +1,5 @@
-import { readCheckPack, type CheckPack } from "@corbits/triage-contracts";
-import { errorText } from "./error-text.ts";
-import { defaultLocalPack } from "./local-pack.ts";
+import { errorText } from "@corbits/common";
+import { readCheckPack, recommendedPack, type CheckPack } from "@corbits/triage-contracts";
 import { localPacks } from "./storage.ts";
 
 export function readLocalPack(stored: unknown, repo: string): { pack: CheckPack } | { error: string } {
@@ -11,11 +10,13 @@ export function readLocalPack(stored: unknown, repo: string): { pack: CheckPack 
   }
 }
 
-/** A stored pack that does not read falls back to the default rather than running half a pack; Settings says why. */
-export async function localPackFor(repo: string): Promise<CheckPack> {
+/** The rules saved in this browser for a repository, or the recommended ones while none are saved. */
+export async function savedPackFor(repo: string): Promise<CheckPack> {
   const stored = (await localPacks.getValue())[repo];
-  const read = stored === undefined ? undefined : readLocalPack(stored, repo);
-  return read && "pack" in read ? read.pack : defaultLocalPack(repo);
+  if (stored === undefined) return recommendedPack(repo);
+  const read = readLocalPack(stored, repo);
+  if ("error" in read) throw new Error(`The rules saved for ${repo} do not read (${read.error}). Reset them in the side panel.`);
+  return read.pack;
 }
 
 export async function saveLocalPack(pack: CheckPack): Promise<void> {

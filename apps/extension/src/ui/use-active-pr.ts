@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { prFromUrl, type PrRef } from "../pr.ts";
 
-export type ActiveTab = { tabId: number; pr: PrRef | undefined; title: string };
+export type ActiveTab = { pr: PrRef | undefined };
 
 export function useActivePr(): ActiveTab | undefined {
   const [active, setActive] = useState<ActiveTab>();
@@ -9,13 +9,13 @@ export function useActivePr(): ActiveTab | undefined {
     let live = true;
     async function read() {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (live && tab?.id !== undefined) setActive({ tabId: tab.id, pr: prFromUrl(tab.url), title: tab.title ?? "" });
+      if (live && tab?.id !== undefined) setActive({ pr: prFromUrl(tab.url) });
     }
     function onActivated() {
       read();
     }
     function onUpdated(_tabId: number, change: Browser.tabs.OnUpdatedInfo) {
-      if (change.url !== undefined || change.title !== undefined) read();
+      if (change.url !== undefined) read();
     }
     read();
     browser.tabs.onActivated.addListener(onActivated);
