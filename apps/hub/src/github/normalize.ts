@@ -17,6 +17,8 @@ export interface PrMail {
   /** Null when the payload does not say, as on check_run. */
   draft: boolean | null;
   review: { state: string } | null;
+  /** Who caused the event, on hosts whose own user's events must not wake triage; GitHub's App events are told apart by sender. */
+  actor?: string | null;
   policy?: RepoPolicy;
 }
 

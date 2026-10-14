@@ -9,16 +9,17 @@ import { ensureTriageRole } from "../github/automation.js";
 import { failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
 import { patchCorbitsTriage, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
 import type { Member } from "../integrations/app.js";
+import { triageWorkflowFor } from "../github/source-workflow.js";
 import { asCaller } from "../stock-caller.js";
 import {
   BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, instanceBaseUrl, pagedValues, readRepo,
   WEBHOOK_EVENTS, webhookExists, type BitbucketFetch,
 } from "./client.js";
-import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, TOKEN_CREDENTIAL } from "./records.js";
+import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, splitName, TOKEN_CREDENTIAL } from "./records.js";
 
 export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
 export const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
-const HOOK_METADATA = { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } };
+const HOOK_METADATA = { webhook: { verify: "standard-webhooks", workflow: triageWorkflowFor("bitbucket-datacenter").id } };
 
 export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
 export const Connection = type({ baseUrl: "string", hookUrl: "string" });
@@ -51,11 +52,6 @@ export type BitbucketDeps = PortalCredentialDeps & {
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
-
-function splitName(name: string): [project: string, slug: string] {
-  const at = name.indexOf("/");
-  return [name.slice(0, at), name.slice(at + 1)];
-}
 
 function instanceFailed(err: unknown): Response {
   if (err instanceof BitbucketFailed) return failure(502, "bitbucket_datacenter_failed", err.message);
@@ -164,8 +160,8 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     return deleted.ok || deleted.status === 404 ? undefined : deleted;
   }
 
-  /** The token is tried once against the instance and stored only when the instance accepts it. */
-  async function verifyToken(baseUrl: string, token: string): Promise<Response | undefined> {
+  /** The token is tried once against the instance and stored only when the instance accepts it; resolves to the user it acts as. */
+  async function verifyToken(baseUrl: string, token: string): Promise<Response | string> {
     let res: Response;
     try {
       res = await bitbucketFetch(deps.fetchImpl, baseUrl, token)("/rest/api/1.0/application-properties");
@@ -174,10 +170,17 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     }
     if (res.status === 401) return failure(400, "bitbucket_datacenter_token_invalid", "The Bitbucket instance did not accept the token.");
     if (!res.ok) return failure(502, "bitbucket_datacenter_failed", `Bitbucket answered ${res.status}.`);
-    if (!ApplicationProperties.allows(await res.json())) return failure(400, "not_bitbucket_datacenter", "That URL is not a Bitbucket Data Center instance.");
+    let properties: unknown;
+    try {
+      properties = await res.json();
+    } catch {
+      properties = undefined;
+    }
+    if (!ApplicationProperties.allows(properties)) return failure(400, "not_bitbucket_datacenter", "That URL is not a Bitbucket Data Center instance.");
     // Bitbucket answers application properties anonymously too, and names the user only when the token signed in.
-    if (!res.headers.has("x-auserid")) return failure(400, "bitbucket_datacenter_token_invalid", "The Bitbucket instance did not accept the token.");
-    return undefined;
+    const user = res.headers.get("x-ausername");
+    if (!res.headers.has("x-auserid") || !user) return failure(400, "bitbucket_datacenter_token_invalid", "The Bitbucket instance did not accept the token.");
+    return user;
   }
 
   async function connect(body: typeof ConnectBody.infer, member: Member, req: Request): Promise<Response> {
@@ -190,8 +193,8 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     if (current && current.baseUrl !== baseUrl && repoRecords(ns).some(isBitbucketRecord)) {
       return failure(409, "bitbucket_datacenter_connected_elsewhere", `This workspace is connected to ${current.baseUrl}. Disconnect it first.`);
     }
-    const invalid = await verifyToken(baseUrl, body.token);
-    if (invalid) return invalid;
+    const user = await verifyToken(baseUrl, body.token);
+    if (user instanceof Response) return user;
     const providerId = await ensureProvider(req, member.tenantId, baseUrl);
     if (providerId instanceof Response) return providerId;
     const tokenFailed = await writeCredential(req, member.tenantId, providerId, { name: TOKEN_CREDENTIAL, secret: body.token });
@@ -203,7 +206,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     if (hookFailed) return hookFailed;
     const written = await patchCorbitsTriage(db, member.tenantId, async function setConnection(next, tx) {
       await ensureTriageRole(tx, member.tenantId, deps.now());
-      return { ...next, bitbucketDatacenter: { baseUrl } };
+      return { ...next, bitbucketDatacenter: { baseUrl, user } };
     });
     if (!written) return failure(404, "not_found", "Workspace not found.");
     await deps.onConnectionChanged(member.tenantId);
@@ -216,12 +219,15 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     return Response.json({ baseUrl: current.baseUrl, hookUrl: hookUrl(member.tenantId) });
   }
 
-  /** Webhooks triage created that could not be removed, by repository name. */
+  /** Webhooks triage created that could not be removed, by repository name; without `use` on the token every one is left. */
   async function removeWebhooks(member: Member, records: RepoRecord[]): Promise<string[]> {
     const hooked = records.filter((record) => record.webhookId !== undefined);
     if (hooked.length === 0) return [];
     const bb = await instance(member);
-    if (bb instanceof Response) return hooked.map((record) => record.name);
+    if (bb instanceof Response) {
+      deps.log({ level: "warn", msg: "bitbucket_datacenter_webhooks_left", tenantId: member.tenantId, repos: hooked.map((record) => record.name), status: bb.status });
+      return hooked.map((record) => record.name);
+    }
     const left: string[] = [];
     for (const record of hooked) {
       try {

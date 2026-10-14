@@ -6,15 +6,23 @@ export const PROVIDER = "bitbucket-datacenter";
 export const TOKEN_CREDENTIAL = "bitbucket-datacenter";
 export const HOOK_CREDENTIAL = "bitbucket-datacenter-hook";
 
-export type BitbucketConnection = { baseUrl: string };
+/** `user` is the slug the token acts as, recorded at connect; a connection recorded before it has none. */
+export type BitbucketConnection = { baseUrl: string; user?: string };
 
 export function bitbucketConnection(ns: CorbitsTriageNs): BitbucketConnection | undefined {
-  const baseUrl = asRecord(ns.bitbucketDatacenter)?.["baseUrl"];
-  return typeof baseUrl === "string" ? { baseUrl } : undefined;
+  const connection = asRecord(ns.bitbucketDatacenter);
+  const baseUrl = connection?.["baseUrl"];
+  const user = connection?.["user"];
+  return typeof baseUrl === "string" ? { baseUrl, ...(typeof user === "string" && { user }) } : undefined;
 }
 
 export function bitbucketRepoName(project: string, slug: string): string {
   return `${project}/${slug}`;
+}
+
+export function splitName(name: string): [project: string, slug: string] {
+  const at = name.indexOf("/");
+  return [name.slice(0, at), name.slice(at + 1)];
 }
 
 export function isBitbucketRecord(record: RepoRecord): boolean {
