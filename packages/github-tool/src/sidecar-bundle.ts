@@ -106,13 +106,22 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
 ];
 
+const ARTIFACT_REF = obj({ id: str, version: { type: "number" } });
+
 const MIRROR_INPUT = obj({
   repo,
   number: { type: "integer" },
   labels: { type: "array", items: str },
   owned: { type: "array", items: str },
   comment: str,
-  header: { type: "object", description: "{ head, policy, verdict } the comment is written for; an unchanged one is not written again" },
+  header: {
+    ...obj({
+      head: str,
+      policy: { type: ["object", "null"], properties: { repo: ARTIFACT_REF, shared: ARTIFACT_REF }, required: ["repo"] },
+      verdict: str,
+    }),
+    description: "What the comment is written for; an unchanged one is not written again",
+  },
   notReadyHead: str,
   fixedHead: str,
 }, ["repo", "number", "labels"]);
@@ -229,7 +238,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): 
         comment: a.comment,
         header: a.header,
         close: false,
-      });
+      }, login);
       if ("skipped" in mirrored) return mirrored;
       if (a.notReadyHead !== mirrored.sha && a.fixedHead !== mirrored.sha) return mirrored;
       const target = { repo: a.repo, number: a.number, login: await login() };

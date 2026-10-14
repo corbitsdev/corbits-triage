@@ -37,7 +37,7 @@ function bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
-type Comment = { id: number; user: { type: string }; body: string; updated_at?: string };
+type Comment = { id: number; user: { login?: string; type: string }; body: string; updated_at?: string };
 type Review = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body: string };
 type Ci = "none" | "pending" | "success" | "failure";
 
@@ -55,7 +55,7 @@ type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; pri
  */
 function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false }: GithubSeed = {}) {
   const requests: Recorded[] = [];
-  const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: { type: "Bot" }, body: prior }];
+  const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
   const pr: { head: string; draft: boolean; ci: Ci; dismissible: boolean } = { head: "abc", draft: false, ci: "none", dismissible: true };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
@@ -77,7 +77,7 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
     if (path.startsWith(`/repos/${REPO}/issues/8/comments?`)) return Response.json(comments);
     if (method === "POST" && path === `/repos/${REPO}/issues/8/comments`) {
       if (failComments) return Response.json({ message: "Server Error" }, { status: 500 });
-      comments.push({ id: comments.length + 10, user: { type: "Bot" }, body: JSON.parse(String(init?.body)).body, updated_at: `2026-10-13T00:00:${requests.length}Z` });
+      comments.push({ id: comments.length + 10, user: APP, body: JSON.parse(String(init?.body)).body, updated_at: `2026-10-13T00:00:${requests.length}Z` });
       return Response.json(comments.at(-1));
     }
     const edited = comments.find((comment) => method === "PATCH" && path === `/repos/${REPO}/issues/comments/${comment.id}`);
@@ -436,12 +436,12 @@ describe("pr-triage body", () => {
     return github.requests.filter((r) => r.path === "/app").length;
   }
 
-  test("every check passing with CI green approves the head once, pinned to it, asking for the App once", async () => {
+  test("every check passing with CI green approves the head once, pinned to it, asking for the App once a step", async () => {
     const { github, pack } = approving();
     const first = await triage(pack, { github });
     const effectId = ((first.verdict as Verdict).actions[0] as SuggestedDo).effectId;
     expect(first.dos).toEqual([{ effectId, status: "done" }]);
-    expect(appReads(github)).toBe(1);
+    expect(appReads(github)).toBe(2);
     expect((await triage(pack, { github })).dos).toEqual([{ effectId, status: "satisfied" }]);
     expect(github.reviews).toEqual([expect.objectContaining({ state: "APPROVED", commit_id: "abc" })]);
   });

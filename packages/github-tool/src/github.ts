@@ -1,4 +1,4 @@
-import { getPr, isTriageComment, json, jsonAll, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
+import { getPr, isTriageComment, json, jsonAll, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type AppLogin, type GithubFetch } from "@corbits/github-reads";
 import type { ArtifactRef, PolicySource } from "@corbits/triage-contracts";
 import { type } from "arktype";
 
@@ -100,14 +100,15 @@ export async function syncLabels(gh: GithubFetch, input: { repo: string; number:
 
 export const NOT_OPEN = "the pull request is not open";
 
-export async function mirror(gh: GithubFetch, i: MirrorInput) {
+/** `login` names the App, whose comments alone are read back. */
+export async function mirror(gh: GithubFetch, i: MirrorInput, login: AppLogin) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   // A closed or merged pull request is history; a close Do reads it open before it comes here.
   if (pr.state !== "open") return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: NOT_OPEN };
   // An empty comment means nothing is asked of the author, so an earlier one would be stale instructions.
   if (i.comment === "") await deleteTriageComments(gh, repo, number);
-  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, author: pr.user?.login }) : null;
+  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header }, login) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
@@ -120,7 +121,7 @@ export type TriageCommentInput = {
   body: string;
 };
 
-type IssueCommentRow = { id: number; body?: unknown; user?: { login?: string; type?: string }; created_at?: string; updated_at?: string };
+type IssueCommentRow = { id: number; body?: unknown; user?: { login?: string; type?: string }; updated_at?: string };
 type MarkedComment = IssueCommentRow & { body: string };
 type WrittenComment = { commentId: number; updated: boolean; unchanged?: string };
 
@@ -172,45 +173,45 @@ export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentI
   return upsert(gh, { ...input, body: `${TRIAGE_COMMENT_MARKER}\n${input.body}` }, current);
 }
 
-/** Whether the author commented or reviewed after `since`; compares logins and times only, never what they wrote. */
-async function authorSpokeSince(gh: GithubFetch, input: { repo: string; number: number; author: string; since: string }, comments: IssueCommentRow[]): Promise<boolean> {
-  const { repo, number, author, since } = input;
-  if (comments.some((c) => c.user?.login === author && c.created_at !== undefined && c.created_at > since)) return true;
-  const reviews = await jsonAll<{ user?: { login?: string }; submitted_at?: string }>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
-  return reviews.some((r) => r.user?.login === author && r.submitted_at !== undefined && r.submitted_at > since);
-}
-
-async function unchangedSince(gh: GithubFetch, input: TriageCommentInput & { header: TriageHeader; author?: string }, latest: MarkedComment, comments: IssueCommentRow[]): Promise<string | undefined> {
+/** When the comment last said exactly this for this head, policy versions and verdict; undefined when anything differs. */
+function unchangedSince(latest: MarkedComment, header: TriageHeader, text: string): string | undefined {
   const before = headerOf(latest.body);
-  const since = latest.updated_at;
-  if (!before || since === undefined || before.head !== input.header.head || before.verdict !== input.header.verdict) return undefined;
-  if (!samePolicy(before.policy, input.header.policy) || renderedText(latest.body) !== input.body) return undefined;
-  if (input.author && await authorSpokeSince(gh, { repo: input.repo, number: input.number, author: input.author, since }, comments)) return undefined;
-  return since;
+  if (!before || before.head !== header.head || before.verdict !== header.verdict || !samePolicy(before.policy, header.policy)) return undefined;
+  return renderedText(latest.body) === text ? latest.updated_at : undefined;
 }
 
 /**
- * Writes nothing when the comment already says this for this head, policy versions and verdict and the author has not
- * spoken since; supersedes it when only the rules changed the verdict on the same head; otherwise edits it in place.
- * The earlier comment is marked superseded before the new one is posted, so a retry never leaves two current comments
- * and still names what changed.
+ * The header the new comment supersedes: the current one's once it is marked superseded, or, when a retry finds no
+ * current comment, the last superseded one's, so the new comment still names what changed.
  */
-async function writeTriageComment(gh: GithubFetch, input: TriageCommentInput & { header?: TriageHeader; author?: string }): Promise<WrittenComment> {
+function earlierHeader(own: MarkedComment[], current: MarkedComment[], superseded: boolean): TriageHeader | undefined {
+  if (superseded) return headerOf(current[0]!.body);
+  if (current.length > 0) return undefined;
+  const last = own.at(-1);
+  return last && headerOf(last.body);
+}
+
+/**
+ * Writes nothing when the App's comment already says this for this head, policy versions and verdict; supersedes it
+ * when only the rules changed the verdict on the same head; otherwise edits it in place. Only the App's own comments
+ * are read, so a copied marker never decides what Triage writes. The earlier comment is marked superseded before the
+ * new one is posted, so a retry never leaves two current comments.
+ */
+async function writeTriageComment(gh: GithubFetch, input: TriageCommentInput & { header?: TriageHeader }, login: AppLogin): Promise<WrittenComment> {
   const { repo, number, header } = input;
   if (!header) return upsertTriageComment(gh, input);
-  const comments = await issueComments(gh, repo, number);
-  const all = marked(comments);
-  const current = all.filter((c) => !isSuperseded(c.body));
+  const app = await login();
+  const own = marked(await issueComments(gh, repo, number)).filter((c) => c.user?.login === app);
+  const current = own.filter((c) => !isSuperseded(c.body));
   const latest = current[0];
-  const since = latest && await unchangedSince(gh, { ...input, header }, latest, comments);
+  const since = latest && unchangedSince(latest, header, input.body);
   if (latest && since) return { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
   const before = latest && headerOf(latest.body);
-  const superseded = before && supersedes(before, header)
-    && await editComment(gh, repo, latest.id, `${SUPERSEDED_MARKER} ${JSON.stringify(before)} -->\nSuperseded by the comment below.`);
-  const earlier = superseded ? before : current.length === 0 ? headerOf(all.at(-1)?.body ?? "") : undefined;
-  const body = `${markerOf(header)}\n${input.body}`;
+  const superseded = before !== undefined && supersedes(before, header)
+    && await editComment(gh, repo, latest!.id, `${SUPERSEDED_MARKER} ${JSON.stringify(before)} -->\nSuperseded by the comment below.`) !== undefined;
+  const earlier = earlierHeader(own, current, superseded);
   if (earlier && supersedes(earlier, header)) return postComment(gh, { repo, number, body: `${markerOf(header)}\n${supersedesNote(earlier, header)}\n\n${input.body}` });
-  return upsert(gh, { repo, number, body }, current);
+  return upsert(gh, { repo, number, body: `${markerOf(header)}\n${input.body}` }, current);
 }
 
 export const REVIEW_EVENTS = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const;

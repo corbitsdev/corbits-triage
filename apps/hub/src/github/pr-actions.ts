@@ -14,7 +14,7 @@ import {
   requestReviewers,
   upsertTriageComment,
 } from "@corbits/github-tool/github";
-import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
+import { appLogin, codeownersForPr, type GithubFetch } from "@corbits/github-reads";
 import { ownedLabels, TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
 import type { CheckPackRead } from "./check-pack-store.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
@@ -70,7 +70,9 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer, owned: 
     case "merge":
       return mergePr(gh, { repo, number, ...(body.headSha ? { sha: body.headSha } : {}) });
     case "close":
-      return mirror(gh, { repo, number, labels: body.labels, owned, comment: body.comment, close: true });
+      return mirror(gh, { repo, number, labels: body.labels, owned, comment: body.comment, close: true }, function login() {
+        return appLogin(gh);
+      });
   }
 }
 
