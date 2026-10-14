@@ -48,14 +48,14 @@ export function listedRepos(ns: CorbitsTriageNs, names: readonly string[]): Repo
 
 export function enableRepo(ns: CorbitsTriageNs, name: string, defaultBranch: string, webhookId: number | undefined): CorbitsTriageNs {
   const repos = repoRecords(ns);
-  const prev = repos.find((record) => record.name === name);
+  const prev = repos.find((record) => isBitbucketRecord(record) && record.name === name);
   const { webhookId: _previous, ...base } = prev ?? newRecord(name);
   const record: RepoRecord = { ...base, connected: true, source: "bitbucket-datacenter", defaultBranch, enabled: true, ...(webhookId !== undefined && { webhookId }) };
   return { ...ns, repos: prev ? repos.map((row) => (row === prev ? record : row)) : [...repos, record] };
 }
 
 export function disableRepo(ns: CorbitsTriageNs, name: string): CorbitsTriageNs {
-  return { ...ns, repos: repoRecords(ns).map((row) => (row.name === name ? withoutWebhook({ ...row, enabled: false }) : row)) };
+  return { ...ns, repos: repoRecords(ns).map((row) => (isBitbucketRecord(row) && row.name === name ? withoutWebhook({ ...row, enabled: false }) : row)) };
 }
 
 function withoutWebhook(record: RepoRecord): RepoRecord {
