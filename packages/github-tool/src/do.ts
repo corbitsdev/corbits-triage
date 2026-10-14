@@ -26,6 +26,7 @@ import {
   dismissDoChangeRequests,
   mergePr,
   mirror,
+  NOT_OPEN,
   syncLabels,
   requestReviewers,
   type MirrorInput,
@@ -95,27 +96,35 @@ async function takeBackOwnRequest(gh: GithubFetch, input: { repo: string; number
   }
 }
 
+/** A closed or merged pull request is history: only a close, or a merge of one already merged, is already done. */
+function closedOutcome(kind: ActionKind, merged: boolean): DoOutcome {
+  if (kind === "close") return { status: "satisfied", result: { closed: true } };
+  if (kind === "merge" && merged) return { status: "satisfied", result: { merged: true } };
+  throw new DoNotRunnableError(NOT_OPEN);
+}
+
 /** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's own reviews. */
 export async function executeDo(gh: GithubFetch, { request, step }: DoInput, login: AppLogin): Promise<DoOutcome> {
   const { repo, number } = request;
   const { target } = step;
+  const pr = await readPr(gh, repo, number);
+  if (pr.state !== "open") return closedOutcome(step.kind, pr.merged === true);
   switch (step.kind) {
     case "labels": {
       if (!("labels" in target)) throw new DoNotRunnableError("this labels Do names no labels");
-      const current = (await readPr(gh, repo, number)).labels;
+      const current = pr.labels;
       const result = await syncLabels(gh, { repo, number, current, add: target.labels, remove: target.unlabel ?? [] });
       return { status: result.added.length || result.removed.length ? "done" : "satisfied", result };
     }
     case "assign": {
       const { users } = await people(gh, repo, number, target);
       if (!users.length) throw new DoNotRunnableError("no code owner is a user who can be assigned");
-      const assignees = missingFrom((await readPr(gh, repo, number)).assignees, users);
+      const assignees = missingFrom(pr.assignees, users);
       if (!assignees.length) return { status: "satisfied", result: { assignees } };
       return { status: "done", result: await addAssignees(gh, { repo, number, assignees }) };
     }
     case "request-review": {
       const wanted = await people(gh, repo, number, target);
-      const pr = await readPr(gh, repo, number);
       const reviewedBy = reviewedOnHead(await getReviews(gh, repo, number), pr.sha);
       const reviewers = missingFrom([...pr.reviewers, ...reviewedBy], wanted.users);
       const teamReviewers = missingFrom(pr.reviewers, wanted.teams);
@@ -123,28 +132,26 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       return { status: "done", result: await requestReviewers(gh, { repo, number, reviewers, teamReviewers }) };
     }
     case "approve": {
-      onHead((await readPr(gh, repo, number)).sha, request, step);
+      onHead(pr.sha, request, step);
       const reviewId = await approvalOnHead(gh, { repo, number, sha: step.headSha, login: await login() });
       if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
       return { status: "done", result: await createReview(gh, { repo, number, body: APPROVE_DO_MARKER, event: "APPROVE", commitId: step.headSha }) };
     }
     case "request-changes": {
       if (!("body" in target)) throw new Error("this request-changes Do has no body");
-      onHead((await readPr(gh, repo, number)).sha, request, step);
+      onHead(pr.sha, request, step);
       const reviewId = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login: await login() });
       if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
       const body = `${REQUEST_CHANGES_DO_MARKER}\n${target.body}`;
       return { status: "done", result: await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha }) };
     }
     case "close": {
-      const pr = await readPr(gh, repo, number);
       onHead(pr.sha, request, step);
-      if (pr.state === "closed") return { status: "satisfied", result: { closed: true } };
       return { status: "done", result: await mirror(gh, { ...request, close: true }) };
     }
     case "comment": {
       if (!("body" in target)) throw new Error("this comment Do has no body");
-      onHead((await readPr(gh, repo, number)).sha, request, step);
+      onHead(pr.sha, request, step);
       const marker = doMarker(step.effectId);
       const posted = (await listIssueComments(gh, repo, number)).find((c) => c.bot && c.body.includes(marker));
       if (posted) return { status: "satisfied", result: { commentId: posted.id } };
@@ -152,8 +159,6 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
     }
     // CI and reviews are read again here because a held merge can be approved long after its verdict; branch protection stays the backstop.
     case "merge": {
-      const pr = await readPr(gh, repo, number);
-      if (pr.merged === true) return { status: "satisfied", result: { merged: true } };
       onHead(pr.sha, request, step);
       const ci = summarizeChecks(await getChecks(gh, repo, step.headSha));
       if (!mergeableCi(ci, "ciOptional" in target)) throw new DoNotRunnableError(ciRefusal(ci));

@@ -387,7 +387,7 @@ describe("judge on a blocked pull request", () => {
     expect(asked).toEqual([]);
     expect(verdict).toMatchObject({ verdict: "unsure", degraded: null, mirror: true, humanGated: false, feedback: "", actions: [] });
     expect(verdict.checks.find((c) => c.check === "not-a-draft")).toEqual({ check: "not-a-draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } });
-    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "" });
+    expect(verdict.request).toEqual({ repo: "acme/widgets", number: 8, labels: verdict.labels, owned: TRIAGE_LABELS, comment: "", header: { head: "abc", policy: null, verdict: "unsure" } });
     expect(unsettledBy(verdict)).toEqual({});
   });
 

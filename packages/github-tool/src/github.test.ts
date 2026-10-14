@@ -140,6 +140,98 @@ describe("github mirror", () => {
   });
 });
 
+type TimedComment = FakeComment & { created_at: string; updated_at: string };
+
+/** GitHub holding alice's pull request 8 at `pr.head`, stamping each comment write, so reruns read what earlier ones wrote and when. */
+function timedGithub(state = "open") {
+  let clock = 0;
+  const pr = { state, user: { login: "alice" }, head: { sha: "abc" }, labels: [] as Array<{ name: string }> };
+  const comments: TimedComment[] = [];
+  const reviews: Array<{ user: { login: string }; submitted_at: string }> = [];
+  function tick() {
+    return new Date(Date.UTC(2026, 9, 13, 0, 0, clock++)).toISOString();
+  }
+  const { gh, requests } = recorder(function respond(path, init) {
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+    if (path.endsWith("/pulls/8") && !init?.method) return pr;
+    if (path.includes("/reviews?per_page")) return reviews;
+    if (path.includes("/comments?per_page")) return comments;
+    if (path.endsWith("/issues/8/labels") && init?.method === "POST") return pr.labels.push(...body.labels.map((name: string) => ({ name })));
+    if (path.endsWith("/issues/8/comments") && init?.method === "POST") {
+      const at = tick();
+      comments.push({ id: comments.length + 100, user: APP, body: body.body, created_at: at, updated_at: at });
+      return comments.at(-1);
+    }
+    const edit = /\/issues\/comments\/(\d+)$/.exec(path);
+    const target = comments.find((comment) => comment.id === Number(edit?.[1]));
+    if (target && init?.method === "PATCH") return Object.assign(target, { body: body.body, updated_at: tick() });
+    throw new Error(`unexpected ${init?.method ?? "GET"} ${path}`);
+  });
+  function writes() {
+    return requests.filter((request) => request.method !== "GET");
+  }
+  function authorComments() {
+    comments.push({ id: comments.length + 100, user: { login: "alice", type: "User" }, body: "Fixed", created_at: tick(), updated_at: "" });
+  }
+  function authorReviews() {
+    reviews.push({ user: { login: "alice" }, submitted_at: tick() });
+  }
+  return { gh, pr, comments, writes, authorComments, authorReviews };
+}
+
+const POLICY_V1 = { repo: { id: "policy-1", version: 1 } };
+const POLICY_V2 = { repo: { id: "policy-1", version: 2 } };
+const PASSED = { repo: "acme/widgets", number: 8, labels: ["Triage: Ready"], owned: ["Triage: Ready", "Triage: Not Ready"], comment: "Passes.", close: false, header: { head: "abc", policy: POLICY_V1, verdict: "pass" } };
+
+describe("triage comment on a rerun", () => {
+  test("the same head, policy, verdict and text writes nothing, not even an edit, and says since when", async () => {
+    const github = timedGithub();
+    await mirror(github.gh, PASSED);
+    const before = github.writes().length;
+    expect(await mirror(github.gh, PASSED)).toMatchObject({ commentId: 100, updated: false, unchanged: "unchanged since 2026-10-13T00:00:00.000Z" });
+    expect(github.writes()).toHaveLength(before);
+    expect(github.comments[0]!.body).toBe(`<!-- corbits-triage {"head":"abc","policy":{"repo":{"id":"policy-1","version":1}},"verdict":"pass"} -->\nPasses.`);
+  });
+
+  test("a moved head, or the author commenting or reviewing since, updates the comment in place", async () => {
+    const github = timedGithub();
+    await mirror(github.gh, PASSED);
+    await mirror(github.gh, { ...PASSED, header: { ...PASSED.header, head: "def" } });
+    github.authorComments();
+    await mirror(github.gh, { ...PASSED, header: { ...PASSED.header, head: "def" } });
+    github.authorReviews();
+    expect(await mirror(github.gh, { ...PASSED, header: { ...PASSED.header, head: "def" } })).toMatchObject({ commentId: 100, updated: true });
+    expect(github.writes().map((write) => `${write.method} ${write.path}`)).toEqual([
+      "POST /repos/acme/widgets/issues/8/comments",
+      "POST /repos/acme/widgets/issues/8/labels",
+      "PATCH /repos/acme/widgets/issues/comments/100",
+      "PATCH /repos/acme/widgets/issues/comments/100",
+      "PATCH /repos/acme/widgets/issues/comments/100",
+    ]);
+  });
+
+  test("new rules changing the verdict on the same head supersede the comment, and a rerun then stays quiet", async () => {
+    const github = timedGithub();
+    await mirror(github.gh, PASSED);
+    const failed = { ...PASSED, comment: "Fails: CI.", header: { head: "abc", policy: POLICY_V2, verdict: "fail" } };
+    await mirror(github.gh, failed);
+    const before = github.writes().length;
+    await mirror(github.gh, failed);
+    expect(github.writes()).toHaveLength(before);
+    expect(github.comments.map((comment) => comment.body)).toEqual([
+      `<!-- corbits-triage-superseded {"head":"abc","policy":{"repo":{"id":"policy-1","version":1}},"verdict":"pass"} -->\nSuperseded by the comment below.`,
+      `<!-- corbits-triage {"head":"abc","policy":{"repo":{"id":"policy-1","version":2}},"verdict":"fail"} -->\nThis supersedes the comment above because the rules changed: repository policy version 1 → version 2.\n\nFails: CI.`,
+    ]);
+  });
+
+  test("a closed or merged pull request is never written to, labels included", async () => {
+    const github = timedGithub("closed");
+    expect(await mirror(github.gh, PASSED)).toMatchObject({ skipped: "the pull request is not open" });
+    expect(await mirror(github.gh, { ...PASSED, comment: "" })).toMatchObject({ skipped: "the pull request is not open" });
+    expect(github.writes()).toEqual([]);
+  });
+});
+
 describe("github write tool approval", () => {
   test("every write except the automatic ones asks", () => {
     expect(githubWrite.definitions).toEqual([

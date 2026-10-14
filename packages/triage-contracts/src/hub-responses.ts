@@ -170,8 +170,11 @@ export type AuditLog = typeof AuditLog.infer;
 
 const ArtifactRefShape = type({ id: "string", version: "number" });
 
+/** The policy artifact versions a run's pack was resolved from, as the hub's mail names them. */
+export const PolicySourceShape = type({ repo: ArtifactRefShape, "shared?": ArtifactRefShape });
+
 /** A repository's policy as triage reads it; a corrupt one names its artifact, which a save replaces in place. */
-export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: { repo: ArtifactRefShape, "shared?": ArtifactRefShape } })
+export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape })
   .or({ status: "'missing'" })
   .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape });
 
