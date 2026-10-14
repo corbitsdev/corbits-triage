@@ -86,9 +86,13 @@
 :is(.inbox, .repos) .mk.judge { background: var(--blue-light); }
 :is(.inbox, .repos) .mk.match { background: var(--paper); }
 
-/* Pulse: a briefing page inside the stage card */
-.pulse { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 960px; margin: 0 auto; padding: 40px 40px 80px; display: grid; gap: 36px; align-content: start; }
-.pulse h1 { font-size: 34px; margin: 0; letter-spacing: -0.02em; }
+/* Pulse and workspace settings: a centred page inside the stage card */
+:is(.pulse, .settings) { flex: 1; min-height: 0; overflow: auto; width: 100%; max-width: 960px; margin: 0 auto; padding: 40px 40px 80px; }
+:is(.pulse, .settings) h1 { font-size: 34px; margin: 0; letter-spacing: -0.02em; }
+.pulse { display: grid; gap: 36px; align-content: start; }
+.settings h1 { font-weight: 700; }
+.settings .lede { margin: 6px 0 10px; font-size: 16px; color: var(--ink); }
+.settings > .byline { margin-bottom: 28px; }
 .pulse h2 { font-size: 17px; margin: 0 0 10px; display: flex; gap: 8px; align-items: baseline; }
 .pulse h3 { font-size: 14px; margin: 20px 0 6px; display: flex; gap: 8px; align-items: baseline; }
 .pulse .n { font: 700 12px var(--mono); }
@@ -305,8 +309,9 @@
 /* On a phone the mobile nav replaces the rail, search gets its own line, the filter popover is a bottom sheet, and toasts span the width above the mobile nav. */
 @media (max-width: 720px) {
   .shell .rail { display: none; }
-  .pulse { padding: 24px 16px 100px; gap: 28px; }
-  .pulse h1 { font-size: 28px; }
+  :is(.pulse, .settings) { padding: 24px 16px 100px; }
+  :is(.pulse, .settings) h1 { font-size: 28px; }
+  .pulse { gap: 28px; }
   .inbox .tools { flex-wrap: wrap; }
   .inbox .search { flex-basis: 100%; }
   .inbox .row.open-row .merge-chip { display: none; }

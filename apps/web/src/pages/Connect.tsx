@@ -21,6 +21,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
+import { CopyField } from "../components/CopyField.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { OtherWorkspaces } from "../components/OtherWorkspaces.tsx";
@@ -58,7 +59,6 @@ export default function Connect() {
   const [pemName, setPemName] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
   const [secretNotice, setSecretNotice] = useState("");
-  const [webhookUrlNotice, setWebhookUrlNotice] = useState("");
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
   const logs = useBacklogLogs();
@@ -79,15 +79,6 @@ export default function Connect() {
       setSecretNotice("Copied secret to clipboard. Back it up now—you won't be able to see it again after saving.");
     } catch {
       setSecretNotice("Secret generated. Copy it now—you won't be able to see it again after saving.");
-    }
-  }
-  async function copyWebhookUrl() {
-    if (!webhookUrl) return;
-    try {
-      await navigator.clipboard.writeText(webhookUrl);
-      setWebhookUrlNotice("Webhook URL copied.");
-    } catch {
-      setWebhookUrlNotice("Could not copy automatically. Select the URL and copy it.");
     }
   }
   async function loadPem(file: File | undefined) {
@@ -245,7 +236,7 @@ export default function Connect() {
           <label>App slug<input value={appSlug} onChange={(event) => setAppSlug(event.target.value)} autoComplete="off" /><small className="muted">{"From the App’s public URL, github.com/apps/{slug}."}</small></label>
           <div className="pem-field full-span"><span className="field-label">Private key</span><input className="sr-only" id="existing-app-pem" type="file" accept=".pem" onChange={(event) => void loadPem(event.target.files?.[0])} />{privateKey ? <div className="file-loaded"><CircleCheck strokeWidth={1.7} aria-hidden="true" /><div><strong>{pemName || "Pasted private key"}</strong><small>Ready</small></div><Button asChild variant="outline"><label htmlFor="existing-app-pem">Replace</label></Button><Button type="button" variant="ghost" onClick={clearPrivateKey}>Remove</Button></div> : <label className="file-picker" htmlFor="existing-app-pem"><Upload strokeWidth={1.7} aria-hidden="true" /><span><strong>Choose .pem file</strong><small>Downloaded from GitHub App settings</small></span></label>}<details><summary>Paste key instead</summary><textarea aria-label="Private key" value={privateKey} onChange={pastePrivateKey} autoComplete="off" /></details></div>
           <label className="full-span">Webhook secret<div className="secret-input"><input type="password" value={webhookSecret} onChange={editWebhookSecret} autoComplete="new-password" /><Button type="button" variant="outline" size="icon" aria-label="Generate and copy webhook secret" title="Generate and copy webhook secret" onClick={() => void generateAndCopyWebhookSecret()}><Sparkles strokeWidth={1.7} aria-hidden="true" /></Button></div><small className="muted">Use the same secret in the GitHub App webhook settings.</small>{secretNotice && <small className="secret-notice" role="status">{secretNotice}</small>}</label>
-          <div className="webhook-url-field full-span"><span className="field-label">Webhook URL</span><div className="copy-field"><input aria-label="Webhook URL" readOnly value={webhookUrl} onFocus={(event) => event.currentTarget.select()} /><Button type="button" variant="outline" onClick={() => void copyWebhookUrl()}>Copy</Button></div>{webhookUrlNotice && <small role="status" className="secret-notice">{webhookUrlNotice}</small>}</div>
+          <CopyField className="full-span" label="Webhook URL" value={webhookUrl} />
           <details className="setup-help full-span"><summary>GitHub App settings</summary><p>Grant read access to Checks and Metadata and read/write access to Contents, Issues and Pull requests. Set the active webhook URL to the value above, use the same secret, and subscribe to Pull request, Pull request review, Issue comment, Check run, Installation, and Installation repositories events. Set the Setup URL to <code>{`${window.location.origin}/`}</code> and check “Redirect on update” so GitHub returns you here after choosing repositories.</p></details>
         </div>
         <div className="task-actions"><Button type="button" disabled={busy || !appId.trim() || !appSlug.trim() || !privateKey.trim() || !webhookSecret.trim()} onClick={() => void saveManual()}>{busy ? "Connecting…" : "Connect GitHub App"}</Button></div>
