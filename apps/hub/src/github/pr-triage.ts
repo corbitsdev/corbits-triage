@@ -5,7 +5,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { repoPolicy } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy } from "@corbits/triage-contracts";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
@@ -13,7 +13,8 @@ import type { CheckPackRead } from "./check-pack-store.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { isStuck, runKey, type ReconcilePolicy } from "./reconcile-plan.js";
-import { repoRecords, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
+import { triageWorkflowFor } from "./source-workflow.js";
+import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
 import { mergeObservedRuns, observeDeployments, type ObserveRuns } from "./triage-runs.js";
 import { isQueuedSince, isRunningSince, queueHead, restoreHead } from "./triage-queue.js";
@@ -27,8 +28,8 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   /** The open pull request's head on the record's host, or undefined when it is not open. */
   pullHead: (tenantId: string, record: RepoRecord, number: number) => Promise<string | undefined>;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
-  /** Newest first; mail goes to the first, and a head may still be running on a replaced one. */
-  liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
+  /** The named workflow's, newest first; mail goes to the first, and a head may still be running on a replaced one. */
+  liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
   observeRuns: ObserveRuns;
   store: TriageStateStore;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
@@ -53,6 +54,7 @@ export async function readyToTriage(
   const pack = await deps.readCheckPack(tenantId, repo);
   if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: pack.reason });
   if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
+  if (!hasEnabledRules(pack.pack)) return failure(409, "no_rules", "Switch on a rule first; with every rule off there is nothing to triage.");
   return { tenant, record, policy, pack };
 }
 
@@ -62,9 +64,10 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const ready = await readyToTriage(deps, member, repo);
     if (ready instanceof Response) return ready;
     const { tenant, record, policy, pack } = ready;
-    const deployments = await deps.liveDeployments(tenantId);
+    const triage = triageWorkflowFor(sourceOf(record));
+    const deployments = await deps.liveDeployments(tenantId, triage.id);
     const deployment = newestLive(deployments);
-    if (!deployment) return failure(503, "service_not_running", "The pr-triage service is not running.");
+    if (!deployment) return failure(503, "service_not_running", `The ${triage.id} service is not running.`);
 
     let openHead: string | undefined;
     try {

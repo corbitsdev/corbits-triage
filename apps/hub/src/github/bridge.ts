@@ -14,7 +14,7 @@
 // through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
 import { asRecord, errorText, isRecord } from "@corbits/common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
@@ -515,6 +515,10 @@ export function createBridgeHandler(d: BridgeDeps) {
     if (!stored) {
       log({ level: "info", msg: "needs_setup", delivery, event, repo: mail.repo, hook: loaded.credentialId });
       return json(202, { status: "needs-setup" });
+    }
+    if (!hasEnabledRules(stored.pack)) {
+      log({ level: "info", msg: "triage_skipped_no_rules", delivery, event, repo: mail.repo, pr: mail.prNumber, headSha, hook: loaded.credentialId });
+      return json(202, { status: "ignored" });
     }
     let accepted: Accepted;
     try {
