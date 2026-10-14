@@ -129,11 +129,12 @@ URL: `POST {hub}/api/hooks/bitbucket-datacenter/{tenantId}`, signed with the
 - Repository: `repo:refs_changed`
 
 Data Center sends no webhook when a build status finishes, so a verdict left
-waiting on `ci-green` would never catch up on its own. The hub re-reads the
-build statuses of such heads on the unconfirmed retry interval (5 minutes,
-doubling, up to the retry cap) and queues the head again once they are no
-longer pending (`triage_requeued` with `reason: build_status_changed`). GitHub
-needs none of this: its `check_run` webhook triages the head again.
+waiting on `ci-green`, or failed by it, would never catch up on its own. The hub
+re-reads the build statuses of such heads on the unconfirmed retry interval
+(5 minutes, doubling, up to the retry cap) and queues the head again once they
+changed: no longer pending, or no longer failing (`triage_requeued` with
+`reason: build_status_changed`). GitHub needs none of this: its `check_run`
+webhook triages the head again.
 
 A webhook triage created is removed when the repository is disabled or the
 instance disconnected; one set up by hand is not, and stays until a repository
