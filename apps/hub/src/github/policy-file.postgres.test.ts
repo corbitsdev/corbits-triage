@@ -26,10 +26,12 @@ actions:
   unsure: []
 `;
 
-const files = new Map<string, { sha: string; text: string }>();
+/** A null `text` is a file over 1 MB, whose content GitHub leaves out. */
+const files = new Map<string, { sha: string; text: string | null }>();
 const branches = new Set<string>();
 const opened: Array<{ head: string; base: string; title: string }> = [];
 const committed: Array<{ branch: string; text: string }> = [];
+let commitFails = false;
 
 async function github(req: Request): Promise<Response> {
   const { pathname } = new URL(req.url);
@@ -40,7 +42,12 @@ async function github(req: Request): Promise<Response> {
   if (req.method === "GET" && path === "contents/.corbits-triage.yaml") {
     const file = files.get(repo);
     if (!file) return new Response(null, { status: 404 });
-    return Response.json({ sha: file.sha, content: Buffer.from(file.text).toString("base64"), encoding: "base64", html_url: `https://github.com/${repo}/blob/main/.corbits-triage.yaml` });
+    const content = file.text === null ? { content: "", encoding: "none" } : { content: Buffer.from(file.text).toString("base64"), encoding: "base64" };
+    return Response.json({ sha: file.sha, ...content, html_url: `https://github.com/${repo}/blob/main/.corbits-triage.yaml` });
+  }
+  if (req.method === "DELETE" && path.startsWith("git/refs/heads/")) {
+    branches.delete(`${repo}:refs/heads/${path.slice("git/refs/heads/".length)}`);
+    return new Response(null, { status: 204 });
   }
   if (req.method === "GET" && path === "") return Response.json({ default_branch: "main" });
   if (req.method === "GET" && path === "git/ref/heads/main") return Response.json({ object: { sha: "main-sha" } });
@@ -51,6 +58,7 @@ async function github(req: Request): Promise<Response> {
     return Response.json({ ref }, { status: 201 });
   }
   if (req.method === "PUT" && path === "contents/.corbits-triage.yaml") {
+    if (commitFails) return Response.json({ message: "Server Error" }, { status: 500 });
     const { branch, content } = await req.json() as { branch: string; content: string };
     committed.push({ branch, text: Buffer.from(content, "base64").toString("utf8") });
     return Response.json({ content: { sha: "blob-exported" } }, { status: 201 });
@@ -123,6 +131,21 @@ async function fileOf(repo: string): Promise<unknown> {
   return ((await res.json()) as { file: unknown }).file;
 }
 
+async function latestAuthor(artifactId: string): Promise<unknown> {
+  const [row] = await handle.db.execute(sql`select author_id from artifacts.artifact_version where artifact_id = ${artifactId} order by version desc limit 1`);
+  return (row as { author_id: unknown } | undefined)?.author_id;
+}
+
+async function syncedRow() {
+  return (await repoPolicyRow({ db: handle.db, artifacts: handle.db }, TENANT, SYNCED))!;
+}
+
+/** Each level holds eight of the one before, so ten levels expand to a billion strings once serialised. */
+function aliasBomb(): string {
+  const levels = Array.from({ length: 10 }, (_, i) => `l${i + 1}: &l${i + 1} [${Array(8).fill(i === 0 ? '"x"' : `*l${i}`).join(", ")}]`);
+  return `checks: {}\nbomb:\n${levels.map((line) => `  ${line}`).join("\n")}\n`;
+}
+
 test("PostgreSQL: syncing stores the policy file as the repository's policy, marked with its sha, until the hub's copy changes", async () => {
   expect(await fileOf(SYNCED)).toBeNull();
   expect((await policyFile.syncRoute({ repo: SYNCED }, MEMBER)).status).toBe(404);
@@ -133,28 +156,65 @@ test("PostgreSQL: syncing stores the policy file as the repository's policy, mar
   const read = await readPack(TENANT, SYNCED);
   expect(read).toMatchObject({ status: "ok", source: { repo: { version: 1 }, file: { path: ".corbits-triage.yaml", sha: "blob1" } } });
   expect(read.status === "ok" && read.pack.checks).toEqual({ "ci-green": { enabled: true } });
+  expect(await latestAuthor((await syncedRow()).id)).toBe("prn_user");
   expect(await fileOf(SYNCED)).toEqual({ path: ".corbits-triage.yaml", sha: "blob1", url: "https://github.com/acme/synced/blob/main/.corbits-triage.yaml", syncedAt: "2026-10-13T12:00:00.000Z", inSync: true });
   expect(await (await policyFile.syncRoute({ repo: SYNCED }, MEMBER)).json()).toEqual({ status: "unchanged", sha: "blob1" });
 
+  // The same policy with its keys in another order is still the file's.
+  const row = await syncedRow();
+  const reordered = Object.fromEntries(Object.entries(JSON.parse(row.content) as Record<string, unknown>).reverse());
+  await writeArtifactVersion(handle.db, { scope: { tenantId: TENANT, principalId: "prn_user" }, artifactId: row.id, content: JSON.stringify(reordered) });
+  expect(await fileOf(SYNCED)).toMatchObject({ inSync: true });
+
   // A save from the portal carries the marker's metadata forward; the content no longer matches it.
-  const row = (await repoPolicyRow({ db: handle.db, artifacts: handle.db }, TENANT, SYNCED))!;
   await writeArtifactVersion(handle.db, { scope: { tenantId: TENANT, principalId: "prn_user" }, artifactId: row.id, content: JSON.stringify(emptyPack(SYNCED)) });
   const edited = await readPack(TENANT, SYNCED);
   expect(edited.status === "ok" && edited.source.file).toBeUndefined();
   expect(await fileOf(SYNCED)).toMatchObject({ sha: "blob1", inSync: false });
 
-  files.set(SYNCED, { sha: "blob2", text: "checks: [" });
-  const invalid = await policyFile.syncRoute({ repo: SYNCED }, MEMBER);
-  expect(invalid.status).toBe(422);
-  expect(await fileOf(SYNCED)).toMatchObject({ sha: "blob2", inSync: false, problem: expect.stringContaining("is not YAML") });
+  // A push syncs as the GitHub sender.
+  expect(await policyFile.onPush(TENANT, SYNCED)).toEqual({ status: "synced", sha: "blob1" });
+  expect(await latestAuthor(row.id)).toBe("prn_github");
+
+  const refused: Array<[string | null, string]> = [
+    ["checks: [", "is not YAML"],
+    [`${FILE}extra: true\n`, "unknown keys: extra"],
+    [aliasBomb(), "too large or uses aliases"],
+    [`checks: {}\n#${"x".repeat(70 * 1024)}\n`, "too large or uses aliases"],
+    [null, "too large or uses aliases"],
+  ];
+  for (const [i, [text, reason]] of refused.entries()) {
+    files.set(SYNCED, { sha: `bad${i}`, text });
+    const started = performance.now();
+    const res = await policyFile.syncRoute({ repo: SYNCED }, MEMBER);
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: { message: expect.stringContaining(reason) } });
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(await fileOf(SYNCED)).toMatchObject({ sha: `bad${i}`, inSync: false, problem: expect.stringContaining(reason) });
+  }
+
+  // Removing the file keeps the policy, no longer marked as the file's.
+  files.set(SYNCED, { sha: "blob1", text: FILE });
+  await policyFile.onPush(TENANT, SYNCED);
+  const before = await syncedRow();
+  files.delete(SYNCED);
+  expect(await policyFile.onPush(TENANT, SYNCED)).toEqual({ status: "removed" });
+  const after = await readPack(TENANT, SYNCED);
+  expect(after.status === "ok" && after.source.file).toBeUndefined();
+  expect((await syncedRow()).content).toBe(before.content);
 
   expect((await policyFile.syncRoute({ repo: SYNCED }, { tenantId: TENANT, principalId: "prn_github" })).status).toBe(403);
 }, 60_000);
 
-test("PostgreSQL: exporting opens one pull request adding the file the hub's policy reads back as", async () => {
+test("PostgreSQL: exporting opens one pull request adding the file the hub's policy reads back as, and takes back its branch when it fails", async () => {
   expect((await policyFile.exportRoute({ repo: EXPORTED }, MEMBER)).status).toBe(409);
   const pack = { ...emptyPack(EXPORTED), checks: { "ci-green": { enabled: true } } };
   await writePolicy(EXPORTED, JSON.stringify(pack));
+
+  commitFails = true;
+  expect((await policyFile.exportRoute({ repo: EXPORTED }, MEMBER)).status).toBe(502);
+  expect(branches.has(`${EXPORTED}:refs/heads/${EXPORT_BRANCH}`)).toBe(false);
+  commitFails = false;
 
   const res = await policyFile.exportRoute({ repo: EXPORTED }, MEMBER);
   expect(await res.json()).toEqual({ status: "opened", url: "https://github.com/acme/exported/pull/12", number: 12 });

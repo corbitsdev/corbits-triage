@@ -43,7 +43,7 @@ export class TriageStateConflictError extends Error {
 }
 
 /** The package throws its `VersionConflictError` on a stale `expectedVersion` but does not export the class. */
-function isVersionConflict(err: unknown): boolean {
+export function isVersionConflict(err: unknown): boolean {
   return err instanceof Error && err.name === "VersionConflictError";
 }
 

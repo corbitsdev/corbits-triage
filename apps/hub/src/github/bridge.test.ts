@@ -140,10 +140,9 @@ function openHeadOf(drafts: number[]): BridgeDeps["openHeadFor"] {
 
 type Recheck = [string, string, number];
 
-function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[]; synced?: string[] } = {}) {
+function bridge({ synced = [], ...overrides }: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[]; synced?: string[] } = {}) {
   const sent = overrides.sent ?? [];
   const rechecks = overrides.rechecks ?? [];
-  const synced = overrides.synced ?? [];
   async function accept(input: CoalescedEvent) {
     sent.push(input);
     return "queued" as const;
@@ -328,22 +327,24 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("a push to the default branch that changes the policy file syncs it", async () => {
+  test("a push to the default branch that changes or removes the policy file, or is forced, syncs it", async () => {
     const synced: string[] = [];
     const handle = bridge({ synced });
-    function push(ref: string, modified: string[]) {
-      return JSON.stringify({ ref, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [{ added: [], modified }] });
+    function push(ref: string, commit: Record<string, string[]>, forced = false) {
+      return JSON.stringify({ ref, forced, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [commit] });
     }
     const deliveries: Array<[string, string]> = [
-      [push("refs/heads/main", [".corbits-triage.yaml"]), "accepted"],
-      [push("refs/heads/main", ["README.md"]), "ignored"],
-      [push("refs/heads/feature", [".corbits-triage.yaml"]), "ignored"],
+      [push("refs/heads/main", { modified: [".corbits-triage.yaml"] }), "accepted"],
+      [push("refs/heads/main", { removed: [".corbits-triage.yaml"] }), "accepted"],
+      [push("refs/heads/main", { modified: ["README.md"] }, true), "accepted"],
+      [push("refs/heads/main", { modified: ["README.md"] }), "ignored"],
+      [push("refs/heads/feature", { modified: [".corbits-triage.yaml"] }), "ignored"],
     ];
     for (const [i, [body, status]] of deliveries.entries()) {
       const res = await handle(githubRequest(body, { event: "push", delivery: `p${i}` }), TARGET);
       expect(await res.json()).toEqual({ status });
     }
-    expect(synced).toEqual(["octocat/hello"]);
+    expect(synced).toEqual(["octocat/hello", "octocat/hello", "octocat/hello"]);
   });
 
   test("a base move the triage state refused is 500 and releases the id for retry", async () => {

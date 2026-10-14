@@ -7,7 +7,8 @@ function policyFileQuery(tenantId: string | undefined, repo: string) {
   const queryFn = tenantId === undefined ? skipToken : async function readPolicyFile() {
     return loadPolicyFile(createHubTransport(), tenantId, repo);
   };
-  return queryOptions({ queryKey: ["policy-file", tenantId, repo], queryFn, staleTime: 60_000 });
+  // A merge on GitHub changes the file without the portal knowing, so each panel opening reads it again.
+  return queryOptions({ queryKey: ["policy-file", tenantId, repo], queryFn, staleTime: 60_000, refetchOnMount: "always" });
 }
 
 /** The repository's policy file, "Use file" to store it as the policy now, and exporting the policy as the file. */

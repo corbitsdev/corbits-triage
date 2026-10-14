@@ -658,9 +658,10 @@ export type AppLogin = () => Promise<string>;
 /** Marks the changes the request-changes Do requested, so a repeat on the same head finds them. */
 export const REQUEST_CHANGES_DO_MARKER = "<!-- corbits-request-changes -->";
 
-const RepoFile = type({ sha: "string", content: "string", encoding: "'base64'", html_url: "string" });
+const RepoFile = type({ sha: "string", content: "string", encoding: "'base64' | 'none'", html_url: "string" });
 
-export type RepoFileRead = { sha: string; text: string; url: string };
+/** `text` is null for a file over 1 MB, whose content GitHub leaves out. */
+export type RepoFileRead = { sha: string; text: string | null; url: string };
 
 /** A file on the default branch, or undefined when it is not there. */
 export async function readRepoFile(gh: GithubFetch, repo: string, path: string): Promise<RepoFileRead | undefined> {
@@ -669,7 +670,8 @@ export async function readRepoFile(gh: GithubFetch, repo: string, path: string):
   if (res.status === 404) return undefined;
   if (!res.ok) throw new Error(`github GET ${url} -> ${res.status}`);
   const file = RepoFile.assert(await res.json());
-  return { sha: file.sha, text: Buffer.from(file.content, "base64").toString("utf8"), url: file.html_url };
+  const text = file.encoding === "none" ? null : Buffer.from(file.content, "base64").toString("utf8");
+  return { sha: file.sha, text, url: file.html_url };
 }
 
 export type CodeownersRule = {
