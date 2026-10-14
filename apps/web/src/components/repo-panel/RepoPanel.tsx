@@ -93,7 +93,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
       <>
         <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} />
         {manualWebhook && settings.saved.policy.enabled ? <BitbucketDatacenterWebhook webhook={manualWebhook} /> : null}
-        <PolicyCard repo={repo.name} policyFile={policyFile} disabled={disabled} />
+        <PolicyCard repo={repo.name} source={repo.source} policyFile={policyFile} disabled={disabled} />
         <div className={gated ? "gated" : undefined} inert={gated}>
           <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={locked} edit={settings.edit} problem={problem} />
           <StepsSection view={view} automatic={grantsKnown ? runsAlone : undefined} disabled={locked} />
