@@ -667,6 +667,11 @@ const RepoFile = type({ type: "string", sha: "string", "content?": "string", "en
 /** `text` is null for a file over 1 MB, whose content GitHub leaves out; a directory or submodule at the path is not a file. */
 export type RepoFileRead = { kind: "file"; sha: string; text: string | null; url: string } | { kind: "not-a-file" };
 
+// Not Buffer, so the browser extension reads files through this too.
+function base64Text(content: string): string {
+  return new TextDecoder().decode(Uint8Array.from(atob(content.replace(/\s/g, "")), (char) => char.charCodeAt(0)));
+}
+
 /** A file on the default branch, or undefined when nothing is there. */
 export async function readRepoFile(gh: GithubFetch, repo: string, path: string): Promise<RepoFileRead | undefined> {
   const url = `/repos/${repo}/contents/${path}`;
@@ -677,7 +682,7 @@ export async function readRepoFile(gh: GithubFetch, repo: string, path: string):
   if (Array.isArray(body)) return { kind: "not-a-file" };
   const file = RepoFile.assert(body);
   if (file.type !== "file") return { kind: "not-a-file" };
-  const text = file.encoding === "base64" && file.content !== undefined ? Buffer.from(file.content, "base64").toString("utf8") : null;
+  const text = file.encoding === "base64" && file.content !== undefined ? base64Text(file.content) : null;
   return { kind: "file", sha: file.sha, text, url: file.html_url };
 }
 
