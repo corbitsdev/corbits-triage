@@ -436,8 +436,8 @@ async function resolveWorkspace(transport: Transport, chosen: string | null): Pr
   return chooseWorkspace(await listAll<Membership>(transport, "/api/me/principals"), user, chosen);
 }
 
-export async function inviteRoles(transport: Transport, tenantId: string): Promise<string[]> {
-  return InviteRoles.assert(await transport.fetch<unknown>("GET", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`)).assignableRoleIds;
+export async function inviteRoles(transport: Transport, tenantId: string): Promise<InviteRoles> {
+  return InviteRoles.assert(await transport.fetch<unknown>("GET", `/api/integrations/invitations/${enc(requireTenantId(tenantId))}`));
 }
 
 export async function listInvited(transport: Transport, tenantId: string): Promise<HubPrincipal[]> {
