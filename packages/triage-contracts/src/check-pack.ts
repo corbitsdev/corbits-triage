@@ -282,13 +282,14 @@ const StepSchema = type({
 const DoList = StepSchema.array().atMostLength(STEPS_MAX);
 
 /** Packs written before verdicts stored an empty list of actions, which reads as no steps. */
-const PolicyActionsSchema = type({
+const PolicyActionsObject = type({
   "+": "reject",
   when: type.enumerated(...POLICY_EVENTS).array().atLeastLength(1),
   pass: DoList,
   fail: DoList,
   unsure: DoList,
-}).or(type("unknown[]").atMostLength(0));
+});
+const PolicyActionsSchema = PolicyActionsObject.or(type("unknown[]").atMostLength(0));
 
 const CatalogCheckSchema = type({
   enabled: "boolean",
@@ -321,6 +322,20 @@ export const checkPackSchema = type({
   "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
   "actions?": PolicyActionsSchema,
   "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
+});
+
+/** A workspace policy as published: a check pack held by no repository. `readSharedPolicy` stays the authority. */
+export const sharedPolicySchema = checkPackSchema.omit("repo");
+
+const OverrideChecksSchema = type(
+  Object.fromEntries(CATALOG_IDS.map((id) => [`${id}?`, CatalogCheckSchema.partial()])) as Record<`${CatalogId}?`, ReturnType<typeof CatalogCheckSchema.partial>>,
+);
+
+/** A repository policy that extends a workspace policy, as published. `readPolicyOverride` stays the authority. */
+export const policyOverrideSchema = checkPackSchema.omit("checks", "actions").and({
+  extends: Text,
+  "checks?": OverrideChecksSchema,
+  "actions?": PolicyActionsObject.partial(),
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
@@ -735,18 +750,26 @@ function fromVersion1(body: Record<string, unknown>, dropped: string[]): Record<
 
 const LIST_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
 
-/** Reads a stored pack, throwing an Error whose message says why it is rejected. Version 1 reads as version 2. */
-export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
-  const stored = asRecord(parseJson(raw));
-  if (!stored) throw new Error("Policy must be an object.");
-  if (stored.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
-  if (stored.schemaVersion !== LEGACY_SCHEMA_VERSION && stored.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
-  const dropped: string[] = [];
-  const body = stored.schemaVersion === LEGACY_SCHEMA_VERSION ? fromVersion1(stored, dropped) : stored;
+function policyObject(raw: unknown): Record<string, unknown> {
+  const body = asRecord(parseJson(raw));
+  if (!body) throw new Error("Policy must be an object.");
+  if (body.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
+  return body;
+}
+
+function currentVersion(body: Record<string, unknown>): void {
+  if (body.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
+}
+
+function readRepo(body: Record<string, unknown>, expectedRepo: string | undefined): string {
   const repo = asRepo(body.repo);
   if (!repo) throw new Error("repo must be owner/name.");
   if (expectedRepo !== undefined && asRepo(expectedRepo) !== repo) throw new Error(`repo must be ${expectedRepo}.`);
-  const checksRaw = body.checks === undefined ? {} : asRecord(body.checks);
+  return repo;
+}
+
+function readChecks(raw: unknown): CheckPack["checks"] {
+  const checksRaw = raw === undefined ? {} : asRecord(raw);
   if (!checksRaw) throw new Error("checks must be an object.");
   const checks: CheckPack["checks"] = {};
   // A row under its current id wins over one stored under the id it had before a rename.
@@ -758,10 +781,104 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
       if (parsed) checks[id as CatalogId] = parsed;
     }
   }
+  return checks;
+}
+
+function withDropped<T extends object>(read: T, dropped: string[]): T & { dropped?: string[] } {
+  return { ...read, ...(dropped.length > 0 && { dropped }) };
+}
+
+/** Reads a stored pack, throwing an Error whose message says why it is rejected. Version 1 reads as version 2. */
+export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
+  const stored = policyObject(raw);
+  if (stored.schemaVersion !== LEGACY_SCHEMA_VERSION) currentVersion(stored);
+  const dropped: string[] = [];
+  const body = stored.schemaVersion === LEGACY_SCHEMA_VERSION ? fromVersion1(stored, dropped) : stored;
+  if (body.extends !== undefined) throw new Error("This policy extends a workspace policy and is read with it.");
+  const repo = readRepo(body, expectedRepo);
+  const checks = readChecks(body.checks);
   const custom = parseCustom(body.custom);
   const actions = parseActions(body.actions, dropped);
   const labels = parseLabels(body.labels);
-  return { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels, ...(dropped.length > 0 && { dropped }) };
+  return withDropped({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels }, dropped);
+}
+
+/** Workspace policy titles start with this, so the stock artifact list finds them with `?query=`. */
+export const WORKSPACE_POLICY_TITLE_PREFIX = "workspace-policy/";
+
+/** A workspace policy repositories extend: a check pack's rules, actions and labels, held by no one repository. */
+export type SharedPolicy = Omit<CheckPack, "repo">;
+
+/** What a repository sets over the shared policy it extends; `when`, each verdict's steps and each label only when it names them. */
+export type PolicyOverride = Pick<CheckPack, "repo" | "custom"> & {
+  extends: string;
+  checks: Partial<Record<CatalogId, Partial<CatalogCheck>>>;
+  actions: Partial<PolicyActions>;
+  labels: Partial<Record<VerdictWord, string>>;
+};
+
+export function extendsOf(raw: unknown): string | undefined {
+  const value = asRecord(parseJson(raw))?.extends;
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0) throw new Error("extends must be a shared policy's id.");
+  return value.trim();
+}
+
+/** Reads a stored workspace policy, throwing an Error whose message says why it is rejected. */
+export function readSharedPolicy(raw: unknown): SharedPolicy {
+  const body = policyObject(raw);
+  currentVersion(body);
+  if (body.extends !== undefined) throw new Error("A shared policy must not extend another.");
+  const checks = readChecks(body.checks);
+  const dropped: string[] = [];
+  const custom = parseCustom(body.custom);
+  const actions = parseActions(body.actions, dropped);
+  const labels = parseLabels(body.labels);
+  return withDropped({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, checks, custom, actions, labels }, dropped);
+}
+
+/** Built-in rule rows as a repository sets them: `enabled` only where the row names it, so a limit alone keeps the shared switch. */
+function readOverrideChecks(raw: unknown): PolicyOverride["checks"] {
+  const checks: PolicyOverride["checks"] = readChecks(raw);
+  const switched = new Set(Object.entries(asRecord(raw) ?? {}).flatMap(([stored, value]) => (asRecord(value)?.enabled === undefined ? [] : currentRuleIds(stored))));
+  for (const [id, row] of Object.entries(checks)) {
+    if (!switched.has(id)) delete row.enabled;
+  }
+  return checks;
+}
+
+const STEP_WHERE: Record<VerdictWord, string> = { pass: "Pass step", fail: "Fail step", unsure: "Unsure step" };
+
+/** The schema has already refused an unknown list or a step for a removed role, so nothing is dropped. */
+function parseOverrideActions(row: Partial<Record<"when" | VerdictWord, unknown>> | undefined): Partial<PolicyActions> {
+  const actions: Partial<PolicyActions> = {};
+  if (row?.when !== undefined) actions.when = parseWhen(row.when, "Actions when");
+  for (const verdict of VERDICTS) {
+    if (row?.[verdict] !== undefined) actions[verdict] = distinctSteps(parseList(row[verdict], STEP_WHERE[verdict], []));
+  }
+  return actions;
+}
+
+function parseOverrideLabels(row: Partial<Record<VerdictWord, unknown>> | undefined): PolicyOverride["labels"] {
+  const labels: PolicyOverride["labels"] = {};
+  for (const verdict of VERDICTS) {
+    if (row?.[verdict] !== undefined) labels[verdict] = text(row[verdict], `labels ${verdict}`, LABEL_MAX);
+  }
+  return labels;
+}
+
+/** Reads a stored repository policy that extends a shared one, throwing an Error whose message says why it is rejected. */
+export function readPolicyOverride(raw: unknown, expectedRepo?: string): PolicyOverride {
+  const body = policyOverrideSchema(parseJson(raw));
+  if (body instanceof type.errors) throw new Error(body.summary);
+  return {
+    repo: readRepo(body, expectedRepo),
+    extends: body.extends.trim(),
+    checks: readOverrideChecks(body.checks),
+    custom: parseCustom(body.custom),
+    actions: parseOverrideActions(body.actions),
+    labels: parseOverrideLabels(body.labels),
+  };
 }
 
 
