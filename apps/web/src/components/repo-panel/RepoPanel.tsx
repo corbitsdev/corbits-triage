@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, StatusDot } from "@corbits/react-ui";
+import { errorText } from "@corbits/common";
 import { VERDICTS, type ActionKind } from "@corbits/triage-contracts";
 import { triageRunsAlone } from "../../lib/automation-grid.ts";
+import { bitbucketDatacenterRepoUrl, useBitbucketDatacenterConnection, useToggleBitbucketDatacenterRepository } from "../../lib/bitbucket-datacenter.ts";
 import type { RepoRecord } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { useRepoPack, type SaveState } from "../../lib/repo-pack.ts";
@@ -12,6 +14,7 @@ import { useGrants, useRoles } from "../../lib/tenant-entities.ts";
 import { usePolicyView } from "../../lib/use-policy-view.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
 import { usePolicyFile } from "../../lib/policy-file.ts";
+import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import LabelsCard from "./LabelsCard.tsx";
 import PolicyCard from "./PolicyCard.tsx";
 import RepoByline from "./RepoByline.tsx";
@@ -40,7 +43,10 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const grantsKnown = ![grants, roles].some((section) => section.loading || section.unavailable || section.denied);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [closing, setClosing] = useState(false);
-  const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready";
+  const bitbucket = useToggleBitbucketDatacenterRepository();
+  const instance = useBitbucketDatacenterConnection().data;
+  const fromBitbucket = repo.source === "bitbucket-datacenter";
+  const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready" || bitbucket.isPending;
   const gated = !draft.policy.enabled;
   const locked = disabled || gated || fromFile;
   const unfinished = VERDICTS.some((verdict) => view.steps[verdict].some((step) => step.problem) || view.labels[verdict].problem) || view.rules.some((rule) => rule.problem);
@@ -70,6 +76,16 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  function toggleBitbucket(enabled: boolean) {
+    bitbucket.mutate({ repo: repo.name, enabled }, { onSuccess: settings.reload });
+  }
+
+  function sourceLink() {
+    if (!fromBitbucket) return <Button asChild variant="ghost" size="sm" className="gh-link"><a href={`https://github.com/${repo.name}`} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a></Button>;
+    if (!instance) return null;
+    return <Button asChild variant="ghost" size="sm" className="gh-link"><a href={bitbucketDatacenterRepoUrl(instance.baseUrl, repo.name)} target="_blank" rel="noreferrer">Bitbucket <ExternalIcon /></a></Button>;
+  }
+
   function runsAlone(kind: ActionKind): boolean {
     return triageRunsAlone(roles.rows, grants.rows, kind, repo.name);
   }
@@ -79,7 +95,9 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     if (settings.status === "failed") return <div className="rs"><Button type="button" variant="outline" size="sm" onClick={settings.reload}>Retry</Button></div>;
     return (
       <>
-        <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} reason={problem?.where.section === "triage" ? problem.reason : undefined} />
+        <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} onToggle={fromBitbucket ? toggleBitbucket : undefined} reason={problem?.where.section === "triage" ? problem.reason : undefined} />
+        {bitbucket.error ? <p role="alert" className="error">Could not turn triage {bitbucket.variables?.enabled ? "on" : "off"}. {errorText(bitbucket.error)}</p> : null}
+        {bitbucket.data && "hookSecret" in bitbucket.data && draft.policy.enabled ? <BitbucketDatacenterWebhook webhook={bitbucket.data} /> : null}
         <PolicyCard repo={repo.name} policyFile={policyFile} disabled={disabled} />
         <div className={gated ? "gated" : undefined} inert={gated}>
           <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={locked} edit={settings.edit} problem={problem} />
@@ -99,7 +117,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
               <h2 className="title rp-t" id="rp-title" title={repo.name} tabIndex={-1} ref={headingRef}>{repo.name}</h2>
               {settings.status === "ready" ? <span className={`saved ${settings.save}`} role="status" aria-live="polite">{SAVE_WORDS[settings.save]}</span> : null}
               <span className="sp" />
-              <Button asChild variant="ghost" size="sm" className="gh-link"><a href={`https://github.com/${repo.name}`} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a></Button>
+              {sourceLink()}
               <Button type="button" variant="ghost" size="icon" aria-label="Close repository settings" onClick={close}><CloseIcon /></Button>
             </div>
             {live ? <RepoByline row={row} /> : null}

@@ -10,10 +10,12 @@ type TriageSwitchProps = {
   triaging: boolean;
   disabled: boolean;
   edit: RepoPack["edit"];
+  /** Turns triage on or off through the source's own route instead of the saved policy. */
+  onToggle?: (enabled: boolean) => void;
   reason?: string;
 };
 
-export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, reason }: TriageSwitchProps) {
+export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, onToggle, reason }: TriageSwitchProps) {
   const { runBacklog } = usePortal();
   const [rerunError, setRerunError] = useState("");
 
@@ -27,6 +29,10 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
   }
 
   function setEnabled(next: boolean) {
+    if (onToggle) {
+      onToggle(next);
+      return;
+    }
     edit((current) => ({ ...current, policy: { ...current.policy, enabled: next } }));
   }
 
