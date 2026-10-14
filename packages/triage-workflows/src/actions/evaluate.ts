@@ -27,8 +27,8 @@ export type EvaluateOutput = Verdict | { items: Verdict[]; summary: BacklogSumma
 export const Input = type({ items: "object[]", batch: "boolean", "judge?": { output: "unknown[]" }, "judgeParts?": { output: "unknown[]" } });
 
 /** A facts failure or malformed input reaches this step without facts: the verdict then names no head and is degraded. */
-function stamp(facts: PrFacts | undefined) {
-  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null };
+function stamp(facts: PrFacts | undefined, it?: Item) {
+  return { repo: facts?.repo ?? "", number: facts?.number ?? 0, headSha: facts?.headSha ?? null, ...(it?.repoSource && { repoSource: it.repoSource }) };
 }
 
 /**
@@ -151,7 +151,7 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
 /** Takes the item's own chunk replies off the front of `replies` and `partReplies`; requests an earlier run answered took none. */
 function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdict {
   if (it.error !== undefined) {
-    const verdict = { ...stamp(undefined), ...degradedVerdict(it.error), automatic: it.automatic ?? [], actions: [] };
+    const verdict = { ...stamp(undefined, it), ...degradedVerdict(it.error), automatic: it.automatic ?? [], actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
   }
   try {
@@ -189,10 +189,10 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     // What reading the policy left out is said on every verdict, so the policy can be fixed.
     const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
     const labels = it.pack ? [it.pack.labels[rendered.verdict]] : rendered.labels;
-    const verdict = { ...stamp(it.facts), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
+    const verdict = { ...stamp(it.facts, it), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
     return { ...verdict, request: toMirrorRequest(verdict, it.pack ? ownedLabels(it.pack.labels) : undefined, it.source) };
   } catch (e) {
-    const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`), automatic: it.automatic ?? [], actions: [] };
+    const verdict = { ...stamp(undefined, it), ...degradedVerdict(`render failed: ${errorText(e)}`), automatic: it.automatic ?? [], actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };
   }
 }
