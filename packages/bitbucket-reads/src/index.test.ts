@@ -3,6 +3,9 @@ import { checkFailed, checkPending, latestDecisive, reviewedOnHead, summarizeChe
 import { POLICY_FILE_MAX_BYTES } from "@corbits/triage-contracts";
 import { defaultReviewers, getChecks, getPr, getReviews, isTriageComment, listIssueComments, listOpenPrs, listPrCommits, listPrFiles, readRepoFile, type BitbucketFetch } from "./index.js";
 import activities from "./fixtures/activities.json";
+import activitiesApproved from "./fixtures/activities-approved.json";
+import activitiesNeedsWork from "./fixtures/activities-needs-work.json";
+import activitiesUnapproved from "./fixtures/activities-unapproved.json";
 import branchDefault from "./fixtures/branch-default.json";
 import browseType from "./fixtures/browse-type.json";
 import buildStatus from "./fixtures/build-status.json";
@@ -12,6 +15,9 @@ import diffStats from "./fixtures/diff-stats-summary.json";
 import fileCommits from "./fixtures/file-commits.json";
 import merge from "./fixtures/merge.json";
 import pullRequest from "./fixtures/pull-request.json";
+import pullRequestApproved from "./fixtures/pull-request-approved.json";
+import pullRequestNeedsWork from "./fixtures/pull-request-needs-work.json";
+import pullRequestUnapproved from "./fixtures/pull-request-unapproved.json";
 import pullRequestsOpen from "./fixtures/pull-requests-open.json";
 import repository from "./fixtures/repository.json";
 import usersProjectAdmin from "./fixtures/users-project-admin.json";
@@ -103,21 +109,22 @@ describe("getChecks", () => {
 });
 
 describe("getReviews", () => {
-  // Built from the recorded author participant; this instance has a single user, who cannot review their own pull request.
-  function reviewer(slug: string, status: string, lastReviewedCommit: string) {
-    return { ...pullRequest.author, user: { ...pullRequest.author.user, slug }, role: "REVIEWER", status, lastReviewedCommit };
+  function recordedReview(pr: unknown, activityLog: unknown) {
+    return instance([[`${REPO}/pull-requests/1/activities`, activityLog], [`${REPO}/pull-requests/1`, pr]]).bb;
   }
-  const reviewed = {
-    ...pullRequest,
-    reviewers: [reviewer("ada", "APPROVED", HEAD), reviewer("grace", "NEEDS_WORK", "66af7477a3b53db35d1556d16823b6e07970b09a"), reviewer("linus", "UNAPPROVED", HEAD)],
-  };
 
-  test("approval and needs work map to GitHub review states, standing on head only for the commit last reviewed", async () => {
-    const { bb } = instance([[`${REPO}/pull-requests/1/activities`, activities], [`${REPO}/pull-requests/1`, reviewed]]);
-    const reviews = await getReviews(bb, "TRI/widgets", 1, "grace");
-    expect([...latestDecisive(reviews)]).toEqual([["ada", "APPROVED"]]);
-    expect(reviews.find((review) => review.reviewer === "grace")).toMatchObject({ state: "CHANGES_REQUESTED", triageRequest: true });
-    expect(reviewedOnHead(reviews, HEAD)).toEqual(["ada"]);
+  test("needs work and approval become GitHub reviews on the commit last reviewed, timed by their activity", async () => {
+    const needsWork = await getReviews(recordedReview(pullRequestNeedsWork, activitiesNeedsWork), "TRI/widgets", 1);
+    expect(needsWork).toEqual([{ reviewer: "reviewer", state: "CHANGES_REQUESTED", submittedAt: "2026-10-14T17:52:18.989Z", commitId: HEAD }]);
+    const approved = await getReviews(recordedReview(pullRequestApproved, activitiesApproved), "TRI/widgets", 1);
+    expect(approved).toEqual([{ reviewer: "reviewer", state: "APPROVED", submittedAt: "2026-10-14T17:52:27.884Z", commitId: HEAD }]);
+    expect(reviewedOnHead(approved, HEAD)).toEqual(["reviewer"]);
+    expect(await getReviews(recordedReview(pullRequestUnapproved, activitiesUnapproved), "TRI/widgets", 1)).toEqual([]);
+  });
+
+  test("needs work from the triage user is triage's own request, not a reviewer's", async () => {
+    const reviews = await getReviews(recordedReview(pullRequestNeedsWork, activitiesNeedsWork), "TRI/widgets", 1, "reviewer");
+    expect(latestDecisive(reviews).size).toBe(0);
   });
 });
 
