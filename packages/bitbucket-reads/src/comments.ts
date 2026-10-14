@@ -9,6 +9,14 @@ const { comment: Comment } = scope({
 
 type Comment = typeof Comment.infer;
 
+// Data Center renders HTML comments, so triage marks its comment with a link reference definition line instead.
+// Stand-in for the shared matcher in @corbits/triage-contracts, which replaces it at integration.
+const TRIAGE_COMMENT = /^\[corbits-triage(-superseded)?\]: #/;
+
+export function isTriageComment(body: string): boolean {
+  return TRIAGE_COMMENT.test(body);
+}
+
 const Activity = type({ action: "string", "comment?": Comment });
 
 function thread(comment: Comment): Comment[] {
