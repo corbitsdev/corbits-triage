@@ -1,4 +1,4 @@
-import type { ActionKind, CheckPack, PolicySource } from "@corbits/triage-contracts";
+import type { ActionKind, CheckPack, PolicySource, RepoSource } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 
 export type Judged = Record<string, string>;
@@ -16,6 +16,8 @@ export interface Item {
   automatic?: ActionKind[];
   pack?: CheckPack;
   source?: PolicySource;
+  /** Where the pull request lives; absent on GitHub. */
+  repoSource?: RepoSource;
   error?: string;
 }
 
