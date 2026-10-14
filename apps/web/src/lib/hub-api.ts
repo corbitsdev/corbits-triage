@@ -1210,9 +1210,16 @@ export function hasBitbucketDatacenterCredential(credentials: HubCredential[]): 
   return credentials.some((item) => item.name === BITBUCKET_DATACENTER_CREDENTIAL_NAME && item.status.toLowerCase() === "active");
 }
 
-/** Connected once any source is: the GitHub App or a Bitbucket Data Center token. */
+/** The pull request hosts the workspace connected: the GitHub App, a Bitbucket Data Center token. */
+export function connectedSources(credentials: HubCredential[]): RepoSource[] {
+  const sources: RepoSource[] = [];
+  if (hasActiveGithubCredential(credentials)) sources.push("github");
+  if (hasBitbucketDatacenterCredential(credentials)) sources.push("bitbucket-datacenter");
+  return sources;
+}
+
 export function portalConnected(snapshot: PortalSnapshot): boolean {
-  return hasActiveGithubCredential(snapshot.credentials) || hasBitbucketDatacenterCredential(snapshot.credentials);
+  return connectedSources(snapshot.credentials).length > 0;
 }
 
 export type QueueState =
