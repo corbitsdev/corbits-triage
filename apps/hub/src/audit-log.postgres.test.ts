@@ -97,7 +97,7 @@ test("PostgreSQL: the audit log merges verdicts, the Dos they ran, approvals, ch
         readCheckPack(tenantId, repo) {
           return loadCheckPack({ db, artifacts: db, async automaticKinds() { return []; }, log() {} }, tenantId, repo);
         },
-        workflow: "pr-triage",
+        workflows: ["pr-triage"],
         runReader: {
           async readRunEvents(_repoId, _ref, runId) {
             read.push(runId);

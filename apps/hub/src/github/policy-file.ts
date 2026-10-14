@@ -7,12 +7,16 @@ import { type } from "arktype";
 import { createArtifact, writeArtifactVersion, type ArtifactDb, type ArtifactRow, type ArtifactTx, type ResolvedPrincipal } from "@corbits/artifacts";
 import { schema } from "@intx/db";
 import { asRecord, errorText } from "@corbits/common";
+import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { json, readRepoFile, type GithubFetch, type RepoFileRead } from "@corbits/github-reads";
+import { readRepo } from "../bitbucket-datacenter/client.js";
+import { splitName } from "../bitbucket-datacenter/records.js";
+import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
 import { checkPackName, POLICY_FILE_PATH, policyFileText, readPolicyFile, type PolicyFileStatus } from "@corbits/triage-contracts";
 import { fileMarkerOf, repoPolicyRow, type FileMarker } from "./check-pack-store.js";
 import { forInstallation } from "./open-pulls.js";
-import { failure, githubAppGrant, holds, type PortalCredentialDeps } from "./portal-credential.js";
-import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
+import { failure, holds, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
+import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 import { githubFailed } from "./github-refusal.js";
 import { isVersionConflict } from "./triage-state-store.js";
 import type { Member } from "../integrations/app.js";
@@ -37,6 +41,7 @@ export type PolicyFileDeps = PortalCredentialDeps & {
   artifacts: ArtifactDb;
   /** GitHub as the tenant's App; undefined when the tenant has no active GitHub App credential. */
   tenantGithub: (tenantId: string) => Promise<GithubFetch | undefined>;
+  tenantBitbucket: TenantBitbucket;
   /** The principal every sync is recorded as, so syncing never makes a member a policy's creator. */
   writerFor: (tenantId: string) => Promise<string>;
   /** Grants a new policy's writers, as the stock artifact route does for one it creates. */
@@ -84,15 +89,30 @@ function withoutMarker(metadata: unknown): Record<string, unknown> {
 const NOT_A_FILE = `${POLICY_FILE_PATH} is not a file.`;
 
 export function createPolicyFile(deps: PolicyFileDeps) {
+  /** A Bitbucket repository the token sees has no record until it is enabled, so rules can be written for it first, as for GitHub. */
+  async function visibleBitbucketRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
+    const bb = await deps.tenantBitbucket(tenantId);
+    if (!bb || !(await readRepo(bb, ...splitName(repo)))) return undefined;
+    return { name: repo, source: "bitbucket-datacenter", connected: true };
+  }
+
   async function connectedRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
-    return repoRecords(triageNs(tenant?.config)).find((row) => row.name === repo && row.connected);
+    return repoRecords(triageNs(tenant?.config)).find((row) => row.name === repo && row.connected) ?? visibleBitbucketRecord(tenantId, repo);
   }
 
   async function repoGithub(tenantId: string, record: RepoRecord): Promise<GithubFetch> {
     const gh = await deps.tenantGithub(tenantId);
     if (!gh) throw new Error("no active github credential");
     return forInstallation(gh, record.installationId);
+  }
+
+  /** The policy file on the record's default branch, read from its host. */
+  async function readFile(tenantId: string, record: RepoRecord): Promise<RepoFileRead | undefined> {
+    if (sourceOf(record) !== "bitbucket-datacenter") return readRepoFile(await repoGithub(tenantId, record), record.name, POLICY_FILE_PATH);
+    const bb = await deps.tenantBitbucket(tenantId);
+    if (!bb) throw new Error("no active bitbucket-datacenter credential");
+    return bitbucket.readRepoFile(bb, record.name, POLICY_FILE_PATH, record.defaultBranch);
   }
 
   async function store(scope: ResolvedPrincipal, repo: string, content: string, marker: FileMarker, row: ArtifactRow | undefined): Promise<void> {
@@ -127,7 +147,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function sync(tenantId: string, record: RepoRecord, removed: boolean): Promise<PolicyFileSync> {
     const repo = record.name;
     const scope = { tenantId, principalId: await deps.writerFor(tenantId) };
-    const file = await readRepoFile(await repoGithub(tenantId, record), repo, POLICY_FILE_PATH);
+    const file = await readFile(tenantId, record);
     if (!file && removed) return dropMarker(scope, repo);
     if (!file) {
       deps.log({ level: "warn", msg: "policy_file_not_found", tenantId, repo });
@@ -160,7 +180,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   /** Whether the repository holds the file and the hub's copy is what it says; undefined when there is no file. */
   async function status(tenantId: string, record: RepoRecord): Promise<PolicyFileStatus | undefined> {
     const repo = record.name;
-    const file = await readRepoFile(await repoGithub(tenantId, record), repo, POLICY_FILE_PATH);
+    const file = await readFile(tenantId, record);
     if (!file) return undefined;
     if (file.kind === "not-a-file") throw new PolicyFileProblem(NOT_A_FILE);
     const row = await repoPolicyRow(deps, tenantId, repo);
@@ -181,9 +201,9 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   }
 
   async function grantedRecord(member: Member, repo: string, action: "read" | "use"): Promise<RepoRecord | Response> {
-    const grant = await githubAppGrant(deps, member.principalId, member.tenantId, action);
-    if (grant instanceof Response) return grant;
-    return (await connectedRecord(member.tenantId, repo)) ?? failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
+    const record = await connectedRecord(member.tenantId, repo);
+    if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
+    return (await sourceCredentialGrant(deps, member.principalId, member.tenantId, record, action)) ?? record;
   }
 
   async function fileRoute({ repo }: typeof PolicyFileBody.infer, member: Member): Promise<Response> {
@@ -229,9 +249,11 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     throw new Error(`github POST /repos/${repo}/git/refs -> ${res.status}`);
   }
 
+  /** Exporting opens a pull request through the GitHub App; another host's repository keeps its policy in the hub. */
   async function exportRoute({ repo }: typeof PolicyFileBody.infer, member: Member): Promise<Response> {
     const record = await grantedRecord(member, repo, "use");
     if (record instanceof Response) return record;
+    if (sourceOf(record) !== "github") return failure(409, "export_unsupported", `${repo} is not on GitHub; add ${POLICY_FILE_PATH} to its default branch by hand.`);
     const row = await repoPolicyRow(deps, member.tenantId, repo);
     if (!row) return failure(409, "policy_missing", `${repo} has no policy to export.`);
     let stored: Record<string, unknown> | undefined;

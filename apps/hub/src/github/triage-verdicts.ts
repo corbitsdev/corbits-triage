@@ -9,9 +9,8 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { PR_TRIAGE_STUCK_RUN_MS, TriageVerdicts, type VerdictWord } from "@corbits/triage-contracts";
-import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { listRepoPulls, type OpenPullsCache, type OpenPullsRead } from "./open-pulls.js";
-import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import { listingRefusal, listRepoPulls, type OpenPrsLister, type OpenPullsCache, type OpenPullsRead } from "./open-pulls.js";
+import { failure, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { runKeyNumber, type ObservedRun } from "./reconcile-plan.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
@@ -57,7 +56,7 @@ export type TriageVerdictsDeps = PortalCredentialDeps & {
   ready: (tenantId: string) => boolean;
   versions: Pick<TenantVersions, "get">;
   openPulls: OpenPullsCache;
-  githubApiOrigin: string;
+  list: OpenPrsLister;
   now: () => Date;
 };
 
@@ -131,20 +130,18 @@ function respond(req: Request, body: Body): Response {
 
 export function createTriageVerdicts(deps: TriageVerdictsDeps) {
   const kept = new Map<string, { key: string; body: Body }>();
-  const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
   /**
-   * The listing kept from the last 30 seconds, else one read now as the App, like github-open-pulls, when the caller holds `read`
-   * on the GitHub credential. Without it the route asks GitHub nothing and uses the last listing of any age, or none, rather
-   * than refusing: the verdicts themselves need only the run grant.
+   * The listing kept from the last 30 seconds, else one read now on each repository's host, like github-open-pulls, when
+   * the caller holds `read` on every host's credential. Without it the route asks the hosts nothing and uses the last
+   * listing of any age, or none, rather than refusing: the verdicts themselves need only the run grant.
    */
-  async function listingOf(principalId: string, tenantId: string, connected: readonly RepoRecord[]): Promise<OpenPullsRead | undefined> {
+  async function listingOf(member: Member, connected: readonly RepoRecord[]): Promise<OpenPullsRead | undefined> {
+    const { tenantId } = member;
     const fresh = deps.openPulls.kept(tenantId, LISTING_MS);
     if (fresh) return fresh;
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "read");
-    if (appJson instanceof Response) return deps.openPulls.kept(tenantId, Infinity);
-    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
-    return deps.openPulls.read(tenantId, () => listRepoPulls(gh, connected));
+    if (await listingRefusal(deps, member, connected)) return deps.openPulls.kept(tenantId, Infinity);
+    return deps.openPulls.read(tenantId, () => listRepoPulls(deps.list, tenantId, connected));
   }
 
   async function activityOf(tenantId: string, pulls: readonly PullRef[], live: Map<string, LivePull>): Promise<Map<string, string>> {
@@ -206,7 +203,8 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     return build(tenantId, [...known, ...recent], live, wanted, names);
   }
 
-  return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {
+  return async function handle(req: Request, member: Member): Promise<Response> {
+    const { tenantId } = member;
     const query = PullQuery(Object.fromEntries(new URL(req.url).searchParams));
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
     if ((query.repo === undefined) !== (query.number === undefined)) return failure(400, "invalid_request", "Name both repo and number, or neither.");
@@ -224,7 +222,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       return respond(req, bodyOf(one.pulls.length > 0 ? one : { ...one, pulls: [{ ...pull, activityAt: null, verdict: null, run: runOf(undefined, deps.now(), deps.ready(tenantId)) }] }));
     }
 
-    const listed = await listingOf(principalId, tenantId, connected);
+    const listed = await listingOf(member, connected);
     const key = [deps.versions.get(tenantId), listed?.at, deps.ready(tenantId), Math.floor(deps.now().getTime() / REBUILD_MS), ...names].join("\n");
     const hit = kept.get(tenantId);
     if (hit?.key === key) return respond(req, hit.body);

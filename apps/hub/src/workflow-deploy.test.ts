@@ -11,7 +11,7 @@ const BODY = {
   registryAssetId: "ast_registry",
   definitionAssetId: "ast_workflow",
   pin: "@corbits/pr-triage-workflow@0.1.0",
-  entry: "./pr-triage.mjs",
+  entry: "./pr-triage-github.mjs",
   sourceOfferingIds: ["mof_1"],
   defaultSourceOfferingId: "mof_1",
 };
@@ -24,12 +24,14 @@ const db = {
     tenant: { async findFirst() { return { id: TENANT_ID, domain: "tenant.example" }; } },
     asset: { async findFirst() { return { id: "asset" }; } },
     workflowRun: { async findFirst() { return { createdAt: CREATED_AT }; } },
+    credential: { async findMany() { return [{ name: "github" }]; } },
   },
 } as never;
 
 function handler(calls: Calls, overrides: Partial<WorkflowDeployDeps> = {}) {
   return createWorkflowDeploy({
     db,
+    onDeployed: async () => {},
     allocation: {
       async prepareProvisionedDeployment(args) {
         calls.prepared.push(args);
@@ -68,7 +70,7 @@ describe("createWorkflowDeploy", () => {
       anchorRunId: expect.stringMatching(/^run_/),
       deploymentDomain: "tenant.example",
       source: { kind: "asset", assetId: "ast_registry", package: { format: "tarball" } },
-      entry: "./pr-triage.mjs",
+      entry: "./pr-triage-github.mjs",
       pin: "@corbits/pr-triage-workflow@0.1.0",
       definitionAssetId: "ast_workflow",
       sessionId: expect.stringMatching(/^ses/),
@@ -86,4 +88,33 @@ describe("createWorkflowDeploy", () => {
       createdAt: CREATED_AT.toISOString(),
     });
   });
+});
+
+function withCredentials(names: string[]) {
+  return { query: { ...(db as { query: Record<string, unknown> }).query, credential: { async findMany() { return names.map((name) => ({ name })); } } } } as never;
+}
+
+test("a mixed workspace deploys both hosts' packages; a host's package waits for its connection", async () => {
+  const github = { ...BODY, entry: "./pr-triage-github.mjs" };
+  const bitbucket = { ...BODY, entry: "./pr-triage-bitbucket-datacenter.mjs" };
+  const both: Calls = { prepared: [] };
+  const mixed = handler(both, { db: withCredentials(["github", "bitbucket-datacenter"]) });
+  expect((await mixed(github, MEMBER)).status).toBe(201);
+  expect((await mixed(bitbucket, MEMBER)).status).toBe(201);
+  expect(both.prepared.map((call) => call.entry)).toEqual(["./pr-triage-github.mjs", "./pr-triage-bitbucket-datacenter.mjs"]);
+  const only: Calls = { prepared: [] };
+  const bitbucketOnly = handler(only, { db: withCredentials(["bitbucket-datacenter"]) });
+  const refused = await bitbucketOnly(github, MEMBER);
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({ error: { code: "source_not_connected" } });
+  expect((await bitbucketOnly(bitbucket, MEMBER)).status).toBe(201);
+  expect(only.prepared).toHaveLength(1);
+});
+
+test("pr-triage-historical deploys only with GitHub connected", async () => {
+  const calls: Calls = { prepared: [] };
+  const res = await handler(calls, { db: withCredentials(["bitbucket-datacenter"]) })({ ...BODY, entry: "./pr-triage-historical.mjs" }, MEMBER);
+  expect(res.status).toBe(409);
+  expect(calls.prepared).toHaveLength(0);
+  expect((await handler(calls, { db: withCredentials(["github"]) })({ ...BODY, entry: "./pr-triage-historical.mjs" }, MEMBER)).status).toBe(201);
 });

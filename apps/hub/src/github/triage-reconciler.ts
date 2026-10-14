@@ -2,12 +2,13 @@
 // without relying on any webhook, sidecar or portal visit having survived:
 // reads GitHub's open pull requests, the live deployments' run logs and the
 // stored state, then queues what the plan says to the newest deployment.
-import { repoPolicy, type PrTriageRow, type RepoPolicy } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
-import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
-import { repoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRecord } from "./tenant-config.js";
-import type { OpenHeadsReader } from "./tenant-open-heads.js";
+import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
+import { summarizeChecks } from "@corbits/github-reads";
+import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
+import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
@@ -26,11 +27,20 @@ type DeploymentRotation = {
 };
 
 export type TriageReconcilerDeps = {
+  /** The host whose repositories this reconciler brings to a triaged head; the deployment deps below are its workflow's. */
+  source: RepoSource;
+  rotationKey: string;
   tenants: () => Promise<ReconcileTenant[]>;
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
   latestDeployments: (tenantId: string, limit: number) => Promise<DeploymentRecord[]>;
   rotation: DeploymentRotation;
+  /** Undefined when the tenant holds no credential for any pull request host. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
+  /**
+   * For a host that sends no webhook when a build finishes: the build statuses of a settled head whose verdict waits on
+   * CI are read again on the unconfirmed retry interval, with backoff, and the head queued once they changed.
+   */
+  headChecks?: HeadChecksReader;
   /** Reads and records the live deployments' runs, shared with the recording loop. */
   observeTenant: TenantObserver["observe"];
   store: TriageStateStore;
@@ -61,10 +71,10 @@ function failedByInterchange(deployment: DeploymentRecord): deployment is Deploy
   return deployment.status === "failed" && !deployment.cancelling && deployment.endedAt !== null;
 }
 
-function enabledRepos(config: unknown): EnabledRepo[] {
+function enabledRepos(config: unknown, source: RepoSource): EnabledRepo[] {
   return repoRecords(triageNs(config)).flatMap(function enabled(record) {
     const policy = repoPolicy(record);
-    return record.connected && policy.enabled ? [{ record, policy }] : [];
+    return sourceOf(record) === source && record.connected && policy.enabled ? [{ record, policy }] : [];
   });
 }
 
@@ -90,13 +100,69 @@ function mergeRows(theirs: readonly PrTriageRow[], ours: readonly PrTriageRow[])
   return [...merged, ...byHead.values()];
 }
 
+const BUILD_STATUS_CHANGED = "build_status_changed";
+
+type BuildPoll = { polls: number; at: number };
+
+function waitsOnCi(verdict: { checks: ReadonlyArray<{ check: string; result: string }> }): boolean {
+  return verdict.checks.some((check) => check.check === "ci-green" && check.result === "unconfirmed");
+}
+
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
+  /** Heads whose builds were read since their verdict; lost on restart, when the verdict's own time starts the interval again. */
+  const buildPolls = new Map<string, BuildPoll>();
+  /** Repositories skipped last pass and why, so the skip is logged once rather than every pass. */
+  const skippedRepos = new Map<string, string>();
+
+  function latestVerdict(pass: TenantPass, repo: string, row: PrTriageRow) {
+    return pass.runs.verdicts.filter((verdict) => verdict.repo === repo && verdict.number === row.number && verdict.headSha === row.headSha).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
+  }
+
+  /** Queues a settled head whose CI the verdict waited on once its build statuses are no longer pending. */
+  async function pollBuilds(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan): Promise<void> {
+    if (!deps.headChecks) return;
+    const name = repo.record.name;
+    const now = deps.now().getTime();
+    for (const row of plan.rows) {
+      if (row.status !== "triaged") continue;
+      const key = `${pass.tenantId}\n${name}\n${runKey(row.number, row.headSha)}`;
+      const verdict = latestVerdict(pass, name, row);
+      if (!verdict || !waitsOnCi(verdict)) {
+        buildPolls.delete(key);
+        continue;
+      }
+      const poll = buildPolls.get(key) ?? { polls: 0, at: verdict.startedAt.getTime() };
+      if (poll.polls >= deps.policy.maxAttempts || now - poll.at < Math.min(deps.policy.unconfirmedRetryMs * 2 ** poll.polls, deps.policy.backoffMaxMs)) continue;
+      let ci: ReturnType<typeof summarizeChecks>;
+      try {
+        ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
+      } catch (err) {
+        deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
+        continue;
+      }
+      if (ci === "pending") {
+        buildPolls.set(key, { polls: poll.polls + 1, at: now });
+        continue;
+      }
+      buildPolls.delete(key);
+      requeue(plan, row, BUILD_STATUS_CHANGED, deps.now());
+    }
+  }
+
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
-    if (read.status !== "ok") return undefined;
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
-    const stored = await deps.store.load(pass.tenantId, repo.record.name);
-    return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored };
+    // Without a policy, or with every rule off, triage has nothing to decide: no run starts and nothing is written to the pull request.
+    const key = `${pass.tenantId}\n${repo.record.name}`;
+    if (read.status === "ok" && hasEnabledRules(read.pack)) {
+      skippedRepos.delete(key);
+      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored: await deps.store.load(pass.tenantId, triageStateKey(repo.record)) };
+    }
+    const skipped = read.status === "ok" ? "triage_skipped_no_rules" : "triage_skipped_no_policy";
+    // Once per repository, and again only once a policy or rule came and went, so a repository left unset stays quiet.
+    if (skippedRepos.get(key) !== skipped) deps.log({ level: "info", msg: skipped, tenantId: pass.tenantId, repo: repo.record.name, pulls: prs.map((pr) => pr.number) });
+    skippedRepos.set(key, skipped);
+    return undefined;
   }
 
   /**
@@ -144,21 +210,22 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   /** Deliveries stop for the tenant once one fails: the failure is passed on so later repositories keep their heads unqueued. */
   async function deliverRepo(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan, failed: Failure | undefined): Promise<Failure | undefined> {
     const name = repo.record.name;
+    const key = triageStateKey(repo.record);
     if (failed !== undefined) {
-      await saveRows(pass.tenantId, name, repo.stored, withHeads(plan.rows, plan.enqueue.map((queued) => queued.undelivered)));
+      await saveRows(pass.tenantId, key, repo.stored, withHeads(plan.rows, plan.enqueue.map((queued) => queued.undelivered)));
       return failed;
     }
-    const claimed = await claim(pass.tenantId, name, repo.stored, plan);
+    const claimed = await claim(pass.tenantId, key, repo.stored, plan);
     if (claimed === undefined) return undefined;
     // One mail carries up to `batchSize` heads: each mail costs the deployment a fixed set of commits, whatever it carries.
     for (let from = 0; from < claimed.enqueue.length; from += deps.batchSize) {
       const batch = claimed.enqueue.slice(from, from + deps.batchSize);
       const items = batch.map((queued) => ({ prNumber: queued.number, headSha: claimed.rows.find((row) => row.number === queued.number)!.headSha, ...(queued.judged && { judged: queued.judged }) }));
       try {
-        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo, { items }));
+        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(repo.record, repo.policy, repo, { items }));
       } catch (err) {
         const restored = claimed.enqueue.slice(from).map((queued) => ({ ...queued.undelivered, error: `delivery failed: ${String(err)}` }));
-        await restoreRows(pass.tenantId, name, claimed, restored);
+        await restoreRows(pass.tenantId, key, claimed, restored);
         return { repo: name, error: err };
       }
       for (const [i, queued] of batch.entries()) {
@@ -246,7 +313,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   async function route(tenant: ReconcileTenant, deployments: readonly LiveDeployment[], observed: readonly ObservedRuns[]): Promise<LiveDeployment | undefined> {
     const now = deps.now();
     const runningOn = new Set(deployments.filter((_live, index) => isRunning(observed[index]!)).map((live) => live.runId));
-    const recorded = rotationRecord(triageNs(tenant.config));
+    const recorded = rotationRecord(triageNs(tenant.config), deps.rotationKey);
     if (recorded) return settle(tenant.id, recorded, deployments, runningOn, now);
     const adopted = await adopt(tenant.id, deployments, now);
     if (adopted) return settle(tenant.id, adopted, deployments, runningOn, now);
@@ -320,7 +387,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
 
   /** True when the pass is worth repeating soon: a delivery failed because the deployment was not routable yet, or a failed one is being redeployed. */
   async function reconcileTenant(tenant: ReconcileTenant): Promise<boolean> {
-    const repos = enabledRepos(tenant.config);
+    const repos = enabledRepos(tenant.config, deps.source);
     if (repos.length === 0) return false;
     // Only live deployments' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
     const { deployments, observed } = await deps.observeTenant(tenant.id, tenant.domain);
@@ -330,7 +397,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     const openHeads = await deps.openHeadsFor(tenant.id);
     if (!openHeads) {
-      deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_github_credential" });
+      deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_source_credential" });
       return false;
     }
     const runs = mergeObservedRuns(observed);
@@ -365,6 +432,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     let failure: Failure | undefined;
     for (const repo of loaded) {
       try {
+        await pollBuilds(pass, repo, plans.get(repo.record.name)!);
         failure = await deliverRepo(pass, repo, plans.get(repo.record.name)!, failure);
       } catch (err) {
         failure = { repo: repo.record.name, error: err };

@@ -10,6 +10,7 @@ import { isEmailAllowed, MAGIC_LINK_TTL_SECONDS, type HubAuth } from "../auth.js
 import type { SessionUser } from "@intx/hub-api";
 import { failure, type PortalCredentialDeps } from "../github/portal-credential.js";
 import type { Member } from "../integrations/app.js";
+import { asCaller } from "../stock-caller.js";
 import type { SendInviteEmail } from "./invite-email.js";
 
 export const INVITATIONS_PATH = "/api/integrations/invitations";
@@ -43,16 +44,6 @@ export type InvitationDeps = PortalCredentialDeps & {
 function sendFailure(error: unknown): Record<string, unknown> {
   const { code, responseCode } = typeof error === "object" && error !== null ? error as { code?: unknown; responseCode?: unknown } : {};
   return { error: error instanceof Error ? error.name : typeof error, code, responseCode };
-}
-
-/** Stock routes read the caller's session from the same credentials the portal sent. */
-function asCaller(req: Request, method: string, path: string, body?: unknown): Request {
-  const headers = new Headers({ "content-type": "application/json" });
-  for (const name of ["cookie", "authorization", "origin"]) {
-    const value = req.headers.get(name);
-    if (value !== null) headers.set(name, value);
-  }
-  return new Request(new URL(path, req.url).toString(), { method, headers, ...(body !== undefined && { body: JSON.stringify(body) }) });
 }
 
 export function createInvitations(deps: InvitationDeps) {
