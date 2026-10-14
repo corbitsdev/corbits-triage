@@ -1,5 +1,12 @@
-import { RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type ModelShape } from "@corbits/triage-contracts";
-import type { SuggestedDo } from "@corbits/triage-workflows/logic/actions";
+// The words the portal, the extension and the action use for a policy's rules and Dos.
+import { RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type ModelShape } from "./check-pack.js";
+import type { ResolvedTarget } from "./do.js";
+
+export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
+
+function count(value: number | undefined): string {
+  return value?.toLocaleString() ?? "any number of";
+}
 
 const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => string> = {
   "max-files-changed": (row) => `Flag pull requests over ${count(row?.maxFiles)} files changed`,
@@ -14,19 +21,13 @@ const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => st
 
 export const CATALOG_ORDER = Object.keys(CATALOG_SENTENCES) as CatalogId[];
 
-function count(value: number | undefined): string {
-  return value?.toLocaleString() ?? "any number of";
-}
-
 export function catalogSentence(id: CatalogId, pack: CheckPack): string {
   return CATALOG_SENTENCES[id](pack.checks[id]);
 }
 
-export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
+export type RuleKind = { shape: ModelShape; title: string; line: string };
 
-export type CheckKind = { shape: ModelShape; title: string; line: string };
-
-export const CHECK_KINDS: CheckKind[] = [
+export const RULE_KINDS: RuleKind[] = [
   { shape: "is-true", title: "Is it true that…", line: "Fails when the answer is no." },
   { shape: "score", title: "Score", line: "Picks one of its levels; fails only below the level you pick." },
   { shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },
@@ -34,9 +35,12 @@ export const CHECK_KINDS: CheckKind[] = [
 
 export function customSentence(check: CustomCheck): string {
   switch (check.shape) {
-    case "is-true": return `Is it true that ${check.claim}?`;
-    case "score": return `Score ${check.subject} as ${check.levels.join(", ")}${check.failBelow ? `, fail below ${check.failBelow}` : ""}.`;
-    case "choose": return `Which of ${check.options.join(", ")} is it? Fail on ${check.failOn.join(", ")}.`;
+    case "is-true":
+      return `Is it true that ${check.claim}?`;
+    case "score":
+      return `Score ${check.subject} as ${check.levels.join(", ")}${check.failBelow ? `, fail below ${check.failBelow}` : ""}.`;
+    case "choose":
+      return `Which of ${check.options.join(", ")} is it? Fail on ${check.failOn.join(", ")}.`;
   }
 }
 
@@ -47,7 +51,7 @@ function strings(value: unknown): string[] {
 type Target = Record<string, unknown>;
 
 /** What each Do kind does, in full: the action and what it acts on. Null when its target names nothing to act on. */
-const DO_LABELS: Record<ActionKind, (target: Target, repo: string) => string | null> = {
+const DO_SENTENCES: Record<ActionKind, (target: Target, repo: string) => string | null> = {
   labels(target) {
     const labels = strings(target.labels);
     return labels.length ? `Add ${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}` : null;
@@ -64,26 +68,12 @@ const DO_LABELS: Record<ActionKind, (target: Target, repo: string) => string | n
   comment(target) {
     return typeof target.body === "string" && target.body.trim() ? "Comment on this pull request" : null;
   },
-  approve() {
-    return "Approve this pull request";
-  },
-  "request-changes"() {
-    return "Request changes on this pull request";
-  },
-  close() {
-    return "Close this pull request";
-  },
-  merge() {
-    return "Merge this pull request";
-  },
+  approve: () => "Approve this pull request",
+  "request-changes": () => "Request changes on this pull request",
+  close: () => "Close this pull request",
+  merge: () => "Merge this pull request",
 };
 
-export function doLabel(step: SuggestedDo, repo: string): string | null {
-  const target = step.target as Target;
-  return "unresolved" in target ? null : DO_LABELS[step.kind](target, repo);
-}
-
-export function commentBody(step: SuggestedDo): string | undefined {
-  const body = (step.target as { body?: unknown }).body;
-  return step.kind === "comment" && typeof body === "string" ? body : undefined;
+export function doSentence(kind: ActionKind, target: ResolvedTarget, repo: string): string | null {
+  return "unresolved" in target ? null : DO_SENTENCES[kind](target, repo);
 }
