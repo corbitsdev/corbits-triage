@@ -112,6 +112,8 @@ function waitsOnCi(verdict: { checks: ReadonlyArray<{ check: string; result: str
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
   /** Heads whose builds were read since their verdict; lost on restart, when the verdict's own time starts the interval again. */
   const buildPolls = new Map<string, BuildPoll>();
+  /** Repositories skipped last pass and why, so the skip is logged once rather than every pass. */
+  const skippedRepos = new Map<string, string>();
 
   function latestVerdict(pass: TenantPass, repo: string, row: PrTriageRow) {
     return pass.runs.verdicts.filter((verdict) => verdict.repo === repo && verdict.number === row.number && verdict.headSha === row.headSha).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
@@ -152,14 +154,16 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
     // Without a policy, or with every rule off, triage has nothing to decide: no run starts and nothing is written to the pull request.
-    const skipped = read.status !== "ok" ? "triage_skipped_no_policy" : hasEnabledRules(read.pack) ? undefined : "triage_skipped_no_rules";
-    if (skipped !== undefined) {
-      for (const pr of prs) deps.log({ level: "info", msg: skipped, tenantId: pass.tenantId, repo: repo.record.name, pr: pr.number, headSha: pr.headSha });
-      return undefined;
+    const key = `${pass.tenantId}\n${repo.record.name}`;
+    if (read.status === "ok" && hasEnabledRules(read.pack)) {
+      skippedRepos.delete(key);
+      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored: await deps.store.load(pass.tenantId, triageStateKey(repo.record)) };
     }
-    if (read.status !== "ok") return undefined;
-    const stored = await deps.store.load(pass.tenantId, triageStateKey(repo.record));
-    return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored };
+    const skipped = read.status === "ok" ? "triage_skipped_no_rules" : "triage_skipped_no_policy";
+    // Once per repository, and again only once a policy or rule came and went, so a repository left unset stays quiet.
+    if (skippedRepos.get(key) !== skipped) deps.log({ level: "info", msg: skipped, tenantId: pass.tenantId, repo: repo.record.name, pulls: prs.map((pr) => pr.number) });
+    skippedRepos.set(key, skipped);
+    return undefined;
   }
 
   /**
