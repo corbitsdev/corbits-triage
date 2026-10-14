@@ -59,7 +59,8 @@ function peopleTarget(form: DoForm): Record<string, unknown> {
 function doTarget(form: DoForm): Record<string, unknown> | undefined {
   switch (form.kind) {
     case "labels":
-      return form.from === "list" ? { from: form.from, labels: form.labels } : { from: form.from };
+      if (form.from === "list") return { from: form.from, labels: form.labels };
+      return { from: form.from };
     case "assign":
     case "request-review":
       return peopleTarget(form);

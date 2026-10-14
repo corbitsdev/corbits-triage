@@ -172,7 +172,7 @@ test("PostgreSQL: only a member who may manage the workspace reads the teams a c
   expect(await probeResult(admin)).toBe("runs");
 });
 
-test("PostgreSQL: approving needs the approve Do grant on top of use, and pins the review to the head shown", async () => {
+test("PostgreSQL: approving needs the approve Do grant on top of use, and pins the review to the head shown; merging needs the merge grant", async () => {
   const approve = { action: "review", event: "APPROVE", repo: REPO, number: 8, body: "", headSha: HEAD } as const;
   const refused = await prActions(approve, member("usr_user"));
   expect(refused.status).toBe(403);
@@ -182,6 +182,10 @@ test("PostgreSQL: approving needs the approve Do grant on top of use, and pins t
   const approved = await prActions(approve, member("usr_approver"));
   expect(approved.status).toBe(200);
   expect(reviewed).toEqual([{ body: "", event: "APPROVE", commit_id: HEAD }]);
+
+  const merge = await prActions({ action: "merge", repo: REPO, number: 8 }, member("usr_approver"));
+  expect(merge.status).toBe(403);
+  expect(await merge.json()).toEqual({ error: { code: "forbidden", message: "You do not have the grant for this kind of Do in this repository." } });
 });
 
 test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {

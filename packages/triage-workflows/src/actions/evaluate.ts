@@ -1,13 +1,13 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, ownedLabels, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
 import { hasModelChecks, type CheckResult, type DeterministicResult, type PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
-import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
-import { degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
+import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
+import { choiceOver, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 
 /** The rules items, merged with the judge maps' per-chunk outputs, in chunk order, when the judge ran. */
@@ -106,14 +106,14 @@ export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[
   const { facts, det } = it;
   const { plan, focused, requests } = evaluation;
   const model = evaluateModel({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, answers: answersOf(requests, first), plan, focused });
-  if (model.unanswered) return undefined;
+  // A judged rule that failed decides Fail on its own, so the verdict question is not asked.
+  if (model.unanswered || model.checks.some((check) => check.result === "fail")) return undefined;
   return verdictRequest(facts, [...det.checks, ...model.checks].map((c) => policyRule(it.pack!, c)));
 }
 
 /** The verdict question's probabilities from its reply, when it came back whole. */
 function choiceAnswer(request: JudgeRequest, reply: [string, unknown]): Record<VerdictChoice, number> | undefined {
-  const answer = answersOf([request], [reply]).decisions[VERDICT_QUESTION.id];
-  return answer?.type === "choice" ? (answer.probabilities as Record<VerdictChoice, number>) : undefined;
+  return choiceOver(answersOf([request], [reply]).decisions[VERDICT_QUESTION.id], VERDICT_CHOICES);
 }
 
 /** Focused's follow-up requests about the slices its first answers call a separate change, if any. */
@@ -183,8 +183,9 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const feedback = withDos(rendered.feedback, actions);
     // What reading the policy left out is said on every verdict, so the policy can be fixed.
     const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
-    const verdict = { ...stamp(it.facts), ...rendered, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
-    return { ...verdict, request: toMirrorRequest(verdict) };
+    const labels = it.pack ? [it.pack.labels[rendered.verdict]] : rendered.labels;
+    const verdict = { ...stamp(it.facts), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
+    return { ...verdict, request: toMirrorRequest(verdict, it.pack ? ownedLabels(it.pack.labels) : undefined) };
   } catch (e) {
     const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`), automatic: it.automatic ?? [], actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };

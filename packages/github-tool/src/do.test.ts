@@ -34,6 +34,11 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
       review.state = "DISMISSED";
       return Response.json(review);
     }
+    const edited = reviews.find((r) => method === "PUT" && path.endsWith(`/pulls/8/reviews/${r.id}`));
+    if (edited) {
+      edited.body = body.body;
+      return Response.json(edited);
+    }
     if (path.includes("/issues/8/comments?")) return Response.json(comments);
     if (path.endsWith("/issues/8/comments")) {
       comments.push({ id: comments.length + 1, user: APP, body: body.body });
@@ -90,13 +95,13 @@ describe("executeDo", () => {
   });
 
   test("derived labels add what applies and take back what no longer does, once", async () => {
-    const { gh, writes } = fakeGithub({ labels: ["api", "triage: fail"] });
-    const task = step("labels", { labels: ["triage: pass"], unlabel: ["triage: fail", "triage: unsure"] });
+    const { gh, writes } = fakeGithub({ labels: ["api", "Triage: Not Ready"] });
+    const task = step("labels", { labels: ["Triage: Ready"], unlabel: ["Triage: Not Ready", "Triage: Needs Human Review"] });
     expect(await run(gh, task)).toMatchObject({ status: "done" });
     expect(await run(gh, task)).toMatchObject({ status: "satisfied" });
     expect(writes).toEqual([
-      { method: "POST", path: "/repos/acme/widgets/issues/8/labels", body: { labels: ["triage: pass"] } },
-      { method: "DELETE", path: "/repos/acme/widgets/issues/8/labels/triage%3A%20fail", body: null },
+      { method: "POST", path: "/repos/acme/widgets/issues/8/labels", body: { labels: ["Triage: Ready"] } },
+      { method: "DELETE", path: "/repos/acme/widgets/issues/8/labels/Triage%3A%20Not%20Ready", body: null },
     ]);
   });
 
@@ -117,11 +122,16 @@ describe("executeDo", () => {
     expect([...pending.writes, ...changes.writes]).toEqual([]);
   });
 
-  test("triage's own request for changes on an earlier failing head does not stop the passing head's merge; it is taken back first", async () => {
-    const own = { id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "older", body: `${REQUEST_CHANGES_DO_MARKER}\nTriage requests changes:\n- CI: CI failed` };
-    const { gh, writes } = fakeGithub({ approvals: [own] });
-    expect(await run(gh, step("merge", {}))).toMatchObject({ status: "done", result: { merged: true } });
-    expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/reviews/7/dismissals", "PUT /repos/acme/widgets/pulls/8/merge"]);
+  test("triage's own request for changes does not stop a merge: one on this head is taken back first and marked as triage's, one on an earlier head is the mirror's", async () => {
+    const body = `${REQUEST_CHANGES_DO_MARKER}\nTriage requests changes:\n- CI: CI failed`;
+    const earlier = fakeGithub({ approvals: [{ id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "older", body }] });
+    expect(await run(earlier.gh, step("merge", {}))).toMatchObject({ status: "done", result: { merged: true } });
+    expect(earlier.writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/merge"]);
+    const same = fakeGithub({ approvals: [{ id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "abc", body }] });
+    expect(await run(same.gh, step("merge", {}))).toMatchObject({ status: "done" });
+    expect(same.writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/reviews/7/dismissals", "PUT /repos/acme/widgets/pulls/8/reviews/7", "PUT /repos/acme/widgets/pulls/8/merge"]);
+    const again = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
+    expect(await run(same.gh, again)).toMatchObject({ status: "done" });
   });
 
   test("a reviewer requested or reviewed on this head is not asked again", async () => {

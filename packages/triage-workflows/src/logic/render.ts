@@ -1,16 +1,15 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type Rendered, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type Rendered, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
+import { Decision } from "@corbits/system-one";
+import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
 import { hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
-type NoulAnswer = { type: "noul"; noul: number };
-type ChoiceAnswer = { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number };
-/** `legend` names the level each key of `probabilities` stands for. */
-type ScoreAnswer = { type: "score"; score: number; legend: Record<string, string>; probabilities: Record<string, number>; confidence: number };
-type ModelAnswer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
+/** System One's decision; a score's `legend` names the level each key of its `probabilities` stands for. */
+type ModelAnswer = Decision;
 
 export interface ParsedAnswers {
   decisions: Record<string, ModelAnswer>;
@@ -58,34 +57,15 @@ function decisionObjects(text: string): Record<string, unknown>[] | null {
   return decisions;
 }
 
-/** Probabilities over exactly `keys` that sum to about 1, as the backend rounds them. */
-function distribution(probabilities: Record<string, unknown>, keys: string[]): probabilities is Record<string, number> {
-  if (keys.length === 0 || !exactKeys(probabilities, keys) || !keys.every((key) => probability(probabilities[key]))) return false;
-  const sum = keys.reduce((total, key) => total + (probabilities[key] as number), 0);
-  return Math.abs(sum - 1) <= 0.02;
-}
-
 /**
- * A reply is parsed on its own, without its questions: a choice's options are whatever its probabilities name, and a
- * score's levels whatever its legend names. Each rule checks its options or levels when it reads the answer.
+ * A reply is parsed on its own, without its questions, by System One's own decision shape: a choice's options are
+ * whatever its probabilities name, and a score's levels whatever its legend names. Each rule checks its options or
+ * levels when it reads the answer.
  */
 function parseDecision(value: Record<string, unknown>): { id: string; answer: ModelAnswer } | null {
-  if (typeof value.id !== "string") return null;
-  if (value.type === "noul") {
-    if (!exactKeys(value, ["id", "type", "noul"]) || !probability(value.noul)) return null;
-    return { id: value.id, answer: { type: "noul", noul: value.noul } };
-  }
-  if (value.type === "score") {
-    if (!exactKeys(value, ["id", "type", "score", "legend", "probabilities", "confidence"]) || !probability(value.confidence) || !isRecord(value.probabilities) || !isRecord(value.legend)) return null;
-    const { score, legend } = value;
-    const keys = Object.keys(legend);
-    if (!keys.every((key) => typeof legend[key] === "string") || !distribution(value.probabilities, keys) || typeof score !== "number" || !(score >= 0 && score <= keys.length - 1)) return null;
-    return { id: value.id, answer: { type: "score", score, legend: legend as Record<string, string>, probabilities: value.probabilities, confidence: value.confidence } };
-  }
-  if (value.type !== "choice" || !exactKeys(value, ["id", "type", "choice", "probabilities", "confidence"]) || !probability(value.confidence) || !isRecord(value.probabilities)) return null;
-  const { probabilities, choice } = value;
-  if (typeof choice !== "string" || !(choice in probabilities) || !distribution(probabilities, Object.keys(probabilities))) return null;
-  return { id: value.id, answer: { type: "choice", choice, probabilities, confidence: value.confidence } };
+  const decision = Decision(value);
+  if (decision instanceof type.errors) return null;
+  return { id: decision.id, answer: decision };
 }
 
 /** The model may echo a level with other spacing or case. */
@@ -96,13 +76,13 @@ function levelName(level: string): string {
 /** A score answer's probabilities by the level its legend names, when those are exactly `levels`. */
 function levelsOver(answer: ModelAnswer | undefined, levels: readonly string[]): Record<string, number> | undefined {
   if (answer?.type !== "score") return undefined;
-  const byName = new Map(Object.entries(answer.legend).map(([key, level]) => [levelName(level), answer.probabilities[key]!]));
-  if (byName.size !== levels.length || !levels.every((level) => byName.has(levelName(level)))) return undefined;
+  const byName = new Map(Object.entries(answer.legend).map(([key, level]) => [levelName(level), answer.probabilities[key]]));
+  if (byName.size !== levels.length || !levels.every((level) => byName.get(levelName(level)) !== undefined)) return undefined;
   return Object.fromEntries(levels.map((level) => [level, byName.get(levelName(level))!]));
 }
 
 /** The answer's probabilities when they are over exactly `options`. */
-function choiceOver<T extends string>(answer: ModelAnswer | undefined, options: readonly T[]): Record<T, number> | undefined {
+export function choiceOver<T extends string>(answer: ModelAnswer | undefined, options: readonly T[]): Record<T, number> | undefined {
   return answer?.type === "choice" && exactKeys(answer.probabilities, [...options]) ? (answer.probabilities as Record<T, number>) : undefined;
 }
 
@@ -169,7 +149,6 @@ const NOT_APPLICABLE: CheckOutput = { kind: "not-applicable" };
 
 export interface RenderOutput extends Rendered {
   mirror: boolean;
-  /** The verdict's label, which the mirror writes. */
   labels: string[];
   /** Which action list runs on this head. */
   verdict: VerdictWord;
@@ -259,7 +238,7 @@ function answerSet(answers: RenderInput["answers"]): ParsedAnswers {
   const decisions: Record<string, ModelAnswer> = {};
   for (const [id, value] of Object.entries(answers ?? {})) {
     if (!probability(value)) return { decisions: {}, malformed: true };
-    decisions[id] = { type: "noul", noul: value };
+    decisions[id] = { id, type: "noul", noul: value };
   }
   return { decisions, malformed: false };
 }
@@ -596,7 +575,7 @@ function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number 
     ...rendered,
     ...nextStep(checks, ctx.sources, ctx.reviewers, rendered.verdict),
     mirror: rendered.state !== "stale-unknown",
-    labels: [verdictLabel(rendered.verdict)],
+    labels: [VERDICT_LABELS[rendered.verdict]],
     score,
     reasons,
     feedback: authorComment(ctx, checks, rendered.verdict),
@@ -621,6 +600,7 @@ const DECIDED_REASONS: Record<VerdictWord, string> = {
 
 export const RULES_PASS_REASON = "every rule passed, and the policy has no decision-model rule";
 const RULES_UNSURE_REASON = "not every rule could be confirmed, and the policy has no decision-model rule";
+const UNCONFIRMED_REASON = "the decision model passed it, but a judged rule could not be confirmed";
 
 /**
  * A failed hard rule decides Fail without the decision model; a draft or closed pull request is not decided, and is
@@ -640,8 +620,8 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     return { ...verdict, feedback: "" };
   }
   if (!hasModelChecks(det.sources)) {
-    const confirmed = det.checks.every((c) => c.result === "pass");
-    return withChecks({ ...render(confirmed ? "ready-monitoring" : "awaiting-review"), verdict: confirmed ? "pass" : "unsure", degraded: null, reason: confirmed ? RULES_PASS_REASON : RULES_UNSURE_REASON }, checks, null, reasons, ctx);
+    if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
+    return unsureOf(RULES_UNSURE_REASON);
   }
   function unsureOf(reason: string, degraded: RenderOutput["degraded"] = null): RenderOutput {
     return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, null, reasons, ctx);
@@ -649,18 +629,22 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   if (judgeSkipped === true) return unsureOf(NEEDS_JUDGE_REASON);
   if (judgeLimitExceeded === true) return unsureOf(judgeError!);
   if (choiceRefused !== undefined) return unsureOf(choiceRefused);
-  if (judgeError !== undefined || evaluated.unanswered || choice === undefined) return unsureOf(`${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`, "inference-outage");
-  const verdict = decide(choice);
+  const outage = `${UNAVAILABLE_REASON}: ${judgeError ?? "no answer"}`;
+  if (judgeError !== undefined || evaluated.unanswered) return unsureOf(outage, "inference-outage");
+  // A judged rule's own answer decides it, so nothing the pull request says to the verdict question can pass it.
   const failing = evaluated.checks.filter((check) => check.result === "fail").map((check) => reasonOf(check, det.sources));
-  const reason = verdict === "fail" && failing.length ? failing.join("; ") : DECIDED_REASONS[verdict];
-  return withChecks({ ...render(VERDICT_STATES[verdict]), verdict, degraded: null, reason }, checks, choice.pass, reasons, ctx);
+  if (failing.length) return withChecks({ ...render(VERDICT_STATES.fail), verdict: "fail", degraded: null, reason: failing.join("; ") }, checks, null, reasons, ctx);
+  if (choice === undefined) return unsureOf(outage, "inference-outage");
+  const decided = decide(choice);
+  if (decided === "pass" && evaluated.checks.some((check) => check.result === "unconfirmed")) return unsureOf(UNCONFIRMED_REASON);
+  return withChecks({ ...render(VERDICT_STATES[decided]), verdict: decided, degraded: null, reason: DECIDED_REASONS[decided] }, checks, choice.pass, reasons, ctx);
 }
 
 export function degradedVerdict(reason: string): RenderOutput {
   return {
     ...render("stale-unknown"),
     mirror: false,
-    labels: [verdictLabel("unsure")],
+    labels: [VERDICT_LABELS.unsure],
     verdict: "unsure",
     score: null,
     reasons: ["Could not evaluate"],
@@ -697,12 +681,13 @@ export type Verdict = RenderOutput & {
   changesWanted?: boolean;
 };
 
-export function toMirrorRequest(v: RenderOutput & { repo: string; number: number }): MirrorRequest {
+/** `owned` is the labels the mirror takes back: triage's own, and the policy's verdict labels when there is a policy. */
+export function toMirrorRequest(v: RenderOutput & { repo: string; number: number }, owned: readonly string[] = TRIAGE_LABELS): MirrorRequest {
   return {
     repo: v.repo,
     number: v.number,
     labels: v.labels,
-    owned: TRIAGE_LABELS,
+    owned,
     comment: v.feedback,
   };
 }

@@ -13,7 +13,6 @@ const custom: CustomCheck[] = [
 
 const everyDo: Step[] = [
   { do: "labels", target: { from: "list", labels: ["needs-review"] } },
-  { do: "labels", target: { from: "verdict" } },
   { do: "labels", target: { from: "rules" }, for: "maintainers" },
   { do: "assign", target: { to: "users", users: ["octocat"] } },
   { do: "assign", target: { to: "teams", teams: ["core"] } },

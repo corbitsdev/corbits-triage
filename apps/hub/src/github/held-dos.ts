@@ -22,7 +22,8 @@ import { verdictFor } from "./triage-runs.js";
 export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
 
 export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0", effectId: "string > 0", kind: type.enumerated(...ACTION_KINDS, "agent") });
-export const HeldDoSent = type({ status: "'sent'" });
+/** `warning` says when the approved Do runs against its verdict, as a merge on a Fail or Unsure list does. */
+export const HeldDoSent = type({ status: "'sent'", "warning?": "string" });
 
 const StepBase = type({
   list: DoList,
@@ -116,7 +117,9 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
 
     const deployment = newestLive(await deps.liveDeployments(tenantId));
     if (!deployment) return failure(503, "service_not_running", "The pr-triage service is not running.");
-    const logged = { tenantId, principalId, runId, repo, number, effectId: body.effectId, kind: approval.step.kind };
+    const logged = { tenantId, principalId, runId, repo, number, effectId: body.effectId, kind: approval.step.kind, list: approval.list };
+    // A held merge on a Fail or Unsure list may still be approved, and the person approving it is told so.
+    const warning = approval.step.kind === "merge" && approval.list !== "pass" ? `The verdict on this head was ${approval.list}, not pass.` : undefined;
     try {
       await deps.deliver(tenantId, deployment.address, approval);
     } catch (err) {
@@ -126,6 +129,6 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
       return failure(unroutable ? 503 : 502, unroutable ? "service_not_running" : "hub_unavailable", `Could not send the approval: ${errorText(err)}. Try again.`);
     }
     deps.log({ level: "info", msg: "held_do_approved", ...logged });
-    return Response.json({ status: "sent" }, { status: 202 });
+    return Response.json({ status: "sent", ...(warning && { warning }) }, { status: 202 });
   };
 }

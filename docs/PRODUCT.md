@@ -61,7 +61,9 @@ mergeability or CI.
 Built in: Max files changed, Max lines changed, Linked issue, No merge
 conflicts, CI green, No forbidden paths. Two run on every pull request without
 a switch: Not a draft (a draft is never ready) and No changes requested (a
-requested change waits on the author).
+requested change waits on the author). The recommended forbidden paths are
+`vendor/**`, `node_modules/**` and `.github/**`: an author who edits the
+workflows can change which checks run and turn CI green.
 
 Custom rules are decision-model rules only (below). Who opened the pull request
 is a step's **for** (see [Actions](#actions)), not a rule.
@@ -120,12 +122,15 @@ Each pull request head gets one verdict: **Pass**, **Fail** or **Unsure**.
   Choose) never calls the model: every rule passing decides **Pass**, and any
   rule GitHub has not settled yet, such as pending CI, leaves it **Unsure**.
   The verdict's reason says the policy has no decision-model rule.
+- A judged rule that fails decides **Fail** on its own answer, without the
+  verdict question, so nothing the pull request says can talk it into a pass.
 - Otherwise one decision model question decides: does this pull request pass
   this repository's policy? It reads every enabled rule with its result and
   evidence, the judged rules' answers with their probabilities, and the pull
   request's title, body, commits, paths and as much of its diff as fits one
   request. **Pass** at 0.7 or above for pass, **Fail** at 0.7 or above for
-  fail, **Unsure** otherwise. The score shown is the probability of pass.
+  fail, **Unsure** otherwise; a judged rule left unconfirmed turns a pass into
+  **Unsure**. The score shown is the probability of pass.
 - A draft or closed pull request is not decided. A model that does not answer
   leaves the verdict Unsure and Triage re-checks it.
 
@@ -199,24 +204,44 @@ them and react through their own webhooks. Their names are stable:
 
 | Label | When |
 | --- | --- |
-| `triage: pass`, `triage: fail`, `triage: unsure` | The head's verdict. One at a time. |
+| `Triage: Ready` | The head passes. |
+| `Triage: Not Ready` | The head fails. |
+| `Triage: Needs Human Review` | The head is unsure. |
 | `rule: <rule id>` | A built-in or custom rule that failed on the head, such as `rule: docs` or `rule: ci-green`. Not a draft and No changes requested get none. |
 
-A labels step written `{ "from": "verdict" }` sets the verdict label and
-`{ "from": "rules" }` one label per failed rule; each takes back its own labels
-that no longer apply. A `rule: …` label naming no rule of the policy is the
-repository's own and is never taken back. Triage's automatic mirror writes the verdict label too
-when it holds Labels. Labels earlier versions set (`Triage: Needs changes`,
-`Triage: Needs review`, `Triage: Ready to merge` and the `triage:…` state
-labels) are taken back the next time a head is triaged.
+A head carries one verdict label at a time, written by Triage's mirror when the
+`pr-triage` role holds Labels. A policy may name its own label for any verdict,
+up to 50 characters, and the rest keep their defaults:
+
+```json
+"labels": { "pass": "Ready to ship", "fail": "Triage: Not Ready", "unsure": "Triage: Needs Human Review" }
+```
+
+The mirror takes back a verdict label that no longer applies: the three
+defaults, the policy's own and the labels earlier versions set
+(`Triage: Needs changes`, `Triage: Needs review`, `Triage: Ready to merge` and
+the `triage:…` state labels). Rule labels come from a labels step,
+`{ "do": "labels", "target": { "from": "rules" } }`, and like a fixed list of
+labels it can be a step of any list and for any author. It takes back `rule: …`
+for the built-in rules and the policy's custom rules that no longer fail; a
+`rule: …` label naming no rule of the policy, and any other label, is the
+repository's own. Both writers add and remove labels the same way, ignoring
+case.
 
 ### Stored policies
 
-A policy saved before verdicts with no actions (`"actions": []`) reads as empty
-lists. Any other shape from before steps, and any custom rule over GitHub data,
-makes the policy unreadable with a message saying what to remove. Repository
-roles were removed: a step whose target is a role is left out, and every
-verdict's reasons name it.
+Policies are `schemaVersion` 2. A version 1 policy with no actions
+(`"actions": []`, as one saved before verdicts holds) reads as version 2 and is
+saved as one next time; a version 1 policy with actions, any other shape from
+before steps, and any custom rule over GitHub data make the policy unreadable
+with a message saying what changed. Repository roles were removed: a step whose
+target is a role is left out, and every verdict's reasons name it.
+
+Policy text reaches the decision model and GitHub, so names, claims, subjects,
+levels, options, labels, teams and people are kept to one line (line breaks and
+control characters become spaces), up to 500 characters, 50 for a label. A
+comment keeps its line breaks and drops other control characters. A verdict
+list holds at most 20 steps, and a list of labels, people or teams at most 50.
 
 ## Triage over time
 

@@ -4,30 +4,9 @@ import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type CustomChec
 import type { DeterministicResult, PrFacts, PrFileFacts } from "./checks.js";
 import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
 import { globMatch } from "./glob.js";
+import type { BooleanQuestion, ChoiceQuestion, ScoreQuestion } from "@corbits/system-one";
 
-interface BooleanQualityQuestion {
-  id: string;
-  type: "boolean";
-  instructions: string;
-}
-
-/** A custom choose rule's options need no description, so theirs are null. */
-interface ChoiceQualityQuestion {
-  id: string;
-  type: "choice";
-  instructions: string;
-  criteria: Record<FocusedChoice, string> | Record<SliceChoice, string> | Record<VerdictChoice, string> | Record<string, null>;
-}
-
-/** Ordered levels, worst first; the answer is a position across them. */
-interface ScoreQualityQuestion {
-  id: string;
-  type: "score";
-  instructions: string;
-  criteria: string[];
-}
-
-export type QualityQuestion = BooleanQualityQuestion | ChoiceQualityQuestion | ScoreQualityQuestion;
+export type QualityQuestion = BooleanQuestion | ChoiceQuestion | ScoreQuestion;
 
 export const FOCUSED_CHOICES = ["one_thing", "more_than_one_thing", "cant_tell"] as const;
 export type FocusedChoice = typeof FOCUSED_CHOICES[number];
@@ -39,10 +18,10 @@ export const VERDICT_CHOICES = ["pass", "fail", "cant_tell"] as const;
 export type VerdictChoice = typeof VERDICT_CHOICES[number];
 
 /** The question that decides the verdict once no hard rule failed; its id is apart from every rule's, so rule answers keep their keys. */
-export const VERDICT_QUESTION: ChoiceQualityQuestion = {
+export const VERDICT_QUESTION: ChoiceQuestion = {
   id: "verdict",
   type: "choice",
-  instructions: "Does this pull request pass this repository's policy? `policy.rules` lists every rule the repository enabled with its result and evidence; a judged rule's `pass` is how likely it passes. Judge by those results and by the pull request's title, body, commits, changed paths and the diff in `pullRequest.files`. A rule whose result is fail means the pull request fails, unless the pull request plainly shows the rule does not apply to it.",
+  instructions: "Does this pull request pass this repository's policy? `policy.rules` lists every rule the repository enabled with its result and evidence; a judged rule's `pass` is how likely it passes. Judge by those results and by the pull request's title, body, commits, changed paths and the diff in `pullRequest.files`. A rule whose result is fail means the pull request fails.",
   criteria: {
     pass: "No rule fails, anything unconfirmed is minor, and nothing in the pull request breaks the policy.",
     fail: "A rule fails, or the pull request clearly breaks the policy in a way its rules describe.",
@@ -51,7 +30,7 @@ export const VERDICT_QUESTION: ChoiceQualityQuestion = {
 };
 
 /** Focused asks about the whole pull request when its diff fits one request: a change across many files is still one thing. */
-const FOCUSED_QUESTION: ChoiceQualityQuestion = {
+const FOCUSED_QUESTION: ChoiceQuestion = {
   id: "focused",
   type: "choice",
   instructions: "Does this pull request do one thing, or more than one thing? Judge by its title, body, commits, changed paths and the diff in `pullRequest.files`. The code, tests, docs, types and wiring one change needs across files and packages are one thing, and so are several steps toward the same goal.",
@@ -63,7 +42,7 @@ const FOCUSED_QUESTION: ChoiceQualityQuestion = {
 };
 
 /** A diff too large for one request is judged in slices, each asked whether it serves the pull request's one purpose. */
-function sliceQuestion(id: string): ChoiceQualityQuestion {
+function sliceQuestion(id: string): ChoiceQuestion {
   return {
     id,
     type: "choice",

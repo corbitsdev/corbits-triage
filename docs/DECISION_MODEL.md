@@ -56,7 +56,7 @@ Questions point into the state by path, such as `` `pullRequest.files[3].hunks[0
   - `score`: one Score question, `<name>: Which level, worst first, best describes the pull request for <subject>?`, with the rule's levels as its criteria. The likeliest level is the answer, recorded as the rule's evidence and output (`{ kind: "level" }`) and given to the verdict question as the rule's `level`. Without `failBelow` it passes; with it, it fails when the levels below `failBelow` hold P ≥ 0.7, passes when they hold P ≤ 0.3, and is unconfirmed between.
   - `choose`: one Choice question, `<name>: Which option best describes the pull request?`, with the rule's options as criteria (no descriptions). The likeliest option is its evidence; it fails when the `failOn` options hold P ≥ 0.7, passes at P ≤ 0.3, and is unconfirmed between.
   - A reply is parsed on its own, as before: a choice's options are whatever its probabilities name and a score's levels whatever its legend names. Each rule then checks the answer is over its own options or levels, and treats one that is not as unanswered.
-- **Verdict**: a policy with no decision-model rule on (no focused, docs, is-true, score or choose) is decided in code: every rule passing is Pass and any unconfirmed is Unsure, with a reason saying the policy has no decision-model rule (`renderVerdict`, `logic/render.ts`). Otherwise, once no hard rule failed and the judged rules are answered, one Choice, question id `verdict`: "Does this pull request pass this repository's policy?", `pass`, `fail` or `cant_tell`; a rule whose result is fail means the pull request fails unless it plainly does not apply. Its state is `policy.rules`, every enabled rule with its result, reason and evidence and, for a judged rule, `pass`, how likely it passes, and for a score rule, `level`; and the pull request's metadata as focused reads it, with as many judged files as fit one request, packed in order as focused's first slice is. It is not asked when a first-round call failed or left a rule unanswered, since the verdict degrades anyway. Its own key keeps the rules' answers reusable under theirs (`verdictRequest`, `logic/quality.ts`; `choiceOf`, `actions/evaluate.ts`).
+- **Verdict**: a policy with no decision-model rule on (no focused, docs, is-true, score or choose) is decided in code: every rule passing is Pass and any unconfirmed is Unsure, with a reason saying the policy has no decision-model rule (`renderVerdict`, `logic/render.ts`). A judged rule that fails decides Fail on its own answer, and the verdict question is not asked, so pull request text cannot argue a failed rule into a pass. Otherwise, once no hard rule failed and the judged rules are answered and pass or stay unconfirmed, one Choice, question id `verdict`: "Does this pull request pass this repository's policy?", `pass`, `fail` or `cant_tell`. A pass with any judged rule unconfirmed is Unsure. Its state is `policy.rules`, every enabled rule with its result, reason and evidence and, for a judged rule, `pass`, how likely it passes, and for a score rule, `level`; and the pull request's metadata as focused reads it, with as many judged files as fit one request, packed in order as focused's first slice is. It is not asked when a first-round call failed or left a rule unanswered, since the verdict degrades anyway. Its own key keeps the rules' answers reusable under theirs (`verdictRequest`, `logic/quality.ts`; `choiceOf`, `actions/evaluate.ts`).
 
 ## Writing questions
 
@@ -75,13 +75,13 @@ Rules learned while tuning, which match TypeSafe's [jagged edges](https://docs.t
 From `logic/render.ts`:
 
 - **Noul**: P ≥ 0.7 decides yes, P ≤ 0.3 decides no; anything between is unconfirmed ("not enough evidence to decide") and asks a maintainer to confirm.
-- **Verdict**: P(pass) ≥ 0.7 is Pass, P(fail) ≥ 0.7 is Fail, anything else is Unsure. No setting changes these.
+- **Verdict**: P(pass) ≥ 0.7 is Pass, unless a judged rule is unconfirmed, which makes it Unsure; P(fail) ≥ 0.7 is Fail; anything else is Unsure. No setting changes these.
 - **Focused**: any slice with `more_than_one_thing` or `separate_change` ≥ 0.6 fails it. Otherwise an unread file leaves it unconfirmed, every slice with `one_thing` or `serves_purpose` ≥ 0.6 passes it, and anything else is unconfirmed. A failure names up to 3 files whose separate-change Noul is ≥ 0.7, most likely first; when none is, it fails without naming files.
 
 Two different numbers come out of the answers:
 
 - **Rule score** (`packages/triage-contracts/src/check-output.ts`): per is-true, docs and focused rule, 0–100 and unrounded, how likely the rule is fine, with `passAt` 70 (docs, custom) or 60 (focused). It clears `passAt` exactly when the rule passes. Docs scores 1 − P(needs docs) of the weakest file; is-true rules P(meets the rule); focused the least P(`one_thing` or `serves_purpose`) over its slices. A score rule reports its `level`, a choose rule its chosen option; a rule with no score reports `met`, `not-applicable` or `could-not-check` with a reason.
-- **Verdict score**: per pull request, the verdict question's P(pass), shown out of 100. A verdict a failed hard rule decided has none.
+- **Verdict score**: per pull request, the verdict question's P(pass), shown out of 100. A verdict a failed hard or judged rule decided has none.
 
 ## Budgets and limits
 
@@ -157,6 +157,8 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 | definition on the local runner (CL-10638), run 2 | 2026-10-13 | 7, all unsure | 0 | 2, none unsure |
 | definition on the local runner (CL-10638), run 3 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
 | author rules removed from the verdict question (CL-10611) | 2026-10-13 | 5 | 0 | 2 (186-no-docs, 187-no-docs), none unsure |
+| a failed judged rule decides Fail, an unconfirmed one blocks Pass, run 1 | 2026-10-13 | 5 | 0 | 4, all unsure (108, 113, 186-no-docs, 187-no-docs) |
+| same, run 2 | 2026-10-13 | 6 | 0 | 5, all unsure (106, 108, 186-no-docs, 187-no-docs, 190) |
 
 These cover one repository's pull requests. Custom rules and other repositories are unmeasured.
 

@@ -3,7 +3,9 @@ import { asRecord, asRepo } from "@corbits/common";
 import type { AuthorAssociation } from "./repo-policy.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
-export const CHECK_PACK_SCHEMA_VERSION = 1;
+/** Version 2 holds steps, model-only custom rules and verdict labels; version 1 is read only when it held no actions. */
+export const CHECK_PACK_SCHEMA_VERSION = 2;
+export const LEGACY_SCHEMA_VERSION = 1;
 export const CUSTOM_CHECK_CAP = 8;
 
 export const CHECK_PACK_GROUPS = ["pull-request", "issue", "around", "code-vs-ci"] as const;
@@ -91,7 +93,8 @@ export function currentRows(check: string, evidence: readonly string[] = []): Ar
 export const CLOSED_FINDING = "state";
 
 export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
-export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**"] } as const;
+// An author who edits `.github/**` can change which checks run and turn CI green.
+export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**", ".github/**"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
 
 export type CatalogCheck = {
@@ -146,7 +149,6 @@ export type CustomCheck = { id: string; name: string; group: CheckPackGroup; ena
 
 const LEVELS_MIN = 2;
 const LEVELS_MAX = 10;
-/** The levels a new score rule starts with. */
 export const DEFAULT_SCORE_LEVELS = ["poor", "fair", "good", "great"] as const;
 const GLOB_MAX = 200;
 const GLOBS_MAX = 50;
@@ -191,6 +193,11 @@ export const TRIAGE_EVENTS = [
 export type TriageEvent = (typeof TRIAGE_EVENTS)[number];
 
 const COMMENT_BODY_MAX = 65536;
+const LINE_MAX = 500;
+// GitHub refuses a label name longer than this.
+const LABEL_MAX = 50;
+const LIST_MAX = 50;
+const STEPS_MAX = 20;
 
 /** A built-in rule, the not-a-draft rule or a custom rule's id. */
 export type CheckRef = string;
@@ -203,8 +210,11 @@ export type PolicyEvent = (typeof POLICY_EVENTS)[number];
 export const VERDICTS = ["pass", "fail", "unsure"] as const;
 export type VerdictWord = (typeof VERDICTS)[number];
 
-/** `verdict` labels the verdict and `rules` each failed rule (`verdictLabel`, `ruleLabel`). */
-export type LabelsTarget = { from: "list"; labels: string[] } | { from: "verdict" } | { from: "rules" };
+/** Each verdict's label unless the policy names its own. */
+export const VERDICT_LABELS: Record<VerdictWord, string> = { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" };
+
+/** `rules` labels each failed rule (`ruleLabel`); the verdict's label is the policy's `labels`, which the mirror writes. */
+export type LabelsTarget = { from: "list"; labels: string[] } | { from: "rules" };
 export type PeopleTarget =
   | { to: "users"; users: string[] }
   | { to: "teams"; teams: string[] }
@@ -236,6 +246,8 @@ export type CheckPack = {
   checks: Partial<Record<CatalogId, CatalogCheck>>;
   custom: CustomCheck[];
   actions: PolicyActions;
+  /** The label the mirror writes for each verdict, so tools watching GitHub can react to it. */
+  labels: Record<VerdictWord, string>;
   /** What reading the stored policy left out because it no longer runs; each verdict says so. Never read back. */
   dropped?: string[];
 };
@@ -245,8 +257,9 @@ export function defaultActions(): PolicyActions {
   return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [{ do: "request-review", target: { to: "codeowners" } }] };
 }
 
-const Text = type(/\S/);
-const Texts = Text.array().atLeastLength(1);
+const Text = type(/\S/).atMostLength(LINE_MAX);
+const Label = type(/\S/).atMostLength(LABEL_MAX);
+const Texts = Text.array().atLeastLength(1).atMostLength(LIST_MAX);
 const RepoName = type(/^\s*(?!.*\.\.)(?!\.\/)[^\s\\/]+\/(?!\.\s*$)[^\s\\/]+\s*$/);
 
 const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
@@ -259,14 +272,14 @@ const STEP_BASE = { "+": "reject", "for?": StepForSchema } as const;
 const StepSchema = type({
   ...STEP_BASE,
   do: "'labels'",
-  target: type({ "+": "reject", from: "'list'", labels: Texts }).or({ "+": "reject", from: "'verdict' | 'rules'" }),
+  target: type({ "+": "reject", from: "'list'", labels: Label.array().atLeastLength(1).atMostLength(LIST_MAX) }).or({ "+": "reject", from: "'rules'" }),
 })
   .or({ ...STEP_BASE, do: "'assign'", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
   .or({ ...STEP_BASE, do: "'request-review'", target: ReviewTargetSchema })
-  .or({ ...STEP_BASE, do: "'comment'", target: { "+": "reject", body: Text } })
+  .or({ ...STEP_BASE, do: "'comment'", target: { "+": "reject", body: type(/\S/).atMostLength(COMMENT_BODY_MAX) } })
   .or({ ...STEP_BASE, do: "'approve' | 'merge' | 'close' | 'request-changes' | 'nothing'" });
 
-const DoList = StepSchema.array();
+const DoList = StepSchema.array().atMostLength(STEPS_MAX);
 
 /** Packs written before verdicts stored an empty list of actions, which reads as no steps. */
 const PolicyActionsSchema = type({
@@ -307,6 +320,7 @@ export const checkPackSchema = type({
   "checks?": CatalogChecksSchema,
   "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
   "actions?": PolicyActionsSchema,
+  "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
@@ -356,6 +370,7 @@ export function emptyPack(repo: string): CheckPack {
     checks: {},
     custom: [],
     actions: defaultActions(),
+    labels: { ...VERDICT_LABELS },
   };
 }
 
@@ -440,19 +455,31 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], where: s
   throw new Error(`${where} must be one of ${allowed.join(", ")}.`);
 }
 
-function text(value: unknown, where: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${where} must be a non-empty string.`);
-  return value.trim();
+/** Policy text reaches the decision model and GitHub, so a single-line field keeps no line breaks or control characters. */
+function text(value: unknown, where: string, max = LINE_MAX): string {
+  const line = typeof value === "string" ? value.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim() : "";
+  if (!line) throw new Error(`${where} must be a non-empty string.`);
+  if (line.length > max) throw new Error(`${where} must be at most ${max} characters.`);
+  return line;
+}
+
+/** A comment keeps its line breaks and tabs, and drops every other control character. */
+function prose(value: unknown, where: string): string {
+  const body = typeof value === "string" ? value.replace(/[^\P{Cc}\n\t]|\p{Cf}/gu, "").trim() : "";
+  if (!body) throw new Error(`${where} must be a non-empty string.`);
+  if (body.length > COMMENT_BODY_MAX) throw new Error(`${where} must be at most ${COMMENT_BODY_MAX} characters.`);
+  return body;
 }
 
 function list(value: unknown, where: string): unknown[] {
   if (!Array.isArray(value) || value.length === 0) throw new Error(`${where} must be a non-empty list.`);
+  if (value.length > LIST_MAX) throw new Error(`${where} must list at most ${LIST_MAX}.`);
   return value;
 }
 
-function texts(value: unknown, where: string): string[] {
+function texts(value: unknown, where: string, max = LINE_MAX): string[] {
   const out = new Set<string>();
-  for (const item of list(value, where)) out.add(text(item, where));
+  for (const item of list(value, where)) out.add(text(item, where, max));
   return [...out];
 }
 
@@ -535,13 +562,13 @@ function parseCustom(raw: unknown): CustomCheck[] {
 }
 
 function parseLabelsTarget(target: Record<string, unknown>, where: string): LabelsTarget {
-  const from = oneOf(target.from, ["list", "verdict", "rules"] as const, `${where} from`);
+  const from = oneOf(target.from, ["list", "rules"] as const, `${where} from`);
   if (from !== "list") {
     exactKeys(target, ["from"], where);
     return { from };
   }
   exactKeys(target, ["from", "labels"], where);
-  return { from, labels: texts(target.labels, `${where} labels`) };
+  return { from, labels: texts(target.labels, `${where} labels`, LABEL_MAX) };
 }
 
 function parsePeopleTarget(target: Record<string, unknown>, allowAuthor: boolean, where: string): PeopleTarget {
@@ -586,8 +613,7 @@ function parseStep(row: Record<string, unknown>, where: string): Step {
     case "comment": {
       const target = record(row.target, at);
       exactKeys(target, ["body"], at);
-      const body = text(target.body, `${at} body`);
-      if (body.length > COMMENT_BODY_MAX) throw new Error(`${at} body must be at most ${COMMENT_BODY_MAX} characters.`);
+      const body = prose(target.body, `${at} body`);
       return { do: kind, target: { body }, ...step };
     }
     case "approve":
@@ -603,6 +629,7 @@ function parseStep(row: Record<string, unknown>, where: string): Step {
 /** Repository roles were removed, so a step for one is left out and named in `dropped`. */
 function parseList(raw: unknown, where: string, dropped: string[]): Step[] {
   if (!Array.isArray(raw)) throw new Error(`${where} must be a list.`);
+  if (raw.length > STEPS_MAX) throw new Error(`${where} must list at most ${STEPS_MAX} steps.`);
   return raw.flatMap(function stepAt(item, i) {
     const at = `${where} ${i + 1}`;
     const row = record(item, at);
@@ -630,6 +657,15 @@ function distinctSteps(steps: Step[]): Step[] {
   });
 }
 
+/** A verdict the policy names no label for keeps its default. */
+function parseLabels(raw: unknown): Record<VerdictWord, string> {
+  if (raw === undefined) return { ...VERDICT_LABELS };
+  const row = record(raw, "labels");
+  const extra = Object.keys(row).filter((key) => !(VERDICTS as readonly string[]).includes(key));
+  if (extra.length) throw new Error(`labels must set only pass, fail or unsure, not ${extra.join(", ")}.`);
+  return Object.fromEntries(VERDICTS.map((verdict) => [verdict, row[verdict] === undefined ? VERDICT_LABELS[verdict] : text(row[verdict], `labels ${verdict}`, LABEL_MAX)])) as Record<VerdictWord, string>;
+}
+
 /** Packs written before verdicts stored an empty list of actions; one that is not empty is no longer read. */
 function parseActions(raw: unknown, dropped: string[]): PolicyActions {
   if (raw === undefined || (Array.isArray(raw) && raw.length === 0)) return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] };
@@ -653,12 +689,19 @@ function parseJson(value: unknown): unknown {
   }
 }
 
+/** A version 1 pack reads as version 2 only when it held no actions, since its actions were Dos rather than steps. */
+function refuseLegacyActions(actions: unknown): void {
+  if (actions === undefined || (Array.isArray(actions) && actions.length === 0)) return;
+  throw new Error("schemaVersion 1 held actions as Dos ({ kind, target }); schemaVersion 2 holds steps ({ do, target?, for? }) and verdict labels. Save the policy again from the portal.");
+}
+
 /** Reads a stored pack, throwing an Error whose message says why it is rejected. */
 export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const body = asRecord(parseJson(raw));
   if (!body) throw new Error("Policy must be an object.");
   if (body.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
-  if (body.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
+  if (body.schemaVersion === LEGACY_SCHEMA_VERSION) refuseLegacyActions(body.actions);
+  else if (body.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
   const repo = asRepo(body.repo);
   if (!repo) throw new Error("repo must be owner/name.");
   if (expectedRepo !== undefined && asRepo(expectedRepo) !== repo) throw new Error(`repo must be ${expectedRepo}.`);
@@ -677,17 +720,13 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const dropped: string[] = [];
   const custom = parseCustom(body.custom);
   const actions = parseActions(body.actions, dropped);
-  return { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, ...(dropped.length > 0 && { dropped }) };
+  const labels = parseLabels(body.labels);
+  return { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels, ...(dropped.length > 0 && { dropped }) };
 }
 
-/** The verdict label the verdict's labels step writes, which tools watching GitHub react to. */
-export function verdictLabel(verdict: VerdictWord): string {
-  return `triage: ${verdict}`;
-}
 
 const RULE_LABEL_PREFIX = "rule: ";
 
-/** The label a labels step writes for a rule that failed. */
 export function ruleLabel(id: string): string {
   return `${RULE_LABEL_PREFIX}${id}`;
 }

@@ -94,7 +94,7 @@ one does.
    and resolves the verdict's list of steps when the policy's When is woken, skipping each step not for the pull request's author.
 7. **execute**: runs the Dos whose kind the `pr-triage` role holds on GitHub.
    Every other Do is held in the verdict (`held: true`) and the run finishes.
-8. **mirror**: writes the verdict label (`triage: pass|fail|unsure`) when the `pr-triage` role holds the
+8. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`) when the `pr-triage` role holds the
    labels grant, and one marker comment when it holds the comment grant.
 
 The hub reads which kinds the `pr-triage` system role is granted, `invoke` on

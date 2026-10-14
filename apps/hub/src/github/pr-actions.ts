@@ -19,6 +19,7 @@ import { TRIAGE_LABELS, type ActionKind } from "@corbits/triage-contracts";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, doRefused, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import { GITHUB_VERB, githubFailed } from "./github-refusal.js";
+import { logJson } from "./bridge.js";
 
 export const GITHUB_PR_ACTIONS_PATH = "/api/integrations/github-actions";
 
@@ -72,8 +73,8 @@ async function runAction(gh: GithubFetch, body: typeof ActionBody.infer) {
   }
 }
 
-/** The Do kind whose grant a direct action needs; triage's reply is a comment, and merging is not a Do. */
-function doKind(body: typeof ActionBody.infer): ActionKind | undefined {
+/** The Do kind whose grant a direct action needs; triage's reply is a comment. */
+function doKind(body: typeof ActionBody.infer): ActionKind {
   switch (body.action) {
     case "comment":
     case "reply":
@@ -82,11 +83,10 @@ function doKind(body: typeof ActionBody.infer): ActionKind | undefined {
     case "assign":
     case "request-review":
     case "close":
+    case "merge":
       return body.action;
     case "review":
       return body.event === "APPROVE" ? "approve" : "request-changes";
-    case "merge":
-      return undefined;
   }
 }
 
@@ -96,8 +96,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
   return async function handle(body: typeof ActionBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const appJson = await githubAppCredential(deps, principalId, tenantId, "use");
     if (appJson instanceof Response) return appJson;
-    const kind = doKind(body);
-    const refused = kind && (await doRefused(deps, principalId, tenantId, body.repo, kind));
+    const refused = await doRefused(deps, principalId, tenantId, body.repo, doKind(body));
     if (refused) return refused;
     const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
 
@@ -105,11 +104,11 @@ export function createGithubPrActions(deps: PortalCredentialDeps & { githubApiOr
       const { repo, number } = body;
       const result = await runAction(gh, body);
       if (result instanceof Response) return result;
-      console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number }));
+      logJson({ level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number });
       return Response.json(result);
     } catch (err) {
       const message = errorText(err);
-      console.log(JSON.stringify({ ts: new Date().toISOString(), level: "warn", msg: "github_pr_action_failed", tenantId, action: body.action, repo: body.repo, number: body.number, error: message }));
+      logJson({ level: "warn", msg: "github_pr_action_failed", tenantId, action: body.action, repo: body.repo, number: body.number, error: message });
       return githubFailed(`${GITHUB_VERB[body.action]} ${body.repo}#${body.number}`, err);
     }
   };

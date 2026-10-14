@@ -249,7 +249,6 @@ const CI_TEXT: Record<CiState, string> = {
   none: "There is no CI on this head",
 };
 
-/** Why a merge waits on CI. */
 export function ciRefusal(ci: CiState): string {
   return CI_TEXT[ci];
 }
