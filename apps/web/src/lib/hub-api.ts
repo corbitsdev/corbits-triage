@@ -53,9 +53,12 @@ type WorkspaceAccess = MemberAccess | InvitedAccess | { kind: "none" };
 
 type Page<T> = { data: T[]; nextCursor: string | null };
 
+export type RepoSource = "github" | "bitbucket-datacenter";
+
 export type RepoRecord = {
   name: string;
   connected: boolean;
+  source: RepoSource;
   installationId?: number;
   account?: string;
   installationUrl?: string;
@@ -276,7 +279,10 @@ export async function patchAppConfig(
 
 export function reposFromConfig(config: unknown): RepoRecord[] {
   const repos = appConfig(config).repos;
-  if (!Array.isArray(repos)) return [];
+  return Array.isArray(repos) ? repoRecords(repos) : [];
+}
+
+function repoRecords(repos: unknown[]): RepoRecord[] {
   const parsed: RepoRecord[] = [];
   for (const row of repos) {
     if (!row || typeof row !== "object") continue;
@@ -288,9 +294,12 @@ export function reposFromConfig(config: unknown): RepoRecord[] {
     const account = (row as { account?: unknown }).account;
     const installationUrl = (row as { installationUrl?: unknown }).installationUrl;
     const selection = (row as { selection?: unknown }).selection;
+    // Records written before Bitbucket Data Center carry no source; they are all GitHub's.
+    const source: RepoSource = (row as { source?: unknown }).source === "bitbucket-datacenter" ? "bitbucket-datacenter" : "github";
     parsed.push({
       name,
       connected,
+      source,
       ...repoPolicy(row),
       ...(typeof installationId === "number" ? { installationId } : {}),
       ...(typeof account === "string" ? { account } : {}),
@@ -1508,3 +1517,67 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
   }
 }
 
+
+export type BitbucketDatacenterConnection = { baseUrl: string; hookUrl: string };
+
+export type BitbucketDatacenterEnabled =
+  | { webhook: "created"; hookUrl: string }
+  | { webhook: "manual"; hookUrl: string; hookSecret: string; events: string[] };
+
+/** The hub's refusals as sentences; any other refusal keeps the hub's own text. */
+const BITBUCKET_DATACENTER_REFUSALS: Record<string, string> = {
+  bitbucket_datacenter_token_invalid: "Bitbucket Data Center did not accept this token. Check it has not expired and has project read and repository write.",
+  not_bitbucket_datacenter: "This URL does not answer as a Bitbucket Data Center instance. Check the instance URL.",
+  bitbucket_datacenter_connected_elsewhere: "This workspace is connected to another Bitbucket Data Center instance with repositories recorded. Disconnect it first.",
+  bitbucket_datacenter_unreachable: "The hub could not reach this Bitbucket Data Center instance. Check the URL and that the hub can reach it.",
+  repo_empty: "This repository has no default branch yet. Push a first commit, then turn on triage.",
+  repo_name_taken: "A GitHub repository in this workspace has the same name, so this one cannot be triaged.",
+};
+
+/** The hub takes a mutation only as JSON from the portal, so bodiless ones send `{}`. */
+async function bitbucketDatacenter<T>(transport: Transport, method: string, tenantId: string, path: string, body?: unknown): Promise<T> {
+  try {
+    return await transport.fetch<T>(method, `/api/integrations/bitbucket-datacenter/${enc(requireTenantId(tenantId))}${path}`, body);
+  } catch (cause) {
+    const plain = cause instanceof ApiError ? BITBUCKET_DATACENTER_REFUSALS[cause.code] : undefined;
+    throw plain === undefined ? cause : new Error(plain);
+  }
+}
+
+function bitbucketDatacenterRepoPath(repo: string): string {
+  const [project, slug] = validateRepo(repo).split("/");
+  return `/repositories/${enc(project!)}/${enc(slug!)}`;
+}
+
+/** Null when the workspace has no Bitbucket Data Center connection. */
+export async function loadBitbucketDatacenterConnection(transport: Transport, tenantId: string): Promise<BitbucketDatacenterConnection | null> {
+  try {
+    return await bitbucketDatacenter<BitbucketDatacenterConnection>(transport, "GET", tenantId, "/connection");
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 404) return null;
+    throw cause;
+  }
+}
+
+export async function connectBitbucketDatacenter(transport: Transport, tenantId: string, input: { baseUrl: string; token: string }): Promise<BitbucketDatacenterConnection> {
+  return bitbucketDatacenter<BitbucketDatacenterConnection>(transport, "PUT", tenantId, "/connection", input);
+}
+
+/** Answers the repositories whose webhook could not be removed and must be deleted on the instance. */
+export async function disconnectBitbucketDatacenter(transport: Transport, tenantId: string): Promise<{ webhooksLeft: string[] }> {
+  return bitbucketDatacenter<{ webhooksLeft: string[] }>(transport, "DELETE", tenantId, "/connection", {});
+}
+
+export async function listBitbucketDatacenterRepositories(transport: Transport, tenantId: string): Promise<RepoRecord[]> {
+  const body = await bitbucketDatacenter<{ repositories: unknown[] }>(transport, "GET", tenantId, "/repositories");
+  return repoRecords(body.repositories);
+}
+
+export async function enableBitbucketDatacenterRepository(transport: Transport, tenantId: string, repo: string): Promise<BitbucketDatacenterEnabled> {
+  return bitbucketDatacenter<BitbucketDatacenterEnabled>(transport, "POST", tenantId, `${bitbucketDatacenterRepoPath(repo)}/enable`, {});
+}
+
+/** `webhookLeft` is true when the webhook triage created could not be removed. */
+export async function disableBitbucketDatacenterRepository(transport: Transport, tenantId: string, repo: string): Promise<{ webhookLeft: boolean }> {
+  return bitbucketDatacenter<{ webhookLeft: boolean }>(transport, "POST", tenantId, `${bitbucketDatacenterRepoPath(repo)}/disable`, {});
+}
