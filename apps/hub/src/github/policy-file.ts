@@ -87,9 +87,19 @@ function withoutMarker(metadata: unknown): Record<string, unknown> {
 const NOT_A_FILE = `${POLICY_FILE_PATH} is not a file.`;
 
 export function createPolicyFile(deps: PolicyFileDeps) {
+  /** A Bitbucket repository the token sees has no record until it is enabled, so rules can be written for it first, as for GitHub. */
+  async function visibleBitbucketRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
+    const bb = await deps.tenantBitbucket(tenantId);
+    if (!bb) return undefined;
+    const res = await bb(bitbucket.repoPath(repo), { headers: { accept: "application/json" } });
+    if (res.status === 404) return undefined;
+    if (!res.ok) throw new Error(`bitbucket GET ${bitbucket.repoPath(repo)} -> ${res.status}`);
+    return { name: repo, source: "bitbucket-datacenter", connected: true };
+  }
+
   async function connectedRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
-    return repoRecords(triageNs(tenant?.config)).find((row) => row.name === repo && row.connected);
+    return repoRecords(triageNs(tenant?.config)).find((row) => row.name === repo && row.connected) ?? visibleBitbucketRecord(tenantId, repo);
   }
 
   async function repoGithub(tenantId: string, record: RepoRecord): Promise<GithubFetch> {
