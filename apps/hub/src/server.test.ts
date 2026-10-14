@@ -12,7 +12,7 @@ import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
 import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
-import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage";
+import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage-github";
 import { verdictRecord } from "./github/verdict-record-store.js";
 import { ensureTriageRole } from "./github/automation.js";
 import { homedir, tmpdir } from "node:os";

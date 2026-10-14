@@ -64,6 +64,7 @@ test("a tenant whose logs cannot be read is retried with backoff, logged once pe
       },
     },
     activeTenants: async (what) => (what === "deployments" ? [bad, good] : []),
+    endedWithinMs: 4_000,
     backoffMs: 2_000,
     maxBackoffMs: 8_000,
     now: () => new Date(now),
@@ -106,4 +107,29 @@ test("the version moves when a verdict's detail changes, and again after a read 
   records = true;
   await observer.observe("t", "t.test");
   expect(versions.get("t")).toBe(3);
+});
+
+test("a tenant whose child run ended since the last pass is read, as one with a run in flight is, so a run inserted already completed is recorded promptly", async () => {
+  let now = 10_000;
+  const reads: string[] = [];
+  const ended = { id: "bb", domain: "bb.test" };
+  const recording = createRecordPass({
+    observer: {
+      async observe(tenantId) {
+        reads.push(tenantId);
+        return { deployments: [], observed: [] };
+      },
+    },
+    activeTenants: async (what, endedSince) => (what === "runs" && endedSince !== undefined && endedSince.getTime() <= 8_000 ? [ended] : []),
+    endedWithinMs: 4_000,
+    backoffMs: 2_000,
+    maxBackoffMs: 8_000,
+    now: () => new Date(now),
+    log: () => {},
+  });
+  await recording.pass();
+  expect(reads).toEqual(["bb"]);
+  now = 14_000;
+  await recording.pass();
+  expect(reads).toEqual(["bb"]);
 });
