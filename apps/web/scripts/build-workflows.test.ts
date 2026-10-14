@@ -32,6 +32,8 @@ test("packs each workflow deterministically, importing the host tools instead of
     await tar.x({ file: path.join(scratch, "a", packed.filename), cwd: extracted });
     const manifest = JSON.parse(await readFile(path.join(extracted, "package/package.json"), "utf8"));
     expect(manifest.dependencies).toEqual(Object.fromEntries(tools.map((tool) => [tool.name, tool.version])));
+    // The sidecar deploys only a package's own workflow entry.
+    expect(manifest.interchange.workflow).toBe(workflow.entry);
     const bundle = await readFile(path.join(extracted, "package", workflow.entry), "utf8");
     const imports = new Bun.Transpiler({ loader: "js" }).scanImports(bundle).map((entry) => entry.path);
     for (const tool of tools) expect(imports).toContain(tool.name);
