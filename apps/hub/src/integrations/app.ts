@@ -805,7 +805,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${BITBUCKET_PATH}/:tenantId/repositories/:project/:slug/disable`,
     describeRoute({
       summary: "Disable triage on a Bitbucket repository",
-      description: "Needs `manage` on the workspace. Removes the webhook triage created; `webhookLeft` is true when it could not.",
+      description: "Needs `manage` on the workspace, and `use` on the `bitbucket-datacenter` credential to remove the webhook triage created; without it the repository is disabled and `webhookLeft` is true.",
       tags: TAGS,
       parameters: repoParameters,
       responses: { 200: json("Disabled", RepoDisabled), 401: failures[401], 403: failures[403], 404: json("No such repository recorded", Failure) },
