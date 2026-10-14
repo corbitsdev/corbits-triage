@@ -228,12 +228,16 @@ export function checkFailed(run: CheckRun): boolean {
   return run.conclusion !== undefined && run.conclusion !== null && FAILED.has(run.conclusion);
 }
 
+export function checkPending(run: CheckRun): boolean {
+  return run.status !== "completed";
+}
+
 export type CiState = "success" | "failure" | "pending" | "none";
 
 export function summarizeChecks(runs: CheckRun[]): CiState {
   if (!runs.length) return "none";
   if (runs.some(checkFailed)) return "failure";
-  if (runs.some((r) => r.status !== "completed")) return "pending";
+  if (runs.some(checkPending)) return "pending";
   return "success";
 }
 

@@ -483,7 +483,7 @@ test("a pack preview evaluates an open pull request without writing anything", a
     const stored = await previewed({ repo: REPO, number: 8 });
     const reason = "every rule passed, and the policy has no decision-model rule";
     expect(stored).toMatchObject({ repo: REPO, number: 8, headSha: HEAD, event: "catch-up", pack: "saved", judge: "not-needed", verdict: { verdict: "pass", reason, degraded: null } });
-    expect(stored.checks).toContainEqual({ check: "ci-green", name: "CI green", kind: "machine", result: "pass", reason: "checks are success", evidence: [], output: { kind: "values", values: { status: "passing" } } });
+    expect(stored.checks).toContainEqual({ check: "ci-green", name: "CI green", kind: "machine", result: "pass", reason: "required checks are passing", evidence: [], output: { kind: "values", values: { status: "passing" } } });
     expect(stored.verdict).not.toHaveProperty("request");
     const target = { labels: ["checked"] };
     const effectId = doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "labels", target });
@@ -584,7 +584,7 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
       repo: REPO,
       days: 7,
       since: verdictAt.toISOString(),
-      triaged: 1,
+      triaged: 2,
       verdicts: { "ready-monitoring": 1, "awaiting-review": 1 },
       neededYou: 1,
       checks: { "ci-green": { pass: 1, fail: 0, unconfirmed: 1 } },
@@ -593,7 +593,7 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
       medianTimeToVerdictMs: 120_000,
     });
     expect(body.daily).toHaveLength(7);
-    expect(body.daily.filter((d) => d.triaged > 0)).toEqual([{ date: verdictAt.toISOString().slice(0, 10), triaged: 1 }]);
+    expect(body.daily.filter((d) => d.triaged > 0)).toEqual([{ date: verdictAt.toISOString().slice(0, 10), triaged: 2 }]);
 
     expect(await stats(otherTenantId)).toMatchObject({ since: null, triaged: 0, verdicts: {}, checks: {}, actions: {}, comments: 0, medianTimeToVerdictMs: null });
   } finally {

@@ -1,4 +1,4 @@
-import { checkFailed, latestDecisive, reviewedOnHead, summarizeChecks, type CheckRun, type IssueComment, type Review } from "@corbits/github-reads";
+import { checkFailed, checkPending, latestDecisive, reviewedOnHead, summarizeChecks, type CheckRun, type IssueComment, type Review } from "@corbits/github-reads";
 import { authorAssociation, authorKindOf, stepTeams, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
@@ -27,6 +27,10 @@ export interface PrData {
   assignees?: string[];
 }
 export type { CheckRun };
+
+function checkNames(runs: CheckRun[]): string[] {
+  return runs.flatMap((r) => (r.name ? [r.name] : []));
+}
 
 function reviewersWith(latest: Map<string, string>, state: string): string[] {
   return [...latest].flatMap(([login, s]) => (s === state ? [login] : []));
@@ -68,7 +72,8 @@ export function buildFacts(
     draft: pr.draft === true,
     mergeable: pr.mergeable ?? null,
     checks: summarizeChecks(checks),
-    failingChecks: checks.filter(checkFailed).flatMap((r) => (r.name ? [r.name] : [])),
+    failingChecks: checkNames(checks.filter(checkFailed)),
+    pendingChecks: checkNames(checks.filter(checkPending)),
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,

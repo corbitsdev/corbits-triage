@@ -42,6 +42,7 @@ export interface PrFacts {
   mergeable: boolean | null;
   checks: "success" | "failure" | "pending" | "none";
   failingChecks?: string[];
+  pendingChecks?: string[];
   reviewers?: string[];
   approvals: number;
   changesRequested?: string[];
@@ -96,7 +97,16 @@ export interface DeterministicResult {
 
 export const NEEDS_SETUP_REASON = "This repository still needs a policy.";
 
-const CI_STATUS: Record<PrFacts["checks"], string> = { success: "passing", failure: "failing", pending: "pending", none: "none" };
+type CiRule = { status: string; reason: string; failed: boolean | null; names: (facts: PrFacts) => string[] };
+
+// `none` is a head with no check runs at all (skipped or neutral runs complete as success), so the repository has no
+// checks to wait for and the rule passes.
+const CI_RULE: Record<PrFacts["checks"], CiRule> = {
+  success: { status: "passing", reason: "required checks are passing", failed: false, names: () => [] },
+  failure: { status: "failing", reason: "required checks are failing", failed: true, names: (facts) => facts.failingChecks ?? [] },
+  pending: { status: "pending", reason: "checks are still running", failed: null, names: (facts) => facts.pendingChecks ?? [] },
+  none: { status: "none", reason: "no checks configured", failed: false, names: () => [] },
+};
 
 const STATE_RANK: Record<WorkflowState, number> = {
   "ready-monitoring": 0,
@@ -195,9 +205,10 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
   else {
     result(NOT_A_DRAFT, facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", [], { kind: "values", values: { isDraft: facts.draft } });
     if (on("ci-green")) {
-      const failing = facts.checks === "failure";
-      if (failing) add("ci-green", "blocked", "required checks are failing");
-      result("ci-green", failing, failing ? "required checks are failing" : `checks are ${facts.checks}`, failing ? facts.failingChecks ?? [] : [], { kind: "values", values: { status: CI_STATUS[facts.checks] } });
+      const ci = CI_RULE[facts.checks];
+      if (ci.failed === true) add("ci-green", "blocked", ci.reason);
+      if (ci.failed === null) add("ci-green", "awaiting-review", ci.reason);
+      result("ci-green", ci.failed, ci.reason, ci.names(facts), { kind: "values", values: { status: ci.status } });
     }
     if (on("no-merge-conflicts") && facts.mergeable === false) add("no-merge-conflicts", "blocked", "merge conflicts with base");
     const requested = facts.changesRequested ?? [];

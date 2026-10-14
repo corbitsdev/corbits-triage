@@ -420,6 +420,7 @@ function failedStep(c: CheckResult, sources: Sources): Step {
 
 function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
   if (c.check === "no-merge-conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
+  if (c.check === "ci-green") return [{ actor: "system", action: "Wait for checks to finish" }];
   if (c.kind === "model" && sources && c.reason !== NOT_ASKED_REASON) return [{ actor: "maintainer", action: `Confirm ${passText(c.check, sources)}` }];
   return [];
 }
@@ -592,7 +593,7 @@ const DECIDED_REASONS: Record<VerdictWord, string> = {
 
 export const RULES_PASS_REASON = "every rule passed, and the policy has no decision-model rule";
 const RULES_UNSURE_REASON = "not every rule could be confirmed, and the policy has no decision-model rule";
-const UNCONFIRMED_REASON = "the decision model passed it, but a judged rule could not be confirmed";
+const UNCONFIRMED_REASON = "the decision model passed it, but a rule could not be confirmed";
 
 /**
  * A failed hard rule decides Fail without the decision model; a draft or closed pull request is not decided, and is
@@ -628,7 +629,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   if (failing.length) return withChecks({ ...render(VERDICT_STATES.fail), verdict: "fail", degraded: null, reason: failing.join("; ") }, checks, null, reasons, ctx);
   if (choice === undefined) return unsureOf(outage, "inference-outage");
   const decided = decide(choice);
-  if (decided === "pass" && evaluated.checks.some((check) => check.result === "unconfirmed")) return unsureOf(UNCONFIRMED_REASON);
+  if (decided === "pass" && checks.some((check) => check.result === "unconfirmed")) return unsureOf(UNCONFIRMED_REASON);
   return withChecks({ ...render(VERDICT_STATES[decided]), verdict: decided, degraded: null, reason: DECIDED_REASONS[decided] }, checks, choice.pass, reasons, ctx);
 }
 
