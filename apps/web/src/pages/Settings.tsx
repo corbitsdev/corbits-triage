@@ -15,7 +15,8 @@ import { useAllowed, useDeployedWorkflows, useGrants, useRoles, type TenantSecti
 import { WORKFLOW_PACKAGES } from "../lib/workflow-packages.ts";
 import { useSession } from "../lib/session.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
-import AutomationGrid from "../components/AutomationGrid.tsx";
+import ApproverGrid from "../components/ApproverGrid.tsx";
+import TriageOnItsOwn from "../components/TriageOnItsOwn.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { SignedInDevices } from "../components/SignedInDevices.tsx";
 import { DECISION_MODEL_INTRO } from "@corbits/triage-contracts";
@@ -169,6 +170,16 @@ export default function Settings() {
       setError(`Could not read your repositories from GitHub. ${errorText(cause)}`);
     }
   }
+  const grantProps = {
+    roles: roles.rows,
+    grants: grants.rows,
+    loading: [grants, roles].some((section) => section.loading || section.unavailable),
+    denied: grants.denied || roles.denied,
+    disabled: readOnly || !canCreateGrants || !canManageGrants,
+    addGrant,
+    removeGrants,
+    onError: setError,
+  };
   const { arm } = useGithubReturnSync(() => { void syncAfterGithub(); });
 
   async function chooseOnGithub() {
@@ -246,16 +257,8 @@ export default function Settings() {
         return (
           <>
             <InvitePeople onSetupPage={false} />
-            <AutomationGrid
-              roles={roles.rows}
-              grants={grants.rows}
-              loading={[grants, roles].some((section) => section.loading || section.unavailable)}
-              denied={grants.denied || roles.denied}
-              disabled={readOnly || !canCreateGrants || !canManageGrants}
-              addGrant={addGrant}
-              removeGrants={removeGrants}
-              onError={setError}
-            />
+            <ApproverGrid {...grantProps} />
+            <TriageOnItsOwn {...grantProps} loading={grantProps.loading || !snapshot} repos={repos.map((repo) => repo.name)} />
           </>
         );
       case "Account":

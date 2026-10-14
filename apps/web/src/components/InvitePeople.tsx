@@ -1,9 +1,9 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
+import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@intx/hub-client";
 import { errorText } from "@corbits/common";
-import type { InviteSent } from "@corbits/triage-contracts";
+import type { InviteRoles, InviteSent } from "@corbits/triage-contracts";
 import { isTriageRole, roleName } from "../lib/automation-grid.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { initialsOf } from "../lib/inbox-view.ts";
@@ -22,12 +22,46 @@ function addressOf(person: HubPrincipal): string {
   return person.email ?? person.displayName;
 }
 
+function domainList(domains: readonly string[]): string {
+  return domains.join(" or ");
+}
+
+type SignInLimit = InviteRoles["signInLimit"];
+
+/** Whether the hub will refuse to invite `email`. Single allowed addresses stay private, so only a domain-only allowlist can tell. */
+function inviteRefused(email: string, limit: SignInLimit): boolean {
+  const address = email.trim().toLowerCase();
+  const at = address.lastIndexOf("@");
+  if (limit === null || limit.addresses || at < 0) return false;
+  return !limit.domains.includes(address.slice(at));
+}
+
+function signInLimitText(limit: SignInLimit): string {
+  if (limit === null) return "Any email address may be invited.";
+  if (limit.domains.length === 0) return "Only people on this hub's allowlist may sign in.";
+  if (limit.addresses) return `Only ${domainList(limit.domains)} addresses and people on this hub's allowlist may sign in.`;
+  return `Only ${domainList(limit.domains)} addresses may sign in.`;
+}
+
+function deliveryText(sendsEmail: boolean): string {
+  if (sendsEmail) return "The hub emails each invitee a one-time sign-in link that works for 15 minutes.";
+  return "This hub sends no email, so copy the invite link shown after inviting and send it yourself; they sign in with Google first.";
+}
+
+function inviteBlocker(email: string, roleId: string, limit: SignInLimit): string | null {
+  if (!email.trim()) return "Enter an email address to invite.";
+  if (limit && inviteRefused(email, limit)) return `${email.trim()} cannot sign in here: only ${domainList(limit.domains)} addresses may.`;
+  if (!roleId) return "There is no role you may invite into: you must hold every permission of a role to invite someone into it.";
+  return null;
+}
+
 function PeopleHeader({ first }: { first: string }) {
   return (
     <TableHeader>
       <TableRow>
         <TableHead>{first}</TableHead>
         <TableHead>Role</TableHead>
+        <TableHead>State</TableHead>
         <TableHead><span className="sr-only">Actions</span></TableHead>
       </TableRow>
     </TableHeader>
@@ -38,11 +72,19 @@ function MemberRow({ person, you }: { person: HubPrincipal; you: boolean }) {
   const name = person.displayName || addressOf(person);
   return (
     <TableRow>
-      <TableCell><span className="person"><span className="av">{initialsOf(name)}</span>{name}{you && " (you)"}</span></TableCell>
+      <TableCell>
+        <span className="person"><span className="av">{initialsOf(name)}</span><span>{name}{you && " (you)"}{person.email !== name && <span className="muted small-text person-email">{person.email}</span>}</span></span>
+      </TableCell>
       <TableCell>{roleNames(person)}</TableCell>
+      <TableCell><Badge tone="success">Active</Badge></TableCell>
       <TableCell />
     </TableRow>
   );
+}
+
+/** A sign-in account backs every person, and gives them an email; system senders such as the GitHub bridge have none. */
+function isPerson(person: HubPrincipal): boolean {
+  return person.email !== undefined;
 }
 
 /** Active members, then the open invites passed as `children`, once the members are known. */
@@ -54,7 +96,7 @@ function PeopleTable({ you, children }: { you: string | undefined; children: Rea
     <Table>
       <PeopleHeader first="Name" />
       <TableBody>
-        {members.rows.map((person) => <MemberRow key={person.id} person={person} you={person.id === you} />)}
+        {members.rows.filter(isPerson).map((person) => <MemberRow key={person.id} person={person} you={person.id === you} />)}
         {children}
       </TableBody>
     </Table>
@@ -72,8 +114,8 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
     queryFn: tenantId === undefined ? skipToken : async function readInvitations() {
       const transport = createHubTransport();
       try {
-        const [assignableRoleIds, invited] = await Promise.all([inviteRoles(transport, tenantId), listInvited(transport, tenantId)]);
-        return { assignableRoleIds, invited };
+        const [access, invited] = await Promise.all([inviteRoles(transport, tenantId), listInvited(transport, tenantId)]);
+        return { ...access, invited };
       } catch (cause: unknown) {
         signOutWhenRejected(cause);
         throw cause;
@@ -90,7 +132,7 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   const denied = query.error instanceof ApiError && query.error.status === 403;
   if (denied) return onSetupPage ? null : <DeniedNotice section="invites" />;
   if (!tenantId || !query.data) return null;
-  const { invited, assignableRoleIds } = query.data;
+  const { invited, assignableRoleIds, sendsEmail, signInLimit } = query.data;
   const choices = roles.rows.filter((role) => assignableRoleIds.includes(role.id) && !isTriageRole(role));
   const chosenRole = roleId || choices.find((role) => role.name === DEFAULT_ROLE)?.id || "";
 
@@ -146,7 +188,8 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
     });
   }
 
-  const intro = <p>Invitees join with the role you pick through a sign-in link that works once and expires after 15 minutes.</p>;
+  const blocker = inviteBlocker(email, chosenRole, signInLimit);
+  const intro = <p>{signInLimitText(signInLimit)} {deliveryText(sendsEmail)}</p>;
   const notice = <>
     {error && <p role="alert" className="error">{error}</p>}
     {link && (
@@ -168,15 +211,17 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
           {choices.map((role) => <option key={role.id} value={role.id}>{roleName(role)}</option>)}
         </select>
       </label>
-      <Button type="submit" disabled={readOnly || pending !== null || !email.trim() || !chosenRole}>
+      <Button type="submit" aria-describedby="invite-blocker" disabled={readOnly || pending !== null || blocker !== null}>
         {pending === "invite" ? "Inviting…" : "Invite"}
       </Button>
+      <p id="invite-blocker" className="field-help invite-blocker" aria-live="polite">{blocker}</p>
     </form>
   );
   const invitedRows = invited.map((person) => (
     <TableRow key={person.id}>
-      <TableCell>{onSetupPage ? addressOf(person) : <span className="person"><span className="av none">{initialsOf(addressOf(person))}</span>{addressOf(person)} (invited)</span>}</TableCell>
+      <TableCell>{onSetupPage ? addressOf(person) : <span className="person"><span className="av none">{initialsOf(addressOf(person))}</span>{addressOf(person)}</span>}</TableCell>
       <TableCell>{roleNames(person)}</TableCell>
+      <TableCell><Badge tone="warning">Invite pending</Badge></TableCell>
       <TableCell>
         {person.roles.every((role) => assignableRoleIds.includes(role.id)) && (
           <Button type="button" variant="ghost" disabled={readOnly || pending !== null} onClick={() => resend(person)}>

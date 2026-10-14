@@ -8,7 +8,7 @@ import type { CreateGrantInput } from "../lib/grant-actions.ts";
 import type { HubGrant, HubRole } from "../lib/hub-api.ts";
 import { DO_NAMES } from "../lib/pack-prose.ts";
 
-type AutomationGridProps = {
+type ApproverGridProps = {
   roles: HubRole[];
   grants: HubGrant[];
   loading: boolean;
@@ -19,30 +19,51 @@ type AutomationGridProps = {
   onError: (message: string) => void;
 };
 
-/** Who may approve each kind of Do, and which kinds triage runs without asking, on every repository. */
-export default function AutomationGrid({ roles, grants, loading, denied, disabled, addGrant, removeGrants, onError }: AutomationGridProps) {
+type ApproverCellProps = { role: HubRole; kind: ActionKind; grants: HubGrant[]; disabled: boolean; toggle: (role: HubRole, kind: ActionKind, cell: GridCell) => void };
+
+function ApproverCell({ role, kind, grants, disabled, toggle }: ApproverCellProps) {
+  const cell = gridCell(role, kind, grants);
+  return (
+    <TableCell>
+      <Switch
+        checked={cell.granted}
+        onCheckedChange={() => toggle(role, kind, cell)}
+        label={`${roleName(role)} may approve ${DO_NAMES[kind]}`}
+        disabled={disabled || cell.locked}
+      />
+      {cell.repos.length > 0 && <span className="muted small-text repos">only in {cell.repos.join(", ")}</span>}
+    </TableCell>
+  );
+}
+
+/** Which roles may approve each kind of held Do, on every repository. */
+export default function ApproverGrid({ roles, grants, loading, denied, disabled, addGrant, removeGrants, onError }: ApproverGridProps) {
   const [pending, setPending] = useState<string | null>(null);
   const columns = gridRoles(roles);
 
   async function toggle(role: HubRole, kind: ActionKind, cell: GridCell) {
-    if (cell.repos.length > 0 && !window.confirm(`Turn off ${DO_NAMES[kind]} for ${roleName(role)} on ${cell.repos.join(", ")}?`)) return;
+    if (cell.repos.length > 0 && !window.confirm(`Stop ${roleName(role)} approving ${DO_NAMES[kind]} on ${cell.repos.join(", ")}?`)) return;
     setPending(`${role.id}:${kind}`);
     onError("");
     try {
       if (cell.granted) await removeGrants(cell.grants);
       else await addGrant({ roleId: role.id, resource: doResource(kind, "*"), action: DO_GRANT_ACTION });
     } catch (cause) {
-      onError(`Could not change who may ${DO_NAMES[kind].toLowerCase()}. ${errorText(cause)} Try again.`);
+      onError(`Could not change who may approve ${DO_NAMES[kind].toLowerCase()}. ${errorText(cause)} Try again.`);
     } finally {
       setPending(null);
     }
   }
 
+  function startToggle(role: HubRole, kind: ActionKind, cell: GridCell) {
+    void toggle(role, kind, cell);
+  }
+
   return (
-    <section className="sec" aria-labelledby="sec-access">
+    <section className="sec" aria-labelledby="sec-approvers">
       <header>
-        <h2 id="sec-access">Access</h2>
-        <p>Who may approve each held action, and which ones Triage runs on its own.</p>
+        <h2 id="sec-approvers">Who may approve a held action</h2>
+        <p>A held action waits in the inbox until someone with a ticked role approves it.</p>
       </header>
       <div>
         {denied && <DeniedNotice section="access rules" />}
@@ -58,20 +79,7 @@ export default function AutomationGrid({ roles, grants, loading, denied, disable
               {GRID_KINDS.map((kind) => (
                 <TableRow key={kind}>
                   <TableCell>{DO_NAMES[kind]}</TableCell>
-                  {columns.map((role) => {
-                    const cell = gridCell(role, kind, grants);
-                    return (
-                      <TableCell key={role.id}>
-                        <Switch
-                          checked={cell.granted}
-                          onCheckedChange={() => void toggle(role, kind, cell)}
-                          label={`${roleName(role)}: ${DO_NAMES[kind]}`}
-                          disabled={disabled || cell.locked || pending !== null}
-                        />
-                        {cell.repos.length > 0 && <span className="mono repos">{cell.repos.join(", ")}</span>}
-                      </TableCell>
-                    );
-                  })}
+                  {columns.map((role) => <ApproverCell key={role.id} role={role} kind={kind} grants={grants} disabled={disabled || pending !== null} toggle={startToggle} />)}
                 </TableRow>
               ))}
             </TableBody>

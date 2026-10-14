@@ -131,8 +131,15 @@ export type TriageStats = typeof TriageStats.infer;
 /** The invited principal, and its magic link when the hub sends no email. */
 export const InviteSent = type({ principalId: "string", email: "string", emailed: "boolean", "link?": "string" });
 export type InviteSent = typeof InviteSent.infer;
-/** Roles the caller may invite people into. */
-export const InviteRoles = type({ assignableRoleIds: "string[]" });
+/**
+ * Roles the caller may invite people into, whether the hub emails the invite, and the sign-in allowlist: its
+ * `@domain` entries, and only whether it also names single addresses, which stay private. `null` when anyone may sign in.
+ */
+export const InviteRoles = type({
+  assignableRoleIds: "string[]",
+  sendsEmail: "boolean",
+  signInLimit: type({ domains: "string[]", addresses: "boolean" }).or("null"),
+});
 export type InviteRoles = typeof InviteRoles.infer;
 
 export const SessionList = type({
