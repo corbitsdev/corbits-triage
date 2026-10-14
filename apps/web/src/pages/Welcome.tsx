@@ -16,7 +16,8 @@ function returnedSignInError(): string {
   return code === null ? "" : `Google sign-in failed (${code.replaceAll("_", " ")}). Use an allowed account, then try again.`;
 }
 
-export function Welcome() {
+/** `intro` explains why sign-in is asked for, such as an invite waiting behind it. */
+export function Welcome({ intro }: { intro?: string }) {
   const { signIn, signUp, error } = useSession();
   const [mode, setMode] = useState<Mode>("sign-in");
   const [name, setName] = useState("");
@@ -113,6 +114,7 @@ export function Welcome() {
     <SignInShell>
       <div className="signin-head">
         <h1>{signingUp ? "Create an account" : "Sign in"}</h1>
+        {intro && <p>{intro}</p>}
         {methods?.emailPassword && (
           <p>
             {signingUp ? "Have an account? " : "New to Corbits Triage? "}

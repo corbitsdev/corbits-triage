@@ -8,21 +8,23 @@ import { createHubTransport } from "../lib/hub-transport.ts";
 import { useOpenWorkspaceAfterSending } from "../lib/held-inbox.tsx";
 import { usePortal } from "../lib/portal.tsx";
 import { useSession } from "../lib/session.tsx";
+import { Welcome } from "./Welcome.tsx";
 import { SignInShell } from "../components/SignInShell.tsx";
 
 const SPENT = "This invite link was already used or has expired. Ask whoever invited you to resend it.";
 
 /**
  * Where an invite lands. Arriving from the emailed magic link (`?from=email`) joins straight away; a copied link waits
- * for a click, so no other page can join someone by linking here. `?error=` means the magic link was spent or expired.
+ * for a click, so no other page can join someone by linking here. `?error=` beside `?from=email` means the magic link
+ * was spent or expired; `?error=` alone is a failed Google sign-in, which the sign-in form reports.
  */
 export function AcceptInvite({ tenantId }: { tenantId: string }) {
   const { session, error: sessionError } = useSession();
   const { warn } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();
   const params = new URLSearchParams(useLocation().search);
-  const linkFailed = params.has("error");
   const fromEmail = params.get("from") === "email";
+  const linkFailed = fromEmail && params.has("error");
   const [refusal, setRefusal] = useState("");
   const [joining, setJoining] = useState(false);
   const accepted = useRef(false);
@@ -65,17 +67,7 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
       </SignInShell>
     );
   }
-  if (!session) {
-    return (
-      <SignInShell>
-        <div className="signin-head">
-          <h1>Join the workspace</h1>
-          <p>You were invited to a Corbits Triage workspace. Sign in as the invited address, then open this link again.</p>
-          <p><a className="signin-link" href="/">Go to sign in</a></p>
-        </div>
-      </SignInShell>
-    );
-  }
+  if (!session) return <Welcome intro="You were invited to a Corbits Triage workspace. Sign in as the invited address to join it." />;
   if (!joining) {
     return (
       <SignInShell>
