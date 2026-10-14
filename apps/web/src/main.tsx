@@ -5,6 +5,7 @@ import "@corbits/react-ui/styles.css";
 import "./index.css";
 import "./shell.css";
 import "./onboarding.css";
+import "./cards.css";
 import "./repositories.css";
 
 const root = document.getElementById("root");

@@ -1,6 +1,5 @@
-import { useState } from "react";
 import { Button } from "@corbits/react-ui";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { listSessions, revokeSession, type HubSessionRow } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
@@ -11,36 +10,33 @@ async function readSessions(): Promise<HubSessionRow[]> {
   return listSessions(createHubTransport());
 }
 
+function deviceName(session: HubSessionRow): string {
+  if (session.isCurrent) return "This browser";
+  return session.userAgent ?? "Unknown device";
+}
+
 export function SignedInDevices() {
   const query = useQuery({ queryKey: [SESSIONS_QUERY_KEY], queryFn: readSessions });
-  const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState("");
-
-  async function revoke(session: HubSessionRow) {
-    setPending(session.id);
-    setError("");
-    try {
+  const signOut = useMutation({
+    mutationFn: async function revoke(session: HubSessionRow) {
       await revokeSession(createHubTransport(), session.id);
-    } catch (cause: unknown) {
-      setError(errorText(cause));
-    } finally {
-      setPending(null);
+    },
+    onSettled: async function reread() {
       await query.refetch();
-    }
-  }
+    },
+  });
 
   if (query.error) return <p role="alert" className="field-error">{query.error.message}</p>;
   if (!query.data) return null;
   return (
-    <div aria-label="Signed-in devices">
-      <h3>Signed-in devices</h3>
+    <>
       {query.data.map((session) => (
-        <div key={session.id} className="row">
-          <span>{session.isCurrent ? "This browser" : session.userAgent ?? "Unknown device"} · since {new Date(session.createdAt).toLocaleString()}</span>
-          {!session.isCurrent && <Button type="button" variant="outline" disabled={pending !== null} onClick={() => void revoke(session)}>Sign out</Button>}
+        <div key={session.id} className="sentence">
+          <span className="txt">{deviceName(session)} <span className="model">since {new Date(session.createdAt).toLocaleString()}</span></span>
+          {!session.isCurrent && <Button type="button" variant="outline" size="sm" aria-label={`Sign out ${deviceName(session)}`} disabled={signOut.isPending} onClick={() => signOut.mutate(session)}>Sign out</Button>}
         </div>
       ))}
-      {error && <p role="alert" className="field-error">{error}</p>}
-    </div>
+      {signOut.error && <p role="alert" className="field-error">{errorText(signOut.error)}</p>}
+    </>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
+import { Badge, Button, Input, Select, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { ApiError } from "@intx/hub-client";
 import { errorText } from "@corbits/common";
@@ -7,10 +7,11 @@ import type { InviteRoles, InviteSent } from "@corbits/triage-contracts";
 import { isTriageRole, roleName } from "../lib/automation-grid.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { initialsOf } from "../lib/inbox-view.ts";
-import { createInvitation, inviteRoles, listInvited, resendInvitation, withdrawInvitation, type HubPrincipal } from "../lib/hub-api.ts";
+import { createInvitation, inviteRoles, isPerson, listInvited, resendInvitation, withdrawInvitation, type HubPrincipal } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { INVITATIONS_QUERY_KEY, usePortal, useSignOutWhenRejected } from "../lib/portal.tsx";
 import { usePrincipals, useRoles } from "../lib/tenant-entities.ts";
+import { CopyField } from "./CopyField.tsx";
 
 const DEFAULT_ROLE = "member";
 
@@ -80,11 +81,6 @@ function MemberRow({ person, you }: { person: HubPrincipal; you: boolean }) {
       <TableCell />
     </TableRow>
   );
-}
-
-/** A sign-in account backs every person, and gives them an email; system senders such as the GitHub bridge have none. */
-function isPerson(person: HubPrincipal): boolean {
-  return person.email !== undefined;
 }
 
 function PeopleTable({ you, children }: { you: string | undefined; children: ReactNode }) {
@@ -163,15 +159,6 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
     });
   }
 
-  async function copy(shown: { email: string; url: string }) {
-    try {
-      await navigator.clipboard.writeText(shown.url);
-      notify(`Link for ${shown.email} copied.`);
-    } catch (cause: unknown) {
-      setError(`Could not copy the link. ${errorText(cause)}`);
-    }
-  }
-
   function resend(person: HubPrincipal) {
     if (!tenantId) return;
     void act(`resend:${person.id}`, async function resendInvite() {
@@ -191,26 +178,21 @@ export function InvitePeople({ onSetupPage }: { onSetupPage: boolean }) {
   const intro = <p>{signInLimitText(signInLimit)} {deliveryText(sendsEmail)}</p>;
   const notice = <>
     {error && <p role="alert" className="error">{error}</p>}
-    {link && (
-      <div className="hook-url">
-        <code>{link.url}</code>
-        <Button type="button" variant="ghost" onClick={() => void copy(link)}>Copy link</Button>
-      </div>
-    )}
+    {link && <CopyField label={`Invite link for ${link.email}`} value={link.url} help="Send this link to them yourself." />}
   </>;
   const form = (
     <form className="invite" onSubmit={(event) => void invite(event)}>
       <label className="field">
         Email
-        <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={readOnly || pending !== null} />
+        <Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={readOnly || pending !== null} />
       </label>
       <label className="field">
         Role
-        <select value={chosenRole} onChange={(event) => setRoleId(event.target.value)} disabled={readOnly || pending !== null}>
+        <Select value={chosenRole} onChange={(event) => setRoleId(event.target.value)} disabled={readOnly || pending !== null}>
           {choices.map((role) => <option key={role.id} value={role.id}>{roleName(role)}</option>)}
-        </select>
+        </Select>
       </label>
-      <Button type="submit" aria-describedby="invite-blocker" disabled={readOnly || pending !== null || blocker !== null}>
+      <Button type="submit" variant="outline" size="sm" aria-describedby="invite-blocker" disabled={readOnly || pending !== null || blocker !== null}>
         {pending === "invite" ? "Inviting…" : "Invite"}
       </Button>
       <p id="invite-blocker" className="field-help invite-blocker" aria-live="polite">{blocker}</p>
