@@ -2,13 +2,12 @@
 // the tenant's vaulted GitHub App credential so the portal never calls GitHub.
 import { eq } from "drizzle-orm";
 import { schema } from "@intx/db";
-import { authorAssociation, authorKindOf, type AuthorKind } from "@corbits/triage-contracts";
+import { authorAssociation, authorKindOf, type AuthorKind, type RepoSource } from "@corbits/triage-contracts";
 import { INSTALLATION_SELECTOR_HEADER, listOpenPrs, type GithubFetch } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
-import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
-import { githubRepoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
+import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 
 export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
 
@@ -30,17 +29,30 @@ export function forInstallation(gh: GithubFetch, installationId: number | undefi
   };
 }
 
-async function pullsFor(gh: GithubFetch, record: RepoRecord): Promise<RepoPulls> {
+/** Lists one repository's open pull requests on its host; GitHub's through the tenant's App, another host's through its reader. */
+export type OpenPrsLister = (tenantId: string, record: RepoRecord) => Promise<GithubOpenPr[]>;
+
+async function pullsFor(list: OpenPrsLister, tenantId: string, record: RepoRecord): Promise<RepoPulls> {
   try {
-    const prs = await listOpenPrs(forInstallation(gh, record.installationId), record.name);
+    const prs = await list(tenantId, record);
     return { repo: record.name, prs: prs.map(withAuthorKind) };
   } catch (err) {
     return { repo: record.name, prs: [], error: errorText(err) };
   }
 }
 
-export function listRepoPulls(gh: GithubFetch, records: readonly RepoRecord[]): Promise<RepoPulls[]> {
-  return Promise.all(records.map((record) => pullsFor(gh, record)));
+export function listRepoPulls(list: OpenPrsLister, tenantId: string, records: readonly RepoRecord[]): Promise<RepoPulls[]> {
+  return Promise.all(records.map((record) => pullsFor(list, tenantId, record)));
+}
+
+/** Refuses when the member may not read a host's credential among the records' hosts; a host with no record needs nothing. */
+export async function listingRefusal(deps: PortalCredentialDeps, member: Member, records: readonly RepoRecord[]): Promise<Response | undefined> {
+  const sources = new Set<RepoSource>(records.map(sourceOf));
+  for (const source of sources) {
+    const refused = await sourceCredentialGrant(deps, member.principalId, member.tenantId, { name: "", source }, "read");
+    if (refused) return refused;
+  }
+  return undefined;
 }
 
 export type OpenPullsRead = { at: number; repos: RepoPulls[] };
@@ -82,18 +94,15 @@ export function createOpenPullsCache(now: () => Date): OpenPullsCache {
 /** A listing this young is answered again rather than asking GitHub, so the portal and the verdict route share one read. */
 const RELIST_MS = 10_000;
 
-export function createGithubOpenPulls(deps: PortalCredentialDeps & { githubApiOrigin: string; cache: OpenPullsCache }) {
-  const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
-
-  return async function openPulls({ tenantId, principalId }: Member): Promise<Response> {
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "read");
-    if (appJson instanceof Response) return appJson;
-    const gh = appGithubFetch(appFetch, deps.githubApiOrigin, appJson);
-
+export function createGithubOpenPulls(deps: PortalCredentialDeps & { list: OpenPrsLister; cache: OpenPullsCache }) {
+  return async function openPulls(member: Member): Promise<Response> {
+    const { tenantId } = member;
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
-    const connected = githubRepoRecords(triageNs(tenant.config)).filter((record) => record.connected);
-    const listed = deps.cache.kept(tenantId, RELIST_MS) ?? await deps.cache.read(tenantId, () => listRepoPulls(gh, connected));
+    const connected = repoRecords(triageNs(tenant.config)).filter((record) => record.connected);
+    const refused = await listingRefusal(deps, member, connected);
+    if (refused) return refused;
+    const listed = deps.cache.kept(tenantId, RELIST_MS) ?? await deps.cache.read(tenantId, () => listRepoPulls(deps.list, tenantId, connected));
     return Response.json({ repos: listed.repos });
   };
 }
