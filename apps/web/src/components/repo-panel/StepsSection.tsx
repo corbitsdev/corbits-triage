@@ -1,8 +1,9 @@
 import { Link } from "react-router-dom";
-import { Badge, Textarea } from "@corbits/react-ui";
+import { Textarea } from "@corbits/react-ui";
 import { alwaysHeld, VERDICTS, type ActionKind, type PeopleTarget, type ReviewTarget, type Step, type StepKind, type VerdictWord } from "@corbits/triage-contracts";
 import { FOR_NAMES, forChoice, freshStep, STEP_DO_NAMES, STEP_DOS, withFor, type ForChoice } from "../../lib/policy-view.ts";
-import type { PolicyView, StepRow } from "../../lib/use-policy-view.ts";
+import { logins, type PolicyView, type StepRow } from "../../lib/use-policy-view.ts";
+import RunPill from "./RunPill.tsx";
 import TokenList from "./TokenList.tsx";
 
 const VERDICT_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
@@ -13,6 +14,8 @@ const RECIPIENTS: Array<{ value: PeopleTarget["to"]; label: string }> = [
   { value: "teams", label: "teams" },
   { value: "author", label: "the author" },
 ];
+
+const TEAM_PLACEHOLDER = "@org/team";
 
 function whoOf(to: PeopleTarget["to"]): PeopleTarget {
   switch (to) {
@@ -36,20 +39,19 @@ type StepsSectionProps = {
 export default function StepsSection({ view, automatic, disabled }: StepsSectionProps) {
   function pill(verdict: VerdictWord, step: Step) {
     if (!automatic || step.do === "nothing") return <span />;
-    const alone = automatic(step.do) && !alwaysHeld(verdict, step.do);
-    return <Badge tone={alone ? "success" : "warning"} className="pill">{alone ? "automatic" : "waits for you"}</Badge>;
+    return <RunPill automatic={automatic(step.do) && !alwaysHeld(verdict, step.do)} />;
   }
 
-  function people(step: Extract<Step, { do: "request-review" | "assign" }>, onChange: (who: PeopleTarget) => void) {
+  function people(at: string, step: Extract<Step, { do: "request-review" | "assign" }>, onChange: (who: PeopleTarget) => void) {
     const who = step.target;
     const options = RECIPIENTS.filter((option) => option.value !== "author" || step.do === "assign");
     return (
       <span className="tokens">
-        <select className="val q" aria-label={step.do === "assign" ? "Assign to" : "Request review from"} disabled={disabled} value={who.to} onChange={(event) => onChange(whoOf(event.target.value as PeopleTarget["to"]))}>
+        <select className="val q" aria-label={`${at}: ${step.do === "assign" ? "assign to" : "request review from"}`} disabled={disabled} value={who.to} onChange={(event) => onChange(whoOf(event.target.value as PeopleTarget["to"]))}>
           {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
-        {who.to === "users" ? <TokenList values={who.users} noun="person" placeholder="login" disabled={disabled} onChange={(users) => onChange({ to: "users", users })} /> : null}
-        {who.to === "teams" ? <TokenList values={who.teams} noun="team" placeholder="@org/team" mono disabled={disabled} onChange={(teams) => onChange({ to: "teams", teams })} /> : null}
+        {who.to === "users" ? <TokenList values={who.users} noun="person" placeholder="login" disabled={disabled} onChange={(users) => onChange({ to: "users", users: logins(users) })} /> : null}
+        {who.to === "teams" ? <TokenList values={who.teams} noun="team" placeholder={TEAM_PLACEHOLDER} mono disabled={disabled} onChange={(teams) => onChange({ to: "teams", teams })} /> : null}
       </span>
     );
   }
@@ -59,20 +61,20 @@ export default function StepsSection({ view, automatic, disabled }: StepsSection
     return <TokenList values={step.target.labels} noun="label" placeholder="needs-fix" mono disabled={disabled} onChange={(labels) => change({ ...step, target: { from: "list", labels } })} />;
   }
 
-  function audience(step: Step, change: (next: Step) => void) {
+  function audience(at: string, step: Step, change: (next: Step) => void) {
     if (typeof step.for !== "object") return null;
-    if ("team" in step.for) return <input className="val lbl" aria-label="GitHub team" placeholder="org/team" disabled={disabled} value={step.for.team} onChange={(event) => change({ ...step, for: { team: event.target.value } })} />;
-    return <TokenList values={step.for.users} noun="person" placeholder="login" disabled={disabled} onChange={(users) => change({ ...step, for: { users } })} />;
+    if ("team" in step.for) return <input className="val lbl" aria-label={`${at}: team`} placeholder={TEAM_PLACEHOLDER} disabled={disabled} value={step.for.team} onChange={(event) => change({ ...step, for: { team: event.target.value } })} />;
+    return <TokenList values={step.for.users} noun="person" placeholder="login" disabled={disabled} onChange={(users) => change({ ...step, for: { users: logins(users) } })} />;
   }
 
-  function under(step: Step, change: (next: Step) => void) {
+  function under(at: string, step: Step, change: (next: Step) => void) {
     switch (step.do) {
       case "comment":
-        return <Textarea className="val body" rows={1} autoResize aria-label="Comment" placeholder="Comment" disabled={disabled} value={step.target.body} onChange={(event) => change({ ...step, target: { body: event.target.value } })} />;
+        return <Textarea className="val body" rows={1} autoResize aria-label={`${at}: comment`} placeholder="Comment" disabled={disabled} value={step.target.body} onChange={(event) => change({ ...step, target: { body: event.target.value } })} />;
       case "request-review":
-        return people(step, (who) => change({ ...step, target: who as ReviewTarget }));
+        return people(at, step, (who) => change({ ...step, target: who as ReviewTarget }));
       case "assign":
-        return people(step, (who) => change({ ...step, target: who }));
+        return people(at, step, (who) => change({ ...step, target: who }));
       default:
         return null;
     }
@@ -82,27 +84,28 @@ export default function StepsSection({ view, automatic, disabled }: StepsSection
     return <option key={choice} value={choice} disabled={choice === "nothing"}>{STEP_DO_NAMES[choice]}</option>;
   }
 
-  function stepRow(verdict: VerdictWord, { key, index, step, problem }: StepRow) {
+  function stepRow(verdict: VerdictWord, { id, step, problem }: StepRow, position: number) {
+    const at = `${VERDICT_NAMES[verdict]} step ${position + 1}`;
     function change(next: Step) {
-      view.setStep(verdict, index, next);
+      view.setStep(verdict, id, next);
     }
-    const below = under(step, change);
+    const below = under(at, step, change);
     const choices: StepKind[] = step.do === "nothing" ? [...STEP_DOS, "nothing"] : [...STEP_DOS];
     return (
-      <div key={key} className={problem ? "step invalid" : "step"}>
+      <div key={id} className={problem ? "step invalid" : "step"}>
         <span className="sline">
-          <select className="val" aria-label="Do" disabled={disabled} value={step.do} onChange={(event) => change(freshStep(step, event.target.value as StepKind))}>
+          <select className="val" aria-label={`${at}: do`} disabled={disabled} value={step.do} onChange={(event) => change(freshStep(step, event.target.value as StepKind))}>
             {choices.map(doOption)}
           </select>
           {inline(step, change)}
           <span className="for-w">for</span>
-          <select className="val q" aria-label="For" disabled={disabled} value={forChoice(step)} onChange={(event) => change(withFor(step, event.target.value as ForChoice))}>
+          <select className="val q" aria-label={`${at}: for`} disabled={disabled} value={forChoice(step)} onChange={(event) => change(withFor(step, event.target.value as ForChoice))}>
             {Object.entries(FOR_NAMES).map(([value, name]) => <option key={value} value={value}>{name}</option>)}
           </select>
-          {audience(step, change)}
+          {audience(at, step, change)}
         </span>
         {pill(verdict, step)}
-        <button type="button" className="rm" aria-label="Remove this step" title="Remove this step" disabled={disabled} onClick={() => view.removeStep(verdict, index)}>×</button>
+        <button type="button" className="rm" aria-label={`Remove ${at.toLowerCase()}`} title="Remove this step" disabled={disabled} onClick={() => view.removeStep(verdict, id)}>×</button>
         {below ? <div className="sub">{below}</div> : null}
         {problem ? <p className="reason sub">Not saved yet: {problem}</p> : null}
       </div>
@@ -111,11 +114,12 @@ export default function StepsSection({ view, automatic, disabled }: StepsSection
 
   function verdictRow(verdict: VerdictWord) {
     const rows = view.steps[verdict];
+    const empty = view.labels[verdict] ? "Only its labels, below." : "Nothing happens.";
     return (
       <div key={verdict} className="then" id={`rp-list-${verdict}`}>
         <div className="vh"><b className="vw">{VERDICT_NAMES[verdict]}</b></div>
         <div className="steps">
-          {rows.length ? rows.map((row) => stepRow(verdict, row)) : <p className="none">{view.handoffLabels ? "Only the labels below." : "Nothing happens."}</p>}
+          {rows.length ? rows.map((row, position) => stepRow(verdict, row, position)) : <p className="none">{empty}</p>}
           <button type="button" className="linkish quiet step-add" disabled={disabled} onClick={() => view.addStep(verdict)}>+ Add a step</button>
         </div>
       </div>

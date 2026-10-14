@@ -29,16 +29,25 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
     }
   }
 
+  function setEnabled(next: boolean) {
+    edit((current) => ({ ...current, policy: { ...current.policy, enabled: next } }));
+  }
+
+  /** Off says what turning it on unlocks; on as saved offers to triage the open pull requests again. */
+  function hint() {
+    if (!enabled) return <span className="gate-note">Turn on triage to set rules and actions</span>;
+    if (!triaging) return null;
+    return <button type="button" className="linkish quiet" disabled={disabled} onClick={() => void triageAgain()}>Triage open pull requests again</button>;
+  }
+
   return (
     <>
       <div className={reason ? "switch-card invalid" : "switch-card"} id="rp-triage">
         <div className="sc-t">
           <b>Triage pull requests in this repository</b>
-          {!enabled
-            ? <span className="gate-note">Turn on triage to set rules and actions</span>
-            : triaging ? <button type="button" className="linkish quiet" disabled={disabled} onClick={() => void triageAgain()}>Triage open pull requests again</button> : null}
+          {hint()}
         </div>
-        <Switch className="sw lg" checked={enabled} onCheckedChange={(next) => edit((current) => ({ ...current, policy: { ...current.policy, enabled: next } }))} label="Triage pull requests in this repository" disabled={disabled} />
+        <Switch className="sw lg" checked={enabled} onCheckedChange={setEnabled} label="Triage pull requests in this repository" disabled={disabled} />
       </div>
       {reason ? <p className="reason">{reason}</p> : null}
       {rerunError ? <p role="alert" className="error">{rerunError}</p> : null}

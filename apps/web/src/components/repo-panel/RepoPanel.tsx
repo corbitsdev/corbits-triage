@@ -36,9 +36,9 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const grantsKnown = ![grants, roles].some((section) => section.loading || section.unavailable || section.denied);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [closing, setClosing] = useState(false);
-  const disabled = readOnly || (snapshot?.denied.repos ?? false) || settings.status !== "ready";
+  const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready";
   const gated = !draft.policy.enabled;
-  const unfinished = VERDICTS.some((verdict) => view.steps[verdict].some((step) => step.problem)) || view.rules.some((rule) => rule.problem);
+  const unfinished = VERDICTS.some((verdict) => view.steps[verdict].some((step) => step.problem) || view.labels[verdict]?.problem) || view.rules.some((rule) => rule.problem);
 
   /** Unfinished steps and rules are never saved, so the first close says so and the second discards them. */
   function close() {
@@ -78,7 +78,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
         <div className={gated ? "gated" : undefined} inert={gated}>
           <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={disabled || gated} edit={settings.edit} problem={problem} />
           <StepsSection view={view} automatic={grantsKnown ? runsAlone : undefined} disabled={disabled || gated} />
-          <LabelsCard on={view.handoffLabels} automatic={grantsKnown ? runsAlone("labels") : undefined} disabled={disabled || gated} onToggle={view.setHandoffLabels} />
+          <LabelsCard view={view} automatic={grantsKnown ? runsAlone("labels") : undefined} disabled={disabled || gated} />
         </div>
       </>
     );
@@ -100,7 +100,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
           </header>
           {closing && unfinished ? <p role="alert" className="error">Unfinished steps and rules are not saved. Close again to discard them.</p> : null}
           {settings.error ? <p role="alert" className="error">{settings.error} <button type="button" className="linkish" onClick={settings.flush}>Try again</button></p> : null}
-          {draft.pack.dropped?.length ? <p className="note">Left out because they no longer run: {draft.pack.dropped.join("; ")}.</p> : null}
+          {settings.saved.pack.dropped?.length ? <p className="note">Left out because they no longer run: {settings.saved.pack.dropped.join("; ")}.</p> : null}
           {settings.corrupt ? <p className="note">The saved policy could not be read. The next change replaces it. {settings.corrupt}</p> : null}
           {renderBody()}
         </div>

@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Checkbox } from "@corbits/react-ui";
-import { CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type TriageStats } from "@corbits/triage-contracts";
+import { CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, RECOMMENDED_PATHS, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type TriageStats } from "@corbits/triage-contracts";
 import { catalogValue, checkOn, removeCustom, setCatalogCheck, setCustomEnabled, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
 import type { JudgementRule, PolicyView } from "../../lib/use-policy-view.ts";
@@ -51,6 +50,9 @@ const GROUPS: Group[] = [
 
 /** The two rules every pull request runs outside the policy's switches. */
 const ALWAYS_ON = 2;
+
+/** The fail-below choice that never fails; no level is blank, so it cannot clash with one. */
+const NEVER = "";
 
 type ScoreRule = Extract<JudgementRule, { shape: "score" }>;
 
@@ -120,7 +122,7 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
           </>
         );
       case "no-forbidden-paths":
-        return <>Never accept changes to <TokenList values={catalogValue(pack, id, "forbiddenGlobs") ?? []} noun="path" placeholder="path/**" mono disabled={disabled} onChange={(forbiddenGlobs) => set(id, { forbiddenGlobs })} /></>;
+        return <>Never accept changes to <TokenList values={catalogValue(pack, id, "forbiddenGlobs") ?? [...RECOMMENDED_PATHS.forbiddenGlobs]} noun="path" placeholder="path/**" mono disabled={disabled} onChange={(forbiddenGlobs) => set(id, { forbiddenGlobs })} /></>;
       default:
         return CATALOG[id].off;
     }
@@ -145,15 +147,18 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
   }
 
   /** Levels worst first, 2 to 10; failing below one is optional. */
-  function levels(rule: ScoreRule) {
+  function levels(rule: ScoreRule, label: string) {
     const above = rule.levels.slice(1);
     return (
       <div className="levels">
         <TokenList values={rule.levels} noun="level" placeholder="excellent" disabled={disabled} onChange={(next) => view.patchRule(rule.id, { levels: next })} />
-        <Checkbox checked={rule.failBelow !== undefined} label="fail below" disabled={disabled || above.length === 0} onCheckedChange={(checked) => view.patchRule(rule.id, { failBelow: checked ? above[0]! : null })} />
-        <select className="val q" aria-label="Fail below" disabled={disabled || rule.failBelow === undefined} value={rule.failBelow ?? above[0] ?? ""} onChange={(event) => view.patchRule(rule.id, { failBelow: event.target.value })}>
-          {above.map((level) => <option key={level} value={level}>{level}</option>)}
-        </select>
+        <label className="fb">
+          fails
+          <select className="val q" aria-label={`${label}: fails`} disabled={disabled} value={rule.failBelow ?? NEVER} onChange={(event) => view.patchRule(rule.id, { failBelow: event.target.value === NEVER ? null : event.target.value })}>
+            <option value={NEVER}>never</option>
+            {above.map((level) => <option key={level} value={level}>below {level}</option>)}
+          </select>
+        </label>
       </div>
     );
   }
@@ -166,7 +171,7 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
       : <>Score <input className="val w" aria-label="What to score" placeholder="how well the change follows CONTRIBUTING.md" disabled={disabled} value={rule.subject} onChange={(event) => view.patchRule(rule.id, { subject: event.target.value })} /></>;
     return (
       <RuleRow
-        key={rule.id}
+        key={rule.key}
         id={rule.id}
         label={label}
         on={rule.on}
@@ -174,7 +179,7 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
         tip={rule.shape === "is-true" ? IS_TRUE_TIP : scoreTip(rule)}
         model
         stat={passed(rule.id)}
-        more={rule.shape === "score" ? levels(rule) : null}
+        more={rule.shape === "score" ? levels(rule, label) : null}
         reason={rule.problem}
         disabled={disabled}
         onToggle={(next) => edit((current) => setCustomEnabled(current, rule.id, next))}
@@ -197,21 +202,25 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
     );
   }
 
+  function groupCard(group: Group) {
+    return (
+      <section key={group.name} className="gcard" aria-label={group.name}>
+        <header><b>{group.name}</b><span>{group.sub}</span>{group.cap ? <em>{group.cap}</em> : null}</header>
+        <div className="sentences">
+          {group.ids.map(catalogRow)}
+          {group.judgement ? view.rules.map(judgementRow) : null}
+          {group.judgement ? addRow() : null}
+        </div>
+        {group.note ? <p className="group-note">{group.note}</p> : null}
+      </section>
+    );
+  }
+
   return (
     <section className="rs" aria-labelledby="rs-rules" id="rp-rules">
       <h3 id="rs-rules">Rules <span className="n">{on} on</span></h3>
       {reason ? <p className="reason">{reason}</p> : null}
-      {GROUPS.map((group) => (
-        <section key={group.name} className="gcard" aria-label={group.name}>
-          <header><b>{group.name}</b><span>{group.sub}</span>{group.cap ? <em>{group.cap}</em> : null}</header>
-          <div className="sentences">
-            {group.ids.map(catalogRow)}
-            {group.judgement ? view.rules.map(judgementRow) : null}
-            {group.judgement ? addRow() : null}
-          </div>
-          {group.note ? <p className="group-note">{group.note}</p> : null}
-        </section>
-      ))}
+      {GROUPS.map(groupCard)}
     </section>
   );
 }

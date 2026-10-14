@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 type CountFieldProps = { value: number | undefined; label: string; min: number; max?: number; disabled: boolean; onChange: (value: number) => void };
 
@@ -6,14 +6,20 @@ function parse(text: string): number {
   return text.trim() === "" ? Number.NaN : Number(text);
 }
 
+function shown(value: number | undefined): string {
+  return value === undefined ? "" : String(value);
+}
+
 /** A whole number inside a sentence; an emptied field stays empty and reads as not a number until something is typed. */
 export default function CountField({ value, label, min, max, disabled, onChange }: CountFieldProps) {
-  const [text, setText] = useState(value === undefined ? "" : String(value));
+  const [text, setText] = useState(shown(value));
+  const [synced, setSynced] = useState(value);
 
   // A reload or another writer changes the value from outside; typing keeps what was typed.
-  useEffect(function syncFromDraft() {
-    setText((current) => (Object.is(parse(current), value) || value === undefined ? current : String(value)));
-  }, [value]);
+  if (!Object.is(synced, value)) {
+    setSynced(value);
+    if (value !== undefined && !Object.is(parse(text), value)) setText(String(value));
+  }
 
   function change(next: string) {
     setText(next);

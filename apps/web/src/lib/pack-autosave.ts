@@ -1,22 +1,25 @@
 import { errorText } from "@corbits/common";
 import { validate, type RepoDraft } from "./pack-draft.ts";
-import { openSession, saveDraft, type PackSession } from "./repo-pack-save.ts";
-import type { RepoPackStore } from "./repo-pack-store.ts";
+import { mergeDrafts } from "./pack-merge.ts";
+import type { PackSession, SaveOutcome } from "./repo-pack-save.ts";
 
-/** A change to the draft, written against whatever the draft is when it applies, so it can be replayed onto a newer pack. */
 export type DraftUpdate = (draft: RepoDraft) => RepoDraft;
 
-export type AutosaveState = { session: PackSession; draft: RepoDraft; saving: boolean; waiting: boolean; error: string; failure: unknown };
+export type AutosaveState = { session: PackSession; draft: RepoDraft; saving: boolean; waiting: boolean; error: string };
 
 type AutosaveOptions = {
-  store: RepoPackStore;
-  repo: string;
   session: PackSession;
   delayMs: number;
+  /** Writes what of the draft can be saved onto the session's artifact. */
+  write: (session: PackSession, draft: RepoDraft) => Promise<SaveOutcome>;
+  /** Reads the pack again, past any cache, after another writer saved over it. */
+  reread: () => Promise<PackSession>;
   /** Called after every state change. */
   changed: (state: AutosaveState) => void;
   /** Called after each successful save with the session before and after it. */
-  saved: (before: PackSession, after: PackSession) => Promise<void>;
+  afterSave: (before: PackSession, after: PackSession) => Promise<void>;
+  /** Called with why a save failed. */
+  failed: (cause: unknown) => void;
 };
 
 export type Autosave = {
@@ -26,15 +29,22 @@ export type Autosave = {
   flush: () => Promise<void>;
 };
 
+/** Rules saved for the first time take the ids they were saved under, and keep the key they were shown under. */
+function withRenamedRules(draft: RepoDraft, renamed: Record<string, string>): RepoDraft {
+  if (Object.keys(renamed).length === 0) return draft;
+  const ruleKeys = { ...draft.ruleKeys };
+  for (const [from, to] of Object.entries(renamed)) ruleKeys[to] = draft.ruleKeys?.[from] ?? from;
+  return { ...draft, ruleKeys, pack: { ...draft.pack, custom: draft.pack.custom.map((row) => ({ ...row, id: renamed[row.id] ?? row.id })) } };
+}
+
 /**
- * Saves a repository's draft shortly after each edit, one save at a time. When the pack changed on the hub since it
- * was loaded, it is read again and the edits made since the last save are replayed onto it, keeping the other writer's
- * changes. The draft is never replaced by what was stored, so text being typed keeps its spacing.
+ * Saves a repository's draft shortly after each edit, one save at a time. When another writer saved over the pack,
+ * it is read again and what this panel changed since its last save is merged onto it, keeping the other writer's
+ * changes and every unfinished row. The draft is never replaced by what was stored, so text being typed keeps its
+ * spacing.
  */
-export function createAutosave({ store, repo, session, delayMs, changed, saved }: AutosaveOptions): Autosave {
-  let state: AutosaveState = { session, draft: session.saved, saving: false, waiting: false, error: "", failure: null };
-  /** Edits made since `state.session.saved`. */
-  let pending: DraftUpdate[] = [];
+export function createAutosave({ session, delayMs, write, reread, changed, afterSave, failed }: AutosaveOptions): Autosave {
+  let state: AutosaveState = { session, draft: session.saved, saving: false, waiting: false, error: "" };
   let timer: ReturnType<typeof setTimeout> | null = null;
   let running: Promise<void> = Promise.resolve();
   /** Set before `run` starts and cleared when it ends, even when it ends without awaiting. */
@@ -48,21 +58,19 @@ export function createAutosave({ store, repo, session, delayMs, changed, saved }
 
   async function persist(): Promise<boolean> {
     const before = state.session;
-    let sent = pending.length;
-    let outcome = await saveDraft(store, repo, before, state.draft);
+    let outcome = await write(before, state.draft);
     if (outcome.failure?.stale) {
-      const fresh = openSession(repo, await store.load(repo, true));
-      set({ session: fresh, draft: pending.reduce((draft, update) => update(draft), fresh.saved) });
-      sent = pending.length;
-      outcome = await saveDraft(store, repo, fresh, state.draft);
+      const fresh = await reread();
+      set({ session: fresh, draft: mergeDrafts(before.saved, state.draft, fresh.saved) });
+      outcome = await write(fresh, state.draft);
     }
     if (outcome.failure) {
-      set({ session: outcome.session, error: outcome.failure.message, failure: outcome.failure.cause });
+      failed(outcome.failure.cause);
+      set({ session: outcome.session, error: outcome.failure.message });
       return false;
     }
-    pending = pending.slice(sent);
-    set({ session: outcome.session, error: "", failure: null });
-    await saved(before, outcome.session);
+    set({ session: outcome.session, draft: withRenamedRules(state.draft, outcome.renamed), error: "" });
+    await afterSave(before, outcome.session);
     return true;
   }
 
@@ -71,11 +79,12 @@ export function createAutosave({ store, repo, session, delayMs, changed, saved }
     try {
       do {
         again = false;
-        if (validate(state.draft, state.session.saved.pack)) break;
+        if (validate(state.draft, state.session.saved)) break;
         if (!(await persist())) break;
       } while (again);
     } catch (cause) {
-      set({ error: `Could not save the policy. ${errorText(cause)}`, failure: cause });
+      failed(cause);
+      set({ error: `Could not save the policy. ${errorText(cause)}` });
     } finally {
       busy = false;
       set({ saving: false });
@@ -96,7 +105,6 @@ export function createAutosave({ store, repo, session, delayMs, changed, saved }
   }
 
   function edit(update: DraftUpdate) {
-    pending.push(update);
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => void flush(), delayMs);
     set({ draft: update(state.draft), waiting: true });
