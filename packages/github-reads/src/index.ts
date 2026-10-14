@@ -675,7 +675,11 @@ function base64Text(content: string): string {
 /** A file on the default branch, or undefined when nothing is there. */
 export async function readRepoFile(gh: GithubFetch, repo: string, path: string): Promise<RepoFileRead | undefined> {
   const url = `/repos/${repo}/contents/${path}`;
-  const res = await gh(url, { headers: { accept: "application/vnd.github+json" } });
+  return readRepoFileResponse(await gh(url, { headers: { accept: "application/vnd.github+json" } }), url);
+}
+
+/** A contents API response for one path, read as `readRepoFile` reads it; for a caller that sent the request itself. */
+export async function readRepoFileResponse(res: Response, url: string): Promise<RepoFileRead | undefined> {
   if (res.status === 404) return undefined;
   if (!res.ok) throw new Error(`github GET ${url} -> ${res.status}`);
   const body: unknown = await res.json();

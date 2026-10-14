@@ -2,7 +2,7 @@ import { Button, Input, type ButtonProps } from "@corbits/react-ui";
 import { Check } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import { ask } from "../messages.ts";
-import { githubToken } from "../storage.ts";
+import { tokenSaved } from "../storage.ts";
 import { useStorageItem } from "./use-storage.ts";
 import { errorText } from "@corbits/common";
 
@@ -13,7 +13,7 @@ const NEW_TOKEN_URL = "https://github.com/settings/personal-access-tokens/new?na
 
 /** Stays in this browser. */
 export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFormProps) {
-  const saved = useStorageItem(githubToken);
+  const saved = useStorageItem(tokenSaved);
   const [token, setToken] = useState("");
   const [replacing, setReplacing] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -45,7 +45,7 @@ export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFor
   async function remove() {
     setError(null);
     try {
-      await githubToken.setValue(null);
+      await ask({ type: "remove-token" });
     } catch (cause) {
       setError(errorText(cause));
     }

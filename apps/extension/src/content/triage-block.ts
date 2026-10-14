@@ -55,8 +55,9 @@ function rulesList(view: TriageView): HTMLElement {
   return list;
 }
 
-function postedPart(posted: Posted): HTMLElement[] {
-  const parts: HTMLElement[] = [node("h3", "tb-subhead", "The hub would post")];
+// Only the file is the policy the hub syncs; rules saved in the browser or the recommended ones are this browser's own.
+function postedPart(posted: Posted, origin: PolicyOrigin): HTMLElement[] {
+  const parts: HTMLElement[] = [node("h3", "tb-subhead", origin.from === "file" ? "The hub would post" : "This policy would post")];
   parts.push(node("p", "tb-line", `Labels: ${posted.labels.join(", ") || "none"}`));
   for (const step of posted.steps) parts.push(node("p", "tb-line", step));
   if (!posted.comment) {
@@ -73,7 +74,7 @@ export type TriageBlock = { element: HTMLElement; render(view: TriageView | unde
 
 /**
  * Triage's section atop GitHub's pull request sidebar: where the policy came from, each rule's result with its
- * evidence, and, when the rules decide the verdict without the decision model, the verdict and what the hub would post.
+ * evidence, and, when the rules decide the verdict without the decision model, the verdict and what the policy would post.
  */
 export function triageBlock(handlers: { rerun(): void; openPanel(): void }): TriageBlock {
   const element = node("section", "tb");
@@ -106,7 +107,7 @@ export function triageBlock(handlers: { rerun(): void; openPanel(): void }): Tri
     if (run?.error) parts.push(node("p", "tb-warn", view ? `${run.error} Showing the check from ${clock(view.ranAt)}.` : run.error));
     if (view) {
       parts.push(policyLine(view.policy), rulesList(view));
-      if (view.decided) parts.push(...postedPart(view.decided));
+      if (view.decided) parts.push(...postedPart(view.decided, view.policy));
       else parts.push(node("p", "tb-meta", "The verdict needs the decision model, so it is not named here."));
     }
     parts.push(foot(view, run));

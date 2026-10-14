@@ -1,5 +1,5 @@
 import { errorText } from "@corbits/common";
-import { readRepoFile } from "@corbits/github-reads";
+import { readRepoFileResponse, type RepoFileRead } from "@corbits/github-reads";
 import { POLICY_FILE_PATH, readCheckPack, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
 import type { GithubApi } from "./github-api.ts";
 import { savedPackFor } from "./pack-store.ts";
@@ -16,7 +16,7 @@ export type PolicyOrigin = { from: "file"; url: string } | { from: "saved" } | {
 
 export type PolicyRead = { pack: CheckPack; origin: PolicyOrigin };
 
-function outcomeOf(read: Awaited<ReturnType<typeof readRepoFile>>, repo: string): FileOutcome {
+function outcomeOf(read: RepoFileRead | undefined, repo: string): FileOutcome {
   if (read === undefined) return { kind: "absent" };
   if (read.kind === "not-a-file") return { kind: "refused", reason: `${POLICY_FILE_PATH} is not a file.` };
   if (read.text === null) return { kind: "refused", reason: `${POLICY_FILE_PATH} is too large.` };
@@ -33,13 +33,14 @@ async function policyFile(api: GithubApi, repo: string, fresh: boolean): Promise
   if (kept && !fresh && Date.now() - Date.parse(kept.checkedAt) < REVALIDATE_MS) return kept.outcome;
   const headers = new Headers({ accept: "application/vnd.github+json" });
   if (kept?.etag) headers.set("if-none-match", kept.etag);
-  const res = await api.gh(`/repos/${repo}/contents/${POLICY_FILE_PATH}`, { headers, cache: "no-store" });
+  const url = `/repos/${repo}/contents/${POLICY_FILE_PATH}`;
+  const res = await api.gh(url, { headers, cache: "no-store" });
   const checkedAt = new Date().toISOString();
   if (res.status === 304 && kept) {
     await keepPolicyFile(repo, { ...kept, checkedAt });
     return kept.outcome;
   }
-  const outcome = outcomeOf(await readRepoFile(async () => res, repo, POLICY_FILE_PATH), repo);
+  const outcome = outcomeOf(await readRepoFileResponse(res, url), repo);
   await keepPolicyFile(repo, { etag: res.headers.get("etag"), checkedAt, outcome });
   return outcome;
 }

@@ -22,7 +22,7 @@ The policy comes from, in order:
 The block at the top of GitHub's sidebar says which one applied, then lists each rule as Pass, Fail or Waiting with its
 evidence. Decision-model rules show as "Not evaluated here" unless a decision model is set in the side panel. The
 verdict is named only when the rules decide it without the decision model; then the block also shows the labels,
-comment and other steps the hub would post. A chip beside the title repeats the verdict, and the Files tab marks the
+comment and other steps the policy would post (the hub's, when the policy is the file). A chip beside the title repeats the verdict, and the Files tab marks the
 files and lines a failing rule cites.
 
 ## Limits
@@ -30,6 +30,11 @@ files and lines a failing rule cites.
 - Every read needs a GitHub token. A fine-grained token with read-only access to public repositories is enough;
   private repositories need read access to their contents and pull requests.
 - Author team membership is not read, so a step meant for a team is skipped.
+- Approved authors are set on the hub, not in the policy, so the extension treats no author as approved; a pull
+  request from an approved author can get a different result here than on the hub.
+- The token is kept in the extension's `storage.local`, which the browser lets every part of the extension read,
+  the content script on github.com included; it cannot be locked to the background. Only the background reads it, and
+  changing or removing it clears every saved check and policy file.
 - A policy file that extends a shared policy is not checked; only the hub holds the shared policy.
 - The extension never writes to GitHub. Apply labels, comments and reviewers with GitHub's own controls.
 

@@ -3,10 +3,8 @@ import { clock } from "./clock.ts";
 
 export const GITHUB_API = "https://api.github.com";
 
-export type RateLimit = { limit: number; remaining: number; resetAt: string };
-
 export class GithubRateLimitError extends Error {
-  constructor(public readonly resetAt: string) {
+  constructor(resetAt: string) {
     super(`Your GitHub token's hourly limit is used up. It resets at ${clock(resetAt)}.`);
     this.name = "GithubRateLimitError";
   }
@@ -14,17 +12,13 @@ export class GithubRateLimitError extends Error {
 
 type Recorded = { status: number; headers: Headers; body: ArrayBuffer };
 
-export type GithubApi = {
-  gh: GithubFetch;
-  rate(): RateLimit | undefined;
-};
+export type GithubApi = { gh: GithubFetch };
 
-function rateOf(headers: Headers): RateLimit | undefined {
-  const limit = headers.get("x-ratelimit-limit");
-  const remaining = headers.get("x-ratelimit-remaining");
+/** When the token's hourly limit resets, once it is used up. */
+function exhaustedUntil(headers: Headers): string | undefined {
   const reset = headers.get("x-ratelimit-reset");
-  if (limit === null || remaining === null || reset === null) return undefined;
-  return { limit: Number(limit), remaining: Number(remaining), resetAt: new Date(Number(reset) * 1000).toISOString() };
+  if (headers.get("x-ratelimit-remaining") !== "0" || reset === null) return undefined;
+  return new Date(Number(reset) * 1000).toISOString();
 }
 
 /**
@@ -34,15 +28,13 @@ function rateOf(headers: Headers): RateLimit | undefined {
  */
 export function githubApi(token: string, cache: RequestCache): GithubApi {
   const sent = new Map<string, Promise<Recorded>>();
-  let latest: RateLimit | undefined;
 
   async function send(path: string, init?: RequestInit): Promise<Recorded> {
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${token}`);
     const res = await fetch(`${GITHUB_API}${path}`, { ...init, headers, cache: init?.cache ?? cache });
-    const rate = rateOf(res.headers);
-    if (rate) latest = rate;
-    if ((res.status === 403 || res.status === 429) && rate?.remaining === 0) throw new GithubRateLimitError(rate.resetAt);
+    const resetAt = exhaustedUntil(res.headers);
+    if ((res.status === 403 || res.status === 429) && resetAt) throw new GithubRateLimitError(resetAt);
     return { status: res.status, headers: res.headers, body: await res.arrayBuffer() };
   }
 
@@ -67,5 +59,5 @@ export function githubApi(token: string, cache: RequestCache): GithubApi {
     return new Response(status === 204 || status === 304 ? null : body.slice(0), { status, headers: answered });
   }
 
-  return { gh, rate: () => latest };
+  return { gh };
 }

@@ -1,4 +1,4 @@
-// The words the portal, the extension and the action use for a policy's rules and Dos.
+// Plain-text words for a policy's rules and Dos; only the browser extension uses them today.
 import { RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type ModelShape } from "./check-pack.js";
 import type { ResolvedTarget } from "./do.js";
 

@@ -99,7 +99,6 @@ export async function runStepsInBrowser(pr: PrRef, gh: GithubFetch, { pack, orig
   const rows = named.map((check): ViewRule => ({ check: check.check, name: check.name, kind: check.kind, state: stateOf(check), reason: check.reason, evidence: check.evidence }));
   return {
     pr,
-    title: ruledItem.facts.title,
     headSha: ruledItem.facts.headSha,
     ranAt: new Date().toISOString(),
     policy: origin,
