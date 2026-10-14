@@ -36,7 +36,6 @@ function splitFits(): boolean {
   return window.matchMedia(SPLIT_QUERY).matches;
 }
 
-/** The user's stacked or split diff choice, remembered per user in this browser. */
 export function useDiffLayout() {
   const { session } = useSession();
   if (!session) throw new Error("The diff layout needs a signed-in user.");

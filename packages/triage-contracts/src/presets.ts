@@ -23,10 +23,10 @@ const RETIRED_LABELS = [
   "triage:stale-unknown",
 ];
 
-/** Every default verdict label, and every label triage once set. */
+/** Includes every label triage once set. */
 export const TRIAGE_LABELS: readonly string[] = [...Object.values(VERDICT_LABELS), ...RETIRED_LABELS];
 
-/** The labels the mirror takes back when they no longer apply: triage's own, and the verdict labels the policy names. */
+/** The mirror takes back these when they no longer apply. */
 export function ownedLabels(labels: Record<VerdictWord, string>): string[] {
   return [...new Set([...TRIAGE_LABELS, ...Object.values(labels)])];
 }

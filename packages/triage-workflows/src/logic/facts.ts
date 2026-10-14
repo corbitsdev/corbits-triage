@@ -32,7 +32,6 @@ function reviewersWith(latest: Map<string, string>, state: string): string[] {
   return [...latest].flatMap(([login, s]) => (s === state ? [login] : []));
 }
 
-/** The author answered the newest standing request for changes: the head moved past it, or the author commented or reviewed since. */
 function reviewAnswered(reviews: Review[], comments: IssueComment[], author: string, headSha: string, requested: string[]): boolean {
   const asked = reviews.filter((r) => r.state === "CHANGES_REQUESTED" && !r.triageRequest && r.reviewer !== undefined && requested.includes(r.reviewer) && r.submittedAt);
   const newest = asked.reduce<Review | undefined>((latest, r) => (latest === undefined || r.submittedAt! > latest.submittedAt! ? r : latest), undefined);
@@ -90,10 +89,8 @@ export function buildFacts(
 // Patch text past three judge requests' worth is not read, so later pages leave patches out.
 export const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
 
-/** One page of `github_list_pr_files`, its files read as facts. */
 export type FilesPage = { files: PrFileFacts[]; next?: number; patchNext?: number };
 
-/** Where the next page of files starts, and whether it still carries patches. */
 export type FilesCursor = { offset: number; patchOffset?: number; patches: boolean };
 
 export type ListedFiles = { files: PrFileFacts[]; patchChars: number };
@@ -160,7 +157,6 @@ function firstLine(commit: { message?: string }): string {
   return (commit.message ?? "").split("\n", 1)[0]!;
 }
 
-/** The distinct slugs of the repository owner's teams the pack's steps are for, which is what the membership read takes. */
 export function namedTeams(pack: CheckPack, repo: string): string[] {
   return [...new Set(stepTeams(pack).flatMap((team) => teamSlug(team, repo) ?? []))].sort();
 }
@@ -177,7 +173,6 @@ export interface PullData {
   comments: IssueComment[];
   commits: Array<{ message?: string }>;
   files: PrFileFacts[] | string;
-  /** The author's membership of the steps' teams; null when it was not read or could not be. */
   authorTeams: { teams?: unknown; unknown?: unknown } | null;
 }
 
@@ -200,11 +195,9 @@ export interface ItemContext {
   policy: RepoPolicy;
   pack: CheckPack;
   events: TriageEvent[];
-  /** The repository's docs and contribution rules by path, or why they could not be read. */
   docs: RepoDocs | string;
 }
 
-/** The rules step's item for one pull request, or the error that degrades it. */
 export function assembleItem(number: number, data: PullData, { repo, policy, pack, events, docs }: ItemContext): RulesItem {
   const { pr, files } = data;
   if (!pr) return { error: `github_get_pr failed for #${number}` };

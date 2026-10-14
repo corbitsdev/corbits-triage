@@ -5,7 +5,6 @@ import { errorText } from "../error-text.ts";
 
 export type DraftMenu = { element: HTMLElement; render(drafts: Draft[], view: TriageView | undefined, applied: Record<string, Applied | undefined>): void };
 
-/** `post` posts a draft as the person; `insert` puts it in the comment box to edit first. */
 export type DraftHandlers = { insert(draft: Draft): void; post(draft: Draft): Promise<void> };
 
 const NOTE_MS = 5000;
@@ -104,7 +103,6 @@ export function draftMenu(handlers: DraftHandlers): DraftMenu {
     if (!element.contains(event.relatedTarget as Node | null)) setOpen(false);
   });
 
-  /** The triage in one line above the comment box, as the person writes. */
   function renderSummary(view: TriageView | undefined) {
     if (!view) {
       summary.replaceChildren();
@@ -153,7 +151,6 @@ export function draftMenu(handlers: DraftHandlers): DraftMenu {
     return li;
   }
 
-  /** Posting, or posted: a posted draft cannot be posted or put in the box again. */
   function renderApplied(applied: Record<string, Applied | undefined>) {
     for (const [id, { post: postButton, edit }] of rows) {
       const record = applied[id];

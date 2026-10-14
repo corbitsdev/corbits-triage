@@ -7,15 +7,12 @@ import type { RepoPack } from "../../lib/repo-pack.ts";
 type TriageSwitchProps = {
   repo: string;
   enabled: boolean;
-  /** Triage is on as saved, so open pull requests can be triaged again. */
   triaging: boolean;
   disabled: boolean;
   edit: RepoPack["edit"];
-  /** Why the draft cannot be saved, when the triage switch is the reason. */
   reason?: string;
 };
 
-/** Whether triage runs on the repository; everything under it applies only while it is on. */
 export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, reason }: TriageSwitchProps) {
   const { runBacklog } = usePortal();
   const [rerunError, setRerunError] = useState("");
@@ -33,7 +30,6 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
     edit((current) => ({ ...current, policy: { ...current.policy, enabled: next } }));
   }
 
-  /** Off says what turning it on unlocks; on as saved offers to triage the open pull requests again. */
   function hint() {
     if (!enabled) return <span className="gate-note">Turn on triage to set rules and actions</span>;
     if (!triaging) return null;

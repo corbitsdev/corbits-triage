@@ -129,7 +129,6 @@ export function migrationEnv(db: DatabaseConfig): Record<string, string> {
   };
 }
 
-/** How often the hub re-queues open pull requests whose head is not triaged. */
 export function triageReconcileIntervalMs(env: HubEnv): number {
   return env.TRIAGE_RECONCILE_INTERVAL_MS === undefined ? 5 * 60_000 : Number(env.TRIAGE_RECONCILE_INTERVAL_MS);
 }

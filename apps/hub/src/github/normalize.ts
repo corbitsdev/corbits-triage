@@ -16,17 +16,14 @@ export interface PrMail {
   body: string | null;
   /** Null when the payload does not say, as on check_run. */
   draft: boolean | null;
-  /** Null unless the event is a pull request review. */
   review: { state: string } | null;
   policy?: RepoPolicy;
 }
 
 type Json = Record<string, any>;
 
-/** The repository whose default branch moved, and the pull request merged to move it. */
 export type BaseMove = { repo: string; merged: number };
 
-/** A pull request merged into the repository's default branch; null for anything else. */
 export function baseMoveOf(event: string, p: Json): BaseMove | null {
   const pr = p?.pull_request;
   const repo = p?.repository?.full_name;

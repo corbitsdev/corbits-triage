@@ -3,7 +3,6 @@ import type { DraftUpdate } from "./pack-autosave.ts";
 import { customProblem, freshRuleId, freshStepId, labelProblem, same, setSteps, stepEntries, stepProblem, STEPS_MAX, type RepoDraft, type StepEntry } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
 
-/** `position` is the step's place among all the verdict's steps, as the contract counts them. */
 export type StepRow = { id: string; position: number; step: Step; problem: string | null };
 
 /** `key` stays the same when a first save renames the rule. */
@@ -12,28 +11,21 @@ export type JudgementRule = { id: string; key: string; on: boolean; problem: str
   | { shape: "score"; subject: string; levels: string[]; failBelow?: string }
 );
 
-/** One field of a judgement rule; `failBelow: null` means it never fails. */
 export type JudgementPatch = { claim: string } | { subject: string } | { levels: string[] } | { failBelow: string | null };
 
-/** A verdict's label as the Labels card edits it. */
 export type VerdictLabel = { name: string; problem: string | null };
 
 export type PolicyView = {
-  /** The steps people edit; the failed-rule labels step for anyone belongs to the Labels card. */
   steps: Record<VerdictWord, StepRow[]>;
   rules: JudgementRule[];
   labels: Record<VerdictWord, VerdictLabel>;
-  /** Which verdicts label each failed rule. */
   ruleLabels: Record<VerdictWord, boolean>;
-  /** Which verdicts hold as many steps as a verdict can. */
   full: Record<VerdictWord, boolean>;
   addStep: (verdict: VerdictWord) => void;
   setStep: (verdict: VerdictWord, id: string, step: Step) => void;
   removeStep: (verdict: VerdictWord, id: string) => void;
-  /** Adds the failed-rule labels step to every verdict that lacks it, or removes it from every verdict. */
   setRuleLabels: (on: boolean) => void;
   setLabelName: (verdict: VerdictWord, name: string) => void;
-  /** Adds an empty rule and returns its id. */
   addRule: (shape: JudgementRule["shape"]) => string;
   patchRule: (id: string, patch: JudgementPatch) => void;
 };
@@ -44,12 +36,10 @@ function ruleLabelsEntry(entries: StepEntry[]): StepEntry | undefined {
   return entries.find((entry) => same(entry.step, RULES_LABELS));
 }
 
-/** People are GitHub logins, which GitHub matches without the @ and whatever their case. */
 export function logins(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim().replace(/^@/, "").toLowerCase()).filter(Boolean))];
 }
 
-/** What a step still needs, in the panel's words; null when the contract's reason is the clearer one. */
 function stepMissing(step: Step, repo: string): string | null {
   const owner = repo.split("/", 1)[0];
   if (typeof step.for === "object" && "team" in step.for) {

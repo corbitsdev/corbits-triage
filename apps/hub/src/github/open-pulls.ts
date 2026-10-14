@@ -39,7 +39,6 @@ async function pullsFor(gh: GithubFetch, record: RepoRecord): Promise<RepoPulls>
   }
 }
 
-/** Each repository's open pull requests, or why GitHub could not list them. */
 export function listRepoPulls(gh: GithubFetch, records: readonly RepoRecord[]): Promise<RepoPulls[]> {
   return Promise.all(records.map((record) => pullsFor(gh, record)));
 }
@@ -48,7 +47,6 @@ export type OpenPullsRead = { at: number; repos: RepoPulls[] };
 
 /** GitHub's last listing of each tenant's open pull requests, shared by the portal's listing and the verdict route. */
 export type OpenPullsCache = {
-  /** The last listing, when it is younger than `maxAgeMs`. */
   kept(tenantId: string, maxAgeMs: number): OpenPullsRead | undefined;
   /** Lists now and keeps the listing; callers while it is read share it. */
   read(tenantId: string, list: () => Promise<RepoPulls[]>): Promise<OpenPullsRead>;

@@ -96,7 +96,6 @@ function hunkQuestionId(check: string, file: number, hunk: number): string {
 
 export type ScopedCheck = CustomCheck & { shape: "is-true"; scope: "file" | "hunk" };
 
-/** A custom check asked once per changed file or hunk in its scope rather than once for the whole pull request. */
 export function isScoped(row: CustomCheck): row is ScopedCheck {
   return row.shape === "is-true" && (row.scope === "file" || row.scope === "hunk");
 }
@@ -112,18 +111,14 @@ function ruleText(row: ScopedCheck): string {
 
 /** How a per-file check is decided for one pull request: docs or a file or hunk scoped custom check. */
 export interface FilePlan {
-  /** Changed files that satisfy the check; any one passes it without asking. */
   changed: string[];
-  /** Question id to the file, or the lines of the hunk within it, it asks about. */
   asked: Record<string, CheckItem>;
   /** Files or hunks the check would ask about but no request could read, such as patches GitHub left out. */
   unread: string[];
 }
 
-/** Keyed by check id. */
 export type QualityPlan = Record<string, FilePlan>;
 
-/** One question about one changed file or hunk, asked of whichever request holds the file at index `file`. */
 interface FileQuestion {
   check: string;
   id: string;
@@ -193,19 +188,15 @@ function customQuestions(sources: NonNullable<DeterministicResult["sources"]>): 
   return sources.custom.filter((row) => !isScoped(row)).map(customQuestion);
 }
 
-/** Every question id an evaluation asks; `render` refuses answers to anything else. */
 export function askedQuestionIds(sources: NonNullable<DeterministicResult["sources"]>, plan: QualityPlan, focused?: FocusedPlan): Set<string> {
   return new Set([...Object.keys(focused?.slices ?? {}), ...Object.keys(focused?.parts ?? {}), ...customQuestions(sources).map((question) => question.id), ...Object.values(plan).flatMap((filePlan) => Object.keys(filePlan.asked))]);
 }
 
-/** A changed file as the judge reads it: its patch split into hunks. */
 export interface StateFile {
   path: string;
   status?: string;
   hunks: string[];
-  /** Later hunks were left out, or are in a later request. */
   truncated?: true;
-  /** Earlier hunks are in an earlier request. */
   continued?: true;
 }
 
@@ -227,7 +218,6 @@ export type JudgeState = {
 
 type PathList = Pick<JudgeState["pullRequest"], "paths" | "directories">;
 
-/** Every changed file counted by directory, at the deepest level whose summary fits focused's share. */
 function directories(facts: PrFacts): NonNullable<JudgeState["pullRequest"]["directories"]> {
   const changed = new Map((facts.files ?? []).map((file) => [file.path, (file.additions ?? 0) + (file.deletions ?? 0)]));
   let summary: NonNullable<JudgeState["pullRequest"]["directories"]> = {};
@@ -243,7 +233,7 @@ function directories(facts: PrFacts): NonNullable<JudgeState["pullRequest"]["dir
   return summary;
 }
 
-/** The changed paths a request lists: the first 200, or for focused those that fit its share and a directory summary when any is left out. */
+/** The first 200. */
 function pathList(facts: PrFacts, focused: boolean): PathList {
   const paths = facts.paths ?? [];
   if (!focused) return { paths: paths.slice(0, MAX_PATHS) };
@@ -290,7 +280,6 @@ export type VerdictState = {
   policy: { rules: PolicyRule[] };
 };
 
-/** One System One call: the pull request with a share of its files, and the questions about them. */
 export interface JudgeRequest {
   state: JudgeState | VerdictState;
   questions: QualityQuestion[];
@@ -307,19 +296,15 @@ export function judgeKey({ state, questions }: JudgeRequest): string {
   return bytesToHex(sha256(utf8ToBytes(JSON.stringify({ systemPrompt: JUDGE_SYSTEM_PROMPT, state, questions }))));
 }
 
-/** How focused is asked: one choice per request-sized slice of the diff. */
 export interface FocusedPlan {
-  /** Question id to the paths of the slice it asks about; one whole-pull-request question when the diff fits one request. */
   slices: Record<string, string[]>;
   /** Files with lines changed whose patch the judge could not get whole: GitHub left it out, or reading it stopped. */
   unread: string[];
-  /** Focused's follow-up file questions, by id to the file each asks about; empty until it fails. */
   parts: Record<string, CheckItem>;
 }
 
 export interface QualityEvaluation {
   plan: QualityPlan;
-  /** Absent when focused is not enabled, or the pull request has no lines to read. */
   focused?: FocusedPlan;
   requests: JudgeRequest[];
   judgeError?: string;
@@ -359,7 +344,7 @@ function hunkPieces(hunk: string, room: number): string[] {
   return piece.length > 0 ? [...pieces, piece.join("\n")] : pieces;
 }
 
-/** A line as pieces of at most `room` JSON bytes, counting each character at its widest escape. */
+/** Counts each character at its widest escape. */
 function cutLine(line: string, room: number): string[] {
   if (jsonBytes(line) <= room) return [line];
   const chars = [...line];
@@ -418,19 +403,17 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     chunk.push(file);
   }
 
-  /** Starts a new request that reads `file` again when this one holds as many questions as one request may ask. */
+  /** When this one holds as many questions as one request may ask. */
   function makeRoom(file: StateFile, bytes: number) {
     if (questions.length < questionCap) return;
     flush();
     add(file, bytes);
   }
 
-  /** Whether docs, not already passed by a changed doc, asks about this file. */
   function asksDocs(path: string): boolean {
     return isAsked(path) && plan.docs?.changed.length === 0;
   }
 
-  /** Every question about the file at `position` whose leading `read` hunks the request holds; a patch without hunk headers is cited as its file. */
   function fileQuestions(path: string, position: number, read: number, cited: CheckItem[]): FileQuestion[] {
     const out: FileQuestion[] = asksDocs(path) ? [{ check: "docs", id: fileQuestionId("docs", position), item: path, instructions: docsQuestion, criteria: DOCS_CRITERIA }] : [];
     for (const row of scoped) {
@@ -542,7 +525,6 @@ function stateFile(file: PrFileFacts, hunks: string[]): StateFile {
 /** The most files focused names its separate parts from. */
 const MAX_PART_FILES = 30;
 
-/** Focused's file questions, by question id to the file each asks about, and the requests that ask them. */
 export interface FocusedParts {
   asked: Record<string, CheckItem>;
   requests: JudgeRequest[];

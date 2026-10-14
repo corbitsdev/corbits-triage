@@ -24,7 +24,6 @@ const SAVE_WORDS: Record<SaveState, string> = { saved: "Saved", saving: "Savingâ
 /** Escape on an open tooltip closes the tooltip, not the panel. */
 const KEEPS_ESCAPE = "input, textarea, select, [role=dialog], [role=menu], [data-state=delayed-open], [data-state=instant-open]";
 
-/** A repository's triage, rules and steps in one scroll; each change saves on its own. */
 export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanelProps) {
   const { readOnly, snapshot } = usePortal();
   const settings = useRepoPack(store, repo.name);

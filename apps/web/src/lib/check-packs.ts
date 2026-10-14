@@ -7,7 +7,7 @@ import { usePortal } from "./portal.tsx";
 
 export const CHECK_PACK_INDEX_QUERY_KEY = "check-pack-index";
 
-/** One listing of every check pack, at most once per minute plus after refresh(). */
+/** At most once per minute plus after refresh(). */
 export function checkPackIndexQuery(tenantId: string) {
   return queryOptions({
     queryKey: [CHECK_PACK_INDEX_QUERY_KEY, tenantId],
@@ -16,7 +16,6 @@ export function checkPackIndexQuery(tenantId: string) {
   });
 }
 
-/** A repository's check pack as the hub reads it for triage; the repositories table and the repository page share it. */
 export function checkPackQuery(tenantId: string | undefined, repo: string) {
   return queryOptions({
     queryKey: ["check-pack", tenantId, repo],
@@ -29,7 +28,6 @@ export function checkPackQuery(tenantId: string | undefined, repo: string) {
   });
 }
 
-/** The repository's check pack once loaded; null while it loads or when the repository has none. */
 export function useRepoPack(repo: string): CheckPack | null {
   const { snapshot } = usePortal();
   const found = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo)).data;

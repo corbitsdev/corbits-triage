@@ -16,7 +16,6 @@ import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore
 export type ReconcileTenant = { id: string; domain: string; config: unknown };
 
 type DeploymentRotation = {
-  /** Runs a deployment's log may hold before it is replaced by a fresh copy. */
   afterRuns: number;
   redeploy: (tenantId: string, anchorRunId: string) => Promise<Redeployed>;
   sameSource: (anchorRunId: string, otherAnchorRunId: string) => Promise<boolean>;
@@ -28,9 +27,7 @@ type DeploymentRotation = {
 
 export type TriageReconcilerDeps = {
   tenants: () => Promise<ReconcileTenant[]>;
-  /** The tenant's live pr-triage deployments, newest first: the portal's and the copies the hub deploys to replace them. */
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
-  /** The tenant's newest `limit` pr-triage deployments, live or ended, newest first. */
   latestDeployments: (tenantId: string, limit: number) => Promise<DeploymentRecord[]>;
   rotation: DeploymentRotation;
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
@@ -77,7 +74,6 @@ function headKey(row: Pick<PrTriageRow, "number" | "headSha">): string {
   return runKey(row.number, row.headSha);
 }
 
-/** The rows with each of `replacements` standing in for the row of its head. */
 function withHeads(rows: readonly PrTriageRow[], replacements: readonly PrTriageRow[]): PrTriageRow[] {
   const byHead = new Map(replacements.map((row) => [headKey(row), row]));
   return rows.map((row) => byHead.get(headKey(row)) ?? row);
@@ -279,7 +275,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     return settle(tenant.id, record, after, runningOn, now);
   }
 
-  /** Whether the newest `HEAL_CAP` deployments all failed within the window, from the same source. */
+  /** The newest `HEAL_CAP` failed within the window, from the same source. */
   async function healCapped(latest: readonly DeploymentRecord[], now: number): Promise<boolean> {
     if (latest.length < HEAL_CAP) return false;
     if (!latest.every((deployment) => failedByInterchange(deployment) && now - deployment.endedAt.getTime() < HEAL_CAP_WINDOW_MS)) return false;

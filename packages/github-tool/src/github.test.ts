@@ -27,7 +27,6 @@ async function login() {
   return APP.login;
 }
 
-/** GitHub that keeps pull request 8's issue comments, so repeated runs see each other's writes. */
 function fakeGithub(comments: FakeComment[] = [], otherAppComments: number[] = [], labels: string[] = []) {
   let nextId = 100;
   const { gh, requests } = recorder(function respond(path, init) {
@@ -146,7 +145,6 @@ describe("github mirror", () => {
 
 type TimedComment = FakeComment & { updated_at: string };
 
-/** GitHub holding alice's pull request 8, stamping each comment write, so reruns read what earlier ones wrote and when. */
 function timedGithub(state = "open", seed: TimedComment[] = []) {
   let clock = 0;
   const pr = { state, user: { login: "alice" }, head: { sha: "abc" }, labels: [] as Array<{ name: string }> };

@@ -10,7 +10,6 @@ export function useGithubManageAccess() {
   return useAccess(`credential:${credential?.id ?? "*"}`, "manage");
 }
 
-/** Reads the App's repositories from GitHub each time a page that needs them mounts. */
 export function useGithubSync(enabled: boolean) {
   const { snapshot, syncFromGithub } = usePortal();
   const access = useGithubManageAccess();

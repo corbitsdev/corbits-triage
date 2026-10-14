@@ -14,7 +14,6 @@ export type PatchedFile = { status: string; additions: number; deletions: number
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
-/** Parses a GitHub unified patch (hunks only, no file headers) into hunks of numbered lines. */
 export function parsePatch(patch: string): DiffHunk[] {
   const hunks: DiffHunk[] = [];
   let hunk: DiffHunk | null = null;
@@ -49,7 +48,6 @@ export function parsePatch(patch: string): DiffHunk[] {
   return hunks;
 }
 
-/** Pairs a hunk's lines for side-by-side display: each run of removals sits beside the additions that follow it. */
 export function splitRows(lines: DiffLine[]): SplitRow[] {
   const rows: SplitRow[] = [];
   let removed: DiffLine[] = [];
@@ -76,7 +74,6 @@ export function splitRows(lines: DiffLine[]): SplitRow[] {
   return rows;
 }
 
-/** Why GitHub sent no patch for a file. */
 export function missingPatchReason(file: Omit<PatchedFile, "patch">): string {
   if (file.status === "renamed" && file.additions + file.deletions === 0) return "Renamed without changes.";
   if (file.status === "changed") return "File mode changed.";

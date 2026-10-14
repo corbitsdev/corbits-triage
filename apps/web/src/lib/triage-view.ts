@@ -12,7 +12,6 @@ export const VERDICT_LABEL: Record<VerdictWord, string> = { pass: "Pass", fail: 
 
 export const NOT_EVALUATED = "Not evaluated";
 
-/** The verdict in one line: its word, how likely it passes when the judge was asked, and the first reason. */
 export function verdictText(item: Pick<PrItem, "verdict" | "score" | "reasons">): string {
   const { verdict, score, reasons } = item;
   if (verdict === null) return NOT_EVALUATED;

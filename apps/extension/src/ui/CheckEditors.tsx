@@ -5,14 +5,12 @@ import { defaultLocalPack } from "../local-pack.ts";
 import { withCatalogParams, withCustomCheck, type CustomForm } from "../pack-edit.ts";
 import { ISSUE_TRACKER_NAMES } from "../prose.ts";
 
-/** The catalog checks whose limits the pack lets a person set. */
 export const EDITABLE_CATALOG: readonly CatalogId[] = ["max-files-changed", "max-lines-changed", "no-forbidden-paths", "linked-issue"];
 
 function linesOf(text: string): string[] {
   return text.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
-/** A whole number from `min` up, or why not. */
 function wholeNumber(text: string, min: number, what: string): number | string {
   const value = Number(text);
   if (text.trim() === "" || !Number.isInteger(value) || value < min) return `${what} must be a whole number from ${min} up.`;
@@ -54,7 +52,6 @@ function EditorFoot({ error, saveLabel, onCancel }: { error: string | null; save
 
 type CatalogEditorProps = { id: CatalogId; pack: CheckPack; onSave: (pack: CheckPack) => Promise<void>; onCancel: () => void };
 
-/** A catalog check's limits; saved together, then the pull request is scored again. */
 export function CatalogEditor({ id, pack, onSave, onCancel }: CatalogEditorProps) {
   const row: CatalogCheck = { ...defaultLocalPack(pack.repo).checks[id], ...pack.checks[id], enabled: pack.checks[id]?.enabled ?? false };
   const [maxFiles, setMaxFiles] = useState(String(row.maxFiles ?? ""));
@@ -156,7 +153,6 @@ function formOf(shape: ModelShape, text: CustomText): CustomForm | string {
 type CustomEditorProps = {
   shape: ModelShape;
   pack: CheckPack;
-  /** The check being edited; absent for a new one. */
   id?: string;
   form?: CustomForm;
   defaultName: string;
@@ -164,7 +160,6 @@ type CustomEditorProps = {
   onCancel: () => void;
 };
 
-/** A custom check's name and parameters, checked by the pack contract before it is saved. */
 export function CustomEditor({ shape, pack, id, form, defaultName, onSave, onCancel }: CustomEditorProps) {
   const [text, setText] = useState(() => textOf(form, defaultName));
   const [error, setError] = useState<string | null>(null);

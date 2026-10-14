@@ -31,7 +31,6 @@ export async function ensureTriageRole(tx: Tx, tenantId: string, stamp: Date): P
   return id;
 }
 
-/** A record's stored posting mode, at the top level or under `policy` as `repoPolicy` reads it. */
 function postingMode(record: Record<string, unknown>): unknown {
   return record.cleanupMode ?? asRecord(record.policy)?.cleanupMode;
 }

@@ -71,7 +71,7 @@ function isFirstRead(query: { state: { data: unknown } }): boolean {
   return query.state.data === undefined;
 }
 
-/** True while approvals are read for the first time, without subscribing, so it adds no polling of its own. */
+/** Adds no polling of its own. */
 export function useApprovalsFirstLoad(): boolean {
   return useIsFetching({ queryKey: [APPROVALS_QUERY_KEY], predicate: isFirstRead }) > 0;
 }
@@ -100,7 +100,6 @@ export function useDeployedWorkflows(): TenantSection<DeployedWorkflow> {
   return useTenantSection(DEPLOYED_WORKFLOWS_QUERY_KEY, listDeployedWorkflows, DIRECTORY_REFRESH_MS);
 }
 
-/** The hub's answer to whether the signed-in member may do `action` on `resource`. */
 export function useAccess(resource: string, action: string): UseQueryResult<boolean> {
   const { snapshot } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
@@ -119,7 +118,6 @@ export function useAccess(resource: string, action: string): UseQueryResult<bool
   });
 }
 
-/** Whether the signed-in member may do `action` on `resource`; false until the hub answers. */
 export function useAllowed(resource: string, action: string): boolean {
   return useAccess(resource, action).data === true;
 }

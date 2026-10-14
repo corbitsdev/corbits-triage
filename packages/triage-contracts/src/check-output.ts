@@ -2,12 +2,11 @@ import { type } from "arktype";
 
 const LineRangeSchema = type({ start: "number.integer >= 1", end: "number.integer >= 1" });
 
-/** The lines one hunk changes: `added` in the head file at `path`, `removed` in the base file at its own path, which a rename changes. */
+/** `removed` is in the base file at its own path, which a rename changes. */
 export const LineCitationSchema = type({ path: "string", "added?": LineRangeSchema, "removed?": LineRangeSchema.and({ path: "string" }) });
 
 export type LineCitation = typeof LineCitationSchema.infer;
 
-/** A file or other finding as text, or the changed lines behind it. */
 const ItemsSchema = type("string").or(LineCitationSchema).array();
 
 export type CheckItem = typeof ItemsSchema.infer[number];
@@ -50,7 +49,6 @@ export function itemText(item: CheckItem): string {
   return `${item.path}${item.added ? `:${lineRange(item.added, "-")}` : ""}${removedText(item)}`;
 }
 
-/** The cited lines behind an evidence line, when the check's output carries them. */
 export function citationOf(output: CheckOutput | null | undefined, evidence: string): LineCitation | undefined {
   if (!output || output.kind === "values" || output.kind === "level" || output.kind === "not-applicable") return undefined;
   return output.items?.find((item): item is LineCitation => typeof item !== "string" && itemText(item) === evidence);

@@ -92,7 +92,6 @@ function mailedNumbers(delivered: Delivered): number[] {
   return mailedHeads(delivered).map(([, number]) => number);
 }
 
-/** Drives one real triage director for one inbound event and returns its reply. */
 async function directorReply(role: "facts", event: ReactorInboundEvent): Promise<string> {
   const replies: string[] = [];
   const caps = {
@@ -109,7 +108,6 @@ async function directorReply(role: "facts", event: ReactorInboundEvent): Promise
   return replies[0]!;
 }
 
-/** What GitHub answers the facts director about pull request `n` of REPO, with `pr` over the pull request itself. */
 function githubAnswer({ id, name }: ToolCall, pr: Record<string, unknown>): Record<string, unknown> {
   const n = Number(id.split(":")[1]);
   switch (name) {
@@ -133,7 +131,6 @@ function githubAnswer({ id, name }: ToolCall, pr: Record<string, unknown>): Reco
   throw new Error(`unexpected call ${name}`);
 }
 
-/** Focused is one thing and the verdict passes, each with probability `related`. */
 function focusedAnswers(questions: Array<{ id: string }>, related: number): string {
   const rest = (1 - related) / 2;
   const probabilities: Record<string, Record<string, number>> = {
@@ -143,7 +140,6 @@ function focusedAnswers(questions: Array<{ id: string }>, related: number): stri
   return questions.map(({ id }) => JSON.stringify({ id, type: "choice", choice: Object.keys(probabilities[id]!)[0], probabilities: probabilities[id], confidence: 0.9 })).join("");
 }
 
-/** Runs a trigger mail through the real facts director, rules, both judge rounds answering every chunk, and evaluate, as the workflow does; `asked` counts the first round's calls. */
 async function triageMail(mail: unknown, pr: Record<string, unknown>, related = 0.8) {
   const pending: ToolCall[] = [];
   let reply: string | undefined;
@@ -211,29 +207,21 @@ function fakeReader(logs: Logs) {
   return { reader, reads, latestOf };
 }
 
-/** `prs` is the open heads of REPO, or the open heads of several repositories by name. */
 type HarnessOptions = {
   github?: boolean;
   batchSize?: number;
-  /** The `TRIAGE_MAX_IN_FLIGHT` setting; unset keeps the default. */
   maxInFlight?: string;
   failDeliveryAt?: number;
-  /** Stands in for the mail delivery; recorded only when it resolves. */
   deliver?: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   refuseSaves?: number;
   onRefusedSave?: (repo: string) => void;
   onSave?: (repo: string, rows: PrTriageRow[]) => void;
   rotateAfterRuns?: number;
   now?: () => Date;
-  /** Live deployments, newest first; LIVE alone by default. */
   deployments?: LiveDeployment[];
-  /** Runs while the copy deploys, before it is listed. */
   whileRedeploying?: (deployments: LiveDeployment[]) => void;
-  /** The rotation recorded in the tenant config; none by default. */
   rotation?: RotationRecord;
-  /** Whether any two deployments run the same workflow source; false by default. */
   sameSource?: boolean;
-  /** Every repository's check pack; an empty pack by default. */
   pack?: CheckPack;
 };
 
@@ -616,7 +604,6 @@ describe("triage reconciler", () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true }, focused: { enabled: true } } };
     const policy = { enabled: true, checkPack: { name: REPO } };
 
-    /** Heads 1 and 3 triaged once with `related` as every focused answer, then #2 merged and the others mailed again. */
     async function remailed(related: number, deployments?: LiveDeployment[]) {
       const first = await triageMail(stockTriggerMail({ kind: "pr", repo: REPO, items: [1, 3].map((n) => ({ prNumber: n, headSha: `sha${n}` })), policy, checkPack: pack }), { mergeable: true }, related);
       const runs = { run_first: [startedBatch([1, 3]), evaluated({ items: first.verdicts }), completed] };

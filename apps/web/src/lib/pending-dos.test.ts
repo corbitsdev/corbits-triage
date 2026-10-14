@@ -14,7 +14,6 @@ function step(kind: string, target: Record<string, unknown>, index = 0): Record<
   return { list: "fail", index, effectId: `effect-${index}`, kind, held: true, reason: "Size failed.", target };
 }
 
-/** A pr-triage verdict as the hub's triage-verdicts route answers it, read back the way the inbox reads it. */
 function verdict(actions: unknown[]): PrItem {
   const detail = VerdictDetail.assert({ labels: ["triage:needs-decision"], feedback: "Please split this.", actions });
   const recorded = {

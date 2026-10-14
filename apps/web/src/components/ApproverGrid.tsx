@@ -36,7 +36,6 @@ function ApproverCell({ role, kind, grants, disabled, toggle }: ApproverCellProp
   );
 }
 
-/** Which roles may approve each kind of held Do, on every repository. */
 export default function ApproverGrid({ roles, grants, loading, denied, disabled, addGrant, removeGrants, onError }: ApproverGridProps) {
   const [pending, setPending] = useState<string | null>(null);
   const columns = gridRoles(roles);

@@ -70,7 +70,6 @@ describe("corbitsTriage rev CAS", () => {
   });
 });
 
-/** Fails the test when anything reads the database. */
 const untouchable = new Proxy({}, {
   get() {
     throw new Error("database touched");

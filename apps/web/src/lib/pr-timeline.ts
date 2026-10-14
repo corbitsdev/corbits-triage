@@ -16,7 +16,6 @@ export function isPrTimelineQuery(query: Query): boolean {
   return query.queryKey[0] === PR_TIMELINE_QUERY_KEY;
 }
 
-/** A pull request's recorded verdicts, oldest first. */
 export function usePrTimeline(repo: string, number: number | null) {
   const { snapshot } = usePortal();
   return useQuery(prTimelineQuery(snapshot?.workspace.tenantId, repo, number));

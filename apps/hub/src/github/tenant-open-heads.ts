@@ -11,9 +11,7 @@ import type { OpenPr } from "./reconcile-plan.js";
 import type { RepoRecord } from "./tenant-config.js";
 
 export type OpenHeadsReader = (record: RepoRecord) => Promise<OpenPr[]>;
-/** One pull request's head and whether it is a draft, or undefined when it is not open. */
 export type OpenHeadReader = (record: RepoRecord, number: number) => Promise<Pick<OpenPr, "headSha" | "draft"> | undefined>;
-/** One pull request's head sha, or undefined when it is not open. */
 export type PullHeadReader = (appJson: string, record: RepoRecord, number: number) => Promise<string | undefined>;
 
 export function createPullHeadReader(deps: { githubApiOrigin: string }): PullHeadReader {
@@ -27,7 +25,6 @@ export function createPullHeadReader(deps: { githubApiOrigin: string }): PullHea
 
 type TenantGithubDeps = { db: DB["db"]; cipher: CredentialCipher; githubApiOrigin: string };
 
-/** GitHub as the tenant's App; undefined when the tenant has no active GitHub App credential. */
 function createTenantGithub(deps: TenantGithubDeps) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
   return async function tenantGithub(tenantId: string): Promise<GithubFetch | undefined> {
@@ -43,7 +40,6 @@ function createTenantGithub(deps: TenantGithubDeps) {
 export function createTenantOpenHeads(deps: TenantGithubDeps) {
   const tenantGithub = createTenantGithub(deps);
 
-  /** Undefined when the tenant has no active GitHub App credential. */
   return async function openHeadsFor(tenantId: string): Promise<OpenHeadsReader | undefined> {
     const gh = await tenantGithub(tenantId);
     if (!gh) return undefined;
@@ -57,7 +53,6 @@ export function createTenantOpenHeads(deps: TenantGithubDeps) {
 export function createTenantOpenHead(deps: TenantGithubDeps) {
   const tenantGithub = createTenantGithub(deps);
 
-  /** Undefined when the tenant has no active GitHub App credential. */
   return async function openHeadFor(tenantId: string): Promise<OpenHeadReader | undefined> {
     const gh = await tenantGithub(tenantId);
     if (!gh) return undefined;

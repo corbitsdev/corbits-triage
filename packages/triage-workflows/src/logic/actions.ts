@@ -23,7 +23,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The idempotency key for one Do on one head; GitHub writes and their audit share it. */
+/** GitHub writes and their audit share it. */
 export function doEffectId(ref: DoRef): string {
   const parts = [ref.repo, ref.number, ref.headSha, ref.list, ref.index, ref.kind, canonical(ref.target)];
   return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
@@ -34,15 +34,12 @@ type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: strin
 /** `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant. */
 export type SuggestedDo = Place & { effectId: string; target: ResolvedTarget; held?: true };
 
-/** A step resolves to a target or is skipped, as one not for this author is. */
 export type SuggestedAction = SuggestedDo | (Place & { skipped: true });
 
 export interface ActionInput {
   facts: PrFacts;
-  /** The rendered checks, so judged rules count too. */
   checks: CheckResult[];
   verdict: VerdictWord;
-  /** Why the verdict is what it is, recorded on each Do. */
   reason: string;
   pack: CheckPack;
 }
@@ -76,7 +73,6 @@ function people(step: Extract<Step, { do: "assign" | "request-review" }>, { fact
   }
 }
 
-/** The failed checks that are the author's to fix. */
 function changesFor({ checks, pack }: Pick<ActionInput, "checks" | "pack">): CheckResult[] {
   return authorFailures(checks, classificationSources(pack));
 }
@@ -141,7 +137,7 @@ function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): Re
   }
 }
 
-/** Already true on the pull request, so suggesting it again would be noise. */
+/** Suggesting it again would be noise. */
 function satisfied(kind: ActionKind, target: ResolvedTarget, facts: PrFacts): boolean {
   if ("unresolved" in target) return false;
   switch (kind) {
@@ -209,7 +205,7 @@ function lists(pack: CheckPack, kind: ActionKind): boolean {
   return VERDICTS.some((list) => pack.actions[list].some((step) => step.do === kind));
 }
 
-/** The pack approves pull requests, so the approvals its approve Dos made are its own to take back. */
+/** The approvals its approve Dos made are its own to take back. */
 export function packApproves(pack: CheckPack): boolean {
   return lists(pack, "approve");
 }
@@ -237,7 +233,7 @@ export function heldApprovals(actions: SuggestedAction[], approval: string | und
   });
 }
 
-/** Holds each runnable Do the run may not write unattended: `automatic` is the kinds the pr-triage role is granted on the repository. */
+/** `automatic` is the kinds the pr-triage role is granted on the repository; the run may not write the rest unattended. */
 export function holdDos(actions: SuggestedAction[], automatic: readonly ActionKind[]): SuggestedAction[] {
   return actions.map(function hold(action): SuggestedAction {
     if (!("effectId" in action) || unrunnable(action) !== undefined) return action;

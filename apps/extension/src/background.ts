@@ -57,7 +57,6 @@ async function readsFor(pr: PrRef, mode: Triage["mode"]): Promise<GithubReads> {
   return kept ?? sessionGithub(pr, await tokenApi(mode === "refetch" ? "no-cache" : "default"));
 }
 
-/** How a pull request ended, from the read the run already made of it; undefined while it is open. */
 async function endedOf(github: GithubReads, pr: PrRef): Promise<Ended | undefined> {
   const res = await github.gh(`/repos/${pr.repo}/pulls/${pr.number}`);
   if (!res.ok) throw new Error(`github ${pr.repo}#${pr.number} -> ${res.status}`);
@@ -144,7 +143,6 @@ function triageOnce(request: Triage): Promise<null> {
 // The newest open pull requests a repository lists, one page of GitHub's list.
 const NEWEST_OPEN = 25;
 
-/** The repository's newest open pull requests, read as the person signed in to GitHub where a tab allows, else through the API. */
 async function openPrs(repo: string): Promise<OpenPr[]> {
   const github = await sessionGithub({ repo }, await tokenApi("no-cache"));
   const res = await github.gh(`/repos/${repo}/pulls?state=open&per_page=${NEWEST_OPEN}`);
@@ -184,7 +182,6 @@ function onTabUpdated(tabId: number, change: Browser.tabs.OnUpdatedInfo, tab: Br
   if (change.url !== undefined || change.status === "complete") settle(badgeFor(tabId, tab.url));
 }
 
-/** A first install opens the welcome page, the way it walks through setup before the panel is first used. */
 function onInstalled({ reason }: Browser.runtime.InstalledDetails): void {
   if (reason === "install") settle(browser.tabs.create({ url: browser.runtime.getURL("/welcome.html") }));
 }

@@ -1,10 +1,7 @@
 import type { ActionKind, VerdictWord } from "@corbits/triage-contracts";
 import { strings, type HeldDoRef, type PrItem, type SuggestedAction } from "./hub-api.ts";
 
-/**
- * A Do waiting for approval, keyed by its effect id; `sentKey` also names the status it had when approved, so a later failure offers it again.
- * `error` is why its last run did not write it.
- */
+/** `sentKey` also names the status it had when approved, so a later failure offers it again. */
 export type PendingDo = { key: string; sentKey: string; label: string; list: VerdictWord; kind: ActionKind; reason: string; ref: HeldDoRef; error: string | null };
 
 /** Resolution keeps only team slugs, and only the repository owner's teams can review. */
@@ -12,7 +9,6 @@ function teamName(slug: string, repo: string): string {
   return `@${repo.split("/", 1)[0]}/${slug}`;
 }
 
-/** Null when the step has nothing the hub can run: an unresolved target or an empty one. */
 function label(action: SuggestedAction, repo: string): string | null {
   const { kind, target } = action;
   if ("unresolved" in target) return null;
@@ -42,12 +38,10 @@ function label(action: SuggestedAction, repo: string): string | null {
   }
 }
 
-/** A held Do, or one its run failed or could not write; a written one is done. */
 function awaitsApproval({ held, status }: SuggestedAction): boolean {
   return status === undefined ? held : status === "failed" || status === "skipped";
 }
 
-/** The verdict's Dos waiting for a maintainer that the hub can run, in the order the policy lists them. */
 function offeredDos(item: PrItem): PendingDo[] {
   const { repo, number, runId } = item;
   if (number === null || runId === null) return [];
@@ -64,7 +58,6 @@ function offeredDos(item: PrItem): PendingDo[] {
   return out;
 }
 
-/** Dos waiting for approval, less those hidden here or sent since the status they show. */
 export function pendingDos(item: PrItem, hidden: ReadonlySet<string>, sent: ReadonlySet<string>): PendingDo[] {
   return offeredDos(item).filter((pending) => !hidden.has(pending.key) && !sent.has(pending.sentKey));
 }
@@ -76,7 +69,6 @@ export function offersClose(item: PrItem): boolean {
 
 export type DoGroup = { list: VerdictWord; reason: string; dos: PendingDo[] };
 
-/** One verdict list's Dos share its verdict, and so its reason. */
 export function doGroups(dos: PendingDo[]): DoGroup[] {
   const groups = new Map<VerdictWord, DoGroup>();
   for (const pending of dos) {

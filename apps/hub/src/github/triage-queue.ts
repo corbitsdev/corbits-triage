@@ -9,7 +9,6 @@ import { TriageStateConflictError, type TriageStateStore, type TriageStateVersio
 
 export type QueuedHead = { tenantId: string; repo: string; number: number; headSha: string };
 
-/** What the head's row was before it was queued, and the write that queued it. */
 export type Remembered = { prior: PrTriageRow | undefined; rows: PrTriageRow[]; version: TriageStateVersion };
 
 export type QueueOutcome =
@@ -38,7 +37,6 @@ function rowOf(rows: readonly PrTriageRow[], { number, headSha }: QueuedHead): P
   return rows.find((row) => row.number === number && row.headSha === headSha);
 }
 
-/** The rows with this head's row replaced, added, or removed when `next` is undefined. */
 function withRow(rows: readonly PrTriageRow[], { number, headSha }: QueuedHead, next: PrTriageRow | undefined): PrTriageRow[] {
   const others = rows.filter((row) => !(row.number === number && row.headSha === headSha));
   return next === undefined ? others : [...others, next];

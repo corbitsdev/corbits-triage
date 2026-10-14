@@ -40,7 +40,6 @@ const MirrorRequest = type({ repo: "string", number: "number", labels: "string[]
 export type GithubHeldDosDeps = PortalCredentialDeps & {
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
   verdicts: Pick<VerdictRecordStore, "forPull">;
-  /** Newest first; the approval goes to the first. */
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   log: (entry: Record<string, unknown>) => void;

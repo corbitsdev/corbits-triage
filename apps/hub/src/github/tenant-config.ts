@@ -17,7 +17,6 @@ export type RepoRecord = {
   selection?: "all" | "selected";
   enabled?: boolean;
   checks?: RepoPolicy["checks"];
-  /** The repository's policy artifact: its title, and its id once the hub has pinned it. */
   checkPack?: RepoPolicy["checkPack"];
 };
 
@@ -80,7 +79,6 @@ export async function patchCorbitsTriage(
   });
 }
 
-/** The pr-triage deployment the hub replaced (`from`) and the copy it deployed for it (`to`). */
 export type RotationRecord = { from: string; to: string; at: string };
 
 export function rotationRecord(ns: CorbitsTriageNs): RotationRecord | undefined {
@@ -89,7 +87,6 @@ export function rotationRecord(ns: CorbitsTriageNs): RotationRecord | undefined 
   return typeof from === "string" && typeof to === "string" && typeof at === "string" ? { from, to, at } : undefined;
 }
 
-/** Records the rotation unless one is recorded already; true when this one was. */
 export async function claimRotation(db: DB["db"], tenantId: string, record: RotationRecord): Promise<boolean> {
   let claimed = false;
   await patchCorbitsTriage(db, tenantId, function claim(ns) {
@@ -100,7 +97,6 @@ export async function claimRotation(db: DB["db"], tenantId: string, record: Rota
   return claimed;
 }
 
-/** Clears the rotation when it is still this one. */
 export async function clearRotation(db: DB["db"], tenantId: string, record: RotationRecord): Promise<void> {
   await patchCorbitsTriage(db, tenantId, function clear(ns) {
     const current = rotationRecord(ns);
@@ -142,7 +138,7 @@ function cloneWithBody(req: Request, body: string): Request {
   return new Request(req.url, { method: req.method, headers, body });
 }
 
-/** The response refusing PATCH /api/tenants/:id, checked as stock does before the body or tenant is read; undefined when the caller may manage the tenant. */
+/** Checked as stock does, before the body or tenant is read. */
 export async function tenantManagerRefusal(
   d: Pick<PortalCredentialDeps, "db" | "authorize"> & { getSession: (headers: Headers) => Promise<{ user: { id: string } } | null> },
   tenantId: string,

@@ -17,7 +17,6 @@ function memoryStorage(): AsyncStorage<string> & { items: Map<string, string> } 
   };
 }
 
-/** A signed-in user's cache holding the open pull requests, stored once the throttled save ran. */
 async function storedFor(userId: string, storage = memoryStorage()) {
   const queryClient = new QueryClient();
   const cache = createUserCache(queryClient, storage);

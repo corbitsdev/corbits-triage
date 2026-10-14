@@ -17,7 +17,6 @@ type Screen = { kind: "main" } | { kind: "settings" } | { kind: "checks"; repo: 
 
 const SCREEN_TITLES: Record<Screen["kind"], string | null> = { main: null, settings: "Settings", checks: "Rules" };
 
-/** The full-tab workspace, on the pull request the panel shows. */
 async function expand(pr: PrRef | undefined) {
   await browser.tabs.create({ url: browser.runtime.getURL(`/workspace.html${pr ? `#${encodeURIComponent(prKey(pr))}` : ""}`) });
 }

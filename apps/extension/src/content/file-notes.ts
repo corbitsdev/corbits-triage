@@ -2,12 +2,10 @@ import type { FileNote } from "../view.ts";
 
 const FILE_HEADER = ".file-header[data-path]";
 
-/** The Files tab's header for a path, as GitHub's server-rendered diff draws it. */
 function fileHeader(path: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`${FILE_HEADER}[data-path="${CSS.escape(path)}"]`);
 }
 
-/** Where the marker goes in a file's header: after its name. */
 export function noteAnchor(path: string): Element | null {
   const header = fileHeader(path);
   return header?.querySelector(".file-info") ?? header;
@@ -17,7 +15,6 @@ export function onFilesTab(): boolean {
   return /\/pull\/\d+\/files\/?$/.test(location.pathname);
 }
 
-/** The added line's row in the file's diff, by its number in the new file. */
 function lineRow(path: string, line: number): HTMLElement | null {
   const file = fileHeader(path)?.closest(".file");
   return file?.querySelector<HTMLElement>(`td.blob-num-addition[data-line-number="${line}"]`)?.closest("tr") ?? null;
@@ -46,7 +43,6 @@ export function markLines(notes: FileNote[]): void {
 
 export type FileMarker = { element: HTMLElement; render(path: string, notes: FileNote[]): void };
 
-/** "Triage: <check>" in a file's header on the Files tab, with links to each line it found. */
 export function fileMarker(): FileMarker {
   const element = document.createElement("span");
   element.className = "file-note";

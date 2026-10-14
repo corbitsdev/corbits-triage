@@ -7,7 +7,6 @@ const VERDICT_TONE: Record<VerdictWord, BadgeTone> = { pass: "success", fail: "d
 
 type VerdictChipProps = { item: Pick<PrItem, "verdict" | "score" | "reasons">; className?: string };
 
-/** The verdict's word; the full line is its tooltip. */
 export function VerdictChip({ item, className }: VerdictChipProps) {
   if (item.verdict === null) return <Badge tone="neutral" className={className} title={NOT_EVALUATED}>{NOT_EVALUATED}</Badge>;
   return <Badge tone={VERDICT_TONE[item.verdict]} className={className} title={verdictText(item)}>{VERDICT_LABEL[item.verdict]}</Badge>;

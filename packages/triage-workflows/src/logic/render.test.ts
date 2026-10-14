@@ -53,7 +53,6 @@ function sliceAnswer(id: string, serves: number, separate: number): string {
   return JSON.stringify({ id, type: "choice", choice: serves >= separate ? "serves_purpose" : "separate_change", probabilities, confidence: 0.9 });
 }
 
-/** Focused asked of `slices`, with follow-up file questions, one per path in order, answered with how likely each file is a separate change. */
 function focusedPlan(separate: Record<string, number>, slices: Record<string, string[]> = { focused: Object.keys(separate) }, unread: string[] = []): { focused: FocusedPlan; nouls: string } {
   const ids = Object.keys(separate).map((_, index) => `focused-file-${String(index + 1).padStart(3, "0")}`);
   const parts = Object.fromEntries(Object.keys(separate).map((path, index) => [ids[index]!, path]));
@@ -61,7 +60,6 @@ function focusedPlan(separate: Record<string, number>, slices: Record<string, st
   return { focused: { slices, unread, parts }, nouls };
 }
 
-/** The verdict question's answer, by the verdict it decides. */
 const CHOICE = {
   pass: { pass: 0.8, fail: 0.1, cant_tell: 0.1 },
   fail: { pass: 0.1, fail: 0.85, cant_tell: 0.05 },

@@ -14,7 +14,6 @@ interface RulesInput {
   batch: boolean;
 }
 
-/** One System One call the judge makes about item `item`. */
 export type JudgeChunk = Pick<JudgeRequest, "state" | "questions"> & { item: number };
 
 export interface RulesOutput {
@@ -22,7 +21,6 @@ export interface RulesOutput {
   batch: boolean;
   /** The judge's calls, in item order; recorded here so a re-run asks exactly the same. */
   chunks: JudgeChunk[];
-  /** Whether there is any chunk; the workflow skips the judge otherwise. */
   needsJudgment: boolean;
 }
 

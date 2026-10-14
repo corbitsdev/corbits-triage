@@ -2,7 +2,6 @@ export type PrRef = { repo: string; number: number };
 
 const PR_PATH = /^\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)(?:\/|$)/;
 
-/** The pull request a github.com URL shows, on any of its tabs. */
 export function prFromUrl(url: string | undefined): PrRef | undefined {
   if (!url) return undefined;
   let parsed: URL;

@@ -58,7 +58,6 @@ interface PortalContextValue {
   invitations: WorkspaceOption[];
   loadError: string;
   notify: (message: string) => void;
-  /** A failure or an instruction, shown long enough to read. */
   warn: (message: string) => void;
   refresh: () => void;
   refreshNow: () => Promise<PortalSnapshot | null>;
@@ -106,7 +105,6 @@ export const ROLES_QUERY_KEY = "roles";
 export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
 export const ALLOWED_QUERY_KEY = "allowed";
 export const INVITATIONS_QUERY_KEY = "invitations";
-/** Portal path an invite's magic link lands on, as the hub writes it. */
 export const INVITE_PATH = "/invite/";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
@@ -421,7 +419,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  /** Reads the App's repositories from GitHub, so returning from GitHub never waits on a webhook. */
+  /** So returning from GitHub never waits on a webhook. */
   const syncFromGithub = useCallback(async function syncFromGithub() {
     const current = requireSnapshot();
     const result = await syncGithubInstallations(current.workspace.tenantId);

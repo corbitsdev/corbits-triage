@@ -25,7 +25,6 @@ function RecentRow({ view }: { view: TriageView }) {
   );
 }
 
-/** What the panel shows on a tab that is not a pull request. */
 export function Home() {
   const all = useStorageItem(views);
   if (all === undefined) return null;

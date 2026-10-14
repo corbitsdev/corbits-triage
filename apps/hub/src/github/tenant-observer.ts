@@ -31,19 +31,15 @@ export type TenantObserverDeps = {
   observeRuns: ObserveRuns;
   recordRuns: RecordRuns;
   versions: TenantVersions;
-  /** A read finished less recently than this is reused rather than read again. */
   minIntervalMs: number;
   now: () => Date;
 };
 
 export type TenantObserver = {
-  /** Reads and records the live deployments' runs; a caller while a read is in flight shares it. */
   observe(tenantId: string, domain: string): Promise<TenantObservation>;
-  /** The last finished read, without reading. */
   last(tenantId: string): TenantObservation | undefined;
 };
 
-/** What the portal shows of the runs: each one's status, and every verdict as recorded, its posted reply and Do outcomes included. */
 function fingerprint(runs: ObservedRuns): string {
   const statuses = [...runs.byRepo.values()].flatMap((byHead) => [...byHead.values()].flat().map((run) => `${run.runId}:${run.status}`));
   return createHash("sha1").update(JSON.stringify([statuses.sort(), runs.verdicts])).digest("base64url");
@@ -88,9 +84,7 @@ export function createTenantObserver(deps: TenantObserverDeps): TenantObserver {
 
 export type RecordPassDeps = {
   observer: Pick<TenantObserver, "observe">;
-  /** Tenants with a pr-triage run in flight, or with `deployments` a live pr-triage deployment. */
   activeTenants: (what: "runs" | "deployments") => Promise<ActiveTenant[]>;
-  /** A tenant whose read failed is left this long, doubling per failure up to `maxBackoffMs`. */
   backoffMs: number;
   maxBackoffMs: number;
   now: () => Date;
@@ -114,7 +108,7 @@ export function createRecordPass(deps: RecordPassDeps): RecordPass {
   let watching = new Map<string, ActiveTenant>();
   const failing = new Map<string, { failures: number; until: number }>();
 
-  /** False when the read failed; the tenant is then left until its backoff ends, and the failure logged once per step. */
+  /** The tenant is then left until its backoff ends, and the failure logged once per step. */
   async function observe(tenant: ActiveTenant): Promise<{ ok: boolean; running: boolean }> {
     const backoff = failing.get(tenant.id);
     if (backoff && deps.now().getTime() < backoff.until) return { ok: false, running: true };

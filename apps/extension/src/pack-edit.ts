@@ -7,7 +7,6 @@ export function isCatalogId(id: string): id is CatalogId {
   return (CATALOG_IDS as readonly string[]).includes(id);
 }
 
-/** A change the pack contract refuses, with its reason in the contract's own words. */
 export type Refusal = { reason: string };
 
 function validated(candidate: CheckPack): CheckPack | Refusal {
@@ -42,7 +41,6 @@ export function withCatalogParams(pack: CheckPack, id: CatalogId, params: Partia
   return validated({ ...pack, checks: { ...pack.checks, [id]: { ...row, ...params } } });
 }
 
-/** A custom check as the editor holds it: a name and its shape's parameters. */
 export type CustomForm = { name: string; kind: "model" } & ModelCheck;
 
 /** Unique over the pack's and the defaults' ids, so a new rule never takes a default's id while that default is removed. */
@@ -50,7 +48,6 @@ function nextCustomId(pack: CheckPack, name: string): string {
   return customRuleId(name, [...pack.custom, ...defaultLocalPack(pack.repo).custom].map((check) => check.id));
 }
 
-/** Adds a custom check, or replaces check `id` in place keeping its group and switch; the reason is the contract's. */
 export function withCustomCheck(pack: CheckPack, form: CustomForm, id?: string): { pack: CheckPack; id: string } | Refusal {
   const existing = id === undefined ? undefined : pack.custom.find((check) => check.id === id);
   const checkId = existing?.id ?? nextCustomId(pack, form.name);
@@ -65,7 +62,6 @@ export function customFormOf(check: CustomCheck): CustomForm {
   return form as CustomForm;
 }
 
-/** Every check in the manager: the catalog in the portal's order, then the repository's custom checks. */
 export function switchableChecks(pack: CheckPack): Array<{ id: string; on: boolean }> {
   const catalog = CATALOG_ORDER.map((id) => ({ id, on: pack.checks[id]?.enabled === true }));
   const custom = pack.custom.map((check) => ({ id: check.id, on: customCheckEnabled(check) }));
@@ -82,7 +78,6 @@ function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a, sortedKeys) === JSON.stringify(b, sortedKeys);
 }
 
-/** How many checks differ from the defaults: switched, limits changed, added or removed. */
 export function changesFromDefaults(pack: CheckPack): number {
   const defaults = defaultLocalPack(pack.repo);
   const catalog = CATALOG_IDS.filter((id) => !same(pack.checks[id] ?? null, defaults.checks[id] ?? null)).length;

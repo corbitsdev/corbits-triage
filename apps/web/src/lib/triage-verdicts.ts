@@ -15,7 +15,6 @@ function triageVerdictsQuery(tenantId: string | undefined) {
   return queryOptions({ queryKey: [TRIAGE_VERDICTS_QUERY_KEY, tenantId], queryFn, staleTime: VERDICTS_REFRESH_MS, refetchInterval: VERDICTS_REFRESH_MS });
 }
 
-/** One pull request, open or not, for its page once it has left the open list. */
 function pullTriageQuery(tenantId: string | undefined, repo: string, number: number | null) {
   const queryFn = tenantId === undefined || number === null ? skipToken : async function loadPull() {
     return loadTriageVerdicts(createHubTransport(), tenantId, { repo, number });
@@ -36,7 +35,6 @@ export function useTriageVerdicts(): { data: TriageVerdicts | undefined; pending
   return { data: verdicts.data, pending: verdicts.isLoading, denied, error: denied ? null : verdicts.error };
 }
 
-/** Read only while `enabled`, as when the pull request is not in the open list. */
 export function usePullTriage(repo: string, number: number | null, enabled: boolean): TriageVerdicts | undefined {
   const { snapshot } = usePortal();
   return useQuery({ ...pullTriageQuery(snapshot?.workspace.tenantId, repo, number), enabled }).data;

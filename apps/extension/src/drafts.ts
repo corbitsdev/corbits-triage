@@ -1,12 +1,10 @@
 import { commentBody } from "./prose.ts";
 import type { TriageView } from "./view.ts";
 
-/** A comment a person can drop into GitHub's comment box, edit and post as themselves. */
 export type Draft = { id: string; title: string; why: string; body: string; source: "do" | "check" };
 
 const LIST_TITLES = { pass: "On pass", fail: "On fail", unsure: "On unsure" } as const;
 
-/** The pack's comment Dos on this head, the comments its failing checks suggest, then the verdict's own comment for the author. */
 export function draftsOf(view: TriageView): Draft[] {
   if (view.ended) return [];
   const fromDos = view.dos.flatMap(function draft(step): Draft[] {

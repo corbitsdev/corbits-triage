@@ -1,7 +1,7 @@
 const CHANNEL_NAME = "corbits.session";
 const STORAGE_KEY = "corbits.signed-out";
 
-/** Tells the portal's other tabs that this browser signed out, so they drop the user's data too. */
+/** So they drop the user's data too. */
 export function announceSignOut() {
   if (typeof BroadcastChannel === "function") {
     const channel = new BroadcastChannel(CHANNEL_NAME);

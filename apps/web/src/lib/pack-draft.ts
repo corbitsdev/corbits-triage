@@ -52,7 +52,6 @@ export function freshStepIds(pack: CheckPack): Record<VerdictWord, string[]> {
   return { pass: pack.actions.pass.map(freshStepId), fail: pack.actions.fail.map(freshStepId), unsure: pack.actions.unsure.map(freshStepId) };
 }
 
-/** Where in the panel a validation reason belongs. */
 type DraftWhere =
   | { section: "actions"; list?: VerdictWord }
   | { section: "custom"; id?: string }
@@ -93,7 +92,6 @@ const CATALOG_DEFAULTS: Partial<Record<CatalogId, Partial<CatalogCheck>>> = {
   "no-forbidden-paths": { forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
 };
 
-/** A catalog check's value as stored, or the default it reads as. */
 export function catalogValue<K extends keyof CatalogCheck>(pack: CheckPack, id: CatalogId, key: K): CatalogCheck[K] {
   return pack.checks[id]?.[key] ?? CATALOG_DEFAULTS[id]?.[key] as CatalogCheck[K];
 }
@@ -136,12 +134,12 @@ export function removeCustom(draft: RepoDraft, id: string): RepoDraft {
   return withPack(draft, { custom: draft.pack.custom.filter((row) => row.id !== id) });
 }
 
-/** An id for a new rule from `name` that no rule holds and no row is shown under, so two rows never share a key. */
+/** So two rows never share a key. */
 export function freshRuleId(draft: RepoDraft, name: string): string {
   return customRuleId(name, [...draft.pack.custom.map((row) => row.id), ...Object.values(draft.ruleKeys ?? {})]);
 }
 
-/** Rule keys after rules took new ids: a renamed rule keeps the key it was shown under. */
+/** A renamed rule keeps the key it was shown under. */
 export function renamedRuleKeys(ruleKeys: Record<string, string> | undefined, renamed: Record<string, string>): Record<string, string> {
   const next = { ...ruleKeys };
   for (const [from, to] of Object.entries(renamed)) next[to] = ruleKeys?.[from] ?? from;
@@ -162,7 +160,6 @@ function changedIds<T extends { id: string }>(saved: T[], draft: T[]): number {
   return [...ids].filter((id) => !same(saved.find((row) => row.id === id), draft.find((row) => row.id === id))).length;
 }
 
-/** One change per catalog check, custom check, verdict list and verdict label that differs, and one for the policy's when. */
 export function packChanges(saved: CheckPack, draft: CheckPack): number {
   return CATALOG_IDS.filter((id) => !same(saved.checks[id], draft.checks[id])).length
     + changedIds(saved.custom, draft.custom)
@@ -170,7 +167,6 @@ export function packChanges(saved: CheckPack, draft: CheckPack): number {
     + VERDICTS.filter((verdict) => saved.labels[verdict] !== draft.labels[verdict]).length;
 }
 
-/** One change when the triage switch differs. */
 export function policyChanges(saved: DraftPolicy, draft: DraftPolicy): number {
   return Number(saved.enabled !== draft.enabled);
 }
@@ -179,7 +175,6 @@ function longestFirst(a: [string, string], b: [string, string]): number {
   return b[0].length - a[0].length;
 }
 
-/** The id whose `<label> <id>` or `<label> <position>` prefix the message starts with. */
 function idAt(message: string, label: string, rows: Array<{ id: string }>): string | undefined {
   const prefixes = rows.flatMap((row, i): Array<[string, string]> => [[`${label} ${row.id} `, row.id], [`${label} ${i + 1} `, row.id]]);
   return prefixes.sort(longestFirst).find(([prefix]) => message.startsWith(prefix))?.[1];
@@ -208,7 +203,6 @@ function contractProblem(raw: unknown): string | null {
 /** The most steps a verdict holds, as the contract enforces. */
 export const STEPS_MAX = 20;
 
-/** Why one step at `position` in its verdict cannot be saved yet, in the contract's words; null when it can. */
 export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step, position: number): string | null {
   if (position >= STEPS_MAX) return `A verdict holds at most ${STEPS_MAX} steps.`;
   const found = contractProblem({ ...emptyPack(draft.pack.repo), actions: { ...defaultActions(), [list]: [step] } });
@@ -224,14 +218,12 @@ export function storedLabel(name: string): string {
   return name.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
 }
 
-/** Why a verdict label cannot be saved yet; null when it can. */
 export function labelProblem(name: string): string | null {
   const stored = storedLabel(name);
   if (!stored) return "name the label.";
   return stored.length > LABEL_MAX ? `a label is at most ${LABEL_MAX} characters.` : null;
 }
 
-/** Why one custom rule cannot be saved yet, in the contract's words; null when it can. */
 export function customProblem(draft: RepoDraft, row: CustomCheck): string | null {
   return contractProblem({ ...emptyPack(draft.pack.repo), custom: [row] });
 }
@@ -265,7 +257,6 @@ export function storedRuleKey(repo: string, row: CustomCheck): string {
   return storedKey({ ...emptyPack(repo), custom: [row] }, (pack) => pack.custom, row);
 }
 
-/** A built-in rule's row as the contract stores it. */
 export function storedCatalogKey(repo: string, id: CatalogId, row: CatalogCheck | undefined): string {
   return row === undefined ? "absent" : storedKey({ ...emptyPack(repo), checks: { [id]: row } }, (pack) => pack.checks[id], row);
 }
@@ -301,7 +292,6 @@ export function savable(draft: RepoDraft, saved: RepoDraft): RepoDraft {
   return result;
 }
 
-/** Why what can be saved still cannot be, in the contract's words, and where that belongs; null when it can. */
 export function validate(draft: RepoDraft, saved: RepoDraft): DraftProblem | null {
   let pack: CheckPack;
   try {

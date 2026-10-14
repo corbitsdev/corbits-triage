@@ -107,7 +107,6 @@ function AuthorTag({ kind }: { kind: AuthorKind | null }) {
   return <span className={isLoudAuthorKind(kind) ? "tag" : "tag quiet"} title={`Author: ${label}`}><span className="sr-only">Author: </span>{label}</span>;
 }
 
-/** Needs you lists what needs the maintainer; the other views list open pull requests with who each waits on. */
 function listsOpen(view: ListView): boolean {
   return view !== "needs-you";
 }
@@ -238,7 +237,6 @@ function modalOpen(): boolean {
 
 type PaneProps = {
   item: PrItem;
-  /** What the maintainer did to it while it is still open; null in Needs you. */
   handled: HandledMark | null;
   listTitle: string;
   restored: PaneDraft | null;
@@ -249,7 +247,6 @@ type PaneProps = {
 
 type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; dos: PendingDo[]; doBlocked: boolean; running: boolean; onRun: (kind: PaneKind) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void; onSkip: (pending: PendingDo) => void };
 
-/** One primary for the state, up to two secondaries, the rest in More; on a phone the second secondary moves into More. */
 function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo, onSkip }: BottomBarProps) {
   const [menu, setMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -487,7 +484,6 @@ function Outcome({ outcome }: { outcome: Notices["outcome"] }) {
   return <div key={outcome.id} className="toast note">{outcome.message}</div>;
 }
 
-/** One polite live region: the held action with its Undo, then what really happened once it was sent. */
 function Toasts({ notices, onUndo }: { notices: Notices; onUndo: () => void }) {
   const { held, outcome } = notices;
   return (
@@ -504,7 +500,6 @@ function Toasts({ notices, onUndo }: { notices: Notices; onUndo: () => void }) {
   );
 }
 
-/** New, resolved and stuck since the last visit, and what the user acted on; it opens Pulse. */
 function PulseLine() {
   const { pulse } = usePulse();
   if (pulse === null) return null;
@@ -520,7 +515,6 @@ function PulseLine() {
   );
 }
 
-/** Needs you rows are never handled; their piles keep the action order inside repository and owner groups. */
 function needsYouPiles(piles: InboxPile[]): OpenPile[] {
   return piles.map((pile) => ({ key: pile.key, label: pile.label, items: pile.items.map((item) => ({ item, handled: null })) }));
 }

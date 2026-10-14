@@ -110,7 +110,6 @@ export async function getAuthMethods(): Promise<AuthMethods> {
   return { google: body.google, emailPassword: body.emailPassword, passwordReset: body.passwordReset };
 }
 
-/** Leaves the page for Google; the hub returns the browser to this page, with `?error=` on failure. */
 export async function signInWithGoogle(): Promise<void> {
   const returnTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
   const { response, parsed } = await hubAuth("/sign-in/social", {
@@ -125,7 +124,6 @@ export async function signInWithGoogle(): Promise<void> {
   window.location.assign(url);
 }
 
-/** Claims the code an agent shows for this user, so it can then be approved or denied. Returns the asking client's id. */
 export async function claimDeviceCode(userCode: string): Promise<string> {
   const { response, parsed } = await hubAuth(`/device?user_code=${encodeURIComponent(userCode)}`, { method: "GET" });
   const clientId = (parsed as { client_id?: unknown } | undefined)?.client_id;
@@ -162,7 +160,6 @@ export function resetPassword(token: string, newPassword: string): Promise<void>
   return postAuth("/reset-password", { token, newPassword }, "Could not set the password.");
 }
 
-/** Whether the signed-in account has any way to sign in again: a password or a linked provider. */
 export async function hasSignInMethod(): Promise<boolean> {
   const { response, parsed } = await hubAuth("/list-accounts", { method: "GET" });
   if (!response.ok || !Array.isArray(parsed)) throw new ApiError(response.status, "unknown", messageOf(parsed, "Could not read the account."));

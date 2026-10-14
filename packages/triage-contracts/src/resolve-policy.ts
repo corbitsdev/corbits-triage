@@ -13,10 +13,8 @@ import {
   type SharedPolicy,
 } from "./check-pack.js";
 
-/** An artifact as it was read: its id and the version whose content was used. */
 export type ArtifactRef = { id: string; version: number };
 
-/** The policy artifacts a run's pack was resolved from. */
 export type PolicySource = { repo: ArtifactRef; shared?: ArtifactRef };
 
 /**

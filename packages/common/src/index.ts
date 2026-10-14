@@ -10,7 +10,7 @@ export function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-/** `owner/name`, trimmed, or undefined when it is not one or could traverse paths. */
+/** Rejects values that could traverse paths. */
 export function asRepo(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();

@@ -46,10 +46,9 @@ function never(): boolean {
 
 export type UserCache = {
   update: (state: SessionState) => Promise<void>;
-  /** The user whose stored cache has been restored, so queries may fetch. */
+  /** So queries may fetch. */
   restoredUser: () => string | null;
   subscribe: (listener: () => void) => () => void;
-  /** Stops persisting without clearing anything, for when the session being followed changes or the app unmounts. */
   stop: () => void;
 };
 

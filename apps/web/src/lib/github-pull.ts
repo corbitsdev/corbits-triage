@@ -3,7 +3,6 @@ import { loadGithubPull } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { usePortal } from "./portal.tsx";
 
-/** Reads a pull request's files, commits, checks, reviews, issues and conversation live from GitHub. */
 export function useGithubPull(repo: string, number: number | null) {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;

@@ -32,7 +32,6 @@ const pack: CheckPack = {
   actions: { ...defaultActions(), pass: [{ do: "approve" }], fail: [{ do: "request-changes" }] },
 };
 
-/** The verdict as the evaluate step renders it, the verdict question answering pass when no hard rule failed. */
 function input(over: Partial<PrFacts>, using = pack) {
   const pr = { ...facts, ...over };
   const det = deriveState(pr, undefined, using);
@@ -47,7 +46,7 @@ function suggested(over: Partial<PrFacts>, using = pack) {
 
 const APP = "corbits-triage[bot]";
 
-/** Facts from GitHub reviews as the App reads them, so only its own marked review is triage's. */
+/** So only the App's own marked review is triage's. */
 async function reviewFacts(rows: unknown[]): Promise<Partial<PrFacts>> {
   const gh: GithubFetch = async () => Response.json(rows);
   const reviews = await getReviews(gh, "acme/widgets", 8, async function login() {

@@ -1,7 +1,6 @@
 import { RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type ModelShape } from "@corbits/triage-contracts";
 import type { SuggestedDo } from "@corbits/triage-workflows/logic/actions";
 
-/** Each built-in rule in the portal's words, in the order its rules panel lists them; limits read from the policy. */
 const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => string> = {
   "max-files-changed": (row) => `Flag pull requests over ${count(row?.maxFiles)} files changed`,
   "max-lines-changed": (row) => `Flag pull requests over ${count(row?.maxLines)} lines changed`,
@@ -25,7 +24,6 @@ export function catalogSentence(id: CatalogId, pack: CheckPack): string {
 
 export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
 
-/** A kind of check a person can add, as the portal's new-check gallery names it. */
 export type CheckKind = { shape: ModelShape; title: string; line: string };
 
 export const CHECK_KINDS: CheckKind[] = [
@@ -34,7 +32,6 @@ export const CHECK_KINDS: CheckKind[] = [
   { shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },
 ];
 
-/** A custom check as the portal's sentence for its shape reads, with its values in place. */
 export function customSentence(check: CustomCheck): string {
   switch (check.shape) {
     case "is-true": return `Is it true that ${check.claim}?`;
@@ -81,7 +78,6 @@ const DO_LABELS: Record<ActionKind, (target: Target, repo: string) => string | n
   },
 };
 
-/** What running a Do would do, or null for one whose target is still unresolved or names nothing. */
 export function doLabel(step: SuggestedDo, repo: string): string | null {
   const target = step.target as Target;
   return "unresolved" in target ? null : DO_LABELS[step.kind](target, repo);
