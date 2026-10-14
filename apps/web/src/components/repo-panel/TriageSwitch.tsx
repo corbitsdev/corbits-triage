@@ -48,7 +48,7 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
         </div>
         <Switch className="sw lg" checked={enabled} onCheckedChange={setEnabled} label="Triage pull requests in this repository" disabled={disabled} />
       </div>
-      {triaging && !ruleOn ? <p className="help" role="status">Triage is enabled. Add policies to have it start triggering.</p> : null}
+      {triaging && !ruleOn ? <p className="help" role="status">Triage is enabled. Switch on a rule to have it start triggering.</p> : null}
       {rerunError ? <p role="alert" className="error">{rerunError}</p> : null}
     </>
   );
