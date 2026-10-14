@@ -20,6 +20,7 @@ import { PrTimeline } from "../components/PrTimeline.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import { DiffView } from "../components/DiffView.tsx";
 import { CitedEvidence } from "../components/CitedEvidence.tsx";
+import { Markdown } from "../components/Markdown.tsx";
 import { useDiffLayout } from "../lib/diff-layout.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
@@ -106,7 +107,7 @@ function About({ item }: { item: PrItem }) {
       <header className="brief brief-lead">
         <h1>{title}</h1>
         <p className="verdict-why">{item.evidence[0] ?? item.nextAction ?? "No evidence recorded."}</p>
-        {item.comment ? <pre className="mono small-text">{item.comment}</pre> : null}
+        {item.comment ? <Markdown text={item.comment} /> : null}
       </header>
       <section className="brief">
         <h2>Pull request</h2>
