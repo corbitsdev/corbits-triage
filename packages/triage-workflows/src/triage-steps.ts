@@ -1,5 +1,5 @@
 import { action, gate, map, step } from "@intx/workflow";
-import { executeAgent, factsAgent, judgeAgent, mirrorAgent } from "./agents.js";
+import { triageAgents, type TriageAgents } from "./agents.js";
 
 // Transient failures must not fail the body; the section also tolerates a failed body and re-arms for the next mail.
 const STEP = { retry: { maxAttempts: 3, initialBackoffMs: 5_000, maxBackoffMs: 60_000 }, timeout: 15 * 60_000 } as const;
@@ -25,7 +25,7 @@ const RULED = { project: outputOf("rules"), fields: ["items", "batch"] } as cons
 // rules output's chunks, one System One call each; a second map asks focused's file questions only for the items it failed,
 // and makes no call otherwise. An approval mail skips triage and executes the one held Do it names. Each gate branch evaluates, executes and mirrors on its own: a live run never
 // hands a skipped step's output to a selector, so a join after the gate could not read the judge when it was skipped.
-export function triageSteps() {
+export function triageSteps({ facts: factsAgent, judge: judgeAgent, execute: executeAgent, mirror: mirrorAgent }: TriageAgents = triageAgents(["github"])) {
   return {
     approval: action({ handler: "approval", input: { from: "trigger.payload" } }),
     approved: gate({ when: { from: "steps.approval.output.approved" }, then: "executeApproved", else: "facts", after: ["approval"] }),
