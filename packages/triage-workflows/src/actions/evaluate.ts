@@ -185,7 +185,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
     const labels = it.pack ? [it.pack.labels[rendered.verdict]] : rendered.labels;
     const verdict = { ...stamp(it.facts), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
-    return { ...verdict, request: toMirrorRequest(verdict, it.pack ? ownedLabels(it.pack.labels) : undefined) };
+    return { ...verdict, request: toMirrorRequest(verdict, it.pack ? ownedLabels(it.pack.labels) : undefined, it.source) };
   } catch (e) {
     const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`), automatic: it.automatic ?? [], actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };

@@ -112,6 +112,7 @@ const MIRROR_INPUT = obj({
   labels: { type: "array", items: str },
   owned: { type: "array", items: str },
   comment: str,
+  header: { type: "object", description: "{ head, policy, verdict } the comment is written for; an unchanged one is not written again" },
   notReadyHead: str,
   fixedHead: str,
 }, ["repo", "number", "labels"]);
@@ -120,13 +121,13 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_mirror",
     description:
-      "Post (or update) the triage comment on a pull request when comment is given, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Never merges.",
+      "Post (or update) the triage comment on a pull request when comment is given, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_mirror_auto",
     description:
-      "Post (or update) the triage comment on a pull request when comment is given, without waiting for a human approval, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Never merges.",
+      "Post (or update) the triage comment on a pull request when comment is given, without waiting for a human approval, add labels and remove any owned label not in labels. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
@@ -226,8 +227,10 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): 
         labels: a.labels,
         owned: a.owned,
         comment: a.comment,
+        header: a.header,
         close: false,
       });
+      if ("skipped" in mirrored) return mirrored;
       if (a.notReadyHead !== mirrored.sha && a.fixedHead !== mirrored.sha) return mirrored;
       const target = { repo: a.repo, number: a.number, login: await login() };
       const dismissed = a.notReadyHead === mirrored.sha ? await dismissDoApprovals(gh, target) : [];
