@@ -1,14 +1,11 @@
 import {
   ApiError,
-  listWorkflowDeployments,
-  readWorkflowRunEvents,
-  triggerWorkflowRun,
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { asRecord, asRepo, errorText } from "@corbits/common";
+import { asRecord, asRepo } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, repoPolicy, readCheckPack, checkPackName, legacyCheckPack, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, PolicyRead, readCheckPack, repoPolicy, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -66,7 +63,7 @@ export type RepoRecord = {
   selection?: "all" | "selected";
   enabled?: boolean;
   checks?: RepoCheckFlags;
-  checkPack?: { name: string };
+  checkPack?: { name: string; id?: string };
 };
 
 export function githubAppInstallUrl(slug: string): string {
@@ -339,34 +336,23 @@ export async function findArtifactByTitle(transport: Transport, tenantId: string
   return newestByTitle(await listArtifacts(transport, tenantId, title, found)).get(title) ?? null;
 }
 
-/** A check pack with the artifact it was read from; `version` is what a save must match. */
-export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack };
-/** The newest artifact titled for the repository holds something that is not a check pack; a save replaces it in place. */
+/**
+ * A check pack with the artifact it was read from; `version` is what a save must match. `shared` is the workspace
+ * policy the stored policy extends, which `pack` is resolved over.
+ */
+export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack; shared?: ArtifactRef };
+/** The repository's artifact holds something that is not a check pack; a save replaces it in place. */
 type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack;
 
-export async function loadCheckPackById(transport: Transport, tenantId: string, repo: string, id: string): Promise<CheckPackArtifact> {
-  const tid = enc(requireTenantId(tenantId));
-  const detail = await transport.fetch<{ artifact?: { content?: string; version?: number } }>(
-    "GET",
-    `/api/tenants/${tid}/artifacts/${enc(id)}`,
-  );
-  const version = detail.artifact?.version;
-  if (typeof version !== "number") throw new Error("The hub returned an artifact without a version.");
-  try {
-    return { kind: "pack", id, version, pack: readCheckPack(detail.artifact?.content, repo) };
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    return { kind: "corrupt", id, version, reason: error.message };
-  }
-}
-
-/** The one title-to-detail path: the newest artifact titled for the repository, read in full. */
+/** The repository's policy as the hub reads it for triage; null when it has none. */
 export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPackArtifact | null> {
   const clean = validateRepo(repo);
-  const listed = await findArtifactByTitle(transport, tenantId, checkPackName(clean));
-  if (!listed) return null;
-  return loadCheckPackById(transport, tenantId, clean, listed.id);
+  const read = PolicyRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy?repo=${enc(clean)}`));
+  if (read.status === "missing") return null;
+  if (read.status === "corrupt") return { kind: "corrupt", ...read.repo, reason: read.reason };
+  const { repo: stored, shared } = read.source;
+  return { kind: "pack", ...stored, pack: readCheckPack(read.pack, clean), ...(shared && { shared }) };
 }
 
 export type CheckPackLookup = (repo: string) => Promise<boolean>;
@@ -385,27 +371,24 @@ export async function loadRepoPolicy(transport: Transport, tenantId: string, rep
   return repoPolicy(row);
 }
 
-function assertRepoEnabled(policy: RepoPolicy): void {
-  if (!policy.enabled) {
-    throw new Error("Triage is disabled for this repository. Enable it first.");
-  }
-}
-
 /** One config write: the panel's settings, plus the pointer at the repository's pack when it has one. */
 export async function saveRepoSettings(
   transport: Transport,
   tenantId: string,
   repo: string,
   settings: Pick<RepoPolicy, "enabled">,
-  linked: boolean,
+  packId: string | null,
 ): Promise<void> {
   const clean = validateRepo(repo);
   const { enabled } = settings;
-  const next = { enabled, ...(linked ? { checkPack: { name: checkPackName(clean) } } : {}) };
+  /** Pins the pack the panel wrote, so triage reads the same artifact. */
+  function withSettings(row: RepoRecord): RepoRecord {
+    return { ...row, enabled, ...(packId !== null && { checkPack: { name: checkPackName(clean), id: packId } }) };
+  }
   await patchAppConfig(transport, tenantId, function applySettings(current) {
     const repos = current.repos ?? [];
     if (!repos.some((row) => rowName(row) === clean)) throw new Error("Repository not found.");
-    return { ...current, repos: repos.map((row) => (rowName(row) === clean ? { ...(row as object), ...next } : row)) };
+    return { ...current, repos: repos.map((row) => (rowName(row) === clean ? withSettings(row as RepoRecord) : row)) };
   });
 }
 
@@ -845,18 +828,6 @@ export function currentDeployment(deployments: readonly DeployedWorkflow[], work
   return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling);
 }
 
-const SERVICE_NOT_RUNNING = "The service is not running. Restart the hub, then try again.";
-
-function isTerminalMailFailure(cause: unknown): boolean {
-  if (cause instanceof ApiError && cause.code === "deployment_unreachable") return true;
-  const message = errorText(cause);
-  return message.includes("terminal and cannot receive more mail")
-    || message.includes("workflow_run_terminal")
-    || message.includes("deployment_unreachable")
-    || message.includes("allocation is")
-    || message.includes("no longer active");
-}
-
 export const WAITING_FOR_WORKFLOW = "Waiting for the workflow to be ready…";
 
 // A deployment answers 409 `deployment_not_ready` until it records its credential resolution, seconds after it is deployed.
@@ -888,81 +859,10 @@ export async function untilDeploymentReady<T>(
   return attempt();
 }
 
-function byPreferredDeployment(
-  a: { createdAt: string; id: string },
-  b: { createdAt: string; id: string },
-): number {
-  return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
-}
-
-async function triggerNamedWorkflow(
-  transport: Transport,
-  tenantId: string,
-  definitionName: string,
-  content: string,
-  trackBody = false,
-): Promise<{ runId: string; deploymentId: string; priorBodyRunIds: ReadonlySet<string> }> {
-  const tid = enc(requireTenantId(tenantId));
-  const [deployments, assets] = await Promise.all([
-    listWorkflowDeployments(transport, tenantId),
-    transport.fetch<Array<{ id: string; kind: string; name: string }>>(
-      "GET",
-      `/api/tenants/${tid}/assets?kind=workflow`,
-    ),
-  ]);
-  const assetIds = new Set(assets.filter((asset) => asset.kind === "workflow" && asset.name === definitionName).map((asset) => asset.id));
-  const matches = deployments.filter((deployment) => assetIds.has(deployment.definitionAssetId));
-  const live = matches
-    .filter((deployment) => isLiveDeployment(deployment.status))
-    .sort(byPreferredDeployment);
-  const deploymentId = live[0]?.id;
-  if (!deploymentId) {
-    if (matches.length > 0) throw new Error(SERVICE_NOT_RUNNING);
-    throw new Error(`The hub has no ${definitionName} deployment to run.`);
-  }
-  const priorBodyRunIds = new Set<string>();
-  if (trackBody) {
-    try {
-      const existing = await readWorkflowRunEvents(transport, tenantId, deploymentId, deploymentId);
-      for (const event of existing.events) {
-        if (event.type !== "ChildSpawned") continue;
-        const body = asRecord(event.body) ?? {};
-        if (body.stepId === "events" && typeof body.childRunId === "string") priorBodyRunIds.add(body.childRunId);
-      }
-    } catch (cause) {
-      // A fresh deployment has no durable event log until its first real mail.
-      if (!(cause instanceof ApiError && cause.status === 404)) throw cause;
-    }
-  }
-  try {
-    const triggered = await triggerWorkflowRun(transport, tenantId, deploymentId, { content });
-    return { runId: triggered.runId, deploymentId, priorBodyRunIds };
-  } catch (cause) {
-    if (isTerminalMailFailure(cause)) throw new Error(SERVICE_NOT_RUNNING);
-    throw cause;
-  }
-}
-
-/** A live pr-triage-historical run the hub already deployed. Does not invent a definition source. */
-export async function startBacklogTriage(
-  transport: Transport,
-  tenantId: string,
-  repo: string,
-): Promise<{ runId: string }> {
+/** Asks the hub to triage the repository's open pull requests again. */
+export async function startBacklogTriage(transport: Transport, tenantId: string, repo: string): Promise<void> {
   const clean = validateRepo(repo);
-  const policy = await loadRepoPolicy(transport, tenantId, clean);
-  assertRepoEnabled(policy);
-  const read = await loadRepoCheckPack(transport, tenantId, clean);
-  if (!read) throw new Error("This repository still needs a policy.");
-  if (read.kind === "corrupt") throw new Error(`This repository's policy is unreadable: ${read.reason} Replace it on the repository page.`);
-  const pack = read.pack;
-  const { runId } = await triggerNamedWorkflow(
-    transport,
-    tenantId,
-    BACKLOG_WORKFLOW,
-    JSON.stringify({ kind: "backlog", repo: clean, policy: { ...policy, checkPack: { name: checkPackName(clean) } }, checkPack: legacyCheckPack(pack), pack }),
-  );
-  return { runId };
+  BacklogStarted.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/backlog`, { repo: clean }));
 }
 
 /** Asks the hub to queue one open pull request on its live pr-triage deployment. */
