@@ -43,7 +43,7 @@ import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
-import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
+import { createIntegrationsApp, INTEGRATIONS_PREFIX, PACK_SCHEMA_PATH } from "./integrations/app.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -70,13 +70,14 @@ import { createTriageVerdicts } from "./github/triage-verdicts.js";
 import { createGithubPrDetails } from "./github/pr-details.js";
 import { createGithubPrPreview } from "./github/pr-preview.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
+import { createPolicyFile } from "./github/policy-file.js";
 import { createGithubPolicyRead } from "./github/policy-read.js";
 import { createGithubBacklog } from "./github/backlog-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
 import { createAutomation } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
-import { createPullHeadReader, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads } from "./github/tenant-open-heads.js";
+import { createPullHeadReader, createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
@@ -417,6 +418,18 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number):
   if (due > 0) kickTriage();
   return due;
 }
+const policyFile = createPolicyFile({
+  db: composition.db,
+  artifacts: composition.db,
+  cipher: composition.credentialCipher,
+  authorize: authorizePortal,
+  tenantGithub: createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  writerFor: githubSenderPrincipal,
+  grantWriters: createArtifactGrants(now),
+  schemaUrl: `${new URL(env.BETTER_AUTH_BASE_URL).origin}${PACK_SCHEMA_PATH}`,
+  now,
+  log: logJson,
+});
 const bridge = createBridgeHandler({
   db: hookDeps.db,
   cipher: hookDeps.cipher,
@@ -425,6 +438,7 @@ const bridge = createBridgeHandler({
   readCheckPack,
   openHeadFor: createTenantOpenHead({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
   recheckOpenPulls,
+  syncPolicyFile: policyFile.onPush,
 });
 
 function decodeSegments(rest: string): string[] | null {
@@ -467,6 +481,9 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   heldDos: githubHeldDos,
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),
+  policyFileRead: policyFile.fileRoute,
+  policyFileSync: policyFile.syncRoute,
+  policyFileExport: policyFile.exportRoute,
   backlog: createGithubBacklog({
     db: composition.db,
     cipher: composition.credentialCipher,

@@ -25,7 +25,9 @@ http://localhost:5173. Open the portal and follow
 [Set up in the portal](docs/SELF_HOST.md#set-up-in-the-portal): create an
 account, the GitHub App and the decision model, then turn on triage for a
 repository. Its open pull requests appear in the Inbox with a verdict, a
-score and the reasons for it.
+score and the reasons for it. A repository can keep its policy in
+`.corbits-triage.yaml` on its default branch; the hub syncs it on push (see
+[Policy file](docs/PRODUCT.md#policy-file)).
 
 To run it for real, build the root `Dockerfile` and follow
 [docs/SELF_HOST.md](docs/SELF_HOST.md).

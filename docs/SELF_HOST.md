@@ -131,7 +131,13 @@ connection queue for minutes.
    - Permissions: Pull requests, Issues and Contents: write; Checks, Members
      and Metadata: read.
    - Events: Pull request, Pull request review, Issue comment, Check run,
-     Installation, Installation repositories.
+     Push, Installation, Installation repositories.
+
+   An App created before the Push event was added keeps working, but its
+   repositories' `.corbits-triage.yaml` is read only on **Use file** until
+   Push is ticked under the App's settings → Permissions & events. Contents
+   access already covers it, so installations are not asked to approve
+   anything new.
 3. **Choose repositories on GitHub**. The hub records them from GitHub's
    installation events, with triage off; nothing runs yet.
 4. **Add the decision model** (during onboarding, or Settings → Model). Pick
@@ -144,7 +150,11 @@ connection queue for minutes.
    **Triage pull requests in this repository**; the rules, steps and labels
    below it save as you change them, and turning triage on triages its open
    pull requests. New pull request events are triaged from then on. **Triage
-   open pull requests again** re-runs it.
+   open pull requests again** re-runs it. To keep the policy in the
+   repository instead, use **Export to repository** on the Policy card and
+   merge the pull request it opens; from then on the hub reads
+   `.corbits-triage.yaml` on every push to the default branch (see
+   [Policy file](PRODUCT.md#policy-file)).
 6. **Verify.** Open a test pull request; it appears in the Inbox once its
    triage run completes.
 
