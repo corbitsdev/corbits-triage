@@ -82,7 +82,7 @@ import { findPrItem } from "../lib/triage-view.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { CheckIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
-import { hostName, pullUrl } from "../lib/pull-link.ts";
+import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
 
 const POSTED = "Posted";
 
@@ -416,7 +416,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
               <Link className="mono repo-link" to={`/repositories/${item.repo}`} title="Repository settings">{item.repo}</Link>
               {item.number === null ? null : <span className="mono">#{item.number}</span>}
               <span className="sp" />
-              {link === null ? null : <Button asChild variant="ghost" size="sm"><a href={link} target="_blank" rel="noreferrer">{hostName(item.source)} <ExternalIcon /></a></Button>}
+              {link === null ? null : <Button asChild variant="ghost" size="sm"><a href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source)} <ExternalIcon /></a></Button>}
             </div>
             <h2 className="title">{titleText(facts.title)}</h2>
             <Byline item={item} author={facts.author} detail={pull.data} />
