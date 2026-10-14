@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { errorText } from "@corbits/common";
 import { isRepoCatchingUp } from "../lib/backlog-status.ts";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
+import { githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { generateWebhookSecret, isPrivateKeyPem } from "../lib/connect-view.ts";
 import {
@@ -22,6 +22,7 @@ import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { useRuns } from "../lib/tenant-entities.ts";
 import { CopyField } from "../components/CopyField.tsx";
+import { BitbucketDatacenterSource } from "../components/settings/BitbucketDatacenterSource.tsx";
 import { DecisionModelForm } from "../components/DecisionModelForm.tsx";
 import { InvitePeople } from "../components/InvitePeople.tsx";
 import { OtherWorkspaces } from "../components/OtherWorkspaces.tsx";
@@ -37,9 +38,14 @@ function returnedFromInstall(): boolean {
 
 function startingStep(snapshot: PortalSnapshot | null, returnedFromGithub: boolean): GuidedStep {
   if (returnedFromGithub) return "install";
-  if (!snapshot || !hasActiveGithubCredential(snapshot.credentials)) return "create";
+  if (!snapshot || !portalConnected(snapshot)) return "create";
+  if (!hasActiveGithubCredential(snapshot.credentials)) return "model";
   if (returnedFromInstall()) return "select";
   return snapshot.repos.length > 0 ? "model" : "install";
+}
+
+function githubDoneNote(created: boolean): string {
+  return created ? "GitHub App created. Its private key stays on the hub." : "GitHub App connected.";
 }
 
 export default function Connect() {
@@ -185,7 +191,7 @@ export default function Connect() {
   }
 
   useEffect(function advancePastCreate() {
-    if (step === "create" && snapshot && hasActiveGithubCredential(snapshot.credentials)) setStep("install");
+    if (step === "create" && snapshot && portalConnected(snapshot)) setStep(hasActiveGithubCredential(snapshot.credentials) ? "install" : "model");
   }, [snapshot, step]);
 
   function clearPrivateKey() {
@@ -241,6 +247,10 @@ export default function Connect() {
         </div>
         <div className="task-actions"><Button type="button" disabled={busy || !appId.trim() || !appSlug.trim() || !privateKey.trim() || !webhookSecret.trim()} onClick={() => void saveManual()}>{busy ? "Connecting…" : "Connect GitHub App"}</Button></div>
       </details>
+      <details className="setup-help">
+        <summary>Use Bitbucket Data Center instead</summary>
+        <BitbucketDatacenterSource />
+      </details>
     </>;
   }
 
@@ -276,13 +286,13 @@ export default function Connect() {
       {modelStored && !liveReady && <p role="status" className="muted">{githubReady ? "Waiting for the first triage run." : "Waiting for GitHub to deliver a webhook."}</p>}
       <div className="task-actions">
         {modelStored && <Button type="button" disabled={!liveReady} onClick={() => navigate("/inbox")}>Open triage</Button>}
-        <Button type="button" variant="ghost" onClick={() => setStep("select")}>Back to repositories</Button>
+        {githubConnected && <Button type="button" variant="ghost" onClick={() => setStep("select")}>Back to repositories</Button>}
       </div>
     </>;
   }
 
-  const githubDoneNote = connected ? "GitHub App created. Its private key stays on the hub." : "GitHub App connected.";
-  const reposDoneNote = `${repos.length} ${repos.length === 1 ? "repository" : "repositories"} selected on GitHub.`;
+  const sourceDoneNote = githubConnected ? githubDoneNote(connected) : "Bitbucket Data Center connected.";
+  const reposDoneNote = githubConnected ? `${repos.length} ${repos.length === 1 ? "repository" : "repositories"} selected on GitHub.` : "Turn triage on for each repository in Repositories.";
 
   return <div className="app is-auth"><main className="setup-flow">
     <span className="onboarding-brand">
@@ -294,7 +304,7 @@ export default function Connect() {
       <p className="setup-lede">Three steps and Triage starts sorting your open pull requests.</p>
       <OtherWorkspaces />
       <ol className="setup-steps">
-        {renderStep(0, "Connect GitHub", githubDoneNote, renderCreateBody)}
+        {renderStep(0, "Connect a source", sourceDoneNote, renderCreateBody)}
         {renderStep(1, "Repositories", reposDoneNote, renderRepositoriesBody)}
         {renderStep(2, "Decision model", "", renderModelBody)}
       </ol>
