@@ -269,6 +269,16 @@ function byWait(a: Due, b: Due): number {
     || a.row.number - b.row.number;
 }
 
+/** Queues a settled head again for `reason`, as a due one is; the row keeps its run so the verdict's answers are carried. */
+export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: Date): void {
+  const index = plan.rows.findIndex((candidate) => candidate.number === row.number && candidate.headSha === row.headSha);
+  if (index === -1) return;
+  const at = now.toISOString();
+  const { runId: _run, error: _error, ...rest } = row;
+  plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
+  plan.enqueue.push({ number: row.number, reason, undelivered: row });
+}
+
 /** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running. */
 export function planTenant({ repos, runs, now, policy, workflowVersion, offeringId }: TenantPlanInput): Map<string, RepoPlan> {
   const at = now.toISOString();

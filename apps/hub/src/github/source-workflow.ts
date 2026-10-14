@@ -18,11 +18,13 @@ export type TriageWorkflow = {
   credential: string;
   /** Where the tenant config records this workflow's deployment rotation; GitHub's keeps the key from before hosts. */
   rotationKey: string;
+  /** The host sends no webhook when a build finishes, so the reconciler polls the builds of heads waiting on CI. */
+  pollsBuilds: boolean;
 };
 
 export const TRIAGE_WORKFLOWS: readonly TriageWorkflow[] = [
-  { source: "github", id: prTriageGithub.id, address: PR_TRIAGE_GITHUB_ADDRESS, entry: "./pr-triage-github.mjs", credential: "github", rotationKey: ROTATION_KEY },
-  { source: "bitbucket-datacenter", id: prTriageBitbucket.id, address: PR_TRIAGE_BITBUCKET_DATACENTER_ADDRESS, entry: "./pr-triage-bitbucket-datacenter.mjs", credential: "bitbucket-datacenter", rotationKey: "rotationBitbucketDatacenter" },
+  { source: "github", id: prTriageGithub.id, address: PR_TRIAGE_GITHUB_ADDRESS, entry: "./pr-triage-github.mjs", credential: "github", rotationKey: ROTATION_KEY, pollsBuilds: false },
+  { source: "bitbucket-datacenter", id: prTriageBitbucket.id, address: PR_TRIAGE_BITBUCKET_DATACENTER_ADDRESS, entry: "./pr-triage-bitbucket-datacenter.mjs", credential: "bitbucket-datacenter", rotationKey: "rotationBitbucketDatacenter", pollsBuilds: true },
 ];
 
 /** The workflow id deployed before hosts, which GitHub hook credentials still name; its mail now goes to the GitHub workflow. */
