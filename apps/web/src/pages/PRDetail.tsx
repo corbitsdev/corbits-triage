@@ -23,6 +23,7 @@ import { CitedEvidence } from "../components/CitedEvidence.tsx";
 import { useDiffLayout } from "../lib/diff-layout.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
+import { hostName, pullUrl } from "../lib/pull-link.ts";
 import {
   approvalHeadline,
   checkValueText,
@@ -413,11 +414,12 @@ export default function PRDetail() {
     );
   }
 
-  const github = item.number ? `https://github.com/${item.repo}/pull/${item.number}` : null;
+  const link = pullUrl(item);
+  const host = hostName(item.source);
   let pane: ReactNode = <About item={item} />;
   const loadState = pullPending
-    ? <p className="muted">Loading from GitHub…</p>
-    : pull.error ? <p role="alert" className="error">Could not load from GitHub. {errorText(pull.error)}</p> : null;
+    ? <p className="muted">Loading from {host}…</p>
+    : pull.error ? <p role="alert" className="error">Could not load from {host}. {errorText(pull.error)}</p> : null;
   if (tab === "files") {
     pane = loadState ? <div className="diff-empty">{loadState}</div>
       : selected ? <DiffView file={selected} layout={diffLayout.layout} canSplit={diffLayout.splitFits} onLayout={diffLayout.choose} />
@@ -467,7 +469,7 @@ export default function PRDetail() {
               {closed ? <Badge>{pull.data?.pr.merged ? "Merged" : "Closed"}</Badge>
                 : mergeable === null ? null : <Badge>{mergeable ? "Mergeable" : "Not mergeable"}</Badge>}
               <VerdictChip item={item} />
-              {github ? <a className="ghost-link" href={github} target="_blank" rel="noreferrer">View on GitHub</a> : null}
+              {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">View on {host}</a> : null}
             </div>
           </div>
           <div className="pr-actions">

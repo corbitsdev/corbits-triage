@@ -82,6 +82,7 @@ import { findPrItem } from "../lib/triage-view.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { CheckIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
+import { hostName, pullUrl } from "../lib/pull-link.ts";
 
 const POSTED = "Posted";
 
@@ -316,7 +317,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   const dos = usePendingDos(item);
   const heldDoKeys = useHeldDoKeys();
   const doBlocked = writeBlocker(gate) !== null;
-  const github = hasNumber(item) ? `https://github.com/${item.repo}/pull/${item.number}` : null;
+  const link = pullUrl(item);
   const status = paneStatus({ item, detail: pull.data, handled, approved: approvedByTriage(item), primary: bar.primary });
   const ended = endedText(item, pull.data, handled) !== null;
 
@@ -415,7 +416,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
               <Link className="mono repo-link" to={`/repositories/${item.repo}`} title="Repository settings">{item.repo}</Link>
               {item.number === null ? null : <span className="mono">#{item.number}</span>}
               <span className="sp" />
-              {github === null ? null : <Button asChild variant="ghost" size="sm"><a href={github} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a></Button>}
+              {link === null ? null : <Button asChild variant="ghost" size="sm"><a href={link} target="_blank" rel="noreferrer">{hostName(item.source)} <ExternalIcon /></a></Button>}
             </div>
             <h2 className="title">{titleText(facts.title)}</h2>
             <Byline item={item} author={facts.author} detail={pull.data} />

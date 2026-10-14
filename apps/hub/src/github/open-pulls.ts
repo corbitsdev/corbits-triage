@@ -13,7 +13,8 @@ export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
 
 type GithubOpenPr = Awaited<ReturnType<typeof listOpenPrs>>[number];
 type OpenPr = Omit<GithubOpenPr, "authorAssociation" | "authorBot"> & { authorKind?: AuthorKind };
-export type RepoPulls = { repo: string; prs: OpenPr[]; error?: string };
+/** `source` names the host the pull requests and their `url` are on. */
+export type RepoPulls = { repo: string; source: RepoSource; prs: OpenPr[]; error?: string };
 
 function withAuthorKind({ authorAssociation: association, authorBot, ...pr }: GithubOpenPr): OpenPr {
   const authorKind = authorKindOf(authorAssociation(association), authorBot);
@@ -33,11 +34,12 @@ export function forInstallation(gh: GithubFetch, installationId: number | undefi
 export type OpenPrsLister = (tenantId: string, record: RepoRecord) => Promise<GithubOpenPr[]>;
 
 async function pullsFor(list: OpenPrsLister, tenantId: string, record: RepoRecord): Promise<RepoPulls> {
+  const source = sourceOf(record);
   try {
     const prs = await list(tenantId, record);
-    return { repo: record.name, prs: prs.map(withAuthorKind) };
+    return { repo: record.name, source, prs: prs.map(withAuthorKind) };
   } catch (err) {
-    return { repo: record.name, prs: [], error: errorText(err) };
+    return { repo: record.name, source, prs: [], error: errorText(err) };
   }
 }
 

@@ -29,7 +29,7 @@ describe("sinceVisit", () => {
     const now = [open("acme/api#1"), open("acme/api#4"), open("acme/new#5")];
     const since = sinceVisit(visit, now, new Set(["acme/api", "acme/new"]));
     expect(since.fresh.map((item) => item.key)).toEqual(["acme/api#4"]);
-    expect(since.resolved).toEqual([{ key: "acme/api#2", repo: "acme/api", number: 2, title: "Merged" }]);
+    expect(since.resolved).toEqual([{ key: "acme/api#2", repo: "acme/api", number: 2, title: "Merged", url: null }]);
     expect(since.turned.map((item) => item.key)).toEqual(["acme/api#1"]);
   });
 

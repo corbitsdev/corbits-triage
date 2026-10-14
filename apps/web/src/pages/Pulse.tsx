@@ -27,9 +27,10 @@ function OpenLine({ item, note }: { item: PrItem; note?: string }) {
 }
 
 function ResolvedLine({ pull }: { pull: ResolvedPull }) {
+  const url = pull.url ?? `https://github.com/${pull.repo}/pull/${pull.number}`;
   return (
     <li>
-      <a href={`https://github.com/${pull.repo}/pull/${pull.number}`} target="_blank" rel="noreferrer">
+      <a href={url} target="_blank" rel="noreferrer">
         <span><b>{titleText(pull.title)}</b><span className="mono">{pull.repo} #{pull.number}</span></span>
         <ExternalIcon />
       </a>
