@@ -122,7 +122,7 @@ async function cancelSuperseded(transport: Transport, tenantId: string, assetId:
  * which retries a failed cancel.
  */
 export function cancelsSuperseded(workflow: string, deployed: boolean): boolean {
-  return deployed || workflow !== "pr-triage";
+  return deployed || workflow === "pr-triage-historical";
 }
 
 export async function ensureWorkflows(

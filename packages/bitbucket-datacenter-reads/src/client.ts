@@ -33,12 +33,12 @@ export async function json(bb: BitbucketFetch, path: string): Promise<unknown> {
   return (await request(bb, path)).json();
 }
 
-export async function jsonAll(bb: BitbucketFetch, path: string): Promise<unknown[]> {
+export async function jsonAll(bb: BitbucketFetch, path: string, limit = PAGE_LIMIT): Promise<unknown[]> {
   const separator = path.includes("?") ? "&" : "?";
   const rows: unknown[] = [];
   let start = 0;
   for (;;) {
-    const page = Page.assert(await json(bb, `${path}${separator}limit=${PAGE_LIMIT}&start=${start}`));
+    const page = Page.assert(await json(bb, `${path}${separator}limit=${limit}&start=${start}`));
     rows.push(...page.values);
     if (page.isLastPage) return rows;
     if (typeof page.nextPageStart !== "number") throw new Error(`bitbucket returned a page without nextPageStart for ${path}`);

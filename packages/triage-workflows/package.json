@@ -13,8 +13,8 @@
     "workflows": {
       "pr-triage": "./src/pr-triage.ts",
       "pr-triage-historical": "./src/pr-triage-historical.ts",
-      "pr-triage-bitbucket-datacenter": "./src/pr-triage-bitbucket-datacenter.ts",
-      "pr-triage-github-bitbucket-datacenter": "./src/pr-triage-github-bitbucket-datacenter.ts"
+      "pr-triage-github": "./src/pr-triage-github.ts",
+      "pr-triage-bitbucket-datacenter": "./src/pr-triage-bitbucket-datacenter.ts"
     }
   },
   "scripts": {},

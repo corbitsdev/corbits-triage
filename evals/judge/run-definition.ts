@@ -33,6 +33,8 @@ export interface RunDefinitionInput {
   apiKey: string;
   endpoint: Endpoint;
   triggerPayload: unknown;
+  /** The library's GitHub definition unless a deployed package's is given. */
+  definition?: typeof workflow;
 }
 
 export type Write = { method: string; path: string; body: unknown };
@@ -87,7 +89,7 @@ function resolveAction(ref: string): ActionHandler {
  * directors: GitHub is `fetch`, and the judge calls `endpoint`. Returns what evaluate decided and every GitHub write the
  * execute and mirror steps made.
  */
-export async function runDefinition({ fetch, apiKey, endpoint, triggerPayload }: RunDefinitionInput) {
+export async function runDefinition({ fetch, apiKey, endpoint, triggerPayload, definition = workflow }: RunDefinitionInput) {
   const writes: Write[] = [];
   const origin = new URL(endpoint.url).origin;
   const cell: { current: CredentialDelivery } = {
@@ -125,7 +127,7 @@ export async function runDefinition({ fetch, apiKey, endpoint, triggerPayload }:
     };
   }
 
-  const body = (workflow.steps.events as OnTriggerPrimitive).body;
+  const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the pr-triage body is not inline");
   try {
     const run = await runLocal(body.inline, {

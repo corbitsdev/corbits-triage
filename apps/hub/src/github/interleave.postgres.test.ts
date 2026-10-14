@@ -17,7 +17,7 @@ const TENANT = "tnt_state";
 const REPO = "acme/widgets";
 const NOW = new Date("2026-10-08T12:00:00Z");
 const LONG_AGO = "2026-10-07T00:00:00.000Z";
-const PACK = emptyPack(REPO);
+const PACK = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true } } };
 const CONFIG = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true, installationId: 1 }] } };
 const DEPLOYMENT = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
 const FAILED: PrTriageRow = { number: 8, headSha: "abc123", status: "failed", attempts: 1, error: "run failed", firstSeenAt: LONG_AGO, queuedAt: LONG_AGO, updatedAt: LONG_AGO };
@@ -56,6 +56,8 @@ function route(store: TriageStateStore, deliver: Deliver) {
 
 function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver) {
   return createTriageReconciler({
+    source: "github",
+    rotationKey: "rotation",
     tenants: async () => [{ id: TENANT, domain: "tenant.example", config: CONFIG }],
     liveDeployments: async () => [DEPLOYMENT],
     latestDeployments: async () => [],

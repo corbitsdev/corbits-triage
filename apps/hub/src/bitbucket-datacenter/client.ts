@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { repoPath as repoPathOf } from "@corbits/bitbucket-datacenter-reads";
 
 export type BitbucketFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -37,6 +38,18 @@ export function bitbucketFetch(fetchImpl: typeof fetch, baseUrl: string, token: 
   };
 }
 
+// Private-network and localhost hosts are allowed, since Data Center commonly lives on a private network; the hosts a
+// cloud runtime answers its own metadata on are not, because the hub's token-check request would reach them.
+const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata", "169.254.169.254"]);
+
+function isMetadataHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (METADATA_HOSTS.has(host)) return true;
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  // fd00::/8 holds the metadata addresses cloud runtimes publish over IPv6, such as fd00:ec2::254.
+  return /^fd[0-9a-f]{2}:/i.test(host);
+}
+
 /**
  * An http(s) URL without credentials, query or fragment, kept with its context path
  * (an instance can live under one) and without a trailing slash.
@@ -49,6 +62,7 @@ export function instanceBaseUrl(value: string): string | undefined {
     return undefined;
   }
   if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password || url.search || url.hash) return undefined;
+  if (isMetadataHost(url.hostname)) return undefined;
   return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
 }
 
@@ -66,7 +80,7 @@ export async function pagedValues(bb: BitbucketFetch, path: string): Promise<unk
 }
 
 export function repoPath(project: string, slug: string): string {
-  return `/rest/api/1.0/projects/${encodeURIComponent(project)}/repos/${encodeURIComponent(slug)}`;
+  return repoPathOf(`${project}/${slug}`);
 }
 
 export async function readRepo(bb: BitbucketFetch, project: string, slug: string): Promise<typeof InstanceRepo.infer | undefined> {

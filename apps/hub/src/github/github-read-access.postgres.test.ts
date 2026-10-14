@@ -11,6 +11,7 @@ import { guardedApp } from "../integrations/test-app.js";
 import { createAuditLog } from "../audit-log.js";
 import { createGithubHeldDos } from "./held-dos.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./open-pulls.js";
+import { createTenantOpenPrs } from "./tenant-open-heads.js";
 import { createGithubPrActions } from "./pr-actions.js";
 import { createGithubPrDetails } from "./pr-details.js";
 import { createGithubPrPreview, PreviewBody } from "./pr-preview.js";
@@ -67,7 +68,8 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
 }
 
 const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigin };
-const openPulls = createGithubOpenPulls({ ...deps, cache: createOpenPullsCache(() => new Date()) });
+const list = createTenantOpenPrs({ ...deps, tenantBitbucket: async () => undefined });
+const openPulls = createGithubOpenPulls({ ...deps, list, cache: createOpenPullsCache(() => new Date()) });
 const prDetails = createGithubPrDetails({ ...deps, log() {} });
 const prActions = createGithubPrActions({ ...deps, log() {}, async readCheckPack() { return { status: "missing" } as const; } });
 const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO), automatic: [], source: { repo: { id: "art_pack", version: 1 } } } as const; } });
@@ -202,7 +204,7 @@ test("PostgreSQL: approving needs the approve Do grant on top of use, and pins t
 test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {
   const unused = {} as never;
   const app = guardedApp(handle.db, sessionOf, grants, {
-    triageVerdicts: createTriageVerdicts({ ...deps, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, now: unused }),
+    triageVerdicts: createTriageVerdicts({ ...deps, list, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, now: unused }),
     triageTimeline: createTriageTimeline({ verdicts: unused }),
     triageStats: createTriageStats({ verdicts: unused, now: unused }),
     audit: createAuditLog({ db: unused, artifacts: unused, readCheckPack: unused, runReader: unused, sameSource: unused, authorize: unused, workflow: "pr-triage" }),

@@ -34,11 +34,12 @@ function review(reviewer: typeof Participant.infer, times: Map<string, number>, 
 }
 
 /**
- * Each reviewer's standing status as a GitHub review; an UNAPPROVED reviewer has none. Data Center keeps the commit a
- * reviewer last reviewed, which is the review's commit. `triageSlug` names the user whose NEEDS_WORK is triage's own request.
+ * Each reviewer's and participant's standing status as a GitHub review; an UNAPPROVED one has none. Data Center keeps
+ * the commit a reviewer last reviewed, which is the review's commit, and lists a status set by someone not asked to
+ * review, Triage's own included, under participants. `triageSlug` names the user whose NEEDS_WORK is triage's own request.
  */
 export async function getReviews(bb: BitbucketFetch, repo: string, number: number, triageSlug?: string): Promise<Review[]> {
   const pr = PullRequest.assert(await json(bb, `${repoPath(repo)}/pull-requests/${number}`));
   const times = await reviewedAt(bb, repo, number);
-  return pr.reviewers.flatMap((reviewer) => review(reviewer, times, triageSlug));
+  return [...pr.reviewers, ...(pr.participants ?? [])].flatMap((reviewer) => review(reviewer, times, triageSlug));
 }

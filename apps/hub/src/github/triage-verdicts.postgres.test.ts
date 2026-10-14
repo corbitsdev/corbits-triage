@@ -117,7 +117,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       ready: () => ready,
       versions,
       openPulls,
-      githubApiOrigin: "http://github.invalid",
+      list: async () => { throw new Error("the workspace has no host credential"); },
       now: () => now,
     });
     const app = guardedApp(db, async () => session as never, createInMemoryGrantStore(grants), { triageVerdicts });

@@ -243,7 +243,7 @@ describe("GitHub manifest credential writes", () => {
     expect(prepared.values[0]).toMatchObject({ name: "github", metadata: { appSlug: conversion.slug } });
     expect(prepared.values[1]).toMatchObject({
       name: "github-hook",
-      metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } },
+      metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage-github" } },
     });
     const metadata = JSON.stringify(prepared.values.map((value) => value.metadata));
     expect(metadata).not.toContain("PRIVATE-KEY-SENTINEL");

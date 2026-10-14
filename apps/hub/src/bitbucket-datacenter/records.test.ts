@@ -28,7 +28,7 @@ test("enabling keeps a recorded repository's settings and replaces its webhook",
 
 test("disconnecting disables only Bitbucket repositories and forgets their webhooks", () => {
   const next = disconnect(ns);
-  expect(next.bitbucket).toBeUndefined();
+  expect(next.bitbucketDatacenter).toBeUndefined();
   expect(next.repos?.map((row) => [row.name, row.enabled, row.webhookId])).toEqual([
     ["acme/app", true, undefined],
     ["TRI/widgets", false, undefined],
