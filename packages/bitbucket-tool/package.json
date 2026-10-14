@@ -1,0 +1,42 @@
+{
+  "name": "@corbits/bitbucket-tool",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "module": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bitbucket": "./src/bitbucket.ts",
+    "./action": "./src/action.ts"
+  },
+  "interchange": {
+    "tools": "./dist/index.js",
+    "credentials": [
+      {
+        "handle": "bitbucket"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "bun run build.ts",
+    "pack:tool": "bun run build.ts pack"
+  },
+  "dependencies": {
+    "@corbits/github-reads": "workspace:*",
+    "@corbits/triage-contracts": "workspace:*",
+    "@intx/agent": "workspace:*",
+    "@intx/types": "workspace:*",
+    "arktype": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "tar": "catalog:"
+  },
+  "main": "./src/index.ts",
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "description": "Bitbucket Data Center write tools for Interchange"
+}
