@@ -12,7 +12,7 @@ A System One model does not generate text. A request carries a JSON `state` and 
 - **Choice**: one option from a fixed set, answered with the chosen option, a probability per option and a confidence.
 - **Score**: ordered, described levels, answered with a position across them, a probability per level and a confidence. Score rules use it.
 
-Triage reaches the model through Interchange inference. The agents name the tenant model alias `decision` on the `corbits-system-one` provider (`packages/triage-workflows/src/agents.ts`). The operator picks the endpoint and model behind that alias in the portal's decision model settings (`apps/web/src/lib/decision-models.ts`):
+Triage reaches the model through Interchange inference. The agents name the tenant model alias `decision` on the `corbits-system-one` provider (`packages/triage-workflows/src/agents.ts`). The operator picks the endpoint and model behind that alias in the portal's decision model settings (presets in `packages/triage-contracts/src/decision-models.ts`):
 
 | Preset | Endpoint | Model |
 | --- | --- | --- |

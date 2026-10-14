@@ -24,7 +24,9 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
 | `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
-| `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`, pull request events → coalescer. |
+| `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`; pull request, review, comment and `check_run` events → coalescer; default-branch pushes touching `.corbits-triage.yaml` → policy-file sync. |
+| `src/github/policy-file.ts` | Syncs `.corbits-triage.yaml` on the default branch into the repository's policy, reads it, and exports the policy as a pull request adding it. |
+| `src/github/automation.ts` | Which action kinds triage writes unattended on a repository, from the grants of the tenant's `pr-triage` system role. |
 | `src/github/check-pack-store.ts` | Reads a repository's policy: the pinned artifact, else the newest titled one, resolved over any workspace policy it extends. |
 | `src/github/policy-read.ts` | The route that serves a repository's policy as triage reads it. |
 | `src/github/backlog-triage.ts` | The route that mails `pr-triage-historical` to triage a repository's open pull requests again. |
@@ -35,8 +37,10 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict records and the routes that serve them. |
 | `src/github/manifest.ts` | GitHub App Manifest flow: start and callback. The setup state is an HMAC-SHA256 token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes and bound to the user who started it; nothing is stored. |
 | `src/github/pr-*.ts` | Pull request actions, details, previews (API only) and single-PR triage. |
-| `src/github/held-dos.ts` | Approves a held Do by mailing it to `pr-triage`. |
+| `src/github/held-dos.ts` | Approves a held action by mailing it to `pr-triage`. |
 | `src/github/github-app-*` | Credential adapter: App JWT → installation token, cached per installation, pinned to the GitHub API origin. |
+
+Hub code logs through one JSON-line logger, `logJson` in `src/github/bridge.ts`, passed down as `log`.
 
 ### Non-default GitHub origin
 
@@ -82,7 +86,7 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
 - `triage-workflows`: `pr-triage`, `pr-triage-historical`, their steps
   (`triage-steps.ts`), directors and the deterministic logic under `logic/`.
 - `github-reads`: GitHub read helpers and types.
-- `github-tool`: the mirror write (marker-comment upsert), Dos and the sidecar
+- `github-tool`: the mirror write (marker-comment upsert), actions and the sidecar
   tool bundles.
 - `github-write-tool`: build wrapper for the write bundle.
 - `triage-contracts`: policy schema (`schemaVersion` 2) with the workspace
@@ -109,7 +113,7 @@ GitHub emulator).
 | --- | --- |
 | `bun run dev` | Hub and portal with prefixed logs (`tooling/dev.ts`). |
 | `bun run hub` | Hub only. |
-| `bun run check` | Typecheck tooling, portal and hub, and bundle the hub. |
+| `bun run check` | Typecheck tooling, portal, extension and hub, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run lint` | oxlint. |
 | `bun run holdback`, `injection`, `report` | Eval scripts: holdback replay, prompt-injection run, cost and latency report. |
