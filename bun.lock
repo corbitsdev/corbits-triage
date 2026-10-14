@@ -120,6 +120,15 @@
         "vite": "^6.3.5",
       },
     },
+    "packages/bitbucket-reads": {
+      "name": "@corbits/bitbucket-reads",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/github-reads": "workspace:*",
+        "@corbits/triage-contracts": "workspace:*",
+        "arktype": "catalog:",
+      },
+    },
     "packages/bitbucket-tool": {
       "name": "@corbits/bitbucket-tool",
       "version": "0.1.0",
@@ -726,6 +735,8 @@
     "@better-fetch/fetch": ["@better-fetch/fetch@1.3.2", "", {}, "sha512-Gs7n99b5tqUC6cQAPbV0uED3IraHB6xQbHLQ/C3l7ZFafHScOx9pQ+DYmP5blbLFShVWLqxNUlI9wi4xU/X+ow=="],
 
     "@corbits/artifacts": ["@corbits/artifacts@0.2.0", "", { "dependencies": { "@hono/standard-validator": "^0.2.3", "arktype": "^2.2.3" }, "peerDependencies": { "@intx/agent": "^0.4.0", "@intx/db": "^0.4.0", "@intx/hub-api": "^0.4.0", "@intx/types": "^0.4.0", "drizzle-orm": "^0.45.2", "hono": "^4.12.32", "hono-openapi": "^1.2.0", "postgres": "^3.4.9" }, "optionalPeers": ["@intx/agent"] }, "sha512-6NBlzckZYLCQgC/5CSU4eb72FL04IUsc5XjWwlGjo6E2OuqbMbG573AVJamwcwOv++c+chKqD8EuV7NjqaRApA=="],
+
+    "@corbits/bitbucket-reads": ["@corbits/bitbucket-reads@workspace:packages/bitbucket-reads"],
 
     "@corbits/bitbucket-tool": ["@corbits/bitbucket-tool@workspace:packages/bitbucket-tool"],
 
