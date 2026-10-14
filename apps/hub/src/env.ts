@@ -175,6 +175,7 @@ export function signInSettings(env: HubEnv): SignInSettings {
     throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together");
   }
   const allowedEmails = allowed?.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+  if (allowedEmails?.length === 0) throw new Error("AUTH_ALLOWED_EMAILS lists no address or @domain");
   if (allowedEmails !== undefined && clientId === undefined) {
     throw new Error("AUTH_ALLOWED_EMAILS requires Google sign-in (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)");
   }

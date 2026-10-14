@@ -5,7 +5,7 @@
 import { type } from "arktype";
 import { and, count, eq, gt, inArray, like, notExists, sql } from "drizzle-orm";
 import { schema } from "@intx/db";
-import { TRIAGE_ROLE } from "@corbits/triage-contracts";
+import { TRIAGE_ROLE, type InviteRoles } from "@corbits/triage-contracts";
 import { isEmailAllowed, MAGIC_LINK_TTL_SECONDS, type HubAuth } from "../auth.js";
 import type { SessionUser } from "@intx/hub-api";
 import { failure, type PortalCredentialDeps } from "../github/portal-credential.js";
@@ -203,7 +203,12 @@ export function createInvitations(deps: InvitationDeps) {
   async function roles({ tenantId, principalId }: Member): Promise<Response> {
     const rows = await db.select({ id: schema.role.id, name: schema.role.name, isSystem: schema.role.isSystem }).from(schema.role).where(eq(schema.role.tenantId, tenantId));
     const people = rows.filter((row) => !isTriageRole(row)).map((row) => row.id);
-    return Response.json({ assignableRoleIds: [...await assignableRoles(principalId, tenantId, people)] });
+    const { allowedEmails } = deps;
+    const signInLimit = allowedEmails === undefined
+      ? null
+      : { domains: allowedEmails.filter((entry) => entry.startsWith("@")), addresses: allowedEmails.some((entry) => !entry.startsWith("@")) };
+    const body: InviteRoles = { assignableRoleIds: [...await assignableRoles(principalId, tenantId, people)], sendsEmail: deps.sendEmail !== undefined, signInLimit };
+    return Response.json(body);
   }
 
   async function accept(body: typeof AcceptBody.infer, user: SessionUser): Promise<Response> {

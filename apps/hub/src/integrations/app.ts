@@ -558,7 +558,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
       summary: "Roles the caller may invite people into",
       description: "Roles whose every permission the caller holds. Open invites are the stock principals with status `invited`.",
       tags: TAGS,
-      responses: { 200: json("Assignable role ids", InviteRoles), 401: failures[401], 403: failures[403] },
+      responses: { 200: json("Assignable role ids, email delivery and the sign-in allowlist", InviteRoles), 401: failures[401], 403: failures[403] },
     }),
     member,
     requireGrant("principal:*", "create"),
