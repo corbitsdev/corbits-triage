@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { projectQueue, type PrItem } from "./hub-api.ts";
 import { groupInbox, regroupInbox } from "./inbox-view.ts";
-import { repoHealth, repoRows, triageReadyRepos } from "./repo-rows.ts";
+import { mergeRepositories, repoHealth, repoRows, triageReadyRepos } from "./repo-rows.ts";
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   return {
@@ -76,5 +76,16 @@ describe("repository rows", () => {
     expect(repoHealth({ ...all, needsSetup: false, enabled: true }).label).toBe("Catching up");
     expect(repoHealth({ ...all, needsSetup: false, enabled: true, catchingUp: false }).label).toBe("Webhooks OK");
     expect(repoHealth({ needsSetup: false, enabled: true, catchingUp: false, receivingEvents: false }).label).toBe("No events yet");
+  });
+});
+
+describe("merged repositories", () => {
+  test("a stored record wins over the Bitbucket Data Center listing, which only adds what is not recorded", () => {
+    const stored = [{ name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: true, checkPack: { name: "check-pack/TRI/widgets" } }];
+    const listed = [
+      { name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
+      { name: "TRI/gadgets", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
+    ];
+    expect(mergeRepositories(stored, listed)).toEqual([stored[0]!, listed[1]!]);
   });
 });
