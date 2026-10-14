@@ -32,12 +32,24 @@ wakes the policy as if it were opened.
   triage again); the rest and the policy's Dos are under More. Merging from the
   portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
-- **Repositories**: per repository, its rules, how the verdict is decided,
-  its steps, its verdict labels, recent
-  stats, the triage switch and **Triage open pull requests again**.
+- **Repositories**: per repository, its Size, Checks and Judgement rules,
+  the steps for each verdict, its labels, the triage switch and **Triage open
+  pull requests again**. Every change saves on its own.
 - **Settings**: the deployed workflow versions, the GitHub App, the decision
   model, invitations, workspace roles, the grid of Do kinds by role, and the
   account.
+
+A repository's panel is one scroll. The triage switch comes first; while it is
+off, everything under it is dimmed and cannot be changed. Three cards hold the
+rules: Size, Checks and Judgement, each rule a sentence with a switch, its
+values inline while it is on, and how often it passed this week. Under Checks
+a line notes what always runs: drafts wait until they are ready for review,
+and a pull request with changes requested fails. Then lists the steps for each
+verdict: what each does, whom it is for, and whether it runs on its own
+(automatic) or waits for you, from the grants in Settings → Access. The Labels
+card names each verdict's label and switches a label for each failed rule. The
+header says Saved, Saving… or Not saved; a step or rule that is not filled in
+yet says what it needs and is not saved until it is.
 
 The portal shows the verdict, its score and the reasons. Evidence for a file or a change
 cites its changed lines (`src/router.ts:40-58`) and links them at the commit
