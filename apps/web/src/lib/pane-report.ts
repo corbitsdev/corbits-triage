@@ -107,7 +107,7 @@ export function paneStatus({ item, detail, handled, approved, primary }: StatusI
   if (isReReview(item)) return status("you", "Ready for your re-review");
   if (fix > 0) return status("you", problemsText(item, primary, fix, check));
   if (unsure > 0) return status("you", `Not sure about ${things(check)} — your call`);
-  if (check > 0) return status("you", `Couldn't check ${things(check)}`);
+  if (check > 0) return status("you", `Couldn't check ${things(check)}: ${problems.filter((problem) => problem.severity === "cant").map((problem) => problem.text ?? problem.check.check).join("; ")}`);
   if (item.state !== "ready") return status("you", inboxStatus(item));
   const blocked = primary?.kind === "merge" && primary.blocker !== null ? NOT_YET[primary.blocker] : undefined;
   if (blocked !== undefined) return status("you", blocked);
