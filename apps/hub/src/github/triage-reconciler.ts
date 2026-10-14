@@ -6,7 +6,7 @@ import { repoPolicy, type PrTriageRow, type RepoPolicy } from "@corbits/triage-c
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
-import { repoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRecord } from "./tenant-config.js";
+import { githubRepoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
@@ -62,7 +62,7 @@ function failedByInterchange(deployment: DeploymentRecord): deployment is Deploy
 }
 
 function enabledRepos(config: unknown): EnabledRepo[] {
-  return repoRecords(triageNs(config)).flatMap(function enabled(record) {
+  return githubRepoRecords(triageNs(config)).flatMap(function enabled(record) {
     const policy = repoPolicy(record);
     return record.connected && policy.enabled ? [{ record, policy }] : [];
   });

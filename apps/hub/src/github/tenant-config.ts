@@ -15,6 +15,11 @@ export type RepoRecord = {
   /** Absent means github. */
   source?: RepoSource;
   connected: boolean;
+  /** Absent means GitHub. */
+  source?: "github" | "bitbucket";
+  defaultBranch?: string;
+  /** The Bitbucket webhook triage created, so disabling removes only its own. */
+  webhookId?: number;
   installationId?: number;
   account?: string;
   installationUrl?: string;
@@ -33,6 +38,7 @@ export type InstallationFields = {
 
 export type CorbitsTriageNs = {
   repos?: RepoRecord[];
+  bitbucket?: unknown;
   allowlist?: unknown;
   labelMap?: unknown;
   rev?: number;
@@ -47,6 +53,11 @@ function isRepoRecord(row: unknown): row is RepoRecord {
 
 export function repoRecords(ns: CorbitsTriageNs): RepoRecord[] {
   return Array.isArray(ns.repos) ? ns.repos.filter(isRepoRecord) : [];
+}
+
+/** Records GitHub serves; Bitbucket repositories are read through their own instance. */
+export function githubRepoRecords(ns: CorbitsTriageNs): RepoRecord[] {
+  return repoRecords(ns).filter((row) => row.source !== "bitbucket");
 }
 
 export function triageNs(config: unknown): CorbitsTriageNs {
