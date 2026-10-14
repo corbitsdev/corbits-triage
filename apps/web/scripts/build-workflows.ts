@@ -1,10 +1,12 @@
-// Packs each workflow as a tarball into public/packages/ beside the GitHub tool it depends on,
+// Packs each workflow as a tarball into public/packages/ beside the host tools it depends on,
 // so the portal can publish them to the hub.
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { buildEntry, packTool } from "../../../packages/github-tool/build.ts";
-import tool from "../../../packages/github-tool/package.json";
+import * as bitbucketTool from "../../../packages/bitbucket-datacenter-tool/build.ts";
+import bitbucketPkg from "../../../packages/bitbucket-datacenter-tool/package.json";
+import * as githubTool from "../../../packages/github-tool/build.ts";
+import githubPkg from "../../../packages/github-tool/package.json";
 import { contentVersion, packPackage, type PackedTarball } from "../../../tooling/pack-tarball.ts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry, type WorkflowPackage } from "../src/lib/workflow-packages.ts";
 
@@ -12,6 +14,13 @@ const WORKFLOW_SRC = resolve(import.meta.dir, "../../../packages/triage-workflow
 const PUBLIC = resolve(import.meta.dir, "../public");
 const DIRECTORS = "directors.mjs";
 const ACTIONS = "actions.mjs";
+
+/** The tool packages published beside each workflow; the workflow imports only these at run time. */
+const TOOLS = [
+  { name: githubPkg.name, build: githubTool },
+  { name: bitbucketPkg.name, build: bitbucketTool },
+];
+const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 
 function interchangeEntries(workflow: WorkflowPackage) {
   return { workflow: workflow.entry, directors: `./${DIRECTORS}`, actions: `./${ACTIONS}` };
@@ -28,8 +37,8 @@ async function bundle(workflow: WorkflowPackage, outdir: string): Promise<void> 
       format: "esm",
       conditions: ["intx-src"],
       define: { "TRIAGE_WORKFLOW_PACKAGE_NAME": JSON.stringify(workflow.packageName) },
-      // The packed tool exports only its root, so a subpath import would not resolve at run time.
-      external: [tool.name],
+      // The packed tools export only their roots, so a subpath import would not resolve at run time.
+      external: TOOL_NAMES,
       // Strips the per-module path comments: the version hash must not depend on the lockfile layout.
       minify: { whitespace: true },
       sourcemap: "none",
@@ -38,19 +47,19 @@ async function bundle(workflow: WorkflowPackage, outdir: string): Promise<void> 
   }
 }
 
-// The tarball resolves only from the registry asset it is published to, which holds nothing but the tool.
+// The tarball resolves only from the registry asset it is published to, which holds nothing but the tools.
 function assertOnlyToolImports(workflow: WorkflowPackage, code: string): void {
   // A CommonJS require would load a module the import scan cannot see.
   if (/\bcreateRequire\b|\b__require\b/.test(code)) {
-    throw new Error(`${workflow.packageName} bundles a CommonJS require; only ESM imports of ${tool.name} are allowed.`);
+    throw new Error(`${workflow.packageName} bundles a CommonJS require; only ESM imports of ${TOOL_NAMES.join(", ")} are allowed.`);
   }
   for (const { path } of new Bun.Transpiler({ loader: "js" }).scanImports(code)) {
-    if (path.startsWith("node:") || path === tool.name) continue;
-    throw new Error(`${workflow.packageName} imports ${path} at run time; only ${tool.name} is published beside it.`);
+    if (path.startsWith("node:") || TOOL_NAMES.includes(path)) continue;
+    throw new Error(`${workflow.packageName} imports ${path} at run time; only ${TOOL_NAMES.join(", ")} are published beside it.`);
   }
 }
 
-async function packWorkflow(workflow: WorkflowPackage, toolVersion: string, outDir: string): Promise<PackedTarball> {
+async function packWorkflow(workflow: WorkflowPackage, tools: PackedTarball[], outDir: string): Promise<PackedTarball> {
   const stage = await mkdtemp(join(tmpdir(), `${workflow.name}-`));
   try {
     await bundle(workflow, stage);
@@ -61,7 +70,7 @@ async function packWorkflow(workflow: WorkflowPackage, toolVersion: string, outD
     };
     const manifest = {
       type: "module",
-      dependencies: { [tool.name]: toolVersion },
+      dependencies: Object.fromEntries(tools.map((tool) => [tool.name, tool.version])),
       interchange: interchangeEntries(workflow),
       files: [workflow.entry.slice(2), DIRECTORS, ACTIONS, "package.json"],
     };
@@ -76,10 +85,10 @@ async function packWorkflow(workflow: WorkflowPackage, toolVersion: string, outD
   }
 }
 
-async function packGithubTool(outDir: string): Promise<PackedTarball> {
-  const stage = await mkdtemp(join(tmpdir(), "github-tool-"));
+async function packHostTool(tool: (typeof TOOLS)[number], outDir: string): Promise<PackedTarball> {
+  const stage = await mkdtemp(join(tmpdir(), "host-tool-"));
   try {
-    return await packTool(await buildEntry(join(stage, "index.js")), outDir);
+    return await tool.build.packTool(await tool.build.buildEntry(join(stage, "index.js")), outDir);
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
@@ -87,9 +96,10 @@ async function packGithubTool(outDir: string): Promise<PackedTarball> {
 
 export async function packWorkflows(outDir: string): Promise<PackageIndexEntry[]> {
   await rm(outDir, { recursive: true, force: true });
-  const packedTool = await packGithubTool(outDir);
-  const packed = [packedTool];
-  for (const workflow of WORKFLOW_PACKAGES) packed.push(await packWorkflow(workflow, packedTool.version, outDir));
+  const tools: PackedTarball[] = [];
+  for (const tool of TOOLS) tools.push(await packHostTool(tool, outDir));
+  const packed = [...tools];
+  for (const workflow of WORKFLOW_PACKAGES) packed.push(await packWorkflow(workflow, tools, outDir));
   const index = packed.map(({ name, version, filename, integrity }) => ({ name, version, filename, integrity }));
   await Bun.write(join(outDir, "index.json"), `${JSON.stringify(index, null, 2)}\n`);
   return index;
