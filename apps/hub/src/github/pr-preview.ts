@@ -19,7 +19,7 @@ import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.
 import { forInstallation } from "./open-pulls.js";
 import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
-import { repoRecords, triageNs } from "./tenant-config.js";
+import { repoRecords, triageNs, sourceOf } from "./tenant-config.js";
 
 export const GITHUB_PR_PREVIEW_PATH = "/api/integrations/github-preview";
 
@@ -173,6 +173,8 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
     const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected);
     if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
+    // The preview reads through the GitHub App only.
+    if (sourceOf(record) !== "github") return failure(409, "preview_unsupported", `${repo} is not on GitHub; run triage to see its verdict.`);
     let pack: CheckPack;
     if (candidate !== undefined) pack = candidate;
     else {
