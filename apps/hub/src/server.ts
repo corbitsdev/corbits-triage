@@ -402,11 +402,19 @@ function triageStack(triage: TriageWorkflow) {
 }
 
 const stacks = TRIAGE_WORKFLOWS.map(triageStack);
-// The portal's verdict listing and audit read the GitHub workflow's, as before other hosts.
+// The portal's verdict listing reads every host's observations; connection changes use the GitHub stack's rotation to release.
 const github = stacks.find((stack) => stack.triage.source === "github")!;
-const tenantObserver = github.observer;
-const recordPass = github.recordPass;
 const deploymentRotation = github.rotation;
+const tenantObserver = {
+  last(tenantId: string) {
+    const observations = stacks.flatMap((stack) => stack.observer.last(tenantId) ?? []);
+    if (observations.length === 0) return undefined;
+    return { deployments: observations.flatMap((observation) => observation.deployments), observed: observations.flatMap((observation) => observation.observed) };
+  },
+};
+function recordsReady(tenantId: string): boolean {
+  return stacks.every((stack) => stack.recordPass.ready(tenantId));
+}
 async function recordAll() {
   for (const stack of stacks) await stack.recordPass.pass();
   return { retry: false };
@@ -598,7 +606,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     authorize: authorizePortal,
     verdicts: verdictRecordStore,
     observer: tenantObserver,
-    ready: recordPass.ready,
+    ready: recordsReady,
     versions: tenantVersions,
     openPulls: openPullsCache,
     list: tenantOpenPrs,
@@ -611,9 +619,9 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     runReader: composition.runReader,
     sameSource: deploymentRotation.sameSource,
     authorize: authorizePortal,
-    workflow: prTriageGithub.id,
+    workflows: TRIAGE_WORKFLOWS.map((workflow) => workflow.id),
   }),
-  workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService }),
+  workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   invitations: createInvitations({
     db: composition.db,

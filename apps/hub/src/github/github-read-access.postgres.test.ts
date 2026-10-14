@@ -207,7 +207,7 @@ test("PostgreSQL: every verdict route needs workflow-run read, which holding the
     triageVerdicts: createTriageVerdicts({ ...deps, list, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, now: unused }),
     triageTimeline: createTriageTimeline({ verdicts: unused }),
     triageStats: createTriageStats({ verdicts: unused, now: unused }),
-    audit: createAuditLog({ db: unused, artifacts: unused, readCheckPack: unused, runReader: unused, sameSource: unused, authorize: unused, workflow: "pr-triage" }),
+    audit: createAuditLog({ db: unused, artifacts: unused, readCheckPack: unused, runReader: unused, sameSource: unused, authorize: unused, workflows: ["pr-triage"] }),
   });
   for (const route of ["triage-verdicts", "triage-timeline", "triage-stats", "audit"]) {
     const res = await app.request(`/api/integrations/${route}/${TENANT}?repo=${REPO}&number=8`, { headers: { "x-test-user": "usr_user" } });
