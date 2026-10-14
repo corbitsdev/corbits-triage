@@ -139,8 +139,9 @@ function openHeadOf(drafts: number[]): BridgeDeps["openHeadFor"] {
 }
 
 type Recheck = [string, string, number];
+type Synced = [string, boolean];
 
-function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[] } = {}) {
+function bridge({ synced = [], ...overrides }: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[]; synced?: Synced[] } = {}) {
   const sent = overrides.sent ?? [];
   const rechecks = overrides.rechecks ?? [];
   async function accept(input: CoalescedEvent) {
@@ -160,6 +161,10 @@ function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Rec
     readCheckPack: packsFor(["octocat/hello"]),
     openHeadFor: openHeadOf([]),
     recheckOpenPulls,
+    async syncPolicyFile(_tenantId, repo, removed) {
+      synced.push([repo, removed]);
+      return { status: "synced", sha: "blob1" };
+    },
     ...overrides,
   });
 }
@@ -321,6 +326,26 @@ describe("bridge handler", () => {
     }
     expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7]]);
     expect(sent).toHaveLength(0);
+  });
+
+  test("a push to the default branch that changes or removes the policy file, or is forced, syncs it", async () => {
+    const synced: Synced[] = [];
+    const handle = bridge({ synced });
+    function push(ref: string, commit: Record<string, string[]>, forced = false) {
+      return JSON.stringify({ ref, forced, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [commit] });
+    }
+    const deliveries: Array<[string, string]> = [
+      [push("refs/heads/main", { modified: [".corbits-triage.yaml"] }), "accepted"],
+      [push("refs/heads/main", { removed: [".corbits-triage.yaml"] }), "accepted"],
+      [push("refs/heads/main", { modified: ["README.md"] }, true), "accepted"],
+      [push("refs/heads/main", { modified: ["README.md"] }), "ignored"],
+      [push("refs/heads/feature", { modified: [".corbits-triage.yaml"] }), "ignored"],
+    ];
+    for (const [i, [body, status]] of deliveries.entries()) {
+      const res = await handle(githubRequest(body, { event: "push", delivery: `p${i}` }), TARGET);
+      expect(await res.json()).toEqual({ status });
+    }
+    expect(synced).toEqual([["octocat/hello", false], ["octocat/hello", true], ["octocat/hello", false]]);
   });
 
   test("a base move the triage state refused is 500 and releases the id for retry", async () => {

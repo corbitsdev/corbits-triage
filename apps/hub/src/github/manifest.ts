@@ -35,6 +35,7 @@ const GITHUB_APP_EVENTS = [
   "pull_request_review",
   "issue_comment",
   "check_run",
+  "push",
   "installation",
   "installation_repositories",
 ] as const;

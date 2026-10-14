@@ -6,7 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import type { DB } from "@intx/db";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, PolicyRead, DeployedVersions, InviteRoles, InviteSent, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, PolicyExported, PolicyFileRead, PolicyRead, PolicySynced, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
@@ -19,6 +19,7 @@ import { ActionBody, GITHUB_PR_ACTIONS_PATH } from "../github/pr-actions.js";
 import { GITHUB_PR_DETAILS_PATH } from "../github/pr-details.js";
 import { GITHUB_PR_PREVIEW_PATH, PreviewBody, PreviewResponse } from "../github/pr-preview.js";
 import { GITHUB_PR_TRIAGE_PATH, TriageBody } from "../github/pr-triage.js";
+import { PolicyFileBody } from "../github/policy-file.js";
 import { PolicyQuery } from "../github/policy-read.js";
 import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
@@ -30,12 +31,13 @@ import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
 export const INTEGRATIONS_PREFIX = "/api/integrations/";
-const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
+export const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
 const packSchemas = {
   checkPack: checkPackSchema.toJsonSchema(),
   sharedPolicy: sharedPolicySchema.toJsonSchema(),
   policyOverride: policyOverrideSchema.toJsonSchema(),
   repoPolicy: repoPolicySchema.toJsonSchema(),
+  policyFile: policyFileSchema.toJsonSchema(),
 };
 
 export type Member = { tenantId: string; principalId: string };
@@ -59,6 +61,9 @@ export type IntegrationHandlers = {
   heldDos: BodyHandler<typeof HeldDoBody.infer>;
   prTriage: BodyHandler<typeof TriageBody.infer>;
   policyRead: BodyHandler<typeof PolicyQuery.infer>;
+  policyFileRead: BodyHandler<typeof PolicyFileBody.infer>;
+  policyFileSync: BodyHandler<typeof PolicyFileBody.infer>;
+  policyFileExport: BodyHandler<typeof PolicyFileBody.infer>;
   backlog: BodyHandler<typeof BacklogBody.infer>;
   openPulls: (member: Member) => Promise<Response>;
   prDetails: MemberHandler;
@@ -87,7 +92,7 @@ const TAGS = ["integrations"];
 const Failure = type({ error: { code: "string", message: "string" } });
 const ManifestFailure = type({ error: "string" });
 const AuthMethods = type({ google: "boolean", emailPassword: "boolean", passwordReset: "boolean" });
-const PackSchemas = type({ checkPack: "Record<string, unknown>", sharedPolicy: "Record<string, unknown>", policyOverride: "Record<string, unknown>", repoPolicy: "Record<string, unknown>" });
+const PackSchemas = type({ checkPack: "Record<string, unknown>", sharedPolicy: "Record<string, unknown>", policyOverride: "Record<string, unknown>", repoPolicy: "Record<string, unknown>", policyFile: "Record<string, unknown>" });
 const ManifestStart = type({ manifest: "Record<string, unknown>", state: "string" });
 const InstallationsSynced = type({ installations: "number", repos: "string[]" });
 const TriageQueued = type({ status: "'queued'", headSha: "string" });
@@ -189,8 +194,8 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.get(
     PACK_SCHEMA_PATH,
     describeRoute({
-      summary: "JSON Schemas of the policy, workspace policy, repository override and repository settings",
-      description: "`checkPack`, `sharedPolicy`, `policyOverride` and `repoPolicy`.",
+      summary: "JSON Schemas of the policy, workspace policy, repository override, repository settings and policy file",
+      description: "`checkPack`, `sharedPolicy`, `policyOverride`, `repoPolicy` and `policyFile`, what `.corbits-triage.yaml` holds.",
       tags: TAGS,
       responses: { 200: json("Policy and repository settings JSON Schemas", PackSchemas) },
     }),
@@ -317,7 +322,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy`,
     describeRoute({
       summary: "A repository's policy as triage reads it",
-      description: "Any member of the workspace. Answers `ok` with the resolved pack and the policy versions it came from, `missing`, or `corrupt` with the reason and the artifact a save replaces.",
+      description: "Any member of the workspace. Answers `ok` with the resolved pack and the policy versions it came from, `missing`, or `corrupt` with the reason and the artifact a save replaces. `source.file` names the policy file the current version was synced from.",
       tags: TAGS,
       parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
       responses: { 200: json("The resolved pack and the policy versions it was read from, or why there is none", PolicyRead), ...invalid, ...failures },
@@ -326,6 +331,59 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     validator("query", PolicyQuery, refuseInvalid),
     function policyRead(c) {
       return handlers.policyRead(c.req.valid("query"), memberOf(c));
+    },
+  );
+
+  app.get(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/file`,
+    describeRoute({
+      summary: "A repository's .corbits-triage.yaml and whether its policy holds what the file says",
+      description: "Needs `read` or `use` on the workspace's GitHub App credential and a connected repository. Reads the file on the default branch; `file` is null when there is none.",
+      tags: TAGS,
+      parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
+      responses: { 200: json("The policy file, or null", PolicyFileRead), ...invalid, ...failures, ...githubFailed },
+    }),
+    member,
+    validator("query", PolicyFileBody, refuseInvalid),
+    function policyFileRead(c) {
+      return handlers.policyFileRead(c.req.valid("query"), memberOf(c));
+    },
+  );
+
+  app.post(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/sync`,
+    describeRoute({
+      summary: "Read a repository's .corbits-triage.yaml into its policy now",
+      description: "Needs `use` on the workspace's GitHub App credential and a connected repository. Stores the file on the default branch as a new version of the repository's policy when it differs; pushes to the default branch do the same.",
+      tags: TAGS,
+      responses: {
+        200: json("Synced, or already what the file holds", PolicySynced),
+        ...invalid,
+        ...failures,
+        404: json("The repository has no policy file", Failure),
+        422: json("The policy file is not a valid policy", Failure),
+        ...githubFailed,
+      },
+    }),
+    member,
+    body(PolicyFileBody),
+    function policyFileSync(c) {
+      return handlers.policyFileSync(c.req.valid("json"), memberOf(c));
+    },
+  );
+
+  app.post(
+    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/export`,
+    describeRoute({
+      summary: "Open a pull request adding .corbits-triage.yaml from the repository's policy",
+      description: "Needs `use` on the workspace's GitHub App credential, a connected repository and a stored policy. One commit on `corbits-triage/policy`; refused when the file or the branch already exists.",
+      tags: TAGS,
+      responses: { 200: json("The pull request opened", PolicyExported), ...invalid, ...failures, ...githubFailed },
+    }),
+    member,
+    body(PolicyFileBody),
+    function policyFileExport(c) {
+      return handlers.policyFileExport(c.req.valid("json"), memberOf(c));
     },
   );
 
