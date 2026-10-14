@@ -25,7 +25,7 @@ import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
-import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, type BitbucketHandlers } from "../bitbucket/integration.js";
+import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
 import { SESSIONS_PATH } from "../sessions.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
@@ -82,7 +82,7 @@ export type IntegrationHandlers = {
     withdraw: (req: Request, member: Member, principalId: string) => Promise<Response>;
     accept: (body: typeof AcceptBody.infer, user: SessionUser) => Promise<Response>;
   };
-  bitbucket: BitbucketHandlers;
+  bitbucketDatacenter: BitbucketHandlers;
   sessions: {
     list: (caller: Caller) => Promise<Response>;
     revoke: (caller: Caller, sessionId: string) => Promise<Response>;
@@ -732,7 +732,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${BITBUCKET_PATH}/:tenantId/connection`,
     describeRoute({
       summary: "Connect a Bitbucket Data Center instance",
-      description: "Needs `manage` on the workspace. The token is tried once against `GET /rest/api/1.0/application-properties` and stored only when the instance accepts it, as the stock `bitbucket` credential on the `bitbucket` provider; a webhook secret is generated as `bitbucket-hook` unless one exists. The token is never returned.",
+      description: "Needs `manage` on the workspace. The token is tried once against `GET /rest/api/1.0/application-properties` and stored only when the instance accepts it, as the stock `bitbucket-datacenter` credential on the `bitbucket-datacenter` provider; a webhook secret is generated as `bitbucket-datacenter-hook` unless one exists. The token is never returned.",
       tags: TAGS,
       requestBody: { required: true, content: { "application/json": { schema: resolver(ConnectBody) } } },
       responses: { 200: json("Connected", Connected), 400: json("Invalid request, or the instance did not accept the token", Failure), ...bitbucketFailures },
@@ -740,7 +740,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     member,
     body(ConnectBody),
     function connectBitbucket(c) {
-      return handlers.bitbucket.connect(c.req.valid("json"), memberOf(c), c.req.raw);
+      return handlers.bitbucketDatacenter.connect(c.req.valid("json"), memberOf(c), c.req.raw);
     },
   );
 
@@ -754,7 +754,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     }),
     member,
     function bitbucketConnection(c) {
-      return handlers.bitbucket.connection(memberOf(c));
+      return handlers.bitbucketDatacenter.connection(memberOf(c));
     },
   );
 
@@ -768,7 +768,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     }),
     member,
     function disconnectBitbucket(c) {
-      return handlers.bitbucket.disconnect(memberOf(c), c.req.raw);
+      return handlers.bitbucketDatacenter.disconnect(memberOf(c), c.req.raw);
     },
   );
 
@@ -776,13 +776,13 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${BITBUCKET_PATH}/:tenantId/repositories`,
     describeRoute({
       summary: "Bitbucket repositories the token sees, with their records",
-      description: "Needs `use` on the `bitbucket` credential. Repository records as the workspace config holds them, named `PROJECT/slug`; a recorded repository the token no longer sees is listed with `connected: false`.",
+      description: "Needs `use` on the `bitbucket-datacenter` credential. Repository records as the workspace config holds them, named `PROJECT/slug`; a recorded repository the token no longer sees is listed with `connected: false`.",
       tags: TAGS,
       responses: { 200: json("Repositories", BitbucketRepos), ...bitbucketFailures },
     }),
     member,
     function bitbucketRepositories(c) {
-      return handlers.bitbucket.repositories(memberOf(c));
+      return handlers.bitbucketDatacenter.repositories(memberOf(c));
     },
   );
 
@@ -797,7 +797,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     }),
     member,
     function enableBitbucketRepo(c) {
-      return handlers.bitbucket.enable(memberOf(c), c.req.param("project"), c.req.param("slug"));
+      return handlers.bitbucketDatacenter.enable(memberOf(c), c.req.param("project"), c.req.param("slug"));
     },
   );
 
@@ -812,7 +812,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     }),
     member,
     function disableBitbucketRepo(c) {
-      return handlers.bitbucket.disable(memberOf(c), c.req.param("project"), c.req.param("slug"));
+      return handlers.bitbucketDatacenter.disable(memberOf(c), c.req.param("project"), c.req.param("slug"));
     },
   );
 

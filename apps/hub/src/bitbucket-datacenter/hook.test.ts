@@ -9,14 +9,14 @@ import { createProviderHookHandler, type ProviderHookDeps } from "../provider-ho
 const SECRET = "bitbucket-secret";
 const TENANT_ID = "tnt_test";
 const REPOS = [
-  { name: "TRI/widgets", source: "bitbucket", connected: true, enabled: true },
+  { name: "TRI/widgets", source: "bitbucket-datacenter", connected: true, enabled: true },
   { name: "TRI/gadgets", connected: true, enabled: true },
 ];
 const HOOK_ROW = {
   id: "crd_bitbucket",
   tenantId: TENANT_ID,
   principalId: null,
-  name: "bitbucket-hook",
+  name: "bitbucket-datacenter-hook",
   status: "active",
   secret: "sealed",
   metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } },
@@ -47,7 +47,7 @@ function sign(body: string): string {
 }
 
 function hookRequest(body: string, eventKey: string, init: { delivery?: string; signature?: string } = {}): Request {
-  return new Request(`https://hub.example/api/hooks/bitbucket/${TENANT_ID}`, {
+  return new Request(`https://hub.example/api/hooks/bitbucket-datacenter/${TENANT_ID}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-event-key": eventKey, "x-request-id": init.delivery ?? "req-1", "x-hub-signature": init.signature ?? sign(body) },
     body,
@@ -91,7 +91,7 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
   return { accepted, rechecked, synced, send: (req: Request) => app.fetch(req) };
 }
 
-describe("POST /api/hooks/bitbucket/:tenantId", () => {
+describe("POST /api/hooks/bitbucket-datacenter/:tenantId", () => {
   test("a signed pull request event is queued once for the Bitbucket repository record", async () => {
     const h = harness();
     const body = prEvent("pr:opened");
@@ -101,7 +101,7 @@ describe("POST /api/hooks/bitbucket/:tenantId", () => {
     const again = await h.send(hookRequest(body, "pr:opened"));
     expect(await again.json()).toEqual({ status: "duplicate" });
     expect(h.accepted).toHaveLength(1);
-    expect(h.accepted[0]).toMatchObject({ workflow: "pr-triage", number: 1, headSha: "3e1552b0", event: "opened", record: { name: "TRI/widgets", source: "bitbucket" } });
+    expect(h.accepted[0]).toMatchObject({ workflow: "pr-triage", number: 1, headSha: "3e1552b0", event: "opened", record: { name: "TRI/widgets", source: "bitbucket-datacenter" } });
   });
 
   test("a bad signature is 401 and a repository with no Bitbucket record is 404", async () => {

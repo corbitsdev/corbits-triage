@@ -45,7 +45,7 @@ import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.j
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX, PACK_SCHEMA_PATH } from "./integrations/app.js";
-import { createBitbucketIntegration } from "./bitbucket/integration.js";
+import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -556,7 +556,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     now,
     log: logJson,
   }),
-  bitbucket: createBitbucketIntegration({
+  bitbucketDatacenter: createBitbucketIntegration({
     db: composition.db,
     cipher: composition.credentialCipher,
     authorize: authorizePortal,

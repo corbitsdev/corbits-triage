@@ -8,7 +8,7 @@ import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-cr
 
 const CONFIG_KEY = "corbitsTriage";
 
-export type RepoSource = "github" | "bitbucket";
+export type RepoSource = "github" | "bitbucket-datacenter";
 
 export type RepoRecord = {
   name: string;
@@ -36,7 +36,7 @@ export type InstallationFields = {
 
 export type CorbitsTriageNs = {
   repos?: RepoRecord[];
-  bitbucket?: unknown;
+  bitbucketDatacenter?: unknown;
   allowlist?: unknown;
   labelMap?: unknown;
   rev?: number;
@@ -55,7 +55,7 @@ export function repoRecords(ns: CorbitsTriageNs): RepoRecord[] {
 
 /** Records GitHub serves; Bitbucket repositories are read through their own instance. */
 export function githubRepoRecords(ns: CorbitsTriageNs): RepoRecord[] {
-  return repoRecords(ns).filter((row) => row.source !== "bitbucket");
+  return repoRecords(ns).filter((row) => row.source !== "bitbucket-datacenter");
 }
 
 export function triageNs(config: unknown): CorbitsTriageNs {

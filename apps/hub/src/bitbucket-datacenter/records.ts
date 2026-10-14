@@ -14,11 +14,11 @@ export function bitbucketRepoName(project: string, slug: string): string {
 }
 
 export function isBitbucketRecord(record: RepoRecord): boolean {
-  return record.source === "bitbucket";
+  return record.source === "bitbucket-datacenter";
 }
 
 function newRecord(name: string): RepoRecord {
-  return { name, connected: true, source: "bitbucket", ...repoPolicy(undefined) };
+  return { name, connected: true, source: "bitbucket-datacenter", ...repoPolicy(undefined) };
 }
 
 /** The instance's repositories with their stored records; a stored one the token no longer sees stays listed, disconnected. */
@@ -38,7 +38,7 @@ export function enableRepo(ns: CorbitsTriageNs, name: string, defaultBranch: str
   const repos = repoRecords(ns);
   const prev = repos.find((record) => record.name === name);
   const { webhookId: _previous, ...base } = prev ?? newRecord(name);
-  const record: RepoRecord = { ...base, connected: true, source: "bitbucket", defaultBranch, enabled: true, ...(webhookId !== undefined && { webhookId }) };
+  const record: RepoRecord = { ...base, connected: true, source: "bitbucket-datacenter", defaultBranch, enabled: true, ...(webhookId !== undefined && { webhookId }) };
   return { ...ns, repos: prev ? repos.map((row) => (row === prev ? record : row)) : [...repos, record] };
 }
 
@@ -53,6 +53,6 @@ function withoutWebhook(record: RepoRecord): RepoRecord {
 
 /** The connection goes and every Bitbucket repository is disabled; their records stay so reconnecting keeps their settings. */
 export function disconnect(ns: CorbitsTriageNs): CorbitsTriageNs {
-  const { bitbucket: _bitbucket, ...rest } = ns;
+  const { bitbucketDatacenter: _bitbucketDatacenter, ...rest } = ns;
   return { ...rest, repos: repoRecords(ns).map((row) => (isBitbucketRecord(row) ? withoutWebhook({ ...row, enabled: false }) : row)) };
 }
