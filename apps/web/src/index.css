@@ -1186,13 +1186,13 @@ details.setup-help[open] { display: grid; gap: 12px; }
 .connection-fields { display: grid; gap: 14px; }
 .task-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .connection-fields > label,
-.pem-field,
-.webhook-url-field {
+.pem-field {
   display: grid;
   gap: 6px;
   font-size: 13px;
   font-weight: 600;
 }
+.copy-field-row { display: grid; gap: 6px; font-size: 13px; }
 .connection-fields input,
 .connection-fields textarea { width: 100%; }
 .connection-fields small { font-size: 12px; font-weight: 400; color: var(--ink-mute); }
@@ -1209,28 +1209,6 @@ details.setup-help[open] { display: grid; gap: 12px; }
 .file-picker > span { display: grid; }
 .file-picker small { font-size: 12px; color: var(--ink-mute); }
 .file-loaded small { color: var(--ok); }
-.hook-url {
-  display: grid;
-  gap: 6px;
-}
-.hook-url code {
-  display: block;
-  font-family: var(--mono);
-  font-size: 12px;
-  padding: 10px 12px;
-  background: var(--inset);
-  border-radius: var(--radius-sm);
-  word-break: break-all;
-}
-
-.integration {
-  display: grid;
-  gap: 8px;
-  padding: 20px 0;
-  border-top: 1px solid var(--rule);
-}
-.integration:first-child { border-top: 0; padding-top: 8px; }
-.integration h2 { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
 
 @media (max-width: 1080px) {
   .pr-overview { grid-template-columns: 1fr; }
@@ -1393,20 +1371,12 @@ details.setup-help[open] { display: grid; gap: 12px; }
 .verbatim { text-transform: none; letter-spacing: normal; }
 /* No portal table is clickable, so rows do not highlight on hover. */
 [data-slot="table"] tr:hover { background: transparent; }
-[role="tabpanel"] > div > .panel:first-child { border-top: 0; }
-.settings-tabs > [role="tablist"] { position: sticky; top: 0; z-index: 1; background: var(--paper); }
-.settings-panel {
-  max-width: 36rem;
-  display: grid;
-  gap: 16px;
-}
 .sec { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px; padding: 26px 0; border-top: 1px solid var(--rule); }
-[role="tabpanel"] > div > .sec:first-child { border-top: 0; }
 .sec > header h2 { font-size: 16px; margin: 0 0 4px; }
 .sec > header p { font-size: 13px; margin: 0; }
 .sec > div { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.sec .sentences { border-top: 0; }
 .sec .person { display: flex; align-items: center; gap: 8px; }
-.sec .repos { margin-left: 6px; }
 .sec .person-email { display: block; }
 .sec .invite-blocker { flex-basis: 100%; margin: 0; }
 .sec .add-repo { width: auto; max-width: 100%; }
@@ -1439,6 +1409,8 @@ input, select, textarea {
   background: var(--sheet);
 }
 textarea { min-height: 88px; resize: vertical; }
+/* The base field padding above would run the react-ui Select's text under its chevron. */
+[data-slot="select"] { padding-right: 32px; }
 .field-help, .hint { color: var(--ink-mute); font-size: 13px; font-weight: 400; }
 .field-label { font-weight: 600; }
 .setup-waiting, .success-callout {

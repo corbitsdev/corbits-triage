@@ -1,4 +1,4 @@
-import type { HubCredential } from "./hub-api.ts";
+import { GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
 
 type CredentialAction = "rotate" | "revoke";
 
@@ -8,39 +8,58 @@ type CredentialActions = {
   revoke: (credentialId: string) => Promise<void>;
 };
 
+/** Legacy rows carry a `:suffix` after the stored name. */
+function storedAs(storedName: string, base: string): boolean {
+  const name = storedName.trim();
+  return name === base || name.startsWith(`${base}:`);
+}
+
 function secretDisplayName(storedName: string): string {
   const name = storedName.trim();
-  if (name === "github-hook" || name.startsWith("github-hook:")) return "Webhook";
-  if (name === "github" || name.startsWith("github:")) return "GitHub App";
-  if (name === "corbits-system-one" || name.startsWith("corbits-system-one:")) return "Inference";
+  if (storedAs(name, GITHUB_HOOK_CREDENTIAL_NAME)) return "Webhook";
+  if (storedAs(name, GITHUB_CREDENTIAL_NAME)) return "GitHub App";
+  if (storedAs(name, INFERENCE_CREDENTIAL_NAME)) return "Inference";
   if (!name) return "Secret";
   return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 }
 
-export function uniqueSecretDisplayNames(credentials: readonly HubCredential[]): Map<string, string> {
+/** The GitHub App key and the webhook secret. */
+export function githubSecrets(credentials: readonly HubCredential[]): HubCredential[] {
+  return credentials.filter((credential) => storedAs(credential.name, GITHUB_CREDENTIAL_NAME) || storedAs(credential.name, GITHUB_HOOK_CREDENTIAL_NAME));
+}
+
+/** The decision model's API key. */
+export function modelSecrets(credentials: readonly HubCredential[]): HubCredential[] {
+  return credentials.filter((credential) => storedAs(credential.name, INFERENCE_CREDENTIAL_NAME));
+}
+
+export type NamedSecret = { credential: HubCredential; name: string };
+
+/** Each secret with a name no other secret in `credentials` shares. */
+export function namedSecrets(credentials: readonly HubCredential[]): NamedSecret[] {
   const counts = new Map<string, number>();
   for (const credential of credentials) {
     const base = secretDisplayName(credential.name);
     counts.set(base, (counts.get(base) ?? 0) + 1);
   }
   const seen = new Map<string, number>();
-  const labels = new Map<string, string>();
+  const named: NamedSecret[] = [];
   for (const credential of credentials) {
     const base = secretDisplayName(credential.name);
     if ((counts.get(base) ?? 0) < 2) {
-      labels.set(credential.id, base);
+      named.push({ credential, name: base });
       continue;
     }
     const hint = credential.name.includes(":") ? credential.name.slice(credential.name.indexOf(":") + 1).trim() : "";
     if (hint) {
-      labels.set(credential.id, `${base} · ${hint}`);
+      named.push({ credential, name: `${base} · ${hint}` });
       continue;
     }
     const index = (seen.get(base) ?? 0) + 1;
     seen.set(base, index);
-    labels.set(credential.id, `${base} ${index}`);
+    named.push({ credential, name: `${base} ${index}` });
   }
-  return labels;
+  return named;
 }
 
 export async function runCredentialAction(

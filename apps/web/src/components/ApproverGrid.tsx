@@ -23,15 +23,18 @@ type ApproverCellProps = { role: HubRole; kind: ActionKind; grants: HubGrant[]; 
 
 function ApproverCell({ role, kind, grants, disabled, toggle }: ApproverCellProps) {
   const cell = gridCell(role, kind, grants);
+  // A locked cell holds the action through a wider grant, so it reads as a fact rather than a dead switch.
+  if (cell.locked) return <TableCell><span className="model">always</span></TableCell>;
   return (
     <TableCell>
       <Switch
+        className="sw"
         checked={cell.granted}
         onCheckedChange={() => toggle(role, kind, cell)}
         label={`${roleName(role)} may approve ${DO_NAMES[kind]}`}
-        disabled={disabled || cell.locked}
+        disabled={disabled}
       />
-      {cell.repos.length > 0 && <span className="muted small-text repos">only in {cell.repos.join(", ")}</span>}
+      {cell.repos.length > 0 && <span className="model">only in {cell.repos.join(", ")}</span>}
     </TableCell>
   );
 }
