@@ -5,7 +5,7 @@ import { authorize } from "@intx/authz";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { emptyPack, type ActionKind } from "@corbits/triage-contracts";
+import { emptyPack, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { guardedApp } from "../integrations/test-app.js";
 import { createAuditLog } from "../audit-log.js";
@@ -69,8 +69,8 @@ async function authorizePortal(principalId: string, tenantId: string, resource: 
 const deps = { db: handle.db, cipher, authorize: authorizePortal, githubApiOrigin };
 const openPulls = createGithubOpenPulls({ ...deps, cache: createOpenPullsCache(() => new Date()) });
 const prDetails = createGithubPrDetails(deps);
-const prActions = createGithubPrActions({ ...deps, async readCheckPack() { return { status: "missing" } as const; } });
-const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO), automatic: [] } as const; } });
+const prActions = createGithubPrActions({ ...deps, log() {}, async readCheckPack() { return { status: "missing" } as const; } });
+const prPreview = createGithubPrPreview({ ...deps, async readCheckPack() { return { status: "ok", pack: emptyPack(REPO), automatic: [], source: { repo: { id: "art_pack", version: 1 } } } as const; } });
 
 function member(user: string) {
   return { tenantId: TENANT, principalId: user.replace("usr_", "prn_") };
@@ -102,12 +102,18 @@ beforeAll(async () => {
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
     { id: "prn_admin", tenantId: TENANT, kind: "user", refId: "usr_admin", status: "active" },
     { id: "prn_approver", tenantId: TENANT, kind: "user", refId: "usr_approver", status: "active" },
+    { id: "prn_lent", tenantId: TENANT, kind: "user", refId: "usr_lent", status: "active" },
   ]);
   await db.insert(schema.role).values([
     { id: "rol_member", tenantId: TENANT, name: "member", isSystem: true },
     { id: "rol_admin", tenantId: TENANT, name: "admin", isSystem: true },
+    { id: "rol_triage", tenantId: TENANT, name: TRIAGE_ROLE, isSystem: true },
   ]);
-  await db.insert(schema.principalRole).values([{ principalId: "prn_member", roleId: "rol_member" }, { principalId: "prn_admin", roleId: "rol_admin" }]);
+  await db.insert(schema.principalRole).values([
+    { principalId: "prn_member", roleId: "rol_member" },
+    { principalId: "prn_admin", roleId: "rol_admin" },
+    { principalId: "prn_lent", roleId: "rol_triage" },
+  ]);
   await db.insert(schema.grant).values([
     { id: "grt_member_read", tenantId: TENANT, roleId: "rol_member", resource: "*", action: "read", effect: "allow", origin: "system" },
     { id: "grt_admin_read", tenantId: TENANT, roleId: "rol_admin", resource: "*", action: "read", effect: "allow", origin: "system" },
@@ -116,6 +122,8 @@ beforeAll(async () => {
     { id: "grt_approver_use", tenantId: TENANT, principalId: "prn_approver", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
     { id: "grt_approver_approve", tenantId: TENANT, principalId: "prn_approver", resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "system" },
     { id: "grt_approver_labels", tenantId: TENANT, principalId: "prn_approver", resource: `triage-do:labels:${REPO}`, action: "invoke", effect: "allow", origin: "system" },
+    { id: "grt_lent_use", tenantId: TENANT, principalId: "prn_lent", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
+    { id: "grt_triage_approve", tenantId: TENANT, roleId: "rol_triage", resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "role" },
   ]);
   await db.insert(schema.provider).values({ id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: githubApiOrigin });
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
@@ -186,6 +194,11 @@ test("PostgreSQL: approving needs the approve Do grant on top of use, and pins t
   const merge = await prActions({ action: "merge", repo: REPO, number: 8 }, member("usr_approver"));
   expect(merge.status).toBe(403);
   expect(await merge.json()).toEqual({ error: { code: "forbidden", message: "You do not have the grant for this kind of Do in this repository." } });
+
+  const lent = await prActions(approve, member("usr_lent"));
+  expect(lent.status).toBe(403);
+  expect(await lent.json()).toEqual({ error: { code: "forbidden", message: "Triage's own role cannot act for a person. Remove it from this member first." } });
+  expect(reviewed).toHaveLength(1);
 });
 
 test("PostgreSQL: every verdict route needs workflow-run read, which holding the GitHub credential does not give", async () => {
@@ -194,7 +207,7 @@ test("PostgreSQL: every verdict route needs workflow-run read, which holding the
     triageVerdicts: createTriageVerdicts({ ...deps, verdicts: unused, observer: unused, ready: unused, versions: unused, openPulls: unused, now: unused }),
     triageTimeline: createTriageTimeline({ verdicts: unused }),
     triageStats: createTriageStats({ verdicts: unused, now: unused }),
-    audit: createAuditLog({ db: unused, artifacts: unused, runReader: unused, sameSource: unused, authorize: unused, workflow: "pr-triage" }),
+    audit: createAuditLog({ db: unused, artifacts: unused, readCheckPack: unused, runReader: unused, sameSource: unused, authorize: unused, workflow: "pr-triage" }),
   });
   for (const route of ["triage-verdicts", "triage-timeline", "triage-stats", "audit"]) {
     const res = await app.request(`/api/integrations/${route}/${TENANT}?repo=${REPO}&number=8`, { headers: { "x-test-user": "usr_user" } });

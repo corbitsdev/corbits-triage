@@ -226,6 +226,8 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-actions/{tenantId}": ["post"],
     "/api/integrations/github-held-dos/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}": ["post"],
+    "/api/integrations/github-triage/{tenantId}/policy": ["get"],
+    "/api/integrations/github-triage/{tenantId}/backlog": ["post"],
     "/api/integrations/github-open-pulls/{tenantId}": ["get"],
     "/api/integrations/github-pull/{tenantId}": ["get"],
     "/api/integrations/github-preview/{tenantId}": ["post"],

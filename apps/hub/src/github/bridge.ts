@@ -159,14 +159,15 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
 
 /**
  * The deployment reads `pack`; one built before steps reads `checkPack` and never sees `pack`, so both go until every
- * live deployment reads `pack`.
+ * live deployment reads `pack`. `policy.source` names the policy artifact versions `pack` was resolved from, so the
+ * run records what it used.
  */
-export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic }: StoredPack, extra: Record<string, unknown>) {
+export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic, source }: StoredPack, extra: Record<string, unknown>) {
   return {
     ...extra,
     kind: "pr",
     repo,
-    policy: { ...policy, checkPack: { name: checkPackName(repo) } },
+    policy: { ...policy, checkPack: { name: checkPackName(repo) }, source },
     checkPack: legacyCheckPack(pack),
     pack,
     automatic,
@@ -485,7 +486,7 @@ export function createBridgeHandler(d: BridgeDeps) {
     }
     let accepted: Accepted;
     try {
-      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, mail, number: mail.prNumber, headSha, event: triageEvent });
+      accepted = await d.coalescer.accept({ tenantId: loaded.tenantId, workflow: loaded.workflow, record, policy, pack: stored.pack, automatic: stored.automatic, source: stored.source, mail, number: mail.prNumber, headSha, event: triageEvent });
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });

@@ -3,11 +3,12 @@
 // grants and workflow deployments. Nothing is written for the log.
 import { and, desc, eq, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import { type } from "arktype";
-import { findArtifactByTitle, listArtifactVersions, type ArtifactDb } from "@corbits/artifacts";
-import { checkPackName, type AuditEntry, type AuditLog } from "@corbits/triage-contracts";
+import { getArtifact, listArtifactVersions, type ArtifactDb } from "@corbits/artifacts";
+import { WORKSPACE_POLICY_TITLE_PREFIX, type AuditEntry, type AuditLog } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
+import type { CheckPackRead } from "./github/check-pack-store.js";
 import { ROTATION_REASON } from "./github/deployment.js";
 import { failure } from "./github/portal-credential.js";
 import { repoRecords, triageNs } from "./github/tenant-config.js";
@@ -34,6 +35,7 @@ const AuditQuery = type({
 const DO_OUTCOMES: Record<string, string> = { done: "Ran", satisfied: "Found done", failed: "Failed", skipped: "Could not run" };
 
 type Entry = Omit<AuditEntry, "time"> & { at: Date };
+
 /** `people` is whether the caller may read the workspace's principals, which emails and members need. */
 type Window = { tenantId: string; repo?: string; since?: Date; limit: number; people: boolean };
 
@@ -41,6 +43,8 @@ export type AuditLogDeps = {
   db: DB["db"];
   /** The same database, as the artifact store reads it. */
   artifacts: ArtifactDb;
+  /** The repository's policy as triage reads it. */
+  readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
   /** Whether two deployments run the same workflow source. */
   sameSource: (anchorRunId: string, otherAnchorRunId: string) => Promise<boolean>;
@@ -130,23 +134,38 @@ export function createAuditLog(deps: AuditLogDeps) {
     return entries;
   }
 
-  async function checkVersions(tenantId: string, name: string, limit: number): Promise<Entry[]> {
-    const found = await findArtifactByTitle(deps.artifacts, tenantId, checkPackName(name));
-    if (!found) return [];
-    const { versions } = await listArtifactVersions(deps.artifacts, found.artifactId, { limit: Math.min(limit, 100) });
+  async function versionsOf(artifactId: string, what: string, target: string, limit: number): Promise<Entry[]> {
+    const { versions } = await listArtifactVersions(deps.artifacts, artifactId, { limit: Math.min(limit, 100) });
     return versions.map((version) => ({
       at: new Date(version.createdAt),
       actor: version.authorId,
-      action: version.version === 1 ? "Created checks" : "Changed checks",
-      target: name,
+      action: `${version.version === 1 ? "Created" : "Changed"} ${what}`,
+      target,
       detail: `version ${version.version}`,
     }));
+  }
+
+  /** The workspace policy's name, which is its title after the prefix. */
+  async function workspacePolicyName(id: string): Promise<string> {
+    const row = await getArtifact(deps.artifacts, id);
+    if (!row) throw new Error(`workspace policy ${id} disappeared while the audit log was read`);
+    return row.title.slice(WORKSPACE_POLICY_TITLE_PREFIX.length);
   }
 
   async function policyVersions({ tenantId, repo, limit }: Window): Promise<Entry[]> {
     const row = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
     const repos = repo === undefined ? repoRecords(triageNs(row?.config)).map((record) => record.name) : [repo];
-    return (await Promise.all(repos.map((name) => checkVersions(tenantId, name, limit)))).flat();
+    const entries: Entry[] = [];
+    const shared = new Set<string>();
+    for (const name of repos) {
+      const read = await deps.readCheckPack(tenantId, name);
+      if (read.status === "missing") continue;
+      const source = read.status === "ok" ? read.source : { repo: read.repo };
+      entries.push(...(await versionsOf(source.repo.id, "checks", name, limit)));
+      if (source.shared) shared.add(source.shared.id);
+    }
+    for (const id of shared) entries.push(...(await versionsOf(id, "workspace policy", await workspacePolicyName(id), limit)));
+    return entries;
   }
 
   async function members({ tenantId, limit }: Window): Promise<Entry[]> {

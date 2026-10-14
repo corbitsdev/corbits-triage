@@ -67,7 +67,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
       return true;
     },
     pullHead: async (_app, _record, number) => (number === 8 ? "abc123" : undefined),
-    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [] }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
     liveDeployments: async () => [ANCHOR],
     observeRuns: observed([]),
     store: stored([], s.saved),
@@ -136,7 +136,7 @@ describe("createGithubPrTriage", () => {
   test("refuses a repository whose check pack is missing or unreadable, each by name", async () => {
     const s = stub();
     await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "missing" }) })(request(), MEMBER), 409, "needs_setup");
-    await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "corrupt", reason: "repo must be owner/name." }) })(request(), MEMBER), 409, "check_pack_unreadable", { reason: "repo must be owner/name." });
+    await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "corrupt", reason: "repo must be owner/name.", repo: { id: "art_pack", version: 1 } }) })(request(), MEMBER), 409, "check_pack_unreadable", { reason: "repo must be owner/name." });
     expect(s.delivered).toEqual([]);
   });
 
