@@ -2,7 +2,8 @@
 // GitHub manifest start/callback and PR actions are custom domain routes
 // because GitHub must return a one-time code to a confidential server before
 // any browser can observe it. GitHub-signed hook requests go to the legacy
-// bridge until upstream ships a GitHub verifier. Every other /api/* path falls
+// bridge until upstream ships a GitHub verifier; other source hosts post to
+// /api/hooks/:provider/:tenantId (./provider-hooks). Every other /api/* path falls
 // through to stock unchanged.
 //
 // createHubServer takes no workflow/tool registry: the portal deploys the
@@ -51,6 +52,8 @@ import { createWorkflowVersions } from "./workflow-versions.js";
 import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
+import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
+import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
@@ -430,16 +433,26 @@ const policyFile = createPolicyFile({
   now,
   log: logJson,
 });
+const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
   db: hookDeps.db,
   cipher: hookDeps.cipher,
-  cache: new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` }),
+  cache: deliveryCache,
   coalescer,
   readCheckPack,
   openHeadFor: createTenantOpenHead({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
   recheckOpenPulls,
   syncPolicyFile: policyFile.onPush,
 });
+const providerHooks = createProviderHookApp(createProviderHookHandler({
+  db: hookDeps.db,
+  cipher: hookDeps.cipher,
+  cache: deliveryCache,
+  coalescer,
+  readCheckPack,
+  recheckOpenPulls,
+  syncPolicyFile: policyFile.onPush,
+}));
 
 function decodeSegments(rest: string): string[] | null {
   try {
@@ -547,6 +560,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
 // Mounted so the stock /openapi.json lists the routes; requests reach them
 // through routeRequest before the stock logger.
 composition.app.route("/", integrations);
+composition.app.route("/", providerHooks);
 
 const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
 
@@ -564,6 +578,7 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     if (declared !== null && Number(declared) > MAX_BODY_BYTES) {
       return Response.json({ error: "payload_too_large" }, { status: 413 });
     }
+    if (isProviderHookPath(url.pathname)) return providerHooks.fetch(req);
     if (req.headers.get("x-hub-signature-256") !== null) {
       const rest = url.pathname.slice(HOOK_MOUNT_PATH.length);
       const target = hookTarget(req, rest);
