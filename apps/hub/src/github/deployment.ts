@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, ne, or } from "drizzle-orm";
 import { schema, type DB, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
@@ -90,8 +90,14 @@ export async function latestDeployments(db: DB["db"], tenantId: string, definiti
 
 export type ActiveTenant = { id: string; domain: string };
 
-export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments"): Promise<ActiveTenant[]> {
+/**
+ * Tenants with a child run of the definition in flight, or ended since `endedSince`: a host whose runs are inserted already
+ * completed is seen only through the latter, so its verdicts are recorded within a pass of the run's end.
+ */
+export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments", endedSince?: Date): Promise<ActiveTenant[]> {
   const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
+  const running = eq(workflowRun.status, "running");
+  const childRuns = endedSince === undefined ? running : or(running, gt(workflowRun.endedAt, endedSince));
   return db
     .selectDistinct({ id: tenant.id, domain: tenant.domain })
     .from(workflowRun)
@@ -100,7 +106,7 @@ export async function activeTenants(db: DB["db"], definitionName: string, what: 
     .where(and(
       eq(workflowDefinition.name, definitionName),
       what === "runs" ? ne(workflowRun.id, workflowRun.anchorRunId) : eq(workflowRun.id, workflowRun.anchorRunId),
-      what === "runs" ? eq(workflowRun.status, "running") : inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
+      what === "runs" ? childRuns : inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
     ));
 }
 
@@ -168,6 +174,8 @@ export type DeploymentRotationDeps = {
   lifecycle: WorkflowLifecycleService;
   /** As the stock deploy route requires. */
   mayDeploy: (principalId: string, tenantId: string) => Promise<boolean>;
+  /** Where the tenant config records this deployment's rotation; the GitHub one keeps the original key. */
+  rotationKey?: string;
 };
 
 export const ROTATION_REASON = "Replaced by a fresh deployment of the same workflow";
@@ -247,11 +255,11 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
   }
 
   function claim(tenantId: string, record: RotationRecord): Promise<boolean> {
-    return claimRotation(deps.db, tenantId, record);
+    return claimRotation(deps.db, tenantId, record, deps.rotationKey);
   }
 
   function clear(tenantId: string, record: RotationRecord): Promise<void> {
-    return clearRotation(deps.db, tenantId, record);
+    return clearRotation(deps.db, tenantId, record, deps.rotationKey);
   }
 
   return { redeploy, sameSource, release, claim, clear };

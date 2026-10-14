@@ -2,7 +2,8 @@
 // GitHub manifest start/callback and PR actions are custom domain routes
 // because GitHub must return a one-time code to a confidential server before
 // any browser can observe it. GitHub-signed hook requests go to the legacy
-// bridge until upstream ships a GitHub verifier. Every other /api/* path falls
+// bridge until upstream ships a GitHub verifier; other source hosts post to
+// /api/hooks/:provider/:tenantId (./provider-hooks). Every other /api/* path falls
 // through to stock unchanged.
 //
 // createHubServer takes no workflow/tool registry: the portal deploys the
@@ -44,6 +45,9 @@ import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.j
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX, PACK_SCHEMA_PATH } from "./integrations/app.js";
+import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
+import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
+import { connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -51,6 +55,8 @@ import { createWorkflowVersions } from "./workflow-versions.js";
 import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
+import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
+import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { DeliveryCache } from "./github/dedupe.js";
@@ -77,22 +83,31 @@ import { loadCheckPack } from "./github/check-pack-store.js";
 import { createAutomation } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
-import { createPullHeadReader, createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads } from "./github/tenant-open-heads.js";
+import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
 import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManagerRefusal } from "./github/tenant-config.js";
-import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage";
+import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead, githubWrite } from "@corbits/github-tool";
+import { bitbucketRead, bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
 
+// Per host: a workspace deploys a host's workflow and tools once that host's credential exists; pr-triage-historical
+// reads GitHub only. A workspace with both hosts runs both pr-triage workflows.
 const EXPECTED_DEPLOYMENT_SET = {
-  workflows: [
-    { address: PR_TRIAGE_ADDRESS, id: prTriageWorkflow.id },
-    { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
-  ],
-  tools: [githubRead.id, githubWrite.id],
+  github: {
+    workflows: [
+      { address: triageWorkflowFor("github").address, id: prTriageGithub.id },
+      { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
+    ],
+    tools: [githubRead.id, githubWrite.id],
+  },
+  "bitbucket-datacenter": {
+    workflows: [{ address: triageWorkflowFor("bitbucket-datacenter").address, id: triageWorkflowFor("bitbucket-datacenter").id }],
+    tools: [bitbucketRead.id, bitbucketWrite.id],
+  },
 };
 
 // Runs whose trigger and outcome the reconciler remembers between passes.
@@ -251,21 +266,14 @@ const githubPrActions = createGithubPrActions({
   readCheckPack,
   log: logJson,
 });
+const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
+  tenantBitbucket,
   authorize: authorizePortal,
   log: logJson,
-});
-
-const openPullsCache = createOpenPullsCache(now);
-const githubOpenPulls = createGithubOpenPulls({
-  cache: openPullsCache,
-  db: composition.db,
-  cipher: composition.credentialCipher,
-  githubApiOrigin: githubOrigin,
-  authorize: authorizePortal,
 });
 
 const hookDeps = { db: composition.db, cipher: composition.credentialCipher };
@@ -280,9 +288,11 @@ const githubDeliverer = runTriggerDeliverer(GITHUB_SENDER);
 async function deliverToDeployment(tenantId: string, address: string, payload: unknown): Promise<void> {
   await githubDeliverer.to(address, JSON.stringify(payload), tenantId, undefined);
 }
+/** A hook credential written before hosts names `pr-triage`; its mail goes to the GitHub workflow that replaced it. */
 async function sendBridgeMail(tenantId: string, workflow: string, payload: unknown): Promise<void> {
-  const live = await resolveLiveDeployment(composition.db, tenantId, workflow);
-  if (!live) throw new NoLiveDeploymentError(workflow);
+  const id = triageWorkflowOf(workflow)?.id ?? workflow;
+  const live = await resolveLiveDeployment(composition.db, tenantId, id);
+  if (!live) throw new NoLiveDeploymentError(id);
   await deliverToDeployment(tenantId, live.address, payload);
 }
 function readCheckPack(tenantId: string, repo: string) {
@@ -308,19 +318,22 @@ function reconcileTenants() {
   return composition.db.select({ id: schema.tenant.id, domain: schema.tenant.domain, config: schema.tenant.config }).from(schema.tenant);
 }
 const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
-async function livePrTriageDeployments(tenantId: string) {
-  return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, prTriageWorkflow.id));
+async function liveTriageDeployments(tenantId: string, workflow: string) {
+  return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, workflow));
 }
-const deploymentRotation = createDeploymentRotation({
+const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
+const tenantOpenHeads = createTenantOpenHeads(tenantSources);
+const tenantOpenHead = createTenantOpenHead(tenantSources);
+const tenantOpenPrs = createTenantOpenPrs(tenantSources);
+const tenantHeadChecks = createTenantHeadChecks(tenantSources);
+const openPullsCache = createOpenPullsCache(now);
+const githubOpenPulls = createGithubOpenPulls({
+  cache: openPullsCache,
   db: composition.db,
-  launchSpecs,
-  allocation: composition.workflowAllocationService,
-  lifecycle: composition.workflowLifecycleService,
-  mayDeploy: function mayDeploy(principalId, tenantId) {
-    return authorizePortal(principalId, tenantId, "workflow:*", "create");
-  },
+  cipher: composition.credentialCipher,
+  list: tenantOpenPrs,
+  authorize: authorizePortal,
 });
-const tenantOpenHeads = createTenantOpenHeads({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
 const observeTriageRuns = createTriageRuns({
   runReader: composition.runReader,
@@ -328,51 +341,102 @@ const observeTriageRuns = createTriageRuns({
   maxKnownRuns: TRIAGE_KNOWN_RUNS,
 });
 const tenantVersions = createTenantVersions();
-const tenantObserver = createTenantObserver({
-  liveDeployments: livePrTriageDeployments,
-  observeRuns: observeTriageRuns,
-  recordRuns: createRunRecorder({ verdicts: verdictRecordStore, log: logJson }),
-  versions: tenantVersions,
-  minIntervalMs: TRIAGE_RECORD_MS,
-  now,
-});
-const recordPass = createRecordPass({
-  observer: tenantObserver,
-  activeTenants: function activePrTriageTenants(what) {
-    return activeTenants(composition.db, prTriageWorkflow.id, what);
-  },
-  backoffMs: TRIAGE_RECORD_MS,
-  maxBackoffMs: TRIAGE_RECORD_MAX_BACKOFF_MS,
-  now,
-  log: logJson,
-});
-recordLoop = createReconcileLoop(recordPass.pass, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
 const reconcilePolicy = triageReconcilePolicy(env);
-const reconcileTriage = createTriageReconciler({
-  tenants: reconcileTenants,
-  liveDeployments: livePrTriageDeployments,
-  latestDeployments: function latestPrTriageDeployments(tenantId, limit) {
-    return latestDeployments(composition.db, tenantId, prTriageWorkflow.id, limit);
+const runRecorder = createRunRecorder({ verdicts: verdictRecordStore, log: logJson });
+
+/** One host's observer, run recorder, rotation and reconciler over its own workflow's deployments. */
+function triageStack(triage: TriageWorkflow) {
+  function liveDeployments(tenantId: string) {
+    return liveTriageDeployments(tenantId, triage.id);
+  }
+  const observer = createTenantObserver({
+    liveDeployments,
+    observeRuns: observeTriageRuns,
+    recordRuns: runRecorder,
+    versions: tenantVersions,
+    minIntervalMs: TRIAGE_RECORD_MS,
+    now,
+  });
+  const recordPass = createRecordPass({
+    observer,
+    activeTenants: function activeTriageTenants(what, endedSince) {
+      return activeTenants(composition.db, triage.id, what, endedSince);
+    },
+    endedWithinMs: 2 * TRIAGE_RECORD_MS,
+    backoffMs: TRIAGE_RECORD_MS,
+    maxBackoffMs: TRIAGE_RECORD_MAX_BACKOFF_MS,
+    now,
+    log: logJson,
+  });
+  const rotation = createDeploymentRotation({
+    db: composition.db,
+    launchSpecs,
+    allocation: composition.workflowAllocationService,
+    lifecycle: composition.workflowLifecycleService,
+    mayDeploy: function mayDeploy(principalId, tenantId) {
+      return authorizePortal(principalId, tenantId, "workflow:*", "create");
+    },
+    rotationKey: triage.rotationKey,
+  });
+  const reconcile = createTriageReconciler({
+    source: triage.source,
+    rotationKey: triage.rotationKey,
+    tenants: reconcileTenants,
+    liveDeployments,
+    ...(triage.pollsBuilds && { headChecks: tenantHeadChecks }),
+    latestDeployments: function latestTriageDeployments(tenantId, limit) {
+      return latestDeployments(composition.db, tenantId, triage.id, limit);
+    },
+    rotation: { afterRuns: triageRotateAfterRuns(env), ...rotation },
+    openHeadsFor: tenantOpenHeads,
+    observeTenant: observer.observe,
+    store: triageStateStore,
+    readCheckPack,
+    deliver: deliverToDeployment,
+    policy: reconcilePolicy,
+    batchSize: triageBatchSize(env),
+    now,
+    log: logJson,
+  });
+  return { triage, observer, recordPass, rotation, reconcile };
+}
+
+const stacks = TRIAGE_WORKFLOWS.map(triageStack);
+// The portal's verdict listing reads every host's observations; connection changes use the GitHub stack's rotation to release.
+const github = stacks.find((stack) => stack.triage.source === "github")!;
+const deploymentRotation = github.rotation;
+const tenantObserver = {
+  last(tenantId: string) {
+    const observations = stacks.flatMap((stack) => stack.observer.last(tenantId) ?? []);
+    if (observations.length === 0) return undefined;
+    return { deployments: observations.flatMap((observation) => observation.deployments), observed: observations.flatMap((observation) => observation.observed) };
   },
-  rotation: { afterRuns: triageRotateAfterRuns(env), ...deploymentRotation },
-  openHeadsFor: tenantOpenHeads,
-  observeTenant: tenantObserver.observe,
-  store: triageStateStore,
-  readCheckPack,
-  deliver: deliverToDeployment,
-  policy: reconcilePolicy,
-  batchSize: triageBatchSize(env),
-  now,
-  log: logJson,
-});
-triageLoop = createReconcileLoop(reconcileTriage, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
+};
+function recordsReady(tenantId: string): boolean {
+  return stacks.every((stack) => stack.recordPass.ready(tenantId));
+}
+async function recordAll() {
+  for (const stack of stacks) await stack.recordPass.pass();
+  return { retry: false };
+}
+async function reconcileAll() {
+  let retry = false;
+  for (const stack of stacks) if ((await stack.reconcile()).retry) retry = true;
+  return { retry };
+}
+recordLoop = createReconcileLoop(recordAll, { intervalMs: TRIAGE_RECORD_MS, retryMs: TRIAGE_RECORD_MS, retryMaxMs: TRIAGE_RECORD_MS }, logJson);
+triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
 const githubPrTriage = createGithubPrTriage({
   db: composition.db,
   cipher: composition.credentialCipher,
   authorize: authorizePortal,
-  pullHead: createPullHeadReader({ githubApiOrigin: githubOrigin }),
+  pullHead: async function pullHead(tenantId, record, number) {
+    const openHead = await tenantOpenHead(tenantId);
+    if (!openHead) throw new Error("no active source credential");
+    return (await openHead(record, number))?.headSha;
+  },
   readCheckPack,
-  liveDeployments: livePrTriageDeployments,
+  liveDeployments: liveTriageDeployments,
   observeRuns: observeTriageRuns,
   store: triageStateStore,
   deliver: deliverToDeployment,
@@ -386,16 +450,37 @@ const githubHeldDos = createGithubHeldDos({
   authorize: authorizePortal,
   runReader: composition.runReader,
   verdicts: verdictRecordStore,
-  liveDeployments: livePrTriageDeployments,
+  liveDeployments: liveTriageDeployments,
   deliver: deliverToDeployment,
   log: logJson,
 });
+const reconcileSourceDeployments = createSourceDeployments({
+  connectedSources: function connectedSourcesOf(tenantId) {
+    return connectedSources(composition.db, tenantId);
+  },
+  liveDeployments: function liveOf(tenantId, workflow) {
+    return resolveLiveDeployments(composition.db, tenantId, workflow);
+  },
+  release: deploymentRotation.release,
+  log: logJson,
+});
+const kickTriage = triageLoop.kick;
+async function onSourcesChanged(tenantId: string): Promise<void> {
+  try {
+    await reconcileSourceDeployments(tenantId);
+  } catch (err) {
+    logJson({ level: "error", msg: "triage_source_deployments_failed", tenantId, error: String(err) });
+  }
+  kickTriage();
+}
 const syncInstallations = createInstallationSync({
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
-  onSynced: triageLoop.kick,
+  onSynced: function installationsSynced(tenantId) {
+    void onSourcesChanged(tenantId);
+  },
 });
 function setTimer(fire: () => Promise<void>, ms: number): () => void {
   const handle = setTimeout(fire, ms);
@@ -406,13 +491,12 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
 coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendBridgeMail,
-  headChecks: createTenantHeadChecks({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  headChecks: tenantHeadChecks,
   window: triageCoalesceWindow(env, reconcilePolicy),
   setTimer,
   now,
   log: logJson,
 });
-const kickTriage = triageLoop.kick;
 async function recheckOpenPulls(tenantId: string, repo: string, except: number): Promise<number> {
   const due = await markBaseMoved(triageStateStore, tenantId, repo, except, now(), reconcilePolicy);
   if (due > 0) kickTriage();
@@ -424,22 +508,33 @@ const policyFile = createPolicyFile({
   cipher: composition.credentialCipher,
   authorize: authorizePortal,
   tenantGithub: createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  tenantBitbucket,
   writerFor: githubSenderPrincipal,
   grantWriters: createArtifactGrants(now),
   schemaUrl: `${new URL(env.BETTER_AUTH_BASE_URL).origin}${PACK_SCHEMA_PATH}`,
   now,
   log: logJson,
 });
+const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
   db: hookDeps.db,
   cipher: hookDeps.cipher,
-  cache: new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` }),
+  cache: deliveryCache,
   coalescer,
   readCheckPack,
-  openHeadFor: createTenantOpenHead({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  openHeadFor: tenantOpenHead,
   recheckOpenPulls,
   syncPolicyFile: policyFile.onPush,
 });
+const providerHooks = createProviderHookApp(createProviderHookHandler({
+  db: hookDeps.db,
+  cipher: hookDeps.cipher,
+  cache: deliveryCache,
+  coalescer,
+  readCheckPack,
+  recheckOpenPulls,
+  syncPolicyFile: policyFile.onPush,
+}));
 
 function decodeSegments(rest: string): string[] | null {
   try {
@@ -511,10 +606,10 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     authorize: authorizePortal,
     verdicts: verdictRecordStore,
     observer: tenantObserver,
-    ready: recordPass.ready,
+    ready: recordsReady,
     versions: tenantVersions,
     openPulls: openPullsCache,
-    githubApiOrigin: githubOrigin,
+    list: tenantOpenPrs,
     now,
   }),
   audit: createAuditLog({
@@ -524,9 +619,9 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     runReader: composition.runReader,
     sameSource: deploymentRotation.sameSource,
     authorize: authorizePortal,
-    workflow: prTriageWorkflow.id,
+    workflows: TRIAGE_WORKFLOWS.map((workflow) => workflow.id),
   }),
-  workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService }),
+  workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   invitations: createInvitations({
     db: composition.db,
@@ -542,11 +637,26 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     now,
     log: logJson,
   }),
+  bitbucketDatacenter: createBitbucketIntegration({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    authorize: authorizePortal,
+    stockFetch: async function stockFetch(req) {
+      return composition.app.fetch(req);
+    },
+    publicOrigin: new URL(env.BETTER_AUTH_BASE_URL).origin,
+    fetchImpl: fetch,
+    onEnabled: triageLoop.kick,
+    onConnectionChanged: onSourcesChanged,
+    now,
+    log: logJson,
+  }),
   sessions: createSessions(composition.db),
 });
 // Mounted so the stock /openapi.json lists the routes; requests reach them
 // through routeRequest before the stock logger.
 composition.app.route("/", integrations);
+composition.app.route("/", providerHooks);
 
 const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandler(env.PORTAL_DIR);
 
@@ -564,6 +674,7 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
     if (declared !== null && Number(declared) > MAX_BODY_BYTES) {
       return Response.json({ error: "payload_too_large" }, { status: 413 });
     }
+    if (isProviderHookPath(url.pathname)) return providerHooks.fetch(req);
     if (req.headers.get("x-hub-signature-256") !== null) {
       const rest = url.pathname.slice(HOOK_MOUNT_PATH.length);
       const target = hookTarget(req, rest);
@@ -601,8 +712,7 @@ recordLoop.start();
 logJson({
   level: "info",
   msg: "hub_composition",
-  workflows: EXPECTED_DEPLOYMENT_SET.workflows,
-  tools: EXPECTED_DEPLOYMENT_SET.tools,
+  deployments: EXPECTED_DEPLOYMENT_SET,
   webhookMount: HOOK_MOUNT_PATH,
 });
 

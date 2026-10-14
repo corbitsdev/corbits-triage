@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, repoSourceOf, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
 import type { Tx } from "./admin-github-grant.js";
@@ -10,7 +10,12 @@ const CONFIG_KEY = "corbitsTriage";
 
 export type RepoRecord = {
   name: string;
+  /** Absent means github. */
+  source?: RepoSource;
   connected: boolean;
+  defaultBranch?: string;
+  /** The Bitbucket webhook triage created, so disabling removes only its own. */
+  webhookId?: number;
   installationId?: number;
   account?: string;
   installationUrl?: string;
@@ -29,6 +34,7 @@ export type InstallationFields = {
 
 export type CorbitsTriageNs = {
   repos?: RepoRecord[];
+  bitbucketDatacenter?: unknown;
   allowlist?: unknown;
   labelMap?: unknown;
   rev?: number;
@@ -43,6 +49,16 @@ function isRepoRecord(row: unknown): row is RepoRecord {
 
 export function repoRecords(ns: CorbitsTriageNs): RepoRecord[] {
   return Array.isArray(ns.repos) ? ns.repos.filter(isRepoRecord) : [];
+}
+
+export function sourceOf(record: Pick<RepoRecord, "source">): RepoSource {
+  return repoSourceOf(record.source);
+}
+
+/** What the triage state and its queue key a repository by: GitHub ones keep their name, so stored state keeps matching; another host's carries its source. */
+export function triageStateKey(record: Pick<RepoRecord, "name" | "source">): string {
+  const source = sourceOf(record);
+  return source === "github" ? record.name : `${source}:${record.name}`;
 }
 
 export function triageNs(config: unknown): CorbitsTriageNs {
@@ -81,27 +97,30 @@ export async function patchCorbitsTriage(
 
 export type RotationRecord = { from: string; to: string; at: string };
 
-export function rotationRecord(ns: CorbitsTriageNs): RotationRecord | undefined {
-  const value = asRecord(ns["rotation"]);
+export const ROTATION_KEY = "rotation";
+
+/** `key` names the deployment the record is of; the GitHub one keeps the original key. */
+export function rotationRecord(ns: CorbitsTriageNs, key = ROTATION_KEY): RotationRecord | undefined {
+  const value = asRecord(ns[key]);
   const { from, to, at } = value ?? {};
   return typeof from === "string" && typeof to === "string" && typeof at === "string" ? { from, to, at } : undefined;
 }
 
-export async function claimRotation(db: DB["db"], tenantId: string, record: RotationRecord): Promise<boolean> {
+export async function claimRotation(db: DB["db"], tenantId: string, record: RotationRecord, key = ROTATION_KEY): Promise<boolean> {
   let claimed = false;
   await patchCorbitsTriage(db, tenantId, function claim(ns) {
-    if (rotationRecord(ns) !== undefined) return undefined;
+    if (rotationRecord(ns, key) !== undefined) return undefined;
     claimed = true;
-    return { ...ns, rotation: record };
+    return { ...ns, [key]: record };
   });
   return claimed;
 }
 
-export async function clearRotation(db: DB["db"], tenantId: string, record: RotationRecord): Promise<void> {
+export async function clearRotation(db: DB["db"], tenantId: string, record: RotationRecord, key = ROTATION_KEY): Promise<void> {
   await patchCorbitsTriage(db, tenantId, function clear(ns) {
-    const current = rotationRecord(ns);
+    const current = rotationRecord(ns, key);
     if (current?.from !== record.from || current.to !== record.to) return undefined;
-    const { rotation: _rotation, ...rest } = ns;
+    const { [key]: _rotation, ...rest } = ns;
     return rest;
   });
 }
@@ -191,14 +210,14 @@ export async function prepareCorbitsTriagePatch(
   }));
 }
 
-/** Repositories new to the config are recorded disabled: nothing runs until a user enables one. */
+/** Repositories new to the config are recorded disabled: nothing runs until a user enables one. Another host's record of the same name is left alone. */
 export function upsertConnectedRepos(
   ns: CorbitsTriageNs,
   names: readonly string[],
   fields: InstallationFields,
 ): CorbitsTriageNs {
   const repos = [...repoRecords(ns)];
-  const index = new Map(repos.map((row, i) => [row.name, i]));
+  const index = new Map(repos.flatMap((row, i) => (sourceOf(row) === "github" ? [[row.name, i] as const] : [])));
   for (const name of names) {
     const at = index.get(name);
     if (at === undefined) {
