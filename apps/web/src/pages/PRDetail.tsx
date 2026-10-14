@@ -35,10 +35,19 @@ import {
 
 type SliverTab = "about" | "files" | "commits" | "issue" | "conversation";
 
-function IssueList({ issues, pending, error }: { issues: GithubPullDetail["issues"]; pending: boolean; error: unknown }) {
+/** Bitbucket resolves no issue records; the reference the linked-issue rule found stands in for them. */
+function ruleIssueReference(item: PrItem): string | null {
+  const check = item.checks.find((row) => row.check === "linked-issue" && row.result === "pass");
+  return check?.evidence[0] ?? null;
+}
+
+function IssueList({ item, issues, pending, error }: { item: PrItem; issues: GithubPullDetail["issues"]; pending: boolean; error: unknown }) {
   if (pending) return <p className="muted">Loading issues…</p>;
   if (error) return <p className="muted">Could not load issues. {errorText(error)}</p>;
-  if (issues.length === 0) return <p className="muted">No linked issue.</p>;
+  if (issues.length === 0) {
+    const reference = ruleIssueReference(item);
+    return reference === null ? <p className="muted">No linked issue.</p> : <p className="mono">{reference}</p>;
+  }
   return (
     <ul>
       {issues.map((issue) => (
@@ -126,7 +135,7 @@ function About({ item }: { item: PrItem }) {
       </section>
       <section className="brief">
         <h2>Issue</h2>
-        <IssueList issues={issues} pending={pending} error={pull.error} />
+        <IssueList item={item} issues={issues} pending={pending} error={pull.error} />
       </section>
       <section className="brief">
         <h2>Repository</h2>
@@ -441,7 +450,7 @@ export default function PRDetail() {
     );
   }
   if (tab === "issue") {
-    pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><IssueList issues={pull.data?.issues ?? []} pending={pullPending} error={pull.error} /></div>;
+    pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><IssueList item={item} issues={pull.data?.issues ?? []} pending={pullPending} error={pull.error} /></div>;
   }
   if (tab === "conversation") {
     pane = (
