@@ -133,7 +133,7 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 
 ## Measured accuracy
 
-`evals/judge` replays frozen, labelled pull requests of this repository through the production steps (file paging, rules, one call per chunk, focused's follow-up calls and the verdict question, evaluate) against OpenCode Zen `jev-1.13`, with focused and docs enabled. Each case expects the verdict to fail when docs or focused is expected to fail, and to pass otherwise.
+`evals/judge` replays frozen, labelled pull requests of this repository through the deployed pr-triage definition on Interchange's local runner (`runLocal` with the production step invoker, agents and directors; `evals/judge/run-definition.ts`), triggered by the mail the hub sends, with GitHub served from the snapshot and the judge calling OpenCode Zen `jev-1.13`, with focused and docs enabled. Each judge call is attempted once, as deployed: the judge director answers an inference error as a judge error, so the step's retry never runs. The harness before CL-10638 retried timeouts, network errors, 429s and 5xx up to three times, which may account for its one or two fewer docs unsures. Each case expects the verdict to fail when docs or focused is expected to fail, and to pass otherwise.
 
 - **Cases**: 49 in `cases.jsonl`. These are 34 pull requests labelled in `labels.json` (needs docs), 4 variants with their docs removed (body and matching commit messages dropped too), 7 mixes of two unrelated pull requests that focused must fail, and 4 of those mixes again with a title and body describing both halves (`describedMixes`). #190 and #191 are one feature each spread across hub, portal, contracts and workflows, which focused must pass.
 - **Allowed misses**: docs 7, focused 2, verdict 4 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
@@ -151,6 +151,9 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 | verdict question (CL-10604) | 2026-10-12 | 5 | 0 | 2, none unsure |
 | "fail means fail" wording, run 1 | 2026-10-13 | 5 | 0 | 2, none unsure |
 | "fail means fail" wording, run 2 | 2026-10-13 | 5 | 0 | 2, none unsure |
+| definition on the local runner (CL-10638), run 1 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
+| definition on the local runner (CL-10638), run 2 | 2026-10-13 | 7, all unsure | 0 | 2, none unsure |
+| definition on the local runner (CL-10638), run 3 | 2026-10-13 | 6, all unsure | 0 | 2, none unsure |
 
 These cover one repository's pull requests. Custom rules and other repositories are unmeasured.
 
