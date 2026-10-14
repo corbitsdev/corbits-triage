@@ -10,7 +10,7 @@ const MEMBER = { tenantId: TENANT_ID, principalId: "member-1" };
 const REPO = "acme/widgets";
 const CREDENTIAL_ID = "crd_github";
 const NOW = new Date("2026-10-08T12:00:00Z");
-const PACK = emptyPack(REPO);
+const PACK = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true } } };
 const ENABLED = { name: REPO, connected: true, enabled: true };
 const ANCHOR = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
 

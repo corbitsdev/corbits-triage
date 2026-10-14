@@ -223,6 +223,7 @@ type HarnessOptions = {
   rotation?: RotationRecord;
   sameSource?: boolean;
   pack?: CheckPack;
+  noPack?: boolean;
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
@@ -268,6 +269,8 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     now,
   });
   const reconcile = createTriageReconciler({
+    source: "github",
+    rotationKey: "rotation",
     tenants: async function tenants() {
       return [tenant()];
     },
@@ -307,7 +310,8 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     observeTenant: observer.observe,
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
-      return { status: "ok", pack: options.pack ?? emptyPack(repo), automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
+      if (options.noPack) return { status: "missing" };
+      return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
     },
     deliver: async function deliver(tenantId, address, payload) {
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
@@ -354,6 +358,17 @@ function rotationLogs(logged: ReadonlyArray<Record<string, unknown>>): unknown[]
 }
 
 describe("triage reconciler", () => {
+  test("a repository with every rule off, or no policy, starts no run and is logged once per head", async () => {
+    const off = harness({ [repoKey(LIVE.runId)]: {} }, [head(1), head(2)], { pack: emptyPack(REPO) });
+    await off.reconcile();
+    expect(off.delivered).toHaveLength(0);
+    expect(off.logged.filter((entry) => entry.msg === "triage_skipped_no_rules").map((entry) => entry.pr)).toEqual([1, 2]);
+    const unset = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { noPack: true });
+    await unset.reconcile();
+    expect(unset.delivered).toHaveLength(0);
+    expect(unset.logged).toContainEqual(expect.objectContaining({ msg: "triage_skipped_no_policy", pr: 1 }));
+  });
+
   test("reads only the live deployment's runs and queues to it", async () => {
     const logs: Logs = {
       [repoKey("run_old")]: { run_old_pr: [started(1), rendered(current(1)), completed] },
