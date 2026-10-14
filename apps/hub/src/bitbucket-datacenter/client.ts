@@ -42,8 +42,18 @@ export function bitbucketFetch(fetchImpl: typeof fetch, baseUrl: string, token: 
 // cloud runtime answers its own metadata on are not, because the hub's token-check request would reach them.
 const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata", "169.254.169.254"]);
 
+/** An IPv6-mapped IPv4 address (`::ffff:169.254.169.254` or `::ffff:a9fe:a9fe`) in dotted form; anything else as given. */
+function unmapped(host: string): string {
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
+  if (dotted) return dotted[1]!;
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (!hex) return host;
+  const [high, low] = [parseInt(hex[1]!, 16), parseInt(hex[2]!, 16)];
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+}
+
 function isMetadataHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const host = unmapped(hostname.replace(/^\[|\]$/g, "").toLowerCase());
   if (METADATA_HOSTS.has(host)) return true;
   if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
   // fd00::/8 holds the metadata addresses cloud runtimes publish over IPv6, such as fd00:ec2::254.

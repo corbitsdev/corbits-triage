@@ -14,6 +14,9 @@ test("private-network and localhost instances are allowed; link-local and cloud 
   expect(instanceBaseUrl("http://169.254.169.254/latest")).toBeUndefined();
   expect(instanceBaseUrl("http://169.254.0.1")).toBeUndefined();
   expect(instanceBaseUrl("http://[fd00:ec2::254]")).toBeUndefined();
+  expect(instanceBaseUrl("http://[::ffff:169.254.169.254]")).toBeUndefined();
+  expect(instanceBaseUrl("http://[::ffff:a9fe:a9fe]")).toBeUndefined();
+  expect(instanceBaseUrl("http://[::ffff:10.0.0.5]:7990")).toBe("http://[::ffff:a00:5]:7990");
   expect(instanceBaseUrl("http://metadata.google.internal")).toBeUndefined();
 });
 
