@@ -197,10 +197,12 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
     return row.assetId;
   }
 
-  async function redeploy(tenantId: string, anchorRunId: string): Promise<Redeployed> {
+  /** `entry` replaces the deployment's own when the workspace's connected hosts changed. */
+  async function redeploy(tenantId: string, anchorRunId: string, entry?: string): Promise<Redeployed> {
     const spec = await deps.launchSpecs.get(anchorRunId);
     if (!spec) throw new Error(`deployment ${anchorRunId} has no launch spec`);
-    const { source, entry } = spec.frozenApprovalBundle;
+    const { source } = spec.frozenApprovalBundle;
+    entry ??= spec.frozenApprovalBundle.entry;
     if (source.kind !== "asset") throw new Error(`deployment ${anchorRunId} is not deployed from a workflow asset`);
     const pin = pinFor(spec.frozenApprovalBundle);
     const systemPrompt = spec.deployContent["systemPrompt"];
