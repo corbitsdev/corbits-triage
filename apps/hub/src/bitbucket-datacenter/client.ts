@@ -1,7 +1,5 @@
 import { type } from "arktype";
-import { repoPath as repoPathOf } from "@corbits/bitbucket-datacenter-reads";
-
-export type BitbucketFetch = (path: string, init?: RequestInit) => Promise<Response>;
+import { repoPath as repoPathOf, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 
 export class BitbucketFailed extends Error {
   constructor(readonly status: number, path: string) {

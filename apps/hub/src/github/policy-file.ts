@@ -9,6 +9,8 @@ import { schema } from "@intx/db";
 import { asRecord, errorText } from "@corbits/common";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { json, readRepoFile, type GithubFetch, type RepoFileRead } from "@corbits/github-reads";
+import { readRepo } from "../bitbucket-datacenter/client.js";
+import { splitName } from "../bitbucket-datacenter/records.js";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
 import { checkPackName, POLICY_FILE_PATH, policyFileText, readPolicyFile, type PolicyFileStatus } from "@corbits/triage-contracts";
 import { fileMarkerOf, repoPolicyRow, type FileMarker } from "./check-pack-store.js";
@@ -90,10 +92,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   /** A Bitbucket repository the token sees has no record until it is enabled, so rules can be written for it first, as for GitHub. */
   async function visibleBitbucketRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
     const bb = await deps.tenantBitbucket(tenantId);
-    if (!bb) return undefined;
-    const res = await bb(bitbucket.repoPath(repo), { headers: { accept: "application/json" } });
-    if (res.status === 404) return undefined;
-    if (!res.ok) throw new Error(`bitbucket GET ${bitbucket.repoPath(repo)} -> ${res.status}`);
+    if (!bb || !(await readRepo(bb, ...splitName(repo)))) return undefined;
     return { name: repo, source: "bitbucket-datacenter", connected: true };
   }
 

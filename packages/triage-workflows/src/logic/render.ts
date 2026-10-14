@@ -1,6 +1,5 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type PolicySource, type Rendered, type RepoSource, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
-import type { TriageHeader } from "@corbits/github-tool/github";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";

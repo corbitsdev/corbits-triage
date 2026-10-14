@@ -9,10 +9,10 @@ function harness(connected: Array<"github" | "bitbucket-datacenter">, live: Live
   const reconcile = createSourceDeployments({
     connectedSources: async () => connected,
     liveDeployments: async (_tenantId, workflow) => live[workflow] ?? [],
-    release: async (_tenantId, runId) => {
+    async release(_tenantId, runId) {
       released.push(runId);
     },
-    log: (entry) => {
+    log(entry) {
       logged.push(entry);
     },
   });

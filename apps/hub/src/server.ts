@@ -109,6 +109,7 @@ const EXPECTED_DEPLOYMENT_SET = {
     tools: [bitbucketRead.id, bitbucketWrite.id],
   },
 };
+
 // Runs whose trigger and outcome the reconciler remembers between passes.
 const TRIAGE_KNOWN_RUNS = 10_000;
 const TRIAGE_RETRY_MS = 15_000;
@@ -274,7 +275,6 @@ const githubPrDetails = createGithubPrDetails({
   authorize: authorizePortal,
   log: logJson,
 });
-
 
 const hookDeps = { db: composition.db, cipher: composition.credentialCipher };
 const hookApp = createStockHookApp(

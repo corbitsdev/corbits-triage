@@ -2,8 +2,8 @@ import { type } from "arktype";
 import type { RepoFileRead } from "@corbits/github-reads";
 import { POLICY_FILE_MAX_BYTES } from "@corbits/triage-contracts";
 import { filePath, json, repoPath, request, type BitbucketFetch } from "./client.js";
+import { BranchHead } from "./shapes.js";
 
-const DefaultBranch = type({ latestCommit: "string" });
 const Browse = type({ type: "string" });
 const Commits = type({ values: type({ id: "string" }).array() });
 const Repository = type({ links: { self: type({ href: "string" }).array().atLeastLength(1) } });
@@ -24,7 +24,7 @@ const Branches = type({ values: type({ displayId: "string", latestCommit: "strin
 
 /** The head of the named branch, or of the default branch. */
 async function branchHead(bb: BitbucketFetch, base: string, branch: string | undefined): Promise<string> {
-  if (branch === undefined) return DefaultBranch.assert(await json(bb, `${base}/branches/default`)).latestCommit;
+  if (branch === undefined) return BranchHead.assert(await json(bb, `${base}/branches/default`)).latestCommit;
   const branches = Branches.assert(await json(bb, `${base}/branches?filterText=${encodeURIComponent(branch)}&limit=100`));
   const found = branches.values.find((row) => row.displayId === branch);
   if (!found) throw new Error(`bitbucket has no branch ${branch} in ${base}`);
