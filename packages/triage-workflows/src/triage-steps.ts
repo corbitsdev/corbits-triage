@@ -23,7 +23,9 @@ const RULED = { project: outputOf("rules"), fields: ["items", "batch"] } as cons
 // Actions cannot reach a bound credential on this Interchange pin, so the deterministic facts, execute and mirror steps run
 // as directors, reaching GitHub through the tool's credential, until upstream exposes credentials to actions. The judge maps over the
 // rules output's chunks, one System One call each; a second map asks focused's file questions only for the items it failed,
-// and makes no call otherwise. An approval mail skips triage and executes the one held Do it names. Each gate branch evaluates, executes and mirrors on its own: a live run never
+// and makes no call otherwise. An approval mail skips triage and executes the one held Do it names. The mirror writes the
+// verdict's comment and label (or build status) before execute, so a merge or close finds them on the head it closes; a
+// mirror on a closed pull request would write nothing. Each gate branch evaluates, mirrors and executes on its own: a live run never
 // hands a skipped step's output to a selector, so a join after the gate could not read the judge when it was skipped.
 export function triageSteps({ facts: factsAgent, judge: judgeAgent, execute: executeAgent, mirror: mirrorAgent }: TriageAgents = triageAgents(["github"])) {
   return {
@@ -37,10 +39,10 @@ export function triageSteps({ facts: factsAgent, judge: judgeAgent, execute: exe
     parts: action({ handler: "parts", input: { merge: [RULED, JUDGED] }, after: ["judge"] }),
     judgeParts: map({ over: { from: "steps.parts.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["parts"] }),
     evaluate: action({ handler: "evaluate", input: { merge: [RULED, BOTH_JUDGED] }, after: ["judgeParts"] }),
-    execute: step({ agent: executeAgent, input: outputOf("evaluate"), after: ["evaluate"], ...STEP }),
-    mirror: step({ agent: mirrorAgent, input: outputOf("evaluate"), after: ["execute"], ...STEP }),
+    mirror: step({ agent: mirrorAgent, input: outputOf("evaluate"), after: ["evaluate"], ...STEP }),
+    execute: step({ agent: executeAgent, input: outputOf("evaluate"), after: ["mirror"], ...STEP }),
     evaluateRules: action({ handler: "evaluate", input: outputOf("rules"), after: ["route"] }),
-    executeRules: step({ agent: executeAgent, input: outputOf("evaluateRules"), after: ["evaluateRules"], ...STEP }),
-    mirrorRules: step({ agent: mirrorAgent, input: outputOf("evaluateRules"), after: ["executeRules"], ...STEP }),
+    mirrorRules: step({ agent: mirrorAgent, input: outputOf("evaluateRules"), after: ["evaluateRules"], ...STEP }),
+    executeRules: step({ agent: executeAgent, input: outputOf("evaluateRules"), after: ["mirrorRules"], ...STEP }),
   };
 }

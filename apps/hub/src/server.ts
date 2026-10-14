@@ -359,9 +359,10 @@ function triageStack(triage: TriageWorkflow) {
   });
   const recordPass = createRecordPass({
     observer,
-    activeTenants: function activeTriageTenants(what) {
-      return activeTenants(composition.db, triage.id, what);
+    activeTenants: function activeTriageTenants(what, endedSince) {
+      return activeTenants(composition.db, triage.id, what, endedSince);
     },
+    endedWithinMs: 2 * TRIAGE_RECORD_MS,
     backoffMs: TRIAGE_RECORD_MS,
     maxBackoffMs: TRIAGE_RECORD_MAX_BACKOFF_MS,
     now,
