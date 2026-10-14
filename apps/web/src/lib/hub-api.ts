@@ -5,7 +5,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, PolicyRead, readCheckPack, repoPolicy, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type TriageEvent, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, PolicyRead, readCheckPack, repoPolicy, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type RepoCheckFlags, type RepoPolicy, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =

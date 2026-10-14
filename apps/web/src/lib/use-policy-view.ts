@@ -1,6 +1,6 @@
-import { customRuleId, DEFAULT_SCORE_LEVELS, teamSlug, VERDICTS, type CustomCheck, type Step, type VerdictWord } from "@corbits/triage-contracts";
+import { DEFAULT_SCORE_LEVELS, teamSlug, VERDICTS, type CustomCheck, type Step, type VerdictWord } from "@corbits/triage-contracts";
 import type { DraftUpdate } from "./pack-autosave.ts";
-import { customProblem, freshStepId, labelProblem, same, setSteps, stepEntries, stepProblem, STEPS_MAX, type RepoDraft, type StepEntry } from "./pack-draft.ts";
+import { customProblem, freshRuleId, freshStepId, labelProblem, same, setSteps, stepEntries, stepProblem, STEPS_MAX, type RepoDraft, type StepEntry } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
 
 /** `position` is the step's place among all the verdict's steps, as the contract counts them. */
@@ -151,7 +151,7 @@ export function usePolicyView(draft: RepoDraft, edit: (update: DraftUpdate) => v
   function addRule(shape: JudgementRule["shape"]): string {
     let id = "";
     edit(function added(current) {
-      id = customRuleId(NEW_RULE_NAMES[shape], current.pack.custom.map((row) => row.id));
+      id = freshRuleId(current, NEW_RULE_NAMES[shape]);
       const base = { id, name: NEW_RULE_NAMES[shape], group: "pull-request" as const, kind: "model" as const };
       const row: CustomCheck = shape === "is-true" ? { ...base, shape, claim: "" } : { ...base, shape, subject: "", levels: [...DEFAULT_SCORE_LEVELS] };
       return { ...current, pack: { ...current.pack, custom: [...current.pack.custom, row] } };

@@ -3,6 +3,7 @@ import {
   CATALOG_IDS,
   catalogCheckEnabled,
   customCheckEnabled,
+  customRuleId,
   defaultActions,
   emptyPack,
   isCatalogId,
@@ -135,6 +136,11 @@ export function removeCustom(draft: RepoDraft, id: string): RepoDraft {
   return withPack(draft, { custom: draft.pack.custom.filter((row) => row.id !== id) });
 }
 
+/** An id for a new rule from `name` that no rule holds and no row is shown under, so two rows never share a key. */
+export function freshRuleId(draft: RepoDraft, name: string): string {
+  return customRuleId(name, [...draft.pack.custom.map((row) => row.id), ...Object.values(draft.ruleKeys ?? {})]);
+}
+
 /** Rule keys after rules took new ids: a renamed rule keeps the key it was shown under. */
 export function renamedRuleKeys(ruleKeys: Record<string, string> | undefined, renamed: Record<string, string>): Record<string, string> {
   const next = { ...ruleKeys };
@@ -213,10 +219,14 @@ export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step, pos
   return outside === undefined ? null : `Team ${outside} is not in ${draft.pack.repo.split("/", 1)[0]}.`;
 }
 
+/** A label as the contract stores it: runs of whitespace and control characters become one space. */
+export function storedLabel(name: string): string {
+  return name.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
+}
+
 /** Why a verdict label cannot be saved yet; null when it can. */
 export function labelProblem(name: string): string | null {
-  // Measured as the contract stores it: runs of whitespace and control characters become one space.
-  const stored = name.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
+  const stored = storedLabel(name);
   if (!stored) return "name the label.";
   return stored.length > LABEL_MAX ? `a label is at most ${LABEL_MAX} characters.` : null;
 }
@@ -247,7 +257,26 @@ function savableSteps(draft: RepoDraft, saved: RepoDraft, list: VerdictWord): St
 
 /** A step as the contract stores it, so steps that differ only in what the contract trims compare equal. */
 export function storedStepKey(repo: string, list: VerdictWord, step: Step): string {
-  return JSON.stringify(readCheckPack({ ...emptyPack(repo), actions: { ...defaultActions(), [list]: [step] } }).actions[list]);
+  return storedKey({ ...emptyPack(repo), actions: { ...defaultActions(), [list]: [step] } }, (pack) => pack.actions[list], step);
+}
+
+/** A rule as the contract stores it, so rules that differ only in what the contract trims compare equal. */
+export function storedRuleKey(repo: string, row: CustomCheck): string {
+  return storedKey({ ...emptyPack(repo), custom: [row] }, (pack) => pack.custom, row);
+}
+
+/** A built-in rule's row as the contract stores it. */
+export function storedCatalogKey(repo: string, id: CatalogId, row: CatalogCheck | undefined): string {
+  return row === undefined ? "absent" : storedKey({ ...emptyPack(repo), checks: { [id]: row } }, (pack) => pack.checks[id], row);
+}
+
+/** One row read through the contract, as text to compare; a row the contract cannot read yet compares as typed. */
+function storedKey(raw: unknown, pick: (pack: CheckPack) => unknown, typed: unknown): string {
+  try {
+    return JSON.stringify(pick(readCheckPack(raw)));
+  } catch {
+    return JSON.stringify(typed);
+  }
 }
 
 /**

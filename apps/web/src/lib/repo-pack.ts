@@ -69,6 +69,8 @@ export type RepoPack = {
   /** Why the newest artifact for the repository is not a check pack; the next save replaces it in place. */
   corrupt: string | null;
   error: string;
+  /** What another writer also changed while this panel kept its own version. */
+  conflicts: string[];
   edit: (update: DraftUpdate) => void;
   /** Saves now; also how a failed save is tried again. */
   flush: () => void;
@@ -183,5 +185,5 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
     setAttempt((count) => count + 1);
   }
 
-  return { status: status(), draft, saved: session.saved, save: saveState(), problem, corrupt: session.corrupt, error: loadError || state?.error || afterError, edit, flush, reload };
+  return { status: status(), draft, saved: session.saved, save: saveState(), problem, corrupt: session.corrupt, error: loadError || state?.error || afterError, conflicts: state?.conflicts ?? [], edit, flush, reload };
 }
