@@ -4,7 +4,7 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
-import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions } from "@corbits/triage-contracts";
+import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory, type DoResult } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
@@ -37,7 +37,7 @@ function bytes(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
-type Comment = { id: number; user: { type: string }; body: string };
+type Comment = { id: number; user: { login?: string; type: string }; body: string; updated_at?: string };
 type Review = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body: string };
 type Ci = "none" | "pending" | "success" | "failure";
 
@@ -55,7 +55,7 @@ type GithubSeed = { missing?: boolean; files?: FileRow[]; labels?: string[]; pri
  */
 function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failComments = false }: GithubSeed = {}) {
   const requests: Recorded[] = [];
-  const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: { type: "Bot" }, body: prior }];
+  const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
   const pr: { head: string; draft: boolean; ci: Ci; dismissible: boolean } = { head: "abc", draft: false, ci: "none", dismissible: true };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
@@ -77,9 +77,11 @@ function fakeGithub({ missing = false, files = [FLAG], labels = [], prior, failC
     if (path.startsWith(`/repos/${REPO}/issues/8/comments?`)) return Response.json(comments);
     if (method === "POST" && path === `/repos/${REPO}/issues/8/comments`) {
       if (failComments) return Response.json({ message: "Server Error" }, { status: 500 });
-      comments.push({ id: comments.length + 10, user: { type: "Bot" }, body: JSON.parse(String(init?.body)).body });
+      comments.push({ id: comments.length + 10, user: APP, body: JSON.parse(String(init?.body)).body, updated_at: `2026-10-13T00:00:${requests.length}Z` });
       return Response.json(comments.at(-1));
     }
+    const edited = comments.find((comment) => method === "PATCH" && path === `/repos/${REPO}/issues/comments/${comment.id}`);
+    if (edited) return Response.json(Object.assign(edited, { body: JSON.parse(String(init?.body)).body, updated_at: `2026-10-13T00:00:${requests.length}Z` }));
     if (path === "/app") return Response.json({ slug: "corbits-triage" });
     if (path.startsWith(`/repos/${REPO}/pulls/8/reviews?`)) return Response.json(reviews);
     if (method === "POST" && path === `/repos/${REPO}/pulls/8/reviews`) {
@@ -166,11 +168,11 @@ const VERDICT_PATH = { invoked: ["triage-facts", "triage-judge", "triage-execute
 const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
 
 /** `automatic` is the Do kinds the hub's mail says the pr-triage role is granted, and `from` who sent the mail. */
-type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub> };
+type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
 
-async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, automatic = ACTION_KINDS, from = "github@acme.test", github, ...seed }: TriageOptions = {}) {
+async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, automatic = ACTION_KINDS, from = "github@acme.test", github, source, ...seed }: TriageOptions = {}) {
   const { gh, requests } = github ?? fakeGithub(seed);
-  const policy = { enabled: true };
+  const policy = { enabled: true, ...(source && { source }) };
   const invoked: string[] = [];
   const judged: SystemOne[] = [];
   const body = ((backlog ? historical : workflow).steps.events as OnTriggerPrimitive).body;
@@ -354,6 +356,28 @@ describe("pr-triage body", () => {
     expect(requests).toContainEqual({ method: "PATCH", path: `/repos/${REPO}/issues/comments/5` });
   });
 
+  test("a rerun of the same head and policy leaves the comment alone; new rules that change its verdict supersede it", async () => {
+    const github = fakeGithub();
+    github.pr.ci = "failure";
+    const v1 = { repo: { id: "policy-1", version: 1 } };
+    const v2 = { repo: { id: "policy-1", version: 2 } };
+    await triage(emptyPack(REPO), { github, source: v1 });
+    const again = await triage(emptyPack(REPO), { github, source: v1 });
+    expect(again.mirrored).toEqual([expect.objectContaining({ reply: expect.stringContaining("unchanged since") })]);
+    const strict = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } }, { github, source: v2 });
+    expect(strict.verdict).toMatchObject({ verdict: "fail" });
+    const commentWrites = github.requests.filter((r) => r.method !== "GET" && r.path.includes("comments"));
+    expect(commentWrites).toEqual([
+      { method: "POST", path: `/repos/${REPO}/issues/8/comments` },
+      { method: "PATCH", path: `/repos/${REPO}/issues/comments/10` },
+      { method: "POST", path: `/repos/${REPO}/issues/8/comments` },
+    ]);
+    expect(github.comments.map((comment) => comment.body.split("\n")[1])).toEqual([
+      "Superseded by the comment below.",
+      "This supersedes the comment above because the rules changed: repository policy version 1 → version 2.",
+    ]);
+  });
+
   test("an automated repository runs a Do whose kind the pr-triage role is granted once per head", async () => {
     const github = fakeGithub();
     const pack = { ...emptyPack(REPO), actions: HELLO };
@@ -412,12 +436,12 @@ describe("pr-triage body", () => {
     return github.requests.filter((r) => r.path === "/app").length;
   }
 
-  test("every check passing with CI green approves the head once, pinned to it, asking for the App once", async () => {
+  test("every check passing with CI green approves the head once, pinned to it, asking for the App once a step", async () => {
     const { github, pack } = approving();
     const first = await triage(pack, { github });
     const effectId = ((first.verdict as Verdict).actions[0] as SuggestedDo).effectId;
     expect(first.dos).toEqual([{ effectId, status: "done" }]);
-    expect(appReads(github)).toBe(1);
+    expect(appReads(github)).toBe(2);
     expect((await triage(pack, { github })).dos).toEqual([{ effectId, status: "satisfied" }]);
     expect(github.reviews).toEqual([expect.objectContaining({ state: "APPROVED", commit_id: "abc" })]);
   });

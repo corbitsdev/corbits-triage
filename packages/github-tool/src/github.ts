@@ -1,4 +1,6 @@
-import { getPr, isTriageComment, json, jsonAll, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
+import { getPr, isTriageComment, json, jsonAll, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type AppLogin, type GithubFetch } from "@corbits/github-reads";
+import type { ArtifactRef, PolicySource } from "@corbits/triage-contracts";
+import { type } from "arktype";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -16,7 +18,68 @@ export interface MirrorInput {
   owned?: readonly string[];
   /** Absent leaves the triage comment as it is. */
   comment?: string;
+  /** What the comment is written for; without it the comment is written whatever it said before. */
+  header?: TriageHeader;
   close: boolean;
+}
+
+/** What a Triage comment was written for, kept in its marker so a later run can tell what changed. */
+export type TriageHeader = { head: string; policy: PolicySource | null; verdict: string };
+
+const ArtifactRefShape = type({ id: "string", version: "number" });
+const TriageHeaderShape = type({ head: "string", policy: type({ repo: ArtifactRefShape, "shared?": ArtifactRefShape }).or("null"), verdict: "string" });
+
+// Starts like the current marker, so the hub still reads it as Triage's own, but is never taken as the current comment.
+const SUPERSEDED_MARKER = "<!-- corbits-triage-superseded";
+const SUPERSEDES_NOTE = "This supersedes the comment above because the rules changed";
+
+function markerOf(header: TriageHeader): string {
+  return `<!-- corbits-triage ${JSON.stringify(header)} -->`;
+}
+
+/** The header on a marked comment's first line; undefined on one written before headers. */
+function headerOf(body: string): TriageHeader | undefined {
+  const match = /^<!-- corbits-triage(?:-superseded)? (\{.*\}) -->/.exec(body);
+  if (!match) return undefined;
+  try {
+    const parsed = TriageHeaderShape(JSON.parse(match[1]!));
+    return parsed instanceof type.errors ? undefined : parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function isSuperseded(body: string): boolean {
+  return body.startsWith(SUPERSEDED_MARKER);
+}
+
+/** The text below the marker, less a supersede note, so a rerun compares only what it renders. */
+function renderedText(body: string): string {
+  const text = body.slice(body.indexOf("\n") + 1);
+  return text.startsWith(SUPERSEDES_NOTE) ? text.slice(text.indexOf("\n\n") + 2) : text;
+}
+
+function sameRef(a: ArtifactRef | undefined, b: ArtifactRef | undefined): boolean {
+  return a?.id === b?.id && a?.version === b?.version;
+}
+
+function samePolicy(a: PolicySource | null, b: PolicySource | null): boolean {
+  return sameRef(a?.repo, b?.repo) && sameRef(a?.shared, b?.shared);
+}
+
+/** The rules changed under an unchanged head and changed its verdict, so the earlier comment is history rather than stale. */
+function supersedes(before: TriageHeader, after: TriageHeader): boolean {
+  return before.head === after.head && before.verdict !== after.verdict && !samePolicy(before.policy, after.policy);
+}
+
+function versionChange(name: string, before: ArtifactRef | undefined, after: ArtifactRef | undefined): string[] {
+  if (sameRef(before, after)) return [];
+  return [`${name} ${before ? `version ${before.version}` : "none"} → ${after ? `version ${after.version}` : "none"}`];
+}
+
+function supersedesNote(before: TriageHeader, after: TriageHeader): string {
+  const changes = [...versionChange("repository policy", before.policy?.repo, after.policy?.repo), ...versionChange("workspace policy", before.policy?.shared, after.policy?.shared)];
+  return `${SUPERSEDES_NOTE}: ${changes.join(", ")}.`;
 }
 
 /**
@@ -35,16 +98,21 @@ export async function syncLabels(gh: GithubFetch, input: { repo: string; number:
   return { added, removed };
 }
 
-export async function mirror(gh: GithubFetch, i: MirrorInput) {
+export const NOT_OPEN = "the pull request is not open";
+
+/** `login` names the App, whose comments alone are read back. */
+export async function mirror(gh: GithubFetch, i: MirrorInput, login: AppLogin) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
-  // An empty comment means nothing is asked of the author, so an earlier one on an open pull request would be stale instructions.
-  if (i.comment === "" && pr.state === "open") await deleteTriageComments(gh, repo, number);
-  const posted = i.comment ? await upsertTriageComment(gh, { repo, number, body: i.comment }) : null;
+  // A closed or merged pull request is history; a close Do reads it open before it comes here.
+  if (pr.state !== "open") return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: NOT_OPEN };
+  // An empty comment means nothing is asked of the author, so an earlier one would be stale instructions.
+  if (i.comment === "") await deleteTriageComments(gh, repo, number);
+  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header }, login) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
-  return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha };
+  return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }) };
 }
 
 export type TriageCommentInput = {
@@ -53,13 +121,20 @@ export type TriageCommentInput = {
   body: string;
 };
 
-async function triageComments(gh: GithubFetch, repo: string, number: number): Promise<Array<{ id: number }>> {
-  const comments = await jsonAll<any>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
-  return comments.filter((c) => c.user?.type === "Bot" && typeof c.body === "string" && isTriageComment(c.body));
+type IssueCommentRow = { id: number; body?: unknown; user?: { login?: string; type?: string }; updated_at?: string };
+type MarkedComment = IssueCommentRow & { body: string };
+type WrittenComment = { commentId: number; updated: boolean; unchanged?: string };
+
+async function issueComments(gh: GithubFetch, repo: string, number: number): Promise<IssueCommentRow[]> {
+  return jsonAll<IssueCommentRow>(gh, `/repos/${repo}/issues/${number}/comments?per_page=100`);
+}
+
+function marked(comments: IssueCommentRow[]): MarkedComment[] {
+  return comments.filter((c): c is MarkedComment => c.user?.type === "Bot" && typeof c.body === "string" && isTriageComment(c.body));
 }
 
 async function deleteTriageComments(gh: GithubFetch, repo: string, number: number) {
-  for (const candidate of await triageComments(gh, repo, number)) {
+  for (const candidate of marked(await issueComments(gh, repo, number))) {
     const path = `/repos/${repo}/issues/comments/${candidate.id}`;
     const res = await gh(path, { method: "DELETE", headers: { accept: "application/vnd.github+json" } });
     // Another App's marked comment is not ours to delete.
@@ -68,23 +143,75 @@ async function deleteTriageComments(gh: GithubFetch, repo: string, number: numbe
   }
 }
 
-/** Edits the App's one Triage comment on the pull request, creating it only when none exists. */
-export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput) {
-  const { repo, number } = input;
-  const body = `${TRIAGE_COMMENT_MARKER}\n${input.body}`;
-  const candidates = await triageComments(gh, repo, number);
+/** Undefined when GitHub refuses: an installation token can edit only its own App's comments. */
+async function editComment(gh: GithubFetch, repo: string, id: number, body: string): Promise<{ id: number } | undefined> {
+  const path = `/repos/${repo}/issues/comments/${id}`;
   const edit = send("PATCH", { body });
-  for (const candidate of candidates) {
-    const path = `/repos/${repo}/issues/comments/${candidate.id}`;
-    const res = await gh(path, { ...edit, headers: { accept: "application/vnd.github+json", ...edit.headers } });
-    // An installation token can edit only its own App's comments, so a refusal means another App wrote this one.
-    if (res.status === 403 || res.status === 404) continue;
-    if (!res.ok) throw new Error(`github PATCH ${path} -> ${res.status}`);
-    const edited = await res.json() as { id: number };
-    return { commentId: edited.id, updated: true };
-  }
+  const res = await gh(path, { ...edit, headers: { accept: "application/vnd.github+json", ...edit.headers } });
+  if (res.status === 403 || res.status === 404) return undefined;
+  if (!res.ok) throw new Error(`github PATCH ${path} -> ${res.status}`);
+  return await res.json() as { id: number };
+}
+
+async function postComment(gh: GithubFetch, { repo, number, body }: TriageCommentInput): Promise<WrittenComment> {
   const posted = await json(gh, `/repos/${repo}/issues/${number}/comments`, send("POST", { body }));
   return { commentId: posted.id, updated: false };
+}
+
+/** Edits the first current Triage comment GitHub lets this App edit, creating one only when there is none. */
+async function upsert(gh: GithubFetch, input: TriageCommentInput, current: MarkedComment[]): Promise<WrittenComment> {
+  for (const candidate of current) {
+    const edited = await editComment(gh, input.repo, candidate.id, input.body);
+    if (edited) return { commentId: edited.id, updated: true };
+  }
+  return postComment(gh, input);
+}
+
+/** Edits the App's one Triage comment on the pull request, creating it only when none exists. */
+export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput): Promise<WrittenComment> {
+  const current = marked(await issueComments(gh, input.repo, input.number)).filter((c) => !isSuperseded(c.body));
+  return upsert(gh, { ...input, body: `${TRIAGE_COMMENT_MARKER}\n${input.body}` }, current);
+}
+
+/** When the comment last said exactly this for this head, policy versions and verdict; undefined when anything differs. */
+function unchangedSince(latest: MarkedComment, header: TriageHeader, text: string): string | undefined {
+  const before = headerOf(latest.body);
+  if (!before || before.head !== header.head || before.verdict !== header.verdict || !samePolicy(before.policy, header.policy)) return undefined;
+  return renderedText(latest.body) === text ? latest.updated_at : undefined;
+}
+
+/**
+ * The header the new comment supersedes: the current one's once it is marked superseded, or, when a retry finds no
+ * current comment, the last superseded one's, so the new comment still names what changed.
+ */
+function earlierHeader(own: MarkedComment[], current: MarkedComment[], superseded: boolean): TriageHeader | undefined {
+  if (superseded) return headerOf(current[0]!.body);
+  if (current.length > 0) return undefined;
+  const last = own.at(-1);
+  return last && headerOf(last.body);
+}
+
+/**
+ * Writes nothing when the App's comment already says this for this head, policy versions and verdict; supersedes it
+ * when only the rules changed the verdict on the same head; otherwise edits it in place. Only the App's own comments
+ * are read, so a copied marker never decides what Triage writes. The earlier comment is marked superseded before the
+ * new one is posted, so a retry never leaves two current comments.
+ */
+async function writeTriageComment(gh: GithubFetch, input: TriageCommentInput & { header?: TriageHeader }, login: AppLogin): Promise<WrittenComment> {
+  const { repo, number, header } = input;
+  if (!header) return upsertTriageComment(gh, input);
+  const app = await login();
+  const own = marked(await issueComments(gh, repo, number)).filter((c) => c.user?.login === app);
+  const current = own.filter((c) => !isSuperseded(c.body));
+  const latest = current[0];
+  const since = latest && unchangedSince(latest, header, input.body);
+  if (latest && since) return { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
+  const before = latest && headerOf(latest.body);
+  const superseded = before !== undefined && supersedes(before, header)
+    && await editComment(gh, repo, latest!.id, `${SUPERSEDED_MARKER} ${JSON.stringify(before)} -->\nSuperseded by the comment below.`) !== undefined;
+  const earlier = earlierHeader(own, current, superseded);
+  if (earlier && supersedes(earlier, header)) return postComment(gh, { repo, number, body: `${markerOf(header)}\n${supersedesNote(earlier, header)}\n\n${input.body}` });
+  return upsert(gh, { repo, number, body: `${markerOf(header)}\n${input.body}` }, current);
 }
 
 export const REVIEW_EVENTS = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const;
