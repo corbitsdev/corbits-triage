@@ -21,7 +21,8 @@ export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
   const { syncFromGithub } = usePortal();
   const [error, setError] = useState("");
   const canManage = useGithubManageAccess().data === true;
-  const { credentials, repos } = snapshot;
+  const { credentials } = snapshot;
+  const repos = snapshot.repos.filter((repo) => repo.source !== "bitbucket-datacenter");
   const ready = hasActiveGithubCredential(credentials);
   const secrets = namedSecrets(githubSecrets(credentials));
   const others = namedSecrets(otherSecrets(credentials));
