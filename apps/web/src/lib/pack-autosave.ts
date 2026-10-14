@@ -1,11 +1,12 @@
 import { errorText } from "@corbits/common";
 import { renamedRuleKeys, validate, type RepoDraft } from "./pack-draft.ts";
-import { mergeDrafts } from "./pack-merge.ts";
+import { mergeDrafts, rekeyed } from "./pack-merge.ts";
 import type { PackSession, SaveOutcome } from "./repo-pack-save.ts";
 
 export type DraftUpdate = (draft: RepoDraft) => RepoDraft;
 
-export type AutosaveState = { session: PackSession; draft: RepoDraft; saving: boolean; waiting: boolean; error: string };
+/** `conflicts` names what another writer also changed while this panel kept its own version, until the next edit. */
+export type AutosaveState = { session: PackSession; draft: RepoDraft; saving: boolean; waiting: boolean; error: string; conflicts: string[] };
 
 type AutosaveOptions = {
   session: PackSession;
@@ -42,7 +43,7 @@ function withRenamedRules(draft: RepoDraft, renamed: Record<string, string>): Re
  * spacing.
  */
 export function createAutosave({ session, delayMs, write, reread, changed, afterSave, failed }: AutosaveOptions): Autosave {
-  let state: AutosaveState = { session, draft: session.saved, saving: false, waiting: false, error: "" };
+  let state: AutosaveState = { session, draft: session.saved, saving: false, waiting: false, error: "", conflicts: [] };
   let timer: ReturnType<typeof setTimeout> | null = null;
   let running: Promise<void> = Promise.resolve();
   /** Set before `run` starts and cleared when it ends, even when it ends without awaiting. */
@@ -58,8 +59,10 @@ export function createAutosave({ session, delayMs, write, reread, changed, after
     const before = state.session;
     let outcome = await write(before, state.draft);
     if (outcome.failure?.stale) {
-      const fresh = await reread();
-      set({ session: fresh, draft: mergeDrafts(before.saved, state.draft, fresh.saved) });
+      const read = await reread();
+      const fresh = { ...read, saved: rekeyed(before.saved, read.saved) };
+      const merged = mergeDrafts(before.saved, state.draft, fresh.saved);
+      set({ session: fresh, draft: merged.draft, conflicts: merged.conflicts });
       outcome = await write(fresh, state.draft);
     }
     if (outcome.failure) {
@@ -105,7 +108,7 @@ export function createAutosave({ session, delayMs, write, reread, changed, after
   function edit(update: DraftUpdate) {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => void flush(), delayMs);
-    set({ draft: update(state.draft), waiting: true });
+    set({ draft: update(state.draft), waiting: true, conflicts: [] });
   }
 
   return { state: () => state, edit, flush };
