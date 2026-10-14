@@ -248,6 +248,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_ACTIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Act on a pull request",
+      description: "Needs `use` on the GitHub App credential and `invoke` on `triage-do:<kind>:<owner/name>` for the Do kind the action is: comment (comment and reply), labels, assign, request-review, approve or request-changes (review), close or merge.",
       tags: TAGS,
       responses: { 200: json("GitHub's answer", type("unknown")), ...invalid, ...failures, ...githubFailed },
     }),
@@ -335,7 +336,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_PREVIEW_PATH}/:tenantId`,
     describeRoute({
       summary: "Preview a policy on an open pull request",
-      description: "Evaluates the saved policy, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the rules it answers need it and actions on them list each branch they could take. Candidate roles apply only when the caller may manage the workspace; otherwise the saved roles are used.",
+      description: "Evaluates the saved policy, or a candidate, without writing to GitHub or storing anything. The judge is not run, so the rules it answers need it and each verdict's steps are listed. Team membership for a candidate policy's steps is read only when the caller may manage the workspace; otherwise those teams stay unknown.",
       tags: TAGS,
       responses: {
         200: json("Rules, verdict and each action's branch and Dos", PreviewResponse),
@@ -422,7 +423,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${AUDIT_PATH}/:tenantId`,
     describeRoute({
       summary: "What the workspace recorded, newest first",
-      description: "Needs `workflow-run:*` read. Reads only what is already stored: recorded verdicts and the Dos their runs ran (at the verdict's time; no separate time is recorded), held Do approvals from the run logs of the workflow's runs without a verdict, check pack versions, members and invites, grants, and workflow deployments and how they ended. Withdrawn invites and removed grants leave no row, so they are not listed. `actor` is the person's email or principal id, `Triage` for the workflow, `hub` for a deployment the hub failed or replaced, or `unknown` where the store does not say. With `repo`, only that repository's verdicts, Dos, approvals and checks.",
+      description: "Needs `workflow-run:*` read. Reads only what is already stored: recorded verdicts and the Dos their runs ran (at the verdict's time; no separate time is recorded), held Do approvals from the run logs of the workflow's runs without a verdict, policy versions, members and invites, grants, and workflow deployments and how they ended. Withdrawn invites and removed grants leave no row, so they are not listed. `actor` is the person's email or principal id, `Triage` for the workflow, `hub` for a deployment the hub failed or replaced, or `unknown` where the store does not say. With `repo`, only that repository's verdicts, Dos, approvals and checks.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: false, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },

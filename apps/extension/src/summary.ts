@@ -16,9 +16,9 @@ function unasked(check: ViewCheck): boolean {
   return check.result === "needs-judge" || (check.kind === "model" && check.reason === "not asked");
 }
 
-/** Failures first, then what is not settled, then passes; gates decide actions and are not findings. */
+/** Failures first, then what is not settled, then passes. */
 export function shownChecks(view: TriageView): ViewCheck[] {
-  return view.checks.filter((check) => !check.gate && !unasked(check)).sort((a, b) => ORDER[a.result] - ORDER[b.result]);
+  return view.checks.filter((check) => !unasked(check)).sort((a, b) => ORDER[a.result] - ORDER[b.result]);
 }
 
 export const RESULT_NAMES: Record<ViewCheck["result"], string> = { pass: "Passed", fail: "Failed", unconfirmed: "Not confirmed", "needs-judge": "Not answered" };

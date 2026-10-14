@@ -32,7 +32,7 @@ function people(target: Record<string, unknown>, repo: string): string {
   return listed([...strings(target.users).map((user) => `@${user}`), ...strings(target.teams).map((slug) => `@${owner}/${slug}`)], "and");
 }
 
-/** A Do as the hub resolved it: roles are people by now, and Dos already true on the pull request are left out. */
+/** A Do as the hub resolved it: Dos already true on the pull request are left out. */
 function resolvedDoText(step: PreviewDo, repo: string): string {
   if (step.skipped) return `skip ${DO_NAMES[step.kind].toLowerCase()} (${step.reason.replace(/\.$/, "")})`;
   return resolvedAction(step, step.target ?? {}, repo);
@@ -41,7 +41,6 @@ function resolvedDoText(step: PreviewDo, repo: string): string {
 function resolvedAction(step: PreviewDo, target: Record<string, unknown>, repo: string): string {
   switch (step.kind) {
     case "labels": {
-      if (target.unresolved === "derive") return `label it by ${String(target.from)}`;
       const labels = strings(target.labels);
       return `add ${labels.length === 1 ? "the label" : "the labels"} ${listed(labels, "and")}`;
     }
@@ -57,8 +56,8 @@ function resolvedAction(step: PreviewDo, target: Record<string, unknown>, repo: 
       return "request changes on the pull request";
     case "close":
       return "close it";
-    case "agent":
-      return `ask an agent ${quoted(String(target.prompt))}`;
+    case "merge":
+      return "merge it";
   }
 }
 

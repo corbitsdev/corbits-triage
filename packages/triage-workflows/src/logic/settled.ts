@@ -18,6 +18,7 @@ function checksOf(verdict: VerdictFields): Array<Record<string, unknown>> {
 }
 
 function isUnconfirmedMachineCheck(check: Record<string, unknown>): boolean {
+  // `gate` marks an author rule on a verdict recorded before author rules were removed.
   return check["kind"] === "machine" && check["result"] === "unconfirmed" && check["gate"] !== true;
 }
 
@@ -25,7 +26,7 @@ function isUnconfirmedMachineCheck(check: Record<string, unknown>): boolean {
 function modelNotAsked(verdict: VerdictFields, checks: Array<Record<string, unknown>>): boolean {
   const model = checks.filter((check) => check["kind"] === "model");
   const draft = checks.some((check) => check["check"] === NOT_A_DRAFT && check["result"] === "fail");
-  return verdict.state !== "stale-unknown" && !draft && hardFailures(checks as Array<Pick<CheckResult, "check" | "kind" | "result" | "gate">>).length === 0 && model.length > 0 && model.every((check) => check["reason"] === NOT_ASKED_REASON);
+  return verdict.state !== "stale-unknown" && !draft && hardFailures(checks as Array<Pick<CheckResult, "check" | "kind" | "result">>).length === 0 && model.length > 0 && model.every((check) => check["reason"] === NOT_ASKED_REASON);
 }
 
 /** Why the verdict does not settle `headSha`, when given, or its own head: degraded, made on another commit, a machine check GitHub had not computed yet, or the decision model never asked. */

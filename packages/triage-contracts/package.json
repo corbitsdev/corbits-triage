@@ -12,8 +12,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@corbits/common": "workspace:*",
-    "arktype": "catalog:",
-    "re2js": "2.8.6"
+    "arktype": "catalog:"
   },
   "devDependencies": {
     "@intx/mime": "workspace:*"

@@ -19,6 +19,22 @@ export interface MirrorInput {
   close: boolean;
 }
 
+/**
+ * Adds the labels of `add` the pull request lacks, and removes those of `remove` it holds that `add` does not name.
+ * GitHub label names are case-insensitive. Adding first means a failure part-way leaves an extra label rather than none.
+ */
+export async function syncLabels(gh: GithubFetch, input: { repo: string; number: number; current: string[]; add: readonly string[]; remove: readonly string[] }) {
+  const { repo, number, current } = input;
+  const present = new Set(current.map(lowercase));
+  const kept = new Set(input.add.map(lowercase));
+  const removable = new Set(input.remove.map(lowercase));
+  const added = input.add.filter((name) => !present.has(lowercase(name)));
+  const removed = current.filter((name) => removable.has(lowercase(name)) && !kept.has(lowercase(name)));
+  if (added.length) await json(gh, `/repos/${repo}/issues/${number}/labels`, send("POST", { labels: added }));
+  for (const name of removed) await json(gh, `/repos/${repo}/issues/${number}/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
+  return { added, removed };
+}
+
 export async function mirror(gh: GithubFetch, i: MirrorInput) {
   const { repo, number } = i;
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
@@ -26,15 +42,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput) {
   if (i.comment === "" && pr.state === "open") await deleteTriageComments(gh, repo, number);
   const posted = i.comment ? await upsertTriageComment(gh, { repo, number, body: i.comment }) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
-  // GitHub label names are case-insensitive.
-  const present = new Set(current.map(lowercase));
-  const removable = new Set((i.owned ?? []).map(lowercase));
-  for (const name of i.labels) removable.delete(lowercase(name));
-  const missing = i.labels.filter((name) => !present.has(lowercase(name)));
-  const stale = current.filter((name) => removable.has(lowercase(name)));
-  // Adding first means a failure part-way leaves an extra triage label rather than none.
-  if (missing.length) await json(gh, `/repos/${repo}/issues/${number}/labels`, send("POST", { labels: missing }));
-  for (const name of stale) await json(gh, `/repos/${repo}/issues/${number}/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
+  await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
   return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha };
 }
@@ -122,11 +130,14 @@ export async function approvalOnHead(gh: GithubFetch, input: { repo: string; num
     && (review.state === "APPROVED" || (review.state === "DISMISSED" && !review.body?.includes(REQUEST_CHANGES_DO_MARKER))))?.id;
 }
 
-/** The request-changes Do's review of `sha`, still standing or since dismissed, which is not made again: a person who dismissed it does not want it. */
+/** Marks a request for changes triage itself took back, which a later failure on its head may make again. */
+const DISMISSED_BY_TRIAGE_MARKER = "<!-- corbits-dismissed -->";
+
+/** The request-changes Do's review of `sha`, still standing or dismissed by a person, which is not made again: a person who dismissed it does not want it. */
 export async function changesRequestedOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<number | undefined> {
   const reviews = await reviewsBy(gh, input.repo, input.number, input.login);
   return reviews.find((review) => review.commit_id === input.sha
-    && (review.state === "CHANGES_REQUESTED" || review.state === "DISMISSED")
+    && (review.state === "CHANGES_REQUESTED" || (review.state === "DISMISSED" && !review.body?.includes(DISMISSED_BY_TRIAGE_MARKER)))
     && review.body?.includes(REQUEST_CHANGES_DO_MARKER))?.id;
 }
 
@@ -149,9 +160,21 @@ export async function dismissDoApprovals(gh: GithubFetch, input: { repo: string;
   return dismissDoReviews(gh, input, "APPROVED", APPROVE_DO_MARKER, "This pull request is no longer ready to approve, so this approval no longer stands.");
 }
 
-/** Dismisses the request-changes Do's standing requests once nothing failed is the author's to fix; a repeat changes nothing. */
-export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: string; number: number; login: string }): Promise<number[]> {
-  return dismissDoReviews(gh, input, "CHANGES_REQUESTED", REQUEST_CHANGES_DO_MARKER, "Nothing triage asked to change still fails, so this request no longer stands.");
+/**
+ * Dismisses the request-changes Do's standing requests once nothing failed is the author's to fix, those of `sha` only
+ * when it is given; a repeat changes nothing. Each is marked as triage's own dismissal, so a later failure on its head
+ * may request changes again, where a person's dismissal is final.
+ */
+export async function dismissDoChangeRequests(gh: GithubFetch, input: { repo: string; number: number; login: string; sha?: string }): Promise<number[]> {
+  const { repo, number, sha } = input;
+  const reviews = await reviewsBy(gh, repo, number, input.login);
+  const standing = reviews.filter((review) => review.state === "CHANGES_REQUESTED" && review.body?.includes(REQUEST_CHANGES_DO_MARKER) && (sha === undefined || review.commit_id === sha));
+  for (const review of standing) {
+    // Marked first, so a failure part-way never leaves a dismissal that reads as a person's.
+    await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}`, send("PUT", { body: `${review.body}\n${DISMISSED_BY_TRIAGE_MARKER}` }));
+    await json(gh, `/repos/${repo}/pulls/${number}/reviews/${review.id}/dismissals`, send("PUT", { message: "Nothing triage asked to change still fails, so this request no longer stands.", event: "DISMISS" }));
+  }
+  return standing.map((review) => review.id);
 }
 
 export type CreateIssueCommentInput = {

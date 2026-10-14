@@ -1,10 +1,11 @@
 import { type } from "arktype";
-import { RE2JS, RE2JSSyntaxException } from "re2js";
 import { asRecord, asRepo } from "@corbits/common";
 import type { AuthorAssociation } from "./repo-policy.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
-export const CHECK_PACK_SCHEMA_VERSION = 1;
+/** Version 2 holds steps, model-only custom rules and verdict labels; version 1 is read only when it held no actions. */
+export const CHECK_PACK_SCHEMA_VERSION = 2;
+export const LEGACY_SCHEMA_VERSION = 1;
 export const CUSTOM_CHECK_CAP = 8;
 
 export const CHECK_PACK_GROUPS = ["pull-request", "issue", "around", "code-vs-ci"] as const;
@@ -92,7 +93,8 @@ export function currentRows(check: string, evidence: readonly string[] = []): Ar
 export const CLOSED_FINDING = "state";
 
 export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
-export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**"] } as const;
+// An author who edits `.github/**` can change which checks run and turn CI green.
+export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**", ".github/**"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
 
 export type CatalogCheck = {
@@ -103,18 +105,6 @@ export type CatalogCheck = {
   forbiddenGlobs?: string[];
 };
 
-export const RULE_KINDS = [
-  "paths-unchanged",
-  "paths-together",
-  "title-pattern",
-  "branch-pattern",
-  "label-required",
-  "diff-excludes",
-  "min-approvals",
-  "author",
-] as const;
-export type RuleKind = (typeof RULE_KINDS)[number];
-
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
 export type ModelShape = (typeof MODEL_SHAPES)[number];
 
@@ -124,8 +114,6 @@ export type CustomScope = (typeof CUSTOM_SCOPES)[number];
 
 export const AUTHOR_KINDS = ["owner", "member", "collaborator", "contributor", "first-timer", "outside", "bot"] as const;
 export type AuthorKind = (typeof AUTHOR_KINDS)[number];
-export const AUTHOR_WHO = ["users", "role", "kinds"] as const;
-export type AuthorWho = (typeof AUTHOR_WHO)[number];
 
 /** GitHub's author association folded to the kinds a pack names; a bot is a bot whatever its association, and no association is unknown. */
 export function authorKindOf(association: AuthorAssociation | null, bot: boolean): AuthorKind | undefined {
@@ -143,50 +131,50 @@ export function authorKindOf(association: AuthorAssociation | null, bot: boolean
   }
 }
 
-/** Patterns are regular expressions without flags; globs use `*` within a path segment and `**` across segments. */
-type RuleParams = {
-  "paths-unchanged": { globs: string[] };
-  "paths-together": { changed: string[]; requires: string[] };
-  "title-pattern": { pattern: string };
-  "branch-pattern": { pattern: string };
-  "label-required": { label: string };
-  "diff-excludes": { pattern: string };
-  "min-approvals": { count: number };
-  author: { who: "users"; users: string[] } | { who: "role"; role: string } | { who: "kinds"; kinds: AuthorKind[] };
-};
-export type RuleCheck = { [K in RuleKind]: { rule: K } & RuleParams[K] }[RuleKind];
-
 /**
- * `score` passes at `min` or above on a 0 to 10 scale; `choose` fails when the answer is one of `failOn`. A file or hunk
- * scoped `is-true` asks whether each item in scope meets `claim`, and applies only to paths matching `when` when it is set.
+ * `score` picks one of `levels`, ordered worst first, and fails only below `failBelow` when it is set; `choose` picks one
+ * of `options` and fails when that is one of `failOn`. A file or hunk scoped `is-true` asks whether each item in scope
+ * meets `claim`, and applies only to paths matching `when` when it is set; globs use `*` within a path segment and `**`
+ * across segments.
  */
 type ModelParams = {
   "is-true": { claim: string; scope?: CustomScope; when?: string[] };
-  score: { subject: string; min: number };
+  score: { subject: string; levels: string[]; failBelow?: string };
   choose: { options: string[]; failOn: string[] };
 };
 export type ModelCheck = { [K in ModelShape]: { shape: K } & ModelParams[K] }[ModelShape];
 
-/** `enabled` is stored only as false; an absent flag means the check runs. */
-export type CustomCheck = { id: string; name: string; group: CheckPackGroup; enabled?: boolean } & (
-  | ({ kind: "rule" } & RuleCheck)
-  | ({ kind: "model" } & ModelCheck)
-);
-export type ModelCustomCheck = Extract<CustomCheck, { kind: "model" }>;
-export type RuleCustomCheck = Extract<CustomCheck, { kind: "rule" }>;
+/** A custom rule is asked of the decision model; `enabled` is stored only as false, and an absent flag means it runs. */
+export type CustomCheck = { id: string; name: string; group: CheckPackGroup; enabled?: boolean; kind: "model" } & ModelCheck;
 
-const SCORE_MAX = 10;
-const PATTERN_MAX = 200;
+const LEVELS_MIN = 2;
+const LEVELS_MAX = 10;
+export const DEFAULT_SCORE_LEVELS = ["poor", "fair", "good", "great"] as const;
 const GLOB_MAX = 200;
 const GLOBS_MAX = 50;
 const CUSTOM_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CUSTOM_ID_MAX = 64;
 
-export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "agent"] as const;
+/** What a policy step does; `nothing` writes nothing. */
+export const STEP_KINDS = ["approve", "merge", "close", "comment", "request-changes", "request-review", "assign", "labels", "nothing"] as const;
+export type StepKind = (typeof STEP_KINDS)[number];
+
+/** The Do kinds a step writes to GitHub, each granted on its own. */
+export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "merge"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
-/** Do kinds since removed; stored packs may still name them. */
-const RETIRED_DO_KINDS: ReadonlySet<unknown> = new Set(["convert-to-draft"]);
+/** Who a step is for, by the pull request's author: a group, the members of a team, or named people. */
+export const AUTHOR_GROUPS = ["anyone", "first-timers", "maintainers", "external", "bots"] as const;
+export type AuthorGroup = (typeof AUTHOR_GROUPS)[number];
+export type StepFor = AuthorGroup | { team: string } | { users: string[] };
+
+/** The author kinds each group holds; `anyone` holds every author, known or not. */
+const AUTHOR_GROUP_KINDS: Record<Exclude<AuthorGroup, "anyone">, readonly AuthorKind[]> = {
+  "first-timers": ["first-timer"],
+  maintainers: ["owner", "member", "collaborator"],
+  external: ["contributor", "first-timer", "outside"],
+  bots: ["bot"],
+};
 
 export const TRIAGE_EVENTS = [
   "opened",
@@ -205,6 +193,11 @@ export const TRIAGE_EVENTS = [
 export type TriageEvent = (typeof TRIAGE_EVENTS)[number];
 
 const COMMENT_BODY_MAX = 65536;
+const LINE_MAX = 500;
+// GitHub refuses a label name longer than this.
+const LABEL_MAX = 50;
+const LIST_MAX = 50;
+const STEPS_MAX = 20;
 
 /** A built-in rule, the not-a-draft rule or a custom rule's id. */
 export type CheckRef = string;
@@ -217,31 +210,34 @@ export type PolicyEvent = (typeof POLICY_EVENTS)[number];
 export const VERDICTS = ["pass", "fail", "unsure"] as const;
 export type VerdictWord = (typeof VERDICTS)[number];
 
-export type LabelsTarget = { from: "list"; labels: string[] } | { from: "type" } | { from: "paths" };
-/** A role names an entry in the repository settings' roles, resolved at evaluation time. */
+/** Each verdict's label unless the policy names its own. */
+export const VERDICT_LABELS: Record<VerdictWord, string> = { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" };
+
+/** `rules` labels each failed rule (`ruleLabel`); the verdict's label is the policy's `labels`, which the mirror writes. */
+export type LabelsTarget = { from: "list"; labels: string[] } | { from: "rules" };
 export type PeopleTarget =
   | { to: "users"; users: string[] }
   | { to: "teams"; teams: string[] }
-  | { to: "role"; role: string }
   | { to: "codeowners" }
   | { to: "author" };
 export type ReviewTarget = Exclude<PeopleTarget, { to: "author" }>;
 export type CommentTarget = { body: string };
-export type CloseTarget = Record<string, never>;
-export type AgentTarget = { prompt: string; tools: string[] };
 
-export type Do =
-  | { kind: "labels"; target: LabelsTarget }
-  | { kind: "assign"; target: PeopleTarget }
-  | { kind: "request-review"; target: ReviewTarget }
-  | { kind: "comment"; target: CommentTarget }
-  | { kind: "approve"; target: CloseTarget }
-  | { kind: "request-changes"; target: CloseTarget }
-  | { kind: "close"; target: CloseTarget }
-  | { kind: "agent"; target: AgentTarget };
+/** One step of a verdict's list: what it does, and for which authors; no `for` means anyone. */
+export type Step = (
+  | { do: "labels"; target: LabelsTarget }
+  | { do: "assign"; target: PeopleTarget }
+  | { do: "request-review"; target: ReviewTarget }
+  | { do: "comment"; target: CommentTarget }
+  | { do: "approve" }
+  | { do: "merge" }
+  | { do: "close" }
+  | { do: "request-changes" }
+  | { do: "nothing" }
+) & { for?: StepFor };
 
-/** One list of Dos per verdict, run when an event in `when` wakes the policy. */
-export type PolicyActions = { when: PolicyEvent[] } & Record<VerdictWord, Do[]>;
+/** One list of steps per verdict, run in order when an event in `when` wakes the policy. */
+export type PolicyActions = { when: PolicyEvent[] } & Record<VerdictWord, Step[]>;
 
 export type CheckPack = {
   kind: typeof CHECK_PACK_KIND;
@@ -250,42 +246,49 @@ export type CheckPack = {
   checks: Partial<Record<CatalogId, CatalogCheck>>;
   custom: CustomCheck[];
   actions: PolicyActions;
+  /** The label the mirror writes for each verdict, so tools watching GitHub can react to it. */
+  labels: Record<VerdictWord, string>;
+  /** What reading the stored policy left out because it no longer runs; each verdict says so. Never read back. */
+  dropped?: string[];
 };
 
 /** A new pack's policy wakes on every event and asks a person to review what it is unsure of. */
 export function defaultActions(): PolicyActions {
-  return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [{ kind: "request-review", target: { to: "codeowners" } }] };
+  return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [{ do: "request-review", target: { to: "codeowners" } }] };
 }
 
-const Text = type(/\S/);
-const Texts = Text.array().atLeastLength(1);
+const Text = type(/\S/).atMostLength(LINE_MAX);
+const Label = type(/\S/).atMostLength(LABEL_MAX);
+const Texts = Text.array().atLeastLength(1).atMostLength(LIST_MAX);
 const RepoName = type(/^\s*(?!.*\.\.)(?!\.\/)[^\s\\/]+\/(?!\.\s*$)[^\s\\/]+\s*$/);
 
 const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
   .or({ "+": "reject", to: "'teams'", teams: Texts })
-  .or({ "+": "reject", to: "'role'", role: Text })
   .or({ "+": "reject", to: "'codeowners'" });
 
-const DoSchema = type({
-  kind: "'labels'",
-  target: type({ "+": "reject", from: "'list'", labels: Texts }).or({ "+": "reject", from: "'type' | 'paths'" }),
+const StepForSchema = type.enumerated(...AUTHOR_GROUPS).or({ "+": "reject", team: Text }).or({ "+": "reject", users: Texts });
+const STEP_BASE = { "+": "reject", "for?": StepForSchema } as const;
+
+const StepSchema = type({
+  ...STEP_BASE,
+  do: "'labels'",
+  target: type({ "+": "reject", from: "'list'", labels: Label.array().atLeastLength(1).atMostLength(LIST_MAX) }).or({ "+": "reject", from: "'rules'" }),
 })
-  .or({ kind: "'assign'", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
-  .or({ kind: "'request-review'", target: ReviewTargetSchema })
-  .or({ kind: "'comment'", target: { "+": "reject", body: Text } })
-  .or({ kind: "'approve' | 'request-changes' | 'close'", target: { "+": "reject" } })
-  .or({ kind: "'agent'", target: { "+": "reject", prompt: Text, tools: Text.array() } });
+  .or({ ...STEP_BASE, do: "'assign'", target: ReviewTargetSchema.or({ "+": "reject", to: "'author'" }) })
+  .or({ ...STEP_BASE, do: "'request-review'", target: ReviewTargetSchema })
+  .or({ ...STEP_BASE, do: "'comment'", target: { "+": "reject", body: type(/\S/).atMostLength(COMMENT_BODY_MAX) } })
+  .or({ ...STEP_BASE, do: "'approve' | 'merge' | 'close' | 'request-changes' | 'nothing'" });
 
-const DoList = DoSchema.array();
+const DoList = StepSchema.array().atMostLength(STEPS_MAX);
 
-/** Packs written before verdicts held one list of actions, each choosing a branch from its own checks; reading one collapses them. */
+/** Packs written before verdicts stored an empty list of actions, which reads as no steps. */
 const PolicyActionsSchema = type({
   "+": "reject",
   when: type.enumerated(...POLICY_EVENTS).array().atLeastLength(1),
   pass: DoList,
   fail: DoList,
   unsure: DoList,
-}).or("object[]");
+}).or(type("unknown[]").atMostLength(0));
 
 const CatalogCheckSchema = type({
   enabled: "boolean",
@@ -296,19 +299,10 @@ const CatalogCheckSchema = type({
 });
 
 const CUSTOM_BASE = { id: type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX), name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
-const RULE = { ...CUSTOM_BASE, kind: "'rule'" } as const;
 const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
-const CustomCheckSchema = type({ ...RULE, rule: "'paths-unchanged'", globs: Texts })
-  .or({ ...RULE, rule: "'paths-together'", changed: Texts, requires: Texts })
-  .or({ ...RULE, rule: "'title-pattern' | 'branch-pattern' | 'diff-excludes'", pattern: Text.atMostLength(PATTERN_MAX) })
-  .or({ ...RULE, rule: "'label-required'", label: Text })
-  .or({ ...RULE, rule: "'min-approvals'", count: "number.integer >= 1" })
-  .or({ ...RULE, rule: "'author'", who: "'users'", users: Texts })
-  .or({ ...RULE, rule: "'author'", who: "'role'", role: Text })
-  .or({ ...RULE, rule: "'author'", who: "'kinds'", kinds: type.enumerated(...AUTHOR_KINDS).array().atLeastLength(1) })
-  .or({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Texts })
-  .or({ ...MODEL, shape: "'score'", subject: Text, min: `0 <= number.integer <= ${SCORE_MAX}` })
+const CustomCheckSchema = type({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Texts })
+  .or({ ...MODEL, shape: "'score'", subject: Text, levels: Text.array().atLeastLength(LEVELS_MIN).atMostLength(LEVELS_MAX), "failBelow?": Text })
   .or({ ...MODEL, shape: "'choose'", options: Text.array().atLeastLength(2), failOn: Texts });
 
 const CatalogChecksSchema = type(
@@ -316,8 +310,8 @@ const CatalogChecksSchema = type(
 );
 
 /**
- * Published as JSON Schema. `readCheckPack` stays the authority: it also drops catalog and blank legacy custom rows,
- * checks patterns and choices, and collapses legacy actions.
+ * Published as JSON Schema. `readCheckPack` stays the authority: it also drops unknown catalog rows, checks ids,
+ * choices and levels, and leaves out steps for a role.
  */
 export const checkPackSchema = type({
   kind: type.unit(CHECK_PACK_KIND),
@@ -326,6 +320,7 @@ export const checkPackSchema = type({
   "checks?": CatalogChecksSchema,
   "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
   "actions?": PolicyActionsSchema,
+  "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
 });
 
 const CATALOG_SET = new Set<string>(CATALOG_IDS);
@@ -355,7 +350,6 @@ export function customRuleId(name: string, taken: Iterable<string>): string {
   return `${base}-${Math.max(highest, 1) + 1}`;
 }
 
-const GROUP_SET = new Set<string>(CHECK_PACK_GROUPS);
 const TRACKER_SET = new Set<string>(ISSUE_TRACKERS);
 
 export const CHECK_PACK_TITLE_PREFIX = "check-pack/";
@@ -376,6 +370,7 @@ export function emptyPack(repo: string): CheckPack {
     checks: {},
     custom: [],
     actions: defaultActions(),
+    labels: { ...VERDICT_LABELS },
   };
 }
 
@@ -393,7 +388,7 @@ export function recommendedPack(repo: string): CheckPack {
       "ci-green": { enabled: true },
       "no-forbidden-paths": { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
     },
-    actions: { ...defaultActions(), pass: [{ kind: "approve", target: {} }] },
+    actions: { ...defaultActions(), pass: [{ do: "approve" }] },
   };
 }
 
@@ -460,23 +455,31 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], where: s
   throw new Error(`${where} must be one of ${allowed.join(", ")}.`);
 }
 
-function verbatim(value: unknown, where: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${where} must be a non-empty string.`);
-  return value;
+/** Policy text reaches the decision model and GitHub, so a single-line field keeps no line breaks, control or bidi characters; emoji sequences stay whole. */
+function text(value: unknown, where: string, max = LINE_MAX): string {
+  const line = typeof value === "string" ? value.replace(/[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\s]+/gu, " ").trim() : "";
+  if (!line) throw new Error(`${where} must be a non-empty string.`);
+  if (line.length > max) throw new Error(`${where} must be at most ${max} characters.`);
+  return line;
 }
 
-function text(value: unknown, where: string): string {
-  return verbatim(value, where).trim();
+/** A comment keeps its line breaks and tabs, and drops every other control or bidi character. */
+function prose(value: unknown, where: string): string {
+  const body = typeof value === "string" ? value.replace(/[^\P{Cc}\n\t]|[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu, "").trim() : "";
+  if (!body) throw new Error(`${where} must be a non-empty string.`);
+  if (body.length > COMMENT_BODY_MAX) throw new Error(`${where} must be at most ${COMMENT_BODY_MAX} characters.`);
+  return body;
 }
 
 function list(value: unknown, where: string): unknown[] {
   if (!Array.isArray(value) || value.length === 0) throw new Error(`${where} must be a non-empty list.`);
+  if (value.length > LIST_MAX) throw new Error(`${where} must list at most ${LIST_MAX}.`);
   return value;
 }
 
-function texts(value: unknown, where: string): string[] {
+function texts(value: unknown, where: string, max = LINE_MAX): string[] {
   const out = new Set<string>();
-  for (const item of list(value, where)) out.add(text(item, where));
+  for (const item of list(value, where)) out.add(text(item, where, max));
   return [...out];
 }
 
@@ -493,53 +496,19 @@ function exactKeys(row: Record<string, unknown>, expected: readonly string[], wh
   }
 }
 
-function pattern(value: unknown, where: string): string {
-  const source = verbatim(value, where);
-  if (source.length > PATTERN_MAX) throw new Error(`${where} must be at most ${PATTERN_MAX} characters.`);
-  try {
-    RE2JS.compile(source);
-  } catch (error) {
-    if (!(error instanceof RE2JSSyntaxException)) throw error;
-    throw new Error(`${where} must be a valid regular expression without lookaround or backreferences: ${error.message}.`);
-  }
-  return source;
-}
-
 function distinctTexts(value: unknown, where: string): string[] {
   const out = list(value, where).map((item) => text(item, where));
   if (new Set(out).size !== out.length) throw new Error(`${where} must not repeat a value.`);
   return out;
 }
 
-function integer(value: unknown, min: number, max: number, where: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
-    throw new Error(`${where} must be a whole number from ${min} to ${max}.`);
-  }
-  return value;
-}
-
-function parseRule(row: Record<string, unknown>, where: string): RuleCheck {
-  const rule = oneOf(row.rule, RULE_KINDS, `${where} rule`);
-  switch (rule) {
-    case "paths-unchanged":
-      return { rule, globs: globs(row.globs, `${where} globs`) };
-    case "paths-together":
-      return { rule, changed: globs(row.changed, `${where} changed`), requires: globs(row.requires, `${where} requires`) };
-    case "title-pattern":
-    case "branch-pattern":
-    case "diff-excludes":
-      return { rule, pattern: pattern(row.pattern, `${where} pattern`) };
-    case "label-required":
-      return { rule, label: verbatim(row.label, `${where} label`) };
-    case "min-approvals":
-      return { rule, count: integer(row.count, 1, Number.MAX_SAFE_INTEGER, `${where} count`) };
-    case "author": {
-      const who = oneOf(row.who, AUTHOR_WHO, `${where} who`);
-      if (who === "users") return { rule, who, users: texts(row.users, `${where} users`).map((login) => login.replace(/^@/, "")) };
-      if (who === "role") return { rule, who, role: text(row.role, `${where} role`) };
-      return { rule, who, kinds: [...new Set(texts(row.kinds, `${where} kinds`).map((kind) => oneOf(kind, AUTHOR_KINDS, `${where} kinds`)))] };
-    }
-  }
+function parseScore(row: Record<string, unknown>, where: string): ModelCheck {
+  const levels = distinctTexts(row.levels, `${where} levels`);
+  if (levels.length < LEVELS_MIN || levels.length > LEVELS_MAX) throw new Error(`${where} levels must list ${LEVELS_MIN} to ${LEVELS_MAX} levels.`);
+  if (row.failBelow === undefined) return { shape: "score", subject: text(row.subject, `${where} subject`), levels };
+  const failBelow = text(row.failBelow, `${where} failBelow`);
+  if (levels.indexOf(failBelow) < 1) throw new Error(`${where} failBelow must be one of the levels after the first.`);
+  return { shape: "score", subject: text(row.subject, `${where} subject`), levels, failBelow };
 }
 
 function parseScope(row: Record<string, unknown>, where: string): { scope?: CustomScope; when?: string[] } {
@@ -556,7 +525,7 @@ function parseModel(row: Record<string, unknown>, where: string): ModelCheck {
     case "is-true":
       return { shape, claim: text(row.claim, `${where} claim`), ...parseScope(row, where) };
     case "score":
-      return { shape, subject: text(row.subject, `${where} subject`), min: integer(row.min, 0, SCORE_MAX, `${where} min`) };
+      return parseScore(row, where);
     case "choose": {
       const options = distinctTexts(row.options, `${where} options`);
       if (options.length < 2) throw new Error(`${where} options must list at least two choices.`);
@@ -567,109 +536,108 @@ function parseModel(row: Record<string, unknown>, where: string): ModelCheck {
   }
 }
 
-function parseTypedCustom(row: Record<string, unknown>, index: number): CustomCheck {
+function parseCustomRow(row: Record<string, unknown>, index: number): CustomCheck {
   const where = `Custom rule ${typeof row.id === "string" ? row.id : index + 1}`;
   if (typeof row.id !== "string") throw new Error(`${where} id must be a string.`);
   const problem = customIdProblem(row.id);
   if (problem) throw new Error(`${where} id ${problem}.`);
   if (row.enabled !== undefined && typeof row.enabled !== "boolean") throw new Error(`${where} enabled must be true or false.`);
+  if (row.kind === "rule") throw new Error(`${where} is a ${String(row.rule)} rule over GitHub data, which Triage no longer runs; remove it.`);
+  if (row.kind !== "model") throw new Error(`${where} kind must be model.`);
   const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }) };
-  const kind = oneOf(row.kind, ["rule", "model"] as const, `${where} kind`);
-  return kind === "rule" ? { ...base, kind, ...parseRule(row, where) } : { ...base, kind, ...parseModel(row, where) };
+  return { ...base, kind: "model", ...parseModel(row, where) };
 }
 
-/** A legacy row has no kind; it asks its instruction as an is-true question and is dropped when blank. */
-function parseLegacyCustom(row: Record<string, unknown>, next: number): CustomCheck | undefined {
-  const name = typeof row.name === "string" ? row.name.trim() : "";
-  const instruction = typeof row.instruction === "string" ? row.instruction.trim() : "";
-  const group = typeof row.group === "string" ? row.group.trim() : "";
-  if (!name || !instruction || !GROUP_SET.has(group)) return undefined;
-  const requested = typeof row.id === "string" ? row.id.trim() : "";
-  const id = customIdProblem(requested) === undefined ? requested : `custom-${next}`;
-  return { id, name, group: group as CheckPackGroup, kind: "model", shape: "is-true", claim: instruction };
-}
-
+/** The last row of an id wins. */
 function parseCustom(raw: unknown): CustomCheck[] {
-  if (!Array.isArray(raw)) return [];
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error("custom must be a list.");
   const byId = new Map<string, CustomCheck>();
-  let next = 1;
   for (const [index, item] of raw.entries()) {
-    const row = asRecord(item);
-    if (!row) continue;
-    const check = row.kind === undefined ? parseLegacyCustom(row, next) : parseTypedCustom(row, index);
-    if (!check) continue;
-    const n = check.id.startsWith("custom-") ? Number(check.id.slice("custom-".length)) : Number.NaN;
-    if (Number.isInteger(n) && n >= next) next = n + 1;
-    else next += 1;
-    if (!byId.has(check.id) && byId.size >= CUSTOM_CHECK_CAP) {
-      throw new Error(`Policy must have at most ${CUSTOM_CHECK_CAP} custom rules.`);
-    }
+    const check = parseCustomRow(record(item, `Custom rule ${index + 1}`), index);
+    if (!byId.has(check.id) && byId.size >= CUSTOM_CHECK_CAP) throw new Error(`Policy must have at most ${CUSTOM_CHECK_CAP} custom rules.`);
     byId.set(check.id, check);
   }
   return [...byId.values()];
 }
 
 function parseLabelsTarget(target: Record<string, unknown>, where: string): LabelsTarget {
-  const from = oneOf(target.from, ["list", "type", "paths"] as const, `${where} from`);
+  const from = oneOf(target.from, ["list", "rules"] as const, `${where} from`);
   if (from !== "list") {
     exactKeys(target, ["from"], where);
     return { from };
   }
   exactKeys(target, ["from", "labels"], where);
-  return { from, labels: texts(target.labels, `${where} labels`) };
+  return { from, labels: texts(target.labels, `${where} labels`, LABEL_MAX) };
 }
 
 function parsePeopleTarget(target: Record<string, unknown>, allowAuthor: boolean, where: string): PeopleTarget {
-  const kinds = allowAuthor
-    ? (["users", "teams", "role", "codeowners", "author"] as const)
-    : (["users", "teams", "role", "codeowners"] as const);
+  const kinds = allowAuthor ? (["users", "teams", "codeowners", "author"] as const) : (["users", "teams", "codeowners"] as const);
   const to = oneOf(target.to, kinds, `${where} to`);
   if (to === "codeowners" || to === "author") {
     exactKeys(target, ["to"], where);
     return { to };
   }
   exactKeys(target, ["to", to], where);
-  if (to === "role") return { to, role: text(target.role, `${where} role`) };
   if (to === "users") return { to, users: texts(target.users, `${where} users`) };
   return { to, teams: texts(target.teams, `${where} teams`) };
 }
 
-function parseDo(raw: unknown, where: string): Do {
+/** Anyone is the default, so it is not kept. */
+function parseFor(raw: unknown, where: string): StepFor | undefined {
+  if (raw === undefined || raw === "anyone") return undefined;
+  if (typeof raw === "string") return oneOf(raw, AUTHOR_GROUPS, where);
   const row = record(raw, where);
-  const kind = oneOf(row.kind, ACTION_KINDS, `${where} kind`);
+  if ("team" in row) {
+    exactKeys(row, ["team"], where);
+    return { team: text(row.team, `${where} team`) };
+  }
+  exactKeys(row, ["users"], where);
+  return { users: texts(row.users, `${where} users`).map((login) => login.replace(/^@/, "")) };
+}
+
+function parseStep(row: Record<string, unknown>, where: string): Step {
+  const extra = Object.keys(row).filter((key) => row[key] !== undefined && !["do", "target", "for"].includes(key));
+  if (extra.length) throw new Error(`${where} must not set ${extra.join(", ")}.`);
+  const kind = oneOf(row.do, STEP_KINDS, `${where} do`);
   const at = `${where} target`;
-  const target = record(row.target, at);
+  const audience = parseFor(row.for, `${where} for`);
+  const step = audience === undefined ? {} : { for: audience };
   switch (kind) {
     case "labels":
-      return { kind, target: parseLabelsTarget(target, at) };
+      return { do: kind, target: parseLabelsTarget(record(row.target, at), at), ...step };
     case "assign":
-      return { kind, target: parsePeopleTarget(target, true, at) };
+      return { do: kind, target: parsePeopleTarget(record(row.target, at), true, at), ...step };
     case "request-review":
-      return { kind, target: parsePeopleTarget(target, false, at) as ReviewTarget };
+      return { do: kind, target: parsePeopleTarget(record(row.target, at), false, at) as ReviewTarget, ...step };
     case "comment": {
+      const target = record(row.target, at);
       exactKeys(target, ["body"], at);
-      const body = text(target.body, `${at} body`);
-      if (body.length > COMMENT_BODY_MAX) throw new Error(`${at} body must be at most ${COMMENT_BODY_MAX} characters.`);
-      return { kind, target: { body } };
+      const body = prose(target.body, `${at} body`);
+      return { do: kind, target: { body }, ...step };
     }
     case "approve":
-    case "request-changes":
+    case "merge":
     case "close":
-      exactKeys(target, [], at);
-      return { kind, target: {} };
-    case "agent": {
-      exactKeys(target, ["prompt", "tools"], at);
-      if (!Array.isArray(target.tools)) throw new Error(`${at} tools must be a list.`);
-      const tools = new Set<string>();
-      for (const tool of target.tools) tools.add(text(tool, `${at} tools`));
-      return { kind, target: { prompt: text(target.prompt, `${at} prompt`), tools: [...tools] } };
-    }
+    case "request-changes":
+    case "nothing":
+      if (row.target !== undefined) exactKeys(record(row.target, at), [], at);
+      return { do: kind, ...step };
   }
 }
 
-function parseList(raw: unknown, where: string): Do[] {
+/** Repository roles were removed, so a step for one is left out and named in `dropped`. */
+function parseList(raw: unknown, where: string, dropped: string[]): Step[] {
   if (!Array.isArray(raw)) throw new Error(`${where} must be a list.`);
-  return raw.flatMap((item, i) => (RETIRED_DO_KINDS.has(record(item, `${where} ${i + 1}`).kind) ? [] : [parseDo(item, `${where} ${i + 1}`)]));
+  if (raw.length > STEPS_MAX) throw new Error(`${where} must list at most ${STEPS_MAX} steps.`);
+  return raw.flatMap(function stepAt(item, i) {
+    const at = `${where} ${i + 1}`;
+    const row = record(item, at);
+    const role = asRecord(row.target)?.to === "role" ? asRecord(row.target)?.role : undefined;
+    if (role === undefined) return [parseStep(row, at)];
+    dropped.push(`${at} (${String(row.do)} role ${String(role)}) no longer runs`);
+    return [];
+  });
 }
 
 function parseWhen(raw: unknown, where: string): PolicyEvent[] {
@@ -678,10 +646,10 @@ function parseWhen(raw: unknown, where: string): PolicyEvent[] {
   return POLICY_EVENTS.filter((event) => events.has(event));
 }
 
-/** The same Do listed twice runs once. */
-function distinctDos(dos: Do[]): Do[] {
+/** The same step listed twice runs once. */
+function distinctSteps(steps: Step[]): Step[] {
   const seen = new Set<string>();
-  return dos.filter(function first(step) {
+  return steps.filter(function first(step) {
     const key = JSON.stringify(step);
     if (seen.has(key)) return false;
     seen.add(key);
@@ -689,50 +657,26 @@ function distinctDos(dos: Do[]): Do[] {
   });
 }
 
-const LEGACY_LISTS: Record<string, VerdictWord[]> = { yes: ["pass"], no: ["fail"], unsure: ["unsure"], always: ["pass", "fail", "unsure"] };
-
-/** Which lists a legacy Do joins: one that ran without checks joins all three, except a close or agent, which only ever ran with a person's approval and stays held on Unsure. */
-function listsOf(branch: string, step: Do): VerdictWord[] {
-  return branch === "always" && (step.kind === "close" || step.kind === "agent") ? ["unsure"] : LEGACY_LISTS[branch]!;
+/** A verdict the policy names no label for keeps its default. */
+function parseLabels(raw: unknown): Record<VerdictWord, string> {
+  if (raw === undefined) return { ...VERDICT_LABELS };
+  const row = record(raw, "labels");
+  const extra = Object.keys(row).filter((key) => !(VERDICTS as readonly string[]).includes(key));
+  if (extra.length) throw new Error(`labels must set only pass, fail or unsure, not ${extra.join(", ")}.`);
+  return Object.fromEntries(VERDICTS.map((verdict) => [verdict, row[verdict] === undefined ? VERDICT_LABELS[verdict] : text(row[verdict], `labels ${verdict}`, LABEL_MAX)])) as Record<VerdictWord, string>;
 }
 
-/**
- * Legacy actions collapse into one policy: each branch's Dos join its verdict's list, `always` joins all three, and
- * `when` is every action's together. An action that woke on no event a policy names is dropped, not widened.
- */
-function migrateActions(rows: unknown[]): PolicyActions {
-  const when = new Set<PolicyEvent>();
-  const lists: Record<VerdictWord, Do[]> = { pass: [], fail: [], unsure: [] };
-  for (const [index, raw] of rows.entries()) {
-    const row = record(raw, `Action ${index + 1}`);
-    const where = `Action ${typeof row.id === "string" ? row.id : index + 1}`;
-    const named = row.when === "every" ? POLICY_EVENTS : Array.isArray(row.when) ? row.when : [];
-    const events = POLICY_EVENTS.filter((event) => named.includes(event));
-    if (events.length === 0) continue;
-    for (const event of events) when.add(event);
-    for (const [branch, dos] of Object.entries(record(row.branches, `${where} branches`))) {
-      if (!LEGACY_LISTS[branch]) throw new Error(`${where} branches must set only yes, no, unsure or always.`);
-      for (const step of parseList(dos, `${where} ${branch}`)) for (const verdict of listsOf(branch, step)) lists[verdict].push(step);
-    }
-  }
-  return {
-    when: when.size > 0 ? POLICY_EVENTS.filter((event) => when.has(event)) : [...POLICY_EVENTS],
-    pass: distinctDos(lists.pass),
-    fail: distinctDos(lists.fail),
-    unsure: distinctDos(lists.unsure),
-  };
-}
-
-function parseActions(raw: unknown): PolicyActions {
-  if (raw === undefined) return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] };
-  if (Array.isArray(raw)) return migrateActions(raw);
+/** Packs written before verdicts stored an empty list of actions; one that is not empty is no longer read. */
+function parseActions(raw: unknown, dropped: string[]): PolicyActions {
+  if (raw === undefined || (Array.isArray(raw) && raw.length === 0)) return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] };
+  if (Array.isArray(raw)) throw new Error("Actions must be { when, pass, fail, unsure }; a list of actions with yes, no, unsure and always branches is no longer read.");
   const row = record(raw, "Actions");
   exactKeys(row, ["when", ...VERDICTS], "Actions");
   return {
     when: parseWhen(row.when, "Actions when"),
-    pass: distinctDos(parseList(row.pass, "Actions pass")),
-    fail: distinctDos(parseList(row.fail, "Actions fail")),
-    unsure: distinctDos(parseList(row.unsure, "Actions unsure")),
+    pass: distinctSteps(parseList(row.pass, "Pass step", dropped)),
+    fail: distinctSteps(parseList(row.fail, "Fail step", dropped)),
+    unsure: distinctSteps(parseList(row.unsure, "Unsure step", dropped)),
   };
 }
 
@@ -745,12 +689,60 @@ function parseJson(value: unknown): unknown {
   }
 }
 
-/** Reads a stored pack, throwing an Error whose message says why it is rejected. */
+/** A version 1 Do as a step for anyone, or why it is left out: it no longer runs, or labels derived from the pull request never ran. */
+function stepOfDo(raw: unknown, where: string, dropped: string[]): unknown[] {
+  const row = record(raw, where);
+  const target = asRecord(row.target);
+  const from = target?.from;
+  if (!(STEP_KINDS as readonly unknown[]).includes(row.kind) || (row.kind === "labels" && from !== "list")) {
+    dropped.push(`${where} (${String(row.kind)}${from === undefined ? "" : ` from ${String(from)}`}) no longer runs`);
+    return [];
+  }
+  return [target && Object.keys(target).length > 0 ? { do: row.kind, target } : { do: row.kind }];
+}
+
+/** Text a version 1 pack stored longer than version 2 holds is cut, and said so, rather than costing the whole pack. */
+function cutText(value: unknown, where: string, dropped: string[], max = LINE_MAX): unknown {
+  if (typeof value !== "string" || value.trim().length <= max) return value;
+  dropped.push(`${where} was cut to ${max} characters`);
+  return value.trim().slice(0, max);
+}
+
+function cutCustom(raw: unknown, index: number, dropped: string[]): unknown[] {
+  const row = asRecord(raw);
+  if (!row) return [raw];
+  const where = `Custom rule ${typeof row.id === "string" ? row.id : index + 1}`;
+  if (row.kind === "rule") {
+    dropped.push(`${where} (${String(row.rule)} rule over GitHub data) no longer runs`);
+    return [];
+  }
+  const cut = Object.fromEntries(["name", "claim", "subject"].flatMap((key) => (key in row ? [[key, cutText(row[key], `${where} ${key}`, dropped)]] : [])));
+  const lists = Object.fromEntries(["levels", "options", "failOn"].flatMap((key) => (Array.isArray(row[key]) ? [[key, (row[key] as unknown[]).map((item) => cutText(item, `${where} ${key}`, dropped))]] : [])));
+  return [{ ...row, ...cut, ...lists }];
+}
+
+/**
+ * A version 1 pack read as version 2: its lists of Dos become steps for anyone, and its custom rules over GitHub data
+ * and over-long text are left out or cut, each named in `dropped`. A list of actions with branches cannot be mapped.
+ */
+function fromVersion1(body: Record<string, unknown>, dropped: string[]): Record<string, unknown> {
+  const custom = Array.isArray(body.custom) ? body.custom.flatMap((row, index) => cutCustom(row, index, dropped)) : body.custom;
+  const lists = asRecord(body.actions);
+  if (!lists || Array.isArray(body.actions)) return { ...body, custom };
+  const steps = Object.fromEntries(VERDICTS.map((verdict) => [verdict, Array.isArray(lists[verdict]) ? (lists[verdict] as unknown[]).flatMap((item, i) => stepOfDo(item, `${LIST_NAMES[verdict]} step ${i + 1}`, dropped)) : lists[verdict]]));
+  return { ...body, custom, actions: { ...lists, ...steps } };
+}
+
+const LIST_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
+
+/** Reads a stored pack, throwing an Error whose message says why it is rejected. Version 1 reads as version 2. */
 export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
-  const body = asRecord(parseJson(raw));
-  if (!body) throw new Error("Policy must be an object.");
-  if (body.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
-  if (body.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
+  const stored = asRecord(parseJson(raw));
+  if (!stored) throw new Error("Policy must be an object.");
+  if (stored.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
+  if (stored.schemaVersion !== LEGACY_SCHEMA_VERSION && stored.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
+  const dropped: string[] = [];
+  const body = stored.schemaVersion === LEGACY_SCHEMA_VERSION ? fromVersion1(stored, dropped) : stored;
   const repo = asRepo(body.repo);
   if (!repo) throw new Error("repo must be owner/name.");
   if (expectedRepo !== undefined && asRepo(expectedRepo) !== repo) throw new Error(`repo must be ${expectedRepo}.`);
@@ -766,14 +758,42 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
       if (parsed) checks[id as CatalogId] = parsed;
     }
   }
-  return {
-    kind: CHECK_PACK_KIND,
-    schemaVersion: CHECK_PACK_SCHEMA_VERSION,
-    repo,
-    checks,
-    custom: parseCustom(body.custom),
-    actions: parseActions(body.actions),
-  };
+  const custom = parseCustom(body.custom);
+  const actions = parseActions(body.actions, dropped);
+  const labels = parseLabels(body.labels);
+  return { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels, ...(dropped.length > 0 && { dropped }) };
+}
+
+
+const RULE_LABEL_PREFIX = "rule: ";
+
+export function ruleLabel(id: string): string {
+  return `${RULE_LABEL_PREFIX}${id}`;
+}
+
+/** Whether the author is one a step is for; undefined, with why, when the facts cannot tell. */
+export function stepForAuthor(
+  audience: StepFor | undefined,
+  author: { login: string; kind?: AuthorKind; teams?: readonly string[]; teamsUnknown?: readonly string[] },
+): { matches: boolean; reason: string } | { matches: undefined; reason: string } {
+  if (audience === undefined || audience === "anyone") return { matches: true, reason: "for anyone" };
+  if (typeof audience === "string") {
+    if (!author.kind) return { matches: undefined, reason: `the author's kind is not known, so it cannot tell whether they are ${audience}` };
+    const matches = AUTHOR_GROUP_KINDS[audience].includes(author.kind);
+    return { matches, reason: matches ? `the author is ${author.kind}, one of ${audience}` : `the author is ${author.kind}, not one of ${audience}` };
+  }
+  if ("users" in audience) {
+    const matches = audience.users.some((login) => login.toLowerCase() === author.login.toLowerCase());
+    return { matches, reason: matches ? `the author is one of ${audience.users.join(", ")}` : `the author is not one of ${audience.users.join(", ")}` };
+  }
+  if (author.teams?.includes(audience.team)) return { matches: true, reason: `the author is in ${audience.team}` };
+  if (!author.teams || author.teamsUnknown?.includes(audience.team)) return { matches: undefined, reason: `membership of ${audience.team} is not known` };
+  return { matches: false, reason: `the author is not in ${audience.team}` };
+}
+
+/** Every team a pack's steps are for, as the steps write them. */
+export function stepTeams(pack: CheckPack): string[] {
+  return [...new Set(VERDICTS.flatMap((list) => pack.actions[list].flatMap((step) => (typeof step.for === "object" && "team" in step.for ? [step.for.team] : []))))];
 }
 
 export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack | null {
@@ -788,26 +808,10 @@ export function customCheckEnabled(row: CustomCheck): boolean {
   return row.enabled !== false;
 }
 
-function isModelCheck(row: CustomCheck): row is ModelCustomCheck {
-  return row.kind === "model";
-}
-
-function isRuleCheck(row: CustomCheck): row is RuleCustomCheck {
-  return row.kind === "rule";
-}
-
-/** Switched-off custom rows are left out. Model rows are handed to the classifier as plain text; rule rows are evaluated from facts and listed here for naming. */
-export function classificationSources(pack: CheckPack): {
-  quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>;
-  custom: ModelCustomCheck[];
-  rules: RuleCustomCheck[];
-} {
+/** The judged rules that are switched on. */
+export function classificationSources(pack: CheckPack): { quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>; custom: CustomCheck[] } {
   return {
-    quality: QUALITY_CHECK_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id) => ({
-      id,
-      group: CHECK_CATALOG[id].group,
-    })),
-    custom: pack.custom.filter(customCheckEnabled).filter(isModelCheck),
-    rules: pack.custom.filter(customCheckEnabled).filter(isRuleCheck),
+    quality: QUALITY_CHECK_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id) => ({ id, group: CHECK_CATALOG[id].group })),
+    custom: pack.custom.filter(customCheckEnabled),
   };
 }

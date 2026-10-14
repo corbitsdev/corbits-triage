@@ -1,7 +1,7 @@
 import { Button, Switch } from "@corbits/react-ui";
 import { customCheckEnabled, type CustomCheck } from "@corbits/triage-contracts";
 import { checkFormOf, customCheckOf, type CheckForm } from "../../lib/action-builder.ts";
-import { removeCustom, setCustomEnabled, upsertCustom, type RepoDraft } from "../../lib/pack-draft.ts";
+import { removeCustom, setCustomEnabled, upsertCustom } from "../../lib/pack-draft.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
 import { CloseIcon } from "../inbox-icons.tsx";
 import CheckParams from "./CheckParams.tsx";
@@ -9,7 +9,6 @@ import EvalBadge from "./EvalBadge.tsx";
 
 type CustomSentenceProps = {
   check: CustomCheck;
-  draft: RepoDraft;
   disabled: boolean;
   edit: RepoPack["edit"];
   /** Why the draft cannot be saved, when this check is the reason. */
@@ -18,7 +17,7 @@ type CustomSentenceProps = {
 };
 
 /** A custom check as a sentence like the built-in ones: its name, its values inline, a switch and a remove. */
-export default function CustomSentence({ check, draft, disabled, edit, reason, stat }: CustomSentenceProps) {
+export default function CustomSentence({ check, disabled, edit, reason, stat }: CustomSentenceProps) {
   const form = checkFormOf(check);
 
   function change(next: CheckForm) {
@@ -29,7 +28,7 @@ export default function CustomSentence({ check, draft, disabled, edit, reason, s
     <div className={reason ? "sentence custom invalid" : "sentence custom"} id={`rp-custom-${check.id}`}>
       <span className="txt">
         <input className="val name" aria-label="Rule name" disabled={disabled} value={form.name} onChange={(event) => change({ ...form, name: event.target.value })} />
-        <CheckParams form={form} roles={Object.keys(draft.policy.roles)} disabled={disabled} onChange={change} />
+        <CheckParams form={form} disabled={disabled} onChange={change} />
         {stat ? <small>{stat}</small> : null}
         {reason ? <small className="reason">{reason}</small> : null}
       </span>

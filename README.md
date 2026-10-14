@@ -33,7 +33,7 @@ To run it for real, build the root `Dockerfile` and follow
 ## Read next
 
 - [docs/PRODUCT.md](docs/PRODUCT.md): what it does, the kinds of rules,
-  actions, and what is not finished.
+  steps, labels, and what is not finished.
 - [docs/DECISION_MODEL.md](docs/DECISION_MODEL.md): how decision-model rules
   are asked and judged, budgets, cost and measured accuracy.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, the triage

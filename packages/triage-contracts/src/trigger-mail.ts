@@ -1,4 +1,5 @@
 import { asRecord } from "@corbits/common";
+import { LEGACY_SCHEMA_VERSION, VERDICTS, type CheckPack, type CustomCheck, type Step } from "./check-pack.js";
 
 /** The local part of the tenant system sender the hub mails triage requests as. */
 export const TRIAGE_MAIL_SENDER = "github";
@@ -48,3 +49,28 @@ export function triggerRequestOf(payload: unknown): Record<string, unknown> | un
 
 /** The `kind` of the mail the hub sends pr-triage when a maintainer approves a held Do. */
 export const APPROVE_DO_KIND = "approve-do";
+
+/** A Do as deployments built before steps read it; one they cannot run as the policy means is left out. */
+function legacyDo(step: Step) {
+  if (step.for !== undefined || step.do === "merge" || step.do === "nothing") return [];
+  if (step.do === "labels" && step.target.from === "rules") return [];
+  return [{ kind: step.do, target: "target" in step ? step.target : {} }];
+}
+
+/** A score row as deployments built before levels read it: `min` on 0 to 10 at its `failBelow`, or 0, which never fails. */
+function legacyCustom(row: CustomCheck) {
+  if (row.shape !== "score") return row;
+  const { levels, failBelow, ...rest } = row;
+  const at = failBelow === undefined ? 0 : levels.indexOf(failBelow);
+  return { ...rest, min: Math.round((at * 10) / (levels.length - 1)) };
+}
+
+/**
+ * The pack as deployments built before steps read it, mailed as `checkPack` beside the pack itself as `pack`, which
+ * they never read: each list holds the Dos of the steps they can run as the policy means.
+ */
+export function legacyCheckPack(pack: CheckPack) {
+  const [pass, fail, unsure] = VERDICTS.map((list) => pack.actions[list].flatMap(legacyDo));
+  const { dropped: _dropped, labels: _labels, ...rest } = pack;
+  return { ...rest, schemaVersion: LEGACY_SCHEMA_VERSION, custom: pack.custom.map(legacyCustom), actions: { when: pack.actions.when, pass, fail, unsure } };
+}

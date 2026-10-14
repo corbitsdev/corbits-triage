@@ -15,7 +15,6 @@ describe("repoPolicy", () => {
         ci: false,
         conflicts: true,
       },
-      roles: {},
       approvedAuthors: [],
     });
     expect(repoPolicy({
@@ -24,12 +23,6 @@ describe("repoPolicy", () => {
         enabled: false,
         triageDrafts: false,
         checks: { draft: false, conflicts: false },
-        roles: {
-          " maintainers ": { teams: ["core", " core "], users: [] },
-          "": { users: ["ghost"] },
-          empty: { users: [" "] },
-          broken: { users: "ghost", teams: ["core"] },
-        },
       },
     })).toEqual({
       enabled: false,
@@ -37,7 +30,6 @@ describe("repoPolicy", () => {
         ci: true,
         conflicts: false,
       },
-      roles: { maintainers: { teams: ["core"] } },
       approvedAuthors: [],
     });
   });

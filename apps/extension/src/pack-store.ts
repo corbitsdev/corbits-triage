@@ -1,11 +1,22 @@
-import { parseCheckPack, type CheckPack } from "@corbits/triage-contracts";
+import { readCheckPack, type CheckPack } from "@corbits/triage-contracts";
+import { errorText } from "./error-text.ts";
 import { defaultLocalPack } from "./local-pack.ts";
 import { localPacks } from "./storage.ts";
 
-/** A stored pack that no longer reads as valid falls back to the default rather than running half a pack. */
+/** A stored pack, or why it does not read; one from an earlier version reads as this one, as the hub reads it. */
+export function readLocalPack(stored: unknown, repo: string): { pack: CheckPack } | { error: string } {
+  try {
+    return { pack: readCheckPack(stored, repo) };
+  } catch (cause) {
+    return { error: errorText(cause) };
+  }
+}
+
+/** A stored pack that does not read falls back to the default rather than running half a pack; Settings says why. */
 export async function localPackFor(repo: string): Promise<CheckPack> {
   const stored = (await localPacks.getValue())[repo];
-  return (stored && parseCheckPack(stored, repo)) ?? defaultLocalPack(repo);
+  const read = stored === undefined ? undefined : readLocalPack(stored, repo);
+  return read && "pack" in read ? read.pack : defaultLocalPack(repo);
 }
 
 export async function saveLocalPack(pack: CheckPack): Promise<void> {

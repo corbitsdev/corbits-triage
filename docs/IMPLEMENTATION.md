@@ -30,7 +30,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and records verdicts. |
 | `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict records and the routes that serve them. |
 | `src/github/manifest.ts` | GitHub App Manifest flow: start and callback. The setup state is an HMAC-SHA256 token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes and bound to the user who started it; nothing is stored. |
-| `src/github/pr-*.ts` | Pull request actions, details, previews and single-PR triage. |
+| `src/github/pr-*.ts` | Pull request actions, details, previews (API only) and single-PR triage. |
 | `src/github/held-dos.ts` | Approves a held Do by mailing it to `pr-triage`. |
 | `src/github/github-app-*` | Credential adapter: App JWT → installation token, cached per installation, pinned to the GitHub API origin. |
 
@@ -81,7 +81,7 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
 - `github-tool`: the mirror write (marker-comment upsert), Dos and the sidecar
   tool bundles.
 - `github-write-tool`: build wrapper for the write bundle.
-- `triage-contracts`: policy schema, repository settings, triage state,
+- `triage-contracts`: policy schema (`schemaVersion` 2), repository settings, triage state,
   verdict labels, trigger mail and shared types.
 - `openai-null-delta`: inference adapter fix for null stream deltas.
 - `common`: dependency-free helpers shared across apps and packages.

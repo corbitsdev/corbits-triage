@@ -9,11 +9,11 @@ const facts: ActionInput["facts"] = {
 };
 
 function say(body: string) {
-  return [{ kind: "comment" as const, target: { body } }];
+  return [{ do: "comment" as const, target: { body } }];
 }
 
 const pack = { ...emptyPack("acme/widgets"), actions: { when: ["opened" as const], pass: say("pass"), fail: say("fail"), unsure: say("unsure") } };
-const input: ActionInput = { facts, checks: [], verdict: "unsure", reason: "needs the judge", pack, roles: {} };
+const input: ActionInput = { facts, checks: [], verdict: "unsure", reason: "needs the judge", pack };
 
 test("previewActions lists every verdict's Dos while it waits on the judge, and none when the event does not wake the policy", () => {
   const waiting = previewActions(input, "waits-on-judge");

@@ -1,17 +1,17 @@
 import { Badge, Button, ConfirmButton, Switch } from "@corbits/react-ui";
-import { CHECK_CATALOG, CUSTOM_CHECK_CAP, parseCheckPack, type CatalogId, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { CHECK_CATALOG, CUSTOM_CHECK_CAP, type CatalogId, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
 import { Check, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { defaultLocalPack } from "../local-pack.ts";
 import { send } from "../messages.ts";
 import { changesFromDefaults, customFormOf, isCatalogId, switchableChecks, withCheck, withoutCheck } from "../pack-edit.ts";
-import { localPackFor, resetLocalPack, saveLocalPack } from "../pack-store.ts";
+import { localPackFor, readLocalPack, resetLocalPack, saveLocalPack } from "../pack-store.ts";
 import { prKey, type PrRef } from "../pr.ts";
 import { catalogSentence, CHECK_KINDS, customSentence, type CheckKind } from "../prose.ts";
 import { localPacks, runStates, systemOne, views } from "../storage.ts";
 import { stateName } from "../view.ts";
 import { errorText } from "../error-text.ts";
-import { CatalogEditor, CustomEditor, EDITABLE_CATALOG, type CustomVariant } from "./CheckEditors.tsx";
+import { CatalogEditor, CustomEditor, EDITABLE_CATALOG } from "./CheckEditors.tsx";
 import { useStorageItem } from "./use-storage.ts";
 
 type Row = { id: string; on: boolean; sentence: string; model: boolean; custom: CustomCheck | undefined };
@@ -22,12 +22,6 @@ function rowsOf(pack: CheckPack): Row[] {
     const custom = pack.custom.find((c) => c.id === id)!;
     return { id, on, sentence: customSentence(custom), model: custom.kind === "model", custom };
   });
-}
-
-/** The editor a custom check opens with; Author is only gates actions, which local mode cannot edit. */
-function variantOf(check: CustomCheck): CustomVariant | undefined {
-  if (check.kind === "model") return { kind: "model", shape: check.shape };
-  return check.rule === "author" ? undefined : { kind: "rule", rule: check.rule };
 }
 
 function EvalBadge({ model }: { model: boolean }) {
@@ -60,8 +54,7 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
 
   const custom = row.custom;
   const label = custom?.name ?? CHECK_CATALOG[row.id as CatalogId].name;
-  const variant = custom ? variantOf(custom) : undefined;
-  const editable = isCatalogId(row.id) ? EDITABLE_CATALOG.includes(row.id) : variant !== undefined;
+  const editable = isCatalogId(row.id) ? EDITABLE_CATALOG.includes(row.id) : custom !== undefined;
 
   async function toggle(on: boolean) {
     await onSave((current) => withCheck(current, row.id, on), `${label} is ${on ? "on" : "off"}.`);
@@ -102,18 +95,14 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
         {custom ? <ConfirmButton size="sm" variant="ghost" confirmLabel={`Confirm: remove ${custom.name}`} onConfirm={remove}>Remove the rule</ConfirmButton> : null}
       </div>
       {editing && isCatalogId(row.id) ? <CatalogEditor id={row.id as CatalogId} pack={pack} onSave={saveEdit} onCancel={stopEdit} /> : null}
-      {editing && custom && variant ? (
-        <CustomEditor variant={variant} pack={pack} id={custom.id} form={customFormOf(custom)} defaultName={custom.name} onSave={saveEdit} onCancel={stopEdit} />
+      {editing && custom ? (
+        <CustomEditor shape={custom.shape} pack={pack} id={custom.id} form={customFormOf(custom)} defaultName={custom.name} onSave={saveEdit} onCancel={stopEdit} />
       ) : null}
     </li>
   );
 }
 
-function variantOfKind(kind: CheckKind): CustomVariant {
-  return kind.evaluation === "rule" ? { kind: "rule", rule: kind.rule } : { kind: "model", shape: kind.shape };
-}
-
-/** The portal's new-check gallery: every rule kind and model shape, then that kind's editor. */
+/** The portal's new-check gallery: every model shape, then that shape's editor. */
 function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<CheckKind | null>(null);
@@ -151,7 +140,7 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
     return (
       <div className="add-check">
         <p className="manage-name">{kind.title}</p>
-        <CustomEditor variant={variantOfKind(kind)} pack={pack} defaultName={kind.title.replace(/…$/, "")} onSave={add} onCancel={cancel} />
+        <CustomEditor shape={kind.shape} pack={pack} defaultName={kind.title.replace(/…$/, "")} onSave={add} onCancel={cancel} />
       </div>
     );
   }
@@ -163,7 +152,7 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
             <button type="button" className="gallery-item" aria-label={`Use ${each.title}`} onClick={() => setKind(each)}>
               <b>{each.title}</b>
               <span>{each.line}</span>
-              <EvalBadge model={each.evaluation === "model"} />
+              <EvalBadge model />
             </button>
           </li>
         ))}
@@ -215,7 +204,8 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
   if (packs === undefined || settings === undefined) return null;
   const stored = packs[repo];
   // The same fallback the background runs with, so the list shows what was scored.
-  const pack = (stored && parseCheckPack(stored, repo)) ?? defaultLocalPack(repo);
+  const read = stored === undefined ? undefined : readLocalPack(stored, repo);
+  const pack = read && "pack" in read ? read.pack : defaultLocalPack(repo);
   const changes = stored ? changesFromDefaults(pack) : 0;
   const rows = rowsOf(pack);
   const scoring = pr?.repo === repo ? pr : undefined;

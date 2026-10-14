@@ -30,11 +30,11 @@ import { actionBar, type ActionBar, type BarPlace } from "./action-bar.ts";
 import { scoreChip } from "./chip.ts";
 import { findCommentBox } from "./comment-box.ts";
 import { draftMenu } from "./draft-menu.ts";
-import { canTriage, openBodyField, openTitleField } from "./editors.ts";
+import { canTriage, openBodyField } from "./editors.ts";
 import { fileMarker, markLines, noteAnchor, onFilesTab, type FileMarker } from "./file-notes.ts";
 import { pageShows } from "./page-ready.ts";
 import { pickerSeeder } from "./pickers.ts";
-import { seedNote, titleHint } from "./seed-note.ts";
+import { seedNote } from "./seed-note.ts";
 import { seeder, type SeedSpot } from "./seeds.ts";
 import { tour } from "./tour.ts";
 import { triageBlock } from "./triage-block.ts";
@@ -54,11 +54,6 @@ function draftsAnchor(): Element | undefined {
 
 function bodyFormAnchor(): Element | undefined {
   const field = openBodyField();
-  return field?.closest("form") ?? field;
-}
-
-function titleFormAnchor(): Element | undefined {
-  const field = openTitleField();
   return field?.closest("form") ?? field;
 }
 
@@ -202,7 +197,6 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
   });
   const composerNote = seedNote(() => undoSeed("composer"));
   const bodyNote = seedNote(() => undoSeed("body"));
-  const hint = titleHint();
   let allViews: Record<string, TriageView> = {};
   let allStates: Record<string, RunState> = {};
   let applied: Record<string, Applied> = {};
@@ -253,7 +247,6 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
   const topBar = await shadow("corbits-triage-top-bar", () => document.querySelector(HEADER_ANCHOR), "before", bars.get("top-bar")!.element);
   const composerSeed = await shadow("corbits-triage-composer-seed", draftsAnchor, "after", composerNote.element);
   const bodySeed = await shadow("corbits-triage-body-seed", bodyFormAnchor, "before", bodyNote.element);
-  const titleSeed = await shadow("corbits-triage-title-hint", titleFormAnchor, "after", hint.element);
   // The banner floats over the page's end, so a spacer in the flow keeps the last of it reachable.
   const floating = document.createElement("div");
   const spacer = document.createElement("div");
@@ -272,10 +265,6 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
     const shown = view();
     if (derived.view !== shown) derived = derive(shown);
     return derived;
-  }
-
-  function titleRule(): string | undefined {
-    return forView().actions.find((action) => action.kind === "edit-title")?.hint;
   }
 
   /** Whether the chosen placement finds where it goes on this page; when not, the sidebar block shows instead. */
@@ -301,7 +290,6 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
     { ui: banner, anchor: () => document.body, placed: () => banner.shadowHost.isConnected, wanted: () => layout === "banner" && placementShows() },
     { ui: composerSeed, anchor: draftsAnchor, placed: () => composerSeed.shadowHost.previousElementSibling === draftsAnchor(), wanted: () => seeds.live("composer") !== undefined },
     { ui: bodySeed, anchor: bodyFormAnchor, placed: () => bodySeed.shadowHost.nextElementSibling === bodyFormAnchor(), wanted: () => seeds.live("body") !== undefined },
-    { ui: titleSeed, anchor: titleFormAnchor, placed: () => titleSeed.shadowHost.previousElementSibling === titleFormAnchor(), wanted: () => titleRule() !== undefined && openTitleField() !== undefined },
   ];
 
   async function makeMarker(path: string, kept: Marker) {
@@ -441,7 +429,6 @@ export async function startContentScript(ctx: ContentScriptContext): Promise<voi
     block.render({ pr: current, view: shown, run: allStates[key], actions, applied: applies, seeded: seededIds });
     composerNote.render(seeds.live("composer"));
     bodyNote.render(seeds.live("body"));
-    hint.render(titleRule());
     keepMounted();
     if (shown) settle(applyOnOpen(current, shown, actions));
     guide.refresh();

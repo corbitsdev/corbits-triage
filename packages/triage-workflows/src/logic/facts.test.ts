@@ -16,9 +16,10 @@ test("assembleItem turns an unreadable file list into an error item", () => {
   expect(item).toMatchObject({ facts: { number: 8, headSha: "abc", paths: ["src/a.ts"], commits: ["fix: a"] } });
 });
 
-test("assembleItem maps team membership back to every spelling and leaves every team unknown without a read", () => {
-  const policy = { ...DEFAULT_REPO_POLICY, roles: { core: { teams: ["@acme/Core", "ops"] }, staff: { teams: ["core", "@other/x"] } } };
-  const context = { repo: "acme/widgets", policy, pack: emptyPack("acme/widgets"), events: [] };
+test("assembleItem maps team membership back to every spelling the steps use and leaves every team unknown without a read", () => {
+  const pack = emptyPack("acme/widgets");
+  pack.actions.pass = ["@acme/Core", "ops", "core", "@other/x"].map((team) => ({ do: "approve", for: { team } }));
+  const context = { repo: "acme/widgets", policy: DEFAULT_REPO_POLICY, pack, events: [] };
   const pull = { pr: { author: "alice", branch: "a", sha: "abc" }, checks: [], reviews: [], comments: [], commits: [], files: [] };
   const all = ["@acme/Core", "ops", "core", "@other/x"];
   expect(assembleItem(8, { ...pull, authorTeams: { teams: ["core"], unknown: [] } }, context)).toMatchObject({ facts: { authorTeams: ["@acme/Core", "core"], authorTeamsUnknown: ["@other/x"] } });

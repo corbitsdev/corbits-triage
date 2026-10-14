@@ -19,13 +19,12 @@ const APPLY_LABELS: Record<PageAction["kind"], string> = {
   comment: "Post comment",
   close: "Close this pull request",
   "edit-body": "Edit the description",
-  "edit-title": "Edit the title",
   link: "Open on GitHub",
   ready: "Mark it ready for review",
 };
 
 // These only open or fill one of GitHub's editors, so they can be applied again.
-const REPEATABLE = new Set<PageAction["kind"]>(["comment", "edit-body", "edit-title", "link"]);
+const REPEATABLE = new Set<PageAction["kind"]>(["comment", "edit-body", "link"]);
 
 /** Without `tabId`, no GitHub tab shows the pull request, so nothing can be applied until one does. */
 function ActionRow({ action, view, tabId, primary }: { action: PageAction; view: TriageView; tabId: number | undefined; primary: boolean }) {

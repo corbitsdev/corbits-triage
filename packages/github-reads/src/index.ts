@@ -207,13 +207,59 @@ export async function getPr(gh: GithubFetch, repo: string, number: number) {
   return prFields(p);
 }
 
-export async function getChecks(gh: GithubFetch, repo: string, sha: string) {
+export interface CheckRun {
+  name?: string;
+  status?: string;
+  conclusion?: string | null;
+}
+
+export async function getChecks(gh: GithubFetch, repo: string, sha: string): Promise<CheckRun[]> {
   const runs = await jsonAll<any>(gh, `/repos/${repo}/commits/${sha}/check-runs?per_page=100`, { items: (page) => (page as { check_runs: any[] }).check_runs });
   return runs.map((c: any) => ({
     name: c.name,
     status: c.status,
     conclusion: c.conclusion,
   }));
+}
+
+const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required"]);
+
+export function checkFailed(run: CheckRun): boolean {
+  return run.conclusion !== undefined && run.conclusion !== null && FAILED.has(run.conclusion);
+}
+
+export type CiState = "success" | "failure" | "pending" | "none";
+
+export function summarizeChecks(runs: CheckRun[]): CiState {
+  if (!runs.length) return "none";
+  if (runs.some(checkFailed)) return "failure";
+  if (runs.some((r) => r.status !== "completed")) return "pending";
+  return "success";
+}
+
+/** A head may merge once its CI passed, or with no CI at all when the policy does not require it. */
+export function mergeableCi(ci: CiState, ciOptional: boolean): boolean {
+  return ci === "success" || (ci === "none" && ciOptional);
+}
+
+const CI_TEXT: Record<CiState, string> = {
+  success: "CI passed on this head",
+  failure: "CI has failed on this head",
+  pending: "CI has not finished on this head",
+  none: "There is no CI on this head",
+};
+
+export function ciRefusal(ci: CiState): string {
+  return CI_TEXT[ci];
+}
+
+/** Each reviewer's latest decisive review state; triage's own requests for changes are its verdict, not a reviewer's. */
+export function latestDecisive(reviews: Review[]): Map<string, string> {
+  const latest = new Map<string, string>();
+  for (const r of reviews) {
+    if (r.reviewer && r.state && r.state !== "COMMENTED" && r.state !== "PENDING" && !r.triageRequest) latest.set(r.reviewer, r.state);
+  }
+  return latest;
 }
 
 /** `login` names the App, asked only when a review carries the request-changes marker, as only the App's marked requests are triage's own. */

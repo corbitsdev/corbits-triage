@@ -19,13 +19,9 @@ export type RepoCheckFlags = {
   conflicts: boolean;
 };
 
-export type RepoRole = { users?: string[]; teams?: string[] };
-
 export type RepoPolicy = {
   enabled: boolean;
   checks: RepoCheckFlags;
-  /** Named reviewer groups that pack actions target by role. */
-  roles: Record<string, RepoRole>;
   /** GitHub logins trusted as approved authors without org membership. */
   approvedAuthors: string[];
   /** Pointer at the per-repo check-pack artifact. Not params. */
@@ -40,7 +36,6 @@ export const DEFAULT_REPO_CHECKS: RepoCheckFlags = {
 export const DEFAULT_REPO_POLICY: RepoPolicy = {
   enabled: false,
   checks: { ...DEFAULT_REPO_CHECKS },
-  roles: {},
   approvedAuthors: [],
 };
 
@@ -51,33 +46,11 @@ export const repoPolicySchema = type({
     "ci?": "boolean",
     "conflicts?": "boolean",
   },
-  "roles?": { "[string]": { "users?": "string[]", "teams?": "string[]" } },
   "checkPack?": { name: "string" },
 });
 
 function flag(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
-}
-
-function members(value: unknown): string[] | null {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) return null;
-  const out = new Set<string>();
-  for (const item of value) if (typeof item === "string" && item.trim().length > 0) out.add(item.trim());
-  return [...out];
-}
-
-function roles(value: unknown): Record<string, RepoRole> {
-  const out: Record<string, RepoRole> = {};
-  for (const [rawName, raw] of Object.entries(asRecord(value) ?? {})) {
-    const name = rawName.trim();
-    const row = asRecord(raw) ?? {};
-    const users = members(row.users);
-    const teams = members(row.teams);
-    if (!name || !users || !teams || users.length + teams.length === 0) continue;
-    out[name] = { ...(users.length > 0 ? { users } : {}), ...(teams.length > 0 ? { teams } : {}) };
-  }
-  return out;
 }
 
 function logins(value: unknown): string[] {
@@ -112,7 +85,6 @@ export function repoPolicy(raw: unknown): RepoPolicy {
       ci: flag(checks.ci, true),
       conflicts: flag(checks.conflicts, true),
     },
-    roles: roles(source.roles),
     approvedAuthors: logins(source.approvedAuthors),
     ...(pointerName.length > 0 ? { checkPack: { name: pointerName } } : {}),
   };

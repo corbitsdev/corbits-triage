@@ -67,19 +67,21 @@ function listed(items: readonly CheckItem[]): string {
 /** What the check found, as `59 / 70`, `33 files, 2,104 lines`, `20 / 60; couldn't read: src/big.ts` or `couldn't check: file could not be read`; the row shows the check's name, reason and evidence. Null for a verdict from before checks carried output. */
 export function checkValueText({ output, reason, evidence }: { output: CheckOutput | null; reason: string | null; evidence: readonly string[] }): string | null {
   if (output === null) return null;
-  const behind = output.kind !== "values" && output.kind !== "not-applicable" && output.items?.length && evidence.length === 0 ? ` (${listed(output.items)})` : "";
+  const behind = output.kind !== "values" && output.kind !== "level" && output.kind !== "not-applicable" && output.items?.length && evidence.length === 0 ? ` (${listed(output.items)})` : "";
   switch (output.kind) {
     case "values": return factsText(output.values);
     case "score": return `${scoreText(output.score, output.passAt)}${behind}${output.unread?.length ? `; couldn't read: ${listed(output.unread)}` : ""}`;
+    case "level": return output.level;
     case "met": return `met${behind}`;
     case "not-applicable": return "not applicable";
     case "could-not-check": return `${output.reason === reason ? "couldn't check" : `couldn't check: ${output.reason}`}${behind}`;
   }
 }
 
-/** What a check measured, as `9 files, 352 lines` or `Scored 59; couldn't read src/big.ts`; null for an output that is only a state, which the check's reason already says. */
+/** What a check measured, as `9 files, 352 lines`, `Rated good` or `Scored 59; couldn't read src/big.ts`; null for an output that is only a state, which the check's reason already says. */
 export function checkMeasuredText(output: CheckOutput | null): string | null {
   if (output?.kind === "values") return upperFirst(factsText(output.values));
+  if (output?.kind === "level") return `Rated ${output.level}`;
   if (output?.kind !== "score") return null;
   const unread = output.unread?.length ? `; couldn't read ${listed(output.unread)}` : "";
   return `Scored ${shownScore(output.score, output.passAt)}${unread}`;

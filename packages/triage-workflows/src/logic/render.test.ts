@@ -5,11 +5,10 @@ import { QUALITY_EVALUATION_LIMIT_ERROR, type FocusedPlan, type QualityPlan } fr
 import { REVIEW_ANSWERED_REASON, type DeterministicResult } from "./checks.js";
 
 describe("custom check rendering", () => {
-  test("a model row is asked by its stored id; a rule row is not a question", () => {
+  test("a model row is answered by its stored id", () => {
     const pack: CheckPack = {
       ...emptyPack("acme/widgets"),
       custom: [
-        { id: "custom-1", name: "No vendor edits", group: "code-vs-ci", kind: "rule", rule: "paths-unchanged", globs: ["vendor/**"] },
         { id: "custom-2", name: "Ticket", group: "pull-request", kind: "model", shape: "is-true", claim: "The title mentions a ticket id." },
       ],
     };
@@ -84,13 +83,12 @@ function focusedVerdict(reply: string, focused: FocusedPlan = focusedPlan({}).fo
 const UNSURE = "**Triage: Unsure**\n\n";
 const UNSURE_FOCUSED = "Not yet confirmed, a maintainer will check:\n- makes one focused change";
 const OUTAGE_NOTE = "Some rules could not run this time. Triage will re-check this pull request.";
-const APPROVAL_NOTE = "**Triage: Pass**\n\nNo changes needed from you. A maintainer will review this pull request.";
 
 describe("focused rendering", () => {
-  test("fails on more than one thing, naming at most three files most likely to be the separate change", () => {
+  test("fails on more than one thing, whatever the verdict question says, naming at most three files most likely to be the separate change", () => {
     const { focused, nouls } = focusedPlan({ "src/a.ts": 0.1, "src/b.ts": 0.75, "src/c.ts": 0.9, "src/d.ts": 0.8, "src/e.ts": 0.71, "src/f.ts": 0.6 });
-    const verdict = focusedVerdict(focusedAnswer(0.1, 0.85) + nouls, focused, CHOICE.fail);
-    expect(verdict).toMatchObject({ verdict: "fail", state: "needs-author-update", mirror: true, humanGated: false, score: 0.1 });
+    const verdict = focusedVerdict(focusedAnswer(0.1, 0.85) + nouls, focused, CHOICE.pass);
+    expect(verdict).toMatchObject({ verdict: "fail", state: "needs-author-update", mirror: true, humanGated: false, score: null });
     expect(verdict.checks).toEqual([{
       check: "focused",
       kind: "model",
@@ -146,6 +144,7 @@ describe("focused rendering", () => {
     expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, humanGated: false, degraded: null, score: 0.5, reasons: ["Not confirmed: makes one focused change"] });
     expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "score", score: 50, passAt: 60, items: [] } }]);
     expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}`);
+    expect(focusedVerdict(focusedAnswer(0.5, 0.4), undefined, CHOICE.pass)).toMatchObject({ verdict: "unsure", reason: "the decision model passed it, but a judged rule could not be confirmed" });
   });
 
   test.each([
@@ -323,44 +322,54 @@ describe("verdict", () => {
   });
 });
 
-describe("rule custom check rendering", () => {
-  const rules = [
-    { id: "custom-1", name: "Branch naming", group: "pull-request", kind: "rule", rule: "branch-pattern", pattern: "^cl-" },
-    { id: "custom-2", name: "Two approvals", group: "around", kind: "rule", rule: "min-approvals", count: 2 },
-  ] as const;
-  const det: DeterministicResult = {
-    state: "needs-author-update",
-    reason: "Branch naming: branch does not match the pattern",
-    findings: [{ check: "custom-1", state: "needs-author-update", reason: "Branch naming: branch does not match the pattern" }],
-    checks: [
-      { check: "custom-1", kind: "machine", result: "fail", reason: "Branch naming: branch does not match the pattern", evidence: ["@acme/team"] },
-      { check: "custom-2", kind: "machine", result: "fail", reason: "Two approvals: not enough approvals", evidence: ["1 of 2 approvals"] },
+describe("score and choose rules", () => {
+  const levels = ["poor", "fair", "good", "great"];
+  const pack: CheckPack = {
+    ...emptyPack("acme/widgets"),
+    custom: [
+      { id: "style", name: "Style", group: "pull-request", kind: "model", shape: "score", subject: "style", levels },
+      { id: "care", name: "Care", group: "pull-request", kind: "model", shape: "score", subject: "care", levels, failBelow: "good" },
+      { id: "kind", name: "Kind", group: "pull-request", kind: "model", shape: "choose", options: ["fix", "feature", "chore"], failOn: ["chore"] },
     ],
-    needsJudgment: false,
-    sources: { quality: [], custom: [], rules: [...rules] },
   };
+  const scored: DeterministicResult = { state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks: [], needsJudgment: true, sources: classificationSources(pack) };
 
-  test("names the rule, asks the author in inline code and keeps approvals with the maintainer", () => {
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det });
-    expect(verdict).toMatchObject({ actor: "author", nextAction: "Rename the branch to match `^cl-`; Approve (`1 of 2 approvals`)" });
-    expect(verdict.feedback.split("\n").slice(3)).toEqual(["- Branch naming: branch does not match the pattern: `@acme/team`"]);
-    expect(verdict).toMatchObject({ verdict: "fail", reasons: ["Branch naming: branch does not match the pattern: @acme/team", "Two approvals: not enough approvals: 1 of 2 approvals"] });
+  function score(id: string, probabilities: number[]): string {
+    const legend = Object.fromEntries(levels.map((level, index) => [String(index), level]));
+    return JSON.stringify({ id, type: "score", score: 1, legend, probabilities: Object.fromEntries(probabilities.map((p, index) => [String(index), p])), confidence: 0.9 });
+  }
+
+  test("a score rule records its level, never fails without failBelow, and fails when the level is likely below it", () => {
+    const kind = JSON.stringify({ id: "kind", type: "choice", choice: "chore", probabilities: { fix: 0.1, feature: 0.1, chore: 0.8 }, confidence: 0.9 });
+    const answers = parseAnswers([score("style", [0.9, 0.1, 0, 0]), score("care", [0.5, 0.3, 0.2, 0]), kind].join("\n"));
+    const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
+    expect(checks.map((c) => [c.check, c.result, c.evidence])).toEqual([["style", "pass", ["poor"]], ["care", "fail", ["poor"]], ["kind", "fail", ["chore"]]]);
+    expect(checks[1]!.output).toEqual({ kind: "level", level: "poor", levels, failBelow: "good" });
   });
 
-  test("a failed author gate is no hard failure and stays out of the next step, the comment and the reasons", () => {
-    const gate = { id: "custom-9", name: "Mine", group: "pull-request", kind: "rule", rule: "author", who: "users", users: ["maya"] } as const;
-    const gated: DeterministicResult = {
-      ...det,
-      state: "ready-monitoring",
-      reason: "all deterministic rules passed",
-      findings: [],
-      checks: [{ check: "custom-9", kind: "machine", result: "fail", reason: "Mine: author is not one of the people named", evidence: ["@octocat (outside)"], gate: true, output: { kind: "values", values: {} } }],
-      needsJudgment: true,
-      sources: { quality: [], custom: [], rules: [gate] },
-    };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: gated, choice: CHOICE.pass });
-    expect(verdict).toMatchObject({ verdict: "pass", actor: "maintainer", nextAction: "Review and merge", reasons: [] });
-    expect(verdict.feedback).toBe(APPROVAL_NOTE);
+  test("a score answer over other levels, or probabilities that do not sum to 1, is unanswered", () => {
+    const style = JSON.stringify({ id: "style", type: "score", score: 1, legend: { 0: "bad", 1: "fair", 2: "good", 3: "great" }, probabilities: { 0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4 }, confidence: 0.5 });
+    const care = JSON.stringify({ id: "care", type: "score", score: 1, legend: { 0: "poor", 1: "fair", 2: "good", 3: "great" }, probabilities: { 0: 0.9, 1: 0.9, 2: 0.9, 3: 0.9 }, confidence: 0.5 });
+    const answers = parseAnswers([style, care, JSON.stringify({ id: "kind", type: "choice", choice: "fix", probabilities: { fix: 0.9, feature: 0.9, chore: 0.9 }, confidence: 1 })].join("\n"));
+    const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
+    expect(checks.map((c) => c.result)).toEqual(["unconfirmed", "unconfirmed", "unconfirmed"]);
+  });
+
+  test("Jev's own score and choice reply reads by the levels its legend names", () => {
+    // Recorded from OpenCode Zen jev-1.13 on 2026-10-13 for these two questions about a one-hunk fix.
+    const reply = '{"id":"care","type":"score","score":1.9,"legend":{"0":"poor","1":"fair","2":"good","3":"great"},"probabilities":{"0":0.06,"1":0.24,"2":0.45,"3":0.25},"confidence":0.39}\n{"id":"kind","type":"choice","choice":"fix","probabilities":{"fix":1,"feature":0,"chore":0},"confidence":1}';
+    const checks = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers: parseAnswers(reply) }).checks;
+    expect(checks.map((c) => [c.check, c.result, c.evidence])).toEqual([["style", "unconfirmed", []], ["care", "pass", ["good"]], ["kind", "pass", ["fix"]]]);
+  });
+});
+
+describe("a policy without a decision-model rule", () => {
+  const det = (checks: DeterministicResult["checks"]): DeterministicResult => ({ state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks, needsJudgment: true, sources: { quality: [], custom: [] } });
+  const ci = (result: "pass" | "unconfirmed") => ({ check: "ci-green", kind: "machine" as const, result, reason: "checks", evidence: [], output: { kind: "values" as const, values: {} } });
+
+  test("passes without the model when every rule passes, and is unsure while CI is pending", () => {
+    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("pass")]) })).toMatchObject({ verdict: "pass", score: null, reason: "every rule passed, and the policy has no decision-model rule" });
+    expect(renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: det([ci("unconfirmed")]) })).toMatchObject({ verdict: "unsure", degraded: null, reason: "not every rule could be confirmed, and the policy has no decision-model rule" });
   });
 });
 

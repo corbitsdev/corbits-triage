@@ -1,4 +1,4 @@
-import type { CheckPack, CustomCheck } from "@corbits/triage-contracts";
+import type { CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "@corbits/triage-workflows/logic/checks";
 import type { PageAction } from "./page-actions.ts";
 import type { FileNote } from "./view.ts";
@@ -27,7 +27,7 @@ export function suggest({ facts, checks, pack, jobs }: SuggestInput): { actions:
   const { repo, number, headSha } = facts;
   const base = `/${repo}/pull/${number}`;
   const head = headSha.slice(0, 12);
-  const custom = new Map<string, CustomCheck>(pack.custom.map((check) => [check.id, check]));
+  const custom = new Set(pack.custom.map((check) => check.id));
   const actions: PageAction[] = [];
   const notes: FileNote[] = [];
 
@@ -39,31 +39,10 @@ export function suggest({ facts, checks, pack, jobs }: SuggestInput): { actions:
     for (const path of check.evidence) notes.push({ path, check: check.name, reason: "Touches a protected path." });
   }
 
-  for (const check of checks.filter((each) => each.result === "fail" && !each.gate)) {
-    const rule = custom.get(check.check);
+  for (const check of checks.filter((each) => each.result === "fail")) {
+    // A custom rule is judged, so a person has no step to take for it; a custom id never reads as a built-in's.
+    if (custom.has(check.check)) continue;
     const why = `${check.name} failed. ${sentence(check.reason)}`;
-    // A custom rule is suggested for by its kind, a built-in one by its id, so a custom id never reads as a built-in's.
-    if (rule) {
-      if (rule.kind !== "rule") continue;
-      switch (rule.rule) {
-        case "label-required":
-          add(check, { kind: "labels", title: `Add label ${rule.label}`, why, values: [rule.label] });
-          break;
-        case "title-pattern":
-          add(check, { kind: "edit-title", title: "Edit this pull request's title", why, hint: rule.pattern });
-          break;
-        case "paths-unchanged":
-          protectedPaths(check);
-          break;
-        case "diff-excludes":
-          for (const hit of check.evidence) {
-            const at = /^(.*):(\d+)$/.exec(hit);
-            if (at) notes.push({ path: at[1]!, line: Number(at[2]), check: check.name, reason: "Added line matches the excluded pattern." });
-          }
-          break;
-      }
-      continue;
-    }
     switch (check.check) {
       case "linked-issue":
         add(check, { kind: "edit-body", title: "Link an issue in this pull request's description", why, body: (pack.checks["linked-issue"]?.tracker ?? "either") === "linear" ? "Closes " : "Closes #" });
@@ -87,7 +66,7 @@ export function suggest({ facts, checks, pack, jobs }: SuggestInput): { actions:
     }
   }
   // The changed lines a failing check cites, marked where they are in the Files tab.
-  for (const check of checks.filter((each) => each.result === "fail" && !each.gate)) {
+  for (const check of checks.filter((each) => each.result === "fail")) {
     const items = "items" in check.output ? check.output.items ?? [] : [];
     for (const item of items) {
       if (typeof item !== "string" && item.added) notes.push({ path: item.path, line: item.added.start, check: check.name, reason: sentence(check.reason) });

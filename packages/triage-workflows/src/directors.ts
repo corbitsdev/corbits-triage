@@ -18,7 +18,7 @@ import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "./logic/check
 import { unrunnable } from "./logic/execute-do.js";
 import { isRecord } from "@corbits/common";
 import { asText, parseJsonText } from "./logic/extract.js";
-import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, roleTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "./logic/facts.js";
+import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "./logic/facts.js";
 import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import type { ApprovalOutput } from "./actions/approval.js";
@@ -182,7 +182,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       ];
     }
 
-    const teams = roleTeams(policy, repo);
+    const teams = namedTeams(pack, repo);
     const listed = new Map<number, ListedFiles>();
     const filesErrors = new Map<number, string>();
 
@@ -295,7 +295,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     const policy = repoPolicy(input?.policy);
     if (typeof repo !== "string") return fail("facts: input has no repo");
     if (!policy.enabled) return fail("Triage is disabled for this repository.");
-    const pack = packFromInput(input?.checkPack);
+    const pack = packFromInput(input?.pack ?? input?.checkPack);
     if (!pack) return fail(NEEDS_SETUP_REASON);
     automatic = automaticKinds(message, input);
     if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, ["catch-up"]);
