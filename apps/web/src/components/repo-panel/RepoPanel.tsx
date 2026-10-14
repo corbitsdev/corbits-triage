@@ -38,7 +38,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const [closing, setClosing] = useState(false);
   const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready";
   const gated = !draft.policy.enabled;
-  const unfinished = VERDICTS.some((verdict) => view.steps[verdict].some((step) => step.problem) || view.labels[verdict]?.problem) || view.rules.some((rule) => rule.problem);
+  const unfinished = VERDICTS.some((verdict) => view.steps[verdict].some((step) => step.problem) || view.labels[verdict].problem) || view.rules.some((rule) => rule.problem);
 
   /** Unfinished steps and rules are never saved, so the first close says so and the second discards them. */
   function close() {

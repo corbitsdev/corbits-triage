@@ -81,6 +81,7 @@ export function mergeDrafts(base: RepoDraft, ours: RepoDraft, theirs: RepoDraft)
     ...theirs.pack,
     checks,
     custom: mergedCustom(base.pack, ours.pack, theirs.pack),
+    labels: { pass: pick(ours.pack.labels.pass, base.pack.labels.pass, theirs.pack.labels.pass), fail: pick(ours.pack.labels.fail, base.pack.labels.fail, theirs.pack.labels.fail), unsure: pick(ours.pack.labels.unsure, base.pack.labels.unsure, theirs.pack.labels.unsure) },
     actions: { ...theirs.pack.actions, when: pick(ours.pack.actions.when, base.pack.actions.when, theirs.pack.actions.when) },
   };
   let merged: RepoDraft = { pack, policy: { enabled: pick(ours.policy.enabled, base.policy.enabled, theirs.policy.enabled) }, stepIds: theirs.stepIds, ...(ours.ruleKeys && { ruleKeys: ours.ruleKeys }) };

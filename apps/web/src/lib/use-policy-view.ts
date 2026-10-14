@@ -1,6 +1,6 @@
-import { customRuleId, DEFAULT_SCORE_LEVELS, teamSlug, VERDICTS, verdictLabel, type CustomCheck, type Step, type VerdictWord } from "@corbits/triage-contracts";
+import { customRuleId, DEFAULT_SCORE_LEVELS, teamSlug, VERDICTS, type CustomCheck, type Step, type VerdictWord } from "@corbits/triage-contracts";
 import type { DraftUpdate } from "./pack-autosave.ts";
-import { customProblem, freshStepId, same, setSteps, stepEntries, stepProblem, type RepoDraft, type StepEntry } from "./pack-draft.ts";
+import { customProblem, freshStepId, labelProblem, same, setSteps, stepEntries, stepProblem, STEPS_MAX, type RepoDraft, type StepEntry } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
 
 export type StepRow = { id: string; step: Step; problem: string | null };
@@ -14,48 +14,33 @@ export type JudgementRule = { id: string; key: string; on: boolean; problem: str
 /** One field of a judgement rule; `failBelow: null` means it never fails. */
 export type JudgementPatch = { claim: string } | { subject: string } | { levels: string[] } | { failBelow: string | null };
 
-/** The verdict's handoff label as the Labels card shows it; null when the verdict does not label itself. */
-export type HandoffLabel = { name: string; problem: string | null } | null;
+/** A verdict's label as the Labels card edits it. */
+export type VerdictLabel = { name: string; problem: string | null };
 
 export type PolicyView = {
-  /** The steps people edit; a verdict's handoff labels belong to the Labels card. */
+  /** The steps people edit; the failed-rule labels step for anyone belongs to the Labels card. */
   steps: Record<VerdictWord, StepRow[]>;
   rules: JudgementRule[];
-  labels: Record<VerdictWord, HandoffLabel>;
+  labels: Record<VerdictWord, VerdictLabel>;
+  /** Which verdicts label each failed rule. */
+  ruleLabels: Record<VerdictWord, boolean>;
+  /** Which verdicts hold as many steps as a verdict can. */
+  full: Record<VerdictWord, boolean>;
   addStep: (verdict: VerdictWord) => void;
   setStep: (verdict: VerdictWord, id: string, step: Step) => void;
   removeStep: (verdict: VerdictWord, id: string) => void;
-  /** Adds the handoff labels to every verdict that lacks them, or removes them from every verdict. */
-  setHandoffLabels: (on: boolean) => void;
+  /** Adds the failed-rule labels step to every verdict that lacks it, or removes it from every verdict. */
+  setRuleLabels: (on: boolean) => void;
   setLabelName: (verdict: VerdictWord, name: string) => void;
   /** Adds an empty rule and returns its id. */
   addRule: (shape: JudgementRule["shape"]) => string;
   patchRule: (id: string, patch: JudgementPatch) => void;
 };
 
-/** The names a new verdict label starts with. */
-export const LABEL_NAMES: Record<VerdictWord, string> = { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" };
-
 const RULES_LABELS: Step = { do: "labels", target: { from: "rules" } };
 
-/**
- * A verdict labels itself through a pair of steps for anyone: its own label, then the failed rules' labels. Until the
- * contract stores a name on the verdict label, a name other than the contract's is a fixed one-label list.
- */
-function handoffPair(entries: StepEntry[]): { label: StepEntry; rules: StepEntry; name: string } | null {
-  for (let i = 0; i + 1 < entries.length; i += 1) {
-    const label = entries[i]!;
-    const rules = entries[i + 1]!;
-    if (!same(rules.step, RULES_LABELS) || label.step.do !== "labels" || label.step.for !== undefined) continue;
-    const target = label.step.target;
-    if (target.from === "list" && target.labels.length === 1) return { label, rules, name: target.labels[0]! };
-    if (target.from === "verdict") return { label, rules, name: "" };
-  }
-  return null;
-}
-
-function labelStep(verdict: VerdictWord, name: string): Step {
-  return name.trim() === verdictLabel(verdict) ? { do: "labels", target: { from: "verdict" } } : { do: "labels", target: { from: "list", labels: [name] } };
+function ruleLabelsEntry(entries: StepEntry[]): StepEntry | undefined {
+  return entries.find((entry) => same(entry.step, RULES_LABELS));
 }
 
 /** People are GitHub logins, which GitHub matches without the @ and whatever their case. */
@@ -101,7 +86,7 @@ function patched(row: CustomCheck, patch: JudgementPatch): CustomCheck {
 const NEW_RULE_NAMES: Record<JudgementRule["shape"], string> = { "is-true": "Is it true", score: "Score" };
 
 /**
- * The repository's steps, judgement rules and handoff labels as the panel edits them. Steps are addressed by their
+ * The repository's steps, judgement rules and verdict labels as the panel edits them. Steps are addressed by their
  * stable id and rules by theirs, so an edit lands on the row it was made on whatever moved around it.
  */
 export function usePolicyView(draft: RepoDraft, edit: (update: DraftUpdate) => void): PolicyView {
@@ -109,21 +94,18 @@ export function usePolicyView(draft: RepoDraft, edit: (update: DraftUpdate) => v
 
   function rows(verdict: VerdictWord): StepRow[] {
     const entries = stepEntries(draft, verdict);
-    const pair = handoffPair(entries);
-    const hidden = new Set(pair ? [pair.label.id, pair.rules.id] : []);
-    function row(entry: StepEntry): StepRow[] {
-      if (hidden.has(entry.id)) return [];
-      const problem = stepProblem(draft, verdict, entry.step);
+    const owned = ruleLabelsEntry(entries)?.id;
+    function row(entry: StepEntry, position: number): StepRow[] {
+      if (entry.id === owned) return [];
+      const problem = stepProblem(draft, verdict, entry.step, position);
       return [{ id: entry.id, step: entry.step, problem: problem && (stepMissing(entry.step, repo) ?? problem.replace(/^\w+ step \d+ /, "")) }];
     }
     return entries.flatMap(row);
   }
 
-  function label(verdict: VerdictWord): HandoffLabel {
-    const pair = handoffPair(stepEntries(draft, verdict));
-    if (!pair) return null;
-    const name = pair.label.step.do === "labels" && pair.label.step.target.from === "verdict" ? verdictLabel(verdict) : pair.name;
-    return { name, problem: name.trim() ? null : "name the label." };
+  function label(verdict: VerdictWord): VerdictLabel {
+    const name = draft.pack.labels[verdict];
+    return { name, problem: labelProblem(name) };
   }
 
   function judgementRow(row: CustomCheck): JudgementRule[] {
@@ -151,22 +133,18 @@ export function usePolicyView(draft: RepoDraft, edit: (update: DraftUpdate) => v
     editSteps(verdict, (entries) => entries.filter((entry) => entry.id !== id));
   }
 
-  function setHandoffLabels(on: boolean) {
+  function setRuleLabels(on: boolean) {
     for (const verdict of VERDICTS) {
-      editSteps(verdict, function handoff(entries) {
-        const pair = handoffPair(entries);
-        if (!on) return pair ? entries.filter((entry) => entry.id !== pair.label.id && entry.id !== pair.rules.id) : entries;
-        if (pair) return entries;
-        return [...entries, { id: freshStepId(), step: labelStep(verdict, LABEL_NAMES[verdict]) }, { id: freshStepId(), step: RULES_LABELS }];
+      editSteps(verdict, function ruleLabels(entries) {
+        const owned = ruleLabelsEntry(entries);
+        if (!on) return owned ? entries.filter((entry) => entry.id !== owned.id) : entries;
+        return owned ? entries : [...entries, { id: freshStepId(), step: RULES_LABELS }];
       });
     }
   }
 
   function setLabelName(verdict: VerdictWord, name: string) {
-    editSteps(verdict, function named(entries) {
-      const pair = handoffPair(entries);
-      return pair ? entries.map((entry) => (entry.id === pair.label.id ? { id: entry.id, step: labelStep(verdict, name) } : entry)) : entries;
-    });
+    edit((current) => ({ ...current, pack: { ...current.pack, labels: { ...current.pack.labels, [verdict]: name } } }));
   }
 
   function addRule(shape: JudgementRule["shape"]): string {
@@ -185,6 +163,8 @@ export function usePolicyView(draft: RepoDraft, edit: (update: DraftUpdate) => v
   }
 
   const steps = Object.fromEntries(VERDICTS.map((verdict) => [verdict, rows(verdict)])) as Record<VerdictWord, StepRow[]>;
-  const labels = Object.fromEntries(VERDICTS.map((verdict) => [verdict, label(verdict)])) as Record<VerdictWord, HandoffLabel>;
-  return { steps, rules: draft.pack.custom.flatMap(judgementRow), labels, addStep, setStep, removeStep, setHandoffLabels, setLabelName, addRule, patchRule };
+  const labels = Object.fromEntries(VERDICTS.map((verdict) => [verdict, label(verdict)])) as Record<VerdictWord, VerdictLabel>;
+  const ruleLabels = Object.fromEntries(VERDICTS.map((verdict) => [verdict, ruleLabelsEntry(stepEntries(draft, verdict)) !== undefined])) as Record<VerdictWord, boolean>;
+  const full = Object.fromEntries(VERDICTS.map((verdict) => [verdict, draft.pack.actions[verdict].length >= STEPS_MAX])) as Record<VerdictWord, boolean>;
+  return { steps, rules: draft.pack.custom.flatMap(judgementRow), labels, ruleLabels, full, addStep, setStep, removeStep, setRuleLabels, setLabelName, addRule, patchRule };
 }

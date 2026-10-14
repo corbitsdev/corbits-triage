@@ -148,11 +148,12 @@ function changedIds<T extends { id: string }>(saved: T[], draft: T[]): number {
   return [...ids].filter((id) => !same(saved.find((row) => row.id === id), draft.find((row) => row.id === id))).length;
 }
 
-/** One change per catalog check and custom check that differs, plus one each for the policy's when and each verdict list that differs. */
+/** One change per catalog check, custom check, verdict list and verdict label that differs, and one for the policy's when. */
 export function packChanges(saved: CheckPack, draft: CheckPack): number {
   return CATALOG_IDS.filter((id) => !same(saved.checks[id], draft.checks[id])).length
     + changedIds(saved.custom, draft.custom)
-    + (["when", ...VERDICTS] as const).filter((key) => !same(saved.actions[key], draft.actions[key])).length;
+    + (["when", ...VERDICTS] as const).filter((key) => !same(saved.actions[key], draft.actions[key])).length
+    + VERDICTS.filter((verdict) => saved.labels[verdict] !== draft.labels[verdict]).length;
 }
 
 /** One change when the triage switch differs. */
@@ -190,14 +191,25 @@ function contractProblem(raw: unknown): string | null {
   }
 }
 
-/** Why one step cannot be saved yet, in the contract's words; null when it can. */
-export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step): string | null {
+/** The most steps a verdict holds, and characters a label, as the contract enforces. */
+export const STEPS_MAX = 20;
+const LABEL_MAX = 50;
+
+/** Why one step at `position` in its verdict cannot be saved yet, in the contract's words; null when it can. */
+export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step, position: number): string | null {
+  if (position >= STEPS_MAX) return `A verdict holds at most ${STEPS_MAX} steps.`;
   const found = contractProblem({ ...emptyPack(draft.pack.repo), actions: { ...defaultActions(), [list]: [step] } });
   if (found) return found;
   // GitHub resolves a team only inside the repository's own organization.
   const teams = [...(typeof step.for === "object" && "team" in step.for ? [step.for.team] : []), ...("target" in step && "teams" in step.target ? step.target.teams : [])];
   const outside = teams.find((team) => teamSlug(team, draft.pack.repo) === null);
   return outside === undefined ? null : `Team ${outside} is not in ${draft.pack.repo.split("/", 1)[0]}.`;
+}
+
+/** Why a verdict label cannot be saved yet; null when it can. */
+export function labelProblem(name: string): string | null {
+  if (!name.trim()) return "name the label.";
+  return name.trim().length > LABEL_MAX ? `a label is at most ${LABEL_MAX} characters.` : null;
 }
 
 /** Why one custom rule cannot be saved yet, in the contract's words; null when it can. */
@@ -214,8 +226,8 @@ function catalogReadable(pack: CheckPack, id: CatalogId, row: CatalogCheck): boo
 function savableSteps(draft: RepoDraft, saved: RepoDraft, list: VerdictWord): StepEntry[] {
   const before = new Map(stepEntries(saved, list).map((entry) => [entry.id, entry.step]));
   const seen = new Set<string>();
-  return stepEntries(draft, list).flatMap(function written(entry): StepEntry[] {
-    const step = stepProblem(draft, list, entry.step) === null ? entry.step : before.get(entry.id);
+  return stepEntries(draft, list).flatMap(function written(entry, position): StepEntry[] {
+    const step = stepProblem(draft, list, entry.step, position) === null ? entry.step : before.get(entry.id);
     if (!step || seen.has(JSON.stringify(step))) return [];
     seen.add(JSON.stringify(step));
     return [{ id: entry.id, step }];
@@ -238,7 +250,8 @@ export function savable(draft: RepoDraft, saved: RepoDraft): RepoDraft {
     if (customProblem(draft, row) === null) return [row];
     return saved.pack.custom.filter((stored) => stored.id === row.id);
   });
-  let result: RepoDraft = { ...draft, pack: { ...pack, checks, custom } };
+  const labels = Object.fromEntries(VERDICTS.map((verdict) => [verdict, labelProblem(pack.labels[verdict]) === null ? pack.labels[verdict] : saved.pack.labels[verdict]])) as CheckPack["labels"];
+  let result: RepoDraft = { ...draft, pack: { ...pack, checks, custom, labels } };
   for (const list of VERDICTS) result = setSteps(result, list, savableSteps(draft, saved, list));
   return result;
 }

@@ -70,6 +70,14 @@ describe("pack draft", () => {
     expect(savable(emptied, saved).pack.actions.pass).toEqual(saved.pack.actions.pass);
   });
 
+  test("a blank or too long verdict label keeps its saved name, and a step past the last a verdict holds waits", () => {
+    const saved = fromPack(pack({}), policy);
+    const named = { ...saved, pack: { ...saved.pack, labels: { ...saved.pack.labels, pass: " ", fail: "x".repeat(51), unsure: "Triage: Look" } } };
+    expect(savable(named, saved).pack.labels).toEqual({ ...saved.pack.labels, unsure: "Triage: Look" });
+    const many = setSteps(saved, "pass", Array.from({ length: 21 }, (_, i) => ({ id: freshStepId(), step: { do: "comment" as const, target: { body: `note ${i}` } } })));
+    expect(savable(many, saved).pack.actions.pass).toHaveLength(20);
+  });
+
   test("an unfinished rule mid-edit keeps its saved version", () => {
     const stored = pack({ custom });
     const saved = fromPack(stored, policy);
