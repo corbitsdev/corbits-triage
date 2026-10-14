@@ -51,6 +51,11 @@ export function repoRecords(ns: CorbitsTriageNs): RepoRecord[] {
   return Array.isArray(ns.repos) ? ns.repos.filter(isRepoRecord) : [];
 }
 
+/** Records GitHub serves; Bitbucket repositories are read through their own instance. */
+export function githubRepoRecords(ns: CorbitsTriageNs): RepoRecord[] {
+  return repoRecords(ns).filter((row) => row.source !== "bitbucket");
+}
+
 export function triageNs(config: unknown): CorbitsTriageNs {
   const ns = asRecord(config)?.[CONFIG_KEY];
   return asRecord(ns) ?? {};
