@@ -1,8 +1,8 @@
 // A repository's policy kept in the repository itself. The file holds what the stored policy holds, less what the
 // repository already says: `kind`, `schemaVersion` and `repo`. Only YAML is read; another format is another path.
-import { dump, JSON_SCHEMA, load } from "js-yaml";
+import { dump, JSON_SCHEMA, load, YAMLException } from "js-yaml";
 import { asRecord } from "@corbits/common";
-import { CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, checkPackSchema, policyOverrideSchema, readCheckPack, readPolicyOverride } from "./check-pack.js";
+import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, checkPackSchema, policyOverrideSchema, readCheckPack, readPolicyOverride } from "./check-pack.js";
 
 export const POLICY_FILE_PATH = ".corbits-triage.yaml";
 export const POLICY_FILE_MAX_BYTES = 64 * 1024;
@@ -22,8 +22,19 @@ function parseYaml(text: string): unknown {
   try {
     return load(text, { schema: JSON_SCHEMA });
   } catch (error) {
-    throw new Error(`${POLICY_FILE_PATH} is not YAML: ${error instanceof Error ? error.message : String(error)}`);
+    if (!(error instanceof YAMLException)) throw error;
+    // The full message quotes the file; the reason and position say enough without carrying its content into logs.
+    throw new Error(`${POLICY_FILE_PATH} is not YAML: ${error.reason} at line ${error.mark.line + 1}, column ${error.mark.column + 1}.`);
   }
+}
+
+const LISTED_MAX = 5;
+const NAME_MAX = 80;
+
+/** Names from the file, cut short so a refusal never carries much of it. */
+function listed(names: readonly string[]): string {
+  const shown = names.slice(0, LISTED_MAX).map((name) => (name.length > NAME_MAX ? `${name.slice(0, NAME_MAX)}…` : name)).join(", ");
+  return names.length > LISTED_MAX ? `${shown} and ${names.length - LISTED_MAX} more` : shown;
 }
 
 /**
@@ -42,9 +53,12 @@ function refuseExpansion(root: unknown): void {
   }
 }
 
-function unknownKeys(file: Record<string, unknown>, allowed: readonly string[]): void {
+function refuseUnknown(file: Record<string, unknown>, allowed: readonly string[]): void {
   const unknown = Object.keys(file).filter((key) => !allowed.includes(key));
-  if (unknown.length > 0) throw new Error(`${POLICY_FILE_PATH} has unknown keys: ${unknown.join(", ")}.`);
+  if (unknown.length > 0) throw new Error(`${POLICY_FILE_PATH} has unknown keys: ${listed(unknown)}.`);
+  // The stored policy drops a rule id it does not know, which in a file is a typo that leaves the real rule at its default.
+  const checks = Object.keys(asRecord(file.checks) ?? {}).filter((id) => !(CATALOG_IDS as readonly string[]).includes(id));
+  if (checks.length > 0) throw new Error(`${POLICY_FILE_PATH} has unknown checks: ${listed(checks)}.`);
 }
 
 /** The policy the file holds, read and normalised as the hub stores it; throws an Error whose message says why the file is rejected. */
@@ -55,12 +69,12 @@ export function readPolicyFile(text: string, repo: string): Record<string, unkno
   if (!file) throw new Error(`${POLICY_FILE_PATH} must be a mapping.`);
   const header = { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION } as const;
   if (file.extends !== undefined) {
-    unknownKeys(file, OVERRIDE_KEYS);
+    refuseUnknown(file, OVERRIDE_KEYS);
     return { ...header, ...readPolicyOverride({ ...file, ...header, repo }, repo) };
   }
-  unknownKeys(file, PACK_KEYS);
+  refuseUnknown(file, PACK_KEYS);
   const { dropped, ...pack } = readCheckPack({ ...file, ...header, repo }, repo);
-  if (dropped) throw new Error(`${POLICY_FILE_PATH} holds what no longer runs: ${dropped.join("; ")}.`);
+  if (dropped) throw new Error(`${POLICY_FILE_PATH} holds what no longer runs: ${listed(dropped)}.`);
   return pack;
 }
 

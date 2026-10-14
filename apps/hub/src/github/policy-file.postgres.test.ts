@@ -16,6 +16,7 @@ const TENANT = "tnt_policy_file";
 const SYNCED = "acme/synced";
 const EXPORTED = "acme/exported";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
+const VIEWER = { tenantId: TENANT, principalId: "prn_viewer" };
 const FILE = `checks:
   ci-green:
     enabled: true
@@ -26,7 +27,8 @@ actions:
   unsure: []
 `;
 
-/** A null `text` is a file over 1 MB, whose content GitHub leaves out. */
+/** A null `text` is a file over 1 MB, whose content GitHub leaves out; the sha `DIRECTORY` is a directory at the path. */
+const DIRECTORY = "directory";
 const files = new Map<string, { sha: string; text: string | null }>();
 const branches = new Set<string>();
 const opened: Array<{ head: string; base: string; title: string }> = [];
@@ -42,8 +44,9 @@ async function github(req: Request): Promise<Response> {
   if (req.method === "GET" && path === "contents/.corbits-triage.yaml") {
     const file = files.get(repo);
     if (!file) return new Response(null, { status: 404 });
+    if (file.sha === DIRECTORY) return Response.json([{ type: "file", name: "inner.yaml" }]);
     const content = file.text === null ? { content: "", encoding: "none" } : { content: Buffer.from(file.text).toString("base64"), encoding: "base64" };
-    return Response.json({ sha: file.sha, ...content, html_url: `https://github.com/${repo}/blob/main/.corbits-triage.yaml` });
+    return Response.json({ type: "file", sha: file.sha, ...content, html_url: `https://github.com/${repo}/blob/main/.corbits-triage.yaml` });
   }
   if (req.method === "DELETE" && path.startsWith("git/refs/heads/")) {
     branches.delete(`${repo}:refs/heads/${path.slice("git/refs/heads/".length)}`);
@@ -102,7 +105,8 @@ beforeAll(async () => {
     artifacts: db,
     cipher,
     async authorize(principalId, _tenantId, resource, action) {
-      return principalId === "prn_user" && resource === "credential:crd_github" && action === "use";
+      if (resource === "credential:crd_github") return action === "use" && ["prn_user", "prn_viewer"].includes(principalId);
+      return principalId === "prn_user" && ((resource === "artifact:*" && action === "create") || (resource.startsWith("artifact:") && action === "write"));
     },
     tenantGithub: createTenantGithub({ db, cipher, githubApiOrigin }),
     async writerFor() {
@@ -151,12 +155,15 @@ test("PostgreSQL: syncing stores the policy file as the repository's policy, mar
   expect((await policyFile.syncRoute({ repo: SYNCED }, MEMBER)).status).toBe(404);
 
   files.set(SYNCED, { sha: "blob1", text: FILE });
+  // Using the file writes the policy, which credential `use` alone does not allow.
+  expect((await policyFile.syncRoute({ repo: SYNCED }, VIEWER)).status).toBe(403);
   const first = await policyFile.syncRoute({ repo: SYNCED }, MEMBER);
   expect(await first.json()).toEqual({ status: "synced", sha: "blob1" });
   const read = await readPack(TENANT, SYNCED);
   expect(read).toMatchObject({ status: "ok", source: { repo: { version: 1 }, file: { path: ".corbits-triage.yaml", sha: "blob1" } } });
   expect(read.status === "ok" && read.pack.checks).toEqual({ "ci-green": { enabled: true } });
-  expect(await latestAuthor((await syncedRow()).id)).toBe("prn_user");
+  expect(await latestAuthor((await syncedRow()).id)).toBe("prn_github");
+  expect((await policyFile.syncRoute({ repo: SYNCED }, VIEWER)).status).toBe(403);
   expect(await fileOf(SYNCED)).toEqual({ path: ".corbits-triage.yaml", sha: "blob1", url: "https://github.com/acme/synced/blob/main/.corbits-triage.yaml", syncedAt: "2026-10-13T12:00:00.000Z", inSync: true });
   expect(await (await policyFile.syncRoute({ repo: SYNCED }, MEMBER)).json()).toEqual({ status: "unchanged", sha: "blob1" });
 
@@ -172,33 +179,41 @@ test("PostgreSQL: syncing stores the policy file as the repository's policy, mar
   expect(edited.status === "ok" && edited.source.file).toBeUndefined();
   expect(await fileOf(SYNCED)).toMatchObject({ sha: "blob1", inSync: false });
 
-  // A push syncs as the GitHub sender.
-  expect(await policyFile.onPush(TENANT, SYNCED)).toEqual({ status: "synced", sha: "blob1" });
-  expect(await latestAuthor(row.id)).toBe("prn_github");
+  expect(await policyFile.onPush(TENANT, SYNCED, false)).toEqual({ status: "synced", sha: "blob1" });
 
+  const manyKeys = Array.from({ length: 7 }, (_, i) => `k${i}: 1`).join("\n");
   const refused: Array<[string | null, string]> = [
-    ["checks: [", "is not YAML"],
-    [`${FILE}extra: true\n`, "unknown keys: extra"],
+    ["checks: [", "is not YAML: unexpected end of the stream within a flow collection at line 2, column 1."],
+    [`${FILE}${manyKeys}\n`, "unknown keys: k0, k1, k2, k3, k4 and 2 more."],
+    ["checks:\n  ci-gren:\n    enabled: true\n", "unknown checks: ci-gren."],
+    [DIRECTORY, "is not a file"],
     [aliasBomb(), "too large or uses aliases"],
     [`checks: {}\n#${"x".repeat(70 * 1024)}\n`, "too large or uses aliases"],
     [null, "too large or uses aliases"],
   ];
   for (const [i, [text, reason]] of refused.entries()) {
-    files.set(SYNCED, { sha: `bad${i}`, text });
+    files.set(SYNCED, text === DIRECTORY ? { sha: DIRECTORY, text: null } : { sha: `bad${i}`, text });
     const started = performance.now();
     const res = await policyFile.syncRoute({ repo: SYNCED }, MEMBER);
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: { message: expect.stringContaining(reason) } });
     expect(performance.now() - started).toBeLessThan(2_000);
+    if (text === DIRECTORY) {
+      const status = await policyFile.fileRoute({ repo: SYNCED }, MEMBER);
+      expect(status.status).toBe(422);
+      continue;
+    }
     expect(await fileOf(SYNCED)).toMatchObject({ sha: `bad${i}`, inSync: false, problem: expect.stringContaining(reason) });
   }
 
-  // Removing the file keeps the policy, no longer marked as the file's.
+  // A file not found on a push that did not remove it writes nothing; one that removed it ends the marker.
   files.set(SYNCED, { sha: "blob1", text: FILE });
-  await policyFile.onPush(TENANT, SYNCED);
+  await policyFile.onPush(TENANT, SYNCED, false);
   const before = await syncedRow();
   files.delete(SYNCED);
-  expect(await policyFile.onPush(TENANT, SYNCED)).toEqual({ status: "removed" });
+  expect(await policyFile.onPush(TENANT, SYNCED, false)).toEqual({ status: "absent" });
+  expect((await syncedRow()).version).toBe(before.version);
+  expect(await policyFile.onPush(TENANT, SYNCED, true)).toEqual({ status: "removed" });
   const after = await readPack(TENANT, SYNCED);
   expect(after.status === "ok" && after.source.file).toBeUndefined();
   expect((await syncedRow()).content).toBe(before.content);

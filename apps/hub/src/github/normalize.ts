@@ -31,17 +31,24 @@ export function baseMoveOf(event: string, p: Json): BaseMove | null {
   return pr.base?.ref === p.repository.default_branch ? { repo, merged: pr.number } : null;
 }
 
+/** `removed` when the last commit that touched the file removed it. */
+export type PolicyPush = { repo: string; removed: boolean };
+
+function lists(paths: unknown, path: string): boolean {
+  return Array.isArray(paths) && paths.includes(path);
+}
+
 /**
- * The repository a push to its default branch that may have changed `path` came from; null for anything else. A forced
- * push's commits need not list what it replaced, so it always counts.
+ * A push to the default branch that may have changed `path`; null for anything else. A forced push's commits need not
+ * list what it replaced, so it always counts.
  */
-export function policyPushOf(event: string, p: Json, path: string): string | null {
+export function policyPushOf(event: string, p: Json, path: string): PolicyPush | null {
   const repo = p?.repository?.full_name;
   if (event !== "push" || typeof repo !== "string" || p.ref !== `refs/heads/${p.repository.default_branch}`) return null;
-  if (p.forced === true) return repo;
   const commits: Json[] = Array.isArray(p.commits) ? p.commits : [];
-  const touched = commits.some((commit) => [commit?.added, commit?.modified, commit?.removed].some((paths) => Array.isArray(paths) && paths.includes(path)));
-  return touched ? repo : null;
+  const last = commits.findLast((commit) => [commit?.added, commit?.modified, commit?.removed].some((paths) => lists(paths, path)));
+  if (!last && p.forced !== true) return null;
+  return { repo, removed: last !== undefined && lists(last.removed, path) };
 }
 
 export function normalize(event: string, deliveryId: string, p: Json): PrMail | null {

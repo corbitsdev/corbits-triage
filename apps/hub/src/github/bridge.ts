@@ -18,7 +18,7 @@ import { checkPackName, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEve
 import { asRecord, errorText, isRecord } from "@corbits/common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
-import { baseMoveOf, normalize, policyPushOf, type BaseMove } from "./normalize.js";
+import { baseMoveOf, normalize, policyPushOf, type BaseMove, type PolicyPush } from "./normalize.js";
 import type { PolicyFileSync } from "./policy-file.js";
 import { readCappedBody } from "../read-json.js";
 import { verifySignature } from "./signature.js";
@@ -65,7 +65,7 @@ export interface BridgeDeps {
   /** Has the repository's open pull requests but `except` triaged again; resolves to how many were due. */
   recheckOpenPulls: (tenantId: string, repo: string, except: number) => Promise<number>;
   /** Reads the repository's policy file into its policy; undefined when the repository is not connected. */
-  syncPolicyFile: (tenantId: string, repo: string) => Promise<PolicyFileSync | undefined>;
+  syncPolicyFile: (tenantId: string, repo: string, removed: boolean) => Promise<PolicyFileSync | undefined>;
 }
 
 function repoRows(config: unknown): Array<Record<string, unknown>> {
@@ -381,11 +381,11 @@ async function handlePolicyPush(
   loaded: BridgeHook,
   delivery: string,
   event: string,
-  repo: string,
+  { repo, removed }: PolicyPush,
 ): Promise<Response> {
   let synced: PolicyFileSync | undefined;
   try {
-    synced = await d.syncPolicyFile(loaded.tenantId, repo);
+    synced = await d.syncPolicyFile(loaded.tenantId, repo, removed);
   } catch (err) {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
     log({ level: "error", msg: "policy_file_sync_failed", delivery, event, repo, error: errorText(err) });
