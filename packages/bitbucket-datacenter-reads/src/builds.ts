@@ -13,14 +13,17 @@ const RUNS: Record<string, Omit<CheckRun, "name">> = {
   UNKNOWN: { status: "queued", conclusion: null },
 };
 
-function checkRun(row: unknown): CheckRun {
-  const build = Build.assert(row);
+function checkRun(build: typeof Build.infer): CheckRun {
   const run = RUNS[build.state];
   if (run === undefined) throw new Error(`bitbucket build ${build.key} has an unknown state ${build.state}`);
   return { name: build.name ?? build.key, ...run };
 }
 
+/** The build status triage writes with its verdict; it is not a check of the head. */
+export const TRIAGE_BUILD_KEY = "corbits-triage";
+
 /** Build statuses on a commit as GitHub check runs; the repository-scoped builds route answers only for a named key. */
 export async function getChecks(bb: BitbucketFetch, sha: string): Promise<CheckRun[]> {
-  return (await jsonAll(bb, `/rest/build-status/1.0/commits/${encodeURIComponent(sha)}`)).map(checkRun);
+  const builds = (await jsonAll(bb, `/rest/build-status/1.0/commits/${encodeURIComponent(sha)}`)).map((row) => Build.assert(row));
+  return builds.filter((build) => build.key !== TRIAGE_BUILD_KEY).map(checkRun);
 }

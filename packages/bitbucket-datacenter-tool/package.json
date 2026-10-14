@@ -23,6 +23,7 @@
     "pack:tool": "bun run build.ts pack"
   },
   "dependencies": {
+    "@corbits/bitbucket-datacenter-reads": "workspace:*",
     "@corbits/github-reads": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@intx/agent": "workspace:*",
@@ -38,5 +39,5 @@
     "dist",
     "package.json"
   ],
-  "description": "Bitbucket Data Center write tools for Interchange"
+  "description": "Bitbucket Data Center read and write tools for Interchange"
 }

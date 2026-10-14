@@ -20,14 +20,26 @@ async function cappedText(res: Response): Promise<string | null> {
   return bytes.length > POLICY_FILE_MAX_BYTES ? null : utf8.decode(bytes);
 }
 
+const Branches = type({ values: type({ displayId: "string", latestCommit: "string" }).array() });
+
+/** The head of the named branch, or of the default branch. */
+async function branchHead(bb: BitbucketFetch, base: string, branch: string | undefined): Promise<string> {
+  if (branch === undefined) return DefaultBranch.assert(await json(bb, `${base}/branches/default`)).latestCommit;
+  const branches = Branches.assert(await json(bb, `${base}/branches?filterText=${encodeURIComponent(branch)}&limit=100`));
+  const found = branches.values.find((row) => row.displayId === branch);
+  if (!found) throw new Error(`bitbucket has no branch ${branch} in ${base}`);
+  return found.latestCommit;
+}
+
 /**
- * A file on the default branch, or undefined when nothing is there. Every read is pinned to the branch head so the
- * file, its type and its sha agree; the sha is the last commit that changed the file, as Data Center has no blob read.
+ * A file on `branch`, the default branch when absent, or undefined when nothing is there. Every read is pinned to the
+ * branch head so the file, its type and its sha agree; the sha is the last commit that changed the file, as Data
+ * Center has no blob read.
  */
-export async function readRepoFile(bb: BitbucketFetch, repo: string, path: string): Promise<RepoFileRead | undefined> {
+export async function readRepoFile(bb: BitbucketFetch, repo: string, path: string, branch?: string): Promise<RepoFileRead | undefined> {
   const base = repoPath(repo);
   const file = filePath(path);
-  const head = DefaultBranch.assert(await json(bb, `${base}/branches/default`)).latestCommit;
+  const head = await branchHead(bb, base, branch);
   const at = `at=${encodeURIComponent(head)}`;
   const browse = await bb(`${base}/browse/${file}?type=true&${at}`, { headers: { accept: "application/json" } });
   if (browse.status === 404) return undefined;

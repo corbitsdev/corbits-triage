@@ -1,4 +1,5 @@
-import { parseHeader, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type MarkerFormat, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { TRIAGE_BUILD_KEY } from "@corbits/bitbucket-datacenter-reads";
+import { isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 /** Pinned to the Bitbucket Data Center instance origin, with auth added by the mediated credential. */
 export type BitbucketFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -12,39 +13,7 @@ export class BitbucketRefusal extends Error {}
 
 export const NOT_OPEN = "the pull request is not open";
 
-const TRIAGE_PREFIX = "[corbits-triage";
-const TRIAGE_SUPERSEDED = "[corbits-triage-superseded]: #";
-// Data Center shows an HTML comment as text; a CommonMark link reference definition renders as nothing.
-const TRIAGE_MARKER = "[corbits-triage]: #";
-
-export function isTriageComment(body: string): boolean {
-  return body.startsWith(TRIAGE_PREFIX);
-}
-
-function headerLine(prefix: string, header: TriageHeader): string {
-  return `${prefix}${encodeURIComponent(JSON.stringify(header))}`;
-}
-
-export const REFERENCE_MARKERS: MarkerFormat = {
-  current(header) {
-    return headerLine(TRIAGE_MARKER, header);
-  },
-  superseded(header) {
-    return headerLine(TRIAGE_SUPERSEDED, header);
-  },
-  headerOf(body) {
-    const match = /^\[corbits-triage(?:-superseded)?\]: #(\S+)/.exec(body);
-    if (!match) return undefined;
-    try {
-      return parseHeader(decodeURIComponent(match[1]!));
-    } catch {
-      return undefined;
-    }
-  },
-  isSuperseded(body) {
-    return body.startsWith(TRIAGE_SUPERSEDED);
-  },
-};
+export const TRIAGE_BUILD_NAME = "Corbits Triage";
 
 function send(method: string, body?: unknown): RequestInit {
   if (body === undefined) return { method };
@@ -123,6 +92,7 @@ export type PullRequest = {
   state: "OPEN" | "DECLINED" | "MERGED";
   version: number;
   sha: string;
+  url: string;
   author: { id: number; slug: string };
   reviewers: Participant[];
   participants: Participant[];
@@ -130,7 +100,7 @@ export type PullRequest = {
 
 export async function readPr(bb: BitbucketFetch, repo: string, number: number): Promise<PullRequest> {
   const pr = await json(bb, prPath(repo, number));
-  return { state: pr.state, version: pr.version, sha: pr.fromRef.latestCommit, author: pr.author.user, reviewers: pr.reviewers, participants: pr.participants };
+  return { state: pr.state, version: pr.version, sha: pr.fromRef.latestCommit, url: pr.links.self[0].href, author: pr.author.user, reviewers: pr.reviewers, participants: pr.participants };
 }
 
 export function statusOf(pr: PullRequest, user: TokenUser): ParticipantStatus | undefined {
@@ -185,7 +155,7 @@ function commentHost(bb: BitbucketFetch, repo: string, number: number, versions:
 }
 
 function marked(comments: Comment[], user: TokenUser): Comment[] {
-  return comments.filter((c) => c.author.id === user.id && isTriageComment(c.text));
+  return comments.filter((c) => c.author.id === user.id && isLinkReferenceTriageComment(c.text));
 }
 
 function markedComment(comment: Comment): MarkedComment {
@@ -201,9 +171,9 @@ export async function writeTriageComment(bb: BitbucketFetch, input: { repo: stri
   const own = marked(await listComments(bb, repo, number), user);
   const host = commentHost(bb, repo, number, new Map(own.map((c) => [c.id, c.version])));
   const comments = own.map(markedComment);
-  if (header) return writeHeadedComment(host, REFERENCE_MARKERS, comments, header, input.body);
-  const current = comments.filter((c) => !REFERENCE_MARKERS.isSuperseded(c.body));
-  return upsertMarked(host, `${TRIAGE_MARKER}\n${input.body}`, current);
+  if (header) return writeHeadedComment(host, LINK_REFERENCE_MARKERS, comments, header, input.body);
+  const current = comments.filter((c) => !LINK_REFERENCE_MARKERS.isSuperseded(c.body));
+  return upsertMarked(host, `${LINK_REFERENCE_MARKER}\n${input.body}`, current);
 }
 
 async function deleteTriageComments(bb: BitbucketFetch, repo: string, number: number, user: TokenUser) {
@@ -234,9 +204,27 @@ export async function mergePr(bb: BitbucketFetch, input: { repo: string; number:
 
 export type BuildState = "SUCCESSFUL" | "FAILED" | "INPROGRESS" | "CANCELLED" | "UNKNOWN";
 
+type Build = { state: BuildState; key: string; description?: string | null; url?: string | null };
+
+async function builds(bb: BitbucketFetch, sha: string): Promise<Build[]> {
+  return jsonAll<Build>(bb, `/rest/build-status/1.0/commits/${sha}`);
+}
+
+/** Other builds on the head; triage's own verdict is not one of them. */
 export async function buildStates(bb: BitbucketFetch, sha: string): Promise<BuildState[]> {
-  const builds = await jsonAll<{ state: BuildState }>(bb, `/rest/build-status/1.0/commits/${sha}`);
-  return builds.map((b) => b.state);
+  return (await builds(bb, sha)).filter((b) => b.key !== TRIAGE_BUILD_KEY).map((b) => b.state);
+}
+
+/** The verdict as a build status on the head: Data Center has no labels, and a build status is what its pull request page shows beside the head. */
+export type VerdictBuild = { state: "SUCCESSFUL" | "FAILED" | "INPROGRESS"; description: string; url?: string };
+
+/** Writes the verdict build status unless the head already shows it; Data Center keeps one status per key and needs a URL on it. */
+export async function setVerdictBuild(bb: BitbucketFetch, sha: string, build: VerdictBuild, fallbackUrl: string): Promise<{ build: VerdictBuild["state"]; written: boolean }> {
+  const url = build.url ?? fallbackUrl;
+  const current = (await builds(bb, sha)).find((b) => b.key === TRIAGE_BUILD_KEY);
+  if (current && current.state === build.state && (current.description ?? "") === build.description && current.url === url) return { build: build.state, written: false };
+  await json(bb, `/rest/build-status/1.0/commits/${sha}`, send("POST", { state: build.state, key: TRIAGE_BUILD_KEY, name: TRIAGE_BUILD_NAME, url, description: build.description }));
+  return { build: build.state, written: true };
 }
 
 export interface MirrorInput {
@@ -247,16 +235,18 @@ export interface MirrorInput {
   owned?: readonly string[];
   comment?: string;
   header?: TriageHeader;
+  build?: VerdictBuild;
   close: boolean;
 }
 
-/** Writes the Triage comment and declines when asked. An empty comment means nothing is asked of the author, so an earlier one would be stale. */
+/** Writes the Triage comment and build status, and declines when asked. An empty comment means nothing is asked of the author, so an earlier one would be stale. */
 export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: BitbucketUser) {
   const { repo, number } = i;
   const pr = await readPr(bb, repo, number);
   if (pr.state !== "OPEN") return { commentId: null, updated: false, closed: false, sha: pr.sha, skipped: NOT_OPEN };
   if (i.comment === "") await deleteTriageComments(bb, repo, number, await user());
   const posted = i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header }, await user()) : null;
+  const build = i.build ? await setVerdictBuild(bb, pr.sha, i.build, pr.url) : undefined;
   if (i.close) await declinePr(bb, { repo, number, version: pr.version });
-  return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }) };
+  return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }), ...(build && { build: build.build, buildWritten: build.written }) };
 }

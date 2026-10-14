@@ -133,6 +133,7 @@
       "name": "@corbits/bitbucket-datacenter-tool",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/bitbucket-datacenter-reads": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/agent": "workspace:*",

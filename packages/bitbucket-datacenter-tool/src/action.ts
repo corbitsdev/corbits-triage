@@ -1,5 +1,6 @@
 import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { ciRefusal, mergeableCi, type CiState } from "@corbits/github-reads";
+import { defaultReviewers } from "@corbits/bitbucket-datacenter-reads";
 import { type } from "arktype";
 import {
   addReviewers,
@@ -34,7 +35,7 @@ export type ActionOutcome = { status: "done" | "satisfied"; result: unknown };
 export const NO_LABELS = "Bitbucket Data Center has no labels";
 export const NO_ASSIGNEES = "Bitbucket Data Center has no assignees";
 export const NO_TEAMS = "Bitbucket Data Center has no team reviewers";
-export const NO_CODEOWNERS = "Bitbucket Data Center code owners are not read";
+export const NO_DEFAULT_REVIEWERS = "no default reviewers for this pull request";
 export const OWN_PULL_REQUEST = "Bitbucket Data Center forbids reviewing your own pull request";
 
 export function actionMarker(effectId: string): string {
@@ -63,8 +64,13 @@ function onHead(sha: string, { repo, number }: ActionInput["request"], step: Act
   if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);
 }
 
-function reviewerSlugs(target: ResolvedTarget): string[] {
-  if ("unresolved" in target) throw new ActionNotRunnableError(NO_CODEOWNERS);
+/** Code owners are Data Center's default reviewers for the pull request. */
+async function reviewerSlugs(bb: BitbucketFetch, repo: string, number: number, target: ResolvedTarget): Promise<string[]> {
+  if ("unresolved" in target) {
+    const owners = await defaultReviewers(bb, repo, number);
+    if (!owners.users.length) throw new ActionNotRunnableError(NO_DEFAULT_REVIEWERS);
+    return owners.users;
+  }
   if (!("users" in target)) throw new Error("this action names no people");
   if (!target.users.length) throw new ActionNotRunnableError(NO_TEAMS);
   return target.users;
@@ -102,7 +108,7 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
       throw new ActionNotRunnableError(NO_ASSIGNEES);
     case "request-review": {
       const present = new Set([pr.author.slug, ...pr.reviewers.map((r) => r.user.slug)]);
-      const reviewers = reviewerSlugs(target).filter((slug) => !present.has(slug));
+      const reviewers = (await reviewerSlugs(bb, repo, number, target)).filter((slug) => !present.has(slug));
       if (!reviewers.length) return { status: "satisfied", result: { reviewers } };
       return { status: "done", result: await addReviewers(bb, { repo, number, reviewers }) };
     }

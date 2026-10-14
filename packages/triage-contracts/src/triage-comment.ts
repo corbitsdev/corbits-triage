@@ -130,3 +130,38 @@ export async function writeHeadedComment(host: CommentHost, markers: MarkerForma
   if (earlier && supersedes(earlier, header)) return { commentId: await host.post(`${markers.current(header)}\n${supersedesNote(earlier, header)}\n\n${text}`), updated: false };
   return upsertMarked(host, `${markers.current(header)}\n${text}`, current);
 }
+
+const LINK_REFERENCE_PREFIX = "[corbits-triage";
+const LINK_REFERENCE_SUPERSEDED = "[corbits-triage-superseded]: #";
+
+/** A host that shows an HTML comment as text gets the header in a CommonMark link reference definition, which renders as nothing. */
+export const LINK_REFERENCE_MARKER = "[corbits-triage]: #";
+
+export function isLinkReferenceTriageComment(body: string): boolean {
+  return body.startsWith(LINK_REFERENCE_PREFIX);
+}
+
+function linkReferenceLine(prefix: string, header: TriageHeader): string {
+  return `${prefix}${encodeURIComponent(JSON.stringify(header))}`;
+}
+
+export const LINK_REFERENCE_MARKERS: MarkerFormat = {
+  current(header) {
+    return linkReferenceLine(LINK_REFERENCE_MARKER, header);
+  },
+  superseded(header) {
+    return linkReferenceLine(LINK_REFERENCE_SUPERSEDED, header);
+  },
+  headerOf(body) {
+    const match = /^\[corbits-triage(?:-superseded)?\]: #(\S+)/.exec(body);
+    if (!match) return undefined;
+    try {
+      return parseHeader(decodeURIComponent(match[1]!));
+    } catch {
+      return undefined;
+    }
+  },
+  isSuperseded(body) {
+    return body.startsWith(LINK_REFERENCE_SUPERSEDED);
+  },
+};
