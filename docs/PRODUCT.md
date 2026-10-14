@@ -292,6 +292,29 @@ artifact titled `workspace-policy/<name>`, and a repository policy extends it
 by setting `extends` to that artifact's id. The portal shows an extending
 policy resolved but cannot edit it yet.
 
+### Policy file
+
+A repository may keep its policy in `.corbits-triage.yaml` at the root of its
+default branch, so policy changes are reviewed like code. The file holds what
+the stored policy holds, without `kind`, `schemaVersion` and `repo`; it may
+`extends` a workspace policy. Its JSON Schema is `policyFile` at the hub's
+`/api/integrations/pack-schema`. Only YAML is read today.
+
+Precedence: the file, then the workspace policy it extends, then what the hub
+holds. A push to the default branch that changes the file stores it as a new
+version of the repository's policy, marked with the file's blob sha, and runs
+name that file; a file that is not a valid policy is logged and changes
+nothing. A repository without the file is untouched.
+
+In the portal the repository's Policy card links the file and says when it
+was synced; the rules, steps and labels are then read-only, with **Edit on
+GitHub**. When the hub's copy differs from the file it says **Not in sync**,
+and **Use file** reads the file now. A repository without the file can
+**Export to repository**: the hub opens a pull request adding the file from
+the current policy on the `corbits-triage/policy` branch. The same reads and
+writes are hub routes: `GET …/github-triage/{tenantId}/policy/file`, and
+`POST …/policy/sync` and `…/policy/export`.
+
 ## Triage over time
 
 Turning triage on triages a repository's open pull requests; after that,

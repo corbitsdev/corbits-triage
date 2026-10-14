@@ -140,9 +140,10 @@ function openHeadOf(drafts: number[]): BridgeDeps["openHeadFor"] {
 
 type Recheck = [string, string, number];
 
-function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[] } = {}) {
+function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[]; synced?: string[] } = {}) {
   const sent = overrides.sent ?? [];
   const rechecks = overrides.rechecks ?? [];
+  const synced = overrides.synced ?? [];
   async function accept(input: CoalescedEvent) {
     sent.push(input);
     return "queued" as const;
@@ -160,6 +161,10 @@ function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Rec
     readCheckPack: packsFor(["octocat/hello"]),
     openHeadFor: openHeadOf([]),
     recheckOpenPulls,
+    async syncPolicyFile(_tenantId, repo) {
+      synced.push(repo);
+      return { status: "synced", sha: "blob1" };
+    },
     ...overrides,
   });
 }
@@ -321,6 +326,24 @@ describe("bridge handler", () => {
     }
     expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7]]);
     expect(sent).toHaveLength(0);
+  });
+
+  test("a push to the default branch that changes the policy file syncs it", async () => {
+    const synced: string[] = [];
+    const handle = bridge({ synced });
+    function push(ref: string, modified: string[]) {
+      return JSON.stringify({ ref, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [{ added: [], modified }] });
+    }
+    const deliveries: Array<[string, string]> = [
+      [push("refs/heads/main", [".corbits-triage.yaml"]), "accepted"],
+      [push("refs/heads/main", ["README.md"]), "ignored"],
+      [push("refs/heads/feature", [".corbits-triage.yaml"]), "ignored"],
+    ];
+    for (const [i, [body, status]] of deliveries.entries()) {
+      const res = await handle(githubRequest(body, { event: "push", delivery: `p${i}` }), TARGET);
+      expect(await res.json()).toEqual({ status });
+    }
+    expect(synced).toEqual(["octocat/hello"]);
   });
 
   test("a base move the triage state refused is 500 and releases the id for retry", async () => {

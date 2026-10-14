@@ -31,6 +31,14 @@ export function baseMoveOf(event: string, p: Json): BaseMove | null {
   return pr.base?.ref === p.repository.default_branch ? { repo, merged: pr.number } : null;
 }
 
+/** The repository a push to its default branch that touched `path` came from; null for anything else. */
+export function policyPushOf(event: string, p: Json, path: string): string | null {
+  const repo = p?.repository?.full_name;
+  if (event !== "push" || typeof repo !== "string" || p.ref !== `refs/heads/${p.repository.default_branch}` || !Array.isArray(p.commits)) return null;
+  const touched = p.commits.some((commit: Json) => [commit?.added, commit?.modified].some((paths) => Array.isArray(paths) && paths.includes(path)));
+  return touched ? repo : null;
+}
+
 export function normalize(event: string, deliveryId: string, p: Json): PrMail | null {
   if (!(EVENTS as readonly string[]).includes(event)) return null;
   const repo = p.repository?.full_name;

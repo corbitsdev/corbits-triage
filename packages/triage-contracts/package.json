@@ -12,9 +12,11 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@corbits/common": "workspace:*",
-    "arktype": "catalog:"
+    "arktype": "catalog:",
+    "js-yaml": "4.1.0"
   },
   "devDependencies": {
-    "@intx/mime": "workspace:*"
+    "@intx/mime": "workspace:*",
+    "@types/js-yaml": "4.0.9"
   }
 }
