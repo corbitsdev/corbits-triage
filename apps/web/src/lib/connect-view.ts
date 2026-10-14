@@ -5,13 +5,7 @@ export function isPrivateKeyPem(value: string): boolean {
     /^-----BEGIN RSA PRIVATE KEY-----\n[\s\S]+\n-----END RSA PRIVATE KEY-----$/.test(pem);
 }
 
-function fillRandom(bytes: Uint8Array): void {
-  crypto.getRandomValues(bytes as unknown as Uint8Array<ArrayBuffer>);
-}
-
-export function generateWebhookSecret(fill: (bytes: Uint8Array) => void = fillRandom): string {
-  const bytes = new Uint8Array(32);
-  fill(bytes);
-  if (bytes.length !== 32) throw new Error("Webhook secret generator must return 32 bytes");
+export function generateWebhookSecret(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

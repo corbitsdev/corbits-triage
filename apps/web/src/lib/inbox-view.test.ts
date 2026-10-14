@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { allOpen, firstTimers, groupInbox, groupOpen, hasDraftComment, inboxAction, inboxStatus, listCounts, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, firstTimers, groupInbox, groupOpen, inboxAction, inboxStatus, listCounts, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -88,21 +88,6 @@ describe("groupInbox", () => {
     const view = groupInbox([item({ key: "verdict", state: "ready" }), item({ key: "untriaged", state: "new", runId: null })], new Set());
     expect(view.groups.map((group) => group.items.map((row) => row.key))).toEqual([["verdict"]]);
     expect(view.awaiting).toBe(0);
-  });
-});
-
-describe("hasDraftComment", () => {
-  test("a real draft is a draft", () => {
-    expect(hasDraftComment("approve this")).toBe(true);
-  });
-
-  test("null and empty are not drafts", () => {
-    expect(hasDraftComment(null)).toBe(false);
-    expect(hasDraftComment("")).toBe(false);
-  });
-
-  test("whitespace-only is not a draft", () => {
-    expect(hasDraftComment("   ")).toBe(false);
   });
 });
 
