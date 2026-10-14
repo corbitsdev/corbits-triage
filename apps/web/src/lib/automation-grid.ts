@@ -23,14 +23,35 @@ export function gridCell(role: HubRole, kind: ActionKind, grants: readonly HubGr
   return { granted: own.length > 0, locked: false, grants: own, repos };
 }
 
-/** Owner and admin first, then the other roles, then what triage does on its own. */
+/** The roles people hold, owner and admin first. */
 export function gridRoles(roles: readonly HubRole[]): HubRole[] {
   function rank(role: HubRole): number {
     if (system(role, "owner")) return 0;
-    if (system(role, "admin")) return 1;
-    return system(role, TRIAGE_ROLE) ? 3 : 2;
+    return system(role, "admin") ? 1 : 2;
   }
-  return [...roles].sort((a, b) => rank(a) - rank(b));
+  return roles.filter((role) => !isTriageRole(role)).sort((a, b) => rank(a) - rank(b));
+}
+
+export function findTriageRole(roles: readonly HubRole[]): HubRole | undefined {
+  return roles.find((role) => system(role, TRIAGE_ROLE));
+}
+
+/**
+ * Where triage runs `kind` without asking. `locked` when a grant of every kind covers it, which cannot change here;
+ * `everywhere` is the kind's `*` grant; `repos` pairs each named repository with the grant that names it.
+ */
+export type TriageScope = { locked: boolean; everywhere: HubGrant | undefined; repos: { repo: string; grant: HubGrant }[] };
+
+export function triageScope(triage: HubRole, kind: ActionKind, grants: readonly HubGrant[]): TriageScope {
+  const held = grants.filter((grant) => grant.roleId === triage.id && grant.action === DO_GRANT_ACTION && grant.effect === "allow");
+  const prefix = `${DO_GRANT_PREFIX}:${kind}:`;
+  const everywhere = doResource(kind, "*");
+  const own = held.filter((grant) => grant.resource.startsWith(prefix));
+  return {
+    locked: held.some((grant) => grant.resource === ANY_DO_RESOURCE),
+    everywhere: own.find((grant) => grant.resource === everywhere),
+    repos: own.filter((grant) => grant.resource !== everywhere).map((grant) => ({ repo: grant.resource.slice(prefix.length), grant })),
+  };
 }
 
 type NamedRole = { name: string; isSystem?: boolean };
@@ -41,13 +62,12 @@ export function isTriageRole(role: NamedRole): boolean {
 }
 
 export function roleName(role: NamedRole): string {
-  if (isTriageRole(role)) return "Triage on its own";
   return role.name.charAt(0).toUpperCase() + role.name.slice(1);
 }
 
 /** Whether the pr-triage role is granted `kind` on `repo`, so triage runs it without asking. */
 export function triageRunsAlone(roles: readonly HubRole[], grants: readonly HubGrant[], kind: ActionKind, repo: string): boolean {
-  const triage = roles.find((role) => system(role, TRIAGE_ROLE));
+  const triage = findTriageRole(roles);
   if (!triage) return false;
   const resources = [ANY_DO_RESOURCE, doResource(kind, "*"), doResource(kind, repo)];
   return grants.some((grant) => grant.roleId === triage.id && grant.action === DO_GRANT_ACTION && grant.effect === "allow" && resources.includes(grant.resource));

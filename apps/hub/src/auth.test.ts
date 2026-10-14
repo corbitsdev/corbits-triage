@@ -16,6 +16,7 @@ test("an allowlist requires Google and turns email/password off", () => {
   const google = { GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret" } as HubEnv;
   expect(() => signInSettings({ AUTH_ALLOWED_EMAILS: "@corbits.dev" } as HubEnv)).toThrow("requires Google");
   expect(() => signInSettings({ GOOGLE_CLIENT_ID: "id" } as HubEnv)).toThrow("must be set together");
+  expect(() => signInSettings({ ...google, AUTH_ALLOWED_EMAILS: " , " })).toThrow("lists no address");
   expect(authMethods(signInSettings({ ...google, AUTH_ALLOWED_EMAILS: "@corbits.dev" }), true)).toEqual({ google: true, emailPassword: false, passwordReset: false });
   expect(authMethods(signInSettings(google), false)).toEqual({ google: true, emailPassword: true, passwordReset: false });
 });
