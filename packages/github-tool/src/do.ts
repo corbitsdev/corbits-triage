@@ -1,25 +1,32 @@
-import { ACTION_KINDS, AGENT_DO, DERIVED_LABELS_DO, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import {
+  ciRefusal,
   codeownersForPr,
+  getChecks,
   getReviews,
+  latestDecisive,
   listIssueComments,
+  mergeableCi,
   missingFrom,
   readPr,
   REQUEST_CHANGES_DO_MARKER,
   reviewedOnHead,
+  summarizeChecks,
   type AppLogin,
   type GithubFetch,
 } from "@corbits/github-reads";
 import {
   addAssignees,
-  addLabels,
   APPROVE_DO_MARKER,
   approvalOnHead,
   changesRequestedOnHead,
   createIssueComment,
   createReview,
+  dismissDoChangeRequests,
+  mergePr,
   mirror,
+  syncLabels,
   requestReviewers,
   type MirrorInput,
 } from "./github";
@@ -41,13 +48,11 @@ export function doMarker(effectId: string): string {
   return `<!-- corbits-do:${effectId} -->`;
 }
 
-const Target = type({ labels: "string[]" })
+const Target = type({ labels: "string[]", "unlabel?": "string[]" })
   .or({ users: "string[]", "teams?": "string[]" })
   .or({ body: "string" })
-  .or({ prompt: "string", tools: "string[]" })
   .or({ unresolved: "'codeowners'" })
-  .or({ unresolved: "'derive'", from: "'type' | 'paths'" })
-  .or({ "+": "reject" });
+  .or({ "+": "reject", "ciOptional?": "true" });
 
 /** A Do as a caller hands it over the wire. */
 export const DoArgs = type({
@@ -64,7 +69,7 @@ export function parseDoInput(args: unknown): DoInput {
 
 type People = { users: string[]; teams: string[] };
 
-/** A close, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
+/** A close, merge, comment or review reads as the verdict's judgement of its head, so it is not written on a later one; the other writes still hold. */
 function onHead(sha: string, { repo, number }: DoInput["request"], step: DoStep): void {
   if (sha !== step.headSha) throw new HeadMovedError(`${repo}#${number} has new commits since this verdict. Run triage again.`);
 }
@@ -77,16 +82,29 @@ async function people(gh: GithubFetch, repo: string, number: number, target: Res
   return owners;
 }
 
+/**
+ * Takes back triage's own request for changes on the merging head, or says why it stands: a repository may restrict who
+ * dismisses reviews, and the merge is then GitHub's to refuse.
+ */
+async function takeBackOwnRequest(gh: GithubFetch, input: { repo: string; number: number; login: string; sha: string }): Promise<string | undefined> {
+  try {
+    await dismissDoChangeRequests(gh, input);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 /** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's own reviews. */
 export async function executeDo(gh: GithubFetch, { request, step }: DoInput, login: AppLogin): Promise<DoOutcome> {
   const { repo, number } = request;
   const { target } = step;
   switch (step.kind) {
     case "labels": {
-      if (!("labels" in target)) throw new DoNotRunnableError(DERIVED_LABELS_DO);
-      const labels = missingFrom((await readPr(gh, repo, number)).labels, target.labels);
-      if (!labels.length) return { status: "satisfied", result: { labels } };
-      return { status: "done", result: await addLabels(gh, { repo, number, labels }) };
+      if (!("labels" in target)) throw new DoNotRunnableError("this labels Do names no labels");
+      const current = (await readPr(gh, repo, number)).labels;
+      const result = await syncLabels(gh, { repo, number, current, add: target.labels, remove: target.unlabel ?? [] });
+      return { status: result.added.length || result.removed.length ? "done" : "satisfied", result };
     }
     case "assign": {
       const { users } = await people(gh, repo, number, target);
@@ -132,8 +150,21 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (posted) return { status: "satisfied", result: { commentId: posted.id } };
       return { status: "done", result: await createIssueComment(gh, { repo, number, body: `${marker}\n${target.body}` }) };
     }
-    case "agent":
-      throw new DoNotRunnableError(AGENT_DO);
+    // CI and reviews are read again here because a held merge can be approved long after its verdict; branch protection stays the backstop.
+    case "merge": {
+      const pr = await readPr(gh, repo, number);
+      if (pr.merged === true) return { status: "satisfied", result: { merged: true } };
+      onHead(pr.sha, request, step);
+      const ci = summarizeChecks(await getChecks(gh, repo, step.headSha));
+      if (!mergeableCi(ci, "ciOptional" in target)) throw new DoNotRunnableError(ciRefusal(ci));
+      const reviews = await getReviews(gh, repo, number, login);
+      const requested = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
+      if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
+      // Execute runs before the mirror, and a protected branch refuses the merge while triage's own request on this head stands; one on an earlier head is the mirror's to take back.
+      const ownRequest = reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha);
+      const kept = ownRequest ? await takeBackOwnRequest(gh, { repo, number, login: await login(), sha: step.headSha }) : undefined;
+      return { status: "done", result: { ...(await mergePr(gh, { repo, number, sha: step.headSha })), ...(kept && { changeRequestsKept: kept }) } };
+    }
     default:
       throw new DoNotRunnableError(`unknown Do kind ${(step as { kind: unknown }).kind}`);
   }

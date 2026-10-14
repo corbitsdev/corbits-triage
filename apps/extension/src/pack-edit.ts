@@ -1,4 +1,4 @@
-import { CATALOG_IDS, customCheckEnabled, customRuleId, readCheckPack, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type ModelCheck, type RuleCheck } from "@corbits/triage-contracts";
+import { CATALOG_IDS, customCheckEnabled, customRuleId, readCheckPack, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type ModelCheck } from "@corbits/triage-contracts";
 import { errorText } from "./error-text.ts";
 import { defaultLocalPack } from "./local-pack.ts";
 import { CATALOG_ORDER } from "./prose.ts";
@@ -42,8 +42,8 @@ export function withCatalogParams(pack: CheckPack, id: CatalogId, params: Partia
   return validated({ ...pack, checks: { ...pack.checks, [id]: { ...row, ...params } } });
 }
 
-/** A custom check as the editor holds it: a name and its rule's or shape's parameters. */
-export type CustomForm = { name: string } & (({ kind: "rule" } & RuleCheck) | ({ kind: "model" } & ModelCheck));
+/** A custom check as the editor holds it: a name and its shape's parameters. */
+export type CustomForm = { name: string; kind: "model" } & ModelCheck;
 
 /** Unique over the pack's and the defaults' ids, so a new rule never takes a default's id while that default is removed. */
 function nextCustomId(pack: CheckPack, name: string): string {

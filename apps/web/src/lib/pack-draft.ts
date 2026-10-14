@@ -15,15 +15,14 @@ import {
   type CheckPack,
   type CheckRef,
   type CustomCheck,
-  type Do,
+  type Step,
   type PolicyActions,
   type PolicyEvent,
   type RepoPolicy,
-  type RepoRole,
   type VerdictWord,
 } from "@corbits/triage-contracts";
 
-export type DraftPolicy = Pick<RepoPolicy, "enabled" | "roles">;
+export type DraftPolicy = Pick<RepoPolicy, "enabled">;
 
 /** Everything the repository panel edits, as the contracts store it. */
 export type RepoDraft = { pack: CheckPack; policy: DraftPolicy };
@@ -49,8 +48,8 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 export function fromPack(pack: CheckPack, policy: DraftPolicy): RepoDraft {
-  const { enabled, roles } = policy;
-  return { pack, policy: { enabled, roles } };
+  const { enabled } = policy;
+  return { pack, policy: { enabled } };
 }
 
 export function toPack(draft: RepoDraft): CheckPack {
@@ -142,17 +141,8 @@ export function setWhen(draft: RepoDraft, when: PolicyEvent[]): RepoDraft {
   return withActions(draft, { when });
 }
 
-export function setList(draft: RepoDraft, list: VerdictWord, dos: Do[]): RepoDraft {
+export function setList(draft: RepoDraft, list: VerdictWord, dos: Step[]): RepoDraft {
   return withActions(draft, { [list]: dos });
-}
-
-export function setRole(draft: RepoDraft, name: string, role: RepoRole): RepoDraft {
-  return { ...draft, policy: { ...draft.policy, roles: { ...draft.policy.roles, [name]: role } } };
-}
-
-export function removeRole(draft: RepoDraft, name: string): RepoDraft {
-  const roles = Object.fromEntries(Object.entries(draft.policy.roles).filter(([key]) => key !== name));
-  return { ...draft, policy: { ...draft.policy, roles } };
 }
 
 function changedIds<T extends { id: string }>(saved: T[], draft: T[]): number {
@@ -167,11 +157,9 @@ export function packChanges(saved: CheckPack, draft: CheckPack): number {
     + (["when", ...VERDICTS] as const).filter((key) => !same(saved.actions[key], draft.actions[key])).length;
 }
 
-/** One change per policy switch and per role that differs. */
+/** One change when the triage switch differs. */
 export function policyChanges(saved: DraftPolicy, draft: DraftPolicy): number {
-  const roles = new Set([...Object.keys(saved.roles), ...Object.keys(draft.roles)]);
-  return Number(saved.enabled !== draft.enabled)
-    + [...roles].filter((name) => !same(saved.roles[name], draft.roles[name])).length;
+  return Number(saved.enabled !== draft.enabled);
 }
 
 export function changeCount(saved: RepoDraft, draft: RepoDraft): number {
@@ -189,18 +177,13 @@ function idAt(message: string, label: string, rows: Array<{ id: string }>): stri
 }
 
 function whereOf(message: string, pack: CheckPack): DraftWhere {
-  const list = VERDICTS.find((word) => message.startsWith(`Actions ${word} `));
+  const list = VERDICTS.find((word) => message.toLowerCase().startsWith(`${word} step `));
   if (list !== undefined) return { section: "actions", list };
   if (message.startsWith("Actions")) return { section: "actions" };
   const custom = idAt(message, "Custom rule", pack.custom);
   if (custom !== undefined) return { section: "custom", id: custom };
   if (message.startsWith("Custom rule ") || message.startsWith("Policy must have at most")) return { section: "custom" };
   return { section: "pack" };
-}
-
-/** Role names the Dos assign or request review from. */
-export function rolesUsed(dos: Do[]): string[] {
-  return dos.flatMap((step) => ((step.kind === "assign" || step.kind === "request-review") && step.target.to === "role" ? [step.target.role] : []));
 }
 
 /** Why the draft cannot be saved, in the contract's words, and where that belongs; null when it can. */
@@ -211,10 +194,6 @@ export function validate(draft: RepoDraft): DraftProblem | null {
   } catch (cause) {
     if (!(cause instanceof Error)) throw cause;
     return { reason: cause.message, where: whereOf(cause.message, draft.pack) };
-  }
-  for (const list of VERDICTS) {
-    const role = rolesUsed(pack.actions[list]).find((name) => !Object.hasOwn(draft.policy.roles, name));
-    if (role !== undefined) return { reason: `Actions ${list} targets role ${role}, which this repository does not define.`, where: { section: "actions", list } };
   }
   const anyCheck = CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
   if (draft.policy.enabled && !anyCheck) return { reason: "Switch on a rule before turning triage on.", where: { section: "triage" } };

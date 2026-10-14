@@ -14,7 +14,7 @@
 // through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, repoPolicy, triageEventOf, VERDICTS, type CheckPack, type Do, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, legacyCheckPack, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
 import { asRecord, isRecord } from "@corbits/common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
@@ -158,26 +158,17 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
 }
 
 /**
- * The pack as deployments built before verdicts read it: one action on every check whose yes, no and unsure branches are
- * the Pass, Fail and Unsure lists, each Do flagged as one built before grants requires. The current workflow reads it
- * back as the same policy.
+ * The deployment reads `pack`; one built before steps reads `checkPack` and never sees `pack`, so both go until every
+ * live deployment reads `pack`.
  */
-function withLegacyActions(pack: CheckPack) {
-  function flagged(dos: Do[]) {
-    return dos.map((step) => ({ ...step, automatic: false }));
-  }
-  const { when, pass, fail, unsure } = pack.actions;
-  const empty = VERDICTS.every((list) => pack.actions[list].length === 0);
-  return { ...pack, actions: empty ? [] : [{ id: "policy", when, checks: ["all"], branches: { yes: flagged(pass), no: flagged(fail), unsure: flagged(unsure) } }] };
-}
-
 export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic }: StoredPack, extra: Record<string, unknown>) {
   return {
     ...extra,
     kind: "pr",
     repo,
     policy: { ...policy, checkPack: { name: checkPackName(repo) } },
-    checkPack: withLegacyActions(pack),
+    checkPack: legacyCheckPack(pack),
+    pack,
     automatic,
   };
 }

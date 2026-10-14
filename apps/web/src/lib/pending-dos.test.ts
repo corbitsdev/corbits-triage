@@ -31,6 +31,10 @@ function labels(dos: PendingDo[]): string[] {
 }
 
 describe("pendingDos", () => {
+  test("a held merge off a Fail list says the verdict was not pass", () => {
+    expect(labels(pendingDos(verdict([step("merge", {}, 0)]), NONE, NONE))).toEqual(["Merge (the verdict was fail, not pass)"]);
+  });
+
   test("each held kind is labelled and approved through the hub by reference only", async () => {
     const dos = pendingDos(verdict([
       step("labels", { labels: ["size/xl", "needs-split"] }, 0),

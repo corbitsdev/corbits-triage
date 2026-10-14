@@ -1,7 +1,8 @@
 // The suggested actions on GitHub's page, signed out, on a real pull request: each of the five placements in light and
 // dark, each one showing the triage in its own place on a pull request with nothing to apply too, the parts surviving
-// GitHub's in-page navigation, an action refused with a sign-in message rather than faked, and auto-apply trying only
-// what may run on its own. Applying for real needs a signed-in browser with write access.
+// GitHub's in-page navigation, an action refused with a sign-in message rather than faked, an action applied whatever
+// the page names the pull request with, and auto-apply trying only what may run on its own. Applying for real needs a
+// signed-in browser with write access.
 // Run it on an open pull request that changes more than one file.
 // Run: bun --conditions=intx-src e2e/page-actions.ts <owner/repo> <number> [owner/repo#number with nothing to apply]
 import { mkdir, mkdtemp } from "node:fs/promises";
@@ -10,9 +11,13 @@ import { join, resolve } from "node:path";
 import { chromium, type Page } from "playwright";
 import type { CheckPack } from "@corbits/triage-contracts";
 import { defaultLocalPack } from "../src/local-pack.ts";
+import type { PageAction } from "../src/page-actions.ts";
 import type { Applied, PageLayout } from "../src/storage.ts";
 
-declare const chrome: { storage: { local: { get(key: string | null): Promise<Record<string, unknown>>; set(items: Record<string, unknown>): Promise<void> } } };
+declare const chrome: {
+  storage: { local: { get(key: string | null): Promise<Record<string, unknown>>; set(items: Record<string, unknown>): Promise<void> } };
+  tabs: { query(info: { url: string }): Promise<Array<{ id?: number }>>; sendMessage(tab: number, message: unknown): Promise<unknown> };
+};
 
 const [repo, numberArg, quietArg] = process.argv.slice(2);
 if (!repo || !numberArg) throw new Error("usage: page-actions.ts <owner/repo> <number> [owner/repo#number with nothing to apply]");
@@ -33,10 +38,10 @@ const pack: CheckPack = {
     ...base.actions,
     fail: [
       ...base.actions.fail,
-      { kind: "labels", target: { from: "list", labels: ["triage:too-large"] } },
-      { kind: "assign", target: { to: "author" } },
-      { kind: "request-review", target: { to: "users", users: [owner] } },
-      { kind: "close", target: {} },
+      { do: "labels", target: { from: "list", labels: ["triage:too-large"] } },
+      { do: "assign", target: { to: "author" } },
+      { do: "request-review", target: { to: "users", users: [owner] } },
+      { do: "close" },
     ],
   },
 };
@@ -220,6 +225,40 @@ try {
   const confirming = await close.innerText();
   console.log(`close, first click: "${confirming}"`);
   if (confirming !== "Confirm: close this pull request") process.exitCode = 1;
+
+  // An action still applies when the page names no pull request, or another one's title is left over from in-page
+  // navigation. Signed out there is no description editor, so a stand-in for GitHub's Edit opens one.
+  const action: PageAction = { id: "edit-body", kind: "edit-body", title: "Link an issue", why: "e2e", values: [], teams: [], body: "Closes #", auto: false, source: "check" };
+  for (const how of ["none", "stale"] as const) {
+    await worker.evaluate(() => chrome.storage.local.set({ applied: {} }));
+    await page.evaluate(({ how, number, repo }) => {
+      for (const marker of document.querySelectorAll('[data-component="PH_Title"], [class*="titleSuffix"], .gh-header-number, .js-command-palette-pull-body')) marker.remove();
+      document.title = how === "stale" ? `Other · Pull Request #${number + 1} · ${repo} · GitHub` : "GitHub";
+      const body = document.createElement("div");
+      body.className = "js-command-palette-pull-body";
+      const edit = document.createElement("button");
+      edit.className = "js-comment-edit-button";
+      edit.addEventListener("click", function open() {
+        const field = document.createElement("textarea");
+        field.name = "pull_request[body]";
+        body.append(field);
+      });
+      body.append(edit);
+      document.querySelector("main")?.prepend(body);
+    }, { how, number, repo });
+    await worker.evaluate(async ({ url, pr, action }) => {
+      const [tab] = await chrome.tabs.query({ url });
+      await chrome.tabs.sendMessage(tab!.id!, { type: "apply-action", pr, action, post: false });
+    }, { url: page.url(), pr: { repo, number }, action });
+    const result = await until("the description edit to settle", async function settled() {
+      const { applied } = await worker.evaluate(() => chrome.storage.local.get("applied"));
+      const state = Object.entries((applied ?? {}) as Record<string, Applied>).find(([each]) => each === `${key} edit-body`)?.[1];
+      return state && state.state !== "applying" ? state : undefined;
+    }, 15_000);
+    const added = await page.evaluate(() => document.querySelector<HTMLTextAreaElement>('textarea[name="pull_request[body]"]')?.value);
+    console.log(`edit-body with ${how} markup: ${result.state}${result.error ? ` (${result.error})` : ""}, editor ${added === undefined ? "did not open" : `holds "${added.trim()}"`}`);
+    if (result.state !== "done" || !added?.includes("Closes #")) process.exitCode = 1;
+  }
 
   // Auto-apply on: only the label is tried once on open; the comment is never posted and the close is never tried.
   // Switched on away from the page, so only the page opened afterwards applies anything.

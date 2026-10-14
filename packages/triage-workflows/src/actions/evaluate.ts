@@ -1,13 +1,13 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { checkName, ownedLabels, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
-import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
+import { hasModelChecks, type CheckResult, type DeterministicResult, type PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item, Judged } from "../logic/item.js";
-import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
-import { degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
+import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation, type VerdictChoice } from "../logic/quality.js";
+import { choiceOver, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 
 /** The rules items, merged with the judge maps' per-chunk outputs, in chunk order, when the judge ran. */
@@ -85,10 +85,11 @@ function reusable(answered: Array<[string, unknown]>): Judged {
   return judged;
 }
 
-/** A rule as the verdict question reads it; a judged rule scored out of 100 says how likely it passes, and an author rule is marked as one. */
+/** A rule as the verdict question reads it; a judged rule scored out of 100 says how likely it passes, and a score rule names its level. */
 function policyRule(pack: CheckPack, c: CheckResult): PolicyRule {
   const pass = c.output.kind === "score" ? Math.round(c.output.score) / 100 : undefined;
-  return { name: checkName(pack, c.check), judged: c.kind === "model", ...(c.gate && { author: true as const }), result: c.result, reason: c.reason, evidence: c.evidence, ...(pass !== undefined && { pass }) };
+  const level = c.output.kind === "level" ? c.output.level : undefined;
+  return { name: checkName(pack, c.check), judged: c.kind === "model", result: c.result, reason: c.reason, evidence: c.evidence, ...(pass !== undefined && { pass }), ...(level !== undefined && { level }) };
 }
 
 /** Whether the verdict question is asked with the judged rules' first calls: when none of those is left to ask, their answers are already known. */
@@ -101,18 +102,18 @@ export function choiceFirst(it: Item, { requests }: QualityEvaluation): boolean 
  * is not judged, or a first call failed or left a rule unanswered and the verdict degrades anyway.
  */
 export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[string, unknown]>): { request: JudgeRequest } | { judgeError: string } | undefined {
-  if (!it.det.needsJudgment || !it.pack || it.judgeLimitExceeded || errorOf(first).judgeError !== undefined) return undefined;
+  if (!it.det.needsJudgment || !hasModelChecks(it.det.sources) || !it.pack || it.judgeLimitExceeded || errorOf(first).judgeError !== undefined) return undefined;
   const { facts, det } = it;
   const { plan, focused, requests } = evaluation;
   const model = evaluateModel({ author: facts.author, repo: facts.repo, headSha: facts.headSha, det, answers: answersOf(requests, first), plan, focused });
-  if (model.unanswered) return undefined;
+  // A judged rule that failed decides Fail on its own, so the verdict question is not asked.
+  if (model.unanswered || model.checks.some((check) => check.result === "fail")) return undefined;
   return verdictRequest(facts, [...det.checks, ...model.checks].map((c) => policyRule(it.pack!, c)));
 }
 
 /** The verdict question's probabilities from its reply, when it came back whole. */
 function choiceAnswer(request: JudgeRequest, reply: [string, unknown]): Record<VerdictChoice, number> | undefined {
-  const answer = answersOf([request], [reply]).decisions[VERDICT_QUESTION.id];
-  return answer?.type === "choice" ? (answer.probabilities as Record<VerdictChoice, number>) : undefined;
+  return choiceOver(answersOf([request], [reply]).decisions[VERDICT_QUESTION.id], VERDICT_CHOICES);
 }
 
 /** Focused's follow-up requests about the slices its first answers call a separate change, if any. */
@@ -129,7 +130,7 @@ const DO_NAMES: Record<ActionKind, string> = {
   approve: "approve",
   "request-changes": "request changes",
   close: "close",
-  agent: "run an agent",
+  merge: "merge",
 };
 
 /** What Triage does on this head unattended and what waits on a person, closing the comment; a Do that cannot run is left out. */
@@ -170,18 +171,21 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }),
     });
-    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, roles: it.roles ?? {} } : undefined;
+    const actionInput = it.pack ? { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack } : undefined;
     // A degraded verdict is incomplete, and a draft or closed pull request is not decided, so nothing is suggested from either.
     const decided = rendered.degraded === null && (it.det.needsJudgment || rendered.verdict === "fail");
     const suggested = actionInput && decided ? evaluateActions(actionInput) : [];
     const wanted = actionInput && changesWanted(actionInput);
     const held = approvalHeldBy(rendered.verdict, it.facts.checks);
     const automatic = it.automatic ?? [];
-    const actions = holdDos(heldApprovals(suggested, held), automatic);
+    const actions = holdDos(heldApprovals(suggested, held, it.facts.checks), automatic);
     const judged = reusable([...first, ...early, ...later, ...late]);
     const feedback = withDos(rendered.feedback, actions);
-    const verdict = { ...stamp(it.facts), ...rendered, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
-    return { ...verdict, request: toMirrorRequest(verdict) };
+    // What reading the policy left out is said on every verdict, so the policy can be fixed.
+    const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
+    const labels = it.pack ? [it.pack.labels[rendered.verdict]] : rendered.labels;
+    const verdict = { ...stamp(it.facts), ...rendered, labels, reasons, feedback, automatic, actions, ...(Object.keys(judged).length > 0 && { judged }), ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }) };
+    return { ...verdict, request: toMirrorRequest(verdict, it.pack ? ownedLabels(it.pack.labels) : undefined) };
   } catch (e) {
     const verdict = { ...stamp(undefined), ...degradedVerdict(`render failed: ${errorText(e)}`), automatic: it.automatic ?? [], actions: [] };
     return { ...verdict, request: toMirrorRequest(verdict) };

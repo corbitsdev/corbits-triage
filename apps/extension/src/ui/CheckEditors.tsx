@@ -1,5 +1,5 @@
 import { Button, Checkbox, Input, Select, Textarea } from "@corbits/react-ui";
-import { ISSUE_TRACKERS, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type ModelShape, type RuleKind } from "@corbits/triage-contracts";
+import { DEFAULT_SCORE_LEVELS, ISSUE_TRACKERS, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type ModelShape } from "@corbits/triage-contracts";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react";
 import { defaultLocalPack } from "../local-pack.ts";
 import { withCatalogParams, withCustomCheck, type CustomForm } from "../pack-edit.ts";
@@ -122,72 +122,39 @@ export function CatalogEditor({ id, pack, onSave, onCancel }: CatalogEditorProps
   );
 }
 
-/** What a custom check is: a rule kind, or a model shape. */
-export type CustomVariant = { kind: "rule"; rule: Exclude<RuleKind, "author"> } | { kind: "model"; shape: ModelShape };
-
 /** The editor's text for each of a check's parameters, so switching nothing loses what was typed. */
-type CustomText = { name: string; globs: string; changed: string; requires: string; pattern: string; label: string; count: string; claim: string; subject: string; min: string; options: string; failOn: string[] };
+type CustomText = { name: string; claim: string; subject: string; levels: string; failBelow: string; options: string; failOn: string[] };
 
 function textOf(form: CustomForm | undefined, name: string): CustomText {
-  const text: CustomText = { name, globs: "", changed: "", requires: "", pattern: "", label: "", count: "1", claim: "", subject: "", min: "7", options: "", failOn: [] };
+  const text: CustomText = { name, claim: "", subject: "", levels: DEFAULT_SCORE_LEVELS.join("\n"), failBelow: "", options: "", failOn: [] };
   if (!form) return text;
   const named = { ...text, name: form.name };
-  if (form.kind === "model") {
-    switch (form.shape) {
-      case "is-true": return { ...named, claim: form.claim };
-      case "score": return { ...named, subject: form.subject, min: String(form.min) };
-      case "choose": return { ...named, options: form.options.join("\n"), failOn: form.failOn };
-    }
-  }
-  switch (form.rule) {
-    case "paths-unchanged": return { ...named, globs: form.globs.join("\n") };
-    case "paths-together": return { ...named, changed: form.changed.join("\n"), requires: form.requires.join("\n") };
-    case "title-pattern":
-    case "branch-pattern":
-    case "diff-excludes": return { ...named, pattern: form.pattern };
-    case "label-required": return { ...named, label: form.label };
-    case "min-approvals": return { ...named, count: String(form.count) };
-    case "author": return named;
+  switch (form.shape) {
+    case "is-true": return { ...named, claim: form.claim };
+    case "score": return { ...named, subject: form.subject, levels: form.levels.join("\n"), failBelow: form.failBelow ?? "" };
+    case "choose": return { ...named, options: form.options.join("\n"), failOn: form.failOn };
   }
 }
 
-function formOf(variant: CustomVariant, text: CustomText): CustomForm | string {
+function formOf(shape: ModelShape, text: CustomText): CustomForm | string {
   const name = text.name.trim();
   if (!name) return "Give the rule a name.";
-  if (variant.kind === "model") {
-    const { kind, shape } = variant;
-    switch (shape) {
-      case "is-true": return { name, kind, shape, claim: text.claim.trim() };
-      case "score": {
-        const min = wholeNumber(text.min, 0, "The minimum score");
-        return typeof min === "string" ? min : { name, kind, shape, subject: text.subject.trim(), min };
-      }
-      case "choose": {
-        const options = linesOf(text.options);
-        return { name, kind, shape, options, failOn: text.failOn.filter((option) => options.includes(option)) };
-      }
+  const kind = "model";
+  switch (shape) {
+    case "is-true": return { name, kind, shape, claim: text.claim.trim() };
+    case "score": {
+      const failBelow = text.failBelow.trim();
+      return { name, kind, shape, subject: text.subject.trim(), levels: linesOf(text.levels), ...(failBelow && { failBelow }) };
     }
-  }
-  const { kind, rule } = variant;
-  switch (rule) {
-    case "paths-unchanged": return { name, kind, rule, globs: linesOf(text.globs) };
-    case "paths-together": return { name, kind, rule, changed: linesOf(text.changed), requires: linesOf(text.requires) };
-    case "title-pattern":
-    case "branch-pattern":
-    case "diff-excludes": return { name, kind, rule, pattern: text.pattern };
-    case "label-required": return { name, kind, rule, label: text.label.trim() };
-    case "min-approvals": {
-      const count = wholeNumber(text.count, 1, "Approvals");
-      return typeof count === "string" ? count : { name, kind, rule, count };
+    case "choose": {
+      const options = linesOf(text.options);
+      return { name, kind, shape, options, failOn: text.failOn.filter((option) => options.includes(option)) };
     }
   }
 }
 
-const PATTERN_HINT = "A regular expression, without slashes or flags.";
-const GLOBS_HINT = "One per line. * matches within a folder, ** across folders.";
-
 type CustomEditorProps = {
-  variant: CustomVariant;
+  shape: ModelShape;
   pack: CheckPack;
   /** The check being edited; absent for a new one. */
   id?: string;
@@ -198,12 +165,10 @@ type CustomEditorProps = {
 };
 
 /** A custom check's name and parameters, checked by the pack contract before it is saved. */
-export function CustomEditor({ variant, pack, id, form, defaultName, onSave, onCancel }: CustomEditorProps) {
+export function CustomEditor({ shape, pack, id, form, defaultName, onSave, onCancel }: CustomEditorProps) {
   const [text, setText] = useState(() => textOf(form, defaultName));
   const [error, setError] = useState<string | null>(null);
   const formRef = useFirstFieldFocus();
-  const rule = variant.kind === "rule" ? variant.rule : undefined;
-  const shape = variant.kind === "model" ? variant.shape : undefined;
 
   function set(key: Exclude<keyof CustomText, "failOn">) {
     return function onChange(event: { target: { value: string } }) {
@@ -219,7 +184,7 @@ export function CustomEditor({ variant, pack, id, form, defaultName, onSave, onC
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    const next = formOf(variant, text);
+    const next = formOf(shape, text);
     if (typeof next === "string") return setError(next);
     const changed = withCustomCheck(pack, next, id);
     if ("reason" in changed) return setError(changed.reason.replace(/^Custom rule \S+ /, ""));
@@ -230,26 +195,13 @@ export function CustomEditor({ variant, pack, id, form, defaultName, onSave, onC
   return (
     <form className="editor" ref={formRef} onSubmit={save} aria-label={id ? "Edit rule" : "New rule"}>
       <Field label="Name">{(fid) => <Input id={fid} value={text.name} onChange={set("name")} />}</Field>
-      {rule === "paths-unchanged" ? <Field label="Fail if any of these change" hint={GLOBS_HINT}>{(fid, hid) => <Textarea id={fid} aria-describedby={hid} className="mono" rows={3} value={text.globs} onChange={set("globs")} />}</Field> : null}
-      {rule === "paths-together" ? (
-        <>
-          <Field label="When any of these change" hint={GLOBS_HINT}>{(fid, hid) => <Textarea id={fid} aria-describedby={hid} className="mono" rows={3} value={text.changed} onChange={set("changed")} />}</Field>
-          <Field label="One of these must change too">{(fid) => <Textarea id={fid} className="mono" rows={3} value={text.requires} onChange={set("requires")} />}</Field>
-        </>
-      ) : null}
-      {rule === "title-pattern" || rule === "branch-pattern" || rule === "diff-excludes" ? (
-        <Field label={rule === "diff-excludes" ? "Added lines must not match" : rule === "title-pattern" ? "Title must match" : "Branch must match"} hint={PATTERN_HINT}>
-          {(fid, hid) => <Input id={fid} aria-describedby={hid} className="mono" spellCheck={false} value={text.pattern} onChange={set("pattern")} />}
-        </Field>
-      ) : null}
-      {rule === "label-required" ? <Field label="Require the label">{(fid) => <Input id={fid} value={text.label} onChange={set("label")} />}</Field> : null}
-      {rule === "min-approvals" ? <Field label="Require at least this many approvals">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={text.count} onChange={set("count")} />}</Field> : null}
       {shape === "is-true" ? <Field label="Is it true that…" hint="The decision model answers yes or no; no fails the rule.">{(fid, hid) => <Textarea id={fid} aria-describedby={hid} rows={2} value={text.claim} onChange={set("claim")} />}</Field> : null}
       {shape === "score" ? (
-        <div className="field-pair">
-          <Field label="What to score from 0 to 10">{(fid) => <Input id={fid} value={text.subject} onChange={set("subject")} />}</Field>
-          <Field label="Pass at or above">{(fid) => <Input id={fid} className="mono" inputMode="numeric" value={text.min} onChange={set("min")} />}</Field>
-        </div>
+        <>
+          <Field label="What to score">{(fid) => <Input id={fid} value={text.subject} onChange={set("subject")} />}</Field>
+          <Field label="Levels" hint="One level per line, worst first, 2 to 10.">{(fid, hid) => <Textarea id={fid} aria-describedby={hid} rows={4} value={text.levels} onChange={set("levels")} />}</Field>
+          <Field label="Fail below" hint="One of the levels after the first; empty never fails.">{(fid, hid) => <Input id={fid} aria-describedby={hid} value={text.failBelow} onChange={set("failBelow")} />}</Field>
+        </>
       ) : null}
       {shape === "choose" ? (
         <>

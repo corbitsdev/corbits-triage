@@ -1,5 +1,5 @@
-import { reviewedOnHead, type IssueComment, type Review } from "@corbits/github-reads";
-import { authorAssociation, authorKindOf, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
+import { checkFailed, latestDecisive, reviewedOnHead, summarizeChecks, type CheckRun, type IssueComment, type Review } from "@corbits/github-reads";
+import { authorAssociation, authorKindOf, stepTeams, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
@@ -26,33 +26,7 @@ export interface PrData {
   labels?: string[];
   assignees?: string[];
 }
-export interface CheckRun {
-  name?: string;
-  status?: string;
-  conclusion?: string | null;
-}
-
-const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required"]);
-
-function failed(run: CheckRun): boolean {
-  return run.conclusion !== undefined && run.conclusion !== null && FAILED.has(run.conclusion);
-}
-
-export function summarizeChecks(runs: CheckRun[]): PrFacts["checks"] {
-  if (!runs.length) return "none";
-  if (runs.some(failed)) return "failure";
-  if (runs.some((r) => r.status !== "completed")) return "pending";
-  return "success";
-}
-
-/** Each reviewer's latest decisive review state, by login; triage's own requests for changes are its verdict, not a reviewer's. */
-function latestDecisive(reviews: Review[]): Map<string, string> {
-  const latest = new Map<string, string>();
-  for (const r of reviews) {
-    if (r.reviewer && r.state && r.state !== "COMMENTED" && r.state !== "PENDING" && !r.triageRequest) latest.set(r.reviewer, r.state);
-  }
-  return latest;
-}
+export type { CheckRun };
 
 function reviewersWith(latest: Map<string, string>, state: string): string[] {
   return [...latest].flatMap(([login, s]) => (s === state ? [login] : []));
@@ -95,7 +69,7 @@ export function buildFacts(
     draft: pr.draft === true,
     mergeable: pr.mergeable ?? null,
     checks: summarizeChecks(checks),
-    failingChecks: checks.filter(failed).flatMap((r) => (r.name ? [r.name] : [])),
+    failingChecks: checks.filter(checkFailed).flatMap((r) => (r.name ? [r.name] : [])),
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,
@@ -186,14 +160,9 @@ function firstLine(commit: { message?: string }): string {
   return (commit.message ?? "").split("\n", 1)[0]!;
 }
 
-/** Every spelling of a team the repository's roles use. */
-function roleTeamSpellings(policy: RepoPolicy): string[] {
-  return [...new Set(Object.values(policy.roles).flatMap((role) => role.teams ?? []))];
-}
-
-/** The distinct slugs of the repository owner's teams the roles name, which is what the membership read takes. */
-export function roleTeams(policy: RepoPolicy, repo: string): string[] {
-  return [...new Set(roleTeamSpellings(policy).flatMap((team) => teamSlug(team, repo) ?? []))].sort();
+/** The distinct slugs of the repository owner's teams the pack's steps are for, which is what the membership read takes. */
+export function namedTeams(pack: CheckPack, repo: string): string[] {
+  return [...new Set(stepTeams(pack).flatMap((team) => teamSlug(team, repo) ?? []))].sort();
 }
 
 function strings(value: unknown): string[] | undefined {
@@ -208,17 +177,17 @@ export interface PullData {
   comments: IssueComment[];
   commits: Array<{ message?: string }>;
   files: PrFileFacts[] | string;
-  /** The author's membership of the roles' teams; null when it was not read or could not be. */
+  /** The author's membership of the steps' teams; null when it was not read or could not be. */
   authorTeams: { teams?: unknown; unknown?: unknown } | null;
 }
 
-/** Maps the read's slugs back to every spelling the roles use; a team the read did not answer, or another org's team, is unknown. */
-function membership(read: PullData["authorTeams"], policy: RepoPolicy, repo: string): Pick<PrFacts, "authorTeams" | "authorTeamsUnknown"> {
+/** Maps the read's slugs back to every spelling the steps use; a team the read did not answer, or another org's team, is unknown. */
+function membership(read: PullData["authorTeams"], pack: CheckPack, repo: string): Pick<PrFacts, "authorTeams" | "authorTeamsUnknown"> {
   const member = strings(read?.teams);
   const unknown = strings(read?.unknown);
   const authorTeams: string[] = [];
   const authorTeamsUnknown: string[] = [];
-  for (const team of roleTeamSpellings(policy)) {
+  for (const team of stepTeams(pack)) {
     const slug = teamSlug(team, repo);
     if (slug === null || !member || !unknown || unknown.includes(slug)) authorTeamsUnknown.push(team);
     else if (member.includes(slug)) authorTeams.push(team);
@@ -243,6 +212,6 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   if (typeof docs === "string") return { error: docs };
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, events, ...docs, ...membership(data.authorTeams, policy, repo) };
-  return { facts, pack, roles: policy.roles };
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, events, ...docs, ...membership(data.authorTeams, pack, repo) };
+  return { facts, pack };
 }

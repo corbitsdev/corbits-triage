@@ -4,20 +4,20 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
-import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, type ActionKind, type CheckPack, type CustomCheck, type Do, type PolicyActions } from "@corbits/triage-contracts";
+import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory, type DoResult } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
-import type { Verdict } from "./logic/render.js";
+import { RULES_PASS_REASON, type Verdict } from "./logic/render.js";
 import { workflow } from "./pr-triage.js";
 import { workflow as historical } from "./pr-triage-historical.js";
 
 const REPO = "acme/widgets";
-const HI: Do[] = [{ kind: "comment", target: { body: "hi" } }];
+const HI: Step[] = [{ do: "comment", target: { body: "hi" } }];
 const HELLO: PolicyActions = { ...defaultActions(), pass: HI, fail: HI, unsure: HI };
-const APPROVE: PolicyActions = { ...defaultActions(), when: ["opened", "updated"], pass: [{ kind: "approve", target: {} }] };
-const REQUEST_CHANGES: PolicyActions = { ...defaultActions(), fail: [{ kind: "request-changes", target: {} }] };
+const APPROVE: PolicyActions = { ...defaultActions(), when: ["opened", "updated"], pass: [{ do: "approve" }] };
+const REQUEST_CHANGES: PolicyActions = { ...defaultActions(), fail: [{ do: "request-changes" }] };
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
 type Recorded = { method: string; path: string };
@@ -162,8 +162,8 @@ function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], ju
 const RULES_PATH = { invoked: ["triage-facts", "triage-execute", "triage-mirror"], mirrors: ["mirrorRules"] };
 // Without judged rules to ask first, the verdict question is the judge's only call.
 const VERDICT_PATH = { invoked: ["triage-facts", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
-// `judgeText` fails focused, so the judge is called again for its file questions, beside the verdict question.
-const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
+// `judgeText` fails focused, so the judge is called again for its file questions; a failed judged rule decides Fail without the verdict question.
+const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
 
 /** `automatic` is the Do kinds the hub's mail says the pr-triage role is granted, and `from` who sent the mail. */
 type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub> };
@@ -231,34 +231,32 @@ describe("pr-triage body", () => {
     expect(path).toEqual(RULES_PATH);
     expect(verdict).toMatchObject({ verdict: "fail", score: null, reasons: ["required checks are failing: build"], degraded: null, actions: [{ list: "fail", kind: "comment", target: { body: "hi" } }] });
     expect((verdict as Verdict).checks.find((c) => c.check === "docs")).toMatchObject({ result: "unconfirmed", reason: "not asked" });
-    expect((verdict as Verdict).request.labels).toEqual(["Triage: Needs changes"]);
+    expect((verdict as Verdict).request.labels).toEqual(["Triage: Not Ready"]);
     expect((verdict as Verdict).request.comment).toBe("**Triage: Fail**\n\n@octocat, please address the following:\n- required checks are failing: `build`\n\nTriage will comment.");
     expect(requests).toContainEqual({ method: "POST", path: `/repos/${REPO}/issues/8/labels` });
     expect(requests.filter((r) => r.method === "DELETE")).toEqual([{ method: "DELETE", path: `/repos/${REPO}/issues/8/labels/triage%3Aawaiting-review` }]);
   });
 
-  test("with no hard rule failed the verdict question decides and its list runs", async () => {
+  test("without a decision-model rule, every rule passing decides Pass without the model and its list runs", async () => {
     const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO });
-    expect(path).toEqual(VERDICT_PATH);
-    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["verdict"]]);
-    expect(judged[0]!.state.policy!.rules).toEqual([
-      { name: "Not a draft", judged: false, result: "pass", reason: "pull request is not a draft", evidence: [] },
-      { name: "CI green", judged: false, result: "pass", reason: "checks are none", evidence: [] },
-      { name: "No changes requested", judged: false, result: "pass", reason: "no changes requested", evidence: [] },
-    ]);
-    expect(verdict).toMatchObject({ verdict: "pass", score: 0.85, reasons: [], actions: [{ list: "pass", kind: "comment" }] });
-    expect((verdict as Verdict).request.labels).toEqual(["Triage: Ready to merge"]);
+    expect(path).toEqual(RULES_PATH);
+    expect(judged).toEqual([]);
+    expect(verdict).toMatchObject({ verdict: "pass", score: null, reason: RULES_PASS_REASON, reasons: [], actions: [{ list: "pass", kind: "comment" }] });
+    expect((verdict as Verdict).request.labels).toEqual(["Triage: Ready"]);
+  });
+
+  test("the mirror writes the policy's own verdict label and takes back the defaults and the policy's other verdict labels", async () => {
+    const labels = { pass: "Ship it", fail: "Triage: Not Ready", unsure: "Look at me" };
+    const { verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, labels });
+    expect((verdict as Verdict).request.labels).toEqual(["Ship it"]);
+    expect((verdict as Verdict).request.owned).toEqual(expect.arrayContaining(["Triage: Ready", "Triage: Not Ready", "Triage: Needs Human Review", "Triage: Needs changes", "Ship it", "Look at me"]));
   });
 
   test("model checks run the judge on the repository's own docs and the verdict records its answers", async () => {
     const { path, judged, verdict } = await triage(recommendedPack(REPO));
     expect(path).toEqual(JUDGE_PATH);
-    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001", "focused"], ["focused-file-001"], ["verdict"]]);
-    expect(judged[2]!.state.policy!.rules.filter((rule) => rule.result === "fail")).toEqual([
-      { name: "Focused", judged: true, result: "fail", reason: "mixes unrelated changes", evidence: [], pass: 0.2 },
-      { name: "Docs", judged: true, result: "fail", reason: "documentation is not updated", evidence: ["src/flag.ts"], pass: 0.1 },
-    ]);
-    expect(verdict).toMatchObject({ verdict: "fail", score: 0.1, reasons: ["mixes unrelated changes: src/flag.ts", "documentation is not updated: src/flag.ts"] });
+    expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001", "focused"], ["focused-file-001"]]);
+    expect(verdict).toMatchObject({ verdict: "fail", score: null, reasons: ["mixes unrelated changes: src/flag.ts", "documentation is not updated: src/flag.ts"] });
     expect(judged[0]!.state.repository).not.toHaveProperty("rules");
     const { "README.md": readme, "docs/guide.md": guide, ...rest } = judged[0]!.state.repository.docs;
     expect(readme).toBe(README);
@@ -291,7 +289,7 @@ describe("pr-triage body", () => {
     const removed = { filename: "docs/old.md", status: "removed", additions: 0, deletions: 1, patch: "@@ -1 +0,0 @@\n-Old." };
     const renamed = { filename: "src/moved.ts", previous_filename: "src/kept.ts", status: "renamed", additions: 0, deletions: 0 };
     const { judged, verdict } = await triage({ ...emptyPack(REPO), checks: { docs: { enabled: true } } }, { files: [FLAG, removed, renamed, { ...FLAG, filename: "src/flag.test.ts" }] });
-    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["docs-file-001", "verdict"]);
+    expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["docs-file-001"]);
     expect((verdict as Verdict).checks.find((c) => c.check === "docs")).toMatchObject({ result: "fail", evidence: ["src/flag.ts"] });
   });
 
@@ -314,7 +312,7 @@ describe("pr-triage body", () => {
     const pack = { ...emptyPack(REPO), custom: [reversible] };
     const migration = { ...FLAG, filename: "migrations/001_users.sql", patch: "@@ -0,0 +1 @@\n+DROP TABLE users;" };
     const migrated = await triage(pack, { files: [FLAG, migration] });
-    expect(migrated.judged.flatMap((call) => call.questions).slice(0, -1)).toEqual([
+    expect(migrated.judged.flatMap((call) => call.questions)).toEqual([
       { id: "custom-1-file-002", type: "boolean", instructions: "Does the change in `pullRequest.files[1]` meet this rule: The migration can be rolled back? Judge it by the pull request and the repository's contribution rules in `repository.rules`." },
     ]);
     const rules = migrated.judged[0]!.state.repository.rules!;
@@ -329,7 +327,7 @@ describe("pr-triage body", () => {
     });
     const twice = { ...migration, patch: "@@ -0,0 +1 @@\n+DROP TABLE users;\n@@ -12,2 +11,0 @@\n-CREATE TABLE teams ();\n-CREATE TABLE orgs ();" };
     const hunks = await triage({ ...pack, custom: [{ ...reversible, scope: "hunk" }] }, { files: [FLAG, twice] });
-    expect(hunks.judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["custom-1-hunk-002-001", "custom-1-hunk-002-002", "verdict"]);
+    expect(hunks.judged.flatMap((call) => call.questions.map((question) => question.id))).toEqual(["custom-1-hunk-002-001", "custom-1-hunk-002-002"]);
     expect((hunks.verdict as Verdict).checks.find((c) => c.check === "custom-1")?.output).toMatchObject({
       items: [{ path: "migrations/001_users.sql", added: { start: 1, end: 1 } }, { path: "migrations/001_users.sql", removed: { path: "migrations/001_users.sql", start: 12, end: 13 } }],
     });
@@ -484,6 +482,17 @@ describe("pr-triage body", () => {
     github.pr.ci = "success";
     await triage(pack, { github });
     expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc", state: "DISMISSED" })]);
+  });
+
+  test("a head that fails requests changes; a later head that passes merges, and the mirror takes the earlier request back", async () => {
+    const { github, pack } = requesting();
+    const merging = { ...pack, actions: { ...pack.actions, pass: [{ do: "merge" as const }] } };
+    await triage(merging, { github });
+    github.pr.head = "def";
+    github.pr.ci = "success";
+    await triage(merging, { github });
+    const writes = github.requests.filter((request) => request.method === "PUT").map((request) => request.path);
+    expect(writes).toEqual([`/repos/${REPO}/pulls/8/merge`, `/repos/${REPO}/pulls/8/reviews/100`, `/repos/${REPO}/pulls/8/reviews/100/dismissals`]);
   });
 
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {

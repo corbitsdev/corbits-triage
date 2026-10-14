@@ -1,8 +1,8 @@
 // Triage on GitHub's page, signed out, on a real pull request under a stricter pack, so most kinds of step show: the
 // sidebar block in light and dark; the best draft put in an empty comment box once, without taking focus, for someone
 // who can triage, taken back out with Undo and not put in again after a reload; "Link an issue" adding the reference
-// to the description's editor only when clicked, with Undo until the person finishes it; the title rule beside the
-// title's editor; a sidebar picker pre-checked once with what Triage suggests; edits refused with a sign-in message;
+// to the description's editor only when clicked, with Undo until the person finishes it; a sidebar picker pre-checked
+// once with what Triage suggests; edits refused with a sign-in message;
 // markers on the Files tab that survive in-page navigation; the guided tour from start to the side panel; and the
 // full-tab workspace at two widths. Signed out, GitHub renders no comment box, editors or pickers, so stand-ins with
 // the markup Triage looks for take their place; applying for real needs a signed-in browser with write access.
@@ -27,17 +27,12 @@ const shots = resolve(import.meta.dir, "../.output/e2e");
 const DEBUG_PORT = 9334;
 const LABEL = "needs-triage-review";
 
-// Stricter than the default: a GitHub issue reference, small size limits, and rules a real pull request fails.
+// Stricter than the default: a GitHub issue reference, small size limits, every path forbidden, and a label on Fail.
 const base = defaultLocalPack(repo);
 const pack = parseCheckPack({
   ...base,
-  checks: { ...base.checks, "linked-issue": { enabled: true, tracker: "github" }, "max-files-changed": { enabled: true, maxFiles: 5 }, "max-lines-changed": { enabled: true, maxLines: 200 } },
-  custom: [
-    ...base.custom,
-    { id: "custom-3", name: "Ticket in the title", group: "pull-request", kind: "rule", rule: "title-pattern", pattern: "^\\[[A-Z]+-\\d+\\]" },
-    { id: "custom-4", name: "Review label", group: "pull-request", kind: "rule", rule: "label-required", label: LABEL },
-    { id: "custom-5", name: "No new imports", group: "code-vs-ci", kind: "rule", rule: "diff-excludes", pattern: "^import " },
-  ],
+  checks: { ...base.checks, "linked-issue": { enabled: true, tracker: "github" }, "max-files-changed": { enabled: true, maxFiles: 5 }, "max-lines-changed": { enabled: true, maxLines: 200 }, "no-forbidden-paths": { enabled: true, forbiddenGlobs: ["**"] } },
+  actions: { ...base.actions, fail: [{ do: "labels", target: { from: "list", labels: [LABEL] } }] },
 }, repo);
 if (!pack) throw new Error("the test pack does not parse");
 
@@ -140,9 +135,8 @@ try {
   const kinds = (view.suggested ?? []).map((action) => action.kind);
   console.log(`run: readiness ${view.readiness}, ${view.verdict.state}; steps from checks: ${kinds.join(", ")}; ${view.notes?.length ?? 0} file notes`);
   expect("a missing issue reference suggests editing the description", kinds.includes("edit-body"));
-  expect("a failing title rule suggests editing the title", kinds.includes("edit-title"));
-  expect("a missing required label suggests adding it", (view.suggested ?? []).some((action) => action.kind === "labels" && action.values.includes(LABEL)));
-  expect("the diff rule's hits become file notes with lines", (view.notes ?? []).some((note) => note.line !== undefined));
+  expect("the fail list's label is suggested", view.dos.some((action) => action.kind === "labels" && "labels" in action.target && action.target.labels.includes(LABEL)));
+  expect("the forbidden paths become file notes", (view.notes ?? []).length > 0);
 
   // The sidebar block, the default placement.
   const block = page.locator("corbits-triage-sidebar .tb");
@@ -212,23 +206,6 @@ try {
   await body.pressSequentially("123");
   await page.locator("corbits-triage-body-seed .seed-note").waitFor({ state: "detached" });
   expect("a reference the person finished is theirs: no Undo offered", (await body.inputValue()).endsWith("Closes #123"));
-  await page.evaluate(() => {
-    const frame = document.createElement("div");
-    frame.className = "stand-in";
-    frame.style.cssText = "max-width:880px;margin:24px 0;padding:8px";
-    const form = document.createElement("form");
-    const field = document.createElement("input");
-    field.name = "pull_request[title]";
-    field.value = document.title;
-    field.style.cssText = "display:block;width:100%";
-    form.append(field);
-    frame.append(form);
-    document.querySelector(".js-discussion")?.prepend(frame);
-  });
-  await page.locator("corbits-triage-title-hint .seed-note").waitFor({ state: "visible" });
-  await shoot(page, page.locator(".stand-in:has(input[name='pull_request[title]'])"), "title-hint");
-  expect("the open title editor shows the pattern it must match", (await page.locator("corbits-triage-title-hint .seed-note code").innerText()).includes("[A-Z]"));
-
   // The label picker, opened: the suggested label is checked and marked, and clicking its row unchecks it.
   await page.evaluate(() => {
     document.querySelector<HTMLDetailsElement>('form[aria-label="Select labels"] details')!.open = true;
@@ -251,9 +228,9 @@ try {
   await Bun.sleep(1000);
   expect("reopened, a suggestion the person took back stays unchecked", !(await page.locator(`form[aria-label='Select labels'] input[value='${LABEL}']`).isChecked()));
 
-  // Signed out, with the stand-in editors gone, an edit is refused with the reason rather than faked.
+  // Signed out, with the stand-in editor gone, an edit is refused with the reason rather than faked.
   await page.evaluate(() => {
-    for (const field of document.querySelectorAll('[name="pull_request[title]"], [name="pull_request[body]"]')) field.closest(".stand-in")?.remove();
+    document.querySelector('[name="pull_request[body]"]')?.closest(".stand-in")?.remove();
   });
   // GitHub's signed-in page may name the pull request in other markup than the signed-out one; with neither the header's
   // number nor the document's title to confirm it, a click still goes ahead once the address names this pull request.
@@ -261,12 +238,12 @@ try {
     for (const marker of document.querySelectorAll('[class*="titleSuffix"], .gh-header-number')) marker.remove();
     document.title = "GitHub";
   });
-  await page.locator("corbits-triage-sidebar .tb-act[data-kind='edit-title']").click();
-  const refused = await until("the refused title edit", async function refusal() {
+  await page.locator("corbits-triage-sidebar .tb-act[data-kind='edit-body']").click();
+  const refused = await until("the refused description edit", async function refusal() {
     const applied = (await stored(worker)).applied as Record<string, Applied> | undefined;
-    return Object.entries(applied ?? {}).find(([each, value]) => each.startsWith(key) && each.endsWith(":edit-title") && value.state === "failed")?.[1];
+    return Object.entries(applied ?? {}).find(([each, value]) => each.startsWith(key) && each.endsWith(":edit-body") && value.state === "failed")?.[1];
   });
-  expect("editing the title signed out, with nothing on the page naming the pull request, is refused only for signing in", refused.error?.includes("Sign in") === true, refused.error);
+  expect("editing the description signed out, with nothing on the page naming the pull request, is refused only for signing in", refused.error?.includes("Sign in") === true, refused.error);
   await shoot(page, page.locator("corbits-triage-sidebar"), "block-refused");
 
   // The Files tab: a marker in each flagged file's header and an edge on each flagged line, through in-page navigation.

@@ -31,8 +31,8 @@ export function packArtifact(found: CheckPackArtifact | null): PackArtifact | nu
 }
 
 export function draftPolicy(policy: DraftPolicy): DraftPolicy {
-  const { enabled, roles } = policy;
-  return { enabled, roles };
+  const { enabled } = policy;
+  return { enabled };
 }
 
 export function transportRepoPackStore(transport: Transport, tenantId: string): RepoPackStore {

@@ -1,24 +1,12 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
+import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type CustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts, PrFileFacts } from "./checks.js";
 import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
 import { globMatch } from "./glob.js";
+import type { BooleanQuestion, ChoiceQuestion, ScoreQuestion } from "@corbits/system-one";
 
-interface BooleanQualityQuestion {
-  id: string;
-  type: "boolean";
-  instructions: string;
-}
-
-interface ChoiceQualityQuestion {
-  id: string;
-  type: "choice";
-  instructions: string;
-  criteria: Record<FocusedChoice, string> | Record<SliceChoice, string> | Record<VerdictChoice, string>;
-}
-
-export type QualityQuestion = BooleanQualityQuestion | ChoiceQualityQuestion;
+export type QualityQuestion = BooleanQuestion | ChoiceQuestion | ScoreQuestion;
 
 export const FOCUSED_CHOICES = ["one_thing", "more_than_one_thing", "cant_tell"] as const;
 export type FocusedChoice = typeof FOCUSED_CHOICES[number];
@@ -30,10 +18,10 @@ export const VERDICT_CHOICES = ["pass", "fail", "cant_tell"] as const;
 export type VerdictChoice = typeof VERDICT_CHOICES[number];
 
 /** The question that decides the verdict once no hard rule failed; its id is apart from every rule's, so rule answers keep their keys. */
-export const VERDICT_QUESTION: ChoiceQualityQuestion = {
+export const VERDICT_QUESTION: ChoiceQuestion = {
   id: "verdict",
   type: "choice",
-  instructions: "Does this pull request pass this repository's policy? `policy.rules` lists every rule the repository enabled with its result and evidence; a judged rule's `pass` is how likely it passes. Judge by those results and by the pull request's title, body, commits, changed paths and the diff in `pullRequest.files`. A rule other than an author rule whose result is fail means the pull request fails, unless the pull request plainly shows the rule does not apply to it. An author rule (`author: true`) only says who opened the pull request and never fails it.",
+  instructions: "Does this pull request pass this repository's policy? `policy.rules` lists every rule the repository enabled with its result and evidence; a judged rule's `pass` is how likely it passes. Judge by those results and by the pull request's title, body, commits, changed paths and the diff in `pullRequest.files`. A rule whose result is fail means the pull request fails.",
   criteria: {
     pass: "No rule fails, anything unconfirmed is minor, and nothing in the pull request breaks the policy.",
     fail: "A rule fails, or the pull request clearly breaks the policy in a way its rules describe.",
@@ -42,7 +30,7 @@ export const VERDICT_QUESTION: ChoiceQualityQuestion = {
 };
 
 /** Focused asks about the whole pull request when its diff fits one request: a change across many files is still one thing. */
-const FOCUSED_QUESTION: ChoiceQualityQuestion = {
+const FOCUSED_QUESTION: ChoiceQuestion = {
   id: "focused",
   type: "choice",
   instructions: "Does this pull request do one thing, or more than one thing? Judge by its title, body, commits, changed paths and the diff in `pullRequest.files`. The code, tests, docs, types and wiring one change needs across files and packages are one thing, and so are several steps toward the same goal.",
@@ -54,7 +42,7 @@ const FOCUSED_QUESTION: ChoiceQualityQuestion = {
 };
 
 /** A diff too large for one request is judged in slices, each asked whether it serves the pull request's one purpose. */
-function sliceQuestion(id: string): ChoiceQualityQuestion {
+function sliceQuestion(id: string): ChoiceQuestion {
   return {
     id,
     type: "choice",
@@ -72,14 +60,22 @@ function focusedFileQuestion(file: number): string {
   return `Is the change in \`pullRequest.files[${file}]\` a separate change from the one the pull request's title and body describe?`;
 }
 
+export const DOCS_CHOICES = ["unaffected", "now_wrong", "now_incomplete"] as const;
+
 /**
- * Docs is decided per file and combined in code: changing a doc file passes it, otherwise each file gets this direct
- * question, answered yes when the file needs the docs updated. Jev answers conditional questions ("if X, does it Y?")
+ * Docs is decided per file and combined in code: changing a doc file passes it, otherwise each file gets one Choice, and
+ * needs the docs updated unless `unaffected` holds the band. Jev answers conditional questions ("if X, does it Y?")
  * backwards, so none is asked.
  */
 function docsQuestion(file: number): string {
-  return `Does the change in \`pullRequest.files[${file}]\` make a statement in \`repository.docs\` wrong or incomplete, or add setup, configuration, permissions, or commands that \`repository.docs\` must describe?`;
+  return `How does the change in \`pullRequest.files[${file}]\` leave \`repository.docs\`?`;
 }
+
+const DOCS_CRITERIA: Record<typeof DOCS_CHOICES[number], string> = {
+  unaffected: "The docs stay correct and complete for this change.",
+  now_wrong: "A statement in the docs is contradicted by this change, such as a name, table, route, file, setting or behaviour the docs describe that the change renames, removes or changes.",
+  now_incomplete: "The change adds setup, configuration, permissions or commands that the docs must describe.",
+};
 
 /** Only a change outside tests and docs can need docs. */
 function isAsked(path: string): boolean {
@@ -98,10 +94,10 @@ function hunkQuestionId(check: string, file: number, hunk: number): string {
   return `${check}-hunk-${ordinal(file)}-${ordinal(hunk)}`;
 }
 
-export type ScopedCheck = ModelCustomCheck & { shape: "is-true"; scope: "file" | "hunk" };
+export type ScopedCheck = CustomCheck & { shape: "is-true"; scope: "file" | "hunk" };
 
 /** A custom check asked once per changed file or hunk in its scope rather than once for the whole pull request. */
-export function isScoped(row: ModelCustomCheck): row is ScopedCheck {
+export function isScoped(row: CustomCheck): row is ScopedCheck {
   return row.shape === "is-true" && (row.scope === "file" || row.scope === "hunk");
 }
 
@@ -133,6 +129,7 @@ interface FileQuestion {
   id: string;
   item: CheckItem;
   instructions: (file: number) => string;
+  criteria?: Record<string, string>;
 }
 
 const FAILURES: Record<QualityCheckId, string> = {
@@ -176,23 +173,15 @@ function judgedFiles(facts: PrFacts) {
 // Custom checks are the repository's own rules, so their requests carry its contribution rules and say where they are.
 const AGAINST_RULES = "Judge it by the pull request and the repository's contribution rules in `repository.rules`.";
 
-/** Every shape is asked as one direct question a yes answer passes. */
-function customInstructions(row: ModelCustomCheck): string {
-  return `${customQuestion(row)} ${AGAINST_RULES}`;
-}
-
-function customQuestion(row: ModelCustomCheck): string {
+/** An is-true rule is one yes/no question, a score rule one Score question over its levels, a choose rule one Choice over its options. */
+function customQuestion(row: CustomCheck): QualityQuestion {
   switch (row.shape) {
     case "is-true":
-      return `${row.name}: ${row.claim}`;
+      return { id: row.id, type: "boolean", instructions: `${row.name}: ${row.claim} ${AGAINST_RULES}` };
     case "score":
-      return `${row.name}: Does the pull request reach at least ${row.min} out of 10 for ${row.subject}?`;
-    case "choose": {
-      const passing = row.options.filter((option) => !row.failOn.includes(option));
-      const failing = row.failOn.join(" or ");
-      if (passing.length === 0) return `${row.name}: Is the pull request best described as something other than ${failing}?`;
-      return `${row.name}: Is the pull request best described as ${passing.join(" or ")}, rather than ${failing}?`;
-    }
+      return { id: row.id, type: "score", instructions: `${row.name}: Which level, worst first, best describes the pull request for ${row.subject}? ${AGAINST_RULES}`, criteria: row.levels };
+    case "choose":
+      return { id: row.id, type: "choice", instructions: `${row.name}: Which option best describes the pull request? ${AGAINST_RULES}`, criteria: Object.fromEntries(row.options.map((option) => [option, null])) };
   }
 }
 
@@ -201,7 +190,7 @@ function isFocused(sources: NonNullable<DeterministicResult["sources"]>): boolea
 }
 
 function customQuestions(sources: NonNullable<DeterministicResult["sources"]>): QualityQuestion[] {
-  return sources.custom.filter((row) => !isScoped(row)).map((row) => ({ id: row.id, type: "boolean" as const, instructions: customInstructions(row) }));
+  return sources.custom.filter((row) => !isScoped(row)).map(customQuestion);
 }
 
 /** Every question id an evaluation asks; `render` refuses answers to anything else. */
@@ -293,9 +282,8 @@ function jsonBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
-/** A rule as the verdict question reads it: a hard rule's result, or a judged rule's answer with how likely it passes. */
-/** `author` marks an author rule, which says who opened the pull request and never fails it. */
-export type PolicyRule = { name: string; judged: boolean; author?: true; result: "pass" | "fail" | "unconfirmed"; reason: string; evidence: string[]; pass?: number };
+/** A rule as the verdict question reads it: a hard rule's result, or a judged rule's answer with how likely it passes and, for a score rule, the level it was given. */
+export type PolicyRule = { name: string; judged: boolean; result: "pass" | "fail" | "unconfirmed"; reason: string; evidence: string[]; pass?: number; level?: string };
 
 export type VerdictState = {
   pullRequest: JudgeState["pullRequest"];
@@ -444,7 +432,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
 
   /** Every question about the file at `position` whose leading `read` hunks the request holds; a patch without hunk headers is cited as its file. */
   function fileQuestions(path: string, position: number, read: number, cited: CheckItem[]): FileQuestion[] {
-    const out: FileQuestion[] = asksDocs(path) ? [{ check: "docs", id: fileQuestionId("docs", position), item: path, instructions: docsQuestion }] : [];
+    const out: FileQuestion[] = asksDocs(path) ? [{ check: "docs", id: fileQuestionId("docs", position), item: path, instructions: docsQuestion, criteria: DOCS_CRITERIA }] : [];
     for (const row of scoped) {
       if (!inScope(row, path)) continue;
       if (row.scope === "file") {
@@ -506,7 +494,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     add(fitted, bytes);
     for (const question of asking) {
       makeRoom(fitted, bytes);
-      questions.push({ id: question.id, type: "boolean", instructions: question.instructions(chunk.length - 1) });
+      const instructions = question.instructions(chunk.length - 1);
+      questions.push(question.criteria ? { id: question.id, type: "choice", instructions, criteria: question.criteria } : { id: question.id, type: "boolean", instructions });
       plan[question.check]!.asked[question.id] = question.item;
       if (question.check !== "docs") asksCustom = true;
     }

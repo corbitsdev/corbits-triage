@@ -17,6 +17,5 @@ export function checkLimitText(pack: CheckPack | null, check: Pick<CheckResult, 
       return maxLines === undefined ? null : `limit ${COUNT.format(maxLines)} lines`;
     }
   }
-  const custom = pack.custom.find((row) => row.id === check.check);
-  return custom?.kind === "rule" && custom.rule === "min-approvals" ? `needs ${custom.count} approvals` : null;
+  return null;
 }

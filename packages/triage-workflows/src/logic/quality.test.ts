@@ -74,7 +74,8 @@ test("quality preflight splits files in order across requests under the state bu
   expect(evaluation.requests.every(withinBudget)).toBe(true);
   const held = evaluation.requests.map((request) => request.state.pullRequest.files.map((file) => file.path));
   expect(held.flat()).toEqual(files.map((file) => file.path));
-  expect(evaluation.requests.map((request) => request.questions.filter((question) => question.type === "choice").map((question) => question.id))).toEqual(held.map((_, index) => [`focused-slice-${String(index + 1).padStart(3, "0")}`]));
+  expect(evaluation.requests.map((request) => request.questions.filter((question) => question.id.startsWith("focused-slice-")).map((question) => question.id))).toEqual(held.map((_, index) => [`focused-slice-${String(index + 1).padStart(3, "0")}`]));
+  expect(evaluation.requests.flatMap((request) => request.questions.filter((question) => question.id.startsWith("docs-file-")).map((question) => question.type))).toEqual(files.map(() => "choice"));
   expect(Object.values(evaluation.focused!.slices)).toEqual(held);
   expect(evaluation.focused!.unread).toEqual([]);
   expect(prepareQualityEvaluation(facts(files), sources)).toEqual(evaluation);

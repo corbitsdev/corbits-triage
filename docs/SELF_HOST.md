@@ -167,7 +167,7 @@ browser; see [Tenancy and authority](ARCHITECTURE.md#tenancy-and-authority).
 Pull the new version, rebuild the image and redeploy. The hub runs
 migrations on every start; nothing else is needed.
 
-- Merges need Contents: write, and author rules on roles that name teams
+- Merges need Contents: write, and a step that is `for` a GitHub team
   need Members: read. An App created before these were requested keeps its old
   permissions until an owner accepts the new ones on GitHub.
 - A hub that ran the build creating `corbits_triage_tenant_migration` can drop

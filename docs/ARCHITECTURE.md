@@ -45,7 +45,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     user who started setup, so no setup state is stored.
   - **Integration routes** under `/api/integrations/`: sign-in methods,
     GitHub App setup and installation sync, open pull requests, details,
-    actions, Dos, previews and single pull request triage, latest verdicts,
+    actions, Dos, previews (API only; the portal no longer calls it) and single
+    pull request triage, latest verdicts,
     triage stats and timeline, the policy schema, invitations, and
     workflow deploy and versions. Each is described in `/openapi.json`. Pull request
     actions are synchronous: a maintainer's click must not wait on a
@@ -89,24 +90,24 @@ one does.
 5. **parts**: reads the first answers and asks, through a second judge map,
    one question per file of each slice that failed focused and the verdict
    question over every rule's result.
-6. **evaluate**: decides the verdict: Fail on a failed hard rule, otherwise
+6. **evaluate**: decides the verdict: Fail on a failed hard rule, Pass when every rule passes in a policy with no decision-model rule, otherwise
    Pass, Fail or Unsure from the verdict question. It renders the one comment
-   and resolves the verdict's list of Dos when the policy's When is woken.
+   and resolves the verdict's list of steps when the policy's When is woken, skipping each step not for the pull request's author.
 7. **execute**: runs the Dos whose kind the `pr-triage` role holds on GitHub.
    Every other Do is held in the verdict (`held: true`) and the run finishes.
-8. **mirror**: writes the triage labels when the `pr-triage` role holds the
+8. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`) when the `pr-triage` role holds the
    labels grant, and one marker comment when it holds the comment grant.
 
 The hub reads which kinds the `pr-triage` system role is granted, `invoke` on
 `triage-do:<kind>:<owner>/<name>`, and mails them with each trigger; the run
-trusts them only from the hub's sender. Close and agent Dos on an Unsure
-verdict are always held. At start the hub
+trusts them only from the hub's sender. Close on an Unsure verdict, and merge on anything but Pass,
+are always held. The hub mails the policy twice: `pack` as stored, and `checkPack` in the shape a deployment built before steps reads, without the steps it would run wrongly. At start the hub
 grants the role comment and labels on each repository still set to post
 automatically, then drops that setting. A person holding the same grant approves a held Do, or one the run failed or could
 not write, from the inbox: the hub checks the grants below and mails the
 deployment the Do, its effect id, head and approver. That mail skips triage: an
 `approval` action reads it, trusting only the hub's sender and checking the
-effect id, and execute writes the Do unless GitHub already shows it; a close,
+effect id, and execute writes the Do unless GitHub already shows it; a close, merge,
 comment or review is refused once the head has moved. The hub reads the
 approval run's outcome back onto the verdict that held the Do. "Hide for me"
 hides a Do in that browser only; nothing is sent.
@@ -129,10 +130,10 @@ trusted sidecar adapter turns the App key into short-lived
 installation tokens at the fetch boundary, so workflow and tool code never
 hold it. Hub routes that read GitHub check the caller's `read` (or `use`)
 grant on the same credential; routes that write to GitHub check `use`. Reads
-(open pull requests, details, previews) use the secret on the caller's
+(open pull requests, details, and the API-only preview) use the secret on the caller's
 behalf and never return it; writes are pull request actions and triage; approving a held Do checks only its kind's grant.
 A pull request action from the portal that is a Do kind (comment, labels,
-assign, request review, approve, request changes, close) also checks `invoke`
+assign, request review, approve, request changes, close, merge) also checks `invoke`
 on `triage-do:<kind>:<owner>/<name>`, the repository name in lowercase; the
 admin role holds `triage-do:*` from GitHub setup, and owners hold every grant. In a run, the repository's policy decides when to
 approve, and only a head that passes with CI green is approved, from the
