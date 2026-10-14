@@ -60,14 +60,22 @@ function focusedFileQuestion(file: number): string {
   return `Is the change in \`pullRequest.files[${file}]\` a separate change from the one the pull request's title and body describe?`;
 }
 
+export const DOCS_CHOICES = ["unaffected", "now_wrong", "now_incomplete"] as const;
+
 /**
- * Docs is decided per file and combined in code: changing a doc file passes it, otherwise each file gets this direct
- * question, answered yes when the file needs the docs updated. Jev answers conditional questions ("if X, does it Y?")
+ * Docs is decided per file and combined in code: changing a doc file passes it, otherwise each file gets one Choice, and
+ * needs the docs updated unless `unaffected` holds the band. Jev answers conditional questions ("if X, does it Y?")
  * backwards, so none is asked.
  */
 function docsQuestion(file: number): string {
-  return `Does the change in \`pullRequest.files[${file}]\` make a statement in \`repository.docs\` wrong or incomplete, or add setup, configuration, permissions, or commands that \`repository.docs\` must describe?`;
+  return `How does the change in \`pullRequest.files[${file}]\` leave \`repository.docs\`?`;
 }
+
+const DOCS_CRITERIA: Record<typeof DOCS_CHOICES[number], string> = {
+  unaffected: "The docs stay correct and complete for this change.",
+  now_wrong: "A statement in the docs is contradicted by this change, such as a name, table, route, file, setting or behaviour the docs describe that the change renames, removes or changes.",
+  now_incomplete: "The change adds setup, configuration, permissions or commands that the docs must describe.",
+};
 
 /** Only a change outside tests and docs can need docs. */
 function isAsked(path: string): boolean {
@@ -121,6 +129,7 @@ interface FileQuestion {
   id: string;
   item: CheckItem;
   instructions: (file: number) => string;
+  criteria?: Record<string, string>;
 }
 
 const FAILURES: Record<QualityCheckId, string> = {
@@ -423,7 +432,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
 
   /** Every question about the file at `position` whose leading `read` hunks the request holds; a patch without hunk headers is cited as its file. */
   function fileQuestions(path: string, position: number, read: number, cited: CheckItem[]): FileQuestion[] {
-    const out: FileQuestion[] = asksDocs(path) ? [{ check: "docs", id: fileQuestionId("docs", position), item: path, instructions: docsQuestion }] : [];
+    const out: FileQuestion[] = asksDocs(path) ? [{ check: "docs", id: fileQuestionId("docs", position), item: path, instructions: docsQuestion, criteria: DOCS_CRITERIA }] : [];
     for (const row of scoped) {
       if (!inScope(row, path)) continue;
       if (row.scope === "file") {
@@ -485,7 +494,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     add(fitted, bytes);
     for (const question of asking) {
       makeRoom(fitted, bytes);
-      questions.push({ id: question.id, type: "boolean", instructions: question.instructions(chunk.length - 1) });
+      const instructions = question.instructions(chunk.length - 1);
+      questions.push(question.criteria ? { id: question.id, type: "choice", instructions, criteria: question.criteria } : { id: question.id, type: "boolean", instructions });
       plan[question.check]!.asked[question.id] = question.item;
       if (question.check !== "docs") asksCustom = true;
     }

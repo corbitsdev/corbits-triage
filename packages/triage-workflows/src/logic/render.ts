@@ -6,7 +6,7 @@ import type { SuggestedAction } from "./actions.js";
 import { hardFailures, hasModelChecks, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
 import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
-import { actionText, askedQuestionIds, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
+import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
 /** System One's decision; a score's `legend` names the level each key of its `probabilities` stands for. */
 type ModelAnswer = Decision;
@@ -214,6 +214,8 @@ function isDecisive(answer: ModelAnswer): boolean {
   if (verdict) return verdict.pass >= VERDICT_DECIDES || verdict.fail >= VERDICT_DECIDES;
   const focused = sides(answer);
   if (focused) return focused.serves >= FOCUSED_DECIDES || focused.separate >= FOCUSED_DECIDES;
+  const docs = choiceOver(answer, DOCS_CHOICES);
+  if (docs) return docs.unaffected >= YES || docs.unaffected <= NO;
   return Math.max(...Object.values(answer.probabilities)) >= YES;
 }
 
@@ -265,7 +267,10 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
 
   function noulOf(id: string): number | undefined {
     const answer = invalid ? undefined : parsed.decisions[id];
-    return answer?.type === "noul" ? answer.noul : undefined;
+    if (answer?.type === "noul") return answer.noul;
+    // Docs' Choice reads as yes, the file needs docs, by how unlikely `unaffected` is.
+    const docs = choiceOver(answer, DOCS_CHOICES);
+    return docs && 1 - docs.unaffected;
   }
 
   function push(check: string, decided: Decided, output: CheckOutput, evidence: string[] = [], reason?: string) {
