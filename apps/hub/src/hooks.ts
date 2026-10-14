@@ -9,9 +9,9 @@ import type { DatabaseConfig } from "./env.js";
 export const HOOK_MOUNT_PATH = "/api/hooks";
 
 /** Must run after Interchange's own migrations. */
-export async function migrateWebhooks({ schema = "public", statementTimeoutMs: _, ...database }: DatabaseConfig): Promise<void> {
+export async function migrateWebhooks({ schema = "public", statementTimeoutMs: _, ...database }: DatabaseConfig, log: (entry: Record<string, unknown>) => void): Promise<void> {
   await runWebhookMigrations(database, { schema });
-  console.log("webhook migrations applied");
+  log({ level: "info", msg: "webhook_migrations_applied" });
 }
 
 export interface HookDeps {

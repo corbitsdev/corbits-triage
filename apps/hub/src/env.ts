@@ -55,6 +55,9 @@ const HubEnvSchema = type({
   "WORKFLOW_DEFAULT_RETENTION_COMPLETED?": lifecycleDuration,
   "WORKFLOW_DEFAULT_RETENTION_FAILED?": lifecycleDuration,
   "WORKFLOW_DEFAULT_RETENTION_CANCELLED?": lifecycleDuration,
+  "PATH?": "string",
+  "HOME?": "string",
+  "TMPDIR?": "string",
   "PG_SCHEMA?": "string",
   "DB_STATEMENT_TIMEOUT_MS?": "string.integer",
 });
@@ -88,6 +91,14 @@ export function loadHubEnv(raw: Record<string, string | undefined>): HubEnv {
 /** Unset means production GitHub; a set origin (e.g. a local emulator) loses any trailing slash. */
 export function githubApiOrigin(env: HubEnv): string {
   return env.GITHUB_API_ORIGIN === undefined ? DEFAULT_GITHUB_API_ORIGIN : env.GITHUB_API_ORIGIN.trim().replace(/\/+$/, "");
+}
+
+export type ChildProcessEnv = { PATH?: string; HOME?: string; TMPDIR?: string };
+
+/** The variables child processes (drizzle-kit, sidecars) need to find binaries and scratch space. */
+export function childProcessEnv(env: HubEnv): ChildProcessEnv {
+  const { PATH, HOME, TMPDIR } = env;
+  return { ...(PATH !== undefined && { PATH }), ...(HOME !== undefined && { HOME }), ...(TMPDIR !== undefined && { TMPDIR }) };
 }
 
 /** `sslmode=require` (or stricter) turns on TLS. */
