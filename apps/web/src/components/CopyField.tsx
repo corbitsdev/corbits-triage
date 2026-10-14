@@ -12,6 +12,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   return (
     <>
       <Button type="button" variant="outline" size="sm" aria-label={label} onClick={() => copy.mutate()}>{copy.isSuccess ? "Copied" : "Copy"}</Button>
+      <span role="status" className="sr-only">{copy.isSuccess ? "Copied." : ""}</span>
       {copy.isError && <span role="alert" className="field-error">Could not copy. Select the text and copy it.</span>}
     </>
   );
@@ -29,7 +30,6 @@ type CopyFieldProps = {
   className?: string;
 };
 
-/** A read-only value with its label and a copy button. */
 export function CopyField({ label, value, help, className }: CopyFieldProps) {
   const id = useId();
   const helpId = `${id}-help`;
@@ -40,7 +40,7 @@ export function CopyField({ label, value, help, className }: CopyFieldProps) {
         <Input id={id} readOnly value={value} onFocus={selectAll} aria-describedby={help ? helpId : undefined} />
         <CopyButton value={value} label={`Copy ${label.toLowerCase()}`} />
       </div>
-      {help && <p id={helpId} className="help">{help}</p>}
+      {help && <p id={helpId} className="field-help">{help}</p>}
     </div>
   );
 }

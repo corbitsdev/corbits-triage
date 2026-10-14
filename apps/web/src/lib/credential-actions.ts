@@ -23,14 +23,17 @@ function secretDisplayName(storedName: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 }
 
-/** The GitHub App key and the webhook secret. */
 export function githubSecrets(credentials: readonly HubCredential[]): HubCredential[] {
   return credentials.filter((credential) => storedAs(credential.name, GITHUB_CREDENTIAL_NAME) || storedAs(credential.name, GITHUB_HOOK_CREDENTIAL_NAME));
 }
 
-/** The decision model's API key. */
 export function modelSecrets(credentials: readonly HubCredential[]): HubCredential[] {
   return credentials.filter((credential) => storedAs(credential.name, INFERENCE_CREDENTIAL_NAME));
+}
+
+export function otherSecrets(credentials: readonly HubCredential[]): HubCredential[] {
+  const ours = new Set([...githubSecrets(credentials), ...modelSecrets(credentials)]);
+  return credentials.filter((credential) => !ours.has(credential));
 }
 
 export type NamedSecret = { credential: HubCredential; name: string };

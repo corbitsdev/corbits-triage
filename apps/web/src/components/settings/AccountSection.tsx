@@ -3,7 +3,6 @@ import { useSignOutAfterSending } from "../../lib/held-inbox.tsx";
 import { useSession } from "../../lib/session.tsx";
 import { SignedInDevices } from "../SignedInDevices.tsx";
 
-/** You, not the workspace: who is signed in, on which devices, and signing out. */
 export function AccountSection() {
   const { session } = useSession();
   const signOut = useSignOutAfterSending();

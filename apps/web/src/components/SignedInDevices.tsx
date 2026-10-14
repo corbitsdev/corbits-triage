@@ -15,7 +15,6 @@ function deviceName(session: HubSessionRow): string {
   return session.userAgent ?? "Unknown device";
 }
 
-/** Each device signed in as you, as sentence rows; any but this one can be signed out. */
 export function SignedInDevices() {
   const query = useQuery({ queryKey: [SESSIONS_QUERY_KEY], queryFn: readSessions });
   const signOut = useMutation({

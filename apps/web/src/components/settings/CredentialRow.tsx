@@ -9,7 +9,7 @@ import { usePortal } from "../../lib/portal.tsx";
 type CredentialRowProps = {
   credential: HubCredential;
   name: string;
-  /** False where another form on the card writes this secret. */
+  /** False where this row only removes: another form writes the secret, or Triage did not create it. */
   replaceable: boolean;
 };
 
@@ -19,7 +19,6 @@ function confirmChange(message: string): boolean {
   return window.confirm(message);
 }
 
-/** One stored workspace secret: its state, and replacing or removing it. */
 export function CredentialRow({ credential, name, replaceable }: CredentialRowProps) {
   const { replaceSecret, revoke, readOnly } = usePortal();
   const [editing, setEditing] = useState(false);
@@ -60,7 +59,7 @@ export function CredentialRow({ credential, name, replaceable }: CredentialRowPr
         )}
         {change.error && <p role="alert" className="field-error">Could not change the {name} secret. {errorText(change.error)} Try again.</p>}
       </div>
-      {replaceable && !editing && <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => setEditing(true)}>Replace secret</Button>}
+      {replaceable && !editing && <Button type="button" variant="outline" size="sm" aria-label={`Replace ${name} secret`} disabled={disabled} onClick={() => setEditing(true)}>Replace secret</Button>}
       <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${name}`} disabled={disabled} onClick={() => change.mutate({ action: "revoke", secret: "" })}>Remove</Button>
     </div>
   );

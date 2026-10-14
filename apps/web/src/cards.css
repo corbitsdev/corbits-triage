@@ -1,6 +1,6 @@
 /* Card, sentence and value styles shared by the repository panel and workspace settings */
-/* Every item leads with its separator and the row starts one separator early, so a wrapped line never starts with one. */
-:is(.repos, .settings) .byline { display: flex; flex-wrap: wrap; align-items: center; margin-left: -17px; clip-path: inset(0 0 0 17px); font-size: 13px; }
+/* Every item leads with its separator and the row starts one separator early, so a wrapped line never starts with one; the clip leaves room for focus rings. */
+:is(.repos, .settings) .byline { display: flex; flex-wrap: wrap; align-items: center; margin-left: -17px; clip-path: inset(-4px -4px -4px 14px); font-size: 13px; }
 :is(.repos, .settings) .byline > * { display: inline-flex; align-items: center; white-space: nowrap; }
 :is(.repos, .settings) .byline > *::before { content: "·"; width: 17px; text-align: center; flex: none; }
 :is(.repos, .settings) .rs { margin-top: 28px; }
@@ -46,6 +46,7 @@
 :is(.repos, .settings) .linkish { background: none; border: 0; padding: 0; font: 600 12px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 :is(.repos, .settings) .linkish.quiet { font-weight: 500; }
 :is(.repos, .settings) .linkish:disabled { opacity: 0.45; cursor: not-allowed; }
+:is(.repos, .settings) .linkish:focus-visible { outline: 0; box-shadow: var(--focus); border-radius: 2px; }
 
 /* On a phone a long settings sentence takes its own line and its buttons wrap under it. */
 @media (max-width: 720px) {

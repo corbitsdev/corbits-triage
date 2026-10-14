@@ -11,7 +11,6 @@ function providerName(saved: { endpoint: string; model: string }): string {
   return preset.id === "custom" ? saved.endpoint : preset.label;
 }
 
-/** The decision model Triage asks for a verdict, its key, and the form that replaces both. */
 export function ModelSection({ snapshot }: { snapshot: PortalSnapshot }) {
   const saved = snapshot.config?.inference;
   const secrets = namedSecrets(modelSecrets(snapshot.credentials));
