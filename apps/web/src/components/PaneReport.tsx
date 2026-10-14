@@ -54,7 +54,6 @@ function ProblemRow({ problem, pack, repo, sha }: { problem: Problem; pack: Chec
   );
 }
 
-/** Only what stands in the way; a pull request with nothing in the way shows no list. */
 export function Problems({ problems, pack, item }: { problems: Problem[]; pack: CheckPack | null; item: PrItem }) {
   if (problems.length === 0) return null;
   return <ol className="pbs">{problems.map((problem) => <ProblemRow key={problem.check.check} problem={problem} pack={pack} repo={item.repo} sha={item.verdictSha} />)}</ol>;
@@ -173,7 +172,6 @@ function Files({ files, changed }: { files: GithubPullDetail["files"]; changed: 
   );
 }
 
-/** A passed check's measure and limit, or a matched gate, on one line. */
 function passedText(check: CheckResult, pack: CheckPack | null): string {
   const measured = isCatalogId(check.check) || BUILT_IN_CHECK_NAMES.has(check.check) ? checkMeasuredText(check.output) : null;
   const text = measured ?? check.reason ?? "";
@@ -202,7 +200,6 @@ function PullStatus({ pull }: { pull: PullState }) {
   return null;
 }
 
-/** What Triage read, folded away: the linked issue, the changed files and the checks that passed. */
 export function ReportRows({ item, pull, pack }: { item: PrItem; pull: PullState; pack: CheckPack | null }) {
   const detail = pull.data;
   const passed = passedChecks(item.checks);

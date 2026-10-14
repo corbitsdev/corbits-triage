@@ -90,7 +90,6 @@ function ActionRow({ action, view, tabId, primary }: { action: PageAction; view:
   );
 }
 
-/** The view's suggested actions, each applied on the pull request's GitHub tab as the person signed in there. */
 export function ActionList({ view, tabId, primary }: { view: TriageView; tabId: number | undefined; primary: boolean }) {
   const actions = pageActions(view);
   if (!actions.length) return null;

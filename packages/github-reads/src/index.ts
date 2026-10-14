@@ -3,7 +3,7 @@ import { minimatch } from "minimatch";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
 
-/** Authenticated fetch pinned to the GitHub API origin; takes a path. */
+/** Pinned to the GitHub API origin. */
 export type GithubFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
 export const INSTALLATION_SELECTOR_HEADER = "x-corbits-github-installation-id";
@@ -192,7 +192,7 @@ function prFields(p: any) {
   };
 }
 
-/** The pull request as GitHub has it now, without waiting for mergeability. */
+/** Without waiting for mergeability. */
 export async function readPr(gh: GithubFetch, repo: string, number: number) {
   return prFields(await json(gh, `/repos/${repo}/pulls/${number}`));
 }
@@ -415,17 +415,13 @@ type RepoDoc = {
   text: string;
 };
 
-/** How much of a contribution rule file, read once, belongs to the docs and to the rules, in UTF-8 bytes. */
 export type RuleSpan = { path: string; docsBytes: number; rulesBytes: number };
 
 export type RepoDocsPage = {
-  /** Each doc read once, as far as the docs or the rules reach into it. */
   docs: RepoDoc[];
-  /** The contribution rules in reading order, and how much of each the docs and the rules take. */
   rules: RuleSpan[];
   /** The tree this page was read from; pass it back with `next` so every page reads the same docs. */
   ref: string;
-  /** The byte offset into the ordered docs where the next page starts. */
   next?: number;
 };
 
@@ -456,7 +452,6 @@ function byRuleOrder(a: Pick<DocBlob, "path">, b: Pick<DocBlob, "path">): number
   return contributionRuleRank(a.path)! - contributionRuleRank(b.path)! || byPath(a, b);
 }
 
-/** The bytes of each doc that `max` reaches, taking the docs in order. */
 function budget(blobs: DocBlob[], max: number): Map<string, number> {
   const reach = new Map<string, number>();
   let read = 0;
@@ -505,7 +500,6 @@ function fitsDocsPage(page: RepoDocsPage, doc: RepoDoc): boolean {
   return JSON.stringify({ ...page, docs: [...page.docs, doc], next: Number.MAX_SAFE_INTEGER }).length <= PR_FILES_PAGE_CHARS;
 }
 
-/** The end of the longest slice of `bytes` from `from` that still fits the page. */
 function fittingEnd(page: RepoDocsPage, path: string, bytes: Uint8Array, from: number): number {
   let low = from;
   let high = bytes.length;
@@ -553,7 +547,6 @@ export async function readRepoDocsPage(gh: GithubFetch, repo: string, { ref, off
   return page;
 }
 
-/** The docs and contribution rules the pages of readRepoDocsPage spell out, by path. */
 export function repoDocs(pages: readonly RepoDocsPage[]): { docs: Record<string, string>; rules: Record<string, string> } {
   const texts: Record<string, string> = {};
   for (const page of pages) for (const { path, text } of page.docs) texts[path] = (texts[path] ?? "") + text;
@@ -571,7 +564,7 @@ export function repoDocs(pages: readonly RepoDocsPage[]): { docs: Record<string,
 
 const utf8Encoder = new TextEncoder();
 
-/** The longest start of `text` within `limit` UTF-8 bytes, never splitting a character. */
+/** Never splits a character. */
 function leadingBytes(text: string, limit: number): string {
   const bytes = utf8Encoder.encode(text);
   return limit >= bytes.length ? text : utf8.decode(bytes.subarray(0, charStart(bytes, limit)));
@@ -624,7 +617,7 @@ export type LinkedIssue = {
 
 const ISSUE_REF = /(?:^|[\s(])#(\d+)\b/g;
 
-/** Same-repo `#n` references in the text that GitHub resolves to issues, not pull requests. */
+/** References GitHub resolves to issues, not pull requests. */
 export async function listReferencedIssues(gh: GithubFetch, repo: string, number: number, text: string): Promise<LinkedIssue[]> {
   const refs = [...new Set([...text.matchAll(ISSUE_REF)].map((m) => Number(m[1])))].filter((n) => n !== number);
   const issues: LinkedIssue[] = [];
@@ -655,12 +648,11 @@ export function missingFrom(have: string[] | undefined, wanted: string[]): strin
   return wanted.filter((name) => !held.has(lowercase(name)));
 }
 
-/** The login GitHub shows on the App's own reviews and comments. */
 export async function appLogin(gh: GithubFetch): Promise<string> {
   return `${(await getApp(gh)).slug}[bot]`;
 }
 
-/** The App's login, asked of GitHub once however often it is needed. */
+/** Asked of GitHub once however often it is needed. */
 export type AppLogin = () => Promise<string>;
 
 /** Marks the changes the request-changes Do requested, so a repeat on the same head finds them. */
@@ -727,7 +719,7 @@ export function codeownersFor(rules: CodeownersRule[], paths: string[]): Codeown
   return { users: [...users], teams: [...teams] };
 }
 
-/** Code owners of a pull request's changed files, without its author. */
+/** Without its author. */
 export async function codeownersForPr(gh: GithubFetch, repo: string, number: number): Promise<Codeowners> {
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   // GitHub applies the base branch's CODEOWNERS, so a pull request cannot edit its own reviewers.

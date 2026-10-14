@@ -30,7 +30,6 @@ type HeldDoKeys = {
   /** Hides a Do, by its `sentKey`, while its approval waits for Undo or for its run's outcome; `release` offers it again. */
   hold: (key: string) => void;
   release: (key: string) => void;
-  /** Hides a Do for this browser: Skip. */
   hide: (key: string) => void;
 };
 

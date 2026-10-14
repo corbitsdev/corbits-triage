@@ -22,12 +22,10 @@ const FIND_OR_VERSION_LOCK_NAMESPACE = 0x0a27_1f05;
 
 export type TriageStateStoreDeps = {
   db: ArtifactDb;
-  /** The principal hub writes are recorded as. */
   writerFor: (tenantId: string) => Promise<string>;
   log: (entry: Record<string, unknown>) => void;
 };
 
-/** The artifact version a load read; null when nothing is stored yet. */
 export type TriageStateVersion = { artifactId: string; version: number } | null;
 
 export type LoadedTriageState = { rows: PrTriageRow[]; version: TriageStateVersion };

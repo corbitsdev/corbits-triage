@@ -9,7 +9,6 @@ export function isPortalRequest(req: Request): boolean {
   return (req.method === "GET" || req.method === "HEAD") && !HUB_PATHS.some((path) => pathname.startsWith(path));
 }
 
-/** Serves the built portal, answering client-side routes with index.html. */
 export function createPortalHandler(dir: string): (req: Request) => Promise<Response> {
   const root = resolve(dir);
   const indexPath = resolve(root, "index.html");

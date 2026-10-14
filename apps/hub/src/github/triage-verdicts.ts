@@ -54,7 +54,6 @@ type Run = NonNullable<Pull["run"]>;
 export type TriageVerdictsDeps = PortalCredentialDeps & {
   verdicts: Pick<VerdictRecordStore, "latest" | "latestSince" | "latestFor" | "triggeredAt" | "reposSince" | "anyScored">;
   observer: Pick<TenantObserver, "last">;
-  /** Whether the hub read the tenant's live logs since it started. */
   ready: (tenantId: string) => boolean;
   versions: Pick<TenantVersions, "get">;
   openPulls: OpenPullsCache;
@@ -62,7 +61,6 @@ export type TriageVerdictsDeps = PortalCredentialDeps & {
   now: () => Date;
 };
 
-/** A pull request's runs in the live logs, newest first. */
 type LivePull = PullRef & { runs: ObservedRun[] };
 
 function pullKey(pull: PullRef): string {

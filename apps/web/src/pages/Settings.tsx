@@ -38,7 +38,6 @@ function parseTab(value: string | undefined): SettingsTab {
 
 type VersionRow = { name: string; version: string };
 
-/** Each workflow's current version, then the tools those deployments carry, each once. */
 function versionRows(deployments: readonly DeployedWorkflow[]): VersionRow[] {
   const current = WORKFLOW_PACKAGES.map((workflow) => ({ name: workflow.name, deployment: currentDeployment(deployments, workflow.name) }));
   const tools = new Map<string, VersionRow>();

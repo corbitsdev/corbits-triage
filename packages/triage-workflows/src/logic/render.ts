@@ -9,7 +9,6 @@ import type { Judged } from "./item.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, DOCS_CHOICES, failureText, FOCUSED_CHOICES, isScoped, passText, SLICE_CHOICES, VERDICT_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
-/** System One's decision; a score's `legend` names the level each key of its `probabilities` stands for. */
 type ModelAnswer = Decision;
 
 export interface ParsedAnswers {
@@ -74,7 +73,6 @@ function levelName(level: string): string {
   return level.trim().toLowerCase();
 }
 
-/** A score answer's probabilities by the level its legend names, when those are exactly `levels`. */
 function levelsOver(answer: ModelAnswer | undefined, levels: readonly string[]): Record<string, number> | undefined {
   if (answer?.type !== "score" || Math.abs(Object.values(answer.probabilities).reduce((total, value) => total + value, 0) - 1) > SUM_TOLERANCE) return undefined;
   const byName = new Map(Object.entries(answer.legend).map(([key, level]) => [levelName(level), answer.probabilities[key]]));
@@ -85,14 +83,14 @@ function levelsOver(answer: ModelAnswer | undefined, levels: readonly string[]):
 // The backend rounds each probability to two places; System One's client checks sums at this tolerance but does not export it.
 const SUM_TOLERANCE = 0.02;
 
-/** The answer's probabilities when they are over exactly `options` and sum to about 1. */
+/** Probabilities sum to about 1. */
 export function choiceOver<T extends string>(answer: ModelAnswer | undefined, options: readonly T[]): Record<T, number> | undefined {
   if (answer?.type !== "choice" || !exactKeys(answer.probabilities, [...options])) return undefined;
   const sum = Object.values(answer.probabilities).reduce((total, value) => total + value, 0);
   return Math.abs(sum - 1) <= SUM_TOLERANCE ? (answer.probabilities as Record<T, number>) : undefined;
 }
 
-/** The most likely key, the first of equals. */
+/** The first of equals. */
 function likeliest(probabilities: Record<string, number>, keys: string[]): string {
   return keys.reduce((best, key) => (probabilities[key]! > probabilities[best]! ? key : best));
 }
@@ -111,21 +109,16 @@ export function parseAnswers(reply: unknown): ParsedAnswers {
 
 export interface RenderInput {
   author: string;
-  /** The pull request's repository and head commit, which the comment links cited lines into. */
   repo: string;
   headSha: string;
   det: DeterministicResult;
   answers?: ParsedAnswers | Record<string, number> | null;
-  /** How the per-file checks are asked and which files they could not read. */
   plan?: QualityPlan;
-  /** How focused is asked, from the same evaluation as `plan`; undefined when it does not apply. */
   focused?: FocusedPlan;
   judgeError?: string;
   judgeLimitExceeded?: true;
   judgeSkipped?: true;
-  /** Logins of requested reviewers. */
   reviewers?: string[];
-  /** The verdict question's probability for each choice; undefined when it was not asked or not answered. */
   choice?: Record<VerdictChoice, number>;
   /** Why the verdict question could not be asked: the pull request is too large for it. */
   choiceRefused?: string;
@@ -156,19 +149,14 @@ const NOT_APPLICABLE: CheckOutput = { kind: "not-applicable" };
 export interface RenderOutput extends Rendered {
   mirror: boolean;
   labels: string[];
-  /** Which action list runs on this head. */
   verdict: VerdictWord;
-  /** How likely the pull request passes its policy, as the verdict question answered; null when it was not asked. */
   score: number | null;
-  /** Why the verdict is what it is: the failed hard rules first, then the judged rules that failed or were not confirmed. */
   reasons: string[];
   degraded: "inference-outage" | "error" | null;
   checks: CheckResult[];
-  /** The reason the verdict was rendered with. */
   reason: string;
   nextAction: string;
   actor: Actor;
-  /** The comment to post for the author; empty only when nothing is posted. */
   feedback: string;
 }
 
@@ -191,7 +179,6 @@ const VERDICT_DECIDES = 0.7;
 const MAX_FILE_EVIDENCE = 3;
 const MAX_CODE_CHARS = 200;
 
-/** How likely a focused answer says its slice serves the pull request's purpose, and how likely a separate change; undefined for any other answer. */
 function sides(answer: ModelAnswer | undefined): { serves: number; separate: number } | undefined {
   const whole = choiceOver(answer, FOCUSED_CHOICES);
   if (whole) return { serves: whole.one_thing, separate: whole.more_than_one_thing };
@@ -204,7 +191,6 @@ function isInvalid({ decisions, malformed }: ParsedAnswers, expected: Set<string
   return malformed || Object.keys(decisions).some((id) => !expected.has(id));
 }
 
-/** The focused slices whose answers call them a separate change, for the follow-up file questions. */
 export function separateSlices(answers: ParsedAnswers, focused: FocusedPlan, expected: Set<string>): string[] {
   if (isInvalid(answers, expected)) return [];
   return Object.keys(focused.slices).filter(function separate(id) {
@@ -225,7 +211,7 @@ function isDecisive(answer: ModelAnswer): boolean {
   return Math.max(...Object.values(answer.probabilities)) >= YES;
 }
 
-/** A judge reply a later run may reuse: well formed, with every answer decisive. */
+/** A later run may reuse it. */
 export function isReusableReply(reply: string): boolean {
   const { decisions, malformed } = parseAnswers(reply);
   return !malformed && Object.values(decisions).every(isDecisive);
@@ -237,7 +223,6 @@ const FOCUSED_PASS_AT = Math.round(FOCUSED_DECIDES * 100);
 
 type ModelEvaluation = {
   checks: CheckResult[];
-  /** Some asked question got no usable answer. */
   unanswered: boolean;
 };
 
@@ -260,7 +245,6 @@ function band(noul: number, yesPasses: boolean): Decided {
   return { result: "unconfirmed", reason: UNDECIDED_REASON };
 }
 
-/** The judged rules' results from the judge's answers; each is unconfirmed when its question was not asked or not answered. */
 export function evaluateModel({ det, answers, plan = {}, focused, judgeError, judgeLimitExceeded, judgeSkipped }: RenderInput): ModelEvaluation {
   if (!det.sources) return { checks: [], unanswered: false };
   const sources = det.sources;
@@ -520,7 +504,6 @@ export function authorFailures(all: CheckResult[], sources: Sources): CheckResul
 
 const VERDICT_TITLES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
 
-/** The comment's first line, naming the verdict. */
 export function commentTitle(verdict: VerdictWord): string {
   return `**Triage: ${VERDICT_TITLES[verdict]}**`;
 }
@@ -558,13 +541,11 @@ function authorComment({ author, repo, headSha, sources }: RenderContext, checks
   return bounded([commentTitle(verdict), "", ...lines]);
 }
 
-/** A failed or unconfirmed rule as the portal lists it: its reason and what it found. */
 function reasonOf(c: CheckResult, sources: Sources): string {
   if (c.result === "fail") return c.evidence.length ? `${c.reason}: ${c.evidence.join(", ")}` : c.reason;
   return `Not confirmed: ${c.kind === "model" && sources ? passText(c.check, sources) : c.reason}`;
 }
 
-/** Failed hard rules first, then the judged rules that failed or the judge could not settle. */
 function reasonsOf(det: DeterministicResult, model: CheckResult[]): string[] {
   const hard = det.checks.filter((c) => c.result === "fail" || (c.result === "unconfirmed" && c.check !== NOT_A_DRAFT));
   const soft = model.filter((c) => c.result === "fail" || unsure(c));
@@ -683,10 +664,8 @@ export type Verdict = RenderOutput & {
   number: number;
   headSha: string | null;
   request: MirrorRequest;
-  /** The Do kinds the pr-triage role is granted on the repository, as the hub's mail said. */
   automatic: ActionKind[];
   actions: SuggestedAction[];
-  /** The judge answers a later run of this head reuses instead of asking again. */
   judged?: Judged;
   /** Set when the pack has an approve Do: whether this head may be approved. */
   approvable?: boolean;

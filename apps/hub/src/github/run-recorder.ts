@@ -30,7 +30,6 @@ export function createRunRecorder(deps: RunRecorderDeps): RecordRuns {
   /** Verdicts recorded per tenant that its live logs still hold, as recorded; a restart records them again, which changes nothing. */
   const recorded = new Map<string, Set<string>>();
 
-  /** Approved Dos' outcomes recorded per tenant that its live logs still hold. */
   const recordedApproved = new Map<string, Set<string>>();
 
   return async function recordRuns(tenantId, runs) {

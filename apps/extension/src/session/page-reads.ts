@@ -51,7 +51,6 @@ function loginOf(user: { slug?: string | null; displayLogin: string }): string {
   return user.slug ? `${user.slug}[bot]` : user.displayLogin;
 }
 
-/** One triage run's page reads, each URL fetched once however many API paths need it. */
 export type PageReads = { answer(path: string): Promise<SessionAnswer | null> };
 
 export function pageReads(): PageReads {
@@ -78,7 +77,6 @@ export function pageReads(): PageReads {
     return JSON.parse(await read(url));
   }
 
-  /** A route's server-rendered partial, as a document to query. */
   async function partial(url: string): Promise<Document> {
     const payload = (await json(url)).payload as Record<string, { value?: unknown }> | undefined;
     const html = Object.values(payload ?? {})[0]?.value;
@@ -99,7 +97,6 @@ export function pageReads(): PageReads {
     };
   }
 
-  /** The description as written, in markdown, as the API gives it. */
   async function body(repo: string, number: number): Promise<string> {
     const { body: text } = await json(`/${repo}/pull/${number}/page_data/description`) as { body?: unknown };
     if (typeof text !== "string") throw new Error(`github.com has no description for ${repo}#${number}`);
@@ -206,7 +203,6 @@ export function pageReads(): PageReads {
     }));
   }
 
-  /** Every open pull request, or only the newest page of GitHub's list when `newest` asks for no more than one page. */
   async function openPulls(repo: string, newest: boolean) {
     const rows: Array<{ number: number; title: string }> = [];
     for (let page = 1; ; page++) {

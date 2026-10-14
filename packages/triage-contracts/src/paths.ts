@@ -8,7 +8,6 @@ export function isTestPath(path: string): boolean {
   return /(^|\/)(__tests__|tests?)\/|\.(test|spec)\.[cm]?[jt]sx?$/.test(path);
 }
 
-/** The repository's own prose: markdown outside vendored or built trees, except legal notices. */
 export function isDocPath(path: string): boolean {
   return /\.mdx?$/i.test(path) && !FOREIGN_PATH.test(path) && !LEGAL_DOC.test(path);
 }
@@ -21,13 +20,11 @@ const CONTRIBUTION_RULES = [
   /^docs\/(CONTRIBUTING|PULL_REQUEST_TEMPLATE)\.mdx?$/i,
 ];
 
-/** Where a contribution rule file comes in reading order (lower first), or undefined for any other path. */
 export function contributionRuleRank(path: string): number | undefined {
   const rank = CONTRIBUTION_RULES.findIndex((pattern) => pattern.test(path));
   return rank === -1 ? undefined : rank;
 }
 
-/** Lockfiles, which say nothing a reviewer judges. */
 export function isGeneratedPath(path: string): boolean {
   return GENERATED_PATH.test(path);
 }

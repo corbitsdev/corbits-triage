@@ -37,7 +37,6 @@ function node<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, 
   return made;
 }
 
-/** A seed's spot, for the actions that put text in one of GitHub's fields. */
 const SPOTS: Partial<Record<PageAction["kind"], SeedSpot>> = { comment: "composer", "edit-body": "body" };
 
 export type BlockState = {
@@ -46,7 +45,6 @@ export type BlockState = {
   run: RunState | undefined;
   actions: PageAction[];
   applied: Record<string, Applied | undefined>;
-  /** The action whose text sits in each of GitHub's fields, while it does. */
   seeded: Partial<Record<SeedSpot, string>>;
 };
 
@@ -168,7 +166,6 @@ export function triageBlock(handlers: BlockHandlers): TriageBlock {
     rerender();
   }
 
-  /** A comment: posted as the person, or put in the comment box to edit first; once posted, it says so. */
   function commentControl(action: PageAction, applied: Applied | undefined): HTMLElement {
     const box = node("div", "tb-draft");
     box.append(node("span", "tb-act-text", `Comment: ${action.title}`));

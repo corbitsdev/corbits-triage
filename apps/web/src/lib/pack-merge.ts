@@ -8,7 +8,6 @@ type Stored<T> = (value: T) => string;
 
 const VERDICT_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
 
-/** What a merge kept, and what both sides changed, for which ours was kept. */
 export type Merged = { draft: RepoDraft; conflicts: string[] };
 
 /**
@@ -49,7 +48,6 @@ function theirEntries(repo: string, list: VerdictWord, base: StepEntry[], steps:
   });
 }
 
-/** Another writer's pack read again, with its steps under the ids this panel already gave the same steps. */
 export function rekeyed(base: RepoDraft, theirs: RepoDraft): RepoDraft {
   let keyed = theirs;
   for (const list of VERDICTS) keyed = setSteps(keyed, list, theirEntries(theirs.pack.repo, list, stepEntries(base, list), theirs.pack.actions[list]));
@@ -118,7 +116,6 @@ function mergedCatalog(repo: string, id: CatalogId, base: CatalogCheck | undefin
   return { row: row as CatalogCheck, both };
 }
 
-/** Ours when we changed it since `base`, otherwise theirs; `both` when both changed it differently. */
 function pick<T>(mine: T, original: T, other: T, stored: (value: T) => unknown = (value) => value): { value: T; both: boolean } {
   if (same(stored(mine), stored(original))) return { value: other, both: false };
   return { value: mine, both: !same(stored(other), stored(original)) && !same(stored(other), stored(mine)) };
@@ -126,7 +123,6 @@ function pick<T>(mine: T, original: T, other: T, stored: (value: T) => unknown =
 
 let lastRuleKey = 0;
 
-/** What this panel changed since `base`, applied onto what another writer saved since (`theirs`, rekeyed onto base). */
 export function mergeDrafts(base: RepoDraft, ours: RepoDraft, theirs: RepoDraft): Merged {
   const repo = theirs.pack.repo;
   const conflicts: string[] = [];

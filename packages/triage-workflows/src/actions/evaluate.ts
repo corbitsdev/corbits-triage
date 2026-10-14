@@ -10,7 +10,6 @@ import { askedQuestionIds, focusedPartRequests, judgeKey, prepareQualityEvaluati
 import { choiceOver, degradedVerdict, evaluateModel, isReusableReply, parseAnswers, separateSlices, renderVerdict, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type Verdict } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 
-/** The rules items, merged with the judge maps' per-chunk outputs, in chunk order, when the judge ran. */
 export interface EvaluateInput {
   items: Item[];
   batch: boolean;
@@ -19,7 +18,6 @@ export interface EvaluateInput {
   judgeParts?: { output: unknown[] };
 }
 
-/** The judge's answer for one chunk, or for one item once its chunks are merged; empty when it was not asked. */
 export type Judgment = Pick<Item, "judge" | "judgeError">;
 
 export type EvaluateOutput = Verdict | { items: Verdict[]; summary: BacklogSummary };
@@ -47,7 +45,6 @@ function answersOf(requests: JudgeRequest[], answered: Array<[string, unknown]>)
   return { decisions, malformed: false };
 }
 
-/** Each distinct error of the chunks that failed. */
 function errorOf(answered: Array<[string, unknown]>): Judgment {
   const errors = new Set<string>();
   for (const [, reply] of answered) {
@@ -57,7 +54,6 @@ function errorOf(answered: Array<[string, unknown]>): Judgment {
   return errors.size > 0 ? { judgeError: [...errors].join("; ") } : {};
 }
 
-/** The item's reply to each of its requests by `judgeKey`: an earlier run's answer where it has one, else the next of `replies`. */
 export function repliesTo(it: Item, requests: JudgeRequest[], replies: unknown[]): Array<[string, unknown]> {
   return requests.map(function replyTo(request): [string, unknown] {
     const key = judgeKey(request);
@@ -111,12 +107,10 @@ export function choiceOf(it: Item, evaluation: QualityEvaluation, first: Array<[
   return verdictRequest(facts, [...det.checks, ...model.checks].map((c) => policyRule(it.pack!, c)));
 }
 
-/** The verdict question's probabilities from its reply, when it came back whole. */
 function choiceAnswer(request: JudgeRequest, reply: [string, unknown]): Record<VerdictChoice, number> | undefined {
   return choiceOver(answersOf([request], [reply]).decisions[VERDICT_QUESTION.id], VERDICT_CHOICES);
 }
 
-/** Focused's follow-up requests about the slices its first answers call a separate change, if any. */
 export function partsOf(sources: DeterministicResult["sources"], { plan, focused, requests }: QualityEvaluation, answered: Array<[string, unknown]>): FocusedParts | undefined {
   const failing = focused && sources ? separateSlices(answersOf(requests, answered), focused, askedQuestionIds(sources, plan, focused)) : [];
   return failing.length > 0 ? focusedPartRequests(requests, failing) : undefined;

@@ -76,14 +76,12 @@ function member(user: string) {
   return { tenantId: TENANT, principalId: user.replace("usr_", "prn_") };
 }
 
-/** A candidate pack whose one step is for members of team `secret`. */
 function probe() {
   const pack = emptyPack(REPO);
   pack.actions.pass = [{ do: "comment", target: { body: "Thanks" }, for: { team: "secret" } }];
   return PreviewBody.assert({ repo: REPO, number: 8, pack });
 }
 
-/** Whether the step ran, or why it was skipped. */
 async function probeResult(res: Response): Promise<string | undefined> {
   const body = await res.json() as { actions: { dos?: Array<{ reason: string; skipped?: true }> } };
   const step = body.actions.dos?.[0];

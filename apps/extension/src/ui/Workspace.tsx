@@ -26,13 +26,11 @@ type OpenList = { state: "loading" } | { state: "loaded"; prs: OpenPr[] } | { st
 
 const KEY = /^([\w.-]+\/[\w.-]+)#(\d+)$/;
 
-/** The pull request in the address's hash, as the panel's expand button and a pick in the list set it. */
 function fromHash(): PrRef | undefined {
   const match = KEY.exec(decodeURIComponent(location.hash.slice(1)));
   return match ? { repo: match[1]!, number: Number(match[2]) } : undefined;
 }
 
-/** A GitHub tab showing the pull request, where its actions apply; none until one opens. */
 function usePrTab(pr: PrRef | undefined): number | undefined {
   const [tabId, setTabId] = useState<number>();
   useEffect(function followTabs() {
@@ -151,10 +149,6 @@ function PrDetail({ pr, view, state }: { pr: PrRef; view: TriageView | undefined
   );
 }
 
-/**
- * The extension in a full tab: repositories and their pull requests on the left, the chosen one's full triage on the
- * right, with the check manager and settings beside it. The side panel stays the quick view.
- */
 export function Workspace() {
   const allViews = useStorageItem(views);
   const allStates = useStorageItem(runStates);

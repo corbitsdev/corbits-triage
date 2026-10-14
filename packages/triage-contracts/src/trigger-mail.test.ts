@@ -5,7 +5,6 @@ import { triggerRequestOf } from "./trigger-mail.js";
 const SIGNATURE = new TextEncoder().encode("-----BEGIN PGP SIGNATURE-----\nAAAA\n-----END PGP SIGNATURE-----\n");
 const INLINE_TEXT_MAX_BYTES = 1024 * 1024;
 
-/** The trigger mail the webhook deliverer signs, decoded and projected the way the stock workflow host stores it. */
 function storedTrigger(request: Record<string, unknown>) {
   const raw = assembleMessage(
     {

@@ -21,17 +21,14 @@ export function paneFacts(item: PrItem, detail: GithubPullDetail | undefined): P
 
 export type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "unchecked-commits" | "mergeability-unknown" | "not-mergeable" | "draft";
 
-/** Commits were pushed after the head Triage checked; the hub checks them again. */
 export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha">): boolean {
   return item.verdictSha !== null && item.headSha !== null && item.verdictSha !== item.headSha;
 }
 
 export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean };
 
-/** Everything the pane can run: the GitHub writes, plus asking the hub to triage the pull request again. */
 export type PaneKind = PrimaryAction;
 
-/** What stops any write to the pull request; merge has its own checks on top. */
 export function writeBlocker(gate: PaneGate): ActionBlocker | null {
   if (gate.item.number === null) return "no-number";
   if (gate.item.running) return "running";
@@ -62,7 +59,6 @@ function paneAction<K extends PaneKind>(kind: K, gate: PaneGate): PaneAction<K> 
   return { kind, blocker: actionBlocker(kind, gate) };
 }
 
-/** A pull request may close plainly, when writable and the pack offers no close of its own. */
 function closeEntry(gate: PaneGate): MenuEntry | null {
   const close = paneAction("close", gate);
   if (close.blocker !== null || offersClose(gate.item)) return null;
@@ -92,7 +88,6 @@ export function paneActions(gate: PaneGate): PaneActions {
 
 export type ReplyDraft = { text: string; edited: boolean };
 
-/** The text the reply editor starts from; a new verdict starts it over. */
 export function draftText(item: Pick<PrItem, "comment">): string {
   return item.comment === null ? "" : item.comment;
 }
@@ -107,7 +102,6 @@ type ComposerKind = "comment" | "changes";
 
 export type Composer = { kind: ComposerKind; body: string };
 
-/** What the user had typed in the pane, put back when an action is undone or its send fails. */
 export type PaneDraft = { reply: string; composer: Composer | null };
 
 export const COMPOSER_COPY: Record<ComposerKind, { placeholder: string; label: string; submit: string }> = {
@@ -156,7 +150,6 @@ function sent(message: string): Outcome {
   return { message, complete: true, kept: true };
 }
 
-/** A reply the hub did not confirm was not posted, as far as anyone can tell. */
 function replyFailure(replied: PromiseSettledResult<PrGithubWriteResult>): string | null {
   if (replied.status === "rejected") return errorText(replied.reason);
   return replied.value.commentId === null ? "The hub did not confirm the reply was posted." : null;
@@ -182,7 +175,6 @@ async function sendReply({ write, replySent }: PaneIo, item: NumberedItem, body:
   return sent(`Posted to GitHub on #${number}.`);
 }
 
-/** The head the pull request is on, once the open pull requests have loaded, else the one the verdict judged. */
 export function currentHead(item: Pick<PrItem, "headSha" | "verdictSha">): string | null {
   return item.headSha ?? item.verdictSha;
 }

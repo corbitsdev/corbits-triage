@@ -15,7 +15,6 @@ const TRACKERS: Array<{ value: IssueTracker; label: string }> = [
 
 const HARD = "A failed rule here fails the pull request without asking the decision model.";
 
-/** Help per rule, and its sentence while off. */
 const CATALOG: Record<CatalogId, { off: string; tip: string }> = {
   "max-files-changed": { off: "Flag pull requests over a files limit", tip: `Counts the files the pull request changes; over the limit fails. ${HARD}` },
   "max-lines-changed": { off: "Flag pull requests over a lines limit", tip: `Counts added and removed lines; over the limit fails. ${HARD}` },
@@ -71,7 +70,6 @@ type RulesSectionProps = {
   problem: DraftProblem | null;
 };
 
-/** Every rule as a sentence and a switch, in Size, Checks and Judgement cards. */
 export default function RulesSection({ draft, saved, view, stats, disabled, edit, problem }: RulesSectionProps) {
   const pack = draft.pack;
   const on = [...CATALOG_IDS, ...pack.custom.map((row) => row.id)].filter((id) => checkOn(pack, id)).length + ALWAYS_ON;
@@ -146,7 +144,6 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
     );
   }
 
-  /** Levels worst first, 2 to 10; failing below one is optional. */
   function levels(rule: ScoreRule, label: string) {
     const above = rule.levels.slice(1);
     return (

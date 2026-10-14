@@ -34,7 +34,6 @@ export function requestOrigin(): string {
   return configured;
 }
 
-/** Absolute origin GitHub and users reach the hub at. */
 export function hubOrigin(): string {
   return requestOrigin() || window.location.origin;
 }

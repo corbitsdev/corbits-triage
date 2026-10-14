@@ -11,22 +11,16 @@ export type AutosaveState = { session: PackSession; draft: RepoDraft; saving: bo
 type AutosaveOptions = {
   session: PackSession;
   delayMs: number;
-  /** Writes what of the draft can be saved onto the session's artifact. */
   write: (session: PackSession, draft: RepoDraft) => Promise<SaveOutcome>;
-  /** Reads the pack again, past any cache, after another writer saved over it. */
   reread: () => Promise<PackSession>;
-  /** Called after every state change. */
   changed: (state: AutosaveState) => void;
-  /** Called after each successful save with the session before and after it. */
   afterSave: (before: PackSession, after: PackSession) => Promise<void>;
-  /** Called with why a save failed. */
   failed: (cause: unknown) => void;
 };
 
 export type Autosave = {
   state: () => AutosaveState;
   edit: (update: DraftUpdate) => void;
-  /** Saves now; resolves once everything edited so far is saved or has failed. */
   flush: () => Promise<void>;
 };
 

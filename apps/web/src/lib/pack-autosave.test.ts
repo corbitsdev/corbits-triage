@@ -13,7 +13,6 @@ function append(draft: RepoDraft, list: VerdictWord, step: Step, id = freshStepI
   return setSteps(draft, list, [...stepEntries(draft, list), { id, step }]);
 }
 
-/** `afterReread` runs once the pack has been read again after a conflict, as a third writer saving in between would. */
 async function open(stored: CheckPack | null, afterReread?: (hub: FakeHub) => void): Promise<{ hub: FakeHub; session: PackSession; autosave: Autosave }> {
   const linked = stored ? { enabled: true, checkPack: { name: title } } : {};
   const hub = fakeHub(stored ? [{ id: "art_1", title, content: JSON.stringify(stored), version: 1, updatedAt: 1 }] : [], { corbitsTriage: { repos: [{ name: repo, connected: true, installationId: 9, ...linked }] } });
@@ -36,7 +35,6 @@ async function open(stored: CheckPack | null, afterReread?: (hub: FakeHub) => vo
   return { hub, session, autosave };
 }
 
-/** Another writer saves over the pack this panel loaded. */
 function writeElsewhere(hub: FakeHub, change: (pack: CheckPack) => CheckPack) {
   const row = hub.artifacts[0]!;
   row.content = JSON.stringify(change(readCheckPack(JSON.parse(row.content))));

@@ -9,7 +9,6 @@ import { onRadioKeys } from "./radio-keys.ts";
 
 type DecisionModelFormProps = { current: SystemOneSettings | null; onSaved?: () => void; onCancel?: () => void; variant?: ButtonProps["variant"] };
 
-/** Official marks from each provider's own site; light-theme art first, dark second where the provider ships both. */
 const LOGOS: Partial<Record<DecisionModelPreset["id"], readonly [string, string?]>> = {
   typesafe: ["/providers/typesafe.png"],
   vercel: ["/providers/vercel-light.svg", "/providers/vercel-dark.svg"],
@@ -47,7 +46,6 @@ function Saved({ current, onChange, onRemove }: { current: SystemOneSettings; on
   );
 }
 
-/** The portal's decision model choice; the key stays in this browser's extension storage and goes only to that endpoint. */
 export function DecisionModelForm({ current, onSaved, onCancel, variant }: DecisionModelFormProps) {
   const [changing, setChanging] = useState(false);
   const [preset, setPreset] = useState<DecisionModelPreset>(presetFor(current ?? undefined));

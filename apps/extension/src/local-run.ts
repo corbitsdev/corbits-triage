@@ -27,7 +27,6 @@ function isDo(action: SuggestedAction): action is SuggestedDo {
   return "effectId" in action;
 }
 
-/** Every file of the pull request, with patches until the evaluation budget is spent, as the facts director reads them. */
 async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
   const listed: ListedFiles = { files: [], patchChars: 0 };
   let cursor: FilesCursor | undefined = FIRST_FILES_PAGE;
@@ -41,7 +40,6 @@ async function listFiles(gh: GithubFetch, repo: string, number: number): Promise
   return listed.files;
 }
 
-/** The repository's docs and contribution rules the decision model reads, by path, as the facts director gathers them. */
 async function readDocs(gh: GithubFetch, repo: string): Promise<RepoDocs> {
   const pages: RepoDocsPage[] = [await readRepoDocsPage(gh, repo)];
   for (;;) {
@@ -56,7 +54,7 @@ async function readDocs(gh: GithubFetch, repo: string): Promise<RepoDocs> {
 /** `docs` reads the repository's docs some other way than `gh`; the API's reads are the fallback when it fails. */
 export type LocalRunDeps = { gh: GithubFetch; pack: CheckPack; systemOne?: SystemOneSettings; docs?: (repo: string) => Promise<RepoDocs>; judged?: Judged };
 
-/** Each check run's page by name, from the check runs `getChecks` already read, so no request is made again. */
+/** From the check runs already read, so no request is made again. */
 async function jobPages(gh: GithubFetch, repo: string, sha: string): Promise<Record<string, string>> {
   const res = await gh(`/repos/${repo}/commits/${sha}/check-runs?per_page=100`);
   if (!res.ok) throw new Error(`github check runs for ${sha} -> ${res.status}`);
@@ -65,7 +63,6 @@ async function jobPages(gh: GithubFetch, repo: string, sha: string): Promise<Rec
   return Object.fromEntries(runs.flatMap((run) => (run.name && run.html_url?.startsWith("https://github.com/") ? [[run.name, run.html_url]] : [])));
 }
 
-/** The repository's docs, read by `own` when given, with the API's reads as the fallback. */
 async function docsOf(gh: GithubFetch, repo: string, own: LocalRunDeps["docs"]): Promise<RepoDocs> {
   if (!own) return readDocs(gh, repo);
   try {
@@ -102,7 +99,6 @@ async function optional<T>(read: Promise<T>, nothing: T, what: string): Promise<
 
 type Read = "checks" | "reviews" | "comments" | "commits" | "files" | "docs";
 
-/** Which checks each read feeds, by the facts they are decided on. */
 const FEEDS: Record<Read, (c: CheckResult) => boolean> = {
   checks: (c) => c.check === "ci-green",
   reviews: (c) => c.check === NO_CHANGES_REQUESTED,
@@ -112,7 +108,6 @@ const FEEDS: Record<Read, (c: CheckResult) => boolean> = {
     docs: (c) => c.kind === "model",
 };
 
-/** Each check a failed read fed, unconfirmed with why; the verdict then cannot pass, and suggests nothing. */
 function unconfirmedBy(failed: Record<Read, string | undefined>, verdict: Verdict): Verdict {
   const reasons = new Map<string, string>();
   for (const [read, why] of Object.entries(failed)) {

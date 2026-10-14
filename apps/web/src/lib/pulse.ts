@@ -21,7 +21,6 @@ function waitsOnYou(entry: OpenItem): boolean {
   return waitsOn(entry.item, entry.handled) === "maintainer";
 }
 
-/** `open` is every open pull request of the repositories with triage on; `read` is those repositories GitHub just answered for. */
 export function visitOf(open: OpenItem[], read: ReadonlySet<string>, now: Date): Visit {
   const pulls = Object.fromEntries(open
     .filter((entry) => read.has(entry.item.repo))
@@ -44,7 +43,6 @@ export function sinceVisit(visit: Visit, open: OpenItem[], read: ReadonlySet<str
   return { fresh: fresh.map((entry) => entry.item), resolved, turned: turned.map((entry) => entry.item) };
 }
 
-/** Open pull requests that have waited on the maintainer longer than `STUCK_MS`, oldest first. */
 export function stuckPulls(open: OpenItem[], now: number): PrItem[] {
   return open
     .filter((entry) => entry.item.waitingSince !== null && waitsOnYou(entry) && now - Date.parse(entry.item.waitingSince) > STUCK_MS)
@@ -87,7 +85,6 @@ function visitFrom(value: unknown): Visit | null {
   return { at: visit.at, repos: visit.repos, pulls: visit.pulls as Record<string, VisitPull> };
 }
 
-/** A saved pulse, or null when the stored value is not one. */
 export function parseSavedPulse(text: string | null): SavedPulse | null {
   if (text === null) return null;
   try {

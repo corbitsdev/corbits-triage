@@ -28,7 +28,6 @@ function compactHunks(count: number, offset = 0): string {
   ].join("\n")).join("\n");
 }
 
-/** A patch of wide hunks, about 180 KB of state: more than two requests hold. */
 function widePatch(): string {
   return Array.from({ length: 20 }, (_, index) => `@@ -${index + 1} +${index + 1} @@\n+// ${"設".repeat(3_000)}`).join("\n");
 }

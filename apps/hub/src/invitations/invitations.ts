@@ -25,7 +25,6 @@ export const AcceptBody = type({ tenantId: "string > 0" });
 export const Accepted = type({ tenantId: "string" });
 const StockPrincipal = type({ id: "string" });
 
-/** Triage's own role holds what it does unattended; no person is given it. */
 function isTriageRole(role: { name: string; isSystem: boolean }): boolean {
   return role.isSystem && role.name === TRIAGE_ROLE;
 }
@@ -93,7 +92,6 @@ export function createInvitations(deps: InvitationDeps) {
     return null;
   }
 
-  /** Emails a magic link to the accept page, or returns the page's link to copy when the hub sends no email. */
   async function sendLink(req: Request, tenantId: string, principalId: string, email: string, status: number): Promise<Response> {
     const landing = `${deps.linkOrigin}/invite/${encodeURIComponent(tenantId)}`;
     const { sendEmail } = deps;

@@ -35,7 +35,6 @@ type Workspace = {
   userId: string;
 };
 
-/** Stock PrincipalSummary, as /api/me/principals returns it, newest principal first. */
 export type Membership = {
   principalId: string;
   tenantId: string;
@@ -113,7 +112,6 @@ type SectionDenied = {
 export type PortalSnapshot = {
   workspace: Workspace;
   tenantName: string;
-  /** Every triage workspace the user is an active member of, the open one included. */
   workspaces: WorkspaceOption[];
   invitations: WorkspaceOption[];
   repos: RepoRecord[];
@@ -182,7 +180,6 @@ function requireContent(content: string, what: string): string {
 
 type Listed<T> = { rows: T[] | undefined; next: string | null };
 
-/** Follows `nextCursor` until the hub runs out of pages or `enough` says the caller has what it came for. */
 async function listPages<T>(transport: Transport, path: string, read: (raw: unknown) => Listed<T>, enough?: (items: T[]) => boolean): Promise<T[]> {
   const items: T[] = [];
   const seen = new Set<string>();
@@ -233,7 +230,6 @@ function appConfig(config: unknown): AppConfig {
   return ns && typeof ns === "object" ? (ns as AppConfig) : {};
 }
 
-/** Stable fingerprint (FNV-1a) of the app config, shown as the config version. */
 function sortedKeys(_key: string, value: unknown): unknown {
   return value && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : 1)))
@@ -345,7 +341,6 @@ export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack:
 type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack;
 
-/** The repository's policy as the hub reads it for triage; null when it has none. */
 export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPackArtifact | null> {
   const clean = validateRepo(repo);
   const read = PolicyRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy?repo=${enc(clean)}`));
@@ -371,7 +366,6 @@ export async function loadRepoPolicy(transport: Transport, tenantId: string, rep
   return repoPolicy(row);
 }
 
-/** One config write: the panel's settings, plus the pointer at the repository's pack when it has one. */
 export async function saveRepoSettings(
   transport: Transport,
   tenantId: string,
@@ -381,7 +375,7 @@ export async function saveRepoSettings(
 ): Promise<void> {
   const clean = validateRepo(repo);
   const { enabled } = settings;
-  /** Pins the pack the panel wrote, so triage reads the same artifact. */
+  /** So triage reads the same artifact. */
   function withSettings(row: RepoRecord): RepoRecord {
     return { ...row, enabled, ...(packId !== null && { checkPack: { name: checkPackName(clean), id: packId } }) };
   }
@@ -505,7 +499,6 @@ export async function ensureWorkspace(transport: Transport, chosen: string | nul
   return createWorkspace(transport);
 }
 
-/** Workflow the app-level hook credential targets (metadata.webhook.workflow). */
 const HOOK_WORKFLOW = "pr-triage";
 
 export function legacyHookCredentials(credentials: HubCredential[]): HubCredential[] {
@@ -767,7 +760,6 @@ export async function saveInference(
 
 type CatalogRow = { id: string; name?: string; canonicalName?: string; baseURL?: string; modelId?: string; providerId?: string; quirks?: Record<string, unknown> | null };
 
-/** Catalog provider, model, and offering the triage workflows deploy onto; reuses rows that already match. */
 async function ensureInferenceOffering(
   transport: Transport,
   tenantId: string,
@@ -817,13 +809,11 @@ export function isLiveDeployment(status: string): boolean {
 /** A live deployment with the versions its frozen closure pins; `package` is null when it was not deployed from the package registry. */
 export type DeployedWorkflow = DeployedVersions["deployments"][number];
 
-/** Live deployments of every workflow, newest first. */
 export async function listDeployedWorkflows(transport: Transport, tenantId: string): Promise<DeployedWorkflow[]> {
   const tid = enc(requireTenantId(tenantId));
   return DeployedVersions.assert(await transport.fetch<unknown>("GET", `/api/integrations/workflow-versions/${tid}`)).deployments;
 }
 
-/** The deployment a workflow's mail goes to: its newest one not being cancelled. */
 export function currentDeployment(deployments: readonly DeployedWorkflow[], workflow: string): DeployedWorkflow | undefined {
   return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling);
 }
@@ -841,7 +831,6 @@ function pause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Retries `attempt` while the deployment is not ready, calling `onWait` once; the last attempt's error is thrown as is. */
 export async function untilDeploymentReady<T>(
   attempt: () => Promise<T>,
   onWait: () => void,
@@ -859,13 +848,11 @@ export async function untilDeploymentReady<T>(
   return attempt();
 }
 
-/** Asks the hub to triage the repository's open pull requests again. */
 export async function startBacklogTriage(transport: Transport, tenantId: string, repo: string): Promise<void> {
   const clean = validateRepo(repo);
   BacklogStarted.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/backlog`, { repo: clean }));
 }
 
-/** Asks the hub to queue one open pull request on its live pr-triage deployment. */
 export async function triagePullRequest(transport: Transport, tenantId: string, repo: string, number: number): Promise<void> {
   const clean = validateRepo(repo);
   if (!Number.isInteger(number) || number < 1) throw new Error("Pull request number must be a positive integer.");
@@ -928,7 +915,6 @@ export async function loadTriageStats(transport: Transport, tenantId: string, re
   return TriageStats.assert(await transport.fetch<unknown>("GET", `/api/integrations/triage-stats/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&days=${days}`));
 }
 
-/** The newest `limit` events the workspace recorded, newest first; with `repo`, only that repository's. */
 export async function loadAuditLog(transport: Transport, tenantId: string, repo: string | null, limit: number): Promise<AuditLog> {
   const scope = repo === null ? "" : `&repo=${enc(validateRepo(repo))}`;
   return AuditLog.assert(await transport.fetch<unknown>("GET", `/api/integrations/audit/${enc(requireTenantId(tenantId))}?limit=${limit}${scope}`));
@@ -936,7 +922,6 @@ export async function loadAuditLog(transport: Transport, tenantId: string, repo:
 
 export type CheckChange = { check: string; from: string | null; to: string | null };
 
-/** One recorded verdict of a pull request, as the hub's triage-timeline route answers; repeats of the same outcome are left out. */
 export type TimelineEntry = {
   at: string;
   runId: string;
@@ -959,12 +944,10 @@ export async function loadTriageTimeline(transport: Transport, tenantId: string,
 
 export type PullTriage = TriageVerdicts["pulls"][number];
 
-/** One recorded verdict of a pull request. */
 export type PullVerdict = NonNullable<PullTriage["verdict"]>;
 
 type PullRun = NonNullable<PullTriage["run"]>;
 
-/** The open pull requests' latest verdicts, or with `pull` that one pull request's, open or not. */
 export async function loadTriageVerdicts(transport: Transport, tenantId: string, pull?: { repo: string; number: number }): Promise<TriageVerdicts> {
   const query = pull === undefined ? "" : `?repo=${enc(validateRepo(pull.repo))}&number=${pull.number}`;
   return TriageVerdicts.assert(await transport.fetch<unknown>("GET", `/api/integrations/triage-verdicts/${enc(requireTenantId(tenantId))}${query}`));
@@ -1081,7 +1064,6 @@ export async function listRoles(transport: Transport, tenantId: string): Promise
   return listAll<HubRole>(transport, `/api/tenants/${tid}/roles`);
 }
 
-/** Stock evaluate: whether `principalId` may do `action` on `resource`, as the hub would decide it. */
 export async function evaluateAccess(
   transport: Transport,
   tenantId: string,
@@ -1242,7 +1224,6 @@ export type PrItem = {
   priority: string | null;
   owner: string | null;
   nextAction: string | null;
-  /** Null until the pull request is triaged. */
   verdict: VerdictWord | null;
   /** How likely it passes its policy, as the verdict question answered; null when it was not asked. */
   score: number | null;
@@ -1261,11 +1242,8 @@ export type PrItem = {
   pendingApprovalId: string | null;
   runId: string | null;
   waitingSince: string | null;
-  /** GitHub's last update to the pull request, known once the open pull requests have loaded. */
   updatedAt: string | null;
-  /** The CI state the verdict saw. */
   ci: CiState | null;
-  /** The current head, known once the open pull requests have loaded. */
   headSha: string | null;
   /** When the newest run triggered by author activity started; see `AUTHOR_ACTIVITY`. */
   activityAt: string | null;
@@ -1273,12 +1251,10 @@ export type PrItem = {
   reviewAnswered: boolean;
   /** The verdict's reply is on GitHub: the run's mirror step wrote non-empty feedback, or this portal sent it (see `useQueueItems`). */
   posted: boolean;
-  /** A pr-triage run for this pull request has started and has not rendered its verdict yet. */
   running: boolean;
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
   failure: RunFailure | null;
   actions: SuggestedAction[];
-  /** The Do kinds triage was granted to write on its own when it made the verdict. */
   automatic: ActionKind[];
   href: string;
 };
@@ -1319,7 +1295,6 @@ export type CheckResult = {
   result: "pass" | "fail" | "unconfirmed";
   reason: string | null;
   evidence: string[];
-  /** Null for a verdict made before checks carried output. */
   output: CheckOutput | null;
   /** An author rule: says who opened the pull request, shown as matched or not, never as a failure. */
   gate: boolean;
@@ -1339,7 +1314,6 @@ function checkResults(checks: NonNullable<VerdictDetail["checks"]>): CheckResult
   return out;
 }
 
-/** A verdict recorded before the hub kept its detail still has each check's result. */
 function recordedChecks(checks: PullVerdict["checks"]): CheckResult[] {
   return checks.flatMap(({ check, result }) => (isCheckResult(result) && !RETIRED_CHECK_IDS.has(check) ? currentRows(check).map((row) => ({ ...row, kind: null, result, reason: null, output: null, gate: false })) : []));
 }

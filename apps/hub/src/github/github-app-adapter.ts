@@ -2,7 +2,6 @@ import type { AdapterFactory } from "@intx/inference";
 
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter";
 
-/** Routes GitHub requests carrying App JSON through installation-token minting. */
 export function installGithubAppFetch(apiOrigin: string): void {
   globalThis.fetch = Object.assign(
     createGithubAppCredentialFetch({ fetch: globalThis.fetch, apiOrigin }),

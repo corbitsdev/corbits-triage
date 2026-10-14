@@ -8,7 +8,6 @@ import { useHandledPulls, useMarkReplySent } from "./open-pulls.ts";
 import { usePortal } from "./portal.tsx";
 import { useSession } from "./session.tsx";
 
-/** Drafts to put back, by pull request key, for the verdict they were written against. */
 export type Restored = Record<string, { runId: string | null; draft: PaneDraft }>;
 
 type HeldInbox = {
@@ -18,9 +17,7 @@ type HeldInbox = {
   hold: (item: NumberedItem, write: PaneWrite, draft: PaneDraft, backTo: () => void) => void;
   undo: () => boolean;
   forgetRestored: (key: string) => void;
-  /** Marks the inbox as on screen; the returned function sends what is held as the inbox is left. */
   enter: () => () => void;
-  /** Sends what is held and waits for every send, for when the session is about to end. */
   flush: () => Promise<void>;
 };
 
@@ -137,7 +134,6 @@ export function useSignOutAfterSending(): () => Promise<void> {
   }, [flush, signOut]);
 }
 
-/** Sends what is held against the open workspace before another one opens. */
 export function useOpenWorkspaceAfterSending(): (tenantId: string, path?: string) => Promise<void> {
   const { flush } = useHeldInbox();
   const { openWorkspace } = usePortal();

@@ -20,7 +20,7 @@ export const AUDIT_PATH = "/api/integrations/audit";
 
 const DEFAULT_LIMIT = 100;
 const MAX_AUDIT_LIMIT = 500;
-/** Run logs read at most per request when looking for approvals. */
+/** Run logs read at most per request. */
 const APPROVAL_READS = 200;
 const TRIAGE = "Triage";
 const HUB = "hub";
@@ -41,15 +41,11 @@ type Window = { tenantId: string; repo?: string; since?: Date; limit: number; pe
 
 export type AuditLogDeps = {
   db: DB["db"];
-  /** The same database, as the artifact store reads it. */
   artifacts: ArtifactDb;
-  /** The repository's policy as triage reads it. */
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
-  /** Whether two deployments run the same workflow source. */
   sameSource: (anchorRunId: string, otherAnchorRunId: string) => Promise<boolean>;
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
-  /** The workflow whose runs make verdicts and approvals. */
   workflow: string;
 };
 
@@ -145,7 +141,6 @@ export function createAuditLog(deps: AuditLogDeps) {
     }));
   }
 
-  /** The workspace policy's name, which is its title after the prefix. */
   async function workspacePolicyName(id: string): Promise<string> {
     const row = await getArtifact(deps.artifacts, id);
     if (!row) throw new Error(`workspace policy ${id} disappeared while the audit log was read`);
@@ -240,7 +235,6 @@ export function createAuditLog(deps: AuditLogDeps) {
     return entries;
   }
 
-  /** Principal ids as their people's emails, where they are people. */
   async function named(tenantId: string, entries: Entry[]): Promise<Entry[]> {
     const ids = [...new Set(entries.map((entry) => entry.actor).filter((actor) => actor.startsWith("prn_")))];
     if (ids.length === 0) return entries;
@@ -254,7 +248,7 @@ export function createAuditLog(deps: AuditLogDeps) {
     return entries.map((entry) => ({ ...entry, actor: emails.get(entry.actor) ?? entry.actor }));
   }
 
-  /** The workspace-wide sources the caller may read, each needing read on its stock resource. */
+  /** Each needs read on its stock resource. */
   async function workspaceSources(window: Window, principalId: string): Promise<Array<Promise<Entry[]>>> {
     const { tenantId } = window;
     const [grantsRead, deploymentsRead] = await Promise.all([deps.authorize(principalId, tenantId, "grant:*", "read"), deps.authorize(principalId, tenantId, "workflow:*", "read")]);

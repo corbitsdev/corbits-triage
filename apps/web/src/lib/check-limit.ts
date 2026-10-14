@@ -3,7 +3,6 @@ import type { CheckResult } from "./hub-api.ts";
 
 const COUNT = new Intl.NumberFormat("en-US");
 
-/** The number a check is held to, read from the repository's pack as pr-triage reads it; null for a check without one. */
 export function checkLimitText(pack: CheckPack | null, check: Pick<CheckResult, "check" | "output">): string | null {
   if (check.output?.kind === "score") return `needs ${Math.round(check.output.passAt)}`;
   if (pack === null) return null;

@@ -3,14 +3,12 @@ import type { CheckResult, PrFacts } from "@corbits/triage-workflows/logic/check
 import type { PageAction } from "./page-actions.ts";
 import type { FileNote } from "./view.ts";
 
-/** Failing CI jobs linked one by one, at most; past that, one link to the Checks tab. */
 const MOST_JOBS = 3;
 
 export type SuggestInput = {
   facts: PrFacts;
   checks: Array<CheckResult & { name: string }>;
   pack: CheckPack;
-  /** Each failing CI job's page, by the check's name, when the CI check failed. */
   jobs: Record<string, string>;
 };
 

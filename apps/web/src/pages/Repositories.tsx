@@ -43,7 +43,6 @@ function ownersLabel(owners: string[]): string {
   return owners.length === 1 ? owners[0]! : `${owners[0]} · ${owners.length - 1} more`;
 }
 
-/** A plain primary click; modified clicks and clicks that end a text selection keep their browser meaning. */
 function isPlainClick(event: MouseEvent): boolean {
   if (event.defaultPrevented || event.button !== 0) return false;
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
@@ -99,7 +98,6 @@ export default function Repositories() {
 
   const sync = useGithubSync(Boolean(snapshot && hasActiveGithubCredential(snapshot.credentials)));
 
-  /** GitHub's Setup URL brings the browser back here after the change. */
   async function manageOnGithub() {
     if (!snapshot) return;
     setOpening(true);

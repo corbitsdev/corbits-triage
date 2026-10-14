@@ -7,11 +7,8 @@ export type FakeHub = {
   transport: Transport;
   artifacts: FakeArtifact[];
   config: Record<string, unknown>;
-  /** What the triage-stats route answers, for any repository and window. */
   stats: TriageStats | null;
-  /** What the policy route answers for a repository, in place of reading its newest titled artifact. */
   policies: Record<string, unknown>;
-  /** Every request, as `METHOD path`. */
   requests: string[];
 };
 

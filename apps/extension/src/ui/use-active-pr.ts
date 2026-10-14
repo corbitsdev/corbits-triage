@@ -3,7 +3,6 @@ import { prFromUrl, type PrRef } from "../pr.ts";
 
 export type ActiveTab = { tabId: number; pr: PrRef | undefined; title: string };
 
-/** The pull request in this window's active tab, following tab switches and in-page navigation. */
 export function useActivePr(): ActiveTab | undefined {
   const [active, setActive] = useState<ActiveTab>();
   useEffect(function followActiveTab() {

@@ -92,7 +92,6 @@ function CheckGroup({ group, view, expanded }: CheckListProps & { group: Group }
   );
 }
 
-/** The run's rules grouped failing, unsure and passed; each opens to its evidence. */
 export function CheckList({ view, expanded }: CheckListProps) {
   const groups = groupsOf(view);
   if (!groups.length) return <p className="hint">No rules ran on this pull request.</p>;

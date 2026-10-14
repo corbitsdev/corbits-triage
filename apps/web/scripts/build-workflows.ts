@@ -85,7 +85,6 @@ async function packGithubTool(outDir: string): Promise<PackedTarball> {
   }
 }
 
-/** Packs the GitHub tool and every workflow into `outDir`, with an index.json listing them. */
 export async function packWorkflows(outDir: string): Promise<PackageIndexEntry[]> {
   await rm(outDir, { recursive: true, force: true });
   const packedTool = await packGithubTool(outDir);

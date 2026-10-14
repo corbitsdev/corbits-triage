@@ -27,7 +27,6 @@ export type TriageStatsDeps = {
 
 const EXECUTED = new Set(["done", "satisfied"]);
 
-/** The newest verdict of each head; `verdicts` is oldest first. */
 function latestPerHead(verdicts: readonly VerdictRecord[]): VerdictRecord[] {
   return [...new Map(verdicts.map((verdict) => [runKey(verdict.number, verdict.headSha), verdict])).values()];
 }

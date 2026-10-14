@@ -41,7 +41,6 @@ export type RecordedVerdict = Omit<typeof verdictRecord.$inferInsert, "tenantId"
 
 export type PullRef = { repo: string; number: number };
 
-/** A recorded row's evidence, from the verdict's detail when it kept one. */
 export function evidenceOf(verdict: Pick<VerdictRecord, "detail">, check: string): string[] | undefined {
   return verdict.detail?.checks?.find((row) => row.check === check)?.evidence;
 }
@@ -68,7 +67,6 @@ function ofPulls(pulls: readonly PullRef[]): SQL | undefined {
   return or(...pulls.map((pull) => and(eq(verdictRecord.repo, pull.repo), eq(verdictRecord.number, pull.number))));
 }
 
-/** The newest verdict of each pull request `where` selects. */
 function latestOf(db: DB["db"], where: SQL | undefined): Promise<VerdictRecord[]> {
   return db
     .selectDistinctOn([verdictRecord.repo, verdictRecord.number])
@@ -108,13 +106,11 @@ export function createVerdictRecordStore(db: DB["db"]) {
       }
     },
 
-    /** The newest verdict of each of `pulls`; reads only those pull requests' rows. */
     latest(tenantId: string, pulls: readonly PullRef[]): Promise<VerdictRecord[]> {
       if (pulls.length === 0) return Promise.resolve([]);
       return latestOf(db, and(eq(verdictRecord.tenantId, tenantId), ofPulls(pulls)));
     },
 
-    /** The newest verdict of each pull request of `repos` with one made since `from`. */
     latestSince(tenantId: string, repos: readonly string[], from: Date): Promise<VerdictRecord[]> {
       if (repos.length === 0) return Promise.resolve([]);
       return latestOf(db, and(eq(verdictRecord.tenantId, tenantId), inArray(verdictRecord.repo, [...repos]), gte(verdictRecord.verdictAt, from)));
@@ -125,7 +121,6 @@ export function createVerdictRecordStore(db: DB["db"]) {
       return latest;
     },
 
-    /** When the newest run started by one of `triggers` started, for each of `pulls` that has one. */
     triggeredAt(tenantId: string, pulls: readonly PullRef[], triggers: readonly string[]): Promise<Array<PullRef & { at: Date }>> {
       if (pulls.length === 0) return Promise.resolve([]);
       return db
@@ -135,7 +130,6 @@ export function createVerdictRecordStore(db: DB["db"]) {
         .groupBy(verdictRecord.repo, verdictRecord.number);
     },
 
-    /** Those of `repos` with a verdict made since `from`, or ever without it. */
     async reposSince(tenantId: string, repos: readonly string[], from?: Date): Promise<string[]> {
       if (repos.length === 0) return [];
       const rows = await db
@@ -145,7 +139,6 @@ export function createVerdictRecordStore(db: DB["db"]) {
       return rows.map((row) => row.repo);
     },
 
-    /** Whether any verdict was scored by the decision model. */
     async anyScored(tenantId: string): Promise<boolean> {
       const [row] = await db
         .select({ runId: verdictRecord.runId })

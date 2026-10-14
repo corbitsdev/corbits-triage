@@ -22,7 +22,6 @@ const DEVICE_CLIENT_ID = "corbits-cli";
 
 export const MAGIC_LINK_TTL_SECONDS = 15 * 60;
 
-/** What an invite passes to `signInMagicLink`: where the link goes. */
 export type MagicLinkDelivery = { deliver: (url: string) => Promise<void> };
 
 function isDelivery(metadata: unknown): metadata is MagicLinkDelivery {

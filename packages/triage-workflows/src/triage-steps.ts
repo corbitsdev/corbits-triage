@@ -15,7 +15,6 @@ function replyOf(id: string) {
 /** A map's output is an array, which a merge cannot take, so it rides as `judge.output`. */
 const JUDGED = { project: { from: "steps" }, fields: ["judge"] } as const;
 
-/** Both judge maps, the first round and focused's follow-up, as `judge.output` and `judgeParts.output`. */
 const BOTH_JUDGED = { project: { from: "steps" }, fields: ["judge", "judgeParts"] } as const;
 
 /** The chunks are already in the run log twice, as the map's input and each judge call's; evaluate re-derives them. */

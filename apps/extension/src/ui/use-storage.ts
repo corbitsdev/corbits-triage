@@ -1,7 +1,6 @@
 import type { WxtStorageItem } from "@wxt-dev/storage";
 import { useEffect, useState } from "react";
 
-/** A storage item's value, kept current as the background worker or another page writes it; undefined until read. */
 export function useStorageItem<T>(item: WxtStorageItem<T, Record<string, unknown>>): T | undefined {
   const [value, setValue] = useState<T>();
   useEffect(function watchItem() {

@@ -1,20 +1,14 @@
 import { findCommentBox, insertDraft, setBox } from "./comment-box.ts";
 import { openBodyField } from "./editors.ts";
 
-/** Where Triage puts text for the person to finish: GitHub's comment box, or the description's editor. */
 export type SeedSpot = "composer" | "body";
 
-/** Text Triage put in one of GitHub's fields, by the action it came from; the person can take it back out in one click. */
 export type Seed = { key: string; spot: SeedSpot; title: string; field: HTMLTextAreaElement; added: string };
 
 export type Seeder = {
-  /** Fills the comment box with a draft while it is empty, without moving focus or the page. */
   fillComposer(key: string, title: string, body: string): boolean;
-  /** Adds a draft to the comment box at the person's request, focused and scrolled to. */
   insertComposer(key: string, title: string, body: string): void;
-  /** Adds text to the end of the description's open editor, unless it already holds it. */
   appendBody(key: string, title: string, text: string, focus: boolean): boolean;
-  /** The seed in a spot while its field is on the page and still ends with the text. */
   live(spot: SeedSpot): Seed | undefined;
   undo(spot: SeedSpot): void;
 };
@@ -24,7 +18,6 @@ function untouched(seed: Seed): boolean {
   return seed.field.isConnected && seed.field.value.endsWith(seed.added);
 }
 
-/** `onUndo` hears that a seed was taken back out. */
 export function seeder(onUndo: () => void): Seeder {
   const seeds = new Map<SeedSpot, Seed>();
 
