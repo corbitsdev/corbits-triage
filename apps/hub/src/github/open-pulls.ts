@@ -8,7 +8,7 @@ import { errorText } from "@corbits/common";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { appGithubFetch, failure, githubAppCredential, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
-import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
+import { githubRepoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
 
 export const GITHUB_OPEN_PULLS_PATH = "/api/integrations/github-open-pulls";
 
@@ -92,7 +92,7 @@ export function createGithubOpenPulls(deps: PortalCredentialDeps & { githubApiOr
 
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
-    const connected = repoRecords(triageNs(tenant.config)).filter((record) => record.connected);
+    const connected = githubRepoRecords(triageNs(tenant.config)).filter((record) => record.connected);
     const listed = deps.cache.kept(tenantId, RELIST_MS) ?? await deps.cache.read(tenantId, () => listRepoPulls(gh, connected));
     return Response.json({ repos: listed.repos });
   };

@@ -25,6 +25,7 @@ import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
+import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, type BitbucketHandlers } from "../bitbucket/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
 import { SESSIONS_PATH } from "../sessions.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
@@ -81,6 +82,7 @@ export type IntegrationHandlers = {
     withdraw: (req: Request, member: Member, principalId: string) => Promise<Response>;
     accept: (body: typeof AcceptBody.infer, user: SessionUser) => Promise<Response>;
   };
+  bitbucket: BitbucketHandlers;
   sessions: {
     list: (caller: Caller) => Promise<Response>;
     revoke: (caller: Caller, sessionId: string) => Promise<Response>;
@@ -712,6 +714,105 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     signedIn,
     function revokeSession(c) {
       return handlers.sessions.revoke(callerOf(c), c.req.param("sessionId"));
+    },
+  );
+
+  const bitbucketFailures = {
+    401: failures[401],
+    403: failures[403],
+    409: json("Bitbucket is not connected, or the repository is not ready", Failure),
+    502: json("The Bitbucket instance failed or could not be reached", Failure),
+  };
+  const repoParameters = [
+    { in: "path" as const, name: "project", required: true, schema: { type: "string" as const }, description: "Project key, e.g. `TRI`" },
+    { in: "path" as const, name: "slug", required: true, schema: { type: "string" as const }, description: "Repository slug" },
+  ];
+
+  app.put(
+    `${BITBUCKET_PATH}/:tenantId/connection`,
+    describeRoute({
+      summary: "Connect a Bitbucket Data Center instance",
+      description: "Needs `manage` on the workspace. The token is tried once against `GET /rest/api/1.0/application-properties` and stored only when the instance accepts it, as the stock `bitbucket` credential on the `bitbucket` provider; a webhook secret is generated as `bitbucket-hook` unless one exists. The token is never returned.",
+      tags: TAGS,
+      requestBody: { required: true, content: { "application/json": { schema: resolver(ConnectBody) } } },
+      responses: { 200: json("Connected", Connected), 400: json("Invalid request, or the instance did not accept the token", Failure), ...bitbucketFailures },
+    }),
+    member,
+    body(ConnectBody),
+    function connectBitbucket(c) {
+      return handlers.bitbucket.connect(c.req.valid("json"), memberOf(c), c.req.raw);
+    },
+  );
+
+  app.get(
+    `${BITBUCKET_PATH}/:tenantId/connection`,
+    describeRoute({
+      summary: "The workspace's Bitbucket connection",
+      description: "Any member of the workspace. `hookUrl` is where the instance posts repository events.",
+      tags: TAGS,
+      responses: { 200: json("The connected instance", Connection), 401: failures[401], 403: failures[403], 404: json("Bitbucket is not connected", Failure) },
+    }),
+    member,
+    function bitbucketConnection(c) {
+      return handlers.bitbucket.connection(memberOf(c));
+    },
+  );
+
+  app.delete(
+    `${BITBUCKET_PATH}/:tenantId/connection`,
+    describeRoute({
+      summary: "Disconnect Bitbucket",
+      description: "Needs `manage` on the workspace. Removes the webhooks triage created, both credentials and the connection, and disables every Bitbucket repository; their records stay. `webhooksLeft` names repositories whose webhook could not be removed.",
+      tags: TAGS,
+      responses: { 200: json("Disconnected", Disconnected), 401: failures[401], 403: failures[403], 404: json("Bitbucket is not connected", Failure) },
+    }),
+    member,
+    function disconnectBitbucket(c) {
+      return handlers.bitbucket.disconnect(memberOf(c), c.req.raw);
+    },
+  );
+
+  app.get(
+    `${BITBUCKET_PATH}/:tenantId/repositories`,
+    describeRoute({
+      summary: "Bitbucket repositories the token sees, with their records",
+      description: "Needs `use` on the `bitbucket` credential. Repository records as the workspace config holds them, named `PROJECT/slug`; a recorded repository the token no longer sees is listed with `connected: false`.",
+      tags: TAGS,
+      responses: { 200: json("Repositories", BitbucketRepos), ...bitbucketFailures },
+    }),
+    member,
+    function bitbucketRepositories(c) {
+      return handlers.bitbucket.repositories(memberOf(c));
+    },
+  );
+
+  app.post(
+    `${BITBUCKET_PATH}/:tenantId/repositories/:project/:slug/enable`,
+    describeRoute({
+      summary: "Enable triage on a Bitbucket repository",
+      description: "Needs `manage` on the workspace and `use` on the Bitbucket credentials. Records the repository with its default branch and creates its webhook. When the token may not manage webhooks, `webhook` is `manual` and the answer carries the hook URL, secret and events to set up by hand.",
+      tags: TAGS,
+      parameters: repoParameters,
+      responses: { 200: json("Enabled", RepoEnabled), ...bitbucketFailures, 404: json("No such repository", Failure) },
+    }),
+    member,
+    function enableBitbucketRepo(c) {
+      return handlers.bitbucket.enable(memberOf(c), c.req.param("project"), c.req.param("slug"));
+    },
+  );
+
+  app.post(
+    `${BITBUCKET_PATH}/:tenantId/repositories/:project/:slug/disable`,
+    describeRoute({
+      summary: "Disable triage on a Bitbucket repository",
+      description: "Needs `manage` on the workspace. Removes the webhook triage created; `webhookLeft` is true when it could not.",
+      tags: TAGS,
+      parameters: repoParameters,
+      responses: { 200: json("Disabled", RepoDisabled), 401: failures[401], 403: failures[403], 404: json("No such repository recorded", Failure) },
+    }),
+    member,
+    function disableBitbucketRepo(c) {
+      return handlers.bitbucket.disable(memberOf(c), c.req.param("project"), c.req.param("slug"));
     },
   );
 
