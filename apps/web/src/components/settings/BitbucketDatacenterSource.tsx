@@ -27,7 +27,8 @@ function ConnectForm({ disabled }: { disabled: boolean }) {
   return (
     <form className="connection-fields" aria-label="Connect Bitbucket Data Center" onSubmit={submit}>
       <label>Instance URL<Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://bitbucket.example.com" disabled={busy} autoComplete="off" /></label>
-      <label>HTTP access token<Input type="password" value={token} onChange={(event) => setToken(event.target.value)} disabled={busy} autoComplete="off" /><small>Create a project or repository HTTP access token named Corbits Triage, so Triage's posts show under that name, not a person's. It needs project read and repository write, and repository admin so Triage can create each repository's webhook. Stored in the hub's credential vault; you won't see it again.</small></label>
+      <label>HTTP access token<Input type="password" value={token} onChange={(event) => setToken(event.target.value)} disabled={busy} autoComplete="off" /><small>Create a user named Corbits Triage and an HTTP access token for that user, so Triage's posts show under that name, not a person's. It needs project read and repository write, and repository admin so Triage can create each repository's webhook.</small></label>
+      <a className="linkish quiet" href="/corbits-triage-avatar.png" download>Download the Corbits Triage avatar</a>
       {connect.error && <p role="alert" className="error">Could not connect Bitbucket Data Center. {errorText(connect.error)}</p>}
       <div className="task-actions">
         <Button type="submit" aria-describedby={blockerId} disabled={busy || blocker !== null}>{connect.isPending ? "Connecting…" : "Connect"}</Button>
