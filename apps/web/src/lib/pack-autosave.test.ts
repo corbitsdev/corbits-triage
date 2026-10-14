@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readCheckPack, recommendedPack, type CheckPack, type Step, type VerdictWord } from "@corbits/triage-contracts";
+import { readCheckPack, recommendedPack, type CheckPack, type CustomCheck, type Step, type VerdictWord } from "@corbits/triage-contracts";
 import { fakeHub, type FakeHub } from "./fake-hub.ts";
 import { createAutosave, type Autosave } from "./pack-autosave.ts";
 import { freshStepId, setCatalogCheck, setSteps, stepEntries, type RepoDraft } from "./pack-draft.ts";
@@ -98,4 +98,40 @@ test("a save held back by an unfinished draft does not stop the next one, and a 
   expect(stored(hub).custom.map((row) => row.id)).toEqual(["the-title-says-what-changed"]);
   expect(autosave.state().draft.pack.custom.map((row) => row.id)).toEqual(["the-title-says-what-changed"]);
   expect(autosave.state().session.saved.policy.enabled).toBe(true);
+});
+
+function editStep(draft: RepoDraft, id: string, step: Step): RepoDraft {
+  return setSteps(draft, "pass", stepEntries(draft, "pass").map((entry) => (entry.id === id ? { id, step } : entry)));
+}
+
+test("a step the other writer changed is kept beside this panel's edit of another step", async () => {
+  const pack = recommendedPack(repo);
+  const both: CheckPack = { ...pack, actions: { ...pack.actions, pass: [{ do: "approve" }, { do: "close" }] } };
+
+  const first = await open(both);
+  writeElsewhere(first.hub, (stored) => ({ ...stored, actions: { ...stored.actions, pass: [{ do: "request-changes" }] } }));
+  const [approve] = stepEntries(first.session.saved, "pass");
+  first.autosave.edit((draft) => editStep(draft, approve!.id, { do: "merge" }));
+  await first.autosave.flush();
+  expect(stored(first.hub).actions.pass).toEqual([{ do: "request-changes" }, { do: "merge" }]);
+
+  const second = await open(both);
+  writeElsewhere(second.hub, (stored) => ({ ...stored, actions: { ...stored.actions, pass: [{ do: "comment", target: { body: "Thanks." } }, { do: "approve" }] } }));
+  const [, close] = stepEntries(second.session.saved, "pass");
+  second.autosave.edit((draft) => editStep(draft, close!.id, { do: "merge" }));
+  await second.autosave.flush();
+  expect(stored(second.hub).actions.pass).toEqual([{ do: "comment", target: { body: "Thanks." } }, { do: "approve" }, { do: "merge" }]);
+});
+
+test("a rule saved for the first time never takes the id of a rule still unfinished in the draft", async () => {
+  const { hub, autosave } = await open(recommendedPack(repo));
+  const unfinished: CustomCheck = { id: "the-title", name: "Is it true", group: "pull-request", kind: "model", shape: "is-true", claim: "" };
+  const finished: CustomCheck = { id: "is-it-true", name: "the title", group: "pull-request", kind: "model", shape: "is-true", claim: "the title" };
+  autosave.edit((draft) => ({ ...draft, pack: { ...draft.pack, custom: [unfinished, finished] } }));
+  await autosave.flush();
+
+  const ids = autosave.state().draft.pack.custom.map((row) => row.id);
+  expect(ids[0]).toBe("the-title");
+  expect(ids[1]).not.toBe("the-title");
+  expect(stored(hub).custom.map((row) => row.id)).toEqual([ids[1]]);
 });

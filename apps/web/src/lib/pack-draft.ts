@@ -6,6 +6,7 @@ import {
   defaultActions,
   emptyPack,
   isCatalogId,
+  LABEL_MAX,
   readCheckPack,
   RECOMMENDED_ISSUE,
   RECOMMENDED_PATHS,
@@ -134,6 +135,13 @@ export function removeCustom(draft: RepoDraft, id: string): RepoDraft {
   return withPack(draft, { custom: draft.pack.custom.filter((row) => row.id !== id) });
 }
 
+/** Rule keys after rules took new ids: a renamed rule keeps the key it was shown under. */
+export function renamedRuleKeys(ruleKeys: Record<string, string> | undefined, renamed: Record<string, string>): Record<string, string> {
+  const next = { ...ruleKeys };
+  for (const [from, to] of Object.entries(renamed)) next[to] = ruleKeys?.[from] ?? from;
+  return next;
+}
+
 export function stepEntries(draft: RepoDraft, list: VerdictWord): StepEntry[] {
   return draft.pack.actions[list].map((step, i) => ({ id: draft.stepIds[list][i]!, step }));
 }
@@ -191,9 +199,8 @@ function contractProblem(raw: unknown): string | null {
   }
 }
 
-/** The most steps a verdict holds, and characters a label, as the contract enforces. */
+/** The most steps a verdict holds, as the contract enforces. */
 export const STEPS_MAX = 20;
-const LABEL_MAX = 50;
 
 /** Why one step at `position` in its verdict cannot be saved yet, in the contract's words; null when it can. */
 export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step, position: number): string | null {
@@ -208,8 +215,10 @@ export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step, pos
 
 /** Why a verdict label cannot be saved yet; null when it can. */
 export function labelProblem(name: string): string | null {
-  if (!name.trim()) return "name the label.";
-  return name.trim().length > LABEL_MAX ? `a label is at most ${LABEL_MAX} characters.` : null;
+  // Measured as the contract stores it: runs of whitespace and control characters become one space.
+  const stored = name.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim();
+  if (!stored) return "name the label.";
+  return stored.length > LABEL_MAX ? `a label is at most ${LABEL_MAX} characters.` : null;
 }
 
 /** Why one custom rule cannot be saved yet, in the contract's words; null when it can. */
@@ -228,10 +237,17 @@ function savableSteps(draft: RepoDraft, saved: RepoDraft, list: VerdictWord): St
   const seen = new Set<string>();
   return stepEntries(draft, list).flatMap(function written(entry, position): StepEntry[] {
     const step = stepProblem(draft, list, entry.step, position) === null ? entry.step : before.get(entry.id);
-    if (!step || seen.has(JSON.stringify(step))) return [];
-    seen.add(JSON.stringify(step));
+    if (!step) return [];
+    const key = storedStepKey(draft.pack.repo, list, step);
+    if (seen.has(key)) return [];
+    seen.add(key);
     return [{ id: entry.id, step }];
   });
+}
+
+/** A step as the contract stores it, so steps that differ only in what the contract trims compare equal. */
+export function storedStepKey(repo: string, list: VerdictWord, step: Step): string {
+  return JSON.stringify(readCheckPack({ ...emptyPack(repo), actions: { ...defaultActions(), [list]: [step] } }).actions[list]);
 }
 
 /**

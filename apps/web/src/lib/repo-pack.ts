@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "@corbits/common";
 import { queryOptions, skipToken, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { emptyPack, repoPolicy } from "@corbits/triage-contracts";
@@ -127,16 +127,20 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
     }
   }
 
+  // The autosave outlives this render, so it calls the newest portal callbacks and store rather than the first ones.
+  const latest = useRef({ write: save.mutateAsync, reread, afterSave, failed: signOutWhenRejected });
+  latest.current = { write: save.mutateAsync, reread, afterSave, failed: signOutWhenRejected };
+
   // A newly loaded pack starts a new autosave, set while rendering so the first frame already shows it.
   if (loaded.data && opened?.from !== loaded.data) {
     const autosave = createAutosave({
       session: openSession(repo, loaded.data),
       delayMs: SAVE_AFTER_MS,
-      write: (session, draft) => save.mutateAsync({ session, draft }),
-      reread,
+      write: (session, draft) => latest.current.write({ session, draft }),
+      reread: () => latest.current.reread(),
       changed: setState,
-      afterSave,
-      failed: signOutWhenRejected,
+      afterSave: (before, after) => latest.current.afterSave(before, after),
+      failed: (cause) => latest.current.failed(cause),
     });
     setOpened({ from: loaded.data, autosave });
     setState(autosave.state());

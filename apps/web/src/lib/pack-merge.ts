@@ -1,5 +1,5 @@
 import { CATALOG_IDS, customRuleId, VERDICTS, type CheckPack, type CustomCheck, type Step, type VerdictWord } from "@corbits/triage-contracts";
-import { freshStepId, same, setSteps, stepEntries, type RepoDraft, type StepEntry } from "./pack-draft.ts";
+import { freshStepId, renamedRuleKeys, same, setSteps, stepEntries, type RepoDraft, type StepEntry } from "./pack-draft.ts";
 
 type Keyed<T> = { id: string; value: T };
 
@@ -24,17 +24,17 @@ function mergeKeyed<T>(base: Keyed<T>[], ours: Keyed<T>[], theirs: Keyed<T>[]): 
   return [...merged, ...revived, ...added];
 }
 
-/** Their steps under the ids of the base steps they still match: the same step first, then the rest in order. */
+/**
+ * Their steps under the ids of the base steps they still hold unchanged. A step they changed or added gets an id of its
+ * own, so it merges as their removal plus their addition and never takes the place of a step this panel edited.
+ */
 function theirEntries(base: StepEntry[], steps: Step[]): StepEntry[] {
   const unused = [...base];
-  const matched: Array<StepEntry | null> = steps.map(function sameStep(step) {
+  return steps.map(function entryOf(step): StepEntry {
     const at = unused.findIndex((entry) => same(entry.step, step));
-    if (at < 0) return null;
+    if (at < 0) return { id: freshStepId(), step };
     const [entry] = unused.splice(at, 1);
     return { id: entry!.id, step };
-  });
-  return steps.map(function entryAt(step, i): StepEntry {
-    return matched[i] ?? { id: unused.shift()?.id ?? freshStepId(), step };
   });
 }
 
@@ -52,18 +52,21 @@ function keyedRules(rows: CustomCheck[]): Keyed<CustomCheck>[] {
   return rows.map((row) => ({ id: row.id, value: row }));
 }
 
-/** A rule we added under an id they took since gets an id of its own. */
-function mergedCustom(base: CheckPack, ours: CheckPack, theirs: CheckPack): CustomCheck[] {
+/** A rule we added under an id they took since gets an id of its own; `renamed` maps the ids that changed. */
+function mergedCustom(base: CheckPack, ours: CheckPack, theirs: CheckPack): { rows: CustomCheck[]; renamed: Record<string, string> } {
   const rows = mergeKeyed(keyedRules(base.custom), keyedRules(ours.custom), keyedRules(theirs.custom)).map((row) => row.value);
   const theirIds = new Set(theirs.custom.map((row) => row.id));
   const baseIds = new Set(base.custom.map((row) => row.id));
   const taken = rows.map((row) => row.id);
-  return rows.map(function own(row) {
+  const renamed: Record<string, string> = {};
+  const owned = rows.map(function own(row) {
     if (baseIds.has(row.id) || !theirIds.has(row.id) || theirs.custom.includes(row)) return row;
     const id = customRuleId(row.name, taken);
     taken.push(id);
+    renamed[row.id] = id;
     return { ...row, id };
   });
+  return { rows: owned, renamed };
 }
 
 /** Ours when we changed it since `base`, otherwise theirs. */
@@ -77,14 +80,17 @@ export function mergeDrafts(base: RepoDraft, ours: RepoDraft, theirs: RepoDraft)
     const value = pick(ours.pack.checks[id], base.pack.checks[id], theirs.pack.checks[id]);
     return value ? [[id, value]] : [];
   }));
+  const custom = mergedCustom(base.pack, ours.pack, theirs.pack);
+  const labels = Object.fromEntries(VERDICTS.map((verdict) => [verdict, pick(ours.pack.labels[verdict], base.pack.labels[verdict], theirs.pack.labels[verdict])])) as CheckPack["labels"];
   const pack: CheckPack = {
     ...theirs.pack,
     checks,
-    custom: mergedCustom(base.pack, ours.pack, theirs.pack),
-    labels: { pass: pick(ours.pack.labels.pass, base.pack.labels.pass, theirs.pack.labels.pass), fail: pick(ours.pack.labels.fail, base.pack.labels.fail, theirs.pack.labels.fail), unsure: pick(ours.pack.labels.unsure, base.pack.labels.unsure, theirs.pack.labels.unsure) },
+    custom: custom.rows,
+    labels,
     actions: { ...theirs.pack.actions, when: pick(ours.pack.actions.when, base.pack.actions.when, theirs.pack.actions.when) },
   };
-  let merged: RepoDraft = { pack, policy: { enabled: pick(ours.policy.enabled, base.policy.enabled, theirs.policy.enabled) }, stepIds: theirs.stepIds, ...(ours.ruleKeys && { ruleKeys: ours.ruleKeys }) };
+  const policy = { enabled: pick(ours.policy.enabled, base.policy.enabled, theirs.policy.enabled) };
+  let merged: RepoDraft = { pack, policy, stepIds: theirs.stepIds, ruleKeys: renamedRuleKeys(ours.ruleKeys, custom.renamed) };
   for (const list of VERDICTS) merged = setSteps(merged, list, mergedSteps(base, ours, theirs, list));
   return merged;
 }

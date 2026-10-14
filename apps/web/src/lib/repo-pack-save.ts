@@ -1,7 +1,7 @@
 import { errorText } from "@corbits/common";
 import { customRuleId, emptyPack, repoPolicy, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
 import { ExtendedPolicyError, StaleCheckPackError } from "./check-pack.ts";
-import { freshStepId, fromPack, packChanges, policyChanges, savable, toPack, type RepoDraft } from "./pack-draft.ts";
+import { freshStepId, fromPack, packChanges, policyChanges, savable, stepEntries, storedStepKey, toPack, type RepoDraft } from "./pack-draft.ts";
 import { draftPolicy, type LoadedRepoPack, type PackRef, type RepoPackStore } from "./repo-pack-store.ts";
 
 /** What the hub holds for the repository, as far as the panel knows. */
@@ -38,9 +38,11 @@ export function openSession(repo: string, found: LoadedRepoPack): PackSession {
  * A rule saved for the first time takes its id from its text, as the `rule: <id>` label shows it on GitHub; a saved
  * rule keeps its id whatever it is renamed to.
  */
-function namedNewRules(pack: CheckPack, saved: CheckPack): { pack: CheckPack; renamed: Record<string, string> } {
+function namedNewRules(pack: CheckPack, saved: CheckPack, draft: CheckPack): { pack: CheckPack; renamed: Record<string, string> } {
   const kept = new Set(saved.custom.map((row) => row.id));
-  const taken = pack.custom.filter((row) => kept.has(row.id)).map((row) => row.id);
+  const naming = new Set(pack.custom.filter((row) => !kept.has(row.id)).map((row) => row.id));
+  // Rules still unfinished in the draft hold their ids too, so a rule named now never takes one of theirs.
+  const taken = draft.custom.map((row) => row.id).filter((id) => !naming.has(id));
   const renamed: Record<string, string> = {};
   for (const row of pack.custom) {
     if (kept.has(row.id)) continue;
@@ -54,9 +56,14 @@ function namedNewRules(pack: CheckPack, saved: CheckPack): { pack: CheckPack; re
 /** What a save of `draft` would write, as stored, with its steps' ids; throws the contract's reason when it cannot be written. */
 function stored(session: PackSession, draft: RepoDraft): { draft: RepoDraft; renamed: Record<string, string> } {
   const next = savable(draft, session.saved);
-  const named = namedNewRules(toPack(next), session.saved.pack);
+  const named = namedNewRules(toPack(next), session.saved.pack, draft.pack);
   const stepIds = Object.fromEntries(VERDICTS.map(function ids(list) {
-    return [list, named.pack.actions[list].length === next.stepIds[list].length ? next.stepIds[list] : named.pack.actions[list].map(freshStepId)];
+    const unused = stepEntries(next, list).map((entry) => ({ id: entry.id, key: storedStepKey(next.pack.repo, list, entry.step) }));
+    return [list, named.pack.actions[list].map(function idOf(step) {
+      const key = storedStepKey(next.pack.repo, list, step);
+      const at = unused.findIndex((entry) => entry.key === key);
+      return at < 0 ? freshStepId() : unused.splice(at, 1)[0]!.id;
+    })];
   })) as RepoDraft["stepIds"];
   return { draft: { pack: named.pack, policy: draftPolicy(repoPolicy(draft.policy)), stepIds }, renamed: named.renamed };
 }

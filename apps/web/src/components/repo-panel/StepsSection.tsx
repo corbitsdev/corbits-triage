@@ -85,7 +85,7 @@ export default function StepsSection({ view, automatic, disabled }: StepsSection
     return <option key={choice} value={choice} disabled={choice === "nothing"}>{STEP_DO_NAMES[choice]}</option>;
   }
 
-  function stepRow(verdict: VerdictWord, { id, step, problem }: StepRow, position: number) {
+  function stepRow(verdict: VerdictWord, { id, position, step, problem }: StepRow) {
     const at = `${VERDICT_NAMES[verdict]} step ${position + 1}`;
     function change(next: Step) {
       view.setStep(verdict, id, next);
@@ -119,7 +119,7 @@ export default function StepsSection({ view, automatic, disabled }: StepsSection
       <div key={verdict} className="then" id={`rp-list-${verdict}`}>
         <div className="vh"><b className="vw">{VERDICT_NAMES[verdict]}</b></div>
         <div className="steps">
-          {rows.length ? rows.map((row, position) => stepRow(verdict, row, position)) : <p className="none">Nothing beyond its labels, below.</p>}
+          {rows.length ? rows.map((row) => stepRow(verdict, row)) : <p className="none">Nothing beyond its labels, below.</p>}
           {view.full[verdict] ? <p className="none">A verdict holds at most {STEPS_MAX} steps.</p> : <button type="button" className="linkish quiet step-add" disabled={disabled} onClick={() => view.addStep(verdict)}>+ Add a step</button>}
         </div>
       </div>

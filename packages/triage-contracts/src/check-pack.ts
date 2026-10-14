@@ -195,7 +195,7 @@ export type TriageEvent = (typeof TRIAGE_EVENTS)[number];
 const COMMENT_BODY_MAX = 65536;
 const LINE_MAX = 500;
 // GitHub refuses a label name longer than this.
-const LABEL_MAX = 50;
+export const LABEL_MAX = 50;
 const LIST_MAX = 50;
 const STEPS_MAX = 20;
 

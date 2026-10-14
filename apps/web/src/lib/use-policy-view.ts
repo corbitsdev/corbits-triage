@@ -3,7 +3,8 @@ import type { DraftUpdate } from "./pack-autosave.ts";
 import { customProblem, freshStepId, labelProblem, same, setSteps, stepEntries, stepProblem, STEPS_MAX, type RepoDraft, type StepEntry } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
 
-export type StepRow = { id: string; step: Step; problem: string | null };
+/** `position` is the step's place among all the verdict's steps, as the contract counts them. */
+export type StepRow = { id: string; position: number; step: Step; problem: string | null };
 
 /** `key` stays the same when a first save renames the rule. */
 export type JudgementRule = { id: string; key: string; on: boolean; problem: string | null } & (
@@ -98,7 +99,7 @@ export function usePolicyView(draft: RepoDraft, edit: (update: DraftUpdate) => v
     function row(entry: StepEntry, position: number): StepRow[] {
       if (entry.id === owned) return [];
       const problem = stepProblem(draft, verdict, entry.step, position);
-      return [{ id: entry.id, step: entry.step, problem: problem && (stepMissing(entry.step, repo) ?? problem.replace(/^\w+ step \d+ /, "")) }];
+      return [{ id: entry.id, position, step: entry.step, problem: problem && (stepMissing(entry.step, repo) ?? problem.replace(/^\w+ step \d+ /, "")) }];
     }
     return entries.flatMap(row);
   }
