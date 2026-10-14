@@ -5,7 +5,7 @@ import {
 } from "@intx/hub-client";
 import { asRecord, asRepo } from "@corbits/common";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, PolicySynced, readCheckPack, repoPolicy, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, PolicySynced, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -52,8 +52,6 @@ export type InvitedAccess = { kind: "invited"; invitations: WorkspaceOption[] };
 type WorkspaceAccess = MemberAccess | InvitedAccess | { kind: "none" };
 
 type Page<T> = { data: T[]; nextCursor: string | null };
-
-export type RepoSource = "github" | "bitbucket-datacenter";
 
 export type RepoRecord = {
   name: string;
@@ -294,8 +292,7 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
     const account = (row as { account?: unknown }).account;
     const installationUrl = (row as { installationUrl?: unknown }).installationUrl;
     const selection = (row as { selection?: unknown }).selection;
-    // Records written before Bitbucket Data Center carry no source; they are all GitHub's.
-    const source: RepoSource = (row as { source?: unknown }).source === "bitbucket-datacenter" ? "bitbucket-datacenter" : "github";
+    const source = repoSourceOf((row as { source?: unknown }).source);
     parsed.push({
       name,
       connected,
