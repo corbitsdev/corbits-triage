@@ -8,8 +8,12 @@ import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-cr
 
 const CONFIG_KEY = "corbitsTriage";
 
+export type RepoSource = "github" | "bitbucket";
+
 export type RepoRecord = {
   name: string;
+  /** Absent means github. */
+  source?: RepoSource;
   connected: boolean;
   installationId?: number;
   account?: string;

@@ -175,7 +175,7 @@ export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic,
   };
 }
 
-async function resolvedPack(
+export async function resolvedPack(
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>,
   tenantId: string,
   repo: string,
@@ -337,7 +337,7 @@ async function handleInstallEvent(
   return json(202, { status: "accepted" });
 }
 
-async function tenantConfigOf(d: BridgeDeps, tenantId: string): Promise<unknown> {
+export async function tenantConfigOf(d: Pick<BridgeDeps, "db">, tenantId: string): Promise<unknown> {
   return (await d.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } }))?.config;
 }
 
