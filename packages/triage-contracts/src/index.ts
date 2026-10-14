@@ -15,3 +15,4 @@ export * from "./presets.js";
 export * from "./decision-models.js";
 export * from "./policy-file.js";
 export * from "./triage-comment.js";
+export * from "./repo-source.js";

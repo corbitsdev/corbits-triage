@@ -1,6 +1,18 @@
 import { defineTool, type BaseEnv } from "@intx/agent";
 import type { ToolDefinition } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
+import {
+  authorTeams,
+  defaultReviewers,
+  getChecks,
+  getPr,
+  getReviews,
+  listIssueComments,
+  listOpenPrs,
+  listPrCommits,
+  listPrFilesPage,
+  readRepoDocsPage,
+} from "@corbits/bitbucket-datacenter-reads";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
 import { BitbucketRefusal, mirror, readPr, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
@@ -12,6 +24,31 @@ const repo = { type: "string", description: "PROJECTKEY/slug" };
 function obj(properties: Record<string, unknown>, required = Object.keys(properties)) {
   return { type: "object", properties, required };
 }
+
+const READ_DEFINITIONS: ToolDefinition[] = [
+  { name: "bitbucket_datacenter_list_open_prs", description: "List open pull requests for a repository.", inputSchema: obj({ repo }) },
+  { name: "bitbucket_datacenter_get_pr", description: "Get one pull request.", inputSchema: obj({ repo, number: { type: "integer" } }) },
+  { name: "bitbucket_datacenter_get_checks", description: "Get build statuses for a commit sha as check runs, without triage's own verdict status.", inputSchema: obj({ repo, sha: str }) },
+  { name: "bitbucket_datacenter_get_reviews", description: "Get each reviewer's standing status on a pull request as a review, marking the token user's own needs-work as triageRequest.", inputSchema: obj({ repo, number: { type: "integer" } }) },
+  { name: "bitbucket_datacenter_list_pr_commits", description: "List commits on a pull request.", inputSchema: obj({ repo, number: { type: "integer" } }) },
+  {
+    name: "bitbucket_datacenter_list_pr_files",
+    description: "List one page of files changed on a pull request from offset, without patches. Call again with next until next is absent.",
+    inputSchema: obj({ repo, number: { type: "integer" }, offset: { type: "integer" }, patchOffset: { type: "integer" }, patches: { type: "boolean" } }, ["repo", "number"]),
+  },
+  {
+    name: "bitbucket_datacenter_read_repo_docs",
+    description: "Read one page of a repository's docs (its own markdown, README first) and its contribution rules from offset, at ref or the default branch head. Call again with next and the returned ref until next is absent.",
+    inputSchema: obj({ repo, ref: str, offset: { type: "integer" } }, ["repo"]),
+  },
+  { name: "bitbucket_datacenter_list_issue_comments", description: "List comments on a pull request, oldest first.", inputSchema: obj({ repo, number: { type: "integer" } }) },
+  { name: "bitbucket_datacenter_codeowners_for_pr", description: "List the default reviewers Data Center names for a pull request, without the author; Data Center has no team reviewers.", inputSchema: obj({ repo, number: { type: "integer" } }) },
+  {
+    name: "bitbucket_datacenter_author_teams",
+    description: "Say which of the given groups (@PROJECT/group or group) the author is a member of. Groups past the first 20, or not listable with the token, are unknown.",
+    inputSchema: obj({ repo, author: str, teams: { type: "array", items: str } }),
+  },
+];
 
 const ARTIFACT_REF = obj({ id: str, version: { type: "number" } });
 
@@ -29,12 +66,16 @@ const MIRROR_INPUT = obj({
     }),
     description: "What the comment is written for; an unchanged one is not written again",
   },
+  build: {
+    ...obj({ state: { type: "string", enum: ["SUCCESSFUL", "FAILED", "INPROGRESS"] }, description: str, url: str }, ["state", "description"]),
+    description: "The verdict as the Corbits Triage build status on the head; the pull request's own page is its URL when none is given",
+  },
   notReadyHead: str,
   fixedHead: str,
 }, ["repo", "number", "labels"]);
 
 const MIRROR_DESCRIPTION =
-  "Post (or update) the triage comment on a Bitbucket Data Center pull request when comment is given. While notReadyHead is the head, which may not be approved, takes back the token user's approval; while fixedHead is the head, which leaves the author nothing to fix, takes back its needs-work. Writes nothing to a closed pull request. Never merges.";
+  "Post (or update) the triage comment on a Bitbucket Data Center pull request when comment is given, and set the Corbits Triage build status on its head when build is given. While notReadyHead is the head, which may not be approved, takes back the token user's approval; while fixedHead is the head, which leaves the author nothing to fix, takes back its needs-work. Writes nothing to a closed pull request. Never merges.";
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   { name: "bitbucket_datacenter_mirror", description: MIRROR_DESCRIPTION, inputSchema: MIRROR_INPUT },
@@ -42,7 +83,7 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "bitbucket_datacenter_execute_action_auto",
     description:
-      "Run one resolved triage action on a Bitbucket Data Center pull request without waiting for a human approval, unless Bitbucket already shows it: add reviewers, post a comment, approve, mark needs work (with the body as a comment), decline, or merge. Labels and assignees do not exist there and are skipped with a reason. A decline also upserts the triage comment. A decline, merge, comment or review is refused once the pull request has moved past headSha. Returns { status } as done, satisfied (already on Bitbucket) or skipped with a reason. Merges only for a merge action.",
+      "Run one resolved triage action on a Bitbucket Data Center pull request without waiting for a human approval, unless Bitbucket already shows it: add reviewers (code owners are the default reviewers), post a comment, approve, mark needs work (with the body as a comment), decline, or merge. Labels and assignees do not exist there and are skipped with a reason. A decline also upserts the triage comment. A decline, merge, comment or review is refused once the pull request has moved past headSha. Returns { status } as done, satisfied (already on Bitbucket) or skipped with a reason. Merges only for a merge action.",
     inputSchema: obj({ request: MIRROR_INPUT, step: obj({ effectId: str, headSha: str, kind: str, target: { type: "object" } }) }),
   },
 ];
@@ -76,9 +117,29 @@ async function takeBack(bb: BitbucketFetch, a: Record<string, any>, sha: string,
 async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: BitbucketUser): Promise<unknown> {
   const a = call.arguments;
   switch (call.name) {
+    case "bitbucket_datacenter_list_open_prs":
+      return { prs: await listOpenPrs(bb, a.repo) };
+    case "bitbucket_datacenter_get_pr":
+      return getPr(bb, a.repo, a.number);
+    case "bitbucket_datacenter_get_checks":
+      return { checks: await getChecks(bb, a.sha) };
+    case "bitbucket_datacenter_get_reviews":
+      return { reviews: await getReviews(bb, a.repo, a.number, (await user()).slug) };
+    case "bitbucket_datacenter_list_pr_commits":
+      return { commits: await listPrCommits(bb, a.repo, a.number) };
+    case "bitbucket_datacenter_list_pr_files":
+      return listPrFilesPage(bb, a.repo, a.number, a.offset);
+    case "bitbucket_datacenter_read_repo_docs":
+      return readRepoDocsPage(bb, a.repo, { ref: a.ref, offset: a.offset });
+    case "bitbucket_datacenter_list_issue_comments":
+      return { comments: await listIssueComments(bb, a.repo, a.number) };
+    case "bitbucket_datacenter_codeowners_for_pr":
+      return defaultReviewers(bb, a.repo, a.number);
+    case "bitbucket_datacenter_author_teams":
+      return authorTeams(bb, { repo: a.repo, author: a.author, teams: a.teams });
     case "bitbucket_datacenter_mirror":
     case "bitbucket_datacenter_mirror_auto": {
-      const mirrored = await mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, close: false }, user);
+      const mirrored = await mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, build: a.build, close: false }, user);
       if ("skipped" in mirrored) return mirrored;
       if (a.notReadyHead !== mirrored.sha && a.fixedHead !== mirrored.sha) return mirrored;
       return { ...mirrored, dismissed: await takeBack(bb, a, mirrored.sha, await user()) };
@@ -109,18 +170,24 @@ function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Pro
   return { definitions, run };
 }
 
-export const bitbucketWrite = defineTool<Env>({
-  id: "@corbits/bitbucket-datacenter-tool/sidecar-bundle",
-  requires: ["capabilities"],
-  definitions: WRITE_DEFINITIONS.map((d) => ({ name: d.name, ...(d.name === "bitbucket_datacenter_mirror" ? { approval: "ask" as const } : {}) })),
-  factory: function bitbucketToolFactory(env) {
-    async function resolveBitbucketFetch(): Promise<BitbucketFetch> {
-      const mediated = await env.capabilities.resolve("credentials").resolve(CREDENTIAL_HANDLE);
-      if (mediated.kind !== "http") throw new Error(`bitbucket credential must be http, got ${mediated.kind}`);
-      return function bitbucketFetch(path, init) {
-        return mediated.fetch(path, init);
-      };
-    }
-    return createBitbucketTools(WRITE_DEFINITIONS, resolveBitbucketFetch);
-  },
-});
+function defineBitbucketTool(id: string, definitions: ToolDefinition[], ask: readonly string[]) {
+  return defineTool<Env>({
+    id,
+    requires: ["capabilities"],
+    definitions: definitions.map((d) => ({ name: d.name, ...(ask.includes(d.name) ? { approval: "ask" as const } : {}) })),
+    factory: function bitbucketToolFactory(env) {
+      async function resolveBitbucketFetch(): Promise<BitbucketFetch> {
+        const mediated = await env.capabilities.resolve("credentials").resolve(CREDENTIAL_HANDLE);
+        if (mediated.kind !== "http") throw new Error(`${CREDENTIAL_HANDLE} credential must be http, got ${mediated.kind}`);
+        return function bitbucketFetch(path, init) {
+          return mediated.fetch(path, init);
+        };
+      }
+      return createBitbucketTools(definitions, resolveBitbucketFetch);
+    },
+  });
+}
+
+// Read and write are separate bundles, as the GitHub tool's are, so each gets its own credential grant.
+export const bitbucketRead = defineBitbucketTool("@corbits/bitbucket-datacenter-tool/sidecar-bundle", READ_DEFINITIONS, []);
+export const bitbucketWrite = defineBitbucketTool("@corbits/bitbucket-datacenter-write-tool/sidecar-bundle", WRITE_DEFINITIONS, ["bitbucket_datacenter_mirror"]);

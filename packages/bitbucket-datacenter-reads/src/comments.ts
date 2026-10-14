@@ -1,5 +1,6 @@
 import { scope, type } from "arktype";
 import type { IssueComment } from "@corbits/github-reads";
+import { isLinkReferenceTriageComment } from "@corbits/triage-contracts";
 import { isoTime, jsonAll, repoPath, type BitbucketFetch } from "./client.js";
 import { isBot } from "./shapes.js";
 
@@ -9,13 +10,7 @@ const { comment: Comment } = scope({
 
 type Comment = typeof Comment.infer;
 
-// Data Center renders HTML comments, so triage marks its comment with a link reference definition line instead.
-// Stand-in for the shared matcher in @corbits/triage-contracts, which replaces it at integration.
-const TRIAGE_COMMENT = /^\[corbits-triage(-superseded)?\]: #/;
-
-export function isTriageComment(body: string): boolean {
-  return TRIAGE_COMMENT.test(body);
-}
+export const isTriageComment = isLinkReferenceTriageComment;
 
 const Activity = type({ action: "string", "comment?": Comment });
 
