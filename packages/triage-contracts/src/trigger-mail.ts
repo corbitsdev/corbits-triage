@@ -1,5 +1,5 @@
 import { asRecord } from "@corbits/common";
-import { VERDICTS, type CheckPack, type CustomCheck, type Step } from "./check-pack.js";
+import { LEGACY_SCHEMA_VERSION, VERDICTS, type CheckPack, type CustomCheck, type Step } from "./check-pack.js";
 
 /** The local part of the tenant system sender the hub mails triage requests as. */
 export const TRIAGE_MAIL_SENDER = "github";
@@ -53,7 +53,7 @@ export const APPROVE_DO_KIND = "approve-do";
 /** A Do as deployments built before steps read it; one they cannot run as the policy means is left out. */
 function legacyDo(step: Step) {
   if (step.for !== undefined || step.do === "merge" || step.do === "nothing") return [];
-  if (step.do === "labels" && (step.target.from === "verdict" || step.target.from === "rules")) return [];
+  if (step.do === "labels" && step.target.from === "rules") return [];
   return [{ kind: step.do, target: "target" in step ? step.target : {} }];
 }
 
@@ -71,6 +71,6 @@ function legacyCustom(row: CustomCheck) {
  */
 export function legacyCheckPack(pack: CheckPack) {
   const [pass, fail, unsure] = VERDICTS.map((list) => pack.actions[list].flatMap(legacyDo));
-  const { dropped: _dropped, ...rest } = pack;
-  return { ...rest, custom: pack.custom.map(legacyCustom), actions: { when: pack.actions.when, pass, fail, unsure } };
+  const { dropped: _dropped, labels: _labels, ...rest } = pack;
+  return { ...rest, schemaVersion: LEGACY_SCHEMA_VERSION, custom: pack.custom.map(legacyCustom), actions: { when: pack.actions.when, pass, fail, unsure } };
 }

@@ -57,7 +57,9 @@ function offeredDos(item: PrItem): PendingDo[] {
     if (text === null) continue;
     const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind };
     const sentKey = `${action.effectId}:${action.status ?? "held"}`;
-    out.push({ key: action.effectId, sentKey, label: text, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
+    // A merge may be approved off a Fail or Unsure list, and the card says so.
+    const shown = action.kind === "merge" && action.list !== "pass" ? `${text} (the verdict was ${action.list}, not pass)` : text;
+    out.push({ key: action.effectId, sentKey, label: shown, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
   }
   return out;
 }

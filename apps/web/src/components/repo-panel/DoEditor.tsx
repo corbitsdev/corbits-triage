@@ -7,7 +7,6 @@ import TokenList from "./TokenList.tsx";
 
 const LABEL_SOURCES: Array<{ value: LabelsTarget["from"]; label: string }> = [
   { value: "list", label: "these labels" },
-  { value: "verdict", label: "the verdict" },
   { value: "rules", label: "each failed rule" },
 ];
 

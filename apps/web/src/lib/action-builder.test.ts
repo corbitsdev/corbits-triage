@@ -7,7 +7,6 @@ const commented: Step = { do: "comment", target: { body: "Thanks!" } };
 
 const targets: Array<[DoForm, Step]> = [
   [{ kind: "labels", from: "list", labels: ["bug"], to: "users" }, { do: "labels", target: { from: "list", labels: ["bug"] } }],
-  [{ kind: "labels", from: "verdict", labels: ["bug"] }, { do: "labels", target: { from: "verdict" } }],
   [comment, commented],
   [{ kind: "assign", to: "users", users: ["ada"], teams: ["core"] }, { do: "assign", target: { to: "users", users: ["ada"] } }],
   [{ kind: "assign", to: "teams", teams: ["core"], users: ["ada"] }, { do: "assign", target: { to: "teams", teams: ["core"] } }],

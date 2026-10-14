@@ -1,4 +1,4 @@
-import { VERDICTS, verdictLabel } from "./check-pack.js";
+import { VERDICT_LABELS, type VerdictWord } from "./check-pack.js";
 import type { Priority, WorkflowState } from "./types.js";
 
 const OWNERS: Record<WorkflowState, string> = {
@@ -23,8 +23,13 @@ const RETIRED_LABELS = [
   "triage:stale-unknown",
 ];
 
-/** Every verdict label, and every label triage once set; the mirror removes only these. */
-export const TRIAGE_LABELS: readonly string[] = [...VERDICTS.map(verdictLabel), ...RETIRED_LABELS];
+/** Every default verdict label, and every label triage once set. */
+export const TRIAGE_LABELS: readonly string[] = [...Object.values(VERDICT_LABELS), ...RETIRED_LABELS];
+
+/** The labels the mirror takes back when they no longer apply: triage's own, and the verdict labels the policy names. */
+export function ownedLabels(labels: Record<VerdictWord, string>): string[] {
+  return [...new Set([...TRIAGE_LABELS, ...Object.values(labels)])];
+}
 
 export interface Rendered {
   state: WorkflowState;

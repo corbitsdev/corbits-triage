@@ -119,14 +119,17 @@ describe("evaluateActions", () => {
     expect(unknownKind[0]).toMatchObject({ skipped: true, reason: "Not run: the author's kind is not known, so it cannot tell whether they are maintainers." });
   });
 
-  test("derived labels name the verdict and each failed rule, and take back only their own that no longer apply", () => {
-    const labelled = { ...facts, labels: ["api", "Triage: Needs changes", "triage: fail", "rule: docs", "rule: focused", "rule: deploy-freeze"] };
+  test("rule labels name each failed rule, and take back only their own that no longer apply", () => {
+    const labelled = { ...facts, labels: ["api", "rule: docs", "rule: focused", "rule: deploy-freeze"] };
     function failed(check: string) {
       return { check, kind: "model" as const, result: "fail" as const, reason: "failed", evidence: [], output: { kind: "not-applicable" as const } };
     }
-    const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [{ do: "labels", target: { from: "verdict" } }, { do: "labels", target: { from: "rules" } }] satisfies Step[] } };
-    expect(targets(evaluateActions({ facts: labelled, checks: [failed("focused"), failed("no-changes-requested")], verdict: "pass", reason: "passes", pack }))).toEqual([
-      { labels: ["triage: pass"], unlabel: ["Triage: Needs changes", "triage: fail"] },
+    const pack = {
+      ...emptyPack("acme/widgets"),
+      actions: { ...defaultActions(), pass: [{ do: "labels", target: { from: "rules" } }] } satisfies PolicyActions,
+    };
+    const checks = [failed("focused"), failed("no-changes-requested")];
+    expect(targets(evaluateActions({ facts: labelled, checks, verdict: "pass", reason: "passes", pack }))).toEqual([
       { labels: ["rule: focused"], unlabel: ["rule: docs"] },
     ]);
   });

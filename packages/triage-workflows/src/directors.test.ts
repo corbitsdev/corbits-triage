@@ -402,7 +402,7 @@ describe("judge on a blocked pull request", () => {
   test("runs the fail list with the failed judged rule as its reason", async () => {
     const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), fail: [{ do: "request-review", target: { to: "users", users: ["dave"] } }] } };
     const { asked, verdict } = await judgeAndEvaluate(await facts([], true, false, { checkPack }, code));
-    expect(asked).toEqual(["docs-file-001", "focused", "focused-file-001", "verdict"]);
+    expect(asked).toEqual(["docs-file-001", "focused", "focused-file-001"]);
     expect(verdict.actions).toEqual([
       { list: "fail", index: 0, effectId: expect.any(String), kind: "request-review", target: { users: ["dave"], teams: [] }, reason: "mixes unrelated changes: src/flag.ts", held: true },
     ]);
@@ -468,9 +468,9 @@ describe("focused judge input", () => {
     const second = await judgeChunks({ ...ruled, chunks }, (questions) => questions.map(({ id }) => JSON.stringify(id === "verdict" ? verdictAnswer("fail") : { id, type: "noul", noul: 0.9 })).join(""));
     expect(second.requests.map((request) => request.providerOptions.systemOne.questions.map((question) => [question.id, question.instructions]))).toEqual([
       [["focused-file-001", expect.stringContaining("`pullRequest.files[0]`")]],
-      [["verdict", expect.stringContaining("pass this repository's policy")]],
     ]);
     const verdict = await evaluate({ ...first.judged, judgeParts: second.judged.judge }, ctx, signal) as Verdict;
+    expect(verdict).toMatchObject({ verdict: "fail", score: null });
     expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: ["src/a.ts"] });
   });
 
@@ -519,11 +519,13 @@ describe("focused judge input", () => {
       expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail", evidence: [] });
     }
     // A malformed verdict reply leaves the pull request undecided: Unsure, and degraded so it is checked again.
-    const garbledVerdict = await judgeChunks({ ...ruled, chunks }, (questions) => (questions[0]!.id === "verdict" ? JSON.stringify({ ...verdictAnswer("pass"), probabilities: { pass: 0.9 } }) : questions.map(({ id }) => JSON.stringify({ id, type: "noul", noul: 0.9 })).join("")));
-    expect(await evaluate({ ...split.judged, judgeParts: garbledVerdict.judged.judge }, ctx, signal)).toMatchObject({ verdict: "unsure", degraded: "inference-outage", actions: [] });
+    const serving = await judgeChunks(ruled, (questions) => questions.map(({ id }) => JSON.stringify(focusedAnswer(id, 0.9, 0.05))).join(""));
+    const verdictChunks = (await parts(serving.judged, ctx, signal)).chunks;
+    const garbledVerdict = await judgeChunks({ ...ruled, chunks: verdictChunks }, () => JSON.stringify({ ...verdictAnswer("pass"), probabilities: { pass: 0.9 } }));
+    expect(await evaluate({ ...serving.judged, judgeParts: garbledVerdict.judged.judge }, ctx, signal)).toMatchObject({ verdict: "unsure", degraded: "inference-outage", actions: [] });
 
     const garbled = await judgeChunks(ruled, (questions, call) => (call === 0 ? "not json" : questions.map(({ id }) => JSON.stringify(call === 1 ? focusedAnswer(id, 0.1, 0.8) : focusedAnswer(id, 0.9, 0.05))).join("")));
-    expect((await parts(garbled.judged, ctx, signal)).chunks.map((chunk) => chunk.questions[0]!.id)).toEqual([expect.stringMatching(/^focused-slice-002-file-/), "verdict"]);
+    expect((await parts(garbled.judged, ctx, signal)).chunks.map((chunk) => chunk.questions[0]!.id)).toEqual([expect.stringMatching(/^focused-slice-002-file-/)]);
     const verdict = await evaluate(garbled.judged, ctx, signal) as Verdict;
     expect(verdict.checks.find((check) => check.check === "focused")).toMatchObject({ result: "fail" });
 

@@ -624,10 +624,12 @@ test("mailPayload mails the pack whole as `pack`, and as `checkPack` only the st
   const pack: CheckPack = {
     ...base,
     custom: [score],
-    actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, for: "first-timers" }, { do: "labels", target: { from: "verdict" } }] },
+    actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, for: "first-timers" }, { do: "labels", target: { from: "rules" } }] },
   };
   const mail = mailPayload("octocat/hello", repoPolicy({ enabled: true }), { pack, automatic: [] }, {});
   expect(mail.pack).toBe(pack);
+  expect(mail.checkPack).toMatchObject({ schemaVersion: 1 });
+  expect(mail.checkPack).not.toHaveProperty("labels");
   expect(mail.checkPack.custom).toEqual([{ id: "care", name: "Care", group: "pull-request", kind: "model", shape: "score", subject: "care", min: 7 }]);
   expect(mail.checkPack.actions).toEqual({ when: base.actions.when, pass: [{ kind: "approve", target: {} }], fail: [], unsure: [{ kind: "request-review", target: { to: "codeowners" } }] });
 });

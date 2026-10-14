@@ -255,9 +255,9 @@ try {
       const state = Object.entries((applied ?? {}) as Record<string, Applied>).find(([each]) => each === `${key} edit-body`)?.[1];
       return state && state.state !== "applying" ? state : undefined;
     }, 15_000);
-    const added = await page.evaluate(() => document.querySelector<HTMLTextAreaElement>('textarea[name="pull_request[body]"]')?.value ?? "");
-    console.log(`edit-body with ${how} markup: ${result.state}${result.error ? ` (${result.error})` : ""}, editor holds "${added.trim()}"`);
-    if (result.state !== "done" || !added.includes("Closes #")) process.exitCode = 1;
+    const added = await page.evaluate(() => document.querySelector<HTMLTextAreaElement>('textarea[name="pull_request[body]"]')?.value);
+    console.log(`edit-body with ${how} markup: ${result.state}${result.error ? ` (${result.error})` : ""}, editor ${added === undefined ? "did not open" : `holds "${added.trim()}"`}`);
+    if (result.state !== "done" || !added?.includes("Closes #")) process.exitCode = 1;
   }
 
   // Auto-apply on: only the label is tried once on open; the comment is never posted and the close is never tried.

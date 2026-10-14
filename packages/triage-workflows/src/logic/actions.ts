@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, stepForAuthor, TRIAGE_LABELS, verdictLabel, type ActionKind, type CheckPack, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, stepForAuthor, type ActionKind, type CheckPack, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { authorFailures } from "./render.js";
 import { errorText } from "@corbits/common";
@@ -95,12 +95,6 @@ function derivedLabels(wanted: string[], owns: (label: string) => boolean, facts
   return { labels: wanted, unlabel: (facts.labels ?? []).filter((label) => owns(label) && !keep.has(label.toLowerCase())) };
 }
 
-const OWNED_LABELS = new Set(TRIAGE_LABELS.map((label) => label.toLowerCase()));
-
-function ownsVerdictLabel(label: string): boolean {
-  return OWNED_LABELS.has(label.toLowerCase());
-}
-
 /**
  * The rule labels a labels step writes, and the only `rule: …` labels it takes back: those of the built-in rules and
  * the policy's own. A repository's other `rule: …` labels are its own. Not a draft and no changes requested say where
@@ -118,7 +112,6 @@ function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): Re
     case "labels": {
       const { target } = step;
       if (target.from === "list") return { labels: target.labels };
-      if (target.from === "verdict") return derivedLabels([verdictLabel(input.verdict)], ownsVerdictLabel, input.facts);
       return ruleLabels(input);
     }
     case "assign": {

@@ -18,7 +18,6 @@ import {
 } from "@corbits/github-reads";
 import {
   addAssignees,
-  addLabels,
   APPROVE_DO_MARKER,
   approvalOnHead,
   changesRequestedOnHead,
@@ -27,7 +26,7 @@ import {
   dismissDoChangeRequests,
   mergePr,
   mirror,
-  removeLabels,
+  syncLabels,
   requestReviewers,
   type MirrorInput,
 } from "./github";
@@ -90,14 +89,9 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
   switch (step.kind) {
     case "labels": {
       if (!("labels" in target)) throw new DoNotRunnableError("this labels Do names no labels");
-      const present = (await readPr(gh, repo, number)).labels;
-      const labels = missingFrom(present, target.labels);
-      const stale = (target.unlabel ?? []).filter((label) => missingFrom(present, [label]).length === 0);
-      if (!labels.length && !stale.length) return { status: "satisfied", result: { labels } };
-      // Adding first means a failure part-way leaves an extra label rather than none.
-      const added = labels.length ? await addLabels(gh, { repo, number, labels }) : { labels };
-      const removed = stale.length ? await removeLabels(gh, { repo, number, labels: stale }) : { removed: [] };
-      return { status: "done", result: { ...added, ...removed } };
+      const current = (await readPr(gh, repo, number)).labels;
+      const result = await syncLabels(gh, { repo, number, current, add: target.labels, remove: target.unlabel ?? [] });
+      return { status: result.added.length || result.removed.length ? "done" : "satisfied", result };
     }
     case "assign": {
       const { users } = await people(gh, repo, number, target);
@@ -153,8 +147,8 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       const reviews = await getReviews(gh, repo, number, login);
       const requested = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
       if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
-      // Execute runs before the mirror takes triage's own request back, and a protected branch would refuse the merge while it stands.
-      if (reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED")) await dismissDoChangeRequests(gh, { repo, number, login: await login() });
+      // Execute runs before the mirror, and a protected branch refuses the merge while triage's own request on this head stands; one on an earlier head is the mirror's to take back.
+      if (reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha)) await dismissDoChangeRequests(gh, { repo, number, login: await login(), sha: step.headSha });
       return { status: "done", result: await mergePr(gh, { repo, number, sha: step.headSha }) };
     }
     default:
