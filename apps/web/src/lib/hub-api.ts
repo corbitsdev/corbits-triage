@@ -1204,8 +1204,15 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
   };
 }
 
+export const BITBUCKET_DATACENTER_CREDENTIAL_NAME = "bitbucket-datacenter";
+
+export function hasBitbucketDatacenterCredential(credentials: HubCredential[]): boolean {
+  return credentials.some((item) => item.name === BITBUCKET_DATACENTER_CREDENTIAL_NAME && item.status.toLowerCase() === "active");
+}
+
+/** Connected once any source is: the GitHub App or a Bitbucket Data Center token. */
 export function portalConnected(snapshot: PortalSnapshot): boolean {
-  return hasActiveGithubCredential(snapshot.credentials);
+  return hasActiveGithubCredential(snapshot.credentials) || hasBitbucketDatacenterCredential(snapshot.credentials);
 }
 
 export type QueueState =

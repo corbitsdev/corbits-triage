@@ -63,9 +63,11 @@ function requireTenant(tenantId: string | undefined): string {
   return tenantId;
 }
 
+/** Connecting may be what lets the workspace in, so the portal reads its credentials again. */
 export function useConnectBitbucketDatacenter() {
   const queryClient = useQueryClient();
-  const tenantId = usePortal().snapshot?.workspace.tenantId;
+  const { snapshot, refreshNow } = usePortal();
+  const tenantId = snapshot?.workspace.tenantId;
   return useMutation({
     mutationFn: async function connect(input: { baseUrl: string; token: string }) {
       return connectBitbucketDatacenter(createHubTransport(), requireTenant(tenantId), input);
@@ -73,6 +75,7 @@ export function useConnectBitbucketDatacenter() {
     onSuccess: async function storeConnection({ baseUrl, hookUrl }) {
       queryClient.setQueryData(connectionKey(tenantId), { baseUrl, hookUrl });
       await queryClient.invalidateQueries({ queryKey: repositoriesKey(tenantId) });
+      await refreshNow();
     },
   });
 }

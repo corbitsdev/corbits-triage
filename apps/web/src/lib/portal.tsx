@@ -10,7 +10,6 @@ import { isTerminalRunEvents } from "@intx/hub-client";
 import { ApiError, createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
 import {
   configureGithubApp,
-  hasActiveGithubCredential,
   configureGithubHook,
   createGrant,
   deleteGrant,
@@ -248,7 +247,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [enabled, queryClient]);
 
   const tenantId = snapshot?.workspace.tenantId;
-  const githubConnected = snapshot ? hasActiveGithubCredential(snapshot.credentials) : false;
+  const sourceConnected = snapshot ? portalConnected(snapshot) : false;
   const decisionModelConnected = snapshot ? hasDecisionModelCredential(snapshot.credentials) : false;
   const convergeWorkflows = useCallback(function convergeWorkflows(id: string, redeploy: boolean) {
     if (!redeploy && convergedTenants.has(id)) return;
@@ -269,8 +268,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [refresh, warn]);
 
   useEffect(function convergeOnConnect() {
-    if (tenantId && githubConnected && decisionModelConnected) convergeWorkflows(tenantId, false);
-  }, [convergeWorkflows, decisionModelConnected, githubConnected, tenantId]);
+    if (tenantId && sourceConnected && decisionModelConnected) convergeWorkflows(tenantId, false);
+  }, [convergeWorkflows, decisionModelConnected, sourceConnected, tenantId]);
 
   const requireSnapshot = useCallback(function requireSnapshot() {
     if (readOnly || !snapshot) {
@@ -435,7 +434,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       await saveInference(createHubTransport(), current.workspace.tenantId, input);
       notify("Decision model saved.");
       refresh();
-      if (hasActiveGithubCredential(current.credentials)) convergeWorkflows(current.workspace.tenantId, true);
+      if (portalConnected(current)) convergeWorkflows(current.workspace.tenantId, true);
     },
     [convergeWorkflows, notify, refresh, requireSnapshot],
   );
