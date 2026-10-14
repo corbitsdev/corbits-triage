@@ -12,7 +12,7 @@
 import type { ActionKind, CheckPack, PolicySource, PrTriageRow, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { PrMail } from "./normalize.js";
-import type { RepoRecord } from "./tenant-config.js";
+import { triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader } from "./tenant-open-heads.js";
 import { failHead, queueHead, restoreHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
@@ -93,11 +93,11 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
   const newest = new Map<string, string>();
 
   function keyOf({ tenantId, record, number }: CoalescedEvent): string {
-    return `${tenantId}\n${record.name}\n${number}`;
+    return `${tenantId}\n${triageStateKey(record)}\n${number}`;
   }
 
   function headOf({ tenantId, record, number }: CoalescedEvent, headSha: string): QueuedHead {
-    return { tenantId, repo: record.name, number, headSha };
+    return { tenantId, repo: triageStateKey(record), number, headSha };
   }
 
   async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
@@ -141,7 +141,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     open.cancelQuiet();
     open.cancelDeadline();
     const { latest, head, events } = open;
-    const entry = { tenantId: head.tenantId, repo: head.repo, pr: head.number, headSha: head.headSha, events };
+    const entry = { tenantId: head.tenantId, repo: latest.record.name, pr: head.number, headSha: head.headSha, events };
     // CI still running on the head is re-triaged once by its last completed check run.
     if (events.every((event) => event === "checks") && await checksPending(open)) {
       await restoreHead(deps.store, head, open.remembered);
@@ -149,7 +149,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       return;
     }
     try {
-      await deps.sendMail(head.tenantId, latest.workflow, mailPayload(head.repo, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events }));
+      await deps.sendMail(head.tenantId, latest.workflow, mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events }));
     } catch (err) {
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
       await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());

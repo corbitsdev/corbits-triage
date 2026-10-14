@@ -6,7 +6,7 @@ import { repoPolicy, type PrTriageRow, type RepoPolicy } from "@corbits/triage-c
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
-import { githubRepoRecords, rotationRecord, triageNs, type RepoRecord, type RotationRecord } from "./tenant-config.js";
+import { repoRecords, rotationRecord, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
@@ -30,6 +30,7 @@ export type TriageReconcilerDeps = {
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
   latestDeployments: (tenantId: string, limit: number) => Promise<DeploymentRecord[]>;
   rotation: DeploymentRotation;
+  /** Undefined when the tenant holds no credential for any pull request host. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
   /** Reads and records the live deployments' runs, shared with the recording loop. */
   observeTenant: TenantObserver["observe"];
@@ -62,7 +63,7 @@ function failedByInterchange(deployment: DeploymentRecord): deployment is Deploy
 }
 
 function enabledRepos(config: unknown): EnabledRepo[] {
-  return githubRepoRecords(triageNs(config)).flatMap(function enabled(record) {
+  return repoRecords(triageNs(config)).flatMap(function enabled(record) {
     const policy = repoPolicy(record);
     return record.connected && policy.enabled ? [{ record, policy }] : [];
   });
@@ -95,7 +96,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
     if (read.status !== "ok") return undefined;
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
-    const stored = await deps.store.load(pass.tenantId, repo.record.name);
+    const stored = await deps.store.load(pass.tenantId, triageStateKey(repo.record));
     return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored };
   }
 
@@ -144,21 +145,22 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   /** Deliveries stop for the tenant once one fails: the failure is passed on so later repositories keep their heads unqueued. */
   async function deliverRepo(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan, failed: Failure | undefined): Promise<Failure | undefined> {
     const name = repo.record.name;
+    const key = triageStateKey(repo.record);
     if (failed !== undefined) {
-      await saveRows(pass.tenantId, name, repo.stored, withHeads(plan.rows, plan.enqueue.map((queued) => queued.undelivered)));
+      await saveRows(pass.tenantId, key, repo.stored, withHeads(plan.rows, plan.enqueue.map((queued) => queued.undelivered)));
       return failed;
     }
-    const claimed = await claim(pass.tenantId, name, repo.stored, plan);
+    const claimed = await claim(pass.tenantId, key, repo.stored, plan);
     if (claimed === undefined) return undefined;
     // One mail carries up to `batchSize` heads: each mail costs the deployment a fixed set of commits, whatever it carries.
     for (let from = 0; from < claimed.enqueue.length; from += deps.batchSize) {
       const batch = claimed.enqueue.slice(from, from + deps.batchSize);
       const items = batch.map((queued) => ({ prNumber: queued.number, headSha: claimed.rows.find((row) => row.number === queued.number)!.headSha, ...(queued.judged && { judged: queued.judged }) }));
       try {
-        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(name, repo.policy, repo, { items }));
+        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(repo.record, repo.policy, repo, { items }));
       } catch (err) {
         const restored = claimed.enqueue.slice(from).map((queued) => ({ ...queued.undelivered, error: `delivery failed: ${String(err)}` }));
-        await restoreRows(pass.tenantId, name, claimed, restored);
+        await restoreRows(pass.tenantId, key, claimed, restored);
         return { repo: name, error: err };
       }
       for (const [i, queued] of batch.entries()) {
@@ -330,7 +332,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     const openHeads = await deps.openHeadsFor(tenant.id);
     if (!openHeads) {
-      deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_github_credential" });
+      deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_source_credential" });
       return false;
     }
     const runs = mergeObservedRuns(observed);

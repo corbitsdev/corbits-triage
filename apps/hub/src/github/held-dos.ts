@@ -16,7 +16,7 @@ import { doRefused, failure, type PortalCredentialDeps } from "./portal-credenti
 import type { Member } from "../integrations/app.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
-import { repoRecords, triageNs } from "./tenant-config.js";
+import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
 
 export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
@@ -120,7 +120,8 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     // A held merge on a Fail or Unsure list may still be approved, and the person approving it is told so.
     const warning = approval.step.kind === "merge" && approval.list !== "pass" ? `The verdict on this head was ${approval.list}, not pass.` : undefined;
     try {
-      await deps.deliver(tenantId, deployment.address, approval);
+      const repoSource = sourceOf(record);
+      await deps.deliver(tenantId, deployment.address, { ...approval, ...(repoSource !== "github" && { repoSource }) });
     } catch (err) {
       deps.log({ level: "error", msg: "held_do_approval_failed", ...logged, error: String(err) });
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);

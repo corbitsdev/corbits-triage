@@ -66,7 +66,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
       s.authorized.push(args);
       return true;
     },
-    pullHead: async (_app, _record, number) => (number === 8 ? "abc123" : undefined),
+    pullHead: async (_tenantId, _record, number) => (number === 8 ? "abc123" : undefined),
     readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
     liveDeployments: async () => [ANCHOR],
     observeRuns: observed([]),

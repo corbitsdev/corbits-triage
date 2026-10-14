@@ -7,13 +7,14 @@ import { errorText, isRecord } from "@corbits/common";
 import { loadBridgeHook, logJson, resolvedPack, tenantConfigOf, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
 import type { Accepted } from "../github/coalescer.js";
 import type { BaseMove, PolicyPush, PrMail } from "../github/normalize.js";
-import { repoRecords, triageNs, type RepoRecord, type RepoSource } from "../github/tenant-config.js";
+import { repoRecords, triageNs, triageStateKey, type RepoRecord, type RepoSource } from "../github/tenant-config.js";
 import { readCappedBody } from "../read-json.js";
 
 export type HookIntake =
   | { kind: "pr"; mail: PrMail }
   | { kind: "base-move"; move: BaseMove }
-  | { kind: "policy-push"; push: PolicyPush };
+  /** `branches` names the branches the push updated when the payload does not say which is the default one. */
+  | { kind: "policy-push"; push: PolicyPush; branches?: string[] };
 
 export type ProviderHook = {
   source: RepoSource;
@@ -74,7 +75,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
   async function baseMove(at: Delivery, { repo, merged }: BaseMove): Promise<Response> {
     let due: number;
     try {
-      due = await d.recheckOpenPulls(at.hook.tenantId, repo, merged);
+      due = await d.recheckOpenPulls(at.hook.tenantId, triageStateKey(at.record), merged);
     } catch (err) {
       return failed(at, 500, "triage_state_unavailable", err);
     }
@@ -169,7 +170,10 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       return json(404, { error: "unknown_repo" });
     }
     const at = { hook, delivery, event, record };
-    if (intake.kind === "policy-push") return policyPush(at, intake.push);
+    if (intake.kind === "policy-push") {
+      if (intake.branches && (record.defaultBranch === undefined || !intake.branches.includes(record.defaultBranch))) return ignored(at, "not_default_branch", { branches: intake.branches });
+      return policyPush(at, intake.push);
+    }
     if (!repoPolicy(record).enabled) return ignored(at, "repo_not_enabled");
     if (intake.kind === "base-move") return baseMove(at, intake.move);
     return pullRequest(at, intake.mail);

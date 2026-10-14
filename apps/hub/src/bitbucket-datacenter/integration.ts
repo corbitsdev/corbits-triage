@@ -14,13 +14,10 @@ import {
   BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, instanceBaseUrl, pagedValues, readRepo,
   WEBHOOK_EVENTS, webhookExists, type BitbucketFetch,
 } from "./client.js";
-import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, isBitbucketRecord, listedRepos } from "./records.js";
+import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, TOKEN_CREDENTIAL } from "./records.js";
 
 export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
 export const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
-const PROVIDER = "bitbucket-datacenter";
-const TOKEN_CREDENTIAL = "bitbucket-datacenter";
-const HOOK_CREDENTIAL = "bitbucket-datacenter-hook";
 const HOOK_METADATA = { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } };
 
 export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
@@ -47,6 +44,8 @@ export type BitbucketDeps = PortalCredentialDeps & {
   /** The hub's public origin; behind a TLS proxy the request URL is not. */
   publicOrigin: string;
   fetchImpl: typeof fetch;
+  /** Called once a repository is enabled, so its open pull requests are triaged without waiting for the next pass. */
+  onEnabled: (tenantId: string) => void;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -286,6 +285,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       });
       const repository = written && repoRecords(written).find((record) => record.name === name);
       if (!repository) return failure(404, "not_found", "Workspace not found.");
+      deps.onEnabled(member.tenantId);
       const url = hookUrl(member.tenantId);
       if (webhookId !== undefined) return Response.json({ repository, webhook: "created", hookUrl: url });
       const hookSecret = await secretOf(member, HOOK_CREDENTIAL);

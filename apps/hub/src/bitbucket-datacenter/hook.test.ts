@@ -9,7 +9,7 @@ import { createProviderHookHandler, type ProviderHookDeps } from "../provider-ho
 const SECRET = "bitbucket-secret";
 const TENANT_ID = "tnt_test";
 const REPOS = [
-  { name: "TRI/widgets", source: "bitbucket-datacenter", connected: true, enabled: true },
+  { name: "TRI/widgets", source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" },
   { name: "TRI/gadgets", connected: true, enabled: true },
 ];
 const HOOK_ROW = {
@@ -130,9 +130,13 @@ describe("POST /api/hooks/bitbucket-datacenter/:tenantId", () => {
   test("a merge rechecks the other open pull requests and a branch update syncs the policy file", async () => {
     const h = harness();
     expect((await h.send(hookRequest(prEvent("pr:merged"), "pr:merged"))).status).toBe(202);
-    const refs = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/main", type: "BRANCH" }, type: "UPDATE" }] });
+    const refs = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/main", displayId: "main", type: "BRANCH" }, type: "UPDATE" }] });
     expect((await h.send(hookRequest(refs, "repo:refs_changed", { delivery: "req-3" }))).status).toBe(202);
-    expect(h.rechecked).toEqual([["TRI/widgets", 1]]);
+    // The triage state of another host's repository is keyed by its source, so it never shares a GitHub repository's.
+    expect(h.rechecked).toEqual([["bitbucket-datacenter:TRI/widgets", 1]]);
+    expect(h.synced).toEqual(["TRI/widgets"]);
+    const other = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/feature", displayId: "feature", type: "BRANCH" }, type: "UPDATE" }] });
+    expect(await (await h.send(hookRequest(other, "repo:refs_changed", { delivery: "req-4" }))).json()).toEqual({ status: "ignored" });
     expect(h.synced).toEqual(["TRI/widgets"]);
   });
 });

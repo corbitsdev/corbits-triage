@@ -28,6 +28,7 @@ import {
   patchCorbitsTriage,
   repoRecords,
   setConnectedForInstallation,
+  sourceOf,
   triageNs,
   upsertConnectedRepos,
   type CorbitsTriageNs,
@@ -62,8 +63,8 @@ export interface BridgeDeps {
   log?: (entry: Record<string, unknown>) => void;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
-  /** Has the repository's open pull requests but `except` triaged again; resolves to how many were due. */
-  recheckOpenPulls: (tenantId: string, repo: string, except: number) => Promise<number>;
+  /** Has the repository's open pull requests but `except` triaged again, by its triage state key; resolves to how many were due. */
+  recheckOpenPulls: (tenantId: string, key: string, except: number) => Promise<number>;
   /** Reads the repository's policy file into its policy; undefined when the repository is not connected. */
   syncPolicyFile: (tenantId: string, repo: string, removed: boolean) => Promise<PolicyFileSync | undefined>;
 }
@@ -163,11 +164,15 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
  * live deployment reads `pack`. `policy.source` names the policy artifact versions `pack` was resolved from, so the
  * run records what it used.
  */
-export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic, source }: StoredPack, extra: Record<string, unknown>) {
+export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { pack, automatic, source }: StoredPack, extra: Record<string, unknown>) {
+  const repo = record.name;
+  const repoSource = sourceOf(record);
   return {
     ...extra,
     kind: "pr",
     repo,
+    // Absent on GitHub, so a deployment built before other hosts reads the mail unchanged.
+    ...(repoSource !== "github" && { repoSource }),
     policy: { ...policy, checkPack: { name: checkPackName(repo) }, source },
     checkPack: legacyCheckPack(pack),
     pack,

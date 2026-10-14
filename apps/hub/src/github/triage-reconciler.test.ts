@@ -1001,6 +1001,6 @@ describe("triage reconciler", () => {
     const { reconcile, delivered, logged } = harness({}, [head(1)], { github: false });
     await reconcile();
     expect(delivered).toEqual([]);
-    expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_reconcile_skipped", reason: "no_github_credential" }));
+    expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_reconcile_skipped", reason: "no_source_credential" }));
   });
 });

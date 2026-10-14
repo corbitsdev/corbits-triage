@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, repoSourceOf, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
 import type { Tx } from "./admin-github-grant.js";
@@ -8,7 +8,7 @@ import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-cr
 
 const CONFIG_KEY = "corbitsTriage";
 
-export type RepoSource = "github" | "bitbucket-datacenter";
+export type { RepoSource };
 
 export type RepoRecord = {
   name: string;
@@ -53,9 +53,19 @@ export function repoRecords(ns: CorbitsTriageNs): RepoRecord[] {
   return Array.isArray(ns.repos) ? ns.repos.filter(isRepoRecord) : [];
 }
 
+export function sourceOf(record: Pick<RepoRecord, "source">): RepoSource {
+  return repoSourceOf(record.source);
+}
+
 /** Records GitHub serves; Bitbucket repositories are read through their own instance. */
 export function githubRepoRecords(ns: CorbitsTriageNs): RepoRecord[] {
-  return repoRecords(ns).filter((row) => row.source !== "bitbucket-datacenter");
+  return repoRecords(ns).filter((row) => sourceOf(row) === "github");
+}
+
+/** What the triage state and its queue key a repository by: GitHub ones keep their name, so stored state keeps matching; another host's carries its source. */
+export function triageStateKey(record: Pick<RepoRecord, "name" | "source">): string {
+  const source = sourceOf(record);
+  return source === "github" ? record.name : `${source}:${record.name}`;
 }
 
 export function triageNs(config: unknown): CorbitsTriageNs {
@@ -204,14 +214,14 @@ export async function prepareCorbitsTriagePatch(
   }));
 }
 
-/** Repositories new to the config are recorded disabled: nothing runs until a user enables one. */
+/** Repositories new to the config are recorded disabled: nothing runs until a user enables one. Another host's record of the same name is left alone. */
 export function upsertConnectedRepos(
   ns: CorbitsTriageNs,
   names: readonly string[],
   fields: InstallationFields,
 ): CorbitsTriageNs {
   const repos = [...repoRecords(ns)];
-  const index = new Map(repos.map((row, i) => [row.name, i]));
+  const index = new Map(repos.flatMap((row, i) => (sourceOf(row) === "github" ? [[row.name, i] as const] : [])));
   for (const name of names) {
     const at = index.get(name);
     if (at === undefined) {

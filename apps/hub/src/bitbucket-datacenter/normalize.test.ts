@@ -83,7 +83,7 @@ describe("normalizeBitbucket", () => {
     function refsChanged(type: string, refType: string) {
       return { eventKey: "repo:refs_changed", actor: { slug: "admin" }, repository, changes: [{ ref: { id: "refs/heads/main", displayId: "main", type: refType }, refId: "refs/heads/main", fromHash: "66af7477", toHash: "9b1c2d3e", type }] };
     }
-    expect(normalizeBitbucket("repo:refs_changed", "d", refsChanged("UPDATE", "BRANCH"))).toEqual({ kind: "policy-push", push: { repo: "TRI/widgets", removed: false } });
+    expect(normalizeBitbucket("repo:refs_changed", "d", refsChanged("UPDATE", "BRANCH"))).toEqual({ kind: "policy-push", push: { repo: "TRI/widgets", removed: false }, branches: ["main"] });
     expect(normalizeBitbucket("repo:refs_changed", "d", refsChanged("DELETE", "BRANCH"))).toBeNull();
     expect(normalizeBitbucket("repo:refs_changed", "d", refsChanged("ADD", "TAG"))).toBeNull();
   });
