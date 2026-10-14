@@ -130,8 +130,20 @@ describe("executeDo", () => {
     const same = fakeGithub({ approvals: [{ id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "abc", body }] });
     expect(await run(same.gh, step("merge", {}))).toMatchObject({ status: "done" });
     expect(same.writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/reviews/7", "PUT /repos/acme/widgets/pulls/8/reviews/7/dismissals", "PUT /repos/acme/widgets/pulls/8/merge"]);
+    const dismissed = fakeGithub({ approvals: [{ id: 7, user: APP, state: "DISMISSED", commit_id: "abc", body: (same.writes[0]!.body as { body: string }).body }] });
     const again = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
-    expect(await run(same.gh, again)).toMatchObject({ status: "done" });
+    expect(await run(dismissed.gh, again)).toMatchObject({ status: "done" });
+  });
+
+  test("a closed or merged pull request is never written to: a close or a merge of it is already done, any other Do is refused", async () => {
+    const merged = fakeGithub();
+    await run(merged.gh, step("merge", {}));
+    merged.writes.length = 0;
+    expect(await run(merged.gh, step("merge", {}))).toMatchObject({ status: "satisfied" });
+    expect(await run(merged.gh, step("close", {}))).toMatchObject({ status: "satisfied" });
+    await expect(run(merged.gh, step("labels", { labels: ["ready"] }))).rejects.toThrow("the pull request is not open");
+    await expect(run(merged.gh, step("comment", { body: "Thanks" }))).rejects.toThrow("the pull request is not open");
+    expect(merged.writes).toEqual([]);
   });
 
   test("a reviewer requested or reviewed on this head is not asked again", async () => {

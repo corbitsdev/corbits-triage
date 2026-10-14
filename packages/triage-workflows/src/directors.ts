@@ -10,7 +10,7 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, classificationSources, isFromTriageSender, repoPolicy, triageEventsOf, type ActionKind, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, classificationSources, isFromTriageSender, PolicySourceShape, repoPolicy, triageEventsOf, type ActionKind, type CheckPack, type PolicySource, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoInput, DoOutcome } from "@corbits/github-tool/do";
 import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
@@ -153,6 +153,12 @@ function carriedAnswers(items: unknown[]): Map<number, Judged> {
   }));
 }
 
+/** The policy versions the hub's mail names; a mail from before it named them has none. */
+function policySource(input: Record<string, unknown> | undefined): PolicySource | undefined {
+  const source = isRecord(input?.policy) ? PolicySourceShape(input.policy.source) : undefined;
+  return source instanceof type.errors ? undefined : source;
+}
+
 /** The Do kinds the hub's mail says the pr-triage role is granted; only the hub's mail, told by its headers, is trusted to grant any. */
 function automaticKinds(message: InboundMail, input: Record<string, unknown> | undefined): ActionKind[] {
   const kinds = input?.automatic;
@@ -164,6 +170,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   let carried = new Map<number, Judged>();
   let automatic: ActionKind[] = [];
+  let source: PolicySource | undefined;
   function reply(items: RulesItem[], batch: boolean) {
     return caps.reply(JSON.stringify({ items, batch }));
   }
@@ -245,7 +252,8 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           }, { repo, policy, pack, events, docs });
           const judged = carried.get(n);
           if ("error" in item) return item;
-          return judged === undefined ? { ...item, automatic } : { ...item, automatic, judged };
+          const stamped = { ...item, automatic, ...(source && { source }) };
+          return judged === undefined ? stamped : { ...stamped, judged };
         }
         return reply(numbers.map(itemFor), batch);
       }
@@ -298,6 +306,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     const pack = packFromInput(input?.pack ?? input?.checkPack);
     if (!pack) return fail(NEEDS_SETUP_REASON);
     automatic = automaticKinds(message, input);
+    source = policySource(input);
     if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, ["catch-up"]);
     if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
     // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.
@@ -384,8 +393,15 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
 
   function finish(results: BatchResults) {
     const outcomes = [...results.values()].map(function outcome(r) {
-      const kept = data<{ changeRequestsKept?: unknown }>(r)?.changeRequestsKept;
-      return { call: r.callId, ok: !r.isError, ...(r.isError ? { error: asText(r.content) } : {}), ...(typeof kept === "string" ? { changeRequestsKept: kept } : {}) };
+      const { changeRequestsKept: kept, unchanged, skipped } = data<{ changeRequestsKept?: unknown; unchanged?: unknown; skipped?: unknown }>(r) ?? {};
+      return {
+        call: r.callId,
+        ok: !r.isError,
+        ...(r.isError ? { error: asText(r.content) } : {}),
+        ...(typeof kept === "string" ? { changeRequestsKept: kept } : {}),
+        ...(typeof unchanged === "string" ? { unchanged } : {}),
+        ...(typeof skipped === "string" ? { skipped } : {}),
+      };
     });
     return caps.reply(JSON.stringify(batch ? { results: outcomes } : (outcomes[0] ?? { skipped: true })));
   }
@@ -393,7 +409,7 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   function mirrorCall(v: Verdict): ToolCall {
     const r = v.request;
     const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
-    const comment = v.automatic.includes("comment") ? { comment: r.comment } : {};
+    const comment = v.automatic.includes("comment") ? { comment: r.comment, ...(r.header && { header: r.header }) } : {};
     return call("github_mirror_auto", { repo: r.repo, number: r.number, ...labels, ...comment, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 

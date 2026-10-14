@@ -155,9 +155,21 @@ Each pull request head gets one verdict: **Pass**, **Fail** or **Unsure**.
 - A draft or closed pull request is not decided. A model that does not answer
   leaves the verdict Unsure and Triage re-checks it.
 
-Triage posts one comment per head: the verdict, the reasons (failed hard rules
-first, then judged rules with their evidence), and what Triage did or what
-waits on a maintainer.
+Triage keeps one comment on the pull request: the verdict, the reasons (failed
+hard rules first, then judged rules with their evidence), and what Triage did
+or what waits on a maintainer. Its hidden marker records the head, the policy
+versions and the verdict it was written for, and only the App's own comments
+are read back, so a re-triage:
+
+- writes nothing, not even an edit, when all three and the text are unchanged;
+  the run records "unchanged since" the comment's last write;
+- edits the comment in place and resyncs labels when the head moved or anything
+  else changed;
+- posts a new comment when only new policy versions changed the verdict on the
+  same head, naming the versions, and edits the earlier one to "Superseded by
+  the comment below".
+
+Triage never writes to a closed or merged pull request: no comment, label or Do.
 
 ## Steps
 

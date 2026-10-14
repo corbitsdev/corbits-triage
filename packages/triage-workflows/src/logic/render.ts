@@ -1,5 +1,6 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type Rendered, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type PolicySource, type Rendered, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
+import type { TriageHeader } from "@corbits/github-tool/github";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
@@ -673,6 +674,8 @@ export interface MirrorRequest {
   labels: string[];
   owned: readonly string[];
   comment: string;
+  /** What the comment is written for; absent on a verdict that names no head. */
+  header?: TriageHeader;
 }
 
 export type Verdict = RenderOutput & {
@@ -692,13 +695,14 @@ export type Verdict = RenderOutput & {
 };
 
 /** `owned` is the labels the mirror takes back: triage's own, and the policy's verdict labels when there is a policy. */
-export function toMirrorRequest(v: RenderOutput & { repo: string; number: number }, owned: readonly string[] = TRIAGE_LABELS): MirrorRequest {
+export function toMirrorRequest(v: RenderOutput & { repo: string; number: number; headSha: string | null }, owned: readonly string[] = TRIAGE_LABELS, policy?: PolicySource): MirrorRequest {
   return {
     repo: v.repo,
     number: v.number,
     labels: v.labels,
     owned,
     comment: v.feedback,
+    ...(v.headSha !== null && { header: { head: v.headSha, policy: policy ?? null, verdict: v.verdict } }),
   };
 }
 
