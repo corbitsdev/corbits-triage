@@ -8,16 +8,16 @@ import { createHubTransport } from "../lib/hub-transport.ts";
 import { useOpenWorkspaceAfterSending } from "../lib/held-inbox.tsx";
 import { usePortal } from "../lib/portal.tsx";
 import { useSession } from "../lib/session.tsx";
+import { SignInShell } from "../components/SignInShell.tsx";
 
 const SPENT = "This invite link was already used or has expired. Ask whoever invited you to resend it.";
-const SIGN_IN_FIRST = "Sign in as the invited address, then open the link again. Without email set up on this hub, invitees must sign in with Google first.";
 
 /**
  * Where an invite lands. Arriving from the emailed magic link (`?from=email`) joins straight away; a copied link waits
  * for a click, so no other page can join someone by linking here. `?error=` means the magic link was spent or expired.
  */
 export function AcceptInvite({ tenantId }: { tenantId: string }) {
-  const { session } = useSession();
+  const { session, error: sessionError } = useSession();
   const { warn } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();
   const params = new URLSearchParams(useLocation().search);
@@ -47,35 +47,52 @@ export function AcceptInvite({ tenantId }: { tenantId: string }) {
     if (session && fromEmail && !linkFailed) void accept();
   }, [accept, fromEmail, linkFailed, session]);
 
-  const message = linkFailed ? SPENT : !session ? SIGN_IN_FIRST : refusal;
+  function failure(): string {
+    if (linkFailed) return SPENT;
+    if (!session && sessionError) return `Could not load your session. ${sessionError} Reload the page to try again.`;
+    return refusal;
+  }
+
+  const message = failure();
   if (message) {
     return (
-      <div className="gate">
-        <section className="onboarding centered-setup" aria-label="Invite">
+      <SignInShell>
+        <div className="signin-head">
           <h1>Could not join</h1>
-          <p role="alert" className="error">{message}</p>
-          <Button asChild variant="outline"><a href="/">Go to Corbits Triage</a></Button>
-        </section>
-      </div>
+          <p><a className="signin-link" href="/">{session ? "Go to Corbits Triage" : "Go to sign in"}</a></p>
+        </div>
+        <p role="alert" className="field-error">{message}</p>
+      </SignInShell>
+    );
+  }
+  if (!session) {
+    return (
+      <SignInShell>
+        <div className="signin-head">
+          <h1>Join the workspace</h1>
+          <p>You were invited to a Corbits Triage workspace. Sign in as the invited address, then open this link again.</p>
+          <p><a className="signin-link" href="/">Go to sign in</a></p>
+        </div>
+      </SignInShell>
     );
   }
   if (!joining) {
     return (
-      <div className="gate">
-        <section className="onboarding centered-setup" aria-label="Invite">
+      <SignInShell>
+        <div className="signin-head">
           <h1>Join the workspace</h1>
-          <p className="muted">You were invited to a Corbits Triage workspace.</p>
-          <Button type="button" onClick={() => void accept()}>Join</Button>
-        </section>
-      </div>
+          <p>You were invited to a Corbits Triage workspace.</p>
+        </div>
+        <Button type="button" size="lg" onClick={() => void accept()}>Join</Button>
+      </SignInShell>
     );
   }
   return (
-    <main className="loading-gate" aria-busy="true" aria-label="Joining the workspace">
-      <img src="/corbits-mark.svg" width="40" height="40" alt="" />
-      <div>
-        <strong role="status">Joining…</strong>
+    <SignInShell>
+      <div className="signin-head" aria-busy="true">
+        <h1>Join the workspace</h1>
+        <p role="status">Joining…</p>
       </div>
-    </main>
+    </SignInShell>
   );
 }
