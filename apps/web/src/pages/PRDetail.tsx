@@ -23,7 +23,7 @@ import { CitedEvidence } from "../components/CitedEvidence.tsx";
 import { useDiffLayout } from "../lib/diff-layout.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
-import { hostName, pullUrl } from "../lib/pull-link.ts";
+import { hostName, pullUrl, viewOnHost } from "../lib/pull-link.ts";
 import {
   approvalHeadline,
   checkValueText,
@@ -469,7 +469,7 @@ export default function PRDetail() {
               {closed ? <Badge>{pull.data?.pr.merged ? "Merged" : "Closed"}</Badge>
                 : mergeable === null ? null : <Badge>{mergeable ? "Mergeable" : "Not mergeable"}</Badge>}
               <VerdictChip item={item} />
-              {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">View on {host}</a> : null}
+              {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source)}</a> : null}
             </div>
           </div>
           <div className="pr-actions">

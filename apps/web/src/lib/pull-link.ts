@@ -11,3 +11,7 @@ export function pullUrl(pull: { source: RepoSource; url: string | null; repo: st
   if (pull.url) return pull.url;
   return pull.source === "github" && pull.number !== null ? `https://github.com/${pull.repo}/pull/${pull.number}` : null;
 }
+
+export function viewOnHost(source: RepoSource): string {
+  return `View on ${hostName(source)}`;
+}
