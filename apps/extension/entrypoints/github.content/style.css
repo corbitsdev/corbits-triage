@@ -1,14 +1,12 @@
 /*
  * The parts Triage adds to GitHub's page follow GitHub's own theme: its colour variables reach into the shadow roots,
  * so light, dark and dimmed come for free, and its system font, since the Corbits fonts load only on extension pages.
- * The brand shows in the orange score ring and the tone marks.
+ * The brand shows in the orange marks.
  */
 :host {
   --triage-orange: #E98428;
   --triage-green: #7B9974;
   --triage-blue: #607C9A;
-  /* A merged pull request's dot: GitHub marks merged in purple; this is a quiet one beside the brand's colours. */
-  --triage-merged: #7D6F8F;
   --triage-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
   --triage-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --triage-focus: var(--focus-outlineColor, #0969da);
@@ -23,12 +21,11 @@ button {
   font-family: var(--triage-font);
 }
 
-/* Everything Triage adds that acts on a click shows it, once for every part; a control that cannot act says so. */
-:is(button, a[href], summary, [role="button"]):not(:disabled, [aria-disabled="true"]) {
+:is(button, a[href], summary):not(:disabled) {
   cursor: pointer;
 }
 
-:is(button, [role="button"]):is(:disabled, [aria-disabled="true"]) {
+button:disabled {
   cursor: not-allowed;
 }
 
@@ -37,482 +34,59 @@ button {
   outline-offset: 2px;
 }
 
-/* Chip */
-
-.chip-wrap {
-  display: inline-block;
-  margin-inline-start: 12px;
-  vertical-align: middle;
+/* The tone dot, shared by the chip and the block's verdict. */
+:is(.chip, .tb-verdict)::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--fgColor-muted, #59636e);
 }
+
+:is(.chip, .tb-verdict)[data-tone="pass"]::before {
+  background: var(--triage-green);
+}
+
+:is(.chip, .tb-verdict)[data-tone="fail"]::before,
+:is(.chip, .tb-verdict)[data-tone="error"]::before {
+  background: var(--triage-orange);
+}
+
+:is(.chip, .tb-verdict)[data-tone="unsure"]::before {
+  background: var(--triage-blue);
+}
+
+:is(.chip, .tb-verdict)[data-tone="busy"]::before {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* Chip */
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 28px;
-  padding: 0 12px 0 8px;
+  margin-inline-start: 12px;
+  padding: 0 12px 0 10px;
   border: 1px solid var(--borderColor-default, #d1d9e0);
   border-radius: 999px;
   background: var(--bgColor-default, #ffffff);
   color: var(--fgColor-default, #1f2328);
   font: 500 13px/1 var(--triage-font);
-  transition: border-color 150ms ease-out;
+  vertical-align: middle;
 }
 
 .chip:hover {
   border-color: var(--triage-orange);
 }
 
-.ring {
-  width: 16px;
-  height: 16px;
-  flex: none;
-}
-
-.ring circle {
-  fill: none;
-  stroke-width: 2.5;
-}
-
-.ring-track {
-  stroke: var(--borderColor-default, #d1d9e0);
-}
-
-.ring-fill {
-  stroke: var(--triage-orange);
-  stroke-linecap: round;
-  stroke-dasharray: 0 40;
-  transition: stroke-dasharray 300ms ease-out;
-}
-
-.chip[data-busy="true"] .ring {
-  animation: spin 1.2s linear infinite;
-}
-
-.score {
-  min-width: 2ch;
-  font: 600 13px/1 var(--triage-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.state {
-  max-width: 24ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.state::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-inline-end: 6px;
-  border-radius: 50%;
-  background: var(--fgColor-muted, #59636e);
-  vertical-align: 2px;
-}
-
-.chip[data-tone="ready"] .state::before {
-  background: var(--triage-green);
-}
-
-.chip[data-tone="merged"] .state::before,
-.bar-summary[data-tone="merged"] .bar-state::before,
-.tb-score[data-tone="merged"] .tb-state::before {
-  background: var(--triage-merged);
-}
-
-.chip[data-tone="closed"] .state::before,
-.bar-summary[data-tone="closed"] .bar-state::before,
-.tb-score[data-tone="closed"] .tb-state::before {
-  background: var(--fgColor-muted, #59636e);
-}
-
-.chip[data-tone="waiting"] .state::before {
-  background: var(--triage-blue);
-}
-
-.chip[data-tone="attention"] .state::before {
-  background: var(--fgColor-default, #1f2328);
-}
-
-.chip[data-stale="true"] .state {
-  color: var(--fgColor-muted, #59636e);
-}
-
-.chip[data-stale="true"] .state::before {
-  background: var(--fgColor-muted, #59636e);
-}
-
-/* Hover card: a popover in the top layer, placed under the chip by the script. */
-
-.card {
-  position: fixed;
-  inset: auto;
-  margin: 0;
-  box-sizing: border-box;
-  padding: 12px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 12px;
-  background: var(--overlay-bgColor, var(--bgColor-default, #ffffff));
-  color: var(--fgColor-default, #1f2328);
-  box-shadow: var(--shadow-floating-small, 0 1px 3px rgb(31 35 40 / 0.12), 0 8px 24px rgb(66 74 83 / 0.12));
-  font: 400 13px/1.45 var(--triage-font);
-}
-
-.card-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.card-score {
-  font: 700 20px/1 var(--triage-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.card-state {
-  font-weight: 600;
-}
-
-.card p,
-.card ul {
-  margin: 8px 0 0;
-}
-
-.card-next {
-  font-weight: 500;
-}
-
-.card-warn {
-  padding: 8px;
-  border-radius: 6px;
-  background: var(--bgColor-attention-muted, #fff8c5);
-  color: var(--fgColor-default, #1f2328);
-}
-
-.card-checks {
-  display: grid;
-  gap: 4px;
-  padding: 0;
-  list-style: none;
-}
-
-.card-checks li {
-  position: relative;
-  padding-inline-start: 14px;
-  overflow-wrap: anywhere;
-}
-
-.card-checks li::before {
-  content: "";
-  position: absolute;
-  top: 0.55em;
-  left: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--fgColor-default, #1f2328);
-}
-
-.card-checks b {
-  font-weight: 600;
-}
-
-.card-checks .card-more {
-  color: var(--fgColor-muted, #59636e);
-}
-
-.card-checks .card-more::before {
-  display: none;
-}
-
-.card-status {
-  color: var(--fgColor-muted, #59636e);
-  font-size: 12px;
-}
-
-.card-status:empty {
-  display: none;
-}
-
-.card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--borderColor-muted, #d1d9e0b3);
-}
-
-.card-action,
-.drafts-toggle {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 6px;
-  background: var(--button-default-bgColor-rest, var(--bgColor-muted, #f6f8fa));
-  color: var(--fgColor-default, #1f2328);
-  font: 500 12px/1 var(--triage-font);
-}
-
-.card-action:hover,
-.drafts-toggle:hover {
-  background: var(--button-default-bgColor-hover, var(--bgColor-neutral-muted, #eff2f5));
-}
-
-/* The chip's ring is the orange on GitHub's page, so the card's main action leads by weight. */
-.card-action[data-primary="true"] {
-  font-weight: 600;
-}
-
-.card-action:disabled {
-  opacity: 0.6;
-}
-
-/* Suggested actions, in the placement chosen in settings */
-
-.bar[hidden] {
-  display: none;
-}
-
-.bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-  color: var(--fgColor-default, #1f2328);
-  font: 400 14px/1.45 var(--triage-font);
-}
-
-/* The Corbits mark and name, as the sidebar block's header carries them. */
-.bar-brand,
-.tb-title {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  color: var(--fgColor-muted, #59636e);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.bar-brand svg,
-.tb-title svg {
-  width: 20px;
-  height: auto;
-  color: var(--fgColor-default, #1f2328);
-}
-
-.bar p,
-.bar h2 {
-  margin: 0;
-}
-
-.bar-summary {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.bar-score {
-  font: 700 14px/1 var(--triage-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.bar-state {
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.bar-state::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-inline-end: 6px;
-  border-radius: 50%;
-  background: var(--fgColor-muted, #59636e);
-  vertical-align: 2px;
-}
-
-.bar-summary[data-tone="ready"] .bar-state::before {
-  background: var(--triage-green);
-}
-
-.bar-summary[data-tone="waiting"] .bar-state::before {
-  background: var(--triage-blue);
-}
-
-.bar-summary[data-tone="attention"] .bar-state::before {
-  background: var(--fgColor-default, #1f2328);
-}
-
-.bar-next {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--fgColor-muted, #59636e);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bar-counts {
-  color: var(--fgColor-default, #1f2328);
-  white-space: nowrap;
-}
-
-.bar-title .bar-next {
-  max-width: 48ch;
-}
-
-.bar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.bar-action {
-  max-width: 36ch;
-  height: 32px;
-  overflow: hidden;
-  padding: 0 12px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 6px;
-  background: var(--button-default-bgColor-rest, var(--bgColor-muted, #f6f8fa));
-  color: var(--fgColor-default, #1f2328);
-  font: 500 13px/1 var(--triage-font);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bar-action:hover:not(:disabled) {
-  border-color: var(--triage-orange);
-}
-
-.bar-action:disabled {
-  opacity: 0.7;
-}
-
-/* A comment posts with GitHub's own primary look, as its Comment button does; Edit first sits beside it. */
-.bar-pair {
-  display: inline-flex;
-  gap: 6px;
-}
-
-.bar-action[data-primary="true"],
-.tb-act[data-primary="true"],
-.draft-post {
-  border: 1px solid;
-  border-color: var(--button-primary-borderColor-rest, #1f232826);
-  background: var(--button-primary-bgColor-rest, #1f883d);
-  color: var(--button-primary-fgColor-rest, #ffffff);
-}
-
-.bar-action[data-primary="true"]:hover:not(:disabled),
-.tb-act[data-primary="true"]:hover:not(:disabled),
-.draft-post:hover:not(:disabled) {
-  border-color: var(--button-primary-borderColor-hover, #1f232826);
-  background: var(--button-primary-bgColor-hover, #1c8139);
-}
-
-.bar-action[data-kind="close"] {
-  margin-inline-start: 6px;
-  color: var(--fgColor-danger, #d1242f);
-}
-
-.bar-action[data-state="failed"] {
-  border-color: var(--fgColor-danger, #d1242f);
-}
-
-.bar-status {
-  flex-basis: 100%;
-  color: var(--fgColor-danger, #d1242f);
-  font-size: 12px;
-}
-
-.bar-status:empty {
-  display: none;
-}
-
-.bar-spacer {
-  height: 120px;
-}
-
-.bar-spacer:has(+ .bar[hidden]) {
-  display: none;
-}
-
-.bar-banner {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  left: 16px;
-  z-index: 99;
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 14px 56px 14px 18px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 12px;
-  background: var(--bgColor-default, #ffffff);
-  box-shadow: var(--shadow-floating-small, 0 6px 12px -3px #25292e0a, 0 6px 18px #25292e1f);
-}
-
-.bar-banner .bar-summary {
-  flex: 1 1 280px;
-}
-
-.bar-dismiss {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--fgColor-muted, #59636e);
-  font-size: 18px;
-  line-height: 1;
-}
-
-.bar-dismiss:hover {
-  background: var(--bgColor-neutral-muted, #eff2f5);
-}
-
-.bar-top-bar {
-  margin: 0 0 16px;
-  padding: 12px 16px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 8px;
-  background: var(--bgColor-default, #ffffff);
-}
-
-.bar-top-bar .bar-summary {
-  flex: 1 1 240px;
-}
-
-.bar-title {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  margin-inline-start: 12px;
-  vertical-align: middle;
-  font-size: 13px;
-}
-
-.bar-title .bar-status {
-  display: none;
-}
-
-/* The Triage block atop GitHub's pull request sidebar, laid out like GitHub's own sidebar sections. */
+/* The sidebar block */
 
 .tb {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 16px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--borderColor-muted, #d1d9e0b3);
@@ -520,305 +94,134 @@ button {
   font: 400 12px/1.5 var(--triage-font);
 }
 
-.tb-body,
-.tb-summary,
-.tb-steps {
-  display: grid;
-  gap: 12px;
-}
-
-.tb-steps[hidden] {
-  display: none;
+.tb:focus {
+  outline: none;
 }
 
 .tb p,
 .tb h2,
 .tb h3,
-.tb ul {
+.tb ul,
+.tb pre {
   margin: 0;
 }
 
 .tb-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  min-height: 24px;
+  gap: 4px 8px;
 }
 
-.tb-icon {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.tb-icon-button {
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  margin-inline-end: -6px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--fgColor-muted, #59636e);
-}
-
-.tb-icon-button:hover {
-  background: var(--bgColor-neutral-muted, #eff2f5);
-  color: var(--fgColor-default, #1f2328);
-}
-
-.tb-score {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.tb-dial {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  flex: none;
-}
-
-.tb-ring {
-  position: absolute;
-  inset: 0;
-  width: 40px;
-  height: 40px;
-}
-
-.tb-ring circle {
-  fill: none;
-  stroke-width: 3;
-}
-
-.tb-ring-track {
-  stroke: var(--borderColor-default, #d1d9e0);
-}
-
-.tb-ring-fill {
-  stroke: var(--triage-orange);
-  stroke-linecap: round;
-  transition: stroke-dasharray 300ms ease-out;
-}
-
-.tb-score[data-busy="true"] .tb-ring {
-  animation: spin 1.2s linear infinite;
-}
-
-.tb-number {
-  font: 700 14px/1 var(--triage-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.tb-score-text {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding-top: 2px;
-}
-
-.tb-state {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.tb-state::before {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-inline-end: 6px;
-  border-radius: 50%;
-  background: var(--fgColor-muted, #59636e);
-  vertical-align: 1px;
-}
-
-.tb-score[data-tone="ready"] .tb-state::before {
-  background: var(--triage-green);
-}
-
-.tb-score[data-tone="waiting"] .tb-state::before {
-  background: var(--triage-blue);
-}
-
-.tb-score[data-tone="attention"] .tb-state::before {
-  background: var(--fgColor-default, #1f2328);
-}
-
-.tb-next {
-  display: -webkit-box;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.tb-checks {
-  display: grid;
+.tb-title {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
-  padding: 0;
-  list-style: none;
-}
-
-.tb-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.tb-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 16px;
-  height: 18px;
-  flex: none;
-  color: var(--fgColor-muted, #59636e);
-}
-
-.tb-check[data-result="fail"] .tb-mark {
-  color: var(--fgColor-default, #1f2328);
-}
-
-.tb-check[data-result="fail"] .tb-icon {
-  stroke-width: 2;
-}
-
-.tb-check-text {
-  display: -webkit-box;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--fgColor-muted, #59636e);
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.tb-check-text b {
-  color: var(--fgColor-default, #1f2328);
-  font-weight: 600;
-}
-
-.tb-subhead {
-  margin-top: 4px;
   color: var(--fgColor-muted, #59636e);
   font-size: 12px;
   font-weight: 600;
 }
 
-.tb-actions {
+.tb-title svg {
+  width: 16px;
+  height: 10px;
+  color: var(--triage-orange);
+}
+
+.tb-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.tb-meta {
+  color: var(--fgColor-muted, #59636e);
+}
+
+.tb a {
+  color: var(--fgColor-accent, #0969da);
+}
+
+.tb-rules {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   padding: 0;
   list-style: none;
 }
 
-.tb-action {
+.tb-rule {
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto 1fr;
+  gap: 0 8px;
 }
 
-.tb-act {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  min-height: 28px;
-  box-sizing: border-box;
-  padding: 4px 10px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 6px;
-  background: var(--button-default-bgColor-rest, var(--bgColor-muted, #f6f8fa));
-  color: var(--fgColor-default, #1f2328);
-  font: 500 12px/1.35 var(--triage-font);
-  text-align: start;
-  text-decoration: none;
+.tb-rule b {
+  font-weight: 600;
 }
 
-.tb-act:hover:not(:disabled) {
-  border-color: var(--triage-orange);
+.tb-reason {
+  grid-column: 2;
+  color: var(--fgColor-muted, #59636e);
+  overflow-wrap: anywhere;
 }
 
-.tb-act:disabled {
-  opacity: 0.7;
+.tb-state {
+  grid-row: span 2;
+  min-width: 56px;
+  color: var(--fgColor-muted, #59636e);
+  font-size: 11px;
+  font-weight: 600;
 }
 
-.tb-draft {
-  display: grid;
-  gap: 6px;
-  font: 500 12px/1.35 var(--triage-font);
+.tb-rule[data-state="pass"] .tb-state {
+  color: var(--fgColor-success, #1a7f37);
 }
 
-.tb-draft-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.tb-draft-buttons .tb-act {
-  width: auto;
-}
-
-.tb-act[data-kind="close"] {
+.tb-rule[data-state="fail"] .tb-state {
   color: var(--fgColor-danger, #d1242f);
 }
 
-.tb-act[data-state="failed"] {
-  border-color: var(--fgColor-danger, #d1242f);
+.tb-rule[data-state="waiting"] .tb-state {
+  color: var(--fgColor-attention, #9a6700);
 }
 
-.tb-act-text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.tb-why,
-.tb-meta,
-.tb-seeded {
+.tb-subhead {
   color: var(--fgColor-muted, #59636e);
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.tb-why {
-  display: -webkit-box;
-  overflow: hidden;
+.tb-line {
   overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
-.tb-seeded {
-  color: var(--fgColor-default, #1f2328);
+.tb-comment pre {
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bgColor-muted, #f6f8fa);
+  font: 11px/1.5 var(--triage-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .tb-warn {
   padding: 8px;
   border-radius: 6px;
   background: var(--bgColor-attention-muted, #fff8c5);
-}
-
-.tb-error {
-  color: var(--fgColor-danger, #d1242f);
   overflow-wrap: anywhere;
 }
 
 .tb-foot {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: 4px 16px;
 }
 
-.tb-link,
-.seed-undo {
+.tb-link {
   padding: 0;
   border: 0;
   background: none;
@@ -826,57 +229,13 @@ button {
   font: 500 12px/1.5 var(--triage-font);
 }
 
-.tb-link:hover,
-.seed-undo:hover {
+.tb-link:hover {
   text-decoration: underline;
 }
 
 .tb-link:disabled {
   color: var(--fgColor-muted, #59636e);
   text-decoration: none;
-}
-
-.tb-status:empty {
-  display: none;
-}
-
-.tb-status {
-  color: var(--fgColor-muted, #59636e);
-}
-
-/* The note beside a GitHub field Triage put text in. */
-
-.seed-note {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 12px;
-  margin: 8px 0;
-  padding: 6px 10px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 6px;
-  background: var(--bgColor-muted, #f6f8fa);
-  color: var(--fgColor-default, #1f2328);
-  font: 400 12px/1.5 var(--triage-font);
-}
-
-.seed-note[hidden] {
-  display: none;
-}
-
-.seed-note::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  flex: none;
-  align-self: center;
-  border-radius: 50%;
-  background: var(--triage-orange);
-}
-
-.seed-note code {
-  font: 12px/1.5 var(--triage-mono);
-  overflow-wrap: anywhere;
 }
 
 /* A file's marker in the Files tab's header. */
@@ -904,226 +263,12 @@ button {
   font-family: var(--triage-mono);
 }
 
-/* Drafts */
-
-.drafts {
-  position: relative;
-  margin: 8px 0;
-  font: 400 13px/1.45 var(--triage-font);
-  color: var(--fgColor-default, #1f2328);
-}
-
-.drafts-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-.drafts-summary {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--fgColor-muted, #59636e);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.drafts-summary b {
-  color: var(--fgColor-default, #1f2328);
-}
-
-.drafts-score {
-  font-family: var(--triage-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.drafts-toggle[hidden] {
-  display: none;
-}
-
-.drafts-note {
-  margin: 0;
-  color: var(--fgColor-muted, #59636e);
-  font-size: 12px;
-}
-
-.drafts-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.drafts-toggle svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.5;
-}
-
-.drafts-toggle[aria-expanded="true"] {
-  border-color: var(--triage-orange);
-}
-
-.drafts-toggle[aria-expanded="true"] .caret {
-  transform: rotate(180deg);
-}
-
-.drafts-count {
-  min-width: 18px;
-  padding: 2px 5px;
-  box-sizing: border-box;
-  border-radius: 999px;
-  background: var(--bgColor-neutral-muted, #818b981f);
-  font: 600 11px/1.2 var(--triage-mono);
-  text-align: center;
-}
-
-.drafts-panel {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 100;
-  display: grid;
-  gap: 8px;
-  width: min(380px, calc(100vw - 32px));
-  box-sizing: border-box;
-  padding: 8px;
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  border-radius: 12px;
-  background: var(--overlay-bgColor, var(--bgColor-default, #ffffff));
-  box-shadow: var(--shadow-floating-small, 0 1px 3px rgb(31 35 40 / 0.12), 0 8px 24px rgb(66 74 83 / 0.12));
-}
-
-.drafts-panel[hidden] {
-  display: none;
-}
-
-.drafts-items {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.draft-item {
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-  border-radius: 6px;
-}
-
-.draft-item:hover,
-.draft-item:focus-within {
-  background: var(--bgColor-neutral-muted, #818b981f);
-}
-
-.draft-text {
-  display: grid;
-  gap: 2px;
-  font: 600 13px/1.4 var(--triage-font);
-}
-
-.draft-text small {
-  color: var(--fgColor-muted, #59636e);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.draft-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.draft-post,
-.draft-edit {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 6px;
-  font: 500 12px/1 var(--triage-font);
-}
-
-.draft-edit {
-  border: 1px solid var(--borderColor-default, #d1d9e0);
-  background: var(--button-default-bgColor-rest, var(--bgColor-muted, #f6f8fa));
-  color: var(--fgColor-default, #1f2328);
-}
-
-.draft-edit:hover:not(:disabled) {
-  background: var(--button-default-bgColor-hover, var(--bgColor-neutral-muted, #eff2f5));
-}
-
-.draft-post:disabled,
-.draft-edit:disabled {
-  opacity: 0.7;
-}
-
-.draft-edit[hidden] {
-  display: none;
-}
-
-.drafts-preview {
-  padding: 8px;
-  border-radius: 6px;
-  background: var(--bgColor-muted, #f6f8fa);
-}
-
-.drafts-preview p {
-  margin: 0;
-}
-
-.drafts-preview-label {
-  color: var(--fgColor-muted, #59636e);
-  font-size: 12px;
-}
-
-.drafts-preview-body {
-  max-height: 120px;
-  overflow: auto;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-
-.drafts-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 4px 4px;
-}
-
-.drafts-hint {
-  margin: 0;
-  color: var(--fgColor-muted, #59636e);
-  font-size: 12px;
-}
-
-.drafts-error {
-  margin: 0 4px 4px;
-  color: var(--fgColor-danger, #d1242f);
-  font-size: 12px;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
+@keyframes pulse {
+  50% { opacity: 0.3; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chip[data-busy="true"] .ring,
-  .tb-score[data-busy="true"] .tb-ring {
+  :is(.chip, .tb-verdict)[data-tone="busy"]::before {
     animation: none;
-  }
-
-  .ring-fill,
-  .tb-ring-fill,
-  .chip {
-    transition: none;
   }
 }

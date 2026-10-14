@@ -7,10 +7,10 @@ export default defineConfig({
   manifestVersion: 3,
   manifest: ({ browser }) => ({
     name: "Corbits Triage",
-    description: "Scores the GitHub pull request in the current tab, lists its checks and drafts the comments you post yourself.",
+    description: "Checks the GitHub pull request you are viewing against its repository's .corbits-triage.yaml, read-only.",
     permissions: ["storage", ...(browser === "firefox" ? [] : ["sidePanel"])],
-    // A pull request's .diff redirects from github.com to patch-diff.githubusercontent.com, a repository's files to raw.githubusercontent.com.
-    host_permissions: ["https://github.com/*", "https://patch-diff.githubusercontent.com/*", "https://raw.githubusercontent.com/*", "https://api.github.com/*"],
+    // Every read goes through GitHub's REST API; the content script's github.com match comes from its own entrypoint.
+    host_permissions: ["https://api.github.com/*"],
     // A custom decision model endpoint is granted one origin at a time, when the person enters it.
     optional_host_permissions: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
     action: { default_title: "Corbits Triage" },

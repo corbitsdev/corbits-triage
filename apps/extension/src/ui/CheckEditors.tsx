@@ -1,9 +1,7 @@
 import { Button, Checkbox, Input, Select, Textarea } from "@corbits/react-ui";
-import { DEFAULT_SCORE_LEVELS, ISSUE_TRACKERS, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type ModelShape } from "@corbits/triage-contracts";
+import { DEFAULT_SCORE_LEVELS, ISSUE_TRACKER_NAMES, ISSUE_TRACKERS, recommendedPack, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type ModelShape } from "@corbits/triage-contracts";
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react";
-import { defaultLocalPack } from "../local-pack.ts";
 import { withCatalogParams, withCustomCheck, type CustomForm } from "../pack-edit.ts";
-import { ISSUE_TRACKER_NAMES } from "../prose.ts";
 
 export const EDITABLE_CATALOG: readonly CatalogId[] = ["max-files-changed", "max-lines-changed", "no-forbidden-paths", "linked-issue"];
 
@@ -53,7 +51,7 @@ function EditorFoot({ error, saveLabel, onCancel }: { error: string | null; save
 type CatalogEditorProps = { id: CatalogId; pack: CheckPack; onSave: (pack: CheckPack) => Promise<void>; onCancel: () => void };
 
 export function CatalogEditor({ id, pack, onSave, onCancel }: CatalogEditorProps) {
-  const row: CatalogCheck = { ...defaultLocalPack(pack.repo).checks[id], ...pack.checks[id], enabled: pack.checks[id]?.enabled ?? false };
+  const row: CatalogCheck = { ...recommendedPack(pack.repo).checks[id], ...pack.checks[id], enabled: pack.checks[id]?.enabled ?? false };
   const [maxFiles, setMaxFiles] = useState(String(row.maxFiles ?? ""));
   const [maxLines, setMaxLines] = useState(String(row.maxLines ?? ""));
   const [globs, setGlobs] = useState((row.forbiddenGlobs ?? []).join("\n"));

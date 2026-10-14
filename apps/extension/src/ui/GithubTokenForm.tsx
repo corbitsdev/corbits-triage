@@ -1,26 +1,19 @@
 import { Button, Input, type ButtonProps } from "@corbits/react-ui";
 import { Check } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
-import { GITHUB_API } from "../github-public.ts";
-import { githubToken } from "../storage.ts";
+import { ask } from "../messages.ts";
+import { tokenSaved } from "../storage.ts";
 import { useStorageItem } from "./use-storage.ts";
-import { errorText } from "../error-text.ts";
+import { errorText } from "@corbits/common";
 
 type GithubTokenFormProps = { onSaved?: () => void; variant?: ButtonProps["variant"] };
 
 // Public repositories, read-only, is the fine-grained form's default access, so the template needs no permissions.
 const NEW_TOKEN_URL = "https://github.com/settings/personal-access-tokens/new?name=Corbits+Triage&description=Reads+public+pull+requests+for+the+Corbits+Triage+extension.&expires_in=90";
 
-/** GitHub's rate-limit endpoint does not count against the limit, so checking a token costs nothing. */
-async function checkToken(token: string): Promise<void> {
-  const res = await fetch(`${GITHUB_API}/rate_limit`, { headers: { authorization: `Bearer ${token}` } });
-  if (res.status === 401) throw new Error("GitHub did not accept this token. Check that it was copied whole and has not expired.");
-  if (!res.ok) throw new Error(`GitHub answered ${res.status} when checking the token. Try again in a moment.`);
-}
-
 /** Stays in this browser. */
 export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFormProps) {
-  const saved = useStorageItem(githubToken);
+  const saved = useStorageItem(tokenSaved);
   const [token, setToken] = useState("");
   const [replacing, setReplacing] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -38,8 +31,7 @@ export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFor
     }
     setChecking(true);
     try {
-      await checkToken(token.trim());
-      await githubToken.setValue(token.trim());
+      await ask({ type: "save-token", token: token.trim() });
       setToken("");
       setReplacing(false);
       onSaved?.();
@@ -53,7 +45,7 @@ export function GithubTokenForm({ onSaved, variant = "outline" }: GithubTokenFor
   async function remove() {
     setError(null);
     try {
-      await githubToken.setValue(null);
+      await ask({ type: "remove-token" });
     } catch (cause) {
       setError(errorText(cause));
     }
