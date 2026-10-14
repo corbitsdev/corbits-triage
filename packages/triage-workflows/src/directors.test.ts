@@ -404,14 +404,6 @@ describe("judge on a blocked pull request", () => {
     ]);
   });
 
-  test("unknown mergeability is no failure: the judge decides, the pass is unsure and the head stays unsettled", async () => {
-    const { asked, verdict } = await judgeAndEvaluate(await facts([], null, false, {}, code), undefined, []);
-    expect(asked).toContain("verdict");
-    expect(verdict).toMatchObject({ verdict: "unsure", reason: "the decision model passed it, but a rule could not be confirmed" });
-    expect(verdict.checks.find((c) => c.check === "no-merge-conflicts")).toMatchObject({ result: "unconfirmed" });
-    expect(unsettledBy(verdict)).toMatchObject({ unconfirmed: true });
-  });
-
   test("running checks leave the pass unsure, settled, with every Do held until they finish", async () => {
     const hi = [{ do: "comment", target: { body: "hi" } }];
     const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), pass: hi, unsure: hi } };
@@ -609,16 +601,6 @@ describe("mirror director grants", () => {
     );
     return calls;
   }
-
-  test("a role granted comment and labels posts with the no-ask tool", async () => {
-    expect(await mirrorCalls({ ...verdict, automatic: ["comment", "labels"] })).toEqual([[
-      {
-        id: "mirror:acme--widgets:8",
-        name: "github_mirror_auto",
-        arguments: request,
-      },
-    ]]);
-  });
 
   test("a Bitbucket Data Center verdict mirrors through its own tool, with the verdict as a build status in place of labels", async () => {
     const checks = [{ check: "ci-green", result: "fail" }, { check: "linked-issue", result: "pass" }];

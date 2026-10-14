@@ -1,4 +1,4 @@
-import type { FileNote } from "../view.ts";
+import type { FileNote } from "../notes.ts";
 
 const FILE_HEADER = ".file-header[data-path]";
 

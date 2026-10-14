@@ -29,14 +29,14 @@ wakes the policy as if it were opened.
   run), the description, and folded rows for the linked issue, the changed
   files and the rules that passed. A bar at the bottom offers the next step
   for that state (merge, request changes, comment, reply, approve, close,
-  triage again); the rest and the policy's Dos are under More. Merging from the
+  triage again); the rest and the policy's actions are under More. Merging from the
   portal is pinned to the commit Triage checked.
 - **Pulse**: what changed since your last visit and what is stuck.
 - **Repositories**: per repository, its Size, Checks and Judgement rules,
   the steps for each verdict, its labels, the triage switch and **Triage open
   pull requests again**. Every change saves on its own.
 - **Settings**: the deployed workflow versions, the GitHub App, the decision
-  model, invitations, workspace roles, the grid of Do kinds by role, and the
+  model, invitations, workspace roles, the grid of action kinds by role, and the
   account.
 
 A repository's panel is one scroll. The triage switch comes first; while it is
@@ -169,21 +169,21 @@ are read back, so a re-triage:
   same head, naming the versions, and edits the earlier one to "Superseded by
   the comment below".
 
-Triage never writes to a closed or merged pull request: no comment, label or Do.
+Triage never writes to a closed or merged pull request: no comment, label or action.
 
 ## Steps
 
 The policy holds one **When** and three ordered lists of steps: **On Pass**,
-**On Fail** and **On Unsure**. The verdict picks the list. Each step names a
-**Do** and who it is **for**.
+**On Fail** and **On Unsure**. The verdict picks the list. Each step names an
+**action** and who it is **for**.
 
 - **When**: opened, updated, checks, ready; all four by default. Catching up
   runs the policy whatever it names.
 - **On Unsure** asks CODEOWNERS for review by default.
-- **Do**: approve, merge, close, comment, request changes, request review (from
+- **Action**: approve, merge, close, comment, request changes, request review (from
   users, teams or code owners), assign, labels, or nothing. Settings → Access
-  holds one grid, Do kind by role: a role's people may approve held Dos of the
-  kinds it holds, and Dos of the kinds Triage holds run on GitHub during
+  holds one grid, action kind by role: a role's people may approve held actions of the
+  kinds it holds, and actions of the kinds Triage holds run on GitHub during
   triage; the rest wait in the Inbox for a click. New workspaces automate
   nothing.
 - **For**: the pull request's author, who opened it and never changes: anyone
@@ -224,7 +224,11 @@ names CI green still requires CI); when it writes, it
 reads CI and reviews again and refuses while CI has not passed or anyone has
 requested changes; Triage's own standing request for changes is taken back
 first. The repository's branch protection stays the backstop.
-Where Triage posts, a later head that may not be approved has the approve Do's
+While CI is still running on the head, every action is held and the comment
+says "Waiting for checks to finish". When the policy's When includes checks,
+as it does by default, a completed check run has Triage triage the head again
+and resolve the held actions.
+Where Triage posts, a later head that may not be approved has the approve action's
 approvals dismissed. Approvals made
 from the Inbox are never dismissed. Request changes lists the failed rules the
 author must fix, once per head; the automatic mirror dismisses it once none
@@ -264,8 +268,8 @@ case.
 ### Stored policies
 
 Policies are `schemaVersion` 2. A version 1 policy, as earlier portals saved
-one, still reads, as version 2, and the next save writes version 2: its Dos
-become steps for anyone, and Dos that no longer run (agent, labels derived from
+one, still reads, as version 2, and the next save writes version 2: its actions
+become steps for anyone, and actions that no longer run (agent, labels derived from
 the type or paths), custom rules over GitHub data and text longer than version
 2 allows are left out or cut, and every verdict's reasons name them. Only a
 list of actions with branches, from before verdicts, cannot be read; an empty

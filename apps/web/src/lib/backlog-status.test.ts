@@ -33,7 +33,7 @@ describe("isRepoCatchingUp", () => {
     expect(catchingUp(source, "acme/widgets")).toBe(true);
   });
 
-  test("H1: running listener parent does not keep a completed 0-PR child catching up", () => {
+  test("a running listener parent does not keep a completed child with no pull requests catching up", () => {
     const source = {
       runs: [
         { ...backlogRun("running"), id: "deploy-backlog" },
@@ -56,7 +56,7 @@ describe("isRepoCatchingUp", () => {
     expect(catchingUp(source, "acme/widgets")).toBe(false);
   });
 
-  test("H4: unbound log without kind:backlog does not invent a live run", () => {
+  test("a log not bound to a backlog run is not a live run", () => {
     const source = {
       logs: [
         {

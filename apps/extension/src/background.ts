@@ -1,19 +1,15 @@
-import { GithubRateLimitError, publicGithub, type PublicGithub } from "./github-public.ts";
-import { runLocal } from "./local-run.ts";
-import type { OpenPr, Reply, Request } from "./messages.ts";
-import { localPackFor } from "./pack-store.ts";
-import { prFromUrl, prKey, type PrRef } from "./pr.ts";
-import { sessionGithub, type GithubReads } from "./session-github.ts";
+import { errorText } from "@corbits/common";
+import { GITHUB_API, githubApi, type GithubApi } from "./github-api.ts";
+import type { Reply, Request } from "./messages.ts";
+import { policyFor } from "./policy-source.ts";
+import { prKey, type PrRef } from "./pr.ts";
+import { runStepsInBrowser } from "./run-steps-in-browser.ts";
 import { openPanelOnActionClick, openSidePanel } from "./side-panel.ts";
-import { clearRunning, githubToken, saveView, setRunState, systemOne, views } from "./storage.ts";
-import type { Judged } from "@corbits/triage-workflows/logic/item";
-import { FRESH_MS, type Ended, type TriageView } from "./view.ts";
-import { errorText } from "./error-text.ts";
+import { clearRunning, githubToken, policyFiles, runStates, saveView, setRunState, systemOne, tokenSaved, views } from "./storage.ts";
+import { FRESH_MS, type TriageView } from "./view.ts";
 
 type Triage = Extract<Request, { type: "triage" }>;
 
-/** The last run's GitHub reads per pull request, so a pack change re-scores without spending more of the hourly limit. */
-const reads = new Map<string, GithubReads>();
 const running = new Map<string, Promise<null>>();
 
 async function settle(work: Promise<unknown>): Promise<void> {
@@ -29,84 +25,32 @@ function openPanel(windowId: number | undefined): void {
   if (windowId !== undefined) settle(openSidePanel(windowId));
 }
 
-async function badgeFor(tabId: number, url: string | undefined): Promise<void> {
-  const pr = prFromUrl(url);
-  const view = pr ? (await views.getValue())[prKey(pr)] : undefined;
-  await browser.action.setBadgeBackgroundColor({ tabId, color: "#E98428" });
-  await browser.action.setBadgeText({ tabId, text: view?.dos.length ? String(view.dos.length) : "" });
+function isFresh(view: TriageView | undefined): view is TriageView {
+  return view !== undefined && Date.now() - Date.parse(view.ranAt) < FRESH_MS;
 }
 
-async function badgeTabsOf(pr: PrRef): Promise<void> {
-  const tabs = await browser.tabs.query({ url: `https://github.com/${pr.repo}/pull/${pr.number}*` });
-  for (const tab of tabs) if (tab.id !== undefined) await badgeFor(tab.id, tab.url);
+async function headOf(api: GithubApi, pr: PrRef): Promise<string> {
+  const res = await api.gh(`/repos/${pr.repo}/pulls/${pr.number}`);
+  if (!res.ok) throw new Error(`GitHub did not return ${prKey(pr)} (${res.status}).`);
+  return ((await res.json()) as { head: { sha: string } }).head.sha;
 }
 
-function isFresh(view: TriageView | undefined): boolean {
-  return view !== undefined && Date.now() - Date.parse(view.checkedAt ?? view.ranAt) < FRESH_MS;
-}
-
-/** GitHub's API only with the person's own token: without one, reads never spend the limit shared by requests without a token. */
-async function tokenApi(cache: RequestCache): Promise<PublicGithub | null> {
-  const token = await githubToken.getValue();
-  return token ? publicGithub(cache, token) : null;
-}
-
-/** A rescore replays the last run's reads; anything else reads GitHub again, as the signed-in person first. */
-async function readsFor(pr: PrRef, mode: Triage["mode"]): Promise<GithubReads> {
-  const kept = mode === "rescore" ? reads.get(prKey(pr)) : undefined;
-  return kept ?? sessionGithub(pr, await tokenApi(mode === "refetch" ? "no-cache" : "default"));
-}
-
-async function endedOf(github: GithubReads, pr: PrRef): Promise<Ended | undefined> {
-  const res = await github.gh(`/repos/${pr.repo}/pulls/${pr.number}`);
-  if (!res.ok) throw new Error(`github ${pr.repo}#${pr.number} -> ${res.status}`);
-  const read = (await res.json()) as { state?: string; merged?: boolean; merged_at?: string | null };
-  if (read.state !== "closed") return undefined;
-  return read.merged === true || Boolean(read.merged_at) ? "merged" : "closed";
-}
-
-/** Answers are reused only from the same decision model; each is keyed by the exact request it answered, so a changed pull request is asked again. */
-function judgedFor(previous: TriageView | undefined, by: string | undefined): Judged | undefined {
-  return previous?.judged && by !== undefined && previous.judgedBy === by ? previous.judged : undefined;
-}
-
-async function localView(pr: PrRef, github: GithubReads, previous: TriageView | undefined): Promise<TriageView> {
-  const [pack, settings] = await Promise.all([localPackFor(pr.repo), systemOne.getValue()]);
-  const by = settings ? `${settings.endpoint} ${settings.model}` : undefined;
-  const judged = judgedFor(previous, by);
-  const run = await runLocal(pr, { gh: github.gh, pack, docs: github.docs, ...(settings ? { systemOne: settings } : {}), ...(judged ? { judged } : {}) });
-  const view = run.judged && by ? { ...run, judgedBy: by } : run;
-  const ended = await endedOf(github, pr);
-  const rate = github.rate();
-  return { ...view, reads: github.counts(), ...(rate ? { rate } : {}), ...(ended ? { ended } : {}) };
-}
-
+/** A recent check is reused only while the pull request's head is the one it checked, so a new push is checked again. */
 async function triage({ pr, mode }: Triage): Promise<null> {
-  const existing = (await views.getValue())[prKey(pr)];
-  if (mode === "if-stale" && isFresh(existing)) return null;
+  const saved = (await views.getValue())[prKey(pr)];
   await setRunState(pr, { running: true });
-  let head: string | undefined;
   try {
-    const github = await readsFor(pr, mode);
-    // A head already scored is scored again only when the person asks, so coming back to it costs one call.
-    if (mode === "if-stale" && existing) head = await github.head();
-    if (existing && head === existing.headSha) {
-      await saveView({ ...existing, checkedAt: new Date().toISOString(), rate: github.rate() ?? existing.rate });
-    } else {
-      await saveView(await localView(pr, github, existing));
-      reads.set(prKey(pr), github);
+    const token = await githubToken.getValue();
+    if (!token) throw new Error("Add a GitHub token in the side panel to check pull requests.");
+    const api = githubApi(token, mode === "refetch" ? "no-cache" : "default");
+    if (!(mode === "if-stale" && isFresh(saved) && (await headOf(api, pr)) === saved.headSha)) {
+      const policy = await policyFor(api, pr.repo, mode === "refetch");
+      await saveView(await runStepsInBrowser(pr, api.gh, policy, await systemOne.getValue()));
     }
     await setRunState(pr, { running: false });
   } catch (cause) {
-    reads.delete(prKey(pr));
-    await setRunState(pr, {
-      running: false,
-      error: errorText(cause),
-      ...(cause instanceof GithubRateLimitError ? { resetAt: cause.resetAt } : {}),
-      ...(head ? { head } : {}),
-    });
+    await setRunState(pr, { running: false, error: errorText(cause) });
   }
-  await badgeTabsOf(pr);
   return null;
 }
 
@@ -127,10 +71,7 @@ async function afterCurrent(current: Promise<null>, request: Triage): Promise<nu
   return triage(request);
 }
 
-/**
- * One triage per pull request at a time. Another `if-stale` ask joins the run already going; a rescore or refetch
- * runs after it, since the change it carries (a pack, a key, a Do just run) came after that run read its inputs.
- */
+/** One run per pull request at a time. Another `if-stale` ask joins the run going; a refetch runs after it. */
 function triageOnce(request: Triage): Promise<null> {
   const key = prKey(request.pr);
   const current = running.get(key);
@@ -140,27 +81,33 @@ function triageOnce(request: Triage): Promise<null> {
   return finish(key, started);
 }
 
-// The newest open pull requests a repository lists, one page of GitHub's list.
-const NEWEST_OPEN = 25;
-
-async function openPrs(repo: string): Promise<OpenPr[]> {
-  const github = await sessionGithub({ repo }, await tokenApi("no-cache"));
-  const res = await github.gh(`/repos/${repo}/pulls?state=open&per_page=${NEWEST_OPEN}`);
-  if (!res.ok) throw new Error(`GitHub did not list ${repo}'s open pull requests (${res.status}).`);
-  const rows = (await res.json()) as Array<{ number: number; title?: string; draft?: boolean }>;
-  return rows.slice(0, NEWEST_OPEN).map((row) => ({ number: row.number, title: row.title ?? "", draft: row.draft === true }));
+/** GitHub's rate-limit endpoint does not count against the limit, so checking a token costs nothing. */
+async function saveToken(token: string): Promise<null> {
+  const res = await fetch(`${GITHUB_API}/rate_limit`, { headers: { authorization: `Bearer ${token}` } });
+  if (res.status === 401) throw new Error("GitHub did not accept this token. Check that it was copied whole and has not expired.");
+  if (!res.ok) throw new Error(`GitHub answered ${res.status} when checking the token. Try again in a moment.`);
+  await setToken(token);
+  return null;
 }
 
-async function handle(request: Request): Promise<unknown> {
+/** Saved checks and policy files were read with the old token, which may have seen repositories the new one cannot. */
+async function setToken(token: string | null): Promise<null> {
+  await Promise.all([githubToken.setValue(token), tokenSaved.setValue(token !== null), views.setValue({}), runStates.setValue({}), policyFiles.setValue({})]);
+  return null;
+}
+
+async function handle(request: Exclude<Request, { type: "open-panel" }>): Promise<null> {
   switch (request.type) {
-    case "open-prs":
-      return openPrs(request.repo);
     case "triage":
       return triageOnce(request);
+    case "save-token":
+      return saveToken(request.token);
+    case "remove-token":
+      return setToken(null);
   }
 }
 
-async function respond(request: Request, sendResponse: (reply: Reply<unknown>) => void): Promise<void> {
+async function respond(request: Exclude<Request, { type: "open-panel" }>, sendResponse: (reply: Reply<null>) => void): Promise<void> {
   try {
     sendResponse({ ok: true, value: await handle(request) });
   } catch (cause) {
@@ -168,7 +115,7 @@ async function respond(request: Request, sendResponse: (reply: Reply<unknown>) =
   }
 }
 
-function onMessage(request: Request, sender: Browser.runtime.MessageSender, sendResponse: (reply: Reply<unknown>) => void): boolean {
+function onMessage(request: Request, sender: Browser.runtime.MessageSender, sendResponse: (reply: Reply<null>) => void): boolean {
   if (request.type === "open-panel") {
     openPanel(sender.tab?.windowId);
     sendResponse({ ok: true, value: null });
@@ -178,22 +125,14 @@ function onMessage(request: Request, sender: Browser.runtime.MessageSender, send
   return true;
 }
 
-function onTabUpdated(tabId: number, change: Browser.tabs.OnUpdatedInfo, tab: Browser.tabs.Tab): void {
-  if (change.url !== undefined || change.status === "complete") settle(badgeFor(tabId, tab.url));
-}
-
-function onInstalled({ reason }: Browser.runtime.InstalledDetails): void {
-  if (reason === "install") settle(browser.tabs.create({ url: browser.runtime.getURL("/welcome.html") }));
+/** A token saved before the flag existed still counts as saved. */
+async function syncTokenSaved(): Promise<void> {
+  await tokenSaved.setValue((await githubToken.getValue()) !== null);
 }
 
 export function startBackground(): void {
   settle(clearRunning());
-  // Kept reads carry the token they were made with.
-  githubToken.watch(function onTokenChange() {
-    reads.clear();
-  });
+  settle(syncTokenSaved());
   browser.runtime.onMessage.addListener(onMessage);
-  browser.tabs.onUpdated.addListener(onTabUpdated);
-  browser.runtime.onInstalled.addListener(onInstalled);
   settle(openPanelOnActionClick());
 }

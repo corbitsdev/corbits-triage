@@ -11,7 +11,7 @@ and tool packages the portal deploys.
 GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-triage run
    ▲                 │  ▲                          │
    │                 │  └──── portal (/api) ───────┤
-   └─── PR actions ──┴──────── GitHub reads, Dos ──┘
+   └─── PR actions ──┴──── GitHub reads, actions ──┘
 ```
 
 - **Hub** (`apps/hub`): the stock Interchange hub plus one composition
@@ -20,9 +20,19 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   origin carries the portal, the API and GitHub webhooks. Triage adds:
   - **GitHub bridge**: verifies GitHub's HMAC on `/api/hooks/*`, updates the
     tenant's repository list from installation events, and hands pull
-    request events to the coalescer. A pull request merged into the default
-    branch marks the repository's other triaged heads `stale`. Temporary
-    until `@corbits/webhooks` verifies GitHub signatures.
+    request, review, comment and `check_run` events to the coalescer. A pull
+    request merged into the default branch marks the repository's other
+    triaged heads `stale`. A push to the default branch that touches
+    `.corbits-triage.yaml` syncs the policy file. Temporary until
+    `@corbits/webhooks` verifies GitHub signatures.
+  - **Policy file sync**: a repository may keep its policy in
+    `.corbits-triage.yaml` on its default branch. A sync stores the file as a
+    new version of the repository's policy, marked with its blob sha, so
+    triage keeps reading the hub's copy. A push or
+    `POST …/github-triage/{tenantId}/policy/sync` runs a sync.
+    `GET …/policy/file` reads the file and whether the policy matches it.
+    `POST …/policy/export` opens a pull request adding the file from the
+    stored policy.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
     mail to the tenant's live pr-triage deployment for the repository's host
     (`pr-triage-github` or `pr-triage-bitbucket-datacenter`), as the tenant
@@ -41,14 +51,14 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     limit, and redeploys one that Interchange failed, after two minutes and
     at most three times an hour.
   - **Run recorder**: reads the live logs of tenants with a pr-triage run in
-    flight and records each verdict and executed Do.
+    flight and records each verdict and executed action.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
     exchanged server side, so the private key never reaches the browser. The
     `state` round-tripped through GitHub is signed by the hub and bound to the
     user who started setup, so no setup state is stored.
   - **Integration routes** under `/api/integrations/`: sign-in methods,
     GitHub App setup and installation sync, open pull requests, details,
-    actions, Dos, previews (API only; the portal no longer calls it) and single
+    actions, held actions, previews (API only; the portal no longer calls it) and single
     pull request triage, latest verdicts, triage stats and timeline, the
     policy schemas, invitations, and workflow deploy and versions.
     `GET /api/integrations/github-triage/{tenantId}/policy?repo=` answers a
@@ -105,25 +115,31 @@ one does.
 6. **evaluate**: decides the verdict: Fail on a failed hard rule, Pass when every rule passes in a policy with no decision-model rule, otherwise
    Pass, Fail or Unsure from the verdict question. It renders the one comment
    and resolves the verdict's list of steps when the policy's When is woken, skipping each step not for the pull request's author.
+   While CI is pending, every runnable action is held and an approve that may
+   not stand is skipped. The comment says "Waiting for checks to finish" and
+   the head settles, so the reconciler does not retry it. When the policy's
+   When includes checks, as it does by default, the completed `check_run`
+   webhook triages the head again and resolves the held actions; a Bitbucket
+   head is polled for its build statuses instead.
 7. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`; on Bitbucket the
    `Corbits Triage` build status) when the `pr-triage` role holds the labels grant, and one marker comment when it holds the comment
    grant. It runs before execute so a merge or close finds the final verdict on the head it closes.
-8. **execute**: runs the steps whose kind the `pr-triage` role holds on the host.
-   Every other step is held in the verdict (`held: true`) and the run finishes.
+8. **execute**: runs the actions whose kind the `pr-triage` role holds on the host.
+   Every other action is held in the verdict (`held: true`) and the run finishes.
 
 The hub reads which kinds the `pr-triage` system role is granted, `invoke` on
 `triage-do:<kind>:<owner>/<name>`, and mails them with each trigger; the run
 trusts them only from the hub's sender. Close on an Unsure verdict, and merge on anything but Pass,
 are always held. The hub mails the policy twice: `pack` as resolved from the repository policy and any workspace policy it extends, and `checkPack` in the shape a deployment built before steps reads, without the steps it would run wrongly. At start the hub
 grants the role comment and labels on each repository still set to post
-automatically, then drops that setting. A person holding the same grant approves a held Do, or one the run failed or could
+automatically, then drops that setting. A person holding the same grant approves a held action, or one the run failed or could
 not write, from the inbox: the hub checks the grants below and mails the
-deployment the Do, its effect id, head and approver. That mail skips triage: an
-`approval` action reads it, trusting only the hub's sender and checking the
-effect id, and execute writes the Do unless GitHub already shows it; a close, merge,
+deployment the action, its effect id, head and approver. That mail skips triage: an
+`approval` action step reads it, trusting only the hub's sender and checking the
+effect id, and execute writes the action unless GitHub already shows it; a close, merge,
 comment or review is refused once the head has moved. The hub reads the
-approval run's outcome back onto the verdict that held the Do. "Hide for me"
-hides a Do in that browser only; nothing is sent.
+approval run's outcome back onto the verdict that held the action. "Hide for me"
+hides an action in that browser only; nothing is sent.
 
 Rules, routing, approval and evaluation are deterministic `action` steps. Facts,
 execute and mirror reach GitHub through the GitHub tool's credential, so on
@@ -144,16 +160,16 @@ installation tokens at the fetch boundary, so workflow and tool code never
 hold it. Hub routes that read GitHub check the caller's `read` (or `use`)
 grant on the same credential; routes that write to GitHub check `use`. Reads
 (open pull requests, details, and the API-only preview) use the secret on the caller's
-behalf and never return it; writes are pull request actions and triage; approving a held Do checks only its kind's grant.
-A pull request action from the portal that is a Do kind (comment, labels,
+behalf and never return it; writes are pull request actions and triage; approving a held action checks only its kind's grant.
+A pull request action from the portal of a kind triage can run (comment, labels,
 assign, request review, approve, request changes, close, merge) also checks `invoke`
 on `triage-do:<kind>:<owner>/<name>`, the repository name in lowercase; the
 admin role holds `triage-do:*` from GitHub setup, and owners hold every grant.
-A member given the `pr-triage` role is refused every Do until it is removed,
+A member given the `pr-triage` role is refused every action until it is removed,
 so what triage does unattended never becomes what a person may do. In a run, the repository's policy decides when to
 approve, and only a head that passes with CI green is approved, from the
 newest verdict. Where triage mirrors and its policy approves, a settled head
-that may not be approved dismisses the approvals the approve Do made; one
+that may not be approved dismisses the approvals the approve action made; one
 dismissed on a head is not made again on it. Where it does not mirror, its
 approvals are not dismissed.
 Hub routes that reach GitHub for the portal use the same adapter.
@@ -190,7 +206,7 @@ Hub routes that reach GitHub for the portal use the same adapter.
   version } }`), read when the event was accepted, so a run records which
   versions it used.
 - Triage tables, in the `corbits_triage` schema: `verdict` (verdicts per
-  head, with the outcomes of the Dos their run executed), applied from `apps/hub/migrations` at hub start in one
+  head, with the outcomes of the actions their run executed), applied from `apps/hub/migrations` at hub start in one
   transaction under an advisory lock. Nothing else is stored: the GitHub App
   setup state is a signed token, and an invite is a stock invited principal
   the invitee accepts once signed in with a verified address, by a
