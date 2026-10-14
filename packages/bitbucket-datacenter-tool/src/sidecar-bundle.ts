@@ -110,7 +110,7 @@ function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Pro
 }
 
 export const bitbucketWrite = defineTool<Env>({
-  id: "@corbits/bitbucket-tool/sidecar-bundle",
+  id: "@corbits/bitbucket-datacenter-tool/sidecar-bundle",
   requires: ["capabilities"],
   definitions: WRITE_DEFINITIONS.map((d) => ({ name: d.name, ...(d.name === "bitbucket_mirror" ? { approval: "ask" as const } : {}) })),
   factory: function bitbucketToolFactory(env) {
