@@ -5,6 +5,7 @@
 import { ApiError, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { requestOrigin } from "./hub-origin.ts";
 import { currentDeployment, DECISION_MODEL_ALIAS, isLiveDeployment, listDeployedWorkflows } from "./hub-api.ts";
+import type { RepoSource } from "@corbits/triage-contracts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry } from "./workflow-packages.ts";
 
 const INFERENCE_PLUGIN = "corbits-system-one";
@@ -122,13 +123,20 @@ async function cancelSuperseded(transport: Transport, tenantId: string, assetId:
  * which retries a failed cancel.
  */
 export function cancelsSuperseded(workflow: string, deployed: boolean): boolean {
-  return deployed || workflow !== "pr-triage";
+  return deployed || workflow === "pr-triage-historical";
 }
 
+/** The hub refuses a host's workflow while that host is not connected, which can change after the portal read it. */
+function sourceNotConnected(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.status === 409 && cause.code === "source_not_connected";
+}
+
+/** `connected` are the hosts the workspace connected; each host's workflows deploy only while it is. */
 export async function ensureWorkflows(
   transport: Transport,
   tenantId: string,
   offerings: OfferingSuggestion,
+  connected: readonly RepoSource[],
   redeploy: boolean,
   fetchRaw: typeof fetch = fetch,
 ): Promise<string[]> {
@@ -138,7 +146,7 @@ export async function ensureWorkflows(
   const index = await (await portalPackage(fetchRaw, "index.json")).json() as PackageIndexEntry[];
   await publishPackages(transport, fetchRaw, tenantId, registry.id, index);
   const deployed: string[] = [];
-  for (const workflow of WORKFLOW_PACKAGES) {
+  for (const workflow of WORKFLOW_PACKAGES.filter((row) => connected.includes(row.source))) {
     const pkg = index.find((entry) => entry.name === workflow.packageName);
     if (!pkg) throw new Error(`The portal build is missing the ${workflow.name} workflow.`);
     // The deploy route needs a workflow asset to name the definition; the code comes from the registry.
@@ -146,14 +154,19 @@ export async function ensureWorkflows(
     const current = currentDeployment(deployments, workflow.name)?.package;
     const deploy = redeploy || current?.name !== pkg.name || current.version !== pkg.version;
     if (deploy) {
-      await transport.fetch<WorkflowDeployment>("POST", `/api/integrations/workflow-deploy/${encodeURIComponent(tenantId)}`, {
-        registryAssetId: registry.id,
-        definitionAssetId: asset.id,
-        pin: `${pkg.name}@${pkg.version}`,
-        entry: workflow.entry,
-        sourceOfferingIds: offerings.ids,
-        defaultSourceOfferingId: offerings.defaultId,
-      });
+      try {
+        await transport.fetch<WorkflowDeployment>("POST", `/api/integrations/workflow-deploy/${encodeURIComponent(tenantId)}`, {
+          registryAssetId: registry.id,
+          definitionAssetId: asset.id,
+          pin: `${pkg.name}@${pkg.version}`,
+          entry: workflow.entry,
+          sourceOfferingIds: offerings.ids,
+          defaultSourceOfferingId: offerings.defaultId,
+        });
+      } catch (cause) {
+        if (sourceNotConnected(cause)) continue;
+        throw cause;
+      }
       deployed.push(workflow.name);
     }
     if (cancelsSuperseded(workflow.name, deploy)) await cancelSuperseded(transport, tenantId, asset.id);

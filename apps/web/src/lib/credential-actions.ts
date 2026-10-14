@@ -1,4 +1,4 @@
-import { GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
+import { BITBUCKET_DATACENTER_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
 
 type CredentialAction = "rotate" | "revoke";
 
@@ -31,8 +31,15 @@ export function modelSecrets(credentials: readonly HubCredential[]): HubCredenti
   return credentials.filter((credential) => storedAs(credential.name, INFERENCE_CREDENTIAL_NAME));
 }
 
+const BITBUCKET_DATACENTER_CREDENTIAL_NAMES = new Set([BITBUCKET_DATACENTER_CREDENTIAL_NAME, `${BITBUCKET_DATACENTER_CREDENTIAL_NAME}-hook`]);
+
+/** Bitbucket Data Center's token and hook secret are written and removed only by connecting and disconnecting. */
+function bitbucketDatacenterSecrets(credentials: readonly HubCredential[]): HubCredential[] {
+  return credentials.filter((credential) => BITBUCKET_DATACENTER_CREDENTIAL_NAMES.has(credential.name.trim()));
+}
+
 export function otherSecrets(credentials: readonly HubCredential[]): HubCredential[] {
-  const ours = new Set([...githubSecrets(credentials), ...modelSecrets(credentials)]);
+  const ours = new Set([...githubSecrets(credentials), ...modelSecrets(credentials), ...bitbucketDatacenterSecrets(credentials)]);
   return credentials.filter((credential) => !ours.has(credential));
 }
 

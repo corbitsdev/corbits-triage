@@ -55,7 +55,6 @@ export function freshStepIds(pack: CheckPack): Record<VerdictWord, string[]> {
 type DraftWhere =
   | { section: "actions"; list?: VerdictWord }
   | { section: "custom"; id?: string }
-  | { section: "triage" }
   | { section: "pack" };
 
 export type DraftProblem = { reason: string; where: DraftWhere };
@@ -293,14 +292,16 @@ export function savable(draft: RepoDraft, saved: RepoDraft): RepoDraft {
 }
 
 export function validate(draft: RepoDraft, saved: RepoDraft): DraftProblem | null {
-  let pack: CheckPack;
   try {
-    pack = toPack(savable(draft, saved));
+    toPack(savable(draft, saved));
   } catch (cause) {
     if (!(cause instanceof Error)) throw cause;
     return { reason: cause.message, where: whereOf(cause.message, draft.pack) };
   }
-  const anyCheck = CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
-  if (draft.policy.enabled && !anyCheck) return { reason: "Switch on a rule before turning triage on.", where: { section: "triage" } };
   return null;
+}
+
+/** Whether any rule is switched on; triage runs without one, but triggers nothing. */
+export function hasRuleOn(pack: CheckPack): boolean {
+  return CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
 }

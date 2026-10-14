@@ -1,20 +1,21 @@
 import { Link } from "react-router-dom";
+import type { RepoSource } from "@corbits/triage-contracts";
 import { DeniedNotice } from "../../lib/denied.tsx";
 import { hasDecisionModelCredential } from "../../lib/decision-models.ts";
-import { currentDeployment, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
+import { connectedSources, currentDeployment, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
 import { triageReadyRepos } from "../../lib/repo-rows.ts";
 import type { TenantSection } from "../../lib/tenant-entities.ts";
 import { WORKFLOW_PACKAGES } from "../../lib/workflow-packages.ts";
 import { CopyButton } from "../CopyField.tsx";
 
-const TRIAGE_WORKFLOW = "pr-triage";
+const SOURCE_NAME: Record<RepoSource, string> = { github: "GitHub", "bitbucket-datacenter": "Bitbucket Data Center" };
 
-/** Each workflow's version, then the tools those deployments carry, each once, as one line to paste into a bug report. */
-function versionLine(deployments: readonly DeployedWorkflow[]): string {
+/** Each connected host's workflows' versions, then the tools those deployments carry, each once, as one line to paste into a bug report. */
+function versionLine(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): string {
   const parts: string[] = [];
   const tools = new Set<string>();
-  for (const workflow of WORKFLOW_PACKAGES) {
+  for (const workflow of WORKFLOW_PACKAGES.filter((row) => sources.includes(row.source))) {
     const deployment = currentDeployment(deployments, workflow.name);
     if (!deployment) {
       parts.push(`${workflow.name} not deployed`);
@@ -26,10 +27,17 @@ function versionLine(deployments: readonly DeployedWorkflow[]): string {
   return [...parts, ...tools].join(" · ");
 }
 
-type Status = { deployed: boolean; model: boolean; triaging: number; total: number };
+/** The connected hosts whose pr-triage workflow has no deployment. */
+function undeployedSources(deployments: readonly DeployedWorkflow[], sources: readonly RepoSource[]): RepoSource[] {
+  return sources.filter((source) => currentDeployment(deployments, `pr-triage-${source}`) === undefined);
+}
 
-function statusText({ deployed, model, triaging, total }: Status): string {
-  if (!deployed) return "Triage is not running: its workflow is not deployed.";
+type Status = { sources: RepoSource[]; undeployed: RepoSource[]; model: boolean; triaging: number; total: number };
+
+function statusText({ sources, undeployed, model, triaging, total }: Status): string {
+  if (sources.length === 0) return "Triage is not running: no source is connected.";
+  if (undeployed.length === sources.length) return "Triage is not running: its workflow is not deployed.";
+  if (undeployed.length > 0) return `Triage is not running on ${undeployed.map((source) => SOURCE_NAME[source]).join(" or ")}: its workflow is not deployed.`;
   if (!model) return "Triage is not running: no decision model is connected.";
   if (total === 0) return "Triage is running, but no repository is connected yet.";
   return `Triage is running on ${triaging} of ${counted(total, "repository", "repositories")}.`;
@@ -37,13 +45,15 @@ function statusText({ deployed, model, triaging, total }: Status): string {
 
 export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: TenantSection<DeployedWorkflow> }) {
   const ready = !deployed.denied && !deployed.loading && !deployed.unavailable;
+  const sources = connectedSources(snapshot.credentials);
   const status = {
-    deployed: currentDeployment(deployed.rows, TRIAGE_WORKFLOW) !== undefined,
+    sources,
+    undeployed: undeployedSources(deployed.rows, sources),
     model: hasDecisionModelCredential(snapshot.credentials),
     triaging: triageReadyRepos(snapshot.repos).size,
     total: snapshot.repos.length,
   };
-  const versions = versionLine(deployed.rows);
+  const versions = versionLine(deployed.rows, sources);
 
   return (
     <section className="sec" id="triage" aria-labelledby="sec-triage">
