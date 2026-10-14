@@ -129,7 +129,7 @@ describe("executeDo", () => {
     expect(earlier.writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/merge"]);
     const same = fakeGithub({ approvals: [{ id: 7, user: APP, state: "CHANGES_REQUESTED", commit_id: "abc", body }] });
     expect(await run(same.gh, step("merge", {}))).toMatchObject({ status: "done" });
-    expect(same.writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/reviews/7/dismissals", "PUT /repos/acme/widgets/pulls/8/reviews/7", "PUT /repos/acme/widgets/pulls/8/merge"]);
+    expect(same.writes.map((write) => `${write.method} ${write.path}`)).toEqual(["PUT /repos/acme/widgets/pulls/8/reviews/7", "PUT /repos/acme/widgets/pulls/8/reviews/7/dismissals", "PUT /repos/acme/widgets/pulls/8/merge"]);
     const again = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
     expect(await run(same.gh, again)).toMatchObject({ status: "done" });
   });

@@ -492,7 +492,7 @@ describe("pr-triage body", () => {
     github.pr.ci = "success";
     await triage(merging, { github });
     const writes = github.requests.filter((request) => request.method === "PUT").map((request) => request.path);
-    expect(writes).toEqual([`/repos/${REPO}/pulls/8/merge`, `/repos/${REPO}/pulls/8/reviews/100/dismissals`, `/repos/${REPO}/pulls/8/reviews/100`]);
+    expect(writes).toEqual([`/repos/${REPO}/pulls/8/merge`, `/repos/${REPO}/pulls/8/reviews/100`, `/repos/${REPO}/pulls/8/reviews/100/dismissals`]);
   });
 
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {

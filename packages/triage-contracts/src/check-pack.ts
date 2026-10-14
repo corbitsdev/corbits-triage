@@ -455,17 +455,17 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], where: s
   throw new Error(`${where} must be one of ${allowed.join(", ")}.`);
 }
 
-/** Policy text reaches the decision model and GitHub, so a single-line field keeps no line breaks or control characters. */
+/** Policy text reaches the decision model and GitHub, so a single-line field keeps no line breaks, control or bidi characters; emoji sequences stay whole. */
 function text(value: unknown, where: string, max = LINE_MAX): string {
-  const line = typeof value === "string" ? value.replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim() : "";
+  const line = typeof value === "string" ? value.replace(/[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\s]+/gu, " ").trim() : "";
   if (!line) throw new Error(`${where} must be a non-empty string.`);
   if (line.length > max) throw new Error(`${where} must be at most ${max} characters.`);
   return line;
 }
 
-/** A comment keeps its line breaks and tabs, and drops every other control character. */
+/** A comment keeps its line breaks and tabs, and drops every other control or bidi character. */
 function prose(value: unknown, where: string): string {
-  const body = typeof value === "string" ? value.replace(/[^\P{Cc}\n\t]|\p{Cf}/gu, "").trim() : "";
+  const body = typeof value === "string" ? value.replace(/[^\P{Cc}\n\t]|[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu, "").trim() : "";
   if (!body) throw new Error(`${where} must be a non-empty string.`);
   if (body.length > COMMENT_BODY_MAX) throw new Error(`${where} must be at most ${COMMENT_BODY_MAX} characters.`);
   return body;
@@ -689,19 +689,60 @@ function parseJson(value: unknown): unknown {
   }
 }
 
-/** A version 1 pack reads as version 2 only when it held no actions, since its actions were Dos rather than steps. */
-function refuseLegacyActions(actions: unknown): void {
-  if (actions === undefined || (Array.isArray(actions) && actions.length === 0)) return;
-  throw new Error("schemaVersion 1 held actions as Dos ({ kind, target }); schemaVersion 2 holds steps ({ do, target?, for? }) and verdict labels. Save the policy again from the portal.");
+/** A version 1 Do as a step for anyone, or why it is left out: it no longer runs, or labels derived from the pull request never ran. */
+function stepOfDo(raw: unknown, where: string, dropped: string[]): unknown[] {
+  const row = record(raw, where);
+  const target = asRecord(row.target);
+  const from = target?.from;
+  if (!(STEP_KINDS as readonly unknown[]).includes(row.kind) || (row.kind === "labels" && from !== "list")) {
+    dropped.push(`${where} (${String(row.kind)}${from === undefined ? "" : ` from ${String(from)}`}) no longer runs`);
+    return [];
+  }
+  return [target && Object.keys(target).length > 0 ? { do: row.kind, target } : { do: row.kind }];
 }
 
-/** Reads a stored pack, throwing an Error whose message says why it is rejected. */
+/** Text a version 1 pack stored longer than version 2 holds is cut, and said so, rather than costing the whole pack. */
+function cutText(value: unknown, where: string, dropped: string[], max = LINE_MAX): unknown {
+  if (typeof value !== "string" || value.trim().length <= max) return value;
+  dropped.push(`${where} was cut to ${max} characters`);
+  return value.trim().slice(0, max);
+}
+
+function cutCustom(raw: unknown, index: number, dropped: string[]): unknown[] {
+  const row = asRecord(raw);
+  if (!row) return [raw];
+  const where = `Custom rule ${typeof row.id === "string" ? row.id : index + 1}`;
+  if (row.kind === "rule") {
+    dropped.push(`${where} (${String(row.rule)} rule over GitHub data) no longer runs`);
+    return [];
+  }
+  const cut = Object.fromEntries(["name", "claim", "subject"].flatMap((key) => (key in row ? [[key, cutText(row[key], `${where} ${key}`, dropped)]] : [])));
+  const lists = Object.fromEntries(["levels", "options", "failOn"].flatMap((key) => (Array.isArray(row[key]) ? [[key, (row[key] as unknown[]).map((item) => cutText(item, `${where} ${key}`, dropped))]] : [])));
+  return [{ ...row, ...cut, ...lists }];
+}
+
+/**
+ * A version 1 pack read as version 2: its lists of Dos become steps for anyone, and its custom rules over GitHub data
+ * and over-long text are left out or cut, each named in `dropped`. A list of actions with branches cannot be mapped.
+ */
+function fromVersion1(body: Record<string, unknown>, dropped: string[]): Record<string, unknown> {
+  const custom = Array.isArray(body.custom) ? body.custom.flatMap((row, index) => cutCustom(row, index, dropped)) : body.custom;
+  const lists = asRecord(body.actions);
+  if (!lists || Array.isArray(body.actions)) return { ...body, custom };
+  const steps = Object.fromEntries(VERDICTS.map((verdict) => [verdict, Array.isArray(lists[verdict]) ? (lists[verdict] as unknown[]).flatMap((item, i) => stepOfDo(item, `${LIST_NAMES[verdict]} step ${i + 1}`, dropped)) : lists[verdict]]));
+  return { ...body, custom, actions: { ...lists, ...steps } };
+}
+
+const LIST_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
+
+/** Reads a stored pack, throwing an Error whose message says why it is rejected. Version 1 reads as version 2. */
 export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
-  const body = asRecord(parseJson(raw));
-  if (!body) throw new Error("Policy must be an object.");
-  if (body.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
-  if (body.schemaVersion === LEGACY_SCHEMA_VERSION) refuseLegacyActions(body.actions);
-  else if (body.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
+  const stored = asRecord(parseJson(raw));
+  if (!stored) throw new Error("Policy must be an object.");
+  if (stored.kind !== CHECK_PACK_KIND) throw new Error(`kind must be ${CHECK_PACK_KIND}.`);
+  if (stored.schemaVersion !== LEGACY_SCHEMA_VERSION && stored.schemaVersion !== CHECK_PACK_SCHEMA_VERSION) throw new Error(`schemaVersion must be ${CHECK_PACK_SCHEMA_VERSION}.`);
+  const dropped: string[] = [];
+  const body = stored.schemaVersion === LEGACY_SCHEMA_VERSION ? fromVersion1(stored, dropped) : stored;
   const repo = asRepo(body.repo);
   if (!repo) throw new Error("repo must be owner/name.");
   if (expectedRepo !== undefined && asRepo(expectedRepo) !== repo) throw new Error(`repo must be ${expectedRepo}.`);
@@ -717,7 +758,6 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
       if (parsed) checks[id as CatalogId] = parsed;
     }
   }
-  const dropped: string[] = [];
   const custom = parseCustom(body.custom);
   const actions = parseActions(body.actions, dropped);
   const labels = parseLabels(body.labels);

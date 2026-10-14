@@ -238,12 +238,14 @@ case.
 
 ### Stored policies
 
-Policies are `schemaVersion` 2. A version 1 policy with no actions
-(`"actions": []`, as one saved before verdicts holds) reads as version 2 and is
-saved as one next time; a version 1 policy with actions, any other shape from
-before steps, and any custom rule over GitHub data make the policy unreadable
-with a message saying what changed. Repository roles were removed: a step whose
-target is a role is left out, and every verdict's reasons name it.
+Policies are `schemaVersion` 2. A version 1 policy, as earlier portals saved
+one, still reads, as version 2, and the next save writes version 2: its Dos
+become steps for anyone, and Dos that no longer run (agent, labels derived from
+the type or paths), custom rules over GitHub data and text longer than version
+2 allows are left out or cut, and every verdict's reasons name them. Only a
+list of actions with branches, from before verdicts, cannot be read; an empty
+one (`"actions": []`) reads as empty lists. Repository roles were removed: a
+step whose target is a role is left out and named the same way.
 
 Policy text reaches the decision model and GitHub, so names, claims, subjects,
 levels, options, labels, teams and people are kept to one line (line breaks and
