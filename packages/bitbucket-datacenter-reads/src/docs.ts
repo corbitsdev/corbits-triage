@@ -1,8 +1,7 @@
 import { PR_FILES_PAGE_CHARS, readRepoDocs, type RepoDocsPage, type RuleSpan } from "@corbits/github-reads";
 import { type } from "arktype";
 import { filePath, json, jsonAll, repoPath, request, type BitbucketFetch } from "./client.js";
-
-const Head = type({ latestCommit: "string" });
+import { BranchHead } from "./shapes.js";
 
 const utf8 = new TextEncoder();
 const decoder = new TextDecoder();
@@ -71,7 +70,7 @@ function fittingEnd(page: RepoDocsPage, path: string, bytes: Uint8Array, from: n
  */
 export async function readRepoDocsPage(bb: BitbucketFetch, repo: string, { ref, offset = 0, docs = docsAt.bind(null, bb) }: { ref?: string; offset?: number; docs?: ReturnType<typeof createDocsReader> } = {}): Promise<RepoDocsPage> {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid docs offset ${offset}`);
-  const head = ref ?? Head.assert(await json(bb, `${repoPath(repo)}/branches/default`)).latestCommit;
+  const head = ref ?? BranchHead.assert(await json(bb, `${repoPath(repo)}/branches/default`)).latestCommit;
   const { texts, rules } = await docs(repo, head);
   const page: RepoDocsPage = { docs: [], rules, ref: head };
   let start = 0;

@@ -28,7 +28,7 @@ export const TRIAGE_WORKFLOWS: readonly TriageWorkflow[] = [
 ];
 
 /** The workflow id deployed before hosts, which GitHub hook credentials still name; its mail now goes to the GitHub workflow. */
-export const LEGACY_TRIAGE_WORKFLOW = PR_TRIAGE_ADDRESS;
+const LEGACY_TRIAGE_WORKFLOW = PR_TRIAGE_ADDRESS;
 
 /** pr-triage-historical binds the GitHub App only, so it deploys for workspaces with GitHub connected. */
 export const HISTORICAL_ENTRY = "./pr-triage-historical.mjs";
@@ -54,7 +54,7 @@ export async function connectedSources(db: DB["db"], tenantId: string): Promise<
   return TRIAGE_WORKFLOWS.filter((workflow) => names.has(workflow.credential)).map((workflow) => workflow.source);
 }
 
-export type SourceDeploymentsDeps = {
+type SourceDeploymentsDeps = {
   connectedSources: (tenantId: string) => Promise<RepoSource[]>;
   liveDeployments: (tenantId: string, workflow: string) => Promise<Array<{ runId: string; cancelling: boolean }>>;
   release: (tenantId: string, anchorRunId: string) => Promise<void>;

@@ -49,7 +49,7 @@ export function listRepoPulls(list: OpenPrsLister, tenantId: string, records: re
 export async function listingRefusal(deps: PortalCredentialDeps, member: Member, records: readonly RepoRecord[]): Promise<Response | undefined> {
   const sources = new Set<RepoSource>(records.map(sourceOf));
   for (const source of sources) {
-    const refused = await sourceCredentialGrant(deps, member.principalId, member.tenantId, { name: "", source }, "read");
+    const refused = await sourceCredentialGrant(deps, member.principalId, member.tenantId, { source }, "read");
     if (refused) return refused;
   }
   return undefined;

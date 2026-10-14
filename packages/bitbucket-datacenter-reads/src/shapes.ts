@@ -1,5 +1,8 @@
 import { type } from "arktype";
 
+/** A branch as `branches/default` answers it. */
+export const BranchHead = type({ latestCommit: "string" });
+
 export const User = type({ slug: "string", "type?": "string" });
 
 export type User = typeof User.infer;

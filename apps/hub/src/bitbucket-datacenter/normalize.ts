@@ -33,7 +33,7 @@ function ownComment(text: string): boolean {
 }
 
 /** `PROJECTKEY/slug`, how Bitbucket repositories are named in the tenant's repository records. */
-export function repoNameOf(repository: Json | undefined): string | null {
+function repoNameOf(repository: Json | undefined): string | null {
   const key = repository?.project?.key;
   const slug = repository?.slug;
   return typeof key === "string" && typeof slug === "string" ? `${key}/${slug}` : null;

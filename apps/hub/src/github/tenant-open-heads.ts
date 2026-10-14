@@ -17,7 +17,7 @@ export type OpenHeadReader = (record: RepoRecord, number: number) => Promise<Pic
 
 export type TenantGithubDeps = { db: DB["db"]; cipher: CredentialCipher; githubApiOrigin: string };
 
-export type TenantSourcesDeps = TenantGithubDeps & { tenantBitbucket: TenantBitbucket };
+type TenantSourcesDeps = TenantGithubDeps & { tenantBitbucket: TenantBitbucket };
 
 /** Each host's credential, read once per tenant lookup and only when a record of that host asks for it. */
 type SourceFetches = { github: () => Promise<GithubFetch | undefined>; bitbucket: () => Promise<bitbucket.BitbucketFetch | undefined> };

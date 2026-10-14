@@ -2,23 +2,23 @@
 // caller, so stock authz decides who may store them; the namespace holds only the instance URL.
 import { randomBytes } from "node:crypto";
 import { type } from "arktype";
-import { and, eq } from "drizzle-orm";
-import { schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
+import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { ensureTriageRole } from "../github/automation.js";
-import { failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
+import { tenantConfigOf } from "../github/bridge.js";
+import { activeCredential, failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
 import { patchCorbitsTriage, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
 import type { Member } from "../integrations/app.js";
 import { triageWorkflowFor } from "../github/source-workflow.js";
 import { asCaller } from "../stock-caller.js";
 import {
   BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, instanceBaseUrl, pagedValues, readRepo,
-  WEBHOOK_EVENTS, webhookExists, type BitbucketFetch,
+  WEBHOOK_EVENTS, webhookExists,
 } from "./client.js";
 import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, HOOK_CREDENTIAL, isBitbucketRecord, listedRepos, PROVIDER, splitName, TOKEN_CREDENTIAL } from "./records.js";
 
 export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
-export const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
+const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
 const HOOK_METADATA = { webhook: { verify: "standard-webhooks", workflow: triageWorkflowFor("bitbucket-datacenter").id } };
 
 export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
@@ -40,7 +40,7 @@ const ApplicationProperties = type({ version: "string", displayName: "string" })
 const StockRow = type({ id: "string", name: "string", "status?": "string", "apiBaseUrl?": "string | null" });
 const StockPage = type({ data: StockRow.array(), "nextCursor?": "string | null" });
 
-export type BitbucketDeps = PortalCredentialDeps & {
+type BitbucketDeps = PortalCredentialDeps & {
   stockFetch: (req: Request) => Promise<Response>;
   /** The hub's public origin; behind a TLS proxy the request URL is not. */
   publicOrigin: string;
@@ -72,14 +72,11 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
   }
 
   async function tenantNs(tenantId: string): Promise<CorbitsTriageNs> {
-    const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
-    return triageNs(tenant?.config);
+    return triageNs(await tenantConfigOf(deps, tenantId));
   }
 
   async function secretOf(member: Member, name: string): Promise<string | Response> {
-    const credential = await db.query.credential.findFirst({
-      where: and(eq(schema.credential.tenantId, member.tenantId), eq(schema.credential.name, name), eq(schema.credential.status, "active")),
-    });
+    const credential = await activeCredential(db, member.tenantId, name);
     if (!credential) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
     if (!(await holds(deps, member.principalId, member.tenantId, `credential:${credential.id}`, "use"))) {
       return failure(403, "forbidden", "You do not have access to the Bitbucket credential.");

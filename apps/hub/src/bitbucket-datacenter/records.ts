@@ -7,7 +7,7 @@ export const TOKEN_CREDENTIAL = "bitbucket-datacenter";
 export const HOOK_CREDENTIAL = "bitbucket-datacenter-hook";
 
 /** `user` is the slug the token acts as, recorded at connect; a connection recorded before it has none. */
-export type BitbucketConnection = { baseUrl: string; user?: string };
+type BitbucketConnection = { baseUrl: string; user?: string };
 
 export function bitbucketConnection(ns: CorbitsTriageNs): BitbucketConnection | undefined {
   const connection = asRecord(ns.bitbucketDatacenter);
