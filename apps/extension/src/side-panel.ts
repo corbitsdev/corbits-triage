@@ -1,4 +1,4 @@
-import { errorText } from "./error-text.ts";
+import { errorText } from "@corbits/common";
 
 // WXT's browser types follow Chrome's, which have no sidebarAction.
 type FirefoxBrowser = { sidebarAction: { open(): Promise<void>; toggle(): Promise<void> } };

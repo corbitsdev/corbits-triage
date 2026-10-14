@@ -1,4 +1,4 @@
-import { checkFailed, checkPending, latestDecisive, reviewedOnHead, summarizeChecks, type CheckRun, type IssueComment, type Review } from "@corbits/github-reads";
+import { checkFailed, checkPending, latestDecisive, listPrFilesPage, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
 import { authorAssociation, authorKindOf, stepTeams, teamSlug, tierOf, type CheckPack, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import type { RulesItem } from "../actions/rules.js";
 import { MAX_PATCH_INPUT_CHARS } from "./hunks.js";
@@ -128,6 +128,19 @@ export function addFilesPage(listed: ListedFiles, cursor: FilesCursor, page: Fil
   }
   if (page.next <= cursor.offset) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
   return { offset: page.next, patches };
+}
+
+/** Every changed file of a pull request, read page by page as the facts director reads them. */
+export async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
+  const listed: ListedFiles = { files: [], patchChars: 0 };
+  let cursor: FilesCursor | undefined = FIRST_FILES_PAGE;
+  while (cursor !== undefined) {
+    const page = await listPrFilesPage(gh, repo, number, cursor);
+    const next = addFilesPage(listed, cursor, { ...page, files: page.files.flatMap(fileFacts) });
+    if (typeof next === "string") throw new Error(`${next} for #${number}`);
+    cursor = next;
+  }
+  return listed.files;
 }
 
 function optionalString(value: unknown): string | undefined {

@@ -1,11 +1,5 @@
-import { CATALOG_IDS, customCheckEnabled, customRuleId, readCheckPack, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type ModelCheck } from "@corbits/triage-contracts";
-import { errorText } from "./error-text.ts";
-import { defaultLocalPack } from "./local-pack.ts";
-import { CATALOG_ORDER } from "./prose.ts";
-
-export function isCatalogId(id: string): id is CatalogId {
-  return (CATALOG_IDS as readonly string[]).includes(id);
-}
+import { errorText } from "@corbits/common";
+import { CATALOG_IDS, CATALOG_ORDER, customCheckEnabled, customRuleId, isCatalogId, readCheckPack, recommendedPack, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type ModelCheck } from "@corbits/triage-contracts";
 
 export type Refusal = { reason: string };
 
@@ -20,7 +14,7 @@ function validated(candidate: CheckPack): CheckPack | Refusal {
 /** A catalog check is switched by its row's flag, a custom check by its own, which is stored only as false. */
 export function withCheck(pack: CheckPack, id: string, on: boolean): CheckPack {
   if (isCatalogId(id)) {
-    const defaults = defaultLocalPack(pack.repo);
+    const defaults = recommendedPack(pack.repo);
     return readCheckPack({ ...pack, checks: { ...pack.checks, [id]: { ...(pack.checks[id] ?? defaults.checks[id]), enabled: on } } }, pack.repo);
   }
   function toggled(row: CustomCheck): CustomCheck {
@@ -37,7 +31,7 @@ export function withoutCheck(pack: CheckPack, id: string): CheckPack {
 
 /** A catalog check's limits merged into its row, which keeps the default's values for the rest. */
 export function withCatalogParams(pack: CheckPack, id: CatalogId, params: Partial<Omit<CatalogCheck, "enabled">>): CheckPack | Refusal {
-  const row = pack.checks[id] ?? defaultLocalPack(pack.repo).checks[id] ?? { enabled: false };
+  const row = pack.checks[id] ?? recommendedPack(pack.repo).checks[id] ?? { enabled: false };
   return validated({ ...pack, checks: { ...pack.checks, [id]: { ...row, ...params } } });
 }
 
@@ -45,7 +39,7 @@ export type CustomForm = { name: string; kind: "model" } & ModelCheck;
 
 /** Unique over the pack's and the defaults' ids, so a new rule never takes a default's id while that default is removed. */
 function nextCustomId(pack: CheckPack, name: string): string {
-  return customRuleId(name, [...pack.custom, ...defaultLocalPack(pack.repo).custom].map((check) => check.id));
+  return customRuleId(name, [...pack.custom, ...recommendedPack(pack.repo).custom].map((check) => check.id));
 }
 
 export function withCustomCheck(pack: CheckPack, form: CustomForm, id?: string): { pack: CheckPack; id: string } | Refusal {
@@ -79,7 +73,7 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 export function changesFromDefaults(pack: CheckPack): number {
-  const defaults = defaultLocalPack(pack.repo);
+  const defaults = recommendedPack(pack.repo);
   const catalog = CATALOG_IDS.filter((id) => !same(pack.checks[id] ?? null, defaults.checks[id] ?? null)).length;
   function sameRule(a: CustomCheck, b: CustomCheck): boolean {
     return same({ ...a, id: "" }, { ...b, id: "" });
