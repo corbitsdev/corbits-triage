@@ -1534,14 +1534,21 @@ const BITBUCKET_DATACENTER_REFUSALS: Record<string, string> = {
   not_bitbucket_datacenter: "This URL does not answer as a Bitbucket Data Center instance. Check the instance URL.",
   bitbucket_datacenter_connected_elsewhere: "This workspace is connected to another Bitbucket Data Center instance with repositories recorded. Disconnect it first.",
   bitbucket_datacenter_unreachable: "The hub could not reach this Bitbucket Data Center instance. Check the URL and that the hub can reach it.",
+  bitbucket_datacenter_not_connected: "Connect Bitbucket Data Center in Settings first.",
+  bitbucket_datacenter_failed: "Bitbucket Data Center answered with an error. Try again in a moment.",
+  repo_not_found: "Bitbucket Data Center does not show this repository to the token. Check the token can read its project.",
   repo_empty: "This repository has no default branch yet. Push a first commit, then turn on triage.",
   repo_name_taken: "A GitHub repository in this workspace has the same name, so this one cannot be triaged.",
 };
 
 /** The hub takes a mutation only as JSON from the portal, so bodiless ones send `{}`. */
+function bitbucketDatacenterPath(tenantId: string, path: string): string {
+  return `/api/integrations/bitbucket-datacenter/${enc(requireTenantId(tenantId))}${path}`;
+}
+
 async function bitbucketDatacenter<T>(transport: Transport, method: string, tenantId: string, path: string, body?: unknown): Promise<T> {
   try {
-    return await transport.fetch<T>(method, `/api/integrations/bitbucket-datacenter/${enc(requireTenantId(tenantId))}${path}`, body);
+    return await transport.fetch<T>(method, bitbucketDatacenterPath(tenantId, path), body);
   } catch (cause) {
     const plain = cause instanceof ApiError ? BITBUCKET_DATACENTER_REFUSALS[cause.code] : undefined;
     throw plain === undefined ? cause : new Error(plain);
@@ -1556,7 +1563,7 @@ function bitbucketDatacenterRepoPath(repo: string): string {
 /** Null when the workspace has no Bitbucket Data Center connection. */
 export async function loadBitbucketDatacenterConnection(transport: Transport, tenantId: string): Promise<BitbucketDatacenterConnection | null> {
   try {
-    return await bitbucketDatacenter<BitbucketDatacenterConnection>(transport, "GET", tenantId, "/connection");
+    return await transport.fetch<BitbucketDatacenterConnection>("GET", bitbucketDatacenterPath(tenantId, "/connection"));
   } catch (cause) {
     if (cause instanceof ApiError && cause.status === 404) return null;
     throw cause;
