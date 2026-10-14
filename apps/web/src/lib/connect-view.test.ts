@@ -8,5 +8,4 @@ describe("GitHub App browser trust boundary", () => {
     expect(isPrivateKeyPem("client-secret")).toBe(false);
     expect(isPrivateKeyPem("-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----")).toBe(false);
   });
-
 });
