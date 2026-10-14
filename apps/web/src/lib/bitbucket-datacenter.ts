@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   connectBitbucketDatacenter,
   disableBitbucketDatacenterRepository,
@@ -7,9 +7,10 @@ import {
   enableBitbucketDatacenterRepository,
   listBitbucketDatacenterRepositories,
   loadBitbucketDatacenterConnection,
+  type BitbucketDatacenterEnabled,
   type RepoRecord,
 } from "./hub-api.ts";
-import { createHubTransport } from "./hub-transport.ts";
+import { createHubTransport, type Transport } from "./hub-transport.ts";
 import { BITBUCKET_DATACENTER_QUERY_KEY, usePortal } from "./portal.tsx";
 
 function connectionKey(tenantId: string | undefined) {
@@ -97,25 +98,31 @@ export function useDisconnectBitbucketDatacenter() {
   });
 }
 
-type Toggle = { repo: string; enabled: boolean };
+/** Whether the Bitbucket Data Center listing names `repo`; it lists the recorded repositories too. */
+export function isBitbucketDatacenterRepo(queryClient: QueryClient, tenantId: string, repo: string): boolean {
+  const listed = queryClient.getQueryData<RepoRecord[]>(repositoriesKey(tenantId));
+  return listed?.some((row) => row.name === repo) === true;
+}
 
-/** Turning triage on or off also creates or removes the repository's webhook, which only the hub's routes do. */
-export function useToggleBitbucketDatacenterRepository() {
-  const queryClient = useQueryClient();
-  const { snapshot, refreshNow } = usePortal();
-  const tenantId = snapshot?.workspace.tenantId;
-  return useMutation({
-    mutationFn: async function toggle({ repo, enabled }: Toggle) {
-      const transport = createHubTransport();
-      const tenant = requireTenant(tenantId);
-      if (enabled) return enableBitbucketDatacenterRepository(transport, tenant, repo);
-      return disableBitbucketDatacenterRepository(transport, tenant, repo);
-    },
-    onSuccess: async function readStoredAgain() {
-      await queryClient.invalidateQueries({ queryKey: repositoriesKey(tenantId) });
-      await refreshNow();
-    },
-  });
+function webhookKey(tenantId: string | undefined, repo: string) {
+  return [BITBUCKET_DATACENTER_QUERY_KEY, tenantId, "webhook", repo] as const;
+}
+
+/** Turning triage on or off also creates or removes the webhook, which only the hub's routes do; a webhook the token may not create is kept for the panel to show. */
+export async function switchBitbucketDatacenterTriage(queryClient: QueryClient, transport: Transport, tenantId: string, repo: string, enabled: boolean): Promise<void> {
+  if (!enabled) {
+    await disableBitbucketDatacenterRepository(transport, tenantId, repo);
+    queryClient.removeQueries({ queryKey: webhookKey(tenantId, repo) });
+    return;
+  }
+  const result = await enableBitbucketDatacenterRepository(transport, tenantId, repo);
+  if (result.webhook === "manual") queryClient.setQueryData(webhookKey(tenantId, repo), result);
+}
+
+/** The webhook to set up by hand after triage was turned on with a token that may not manage webhooks. */
+export function useBitbucketDatacenterManualWebhook(repo: string) {
+  const tenantId = usePortal().snapshot?.workspace.tenantId;
+  return useQuery<Extract<BitbucketDatacenterEnabled, { webhook: "manual" }>>({ queryKey: webhookKey(tenantId, repo), queryFn: skipToken }).data;
 }
 
 export function bitbucketDatacenterRepoUrl(baseUrl: string, repo: string): string {

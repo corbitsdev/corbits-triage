@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, StatusDot } from "@corbits/react-ui";
-import { errorText } from "@corbits/common";
 import { VERDICTS, type ActionKind } from "@corbits/triage-contracts";
 import { triageRunsAlone } from "../../lib/automation-grid.ts";
-import { bitbucketDatacenterRepoUrl, useBitbucketDatacenterConnection, useToggleBitbucketDatacenterRepository } from "../../lib/bitbucket-datacenter.ts";
+import { bitbucketDatacenterRepoUrl, useBitbucketDatacenterConnection, useBitbucketDatacenterManualWebhook } from "../../lib/bitbucket-datacenter.ts";
 import type { RepoRecord } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { useRepoPack, type SaveState } from "../../lib/repo-pack.ts";
@@ -13,6 +12,7 @@ import type { RepoRow } from "../../lib/repo-rows.ts";
 import { useGrants, useRoles } from "../../lib/tenant-entities.ts";
 import { usePolicyView } from "../../lib/use-policy-view.ts";
 import { CloseIcon, ExternalIcon } from "../inbox-icons.tsx";
+import { hasRuleOn } from "../../lib/pack-draft.ts";
 import { usePolicyFile } from "../../lib/policy-file.ts";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import LabelsCard from "./LabelsCard.tsx";
@@ -31,7 +31,7 @@ const KEEPS_ESCAPE = "input, textarea, select, [role=dialog], [role=menu], [data
 
 export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanelProps) {
   const { readOnly, snapshot } = usePortal();
-  const settings = useRepoPack(store, repo.name);
+  const settings = useRepoPack(store, repo.name, repo.source);
   const stats = useRepoStats(store, repo.name);
   const { draft, problem } = settings;
   const view = usePolicyView(draft, settings.edit);
@@ -43,10 +43,10 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const grantsKnown = ![grants, roles].some((section) => section.loading || section.unavailable || section.denied);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [closing, setClosing] = useState(false);
-  const bitbucket = useToggleBitbucketDatacenterRepository();
+  const manualWebhook = useBitbucketDatacenterManualWebhook(repo.name);
   const instance = useBitbucketDatacenterConnection().data;
   const fromBitbucket = repo.source === "bitbucket-datacenter";
-  const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready" || bitbucket.isPending;
+  const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready";
   const gated = !draft.policy.enabled;
   const locked = disabled || gated || fromFile;
   const unfinished = VERDICTS.some((verdict) => view.steps[verdict].some((step) => step.problem) || view.labels[verdict].problem) || view.rules.some((rule) => rule.problem);
@@ -76,10 +76,6 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  function toggleBitbucket(enabled: boolean) {
-    bitbucket.mutate({ repo: repo.name, enabled }, { onSuccess: settings.reload });
-  }
-
   function sourceLink() {
     if (!fromBitbucket) return <Button asChild variant="ghost" size="sm" className="gh-link"><a href={`https://github.com/${repo.name}`} target="_blank" rel="noreferrer">GitHub <ExternalIcon /></a></Button>;
     if (!instance) return null;
@@ -95,9 +91,8 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     if (settings.status === "failed") return <div className="rs"><Button type="button" variant="outline" size="sm" onClick={settings.reload}>Retry</Button></div>;
     return (
       <>
-        <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} onToggle={fromBitbucket ? toggleBitbucket : undefined} reason={problem?.where.section === "triage" ? problem.reason : undefined} />
-        {bitbucket.error ? <p role="alert" className="error">Could not turn triage {bitbucket.variables?.enabled ? "on" : "off"}. {errorText(bitbucket.error)}</p> : null}
-        {bitbucket.data && "hookSecret" in bitbucket.data && draft.policy.enabled ? <BitbucketDatacenterWebhook webhook={bitbucket.data} /> : null}
+        <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} />
+        {manualWebhook && settings.saved.policy.enabled ? <BitbucketDatacenterWebhook webhook={manualWebhook} /> : null}
         <PolicyCard repo={repo.name} policyFile={policyFile} disabled={disabled} />
         <div className={gated ? "gated" : undefined} inert={gated}>
           <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={locked} edit={settings.edit} problem={problem} />

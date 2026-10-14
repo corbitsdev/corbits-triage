@@ -10,12 +10,11 @@ type TriageSwitchProps = {
   triaging: boolean;
   disabled: boolean;
   edit: RepoPack["edit"];
-  /** Turns triage on or off through the source's own route instead of the saved policy. */
-  onToggle?: (enabled: boolean) => void;
-  reason?: string;
+  /** Whether a rule is switched on; triage runs without one, but triggers nothing. */
+  ruleOn: boolean;
 };
 
-export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, onToggle, reason }: TriageSwitchProps) {
+export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, ruleOn }: TriageSwitchProps) {
   const { runBacklog } = usePortal();
   const [rerunError, setRerunError] = useState("");
 
@@ -29,10 +28,6 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
   }
 
   function setEnabled(next: boolean) {
-    if (onToggle) {
-      onToggle(next);
-      return;
-    }
     edit((current) => ({ ...current, policy: { ...current.policy, enabled: next } }));
   }
 
@@ -44,14 +39,14 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
 
   return (
     <>
-      <div className={reason ? "switch-card invalid" : "switch-card"} id="rp-triage">
+      <div className="switch-card" id="rp-triage">
         <div className="sc-t">
           <b>Triage pull requests in this repository</b>
           {hint()}
         </div>
         <Switch className="sw lg" checked={enabled} onCheckedChange={setEnabled} label="Triage pull requests in this repository" disabled={disabled} />
       </div>
-      {reason ? <p className="reason">{reason}</p> : null}
+      {triaging && !ruleOn ? <p className="help" role="status">Triage is enabled. Add policies to have it start triggering.</p> : null}
       {rerunError ? <p role="alert" className="error">{rerunError}</p> : null}
     </>
   );
