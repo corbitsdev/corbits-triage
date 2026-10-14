@@ -15,8 +15,6 @@ export type RepoRecord = {
   /** Absent means github. */
   source?: RepoSource;
   connected: boolean;
-  /** Absent means GitHub. */
-  source?: "github" | "bitbucket";
   defaultBranch?: string;
   /** The Bitbucket webhook triage created, so disabling removes only its own. */
   webhookId?: number;
