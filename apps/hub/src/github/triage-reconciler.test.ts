@@ -4,6 +4,7 @@ import { decodeMail, extractAddrSpec } from "@intx/mime";
 import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import type { CheckRun } from "@corbits/github-reads";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
@@ -224,6 +225,8 @@ type HarnessOptions = {
   sameSource?: boolean;
   pack?: CheckPack;
   noPack?: boolean;
+  /** Build statuses of every head, for a host whose builds the reconciler polls. */
+  headChecks?: CheckRun[];
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
@@ -308,6 +311,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       };
     },
     observeTenant: observer.observe,
+    ...(options.headChecks && { headChecks: async () => options.headChecks! }),
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
       if (options.noPack) return { status: "missing" };
@@ -358,6 +362,22 @@ function rotationLogs(logged: ReadonlyArray<Record<string, unknown>>): unknown[]
 }
 
 describe("triage reconciler", () => {
+  test("a host without build webhooks: a head whose verdict waits on CI is queued again once its builds stop pending", async () => {
+    const waiting = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }] };
+    const logs: Logs = { [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(waiting), completed] } };
+    const pending = harness(logs, [head(1)], { headChecks: [{ name: "build", status: "in_progress", conclusion: null }] });
+    await pending.reconcile();
+    expect(pending.delivered).toHaveLength(0);
+    const finished = harness(logs, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    await finished.reconcile();
+    expect(mailedNumbers(finished.delivered)).toEqual([1]);
+    expect(finished.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "build_status_changed" }));
+    // GitHub's check_run webhook triages the head; without a reader the head is left alone.
+    const github = harness(logs, [head(1)]);
+    await github.reconcile();
+    expect(github.delivered).toHaveLength(0);
+  });
+
   test("a repository with every rule off, or no policy, starts no run and is logged once per head", async () => {
     const off = harness({ [repoKey(LIVE.runId)]: {} }, [head(1), head(2)], { pack: emptyPack(REPO) });
     await off.reconcile();

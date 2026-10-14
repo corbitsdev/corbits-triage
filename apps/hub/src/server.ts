@@ -265,10 +265,12 @@ const githubPrActions = createGithubPrActions({
   readCheckPack,
   log: logJson,
 });
+const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch });
 const githubPrDetails = createGithubPrDetails({
   db: composition.db,
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
+  tenantBitbucket,
   authorize: authorizePortal,
   log: logJson,
 });
@@ -319,11 +321,11 @@ const launchSpecs = createWorkflowRunLaunchSpecStore(composition.db);
 async function liveTriageDeployments(tenantId: string, workflow: string) {
   return withWorkflowVersions(launchSpecs, await resolveLiveDeployments(composition.db, tenantId, workflow));
 }
-const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch });
 const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
 const tenantOpenHeads = createTenantOpenHeads(tenantSources);
 const tenantOpenHead = createTenantOpenHead(tenantSources);
 const tenantOpenPrs = createTenantOpenPrs(tenantSources);
+const tenantHeadChecks = createTenantHeadChecks(tenantSources);
 const openPullsCache = createOpenPullsCache(now);
 const githubOpenPulls = createGithubOpenPulls({
   cache: openPullsCache,
@@ -380,6 +382,7 @@ function triageStack(triage: TriageWorkflow) {
     rotationKey: triage.rotationKey,
     tenants: reconcileTenants,
     liveDeployments,
+    ...(triage.pollsBuilds && { headChecks: tenantHeadChecks }),
     latestDeployments: function latestTriageDeployments(tenantId, limit) {
       return latestDeployments(composition.db, tenantId, triage.id, limit);
     },
@@ -479,7 +482,7 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
 coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendBridgeMail,
-  headChecks: createTenantHeadChecks(tenantSources),
+  headChecks: tenantHeadChecks,
   window: triageCoalesceWindow(env, reconcilePolicy),
   setTimer,
   now,
