@@ -1,15 +1,15 @@
-import { Badge, Button, ConfirmButton, Select, Switch } from "@corbits/react-ui";
-import { readLocalPack } from "../pack-store.ts";
+import { Badge, Button, ConfirmButton } from "@corbits/react-ui";
+import { errorText } from "@corbits/common";
+import { POLICY_FILE_PATH } from "@corbits/triage-contracts";
 import { ChevronRight } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { changesFromDefaults } from "../pack-edit.ts";
+import { readLocalPack } from "../pack-store.ts";
 import type { PrRef } from "../pr.ts";
-import { autoApply, commentFooter, githubToken, localPacks, onboarded, PAGE_LAYOUTS, pageLayout, runStates, systemOne, views, type PageLayout } from "../storage.ts";
-import { openExamplePr } from "./example-pr.ts";
+import { githubToken, localPacks, policyFiles, runStates, systemOne, views } from "../storage.ts";
 import { DecisionModelForm } from "./DecisionModelForm.tsx";
 import { GithubTokenForm } from "./GithubTokenForm.tsx";
 import { useStorageItem } from "./use-storage.ts";
-import { errorText } from "../error-text.ts";
 
 function SettingSection({ id, title, status, description, children }: { id: string; title: string; status?: ReactNode; description?: string; children: ReactNode }) {
   return (
@@ -24,115 +24,37 @@ function SettingSection({ id, title, status, description, children }: { id: stri
   );
 }
 
-function ChecksSection({ pr, onManage }: { pr: PrRef | undefined; onManage: (repo: string) => void }) {
-  const packs = useStorageItem(localPacks);
-  if (packs === undefined) return null;
-  const read = Object.entries(packs).map(([repo, raw]) => [repo, readLocalPack(raw, repo)] as const);
-  const changed = new Map(read.flatMap(function changes([repo, each]): Array<[string, number]> {
-    const count = "pack" in each ? changesFromDefaults(each.pack) : 0;
-    return count ? [[repo, count]] : [];
-  }));
-  const unreadable = read.flatMap(([repo, each]) => ("error" in each ? [[repo, each.error] as const] : []));
-  const repos = [...new Set([...(pr ? [pr.repo] : []), ...changed.keys()])];
+function changesLine(stored: unknown, repo: string): string {
+  if (stored === undefined) return "Recommended rules";
+  const read = readLocalPack(stored, repo);
+  if ("error" in read) return "Saved rules do not read";
+  const count = changesFromDefaults(read.pack);
+  return count ? `${count} ${count === 1 ? "change" : "changes"}` : "Recommended rules";
+}
+
+function RepoRules({ repo, usesFile, stored, onManage }: { repo: string; usesFile: boolean; stored: unknown; onManage: (repo: string) => void }) {
+  if (usesFile) return <p className="repo-link"><span className="mono">{repo}</span><span className="hint">Uses {POLICY_FILE_PATH}</span></p>;
   return (
-    <SettingSection id="setting-checks" title="Rules">
-      {repos.length ? (
-        <ul className="repo-links">
-          {repos.map((repo) => {
-            const count = changed.get(repo) ?? 0;
-            return (
-              <li key={repo}>
-                <button type="button" className="repo-link" onClick={() => onManage(repo)}>
-                  <span className="mono">{repo}</span>
-                  <span className="hint">{count ? `${count} ${count === 1 ? "change" : "changes"}` : "Defaults"}</span>
-                  <ChevronRight aria-hidden="true" />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : <p className="empty-line">Open a pull request to change its repository's rules.</p>}
-      {unreadable.map(([repo, error]) => (
-        <p key={repo} className="error" role="alert"><span className="mono">{repo}</span>: the saved rules do not read ({error}), so the defaults run until you change or reset them.</p>
-      ))}
-    </SettingSection>
+    <button type="button" className="repo-link" onClick={() => onManage(repo)}>
+      <span className="mono">{repo}</span>
+      <span className="hint">{changesLine(stored, repo)}</span>
+      <ChevronRight aria-hidden="true" />
+    </button>
   );
 }
 
-const LAYOUT_NAMES: Record<PageLayout, string> = {
-  sidebar: "In GitHub's sidebar",
-  inline: "In the sidebar and beside the title",
-  banner: "A banner at the bottom",
-  "top-bar": "A bar under GitHub's header",
-  composer: "In the comment box",
-};
-
-function isLayout(value: string): value is PageLayout {
-  return (PAGE_LAYOUTS as string[]).includes(value);
-}
-
-function PageSection({ pr }: { pr: PrRef | undefined }) {
-  const layout = useStorageItem(pageLayout);
-  const auto = useStorageItem(autoApply);
-  const footer = useStorageItem(commentFooter);
-  const [error, setError] = useState<string | null>(null);
-  if (layout === undefined || auto === undefined || footer === undefined) return null;
-
-  async function choose(value: string) {
-    setError(null);
-    try {
-      if (isLayout(value)) await pageLayout.setValue(value);
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  }
-
-  async function setAuto(repo: string, on: boolean) {
-    setError(null);
-    try {
-      const { [repo]: _, ...rest } = await autoApply.getValue();
-      await autoApply.setValue(on ? { ...rest, [repo]: true } : rest);
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  }
-
-  async function setFooter(on: boolean) {
-    setError(null);
-    try {
-      await commentFooter.setValue(on);
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  }
-
-  const repos = [...new Set([...(pr ? [pr.repo] : []), ...Object.keys(auto)])];
+function RulesSection({ pr, onManage }: { pr: PrRef | undefined; onManage: (repo: string) => void }) {
+  const packs = useStorageItem(localPacks);
+  const files = useStorageItem(policyFiles);
+  if (packs === undefined || files === undefined) return null;
+  const repos = [...new Set([...(pr ? [pr.repo] : []), ...Object.keys(packs)])];
   return (
-    <SettingSection id="setting-page" title="On GitHub">
-      <label className="field">
-        <span>Show actions</span>
-        <Select value={layout} onChange={(event) => choose(event.target.value)}>
-          {PAGE_LAYOUTS.map((each) => <option key={each} value={each}>{LAYOUT_NAMES[each]}</option>)}
-        </Select>
-      </label>
-      <div className="auto-row">
-        <span className="auto-text"><b>Add 'Generated by Corbits Triage' to comments I post</b></span>
-        <Switch checked={footer} label="Add 'Generated by Corbits Triage' to comments I post" onCheckedChange={setFooter} />
-      </div>
+    <SettingSection id="setting-rules" title="Rules" description={`A repository's ${POLICY_FILE_PATH} on its default branch comes first; without one, the rules saved here apply, else the recommended rules.`}>
       {repos.length ? (
-        <>
-          <ul className="auto-list" aria-label="Apply actions when a pull request opens">
-            {repos.map((repo) => (
-              <li key={repo} className="auto-row">
-                <span className="auto-text"><b>Apply when a pull request opens</b><span className="mono">{repo}</span></span>
-                <Switch checked={auto[repo] === true} label={`Apply actions when a pull request of ${repo} opens`} onCheckedChange={(on) => setAuto(repo, on)} />
-              </li>
-            ))}
-          </ul>
-          <p className="hint">Only labels are applied on their own; every other action waits for a click.</p>
-        </>
-      ) : null}
-      {error ? <p className="error" role="alert">{error}</p> : null}
+        <ul className="repo-links">
+          {repos.map((repo) => <li key={repo}><RepoRules repo={repo} usesFile={files[repo]?.outcome.kind === "policy"} stored={packs[repo]} onManage={onManage} /></li>)}
+        </ul>
+      ) : <p className="empty-line">Open a pull request to change its repository's rules.</p>}
     </SettingSection>
   );
 }
@@ -141,7 +63,7 @@ function TokenSection() {
   const token = useStorageItem(githubToken);
   if (token === undefined) return null;
   return (
-    <SettingSection id="setting-github" title="GitHub token" status={token ? <Badge tone="success">Saved</Badge> : null} description="Optional. Used when a pull request cannot be read from GitHub's pages, for 5,000 API calls an hour instead of 60.">
+    <SettingSection id="setting-github" title="GitHub token" status={token ? <Badge tone="success">Saved</Badge> : null} description="Required. Every read is made with it, read-only.">
       <GithubTokenForm />
     </SettingSection>
   );
@@ -161,7 +83,7 @@ function ModelSection() {
   }
 
   return (
-    <SettingSection id="setting-model" title="Decision model" status={settings ? <Badge tone="success">Saved</Badge> : null} description="Optional. Answers the rules that need judgement.">
+    <SettingSection id="setting-model" title="Decision model" status={settings ? <Badge tone="success">Saved</Badge> : null} description="Optional. Answers the rules that need judgement; without one they show as not evaluated here.">
       {settings || choosing
         ? <DecisionModelForm current={settings} variant="outline" onSaved={chosen} onCancel={chosen} />
         : <div className="row"><Button size="sm" variant="outline" onClick={choose}>Choose a provider</Button></div>}
@@ -169,7 +91,7 @@ function ModelSection() {
   );
 }
 
-function DataSection() {
+function AboutSection() {
   const all = useStorageItem(views);
   const [cleared, setCleared] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -179,42 +101,21 @@ function DataSection() {
   async function clearRuns() {
     setError(null);
     try {
-      await Promise.all([views.setValue({}), runStates.setValue({})]);
+      await Promise.all([views.setValue({}), runStates.setValue({}), policyFiles.setValue({})]);
       setCleared(true);
     } catch (cause) {
       setError(errorText(cause));
     }
   }
 
-  async function takeTour() {
-    setError(null);
-    try {
-      await openExamplePr();
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  }
-
-  async function replaySetup() {
-    setError(null);
-    try {
-      await onboarded.setValue(false);
-      await browser.tabs.create({ url: browser.runtime.getURL("/welcome.html") });
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  }
-
   return (
-    <SettingSection id="setting-data" title="About">
+    <SettingSection id="setting-about" title="About">
       <dl className="facts">
         <div><dt>Version</dt><dd className="mono">{browser.runtime.getManifest().version}</dd></div>
-        <div><dt>Saved runs</dt><dd className="mono">{count}</dd></div>
+        <div><dt>Saved checks</dt><dd className="mono">{count}</dd></div>
       </dl>
       <div className="row">
-        <ConfirmButton size="sm" variant="outline" disabled={count === 0} confirmLabel="Clear them" onConfirm={clearRuns}>Clear saved runs</ConfirmButton>
-        <Button size="sm" variant="ghost" onClick={takeTour}>Take the tour</Button>
-        <Button size="sm" variant="ghost" onClick={replaySetup}>Show the welcome steps</Button>
+        <ConfirmButton size="sm" variant="outline" disabled={count === 0} confirmLabel="Clear them" onConfirm={clearRuns}>Clear saved checks</ConfirmButton>
       </div>
       {error ? <p className="error" role="alert">{error}</p> : null}
       {cleared ? <p className="hint" role="status">Cleared.</p> : null}
@@ -222,14 +123,13 @@ function DataSection() {
   );
 }
 
-export function Settings({ pr, onManageChecks }: { pr: PrRef | undefined; onManageChecks: (repo: string) => void }) {
+export function Settings({ pr, onManageRules }: { pr: PrRef | undefined; onManageRules: (repo: string) => void }) {
   return (
     <div className="settings">
-      <ChecksSection pr={pr} onManage={onManageChecks} />
-      <PageSection pr={pr} />
-      <ModelSection />
       <TokenSection />
-      <DataSection />
+      <RulesSection pr={pr} onManage={onManageRules} />
+      <ModelSection />
+      <AboutSection />
     </div>
   );
 }
