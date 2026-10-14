@@ -6,7 +6,6 @@ import ApproverGrid from "../ApproverGrid.tsx";
 import { InvitePeople } from "../InvitePeople.tsx";
 import TriageOnItsOwn from "../TriageOnItsOwn.tsx";
 
-/** Who is in the workspace, who approves held actions, and what Triage does without asking. */
 export function AccessSection({ repos }: { repos: RepoRecord[] }) {
   const { addGrant, removeGrants, readOnly } = usePortal();
   const [error, setError] = useState("");
@@ -25,11 +24,12 @@ export function AccessSection({ repos }: { repos: RepoRecord[] }) {
     onError: setError,
   };
   return (
-    <div id="access">
+    <section id="access" aria-labelledby="sec-access">
+      <h2 id="sec-access" className="sr-only">Access</h2>
       {error && <p role="alert" className="error">{error}</p>}
       <InvitePeople onSetupPage={false} />
       <ApproverGrid {...grantProps} />
       <TriageOnItsOwn {...grantProps} repos={repos.map((repo) => repo.name)} />
-    </div>
+    </section>
   );
 }

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@corbits/react-ui";
 import { Link } from "react-router-dom";
 import { errorText } from "@corbits/common";
-import { githubSecrets, namedSecrets } from "../../lib/credential-actions.ts";
+import { githubSecrets, namedSecrets, otherSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
 import { githubAppPickerUrl, githubWebhookUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../../lib/github-return-sync.ts";
@@ -17,7 +17,6 @@ function repoName(repo: RepoRecord): string {
   return repo.connected ? repo.name : `${repo.name} (not connected)`;
 }
 
-/** The GitHub App: whether it works, where it is installed, the webhook it posts to, and its secrets. */
 export function GithubSection({ snapshot }: { snapshot: PortalSnapshot }) {
   const { syncFromGithub } = usePortal();
   const [error, setError] = useState("");
@@ -25,6 +24,8 @@ export function GithubSection({ snapshot }: { snapshot: PortalSnapshot }) {
   const { credentials, repos } = snapshot;
   const ready = hasActiveGithubCredential(credentials);
   const secrets = namedSecrets(githubSecrets(credentials));
+  const others = namedSecrets(otherSecrets(credentials));
+  const installed = repos.filter((repo) => repo.connected).length;
   const slug = githubAppSlugFromCredentials(credentials);
 
   async function syncAfterGithub() {
@@ -61,7 +62,7 @@ export function GithubSection({ snapshot }: { snapshot: PortalSnapshot }) {
         <div className="sentences">
           <div className="sentence">
             <span className="txt">
-              {ready ? <>The GitHub App{slug && <> <b>{slug}</b></>} is connected and installed on {counted(repos.length, "repository", "repositories")}.</> : "The GitHub App is not connected."}
+              {ready ? <>The GitHub App{slug && <> <b>{slug}</b></>} is connected and installed on {counted(installed, "repository", "repositories")}.</> : "The GitHub App is not connected."}
             </span>
             {!ready && <Link className="linkish" to="/connect">Connect it</Link>}
             {ready && canManage && <Button type="button" variant="outline" size="sm" onClick={chooseOnGithub}>Choose repositories on GitHub</Button>}
@@ -75,6 +76,14 @@ export function GithubSection({ snapshot }: { snapshot: PortalSnapshot }) {
           )}
           {secrets.map(({ credential, name }) => <CredentialRow key={credential.id} credential={credential} name={name} replaceable />)}
         </div>
+        {others.length > 0 && (
+          <div>
+            <p className="field-help">Other credentials</p>
+            <div className="sentences">
+              {others.map(({ credential, name }) => <CredentialRow key={credential.id} credential={credential} name={name} replaceable={false} />)}
+            </div>
+          </div>
+        )}
         {snapshot.denied.credentials && <DeniedNotice section="credentials" />}
         <CopyField label="Webhook URL" value={githubWebhookUrl(snapshot.workspace.tenantId)} help="GitHub sends pull request events here. It is the Webhook URL in your GitHub App's settings." />
       </div>

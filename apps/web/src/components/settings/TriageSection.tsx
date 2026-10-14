@@ -1,8 +1,9 @@
 import { Link } from "react-router-dom";
 import { DeniedNotice } from "../../lib/denied.tsx";
-import { currentDeployment, type DeployedWorkflow, type RepoRecord } from "../../lib/hub-api.ts";
+import { hasDecisionModelCredential } from "../../lib/decision-models.ts";
+import { currentDeployment, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
-import { triageEnabledRepos } from "../../lib/repo-rows.ts";
+import { triageReadyRepos } from "../../lib/repo-rows.ts";
 import type { TenantSection } from "../../lib/tenant-entities.ts";
 import { WORKFLOW_PACKAGES } from "../../lib/workflow-packages.ts";
 import { CopyButton } from "../CopyField.tsx";
@@ -25,16 +26,23 @@ function versionLine(deployments: readonly DeployedWorkflow[]): string {
   return [...parts, ...tools].join(" · ");
 }
 
-function statusText(running: boolean, enabled: number, total: number): string {
-  if (!running) return "Triage is not running: its workflow is not deployed.";
+type Status = { deployed: boolean; model: boolean; triaging: number; total: number };
+
+function statusText({ deployed, model, triaging, total }: Status): string {
+  if (!deployed) return "Triage is not running: its workflow is not deployed.";
+  if (!model) return "Triage is not running: no decision model is connected.";
   if (total === 0) return "Triage is running, but no repository is connected yet.";
-  return `Triage is running on ${enabled} of ${counted(total, "repository", "repositories")}.`;
+  return `Triage is running on ${triaging} of ${counted(total, "repository", "repositories")}.`;
 }
 
-/** Whether triage runs, where, what decides a verdict, and the versions it runs. */
-export function TriageSection({ repos, deployed }: { repos: RepoRecord[]; deployed: TenantSection<DeployedWorkflow> }) {
+export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: TenantSection<DeployedWorkflow> }) {
   const ready = !deployed.denied && !deployed.loading && !deployed.unavailable;
-  const running = currentDeployment(deployed.rows, TRIAGE_WORKFLOW) !== undefined;
+  const status = {
+    deployed: currentDeployment(deployed.rows, TRIAGE_WORKFLOW) !== undefined,
+    model: hasDecisionModelCredential(snapshot.credentials),
+    triaging: triageReadyRepos(snapshot.repos).size,
+    total: snapshot.repos.length,
+  };
   const versions = versionLine(deployed.rows);
 
   return (
@@ -48,7 +56,7 @@ export function TriageSection({ repos, deployed }: { repos: RepoRecord[]; deploy
         {ready && (
           <div className="sentences">
             <div className="sentence">
-              <span className="txt">{statusText(running, triageEnabledRepos(repos).size, repos.length)}</span>
+              <span className="txt">{statusText(status)}</span>
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
             <div className="sentence">
