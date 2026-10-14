@@ -24,11 +24,11 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     branch marks the repository's other triaged heads `stale`. Temporary
     until `@corbits/webhooks` verifies GitHub signatures.
   - **Coalescer**: one pull request's burst of webhook events goes out as one
-    mail to the tenant's live pr-triage deployment of the repository's host
+    mail to the tenant's live pr-triage deployment for the repository's host
     (`pr-triage-github` or `pr-triage-bitbucket-datacenter`), as the tenant
     system sender, the same path cron uses. The mail names the host as
-    `repoSource`. A new commit or a newly opened pull
-    request waits only a few seconds.
+    `repoSource`. A new commit or a newly opened pull request waits only a few
+    seconds.
   - **Reconciler**: on an interval, compares each enabled repository's open
     pull requests with the run logs and stored state, and re-queues every
     head without a verdict, and every stale head at most once per 15 minutes,
@@ -73,12 +73,11 @@ executes and ends.
 
 - `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
   pull request, or a batch of heads from the reconciler, and triages them.
-  Both are built by the shared `prTriage({ sources })` library in
-  `@corbits/triage-workflows` (`pr-triage`, not deployed itself); each binds
-  only its host's credential, because an unresolved binding fails a
-  deployment, so a workspace deploys the packages of the hosts it connected
-  and one with both hosts runs both. A deployment of the earlier `pr-triage`
-  workflow is released once `pr-triage-github` is live.
+  Both are built by `prTriage({ sources })` in `@corbits/triage-workflows`.
+  Each binds only its host's credential, since an unresolved binding fails a
+  deployment, so a workspace deploys one per connected host. A deployment of
+  the earlier `pr-triage` workflow is released once `pr-triage-github` is
+  live.
 - `pr-triage-historical`: one run that triages every open pull request of a
   repository. The hub mails it through its backlog route when a user turns
   triage on for the repository, or clicks **Triage open pull requests again**.
@@ -109,8 +108,8 @@ one does.
 7. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`; on Bitbucket the
    `Corbits Triage` build status) when the `pr-triage` role holds the labels grant, and one marker comment when it holds the comment
    grant. It runs before execute so a merge or close finds the final verdict on the head it closes.
-8. **execute**: runs the Dos whose kind the `pr-triage` role holds on the host.
-   Every other Do is held in the verdict (`held: true`) and the run finishes.
+8. **execute**: runs the steps whose kind the `pr-triage` role holds on the host.
+   Every other step is held in the verdict (`held: true`) and the run finishes.
 
 The hub reads which kinds the `pr-triage` system role is granted, `invoke` on
 `triage-do:<kind>:<owner>/<name>`, and mails them with each trigger; the run

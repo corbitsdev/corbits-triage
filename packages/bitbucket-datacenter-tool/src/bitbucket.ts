@@ -1,8 +1,7 @@
-import { repoPath, TRIAGE_BUILD_KEY } from "@corbits/bitbucket-datacenter-reads";
+import { jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, upsertMarked, writeHeadedComment, type CommentHost, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
-/** Pinned to the Bitbucket Data Center instance origin, with auth added by the mediated credential. */
-export type BitbucketFetch = (path: string, init?: RequestInit) => Promise<Response>;
+export type { BitbucketFetch };
 
 /** The user the token acts as: its comments are Triage's, and its participant status is Triage's review. */
 export type TokenUser = { id: number; slug: string };
@@ -13,7 +12,7 @@ export class BitbucketRefusal extends Error {}
 
 export const NOT_OPEN = "the pull request is not open";
 
-export const TRIAGE_BUILD_NAME = "Corbits Triage";
+const TRIAGE_BUILD_NAME = "Corbits Triage";
 
 function send(method: string, body?: unknown): RequestInit {
   if (body === undefined) return { method };
@@ -35,7 +34,7 @@ async function request(bb: BitbucketFetch, path: string, init?: RequestInit): Pr
   return res;
 }
 
-export async function json(bb: BitbucketFetch, path: string, init?: RequestInit): Promise<any> {
+async function json(bb: BitbucketFetch, path: string, init?: RequestInit): Promise<any> {
   const res = await request(bb, path, init);
   return res.status === 204 ? null : res.json();
 }
@@ -48,20 +47,6 @@ async function refusable(bb: BitbucketFetch, path: string, init: RequestInit): P
   return res.status === 204 ? null : res.json();
 }
 
-type Page<T> = { values: T[]; isLastPage: boolean; nextPageStart?: number };
-
-export async function jsonAll<T>(bb: BitbucketFetch, path: string): Promise<T[]> {
-  const all: T[] = [];
-  const joiner = path.includes("?") ? "&" : "?";
-  let start = 0;
-  for (;;) {
-    const page = await json(bb, `${path}${joiner}limit=100&start=${start}`) as Page<T>;
-    all.push(...page.values);
-    if (page.isLastPage || page.nextPageStart === undefined) return all;
-    start = page.nextPageStart;
-  }
-}
-
 function prPath(repo: string, number: number): string {
   return `${repoPath(repo)}/pull-requests/${number}`;
 }
@@ -72,13 +57,13 @@ export async function tokenUser(bb: BitbucketFetch): Promise<TokenUser> {
   const id = Number(res.headers.get("x-auserid"));
   const name = res.headers.get("x-ausername");
   if (!id || !name) throw new Error("the Bitbucket token names no user");
-  const users = await jsonAll<{ id: number; slug: string }>(bb, `/rest/api/1.0/users?filter=${encodeURIComponent(name)}`);
-  const user = users.find((u) => u.id === id);
+  const users = await jsonAll(bb, `/rest/api/1.0/users?filter=${encodeURIComponent(name)}`);
+  const user = (users as TokenUser[]).find((u) => u.id === id);
   if (!user) throw new Error(`Bitbucket user ${name} not found`);
   return { id, slug: user.slug };
 }
 
-export type ParticipantStatus = "UNAPPROVED" | "NEEDS_WORK" | "APPROVED";
+type ParticipantStatus = "UNAPPROVED" | "NEEDS_WORK" | "APPROVED";
 type Participant = { user: { id: number; slug: string }; role: string; status: ParticipantStatus };
 
 export type PullRequest = {
@@ -120,7 +105,7 @@ type Activity = { action: string; commentAction?: string; comment?: Comment };
 
 /** Top-level comments on the pull request, oldest first; Data Center lists them only through its activity stream. */
 export async function listComments(bb: BitbucketFetch, repo: string, number: number): Promise<Comment[]> {
-  const activities = await jsonAll<Activity>(bb, `${prPath(repo, number)}/activities`);
+  const activities = await jsonAll(bb, `${prPath(repo, number)}/activities`) as Activity[];
   return activities.filter((a) => a.action === "COMMENTED" && a.commentAction === "ADDED" && a.comment).map((a) => a.comment!).reverse();
 }
 
@@ -159,7 +144,7 @@ function markedComment(comment: Comment): MarkedComment {
  * Only the token user's comments are read: an admin token could edit anyone's, and a copied marker must never decide
  * what Triage writes. Without a header the current comment is edited whatever it said before.
  */
-export async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; number: number; body: string; header?: TriageHeader }, user: TokenUser): Promise<WrittenComment> {
+async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; number: number; body: string; header?: TriageHeader }, user: TokenUser): Promise<WrittenComment> {
   const { repo, number, header } = input;
   const own = marked(await listComments(bb, repo, number), user);
   const host = commentHost(bb, repo, number, new Map(own.map((c) => [c.id, c.version])));
@@ -175,7 +160,7 @@ async function deleteTriageComments(bb: BitbucketFetch, repo: string, number: nu
   }
 }
 
-export async function declinePr(bb: BitbucketFetch, input: { repo: string; number: number; version: number }) {
+async function declinePr(bb: BitbucketFetch, input: { repo: string; number: number; version: number }) {
   await refusable(bb, `${prPath(input.repo, input.number)}/decline?version=${input.version}`, send("POST", {}));
   return { declined: true };
 }
@@ -195,24 +180,17 @@ export async function mergePr(bb: BitbucketFetch, input: { repo: string; number:
   return { merged: merged.state === "MERGED" };
 }
 
-export type BuildState = "SUCCESSFUL" | "FAILED" | "INPROGRESS" | "CANCELLED" | "UNKNOWN";
-
-type Build = { state: BuildState; key: string; description?: string | null; url?: string | null };
+type Build = { state: string; key: string; description?: string | null; url?: string | null };
 
 async function builds(bb: BitbucketFetch, sha: string): Promise<Build[]> {
-  return jsonAll<Build>(bb, `/rest/build-status/1.0/commits/${sha}`);
-}
-
-/** Other builds on the head; triage's own verdict is not one of them. */
-export async function buildStates(bb: BitbucketFetch, sha: string): Promise<BuildState[]> {
-  return (await builds(bb, sha)).filter((b) => b.key !== TRIAGE_BUILD_KEY).map((b) => b.state);
+  return await jsonAll(bb, `/rest/build-status/1.0/commits/${sha}`) as Build[];
 }
 
 /** The verdict as a build status on the head: Data Center has no labels, and a build status is what its pull request page shows beside the head. */
-export type VerdictBuild = { state: "SUCCESSFUL" | "FAILED" | "INPROGRESS"; description: string; url?: string };
+type VerdictBuild = { state: "SUCCESSFUL" | "FAILED" | "INPROGRESS"; description: string; url?: string };
 
 /** Writes the verdict build status unless the head already shows it; Data Center keeps one status per key and needs a URL on it. */
-export async function setVerdictBuild(bb: BitbucketFetch, sha: string, build: VerdictBuild, fallbackUrl: string): Promise<{ build: VerdictBuild["state"]; written: boolean }> {
+async function setVerdictBuild(bb: BitbucketFetch, sha: string, build: VerdictBuild, fallbackUrl: string): Promise<{ build: VerdictBuild["state"]; written: boolean }> {
   const url = build.url ?? fallbackUrl;
   const current = (await builds(bb, sha)).find((b) => b.key === TRIAGE_BUILD_KEY);
   if (current && current.state === build.state && (current.description ?? "") === build.description && current.url === url) return { build: build.state, written: false };

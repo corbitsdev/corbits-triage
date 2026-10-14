@@ -2,12 +2,12 @@
 // tenant credential holds its hook secret, which headers carry the signature, event and delivery id, and a pure
 // normaliser that turns its payload into the shapes the GitHub bridge produces. Everything after verification is
 // shared and has no provider branches. A failed queue write is 500 so the provider retries.
-import { hasEnabledRules, repoPolicy, triageEventOf } from "@corbits/triage-contracts";
+import { hasEnabledRules, repoPolicy, triageEventOf, type RepoSource } from "@corbits/triage-contracts";
 import { errorText, isRecord } from "@corbits/common";
 import { loadBridgeHook, logJson, resolvedPack, tenantConfigOf, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
 import type { Accepted } from "../github/coalescer.js";
 import type { BaseMove, PolicyPush, PrMail } from "../github/normalize.js";
-import { repoRecords, sourceOf, triageNs, triageStateKey, type CorbitsTriageNs, type RepoRecord, type RepoSource } from "../github/tenant-config.js";
+import { repoRecords, sourceOf, triageNs, triageStateKey, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
 import { readCappedBody } from "../read-json.js";
 
 export type HookIntake =

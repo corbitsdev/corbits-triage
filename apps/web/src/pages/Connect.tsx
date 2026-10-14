@@ -17,6 +17,7 @@ import {
   startGithubManifest,
 } from "../lib/github-manifest.ts";
 import { useGithubSync } from "../lib/github-sync.ts";
+import { counted } from "../lib/plural.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useBacklogLogs } from "../lib/run-logs.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
@@ -292,7 +293,7 @@ export default function Connect() {
   }
 
   const sourceDoneNote = githubConnected ? githubDoneNote(connected) : "Bitbucket Data Center connected.";
-  const reposDoneNote = githubConnected ? `${repos.length} ${repos.length === 1 ? "repository" : "repositories"} selected on GitHub.` : "Turn triage on for each repository in Repositories.";
+  const reposDoneNote = githubConnected ? `${counted(repos.length, "repository", "repositories")} selected on GitHub.` : "Turn triage on for each repository in Repositories.";
 
   return <div className="app is-auth"><main className="setup-flow">
     <span className="onboarding-brand">

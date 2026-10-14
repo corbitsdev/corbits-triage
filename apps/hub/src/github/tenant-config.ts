@@ -8,8 +8,6 @@ import { failure, memberPrincipal, type PortalCredentialDeps } from "./portal-cr
 
 const CONFIG_KEY = "corbitsTriage";
 
-export type { RepoSource };
-
 export type RepoRecord = {
   name: string;
   /** Absent means github. */
@@ -55,11 +53,6 @@ export function repoRecords(ns: CorbitsTriageNs): RepoRecord[] {
 
 export function sourceOf(record: Pick<RepoRecord, "source">): RepoSource {
   return repoSourceOf(record.source);
-}
-
-/** Records GitHub serves; Bitbucket repositories are read through their own instance. */
-export function githubRepoRecords(ns: CorbitsTriageNs): RepoRecord[] {
-  return repoRecords(ns).filter((row) => sourceOf(row) === "github");
 }
 
 /** What the triage state and its queue key a repository by: GitHub ones keep their name, so stored state keeps matching; another host's carries its source. */
