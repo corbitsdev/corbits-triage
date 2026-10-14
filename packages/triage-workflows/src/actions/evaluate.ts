@@ -1,6 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { checkName, ownedLabels, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import { type } from "arktype";
+import { ciRefusal } from "@corbits/github-reads";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals, holdDos, packApproves, type SuggestedAction } from "../logic/actions.js";
 import { hasModelChecks, type CheckResult, type DeterministicResult, type PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
@@ -127,13 +128,23 @@ const DO_NAMES: Record<ActionKind, string> = {
   merge: "merge",
 };
 
-/** What Triage does on this head unattended and what waits on a person, closing the comment; a Do that cannot run is left out. */
+const PENDING_CI = `${ciRefusal("pending")}.`;
+
+function doNames(actions: SuggestedAction[]): string {
+  return [...new Set(actions.map((action) => DO_NAMES[action.kind]))].join(", ");
+}
+
+/** What Triage does on this head unattended and what waits, on checks or on a person, closing the comment; a Do that cannot run is left out. */
 function withDos(feedback: string, actions: SuggestedAction[]): string {
   if (!feedback) return feedback;
   const runnable = actions.filter((action) => "effectId" in action && unrunnable(action) === undefined);
-  const done = [...new Set(runnable.filter((action) => !("held" in action)).map((action) => DO_NAMES[action.kind]))];
-  const waiting = [...new Set(runnable.filter((action) => "held" in action).map((action) => DO_NAMES[action.kind]))];
-  const lines = [...(done.length ? [`Triage will ${done.join(", ")}.`] : []), ...(waiting.length ? [`Waiting on a maintainer to approve: ${waiting.join(", ")}.`] : [])];
+  const held = runnable.filter((action) => "held" in action);
+  const groups: Array<[string, SuggestedAction[]]> = [
+    ["Triage will", runnable.filter((action) => !("held" in action))],
+    ["Waiting for checks to finish:", held.filter((action) => action.reason === PENDING_CI)],
+    ["Waiting on a maintainer to approve:", held.filter((action) => action.reason !== PENDING_CI)],
+  ];
+  const lines = groups.filter(([, group]) => group.length > 0).map(([lead, group]) => `${lead} ${doNames(group)}.`);
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
 }
 

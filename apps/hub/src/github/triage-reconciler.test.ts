@@ -454,16 +454,19 @@ describe("triage reconciler", () => {
         run_other_head: [started(2), rendered({ ...current(2), headSha: "sha2-pushed" }), completed],
         run_unconfirmed: [started(3), rendered({ ...current(3), checks: unconfirmed }), completed],
         run_not_asked: [started(4), rendered({ ...current(4), checks: [{ check: "docs", kind: "model", result: "unconfirmed" }] }), completed],
+        run_ci_pending: [started(5), rendered({ ...current(5), checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }, { check: "docs", kind: "model", result: "pass" }] }), completed],
       },
     };
-    const { reconcile, delivered, saved, logged } = harness(logs, [head(2), head(3), head(4)]);
+    const { reconcile, delivered, saved, logged } = harness(logs, [head(2), head(3), head(4), head(5)]);
     await reconcile();
     expect(mailedNumbers(delivered)).toEqual([2, 3]);
     const reasons = logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"]);
     expect(reasons).toEqual(["verdict made on head sha2-pushed", "unconfirmed checks: no-merge-conflicts"]);
     const rows = saved.get(REPO) ?? [];
-    expect(rows.filter((row) => row.number !== 4).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === VERSION)).toBe(true);
+    expect(rows.filter((row) => row.number < 4).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === VERSION)).toBe(true);
     expect(rows.find((row) => row.number === 4)).toMatchObject({ status: "triaged", runId: "run_not_asked", workflowVersion: VERSION });
+    // Running checks settle; the completed check_run webhook triages the head again.
+    expect(rows.find((row) => row.number === 5)).toMatchObject({ status: "triaged", runId: "run_ci_pending" });
   });
 
   test("a facts failure evaluates to a degraded verdict naming no head, which is queued again with the facts error", async () => {

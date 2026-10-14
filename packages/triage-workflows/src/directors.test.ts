@@ -404,11 +404,30 @@ describe("judge on a blocked pull request", () => {
     ]);
   });
 
-  test("unknown mergeability is no failure: the judge decides and the head stays unsettled", async () => {
+  test("unknown mergeability is no failure: the judge decides, the pass is unsure and the head stays unsettled", async () => {
     const { asked, verdict } = await judgeAndEvaluate(await facts([], null, false, {}, code), undefined, []);
     expect(asked).toContain("verdict");
-    expect(verdict).toMatchObject({ verdict: "pass", state: "ready-monitoring" });
+    expect(verdict).toMatchObject({ verdict: "unsure", reason: "the decision model passed it, but a rule could not be confirmed" });
     expect(verdict.checks.find((c) => c.check === "no-merge-conflicts")).toMatchObject({ result: "unconfirmed" });
+    expect(unsettledBy(verdict)).toMatchObject({ unconfirmed: true });
+  });
+
+  test("running checks leave the pass unsure, settled, with every Do held until they finish", async () => {
+    const hi = [{ do: "comment", target: { body: "hi" } }];
+    const checkPack = { ...recommendedPack("acme/widgets"), actions: { ...defaultActions(), pass: hi, unsure: hi } };
+    const running = [{ name: "build", status: "in_progress", conclusion: null }];
+    const { verdict } = await judgeAndEvaluate(await facts(running, true, false, { checkPack, automatic: ["comment"] }, code), undefined, []);
+    expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", nextAction: "Wait for checks to finish" });
+    expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "unconfirmed", reason: "checks are still running", evidence: ["build"] });
+    expect(verdict.actions).toEqual([expect.objectContaining({ list: "unsure", kind: "comment", held: true, reason: "CI has not finished on this head." })]);
+    expect(verdict.feedback.endsWith("\n\nWaiting for checks to finish: comment.")).toBe(true);
+    expect(unsettledBy(verdict)).toEqual({});
+  });
+
+  test("a head with no check runs passes CI green as no checks configured", async () => {
+    const { verdict } = await judgeAndEvaluate(await facts([], true, false, {}, code), undefined, []);
+    expect(verdict.verdict).toBe("pass");
+    expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "pass", reason: "no checks configured", evidence: [] });
   });
 });
 
