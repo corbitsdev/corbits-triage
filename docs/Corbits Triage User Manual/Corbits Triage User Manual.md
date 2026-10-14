@@ -32,13 +32,13 @@ You use Corbits Triage through a website called the portal. Your administrator w
 
 Open the portal address. You will see the sign-in screen.
 
-![The sign-in screen: an email field, a password field, a Continue button and a link to create an account](images/01.png)
+![The sign-in screen: an email field, a password field, a Sign in button and a link to create an account](images/01.png)
 
-Type your email address and password and press **Continue**. If your organization uses Google sign-in, a **Continue with Google** button appears instead of, or next to, the password fields. If you forget your password, use the **Reset password** link below the form.
+Type your email address and password and press **Sign in**. If your organization uses Google sign-in, a **Google** button appears instead of, or below, the password fields. If you forget your password, use the **Forgot password?** link under the password field.
 
 ### Creating an account
 
-If you are the first person from your team, click **New here? Create an account**. The form asks for your name, your email address and a password.
+If you are the first person from your team, click **Sign up for an account**. The form asks for your name, your email address and a password.
 
 ![The create-account form with Name, Email and Password fields](images/02.png)
 
@@ -314,7 +314,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **Can I try new rules without affecting anyone?** Yes. On the repository page, change the rules, then use **Preview** at the bottom to run the draft against one open pull request. Nothing is written to GitHub. Press **Discard** if you do not want to keep the changes.
 
-**Where do I change my password?** Sign out, then use **Reset password** on the sign-in screen. A reset link is sent to your email.
+**Where do I change my password?** Sign out, then use **Forgot password?** on the sign-in screen. A reset link is sent to your email.
 
 **How do I remove someone from the workspace?** An Owner or Admin can change or remove a person's role under Settings → Access.
 
