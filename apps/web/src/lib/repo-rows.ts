@@ -1,6 +1,6 @@
-import { repoPolicy } from "@corbits/triage-contracts";
+import { repoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { repoNeedsCheckSetup } from "./check-pack.ts";
-import type { OpenPulls, PrItem, RepoRecord, RepoSource } from "./hub-api.ts";
+import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
