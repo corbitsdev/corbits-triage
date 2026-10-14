@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { AuthLayout, Button, Input, LoginForm } from "@corbits/react-ui";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Button, Input } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { getAuthMethods, requestPasswordReset, signInWithGoogle, type AuthMethods } from "../lib/hub-auth.ts";
 import { useSession } from "../lib/session.tsx";
@@ -18,7 +18,9 @@ function returnedSignInError(): string {
 export function Welcome() {
   const { signIn, signUp, error } = useSession();
   const [mode, setMode] = useState<Mode>("sign-in");
-  const [resetEmail, setResetEmail] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [localError, setLocalError] = useState(returnedSignInError);
   const [methods, setMethods] = useState<AuthMethods | null>(null);
@@ -35,7 +37,8 @@ export function Welcome() {
     void load();
   }, []);
 
-  async function submit({ name, email, password }: { name?: string; email: string; password: string }) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setPending(true);
     setLocalError("");
     try {
@@ -66,8 +69,8 @@ export function Welcome() {
     setPending(true);
     setLocalError("");
     try {
-      await requestPasswordReset(resetEmail);
-      setNotice(`If an account uses ${resetEmail}, a link to set its password is on its way.`);
+      await requestPasswordReset(email);
+      setNotice(`If an account uses ${email}, a link to set its password is on its way.`);
     } catch (cause: unknown) {
       setLocalError(`Could not send the reset email. ${message(cause)}.`);
     } finally {
@@ -85,45 +88,84 @@ export function Welcome() {
 
   if (mode === "reset") {
     return (
-      <AuthLayout brand={<><img src="/triage-logo.svg" width="26" height="26" alt="Corbits" />Triage</>}>
-        <form className="signin-reset" aria-busy={pending} onSubmit={(event) => void resetPassword(event)}>
+      <SignInShell>
+        <div className="signin-head">
           <h1>Reset your password</h1>
+          <p><button type="button" className="signin-link" onClick={() => switchTo("sign-in")}>Back to sign in</button></p>
+        </div>
+        <form className="signin-form" aria-busy={pending} onSubmit={(event) => void resetPassword(event)}>
           <label className="field">
             Email
-            <Input type="email" autoComplete="email" value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} required disabled={pending} />
+            <Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={pending} />
           </label>
           {notice && <p role="status" className="field-help">{notice}</p>}
           {shownError && <p role="alert" className="field-error">{shownError}</p>}
-          <Button type="submit" size="lg" disabled={pending || !resetEmail}>{pending ? "Sending…" : "Send reset link"}</Button>
-          <Button type="button" variant="link" size="sm" onClick={() => switchTo("sign-in")}>Back to sign in</Button>
+          <Button type="submit" size="lg" disabled={pending || !email}>{pending ? "Sending…" : "Send reset link"}</Button>
         </form>
-      </AuthLayout>
+      </SignInShell>
     );
   }
 
+  const signingUp = mode === "sign-up";
+
   return (
-    <AuthLayout brand={<><img src="/triage-logo.svg" width="26" height="26" alt="Corbits" />Triage</>}>
-      <p className="signin-lede">Every pull request sorted by what you need to do, with the reply already written.</p>
-      <LoginForm
-        mode={mode}
-        heading={mode === "sign-up" ? "Create your Triage account" : "Sign in to Triage"}
-        providers={methods?.google ? [{ id: "google", label: "Continue with Google", icon: <GoogleMark /> }] : []}
-        onProvider={() => void continueWithGoogle()}
-        onSubmit={methods?.emailPassword ? (credentials) => void submit(credentials) : undefined}
-        busy={pending}
-        error={shownError}
-        footer={methods?.emailPassword ? (
-          <div className="signin-links">
-            <Button type="button" variant="link" size="sm" onClick={() => switchTo(mode === "sign-up" ? "sign-in" : "sign-up")}>
-              {mode === "sign-up" ? "Have an account? Sign in" : "New here? Create an account"}
-            </Button>
-            {methods.passwordReset && mode === "sign-in" && (
-              <Button type="button" variant="link" size="sm" onClick={() => switchTo("reset")}>Reset password</Button>
-            )}
-          </div>
-        ) : undefined}
-      />
-    </AuthLayout>
+    <SignInShell>
+      <div className="signin-head">
+        <h1>{signingUp ? "Create an account" : "Sign in"}</h1>
+        {methods?.emailPassword && (
+          <p>
+            {signingUp ? "Have an account? " : "New to Corbits Triage? "}
+            <button type="button" className="signin-link" disabled={pending} onClick={() => switchTo(signingUp ? "sign-in" : "sign-up")}>
+              {signingUp ? "Sign in" : "Sign up for an account"}
+            </button>.
+          </p>
+        )}
+      </div>
+      {shownError && <p role="alert" aria-live="assertive" className="field-error">{shownError}</p>}
+      {methods?.emailPassword && (
+        <form className="signin-form" aria-busy={pending} onSubmit={(event) => void submit(event)}>
+          {signingUp && (
+            <label className="field">
+              Name
+              <Input type="text" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required disabled={pending} />
+            </label>
+          )}
+          <label className="field">
+            Email
+            <Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={pending} />
+          </label>
+          <label className="field">
+            Password
+            <Input type="password" autoComplete={signingUp ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} required disabled={pending} />
+          </label>
+          {methods.passwordReset && !signingUp && (
+            <button type="button" className="signin-link signin-forgot" disabled={pending} onClick={() => switchTo("reset")}>Forgot password?</button>
+          )}
+          <Button type="submit" size="lg" disabled={pending}>{pending ? (signingUp ? "Signing up…" : "Signing in…") : signingUp ? "Sign up" : "Sign in"}</Button>
+        </form>
+      )}
+      {methods?.google && (
+        <>
+          {methods.emailPassword && <p className="signin-or">Or with</p>}
+          <Button type="button" variant="outline" size="lg" disabled={pending} aria-label="Continue with Google" onClick={() => void continueWithGoogle()}>
+            <GoogleMark />Google
+          </Button>
+        </>
+      )}
+    </SignInShell>
+  );
+}
+
+function SignInShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="signin">
+      <main className="signin-main">
+        <div className="signin-column">{children}</div>
+      </main>
+      <div className="signin-brand" aria-hidden="true">
+        <span className="signin-wordmark"><img src="/triage-logo.svg" width="48" height="48" alt="" />Corbits Triage</span>
+      </div>
+    </div>
   );
 }
 
