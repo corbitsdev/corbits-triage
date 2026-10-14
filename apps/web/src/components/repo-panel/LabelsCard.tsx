@@ -12,7 +12,6 @@ const RULES_TIP = "Adds a rule label for each rule that failed, as a labels step
 
 type LabelsCardProps = {
   view: PolicyView;
-  /** Whether triage writes labels on its own; undefined while the grants are unknown. */
   automatic: boolean | undefined;
   disabled: boolean;
 };

@@ -7,9 +7,7 @@ import { requestOrigin } from "./hub-origin.ts";
 import { currentDeployment, DECISION_MODEL_ALIAS, isLiveDeployment, listDeployedWorkflows } from "./hub-api.ts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry } from "./workflow-packages.ts";
 
-/** Provider plugin the triage agents infer through (packages/triage-workflows/src/agents.ts). */
 const INFERENCE_PLUGIN = "corbits-system-one";
-/** The tenant's package registry the tool and workflow tarballs are published to. */
 const REGISTRY_NAME = "corbits";
 
 type ModelInfo = { canonicalName: string; offerings: Array<{ offeringId: string; plugin: string; priority: number }> };
@@ -17,7 +15,6 @@ type Asset = { id: string; kind: string; name: string };
 
 export type OfferingSuggestion = { ids: string[]; defaultId: string };
 
-/** The tenant's decision-model offering, or null before one is connected. */
 export async function suggestOfferings(transport: Transport, tenantId: string): Promise<OfferingSuggestion | null> {
   const models = await transport.fetch<ModelInfo[]>("GET", `/api/tenants/${encodeURIComponent(tenantId)}/models`);
   const offering = models
@@ -33,7 +30,6 @@ async function ensureAsset(transport: Transport, tenantId: string, kind: "workfl
     ?? transport.fetch<Asset>("POST", base, { kind, name });
 }
 
-/** Reads a file the portal build wrote to `public/packages`. */
 async function portalPackage(fetchRaw: typeof fetch, file: string): Promise<Response> {
   const response = await fetchRaw(`/packages/${file}`);
   if (!response.ok) throw new Error(`The portal build is missing ${file}.`);
@@ -111,7 +107,6 @@ function newestFirst(a: WorkflowDeployment, b: WorkflowDeployment): number {
   return b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
 }
 
-/** Cancels every live deployment of the asset except the newest. */
 async function cancelSuperseded(transport: Transport, tenantId: string, assetId: string): Promise<void> {
   const deployments = await listWorkflowDeployments(transport, tenantId);
   const ofAsset = deployments.filter((d) => d.definitionAssetId === assetId).sort(newestFirst);

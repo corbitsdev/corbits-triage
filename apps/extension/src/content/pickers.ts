@@ -1,6 +1,5 @@
 import { checkboxFor } from "./act.ts";
 
-/** The sidebar pickers Triage fills, by the label GitHub gives each one's form. */
 const PICKERS = { labels: "Select labels", reviewers: "Select reviewers" } as const;
 
 export type PickerSuggestions = Record<keyof typeof PICKERS, string[]>;
@@ -11,7 +10,7 @@ function rowOf(box: HTMLInputElement): HTMLElement {
   return box.closest<HTMLElement>("[role^='menuitem'], label") ?? box;
 }
 
-/** A small note on a row Triage checked; GitHub's row stays a toggle, so clicking it again takes the suggestion back. */
+/** GitHub's row stays a toggle, so clicking it again takes the suggestion back. */
 function mark(row: HTMLElement): void {
   if (row.querySelector(`.${MARK}`)) return;
   const note = document.createElement("span");

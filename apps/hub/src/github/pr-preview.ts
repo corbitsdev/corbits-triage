@@ -94,7 +94,6 @@ const NO_EFFECTS: EffectContext = {
   },
 };
 
-/** Every file of the pull request, with patches until the evaluation budget is spent, as the facts director reads them. */
 export async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
   const listed: ListedFiles = { files: [], patchChars: 0 };
   let cursor: FilesCursor | undefined = FIRST_FILES_PAGE;
@@ -107,7 +106,6 @@ export async function listFiles(gh: GithubFetch, repo: string, number: number): 
   return listed.files;
 }
 
-/** The candidate pack checked as a stored one is, or why it is refused. */
 function candidatePack(raw: unknown, repo: string): CheckPack | string {
   try {
     return readCheckPack(raw, repo);

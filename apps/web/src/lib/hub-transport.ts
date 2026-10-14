@@ -18,7 +18,6 @@ export function createHubTransport(): Transport {
   return hubTransport(false);
 }
 
-/** Its requests outlive the page, for a write sent as the user leaves it. */
 export function createLeavingHubTransport(): Transport {
   return hubTransport(true);
 }

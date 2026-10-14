@@ -87,7 +87,6 @@ function isPerson(person: HubPrincipal): boolean {
   return person.email !== undefined;
 }
 
-/** Active members, then the open invites passed as `children`, once the members are known. */
 function PeopleTable({ you, children }: { you: string | undefined; children: ReactNode }) {
   const members = usePrincipals();
   if (members.denied) return <DeniedNotice section="people" />;

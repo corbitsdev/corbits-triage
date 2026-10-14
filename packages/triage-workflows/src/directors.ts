@@ -32,7 +32,7 @@ export interface TriageDirectorConfig {
   role: Role;
 }
 
-/** What stock hands a director: the headers it parsed, and the text body apart from them. */
+/** The headers stock parsed, and the text body apart from them. */
 type InboundMail = Pick<InboundMessage, "headers" | "content">;
 
 /** The step input arrives as the inbound message text: the trigger mail, or the output of the action before it. */
@@ -86,7 +86,6 @@ function noFollowUp(): DirectorActions {
   return [];
 }
 
-/** Runs one parallel tool batch at a time and hands the collected results to `then` when every call has answered. */
 function batcher(caps: ReactorCapabilities) {
   let outstanding = 0;
   let results: BatchResults = new Map();
@@ -202,7 +201,6 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       return call("github_list_pr_files", { repo, number: n, offset, ...(patchOffset === undefined ? {} : { patchOffset }), ...(patches ? {} : { patches: false }) }, filesId(n, cursor));
     }
 
-    /** Adds one page of files and returns where the next page starts, if any. */
     function addFiles(n: number, cursor: FilesCursor, result: ToolResult | undefined): FilesCursor | undefined {
       const page = filesPage(result);
       const read = listed.get(n) ?? { files: [], patchChars: 0 };
@@ -268,7 +266,6 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return call("github_read_repo_docs", { repo, offset, ...(ref === undefined ? {} : { ref }) }, `docs:${offset}`);
   }
 
-  /** Reads the repository's docs page by page from `offset` onto `pages`, then hands them, or why they failed, to `then`. */
   function readDocs(repo: string, offset: number, result: ToolResult | undefined, pages: RepoDocsPage[], then: (docs: RepoDocs | string) => DirectorActions): DirectorActions {
     const page = docsPage(result);
     if (typeof page === "string") return then(page);
@@ -282,7 +279,6 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return b.run([docsCall(repo, next, ref)], onNextDocs);
   }
 
-  /** Lists the open pull requests and reads the docs the judge needs, then gathers facts for `targets`, or for all of them when none are named. */
   function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[]) {
     const judged = hasModelChecks(classificationSources(pack));
     return b.run([call("github_list_open_prs", { repo }), ...(judged ? [docsCall(repo, 0)] : [])], function onPrList(r) {
@@ -457,7 +453,6 @@ function automaticDos(v: Verdict): AutomaticDo[] {
   return v.actions.filter(isDo).filter((step) => step.held !== true && v.automatic.includes(step.kind)).map((step) => ({ verdict: v, step }));
 }
 
-/** Why the Do is not run in this run, if it is not. */
 function refusal({ verdict, step }: AutomaticDo): string | undefined {
   return verdict.headSha !== null && decidesDos(verdict) ? unrunnable(step) : NOT_SETTLED;
 }

@@ -1,7 +1,6 @@
 import type { ActionKind, CheckPack, PolicySource } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts } from "./checks.js";
 
-/** Judge answers by the `judgeKey` of the request each answered. */
 export type Judged = Record<string, string>;
 
 export interface Item {
@@ -13,14 +12,10 @@ export interface Item {
   judgeLimitExceeded?: true;
   /** A preview does not run the judge, so the checks it would answer wait on it and a human decides. */
   judgeSkipped?: true;
-  /** Answers an earlier run of this head got, by `judgeKey`; their requests are not asked again. */
   judged?: Judged;
-  /** The Do kinds the pr-triage role is granted on the repository, as the hub's mail said. */
   automatic?: ActionKind[];
   pack?: CheckPack;
-  /** The policy artifact versions `pack` was resolved from, as the hub's mail said. */
   source?: PolicySource;
-  /** Why no facts were gathered; the verdict is then degraded with this reason. */
   error?: string;
 }
 

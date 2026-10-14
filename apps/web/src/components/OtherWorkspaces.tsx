@@ -2,7 +2,6 @@ import { useOpenWorkspaceAfterSending } from "../lib/held-inbox.tsx";
 import { sharesName } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 
-/** The user's other workspaces, for pages shown before the menu that switches between them. */
 export function OtherWorkspaces() {
   const { snapshot } = usePortal();
   const openWorkspace = useOpenWorkspaceAfterSending();

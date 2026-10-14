@@ -1,7 +1,6 @@
 import { asRecord } from "@corbits/common";
 import { LEGACY_SCHEMA_VERSION, VERDICTS, type CheckPack, type CustomCheck, type Step } from "./check-pack.js";
 
-/** The local part of the tenant system sender the hub mails triage requests as. */
 export const TRIAGE_MAIL_SENDER = "github";
 
 const BARE_ADDRESS = /^([^\s@<>",()]+)@([^\s@<>",()]+)$/;
@@ -47,7 +46,6 @@ export function triggerRequestOf(payload: unknown): Record<string, unknown> | un
   return undefined;
 }
 
-/** The `kind` of the mail the hub sends pr-triage when a maintainer approves a held Do. */
 export const APPROVE_DO_KIND = "approve-do";
 
 /** A Do as deployments built before steps read it; one they cannot run as the policy means is left out. */

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 type TokenListProps = {
   values: string[];
-  /** What one value is, for the add control and each remove button. */
   noun: string;
   placeholder?: string;
   mono?: boolean;
@@ -10,7 +9,6 @@ type TokenListProps = {
   onChange: (values: string[]) => void;
 };
 
-/** A list of short values as removable chips, added one at a time. */
 export default function TokenList({ values, noun, placeholder, mono, disabled, onChange }: TokenListProps) {
   const [adding, setAdding] = useState(false);
   const [text, setText] = useState("");

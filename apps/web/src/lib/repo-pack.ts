@@ -15,7 +15,6 @@ import { draftPolicy, packArtifact, transportRepoPackStore, type LoadedRepoPack,
 
 const REPO_POLICY_QUERY_KEY = "repo-policy";
 
-/** The hub store, reading packs and settings through the query cache the repositories table shares. */
 function hubRepoPackStore(queryClient: QueryClient, tenantId: string): RepoPackStore {
   const transport = createHubTransport();
   const direct = transportRepoPackStore(transport, tenantId);
@@ -40,7 +39,6 @@ function hubRepoPackStore(queryClient: QueryClient, tenantId: string): RepoPackS
   };
 }
 
-/** Null until the workspace is known. */
 export function useHubRepoPackStore(): RepoPackStore | null {
   const queryClient = useQueryClient();
   const tenantId = usePortal().snapshot?.workspace.tenantId;
@@ -49,7 +47,6 @@ export function useHubRepoPackStore(): RepoPackStore | null {
   }, [queryClient, tenantId]);
 }
 
-/** What the panel shows before the pack has loaded. */
 function emptySession(repo: string): PackSession {
   return { loaded: null, corrupt: null, saved: fromPack(emptyPack(repo), draftPolicy(repoPolicy(undefined))), unlinked: false };
 }
@@ -64,22 +61,18 @@ export type RepoPack = {
   draft: RepoDraft;
   saved: RepoDraft;
   save: SaveState;
-  /** Why what can be saved still cannot be, and where. */
   problem: DraftProblem | null;
   /** Why the newest artifact for the repository is not a check pack; the next save replaces it in place. */
   corrupt: string | null;
   error: string;
-  /** What another writer also changed while this panel kept its own version. */
   conflicts: string[];
   edit: (update: DraftUpdate) => void;
-  /** Saves now; also how a failed save is tried again. */
   flush: () => void;
   reload: () => void;
 };
 
 type SaveInput = { session: PackSession; draft: RepoDraft };
 
-/** Loads a repository's pack and settings and saves each edit shortly after it is made. */
 export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack {
   const { refreshNow, runBacklog } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();

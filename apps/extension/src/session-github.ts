@@ -16,10 +16,8 @@ const FILES = /^\/repos\/([\w.-]+\/[\w.-]+)\/pulls\/(\d+)\/files$/;
 const CONTENTS = /^\/repos\/([\w.-]+\/[\w.-]+)\/contents\/(.+)$/;
 const FILES_PER_PAGE = 100;
 
-/** What a run reads: a pull request, or only its repository, as when listing the open pull requests. */
 export type ReadTarget = { repo: string; number?: number };
 
-/** A github.com tab whose content script reads as the person, the pull request's own first. */
 async function readerTab(target: ReadTarget): Promise<number | undefined> {
   const own = target.number === undefined ? [] : await browser.tabs.query({ url: `https://github.com/${target.repo}/pull/${target.number}*` });
   const any = own.length ? own : await browser.tabs.query({ url: "https://github.com/*" });
@@ -76,7 +74,6 @@ export async function sessionGithub(pr: ReadTarget, api: PublicGithub | null): P
     return fetch(`https://github.com/${repo}/raw/${path}`, { credentials: "include", cache: "no-store" });
   }
 
-  /** A file at a ref, answered with the API's 404 when it is not there. */
   async function contents(repo: string, file: string, ref: string): Promise<Response> {
     const res = await raw(repo, ref, decodeURIComponent(file));
     if (res.status === 404) return new Response(null, { status: 404 });

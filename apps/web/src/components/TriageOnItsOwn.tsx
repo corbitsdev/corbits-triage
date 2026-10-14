@@ -13,7 +13,6 @@ const EVERYWHERE = "*";
 type TriageOnItsOwnProps = {
   roles: HubRole[];
   grants: HubGrant[];
-  /** The workspace's repositories, offered by the add control. */
   repos: string[];
   loading: boolean;
   denied: boolean;
@@ -81,7 +80,6 @@ function ScopeRow({ kind, scope, repos, disabled, add, remove }: ScopeRowProps) 
   );
 }
 
-/** Per kind of Do, the repositories where the pr-triage role runs it without asking. */
 export default function TriageOnItsOwn({ roles, grants, repos, loading, denied, disabled, addGrant, removeGrants, onError }: TriageOnItsOwnProps) {
   const [pending, setPending] = useState(false);
   const triage = findTriageRole(roles);

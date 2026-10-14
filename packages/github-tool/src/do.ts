@@ -36,7 +36,6 @@ import {
 export class DoNotRunnableError extends Error {}
 export class HeadMovedError extends DoNotRunnableError {}
 
-/** One resolved Do; `effectId` names it on `headSha`, the head its verdict was made on. */
 export type DoStep = { effectId: string; headSha: string; kind: ActionKind; target: ResolvedTarget };
 
 /** `request` is the verdict's own mirror request: it names the pull request, and a close sends its labels and comment as the pane's Close does. */
@@ -55,13 +54,11 @@ const Target = type({ labels: "string[]", "unlabel?": "string[]" })
   .or({ unresolved: "'codeowners'" })
   .or({ "+": "reject", "ciOptional?": "true" });
 
-/** A Do as a caller hands it over the wire. */
 export const DoArgs = type({
   request: { repo: "string", number: "number.integer > 0", labels: "string[]", "owned?": "string[]", comment: "string" },
   step: { effectId: "string > 0", headSha: "string > 0", kind: type.enumerated(...ACTION_KINDS), target: Target },
 });
 
-/** Throws when `args` is not a Do. */
 export function parseDoInput(args: unknown): DoInput {
   const parsed = DoArgs(args);
   if (parsed instanceof type.errors) throw new Error(`invalid Do: ${parsed.summary}`);

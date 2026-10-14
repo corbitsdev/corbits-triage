@@ -24,14 +24,13 @@ const VERSION = "0.1.0-sha-22222222";
 const OLDER = "0.1.0-sha-11111111";
 const NEWER = "0.1.0-sha-33333333";
 
-/** `null` is a deployment not pinned from the package registry. */
 function plan(prs: OpenPr[], rows: readonly PrTriageRow[], now: Date, runs: Array<[OpenPr, ObservedRun[]]> = [], maxInFlight = prs.length, workflowVersion: string | null = VERSION): RepoPlan {
   const byHead = new Map(runs.map(([open, observed]) => [runKey(open.number, open.headSha), observed]));
   const input = { repos: [{ name: REPO, prs, rows }], runs: new Map([[REPO, byHead]]), now, policy: { ...policy, maxInFlight }, workflowVersion: workflowVersion ?? undefined };
   return planTenant(input).get(REPO)!;
 }
 
-/** A row the deployment's current workflow already knows; `null` is one from before verdicts were stamped. */
+/** `null` is one from before verdicts were stamped. */
 function row(number: number, extra: Partial<PrTriageRow>, workflowVersion: string | number | null = VERSION): PrTriageRow {
   const base = { number, headSha: `sha${number}`, status: "new" as const, attempts: 0, firstSeenAt: at(-500).toISOString(), updatedAt: at(-500).toISOString() };
   return { ...base, ...(workflowVersion !== null && { workflowVersion }), ...extra };

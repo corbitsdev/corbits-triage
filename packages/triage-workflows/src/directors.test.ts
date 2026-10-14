@@ -16,7 +16,6 @@ const signal = new AbortController().signal;
 
 type SystemOneRequest = { providerOptions: { systemOne: { state: Record<string, any>; questions: Array<{ id: string; instructions: string }> } } };
 
-/** Runs one judge step per rules chunk, as the workflow's map does; `respond` answers a call's questions as text or fails it. */
 async function judgeChunks(ruled: RulesOutput, respond: (questions: Array<{ id: string }>, call: number) => string | { error: string }) {
   const requests: SystemOneRequest[] = [];
   const output: Array<{ reply: string }> = [];
@@ -38,7 +37,6 @@ async function judgeChunks(ruled: RulesOutput, respond: (questions: Array<{ id: 
   return { requests, judged: { ...ruled, judge: { output } } };
 }
 
-/** Both judge rounds as the workflow runs them: the rules chunks, then focused's follow-ups and the verdict question. */
 async function judgeRounds(ruled: RulesOutput, respond: Parameters<typeof judgeChunks>[1]) {
   const first = await judgeChunks(ruled, respond);
   const { chunks } = await parts(first.judged, ctx, signal);
@@ -46,7 +44,6 @@ async function judgeRounds(ruled: RulesOutput, respond: Parameters<typeof judgeC
   return { requests: [...first.requests, ...second.requests], judged: { ...first.judged, judgeParts: second.judged.judge } };
 }
 
-/** The verdict question answered `verdict`. */
 function verdictAnswer(verdict: "pass" | "fail") {
   const probabilities = verdict === "pass" ? { pass: 0.85, fail: 0.1, cant_tell: 0.05 } : { pass: 0.1, fail: 0.85, cant_tell: 0.05 };
   return { id: "verdict", type: "choice", choice: verdict, probabilities, confidence: 0.9 };
@@ -291,7 +288,6 @@ describe("judge on a blocked pull request", () => {
     return { id, type: "choice", choice, probabilities, confidence: 0.9 };
   }
 
-  /** Runs rules, the judge only when the gate would, and evaluate, as the workflow does. */
   async function judgeAndEvaluate(factsReply: string, judgeError?: string, failing = ["focused"]): Promise<{ asked: string[]; requests: SystemOneRequest[]; verdict: Verdict }> {
     const ruled = await rules({ reply: factsReply }, ctx, signal);
     if (!ruled.needsJudgment) return { asked: [], requests: [], verdict: await evaluate(ruled, ctx, signal) as Verdict };
@@ -620,7 +616,6 @@ describe("execute", () => {
     return { list: "pass", index, kind: "comment", reason: "passes the repository's policy", effectId: `e${index}`, target: { body: "hi" } };
   }
 
-  /** Answers every Do call done, one at a time as the director asks, and returns the calls and its reply. */
   async function execute(verdict: Record<string, unknown>) {
     const calls: ToolCall[] = [];
     let reply: { dos: DoResult[] } | undefined;

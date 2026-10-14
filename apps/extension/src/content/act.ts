@@ -32,7 +32,6 @@ async function sidebar(pr: PrRef): Promise<Document> {
   return new DOMParser().parseFromString(html, "text/html");
 }
 
-/** What the sidebar shows as already set for the kind of action. */
 function currentValues(doc: Document, kind: keyof typeof FORMS): string[] {
   if (kind === "labels") return [...doc.querySelectorAll(".js-issue-labels [data-name]")].map((node) => node.getAttribute("data-name")!);
   if (kind === "assign") return [...doc.querySelectorAll(".js-issue-assignees [data-assignee-name]")].map((node) => node.getAttribute("data-assignee-name")!);
@@ -47,7 +46,6 @@ function boxesOf(menu: ParentNode): HTMLInputElement[] {
   return [...menu.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
 }
 
-/** The names a picker row carries, exactly: its box's value and the name GitHub puts on the row. */
 function namesOf(box: HTMLInputElement): string[] {
   const row = box.closest("label, [role^='menuitem'], li") ?? box.parentElement;
   const named = row?.querySelector("[data-name], [data-assignee-name], [data-login]");

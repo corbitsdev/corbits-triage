@@ -48,7 +48,6 @@ type StubDb = BridgeDeps["db"] & { tenantConfig(): unknown };
 
 const APP_ROW = { id: "crd_app", tenantId: TENANT_ID, name: "github", metadata: { appSlug: "corbits-triage" } };
 
-/** True when a drizzle where clause binds `name` as a parameter. */
 function asksForName(node: unknown, name: string): boolean {
   if (node === name) return true;
   if (!node || typeof node !== "object") return false;
@@ -165,7 +164,6 @@ function bridge(overrides: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Rec
   });
 }
 
-/** Fails the first `failures` accepts, then records. */
 function flakyCoalescer(sent: Sent[], failures: number): BridgeDeps["coalescer"] {
   let calls = 0;
   return {

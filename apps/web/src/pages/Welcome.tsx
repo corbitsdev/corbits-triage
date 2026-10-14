@@ -10,7 +10,6 @@ function message(cause: unknown): string {
   return errorText(cause).replace(/[.\s]*$/, "");
 }
 
-/** better-auth sends the browser back with `?error=<code>` when social sign-in fails. */
 function returnedSignInError(): string {
   const code = new URLSearchParams(window.location.search).get("error");
   return code === null ? "" : `Google sign-in failed (${code.replaceAll("_", " ")}). Use an allowed account, then try again.`;

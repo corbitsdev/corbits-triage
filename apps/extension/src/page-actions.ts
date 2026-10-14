@@ -29,9 +29,7 @@ export type PageAction = {
   teams: string[];
   body?: string;
   href?: string;
-  /** Applied on its own when the person turned that on for the repository. */
   auto: boolean;
-  /** A pack Do, or a step derived from the failing check it names. */
   source: "do" | "check";
 };
 
@@ -59,7 +57,6 @@ function covered(action: PageAction, dos: PageAction[]): boolean {
   return dos.some((step) => step.kind === action.kind && includesAll(step.values, action.values) && includesAll(step.teams, action.teams));
 }
 
-/** The view's Dos, the steps its failing checks point to, then its comments, in that order. */
 export function pageActions(view: TriageView): PageAction[] {
   // A merged or closed pull request has nothing left to apply.
   if (view.ended) return [];

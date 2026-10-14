@@ -60,7 +60,6 @@ function compareOwners(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
-/** Every value the items hold for the facet, counted over the items that pass the other facets' filters. */
 export function facetOptions(items: PrItem[], filters: InboxFilters, facet: FilterFacet, now: number): FilterOption[] {
   const others = { ...filters, [facet]: [] };
   const counts = new Map<string, number>();

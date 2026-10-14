@@ -289,7 +289,6 @@ function readCheckPack(tenantId: string, repo: string) {
 }
 // A tenant's system principal never changes once minted.
 const githubSenderPrincipals = new Map<string, string>();
-/** Hub-written triage state is recorded as the tenant's GitHub system sender. */
 async function githubSenderPrincipal(tenantId: string): Promise<string> {
   const cached = githubSenderPrincipals.get(tenantId);
   if (cached !== undefined) return cached;

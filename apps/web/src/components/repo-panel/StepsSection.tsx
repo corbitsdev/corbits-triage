@@ -31,12 +31,10 @@ function whoOf(to: PeopleTarget["to"]): PeopleTarget {
 
 type StepsSectionProps = {
   view: PolicyView;
-  /** Whether the pr-triage role holds the grant for `kind`; undefined while the grants are unknown. */
   automatic: ((kind: ActionKind) => boolean) | undefined;
   disabled: boolean;
 };
 
-/** What runs on each verdict, as steps; each says whether it runs on its own or waits for you. */
 export default function StepsSection({ view, automatic, disabled }: StepsSectionProps) {
   function pill(verdict: VerdictWord, step: Step) {
     if (!automatic || step.do === "nothing") return <span />;

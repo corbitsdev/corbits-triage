@@ -26,7 +26,6 @@ function OpenLine({ item, note }: { item: PrItem; note?: string }) {
   );
 }
 
-/** A resolved pull request has left the inbox, so it opens on GitHub. */
 function ResolvedLine({ pull }: { pull: ResolvedPull }) {
   return (
     <li>
@@ -123,7 +122,6 @@ function ThisWeek() {
   );
 }
 
-/** A briefing beside the inbox: what changed since the last visit, what is stuck, and each repository's week. */
 export default function Pulse() {
   const { pulse } = usePulse();
   return (

@@ -1,7 +1,6 @@
 import { type } from "arktype";
 import { VERDICTS, type ActionKind, type VerdictWord } from "./check-pack.js";
 
-/** The action list a Do is on: the verdict it runs on. */
 export const DoList = type.enumerated(...VERDICTS);
 
 /**
@@ -13,7 +12,6 @@ export const TRIAGE_ROLE = "pr-triage";
 export const DO_GRANT_ACTION = "invoke";
 export const DO_GRANT_PREFIX = "triage-do";
 
-/** Every Do kind on every repository. */
 export const ANY_DO_RESOURCE = `${DO_GRANT_PREFIX}:*`;
 
 /** Holding `invoke` on it lets a person approve a held Do of `kind` in `repo`, and the pr-triage role run it unattended. */

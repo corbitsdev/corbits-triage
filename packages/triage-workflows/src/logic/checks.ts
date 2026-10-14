@@ -25,7 +25,7 @@ export interface PrFileFacts {
   additions?: number;
   deletions?: number;
   patch?: string;
-  /** The patch was read only in part, past the patch budget, so its later hunks are missing. */
+  /** Past the patch budget. */
   patchTruncated?: true;
 }
 
@@ -45,11 +45,8 @@ export interface PrFacts {
   reviewers?: string[];
   approvals: number;
   changesRequested?: string[];
-  /** The App's own request for changes stands on the pull request. */
   triageRequested?: boolean;
-  /** The author pushed, commented or replied in a review after the newest standing request for changes. */
   reviewAnswered?: boolean;
-  /** Logins whose latest review stands on the current head. */
   reviewedBy?: string[];
   labels?: string[];
   assignees?: string[];
@@ -60,16 +57,13 @@ export interface PrFacts {
   files?: PrFileFacts[];
   body?: string;
   commits?: string[];
-  /** The repository's docs on the default branch, by path. */
   docs?: Record<string, string>;
-  /** The repository's contribution rules on the default branch, by path, read apart from its docs. */
   rules?: Record<string, string>;
   branch?: string;
-  /** Teams the steps are for that the author is an active member of, as the steps write them. */
   authorTeams?: string[];
-  /** Teams the steps are for whose membership GitHub would not confirm either way. */
+  /** Membership GitHub would not confirm either way. */
   authorTeamsUnknown?: string[];
-  /** What woke this run; empty for webhook actions no pack event names. */
+  /** Empty for webhook actions no pack event names. */
   events?: TriageEvent[];
 }
 
@@ -138,7 +132,7 @@ function finish(findings: Finding[], checks: CheckResult[], facts: PrFacts, pack
 
 type RuleOutcome = Pick<CheckResult, "check" | "kind" | "result">;
 
-/** Hard rules that failed, which decide the verdict without the decision model; none on a draft, which is not decided at all. */
+/** None on a draft, which is not decided at all. */
 export function hardFailures<T extends RuleOutcome>(checks: readonly T[]): T[] {
   const failed = checks.filter((c) => c.kind === "machine" && c.result === "fail");
   return failed.some((c) => c.check === NOT_A_DRAFT) ? [] : failed;
@@ -277,7 +271,6 @@ export function packFromInput(raw: unknown): CheckPack | null {
   return pack && dropped.length > 0 ? { ...pack, dropped: [...new Set([...(pack.dropped ?? []), ...dropped])] } : pack;
 }
 
-/** Leftover boolean flags when no pack is supplied. Pack, when present, is the check source. */
 export function deriveState(facts: PrFacts, policy?: unknown, pack?: CheckPack | null): DeterministicResult {
   if (pack) return deriveFromPack(facts, pack);
   const legacy = repoPolicy(policy).checks;

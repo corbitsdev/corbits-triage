@@ -11,7 +11,6 @@ import { dirname } from "node:path";
 export interface DeliveryCacheOptions {
   max?: number;
   ttlMs?: number;
-  /** Omitted keeps the cache in memory only. */
   filePath?: string;
   now?: () => number;
 }
@@ -34,7 +33,6 @@ export class DeliveryCache {
     this.load();
   }
 
-  /** True if id was already seen; otherwise records it. */
   check(id: string): boolean {
     const now = this.now();
     this.prune(now);

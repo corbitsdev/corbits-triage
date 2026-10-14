@@ -4,7 +4,6 @@ import path from "node:path";
 import { errorText } from "@corbits/common";
 import type { CredentialCipher } from "@intx/types";
 
-/** What a hub restart needs to re-spawn an allocation identically. */
 export type LocalSidecarManifest = {
   readonly allocationId: string;
   readonly generation: number;
@@ -18,7 +17,6 @@ export type LocalSidecarManifest = {
 
 export interface LocalSidecarManifestStore {
   write(manifest: LocalSidecarManifest): Promise<void>;
-  /** Reads and decrypts every allocation manifest a previous hub process left behind. */
   readAll(): Promise<LocalSidecarManifest[]>;
   readDataDir(allocationId: string): Promise<string | null>;
   remove(allocationId: string): Promise<void>;
@@ -30,7 +28,6 @@ export type CreateLocalSidecarManifestStoreOpts = {
   readonly log: (entry: Record<string, unknown>) => void;
 };
 
-/** `token` holds the cipher blob, not the plaintext. */
 type StoredManifest = LocalSidecarManifest;
 
 /** Domain-separated from `credentialAad` so a manifest token never decrypts as a credential secret. */

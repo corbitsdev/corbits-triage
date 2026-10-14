@@ -2,7 +2,7 @@ import type { PageAction } from "./page-actions.ts";
 import type { PrRef } from "./pr.ts";
 import { errorText } from "./error-text.ts";
 
-/** What the pages and the content script ask the background worker; it makes every network call. */
+/** The background worker makes every network call. */
 export type Request =
   | { type: "open-panel" }
   /** `if-stale` reuses a recent run, `rescore` re-evaluates the last reads, `refetch` reads GitHub again. */
@@ -15,7 +15,6 @@ export type Replies = {
   "open-prs": OpenPr[];
 };
 
-/** A repository's open pull request, as its list shows it. */
 export type OpenPr = { number: number; title: string; draft: boolean };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -27,11 +26,8 @@ export async function ask<R extends Request>(request: R): Promise<Replies[R["typ
   return reply.value;
 }
 
-/** Sent to a GitHub tab: from the panel, a draft for its comment box or an action to apply; from the background, a read for run `run`. */
 export type TabRequest =
-  /** `key` names the draft, by `actionKey`, so the page can take it back out. */
   | { type: "insert-draft"; key: string; title: string; body: string }
-  /** `post` posts a comment action rather than putting it in the comment box. */
   | { type: "apply-action"; pr: PrRef; action: PageAction; post: boolean }
   | { type: "session-read"; run: string; path: string };
 

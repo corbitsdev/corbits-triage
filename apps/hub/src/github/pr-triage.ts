@@ -37,7 +37,6 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   log: (entry: Record<string, unknown>) => void;
 };
 
-/** What a maintainer's triage request needs: `use` on the App, a connected and enabled repository and a readable policy. */
 export async function readyToTriage(
   deps: PortalCredentialDeps & { readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead> },
   { tenantId, principalId }: Member,

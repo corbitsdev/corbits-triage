@@ -16,11 +16,8 @@ export type ObservedRun = {
   unconfirmed?: true;
   /** Workflow package version of the deployment the run ran on; the row remembers it so a later deployment can tell the head needs triage again. */
   workflowVersion?: string;
-  /** The webhook event that started the run, as `event:action`. */
   trigger?: string;
-  /** Decision-model offering of the deployment the run ran on. */
   offeringId?: string;
-  /** Judge answers the run's verdict says a later run of the same head can reuse. */
   judged?: Judged;
 };
 
@@ -35,7 +32,6 @@ export type ReconcilePolicy = {
   clockSkewMs: number;
   backoffBaseMs: number;
   backoffMaxMs: number;
-  /** Runs the hub queues for one head before it leaves the pull request failed. */
   maxAttempts: number;
   /** A head capped by runs that never started gets a fresh set of attempts this long after it was capped. */
   cappedRetryAfterMs: number;
@@ -90,7 +86,6 @@ export function runKey(number: number, headSha: string): string {
   return `${number}@${headSha}`;
 }
 
-/** The pull request number a `runKey` names. */
 export function runKeyNumber(key: string): number {
   return Number(key.slice(0, key.indexOf("@")));
 }

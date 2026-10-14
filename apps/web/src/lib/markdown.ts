@@ -19,7 +19,6 @@ function demotedHeading(this: { parser: { parseInline: (tokens: Tokens.Heading["
 
 const marked = new Marked({ gfm: true, breaks: true, renderer: { heading: demotedHeading } });
 
-/** Markdown as HTML, not yet sanitized; null when the text is too long or nested too deep to parse safely. */
 export function markdownHtml(text: string): string | null {
   if (text.length > MAX_LENGTH || text.split("\n").some((line) => depth(line) > MAX_DEPTH)) return null;
   try {

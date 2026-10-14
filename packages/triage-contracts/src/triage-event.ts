@@ -3,10 +3,9 @@ import { TRIAGE_EVENTS, type TriageEvent } from "./check-pack.js";
 export interface MailEvent {
   event?: unknown;
   action?: unknown;
-  /** The submitted review, as PrMail carries it. */
   review?: unknown;
   merged?: boolean;
-  /** A coalesced webhook run's triage events (`TriageEvent[]`), in the order seen; `event` and `action` then name the latest. */
+  /** In the order seen; `event` and `action` then name the latest. */
   events?: unknown;
 }
 
@@ -52,7 +51,6 @@ function isTriageEvent(value: unknown): value is TriageEvent {
   return (TRIAGE_EVENTS as readonly unknown[]).includes(value);
 }
 
-/** The events a mail wakes actions on: its `events` when it carries them, else its single event; unique, in order. */
 export function triageEventsOf(mail: MailEvent): TriageEvent[] {
   if (Array.isArray(mail.events)) return [...new Set(mail.events.filter(isTriageEvent))];
   const event = triageEventOf(mail);

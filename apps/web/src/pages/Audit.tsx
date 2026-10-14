@@ -27,7 +27,6 @@ function EntryRow({ entry }: { entry: AuditEntry }) {
   );
 }
 
-/** Everything the workspace recorded, newest first: triage verdicts and Dos, approvals, check changes, members, grants and deployments. */
 export default function Audit() {
   const { snapshot } = usePortal();
   const [repo, setRepo] = useState<string | null>(null);

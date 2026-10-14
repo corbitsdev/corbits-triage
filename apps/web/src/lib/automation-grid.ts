@@ -23,7 +23,6 @@ export function gridCell(role: HubRole, kind: ActionKind, grants: readonly HubGr
   return { granted: own.length > 0, locked: false, grants: own, repos };
 }
 
-/** The roles people hold, owner and admin first. */
 export function gridRoles(roles: readonly HubRole[]): HubRole[] {
   function rank(role: HubRole): number {
     if (system(role, "owner")) return 0;
@@ -56,7 +55,6 @@ export function triageScope(triage: HubRole, kind: ActionKind, grants: readonly 
 
 type NamedRole = { name: string; isSystem?: boolean };
 
-/** What triage does on its own; no person holds it. */
 export function isTriageRole(role: NamedRole): boolean {
   return role.isSystem === true && role.name === TRIAGE_ROLE;
 }
@@ -65,7 +63,6 @@ export function roleName(role: NamedRole): string {
   return role.name.charAt(0).toUpperCase() + role.name.slice(1);
 }
 
-/** Whether the pr-triage role is granted `kind` on `repo`, so triage runs it without asking. */
 export function triageRunsAlone(roles: readonly HubRole[], grants: readonly HubGrant[], kind: ActionKind, repo: string): boolean {
   const triage = findTriageRole(roles);
   if (!triage) return false;

@@ -1,7 +1,6 @@
 const RADIUS = 23;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-/** Readiness from 0 to 100 as an arc in the text colour, leaving orange to the view's one action; a dash when there is nothing to score. */
 export function ScoreRing({ value }: { value: number | null }) {
   const filled = value === null ? 0 : (CIRCUMFERENCE * value) / 100;
   return (

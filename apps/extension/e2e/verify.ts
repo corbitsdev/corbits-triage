@@ -49,7 +49,7 @@ const DEBUG_PORT = 9333;
 
 type Target = { id: string; type: string; url: string; webSocketDebuggerUrl: string };
 
-/** One CDP connection to a target Playwright does not expose, such as the side panel. */
+/** A target Playwright does not expose, such as the side panel. */
 async function cdp(target: Target) {
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((done, fail) => {
@@ -96,7 +96,6 @@ async function targets(): Promise<Target[]> {
   return (await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`)).json()) as Target[];
 }
 
-/** Light and dark, as the Corbits theme follows the system's scheme. */
 async function shootPage(page: Page, name: string): Promise<void> {
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
@@ -105,7 +104,6 @@ async function shootPage(page: Page, name: string): Promise<void> {
   }
 }
 
-/** A part of GitHub's page, in GitHub's light and dark themes, which follow the system's scheme when signed out. */
 async function shootPart(page: Page, part: Locator, name: string): Promise<void> {
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
@@ -167,7 +165,6 @@ async function runState(worker: Worker, of: PrRef = pr): Promise<{ running: bool
   }, prKey(of));
 }
 
-/** The next finished run of a pull request after `before`, failing on a recorded error. */
 async function nextRun(worker: Worker, of: PrRef, what: string, before: string | undefined): Promise<TriageView> {
   return until(what, async function finished() {
     const state = await runState(worker, of);
@@ -186,7 +183,6 @@ async function clickSwitch(panel: Cdp, name: string): Promise<void> {
   if (!clicked) throw new Error(`the panel has no "${name}" switch`);
 }
 
-/** Types into a panel field the way React hears it, by its label's text. */
 async function fillInPanel(panel: Cdp, label: string, value: string): Promise<void> {
   const filled = await panel.evaluate<boolean>(`(() => {
     const field = [...document.querySelectorAll("label")].find((each) => each.textContent === ${JSON.stringify(label)});
@@ -213,7 +209,6 @@ function authedGithub(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`https://api.github.com${path}`, { ...init, headers });
 }
 
-/** What must match: everything the panel shows except when it ran and GitHub's rate counter. */
 function comparable(view: TriageView) {
   return {
     headSha: view.headSha,

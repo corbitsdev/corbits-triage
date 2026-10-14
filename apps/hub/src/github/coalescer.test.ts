@@ -11,7 +11,6 @@ const WINDOW = { quietMs: 30_000, maxWaitMs: 120_000, burstMs: 3_000 };
 
 type Timer = { at: number; fire: () => Promise<void> };
 
-/** Time moves only on `advance`, which fires due timers in order and waits for each. */
 function fakeClock() {
   let now = START;
   const timers = new Set<Timer>();

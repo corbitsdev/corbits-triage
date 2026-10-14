@@ -32,7 +32,6 @@ const decidedLog: RunLog = {
   events: [{ seq: 0, type: "RunStarted", body: { trigger: { payload: stockTriggerMail({ kind: "pr", repo: "acme/widgets", prNumber: 8 }) } } }],
 };
 
-/** A verdict as the hub's triage-verdicts route answers it. */
 function verdict(runId: string, state: string, detail: Record<string, unknown> | null, fields: Partial<PullVerdict> = {}): PullVerdict {
   return {
     runId, at: "2026-10-01T01:00:00.000Z", headSha: "abc", verdict: "unsure", settled: true, state, actor: "maintainer", humanGated: false,
@@ -181,7 +180,6 @@ const membership = (tenantSlug: string, status: Membership["status"]): Membershi
   roles: [],
 });
 
-/** Memberships newest first, as stock /api/me/principals lists them. */
 function membershipHub(memberships: Membership[]) {
   const created: unknown[] = [];
   const transport: Transport = {
