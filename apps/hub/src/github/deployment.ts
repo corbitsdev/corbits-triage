@@ -168,6 +168,8 @@ export type DeploymentRotationDeps = {
   lifecycle: WorkflowLifecycleService;
   /** As the stock deploy route requires. */
   mayDeploy: (principalId: string, tenantId: string) => Promise<boolean>;
+  /** Where the tenant config records this deployment's rotation; the GitHub one keeps the original key. */
+  rotationKey?: string;
 };
 
 export const ROTATION_REASON = "Replaced by a fresh deployment of the same workflow";
@@ -197,12 +199,10 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
     return row.assetId;
   }
 
-  /** `entry` replaces the deployment's own when the workspace's connected hosts changed. */
-  async function redeploy(tenantId: string, anchorRunId: string, entry?: string): Promise<Redeployed> {
+  async function redeploy(tenantId: string, anchorRunId: string): Promise<Redeployed> {
     const spec = await deps.launchSpecs.get(anchorRunId);
     if (!spec) throw new Error(`deployment ${anchorRunId} has no launch spec`);
-    const { source } = spec.frozenApprovalBundle;
-    entry ??= spec.frozenApprovalBundle.entry;
+    const { source, entry } = spec.frozenApprovalBundle;
     if (source.kind !== "asset") throw new Error(`deployment ${anchorRunId} is not deployed from a workflow asset`);
     const pin = pinFor(spec.frozenApprovalBundle);
     const systemPrompt = spec.deployContent["systemPrompt"];
@@ -249,11 +249,11 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
   }
 
   function claim(tenantId: string, record: RotationRecord): Promise<boolean> {
-    return claimRotation(deps.db, tenantId, record);
+    return claimRotation(deps.db, tenantId, record, deps.rotationKey);
   }
 
   function clear(tenantId: string, record: RotationRecord): Promise<void> {
-    return clearRotation(deps.db, tenantId, record);
+    return clearRotation(deps.db, tenantId, record, deps.rotationKey);
   }
 
   return { redeploy, sameSource, release, claim, clear };

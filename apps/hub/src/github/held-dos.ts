@@ -16,6 +16,7 @@ import { doRefused, failure, type PortalCredentialDeps } from "./portal-credenti
 import type { Member } from "../integrations/app.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
 import { DeploymentNotReadyError, newestLive, type LiveDeployment } from "./deployment.js";
+import { triageWorkflowFor } from "./source-workflow.js";
 import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
 
@@ -40,7 +41,7 @@ const MirrorRequest = type({ repo: "string", number: "number", labels: "string[]
 export type GithubHeldDosDeps = PortalCredentialDeps & {
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
   verdicts: Pick<VerdictRecordStore, "forPull">;
-  liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
+  liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
   deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -114,8 +115,9 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     if (approval instanceof Response) return approval;
     if (await superseded(tenantId, repo, number, runId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
 
-    const deployment = newestLive(await deps.liveDeployments(tenantId));
-    if (!deployment) return failure(503, "service_not_running", "The pr-triage service is not running.");
+    const triage = triageWorkflowFor(sourceOf(record));
+    const deployment = newestLive(await deps.liveDeployments(tenantId, triage.id));
+    if (!deployment) return failure(503, "service_not_running", `The ${triage.id} service is not running.`);
     const logged = { tenantId, principalId, runId, repo, number, effectId: body.effectId, kind: approval.step.kind, list: approval.list };
     // A held merge on a Fail or Unsure list may still be approved, and the person approving it is told so.
     const warning = approval.step.kind === "merge" && approval.list !== "pass" ? `The verdict on this head was ${approval.list}, not pass.` : undefined;

@@ -77,7 +77,7 @@ All optional; the defaults suit most installs.
 | `TRIAGE_BATCH_SIZE` | 5 | Pull request heads one catch-up run carries at most. |
 | `TRIAGE_MAX_IN_FLIGHT` | 5 | Heads a tenant may have queued or running at once. Higher trades throughput for a bigger pack each rotation has to receive. |
 | `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
-| `TRIAGE_ROTATE_AFTER_RUNS` | 15 | Runs a `pr-triage` deployment's log may hold before the hub deploys a fresh copy. |
+| `TRIAGE_ROTATE_AFTER_RUNS` | 15 | Runs a pr-triage deployment's log may hold before the hub deploys a fresh copy. |
 | `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run; at most four times this after the first. A new commit or a newly opened pull request waits only 3 seconds (or this, if shorter). Must stay below 150000. |
 
 ### Hub and sidecars
@@ -144,7 +144,8 @@ connection queue for minutes.
    TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API key, or **Add
    my own provider** with a System One–compatible base URL (requests go to
    it + `/systemone`), model and key. The key goes to the hub's vault. Every
-   save deploys `pr-triage` and `pr-triage-historical` afresh; triage is not
+   save deploys `pr-triage-github`, `pr-triage-bitbucket-datacenter` (each
+   only once its host is connected) and `pr-triage-historical` afresh; triage is not
    live until then.
 5. **Turn on triage.** Open a repository under Repositories and turn on
    **Triage pull requests in this repository**; the rules, steps and labels

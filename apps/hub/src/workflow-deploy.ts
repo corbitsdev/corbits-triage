@@ -9,7 +9,7 @@ import { parsePin } from "@intx/tool-packaging";
 import type { WorkflowDeploymentResponse } from "@intx/types";
 import { WorkflowDefinitionInvalidError } from "@intx/workflow-deploy";
 import { failure } from "./github/portal-credential.js";
-import { connectedSources, isTriageEntry, triageEntryFor } from "./github/triage-entry.js";
+import { connectedSources, HISTORICAL_ENTRY, triageWorkflowOf } from "./github/source-workflow.js";
 import type { Member } from "./integrations/app.js";
 
 export const WORKFLOW_DEPLOY_PATH = "/api/integrations/workflow-deploy";
@@ -55,9 +55,11 @@ export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
     if (!tenant) return failure(404, "not_found", "Workspace not found");
     if (!(await tenantAsset(tenantId, body.definitionAssetId, "workflow"))) return failure(404, "not_found", "Workflow asset not found");
     if (!(await tenantAsset(tenantId, body.registryAssetId, "package-registry"))) return failure(404, "not_found", "Package registry asset not found");
-    // The portal names the GitHub entry; the hub deploys the one for the hosts the workspace connected.
-    const entry = isTriageEntry(body.entry) ? triageEntryFor(await connectedSources(deps.db, tenantId)) : body.entry;
-    if (entry === undefined) return failure(409, "source_not_connected", "Connect GitHub or Bitbucket Data Center before deploying pr-triage.");
+    // A host's package binds that host's credential, which an unresolved binding would fail: it deploys once the host is connected.
+    const needs = triageWorkflowOf(body.entry)?.source ?? (body.entry === HISTORICAL_ENTRY ? "github" : undefined);
+    if (needs !== undefined && !(await connectedSources(deps.db, tenantId)).includes(needs)) {
+      return failure(409, "source_not_connected", `Connect ${needs} before deploying ${body.entry.slice(2, -4)}.`);
+    }
 
     let prepared;
     try {
@@ -66,7 +68,7 @@ export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
         anchorRunId: generateId("workflowRun"),
         deploymentDomain: tenant.domain,
         source: { kind: "asset", assetId: body.registryAssetId, package: { format: "tarball" } },
-        entry,
+        entry: body.entry,
         pin: body.pin,
         definitionAssetId: body.definitionAssetId,
         sessionId: generateId("session"),
