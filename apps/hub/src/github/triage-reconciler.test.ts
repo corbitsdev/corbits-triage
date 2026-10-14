@@ -382,11 +382,13 @@ describe("triage reconciler", () => {
     const off = harness({ [repoKey(LIVE.runId)]: {} }, [head(1), head(2)], { pack: emptyPack(REPO) });
     await off.reconcile();
     expect(off.delivered).toHaveLength(0);
-    expect(off.logged.filter((entry) => entry.msg === "triage_skipped_no_rules").map((entry) => entry.pr)).toEqual([1, 2]);
+    await off.reconcile();
+    expect(off.logged.filter((entry) => entry.msg === "triage_skipped_no_rules").map((entry) => entry.pulls)).toEqual([[1, 2]]);
     const unset = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { noPack: true });
     await unset.reconcile();
+    await unset.reconcile();
     expect(unset.delivered).toHaveLength(0);
-    expect(unset.logged).toContainEqual(expect.objectContaining({ msg: "triage_skipped_no_policy", pr: 1 }));
+    expect(unset.logged.filter((entry) => entry.msg === "triage_skipped_no_policy")).toEqual([expect.objectContaining({ pulls: [1] })]);
   });
 
   test("reads only the live deployment's runs and queues to it", async () => {
