@@ -14,7 +14,7 @@
     "tools": "./dist/index.js",
     "credentials": [
       {
-        "handle": "bitbucket"
+        "handle": "bitbucket-datacenter"
       }
     ]
   },

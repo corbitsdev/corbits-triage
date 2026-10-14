@@ -16,18 +16,18 @@ import {
 } from "./client.js";
 import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, isBitbucketRecord, listedRepos } from "./records.js";
 
-export const BITBUCKET_PATH = "/api/integrations/bitbucket";
-export const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket";
-const PROVIDER = "bitbucket";
-const TOKEN_CREDENTIAL = "bitbucket";
-const HOOK_CREDENTIAL = "bitbucket-hook";
+export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
+export const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
+const PROVIDER = "bitbucket-datacenter";
+const TOKEN_CREDENTIAL = "bitbucket-datacenter";
+const HOOK_CREDENTIAL = "bitbucket-datacenter-hook";
 const HOOK_METADATA = { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } };
 
 export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
 export const Connection = type({ baseUrl: "string", hookUrl: "string" });
 export const Connected = type({ baseUrl: "string", hookUrl: "string", hookSecretSet: "true" });
 export const Disconnected = type({ webhooksLeft: "string[]" });
-const BitbucketRepo = type({ name: "string", connected: "boolean", source: "'bitbucket'", "enabled?": "boolean", "defaultBranch?": "string", "webhookId?": "number" });
+const BitbucketRepo = type({ name: "string", connected: "boolean", source: "'bitbucket-datacenter'", "enabled?": "boolean", "defaultBranch?": "string", "webhookId?": "number" });
 export const BitbucketRepos = type({ repositories: BitbucketRepo.array() });
 export const RepoEnabled = type({
   repository: BitbucketRepo,
@@ -57,8 +57,8 @@ function splitName(name: string): [project: string, slug: string] {
 }
 
 function instanceFailed(err: unknown): Response {
-  if (err instanceof BitbucketFailed) return failure(502, "bitbucket_failed", err.message);
-  if (err instanceof TypeError) return failure(502, "bitbucket_unreachable", "The Bitbucket instance could not be reached.");
+  if (err instanceof BitbucketFailed) return failure(502, "bitbucket_datacenter_failed", err.message);
+  if (err instanceof TypeError) return failure(502, "bitbucket_datacenter_unreachable", "The Bitbucket instance could not be reached.");
   throw err;
 }
 
@@ -83,7 +83,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     const credential = await db.query.credential.findFirst({
       where: and(eq(schema.credential.tenantId, member.tenantId), eq(schema.credential.name, name), eq(schema.credential.status, "active")),
     });
-    if (!credential) return failure(409, "bitbucket_not_connected", "Connect Bitbucket first.");
+    if (!credential) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
     if (!(await holds(deps, member.principalId, member.tenantId, `credential:${credential.id}`, "use"))) {
       return failure(403, "forbidden", "You do not have access to the Bitbucket credential.");
     }
@@ -92,7 +92,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
 
   async function instance(member: Member): Promise<BitbucketFetch | Response> {
     const connection = bitbucketConnection(await tenantNs(member.tenantId));
-    if (!connection) return failure(409, "bitbucket_not_connected", "Connect Bitbucket first.");
+    if (!connection) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket first.");
     const token = await secretOf(member, TOKEN_CREDENTIAL);
     if (token instanceof Response) return token;
     return bitbucketFetch(deps.fetchImpl, connection.baseUrl, token);
@@ -171,11 +171,11 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     } catch (err) {
       return instanceFailed(err);
     }
-    if (res.status === 401) return failure(400, "bitbucket_token_invalid", "The Bitbucket instance did not accept the token.");
-    if (!res.ok) return failure(502, "bitbucket_failed", `Bitbucket answered ${res.status}.`);
-    if (!ApplicationProperties.allows(await res.json())) return failure(400, "not_bitbucket", "That URL is not a Bitbucket Data Center instance.");
+    if (res.status === 401) return failure(400, "bitbucket_datacenter_token_invalid", "The Bitbucket instance did not accept the token.");
+    if (!res.ok) return failure(502, "bitbucket_datacenter_failed", `Bitbucket answered ${res.status}.`);
+    if (!ApplicationProperties.allows(await res.json())) return failure(400, "not_bitbucket_datacenter", "That URL is not a Bitbucket Data Center instance.");
     // Bitbucket answers application properties anonymously too, and names the user only when the token signed in.
-    if (!res.headers.has("x-auserid")) return failure(400, "bitbucket_token_invalid", "The Bitbucket instance did not accept the token.");
+    if (!res.headers.has("x-auserid")) return failure(400, "bitbucket_datacenter_token_invalid", "The Bitbucket instance did not accept the token.");
     return undefined;
   }
 
@@ -187,7 +187,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     const ns = await tenantNs(member.tenantId);
     const current = bitbucketConnection(ns);
     if (current && current.baseUrl !== baseUrl && repoRecords(ns).some(isBitbucketRecord)) {
-      return failure(409, "bitbucket_connected_elsewhere", `This workspace is connected to ${current.baseUrl}. Disconnect it first.`);
+      return failure(409, "bitbucket_datacenter_connected_elsewhere", `This workspace is connected to ${current.baseUrl}. Disconnect it first.`);
     }
     const invalid = await verifyToken(baseUrl, body.token);
     if (invalid) return invalid;
@@ -202,7 +202,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     if (hookFailed) return hookFailed;
     const written = await patchCorbitsTriage(db, member.tenantId, async function setConnection(next, tx) {
       await ensureTriageRole(tx, member.tenantId, deps.now());
-      return { ...next, bitbucket: { baseUrl } };
+      return { ...next, bitbucketDatacenter: { baseUrl } };
     });
     if (!written) return failure(404, "not_found", "Workspace not found.");
     return Response.json({ baseUrl, hookUrl: hookUrl(member.tenantId), hookSecretSet: true });
@@ -210,7 +210,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
 
   async function connection(member: Member): Promise<Response> {
     const current = bitbucketConnection(await tenantNs(member.tenantId));
-    if (!current) return failure(404, "bitbucket_not_connected", "Bitbucket is not connected.");
+    if (!current) return failure(404, "bitbucket_datacenter_not_connected", "Bitbucket is not connected.");
     return Response.json({ baseUrl: current.baseUrl, hookUrl: hookUrl(member.tenantId) });
   }
 
@@ -225,7 +225,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       try {
         await deleteWebhook(bb, ...splitName(record.name), record.webhookId!);
       } catch (err) {
-        deps.log({ level: "warn", msg: "bitbucket_webhook_left", tenantId: member.tenantId, repo: record.name, error: String(err) });
+        deps.log({ level: "warn", msg: "bitbucket_datacenter_webhook_left", tenantId: member.tenantId, repo: record.name, error: String(err) });
         left.push(record.name);
       }
     }
@@ -236,7 +236,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     const refused = await manageRefusal(member);
     if (refused) return refused;
     const ns = await tenantNs(member.tenantId);
-    if (!bitbucketConnection(ns)) return failure(404, "bitbucket_not_connected", "Bitbucket is not connected.");
+    if (!bitbucketConnection(ns)) return failure(404, "bitbucket_datacenter_not_connected", "Bitbucket is not connected.");
     const webhooksLeft = await removeWebhooks(member, repoRecords(ns).filter(isBitbucketRecord));
     for (const name of [TOKEN_CREDENTIAL, HOOK_CREDENTIAL]) {
       const removeFailed = await removeCredential(req, member.tenantId, name);
