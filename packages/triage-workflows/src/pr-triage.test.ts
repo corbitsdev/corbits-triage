@@ -153,11 +153,11 @@ function stepInvoker(gh: GithubFetch, invoked: string[], judged: SystemOne[], ju
   };
 }
 
-const RULES_PATH = { invoked: ["triage-facts", "triage-execute", "triage-mirror"], mirrors: ["mirrorRules"] };
+const RULES_PATH = { invoked: ["triage-facts", "triage-mirror", "triage-execute"], mirrors: ["mirrorRules"] };
 // Without judged rules to ask first, the verdict question is the judge's only call.
-const VERDICT_PATH = { invoked: ["triage-facts", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
+const VERDICT_PATH = { invoked: ["triage-facts", "triage-judge", "triage-mirror", "triage-execute"], mirrors: ["mirror"] };
 // `judgeText` fails focused, so the judge is called again for its file questions; a failed judged rule decides Fail without the verdict question.
-const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-execute", "triage-mirror"], mirrors: ["mirror"] };
+const JUDGE_PATH = { invoked: ["triage-facts", "triage-judge", "triage-judge", "triage-mirror", "triage-execute"], mirrors: ["mirror"] };
 
 type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
 
@@ -504,7 +504,8 @@ describe("pr-triage body", () => {
     github.pr.ci = "success";
     await triage(merging, { github });
     const writes = github.requests.filter((request) => request.method === "PUT").map((request) => request.path);
-    expect(writes).toEqual([`/repos/${REPO}/pulls/8/merge`, `/repos/${REPO}/pulls/8/reviews/100`, `/repos/${REPO}/pulls/8/reviews/100/dismissals`]);
+    // The mirror takes the earlier request back before execute merges, so the merge finds the final verdict on the head.
+    expect(writes).toEqual([`/repos/${REPO}/pulls/8/reviews/100`, `/repos/${REPO}/pulls/8/reviews/100/dismissals`, `/repos/${REPO}/pulls/8/merge`]);
   });
 
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {
