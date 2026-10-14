@@ -1,5 +1,5 @@
 import { errorText } from "@corbits/common";
-import { validate, type RepoDraft } from "./pack-draft.ts";
+import { renamedRuleKeys, validate, type RepoDraft } from "./pack-draft.ts";
 import { mergeDrafts } from "./pack-merge.ts";
 import type { PackSession, SaveOutcome } from "./repo-pack-save.ts";
 
@@ -32,9 +32,7 @@ export type Autosave = {
 /** Rules saved for the first time take the ids they were saved under, and keep the key they were shown under. */
 function withRenamedRules(draft: RepoDraft, renamed: Record<string, string>): RepoDraft {
   if (Object.keys(renamed).length === 0) return draft;
-  const ruleKeys = { ...draft.ruleKeys };
-  for (const [from, to] of Object.entries(renamed)) ruleKeys[to] = draft.ruleKeys?.[from] ?? from;
-  return { ...draft, ruleKeys, pack: { ...draft.pack, custom: draft.pack.custom.map((row) => ({ ...row, id: renamed[row.id] ?? row.id })) } };
+  return { ...draft, ruleKeys: renamedRuleKeys(draft.ruleKeys, renamed), pack: { ...draft.pack, custom: draft.pack.custom.map((row) => ({ ...row, id: renamed[row.id] ?? row.id })) } };
 }
 
 /**

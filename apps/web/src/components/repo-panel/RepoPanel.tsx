@@ -98,7 +98,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
             </div>
             {live ? <RepoByline row={row} /> : null}
           </header>
-          {closing && unfinished ? <p role="alert" className="error">Unfinished steps and rules are not saved. Close again to discard them.</p> : null}
+          {closing && unfinished ? <p role="alert" className="error">Unfinished steps and rules are not saved; one that was saved before keeps its saved version. Close again to leave them, or remove them with ×.</p> : null}
           {settings.error ? <p role="alert" className="error">{settings.error} <button type="button" className="linkish" onClick={settings.flush}>Try again</button></p> : null}
           {settings.saved.pack.dropped?.length ? <p className="note">Left out because they no longer run: {settings.saved.pack.dropped.join("; ")}.</p> : null}
           {settings.corrupt ? <p className="note">The saved policy could not be read. The next change replaces it. {settings.corrupt}</p> : null}

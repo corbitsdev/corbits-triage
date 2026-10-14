@@ -1,6 +1,7 @@
 import { Switch } from "@corbits/react-ui";
 import { InfoTooltip } from "@corbits/react-ui/ui/tooltip";
-import { ruleLabel, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
+import { LABEL_MAX, ruleLabel, VERDICTS, type VerdictWord } from "@corbits/triage-contracts";
+import { STEPS_MAX } from "../../lib/pack-draft.ts";
 import type { PolicyView } from "../../lib/use-policy-view.ts";
 import RunPill from "./RunPill.tsx";
 
@@ -21,12 +22,14 @@ export default function LabelsCard({ view, automatic, disabled }: LabelsCardProp
   const labelling = VERDICTS.filter((verdict) => view.ruleLabels[verdict]);
   const on = labelling.length === VERDICTS.length;
   const problem = VERDICTS.map((verdict) => view.labels[verdict].problem).find(Boolean);
+  // Turning it on adds a step to every verdict, which a full verdict has no room for.
+  const full = VERDICTS.filter((verdict) => view.full[verdict] && !view.ruleLabels[verdict]);
 
   function nameField(verdict: VerdictWord) {
     return (
       <label key={verdict} className="lbl-field">
         <span>{VERDICT_NAMES[verdict]}</span>
-        <input className="val lbl" aria-label={`${VERDICT_NAMES[verdict]} label`} maxLength={50} disabled={disabled} value={view.labels[verdict].name} onChange={(event) => view.setLabelName(verdict, event.target.value)} />
+        <input className="val lbl" aria-label={`${VERDICT_NAMES[verdict]} label`} maxLength={LABEL_MAX} disabled={disabled} value={view.labels[verdict].name} onChange={(event) => view.setLabelName(verdict, event.target.value)} />
       </label>
     );
   }
@@ -52,9 +55,10 @@ export default function LabelsCard({ view, automatic, disabled }: LabelsCardProp
               <InfoTooltip label={RULES_TIP} triggerLabel="About failed-rule labels" />
               {labelling.length > 0 && !on ? <span className="model">only on {labelling.map((verdict) => VERDICT_NAMES[verdict]).join(" and ")}</span> : null}
             </div>
+            {!on && full.length > 0 ? <p className="reason">{full.map((verdict) => VERDICT_NAMES[verdict]).join(" and ")} already holds {STEPS_MAX} steps; remove one to label failed rules.</p> : null}
           </div>
           {labelling.length > 0 && automatic !== undefined ? <RunPill automatic={automatic} /> : null}
-          <Switch className="sw" checked={on} onCheckedChange={view.setRuleLabels} label="Also label each failed rule" disabled={disabled} />
+          <Switch className="sw" checked={on} onCheckedChange={view.setRuleLabels} label="Also label each failed rule" disabled={disabled || (!on && full.length > 0)} />
           <span className="rm-gap" />
         </div>
       </div>
