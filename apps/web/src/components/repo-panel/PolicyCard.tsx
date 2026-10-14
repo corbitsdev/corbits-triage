@@ -8,8 +8,10 @@ import { ExternalIcon } from "../inbox-icons.tsx";
 
 type PolicyCardProps = { repo: string; policyFile: ReturnType<typeof usePolicyFile>; disabled: boolean };
 
+const IN_HUB = <>Rules live in the hub. Add <code>{POLICY_FILE_PATH}</code> to the repository to keep them in the file.</>;
+
 function sourceText(file: PolicyFileStatus | null) {
-  if (!file) return "Kept in Corbits Triage.";
+  if (!file) return IN_HUB;
   return <>From <code>{POLICY_FILE_PATH}</code> on the default branch{file.syncedAt ? ` · synced ${relativeTime(file.syncedAt)}` : ""}</>;
 }
 
@@ -46,7 +48,7 @@ export default function PolicyCard({ repo, policyFile, disabled }: PolicyCardPro
   }
 
   if (query.isError) {
-    return <p role="alert" className="error">Could not read {POLICY_FILE_PATH}, so the rules and steps stay read-only: {errorText(query.error)} <button type="button" className="linkish" onClick={() => void query.refetch()}>Try again</button></p>;
+    return <section className="gcard" aria-label="Policy"><header><b>Policy</b><span>Could not read <code>{POLICY_FILE_PATH}</code> right now; the file still decides the rules.</span></header></section>;
   }
   if (file === undefined || (file === null && !stored)) return null;
   return (

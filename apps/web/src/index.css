@@ -1376,6 +1376,8 @@ details.setup-help[open] { display: grid; gap: 12px; }
 .sec > header p { font-size: 13px; margin: 0; }
 .sec > div { display: grid; gap: 12px; align-content: start; min-width: 0; }
 .sec .sentences { border-top: 0; }
+.sec .source { margin-top: 0; }
+.source-body { display: grid; gap: 12px; min-width: 0; padding-bottom: 6px; }
 .sec .person { display: flex; align-items: center; gap: 8px; }
 .sec .person-email { display: block; }
 .sec .invite-blocker { flex-basis: 100%; margin: 0; }
