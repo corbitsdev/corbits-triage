@@ -16,7 +16,7 @@ export const GITHUB_PR_DETAILS_PATH = "/api/integrations/github-pull";
 
 const Query = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "string.integer.parse" }).pipe((q, ctx) => (q.number > 0 ? q : ctx.error("number must be positive")));
 
-export function createGithubPrDetails(deps: PortalCredentialDeps & { githubApiOrigin: string }) {
+export function createGithubPrDetails(deps: PortalCredentialDeps & { githubApiOrigin: string; log: (entry: Record<string, unknown>) => void }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
   return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {
@@ -49,7 +49,7 @@ export function createGithubPrDetails(deps: PortalCredentialDeps & { githubApiOr
       return Response.json({ pr, files, commits, comments, issues, checks, reviews });
     } catch (err) {
       const message = errorText(err);
-      console.log(JSON.stringify({ ts: new Date().toISOString(), level: "warn", msg: "github_pr_details_failed", tenantId, repo: query.repo, number: query.number, error: message }));
+      deps.log({ level: "warn", msg: "github_pr_details_failed", tenantId, repo: query.repo, number: query.number, error: message });
       return failure(502, "github_failed", `Could not read ${query.repo}#${query.number} from GitHub: ${message}.`);
     }
   };

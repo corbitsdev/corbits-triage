@@ -33,6 +33,7 @@ export type CreateLocalProcessSidecarProvisionerOpts = {
   readonly spawnSidecar: SpawnLocalSidecar;
   readonly manifests: LocalSidecarManifestStore;
   readonly stopTimeoutMs?: number;
+  readonly log: (entry: Record<string, unknown>) => void;
 };
 
 
@@ -64,17 +65,6 @@ type AllocationState =
       readonly sidecarId: string;
     };
 
-
-function logAllocation(msg: string, manifest: LocalSidecarManifest): void {
-  console.log(JSON.stringify({
-    ts: new Date().toISOString(),
-    level: "info",
-    msg,
-    allocationId: manifest.allocationId,
-    generation: manifest.generation,
-    sidecarId: manifest.sidecarId,
-  }));
-}
 
 async function waitForExit(managed: ManagedProcess): Promise<true> {
   await managed.handle.exited;
@@ -118,9 +108,20 @@ export function createLocalProcessSidecarProvisioner({
   spawnSidecar,
   manifests,
   stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+  log,
 }: CreateLocalProcessSidecarProvisionerOpts): LocalProcessSidecarProvisioner {
   if (stopTimeoutMs <= 0) {
     throw new Error("Local sidecar stop timeout must be positive");
+  }
+
+  function logAllocation(msg: string, manifest: LocalSidecarManifest): void {
+    log({
+      level: "info",
+      msg,
+      allocationId: manifest.allocationId,
+      generation: manifest.generation,
+      sidecarId: manifest.sidecarId,
+    });
   }
 
   const allocations = new Map<string, AllocationState>();

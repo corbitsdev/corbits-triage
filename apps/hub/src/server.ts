@@ -48,7 +48,7 @@ import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
@@ -110,15 +110,15 @@ const database = databaseConfig(env);
 const githubOrigin = githubApiOrigin(env);
 const sidecarAdapterManifest = buildSidecarAdapterManifest(env.HUB_DATA_DIR, githubOrigin);
 
-await Bun.$`bunx drizzle-kit migrate`.cwd(`${V}/packages/db`).env({ PATH: process.env["PATH"], HOME: process.env["HOME"], ...migrationEnv(database) }).quiet();
-console.log("migrations applied");
-await migrateWebhooks(database);
+await Bun.$`bunx drizzle-kit migrate`.cwd(`${V}/packages/db`).env({ ...childProcessEnv(env), ...migrationEnv(database) }).quiet();
+logJson({ level: "info", msg: "migrations_applied" });
+await migrateWebhooks(database, logJson);
 {
   const { schema = "public", statementTimeoutMs: _, ...connection } = database;
   await runArtifactMigrations(connection, { schema });
-  console.log("artifact migrations applied");
+  logJson({ level: "info", msg: "artifact_migrations_applied" });
   await runCronMigrations(connection, { schema });
-  console.log("cron migrations applied");
+  logJson({ level: "info", msg: "cron_migrations_applied" });
 }
 
 const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
@@ -130,11 +130,14 @@ const local = createLocalProcessSidecarProvisioner({
     interchangeDir: V,
     credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
     adapterManifest: sidecarAdapterManifest,
+    processEnv: childProcessEnv(env),
   }),
   manifests: createLocalSidecarManifestStore({
     dataRoot: localSidecarDataRoot,
     cipher: credentialCipher,
+    log: logJson,
   }),
+  log: logJson,
 });
 
 let shuttingDown = false;
@@ -252,6 +255,7 @@ const githubPrDetails = createGithubPrDetails({
   cipher: composition.credentialCipher,
   githubApiOrigin: githubOrigin,
   authorize: authorizePortal,
+  log: logJson,
 });
 
 const openPullsCache = createOpenPullsCache(now);
@@ -578,14 +582,13 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
 triageLoop.start();
 recordLoop.start();
 
-console.log(JSON.stringify({
-  ts: new Date().toISOString(),
+logJson({
   level: "info",
-  msg: "hub composition",
+  msg: "hub_composition",
   workflows: EXPECTED_DEPLOYMENT_SET.workflows,
   tools: EXPECTED_DEPLOYMENT_SET.tools,
   webhookMount: HOOK_MOUNT_PATH,
-}));
+});
 
 export default {
   ...stock,
