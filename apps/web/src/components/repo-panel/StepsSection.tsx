@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Textarea } from "@corbits/react-ui";
 import { alwaysHeld, VERDICTS, type ActionKind, type PeopleTarget, type ReviewTarget, type Step, type StepKind, type VerdictWord } from "@corbits/triage-contracts";
+import { STEPS_MAX } from "../../lib/pack-draft.ts";
 import { FOR_NAMES, forChoice, freshStep, STEP_DO_NAMES, STEP_DOS, withFor, type ForChoice } from "../../lib/policy-view.ts";
 import { logins, type PolicyView, type StepRow } from "../../lib/use-policy-view.ts";
 import RunPill from "./RunPill.tsx";
@@ -114,13 +115,12 @@ export default function StepsSection({ view, automatic, disabled }: StepsSection
 
   function verdictRow(verdict: VerdictWord) {
     const rows = view.steps[verdict];
-    const empty = view.labels[verdict] ? "Only its labels, below." : "Nothing happens.";
     return (
       <div key={verdict} className="then" id={`rp-list-${verdict}`}>
         <div className="vh"><b className="vw">{VERDICT_NAMES[verdict]}</b></div>
         <div className="steps">
-          {rows.length ? rows.map((row, position) => stepRow(verdict, row, position)) : <p className="none">{empty}</p>}
-          <button type="button" className="linkish quiet step-add" disabled={disabled} onClick={() => view.addStep(verdict)}>+ Add a step</button>
+          {rows.length ? rows.map((row, position) => stepRow(verdict, row, position)) : <p className="none">Nothing beyond its labels, below.</p>}
+          {view.full[verdict] ? <p className="none">A verdict holds at most {STEPS_MAX} steps.</p> : <button type="button" className="linkish quiet step-add" disabled={disabled} onClick={() => view.addStep(verdict)}>+ Add a step</button>}
         </div>
       </div>
     );
