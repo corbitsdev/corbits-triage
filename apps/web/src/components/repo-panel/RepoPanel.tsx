@@ -33,8 +33,8 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const { draft, problem } = settings;
   const view = usePolicyView(draft, settings.edit);
   const policyFile = usePolicyFile(repo.name, settings.reload);
-  // The file is the policy: an edit here would be replaced by the next push.
-  const fromFile = Boolean(policyFile.file.data);
+  // The file is the policy: an edit here would be replaced by the next push. Until the file is known, it may exist.
+  const fromFile = policyFile.file.isPending || policyFile.file.isError || Boolean(policyFile.file.data);
   const grants = useGrants();
   const roles = useRoles();
   const grantsKnown = ![grants, roles].some((section) => section.loading || section.unavailable || section.denied);

@@ -31,11 +31,16 @@ export function baseMoveOf(event: string, p: Json): BaseMove | null {
   return pr.base?.ref === p.repository.default_branch ? { repo, merged: pr.number } : null;
 }
 
-/** The repository a push to its default branch that touched `path` came from; null for anything else. */
+/**
+ * The repository a push to its default branch that may have changed `path` came from; null for anything else. A forced
+ * push's commits need not list what it replaced, so it always counts.
+ */
 export function policyPushOf(event: string, p: Json, path: string): string | null {
   const repo = p?.repository?.full_name;
-  if (event !== "push" || typeof repo !== "string" || p.ref !== `refs/heads/${p.repository.default_branch}` || !Array.isArray(p.commits)) return null;
-  const touched = p.commits.some((commit: Json) => [commit?.added, commit?.modified].some((paths) => Array.isArray(paths) && paths.includes(path)));
+  if (event !== "push" || typeof repo !== "string" || p.ref !== `refs/heads/${p.repository.default_branch}`) return null;
+  if (p.forced === true) return repo;
+  const commits: Json[] = Array.isArray(p.commits) ? p.commits : [];
+  const touched = commits.some((commit) => [commit?.added, commit?.modified, commit?.removed].some((paths) => Array.isArray(paths) && paths.includes(path)));
   return touched ? repo : null;
 }
 
