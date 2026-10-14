@@ -1,0 +1,24 @@
+{
+  "size": 1,
+  "limit": 25,
+  "isLastPage": true,
+  "values": [
+    {
+      "name": "admin",
+      "emailAddress": "admin@example.com",
+      "active": true,
+      "displayName": "admin",
+      "id": 3,
+      "slug": "admin",
+      "type": "NORMAL",
+      "links": {
+        "self": [
+          {
+            "href": "https://bitbucket.example/users/admin"
+          }
+        ]
+      }
+    }
+  ],
+  "start": 0
+}

@@ -1,0 +1,236 @@
+{
+  "size": 4,
+  "limit": 100,
+  "isLastPage": true,
+  "values": [
+    {
+      "id": 9,
+      "createdDate": 1791999692523,
+      "user": {
+        "name": "admin",
+        "emailAddress": "admin@example.com",
+        "active": true,
+        "displayName": "admin",
+        "id": 3,
+        "slug": "admin",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example/users/admin"
+            }
+          ]
+        }
+      },
+      "action": "COMMENTED",
+      "commentAction": "ADDED",
+      "comment": {
+        "properties": {
+          "repositoryId": 2
+        },
+        "id": 4,
+        "version": 0,
+        "text": "Please also add multiply.",
+        "author": {
+          "name": "admin",
+          "emailAddress": "admin@example.com",
+          "active": true,
+          "displayName": "admin",
+          "id": 3,
+          "slug": "admin",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example/users/admin"
+              }
+            ]
+          }
+        },
+        "createdDate": 1791999692517,
+        "updatedDate": 1791999692517,
+        "comments": [
+          {
+            "properties": {
+              "repositoryId": 2
+            },
+            "id": 6,
+            "version": 0,
+            "text": "Agreed, multiply next.",
+            "author": {
+              "name": "admin",
+              "emailAddress": "admin@example.com",
+              "active": true,
+              "displayName": "admin",
+              "id": 3,
+              "slug": "admin",
+              "type": "NORMAL",
+              "links": {
+                "self": [
+                  {
+                    "href": "https://bitbucket.example/users/admin"
+                  }
+                ]
+              }
+            },
+            "createdDate": 1791999844974,
+            "updatedDate": 1791999844974,
+            "comments": [],
+            "threadResolved": false,
+            "severity": "NORMAL",
+            "state": "OPEN",
+            "permittedOperations": {
+              "editable": true,
+              "transitionable": true,
+              "deletable": true
+            }
+          }
+        ],
+        "threadResolved": false,
+        "severity": "NORMAL",
+        "state": "OPEN",
+        "permittedOperations": {
+          "editable": true,
+          "transitionable": true,
+          "deletable": true
+        }
+      }
+    },
+    {
+      "id": 8,
+      "createdDate": 1791999692407,
+      "user": {
+        "name": "admin",
+        "emailAddress": "admin@example.com",
+        "active": true,
+        "displayName": "admin",
+        "id": 3,
+        "slug": "admin",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example/users/admin"
+            }
+          ]
+        }
+      },
+      "action": "COMMENTED",
+      "commentAction": "ADDED",
+      "comment": {
+        "properties": {
+          "repositoryId": 2
+        },
+        "id": 3,
+        "version": 0,
+        "text": "<!-- corbits-triage -->\nTriage: looks fine.",
+        "author": {
+          "name": "admin",
+          "emailAddress": "admin@example.com",
+          "active": true,
+          "displayName": "admin",
+          "id": 3,
+          "slug": "admin",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example/users/admin"
+              }
+            ]
+          }
+        },
+        "createdDate": 1791999692399,
+        "updatedDate": 1791999692399,
+        "comments": [],
+        "threadResolved": false,
+        "severity": "NORMAL",
+        "state": "OPEN",
+        "permittedOperations": {
+          "editable": true,
+          "transitionable": true,
+          "deletable": true
+        }
+      }
+    },
+    {
+      "id": 6,
+      "createdDate": 1791999673750,
+      "user": {
+        "name": "admin",
+        "emailAddress": "admin@example.com",
+        "active": true,
+        "displayName": "admin",
+        "id": 3,
+        "slug": "admin",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example/users/admin"
+            }
+          ]
+        }
+      },
+      "action": "COMMENTED",
+      "commentAction": "ADDED",
+      "comment": {
+        "properties": {
+          "repositoryId": 2
+        },
+        "id": 2,
+        "version": 0,
+        "text": "@triage again please",
+        "author": {
+          "name": "admin",
+          "emailAddress": "admin@example.com",
+          "active": true,
+          "displayName": "admin",
+          "id": 3,
+          "slug": "admin",
+          "type": "NORMAL",
+          "links": {
+            "self": [
+              {
+                "href": "https://bitbucket.example/users/admin"
+              }
+            ]
+          }
+        },
+        "createdDate": 1791999673731,
+        "updatedDate": 1791999673731,
+        "comments": [],
+        "threadResolved": false,
+        "severity": "NORMAL",
+        "state": "OPEN",
+        "permittedOperations": {
+          "editable": true,
+          "transitionable": true,
+          "deletable": true
+        }
+      }
+    },
+    {
+      "id": 4,
+      "createdDate": 1791998939168,
+      "user": {
+        "name": "admin",
+        "emailAddress": "admin@example.com",
+        "active": true,
+        "displayName": "admin",
+        "id": 3,
+        "slug": "admin",
+        "type": "NORMAL",
+        "links": {
+          "self": [
+            {
+              "href": "https://bitbucket.example/users/admin"
+            }
+          ]
+        }
+      },
+      "action": "OPENED"
+    }
+  ],
+  "start": 0
+}
