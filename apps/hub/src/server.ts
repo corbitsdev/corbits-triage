@@ -44,6 +44,7 @@ import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.j
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX, PACK_SCHEMA_PATH } from "./integrations/app.js";
+import { createBitbucketIntegration } from "./bitbucket/integration.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -539,6 +540,18 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     allowedEmails: signIn.allowedEmails,
     linkOrigin: inviteLinkOrigin(env),
     sendEmail: smtp?.invite,
+    now,
+    log: logJson,
+  }),
+  bitbucket: createBitbucketIntegration({
+    db: composition.db,
+    cipher: composition.credentialCipher,
+    authorize: authorizePortal,
+    stockFetch: async function stockFetch(req) {
+      return composition.app.fetch(req);
+    },
+    publicOrigin: new URL(env.BETTER_AUTH_BASE_URL).origin,
+    fetchImpl: fetch,
     now,
     log: logJson,
   }),

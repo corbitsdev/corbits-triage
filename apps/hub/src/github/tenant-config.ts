@@ -11,6 +11,11 @@ const CONFIG_KEY = "corbitsTriage";
 export type RepoRecord = {
   name: string;
   connected: boolean;
+  /** Absent means GitHub. */
+  source?: "github" | "bitbucket";
+  defaultBranch?: string;
+  /** The Bitbucket webhook triage created, so disabling removes only its own. */
+  webhookId?: number;
   installationId?: number;
   account?: string;
   installationUrl?: string;
@@ -29,6 +34,7 @@ export type InstallationFields = {
 
 export type CorbitsTriageNs = {
   repos?: RepoRecord[];
+  bitbucket?: unknown;
   allowlist?: unknown;
   labelMap?: unknown;
   rev?: number;
