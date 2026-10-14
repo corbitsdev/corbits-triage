@@ -119,7 +119,7 @@ describe("deriveState check output", () => {
     const outputs = Object.fromEntries(deriveState(facts, undefined, pack).checks.map((check) => [check.check, check.output]));
     expect(outputs).toMatchObject({
       "not-a-draft": { kind: "values", values: { isDraft: true } },
-      "ci-green": { kind: "values", values: { status: "pending" } },
+      "ci-green": { kind: "could-not-check", reason: "checks are still running" },
       "no-merge-conflicts": { kind: "values", values: { hasConflicts: false } },
       "no-forbidden-paths": { kind: "values", values: { touchesForbiddenPaths: true } },
       "max-files-changed": { kind: "values", values: { files: 1 } },

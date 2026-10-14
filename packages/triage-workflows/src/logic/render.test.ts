@@ -142,7 +142,7 @@ describe("focused rendering", () => {
     expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, humanGated: false, degraded: null, score: 0.5, reasons: ["Not confirmed: makes one focused change"] });
     expect(verdict.checks).toEqual([{ check: "focused", kind: "model", result: "unconfirmed", reason: "not enough evidence to decide", evidence: [], output: { kind: "score", score: 50, passAt: 60, items: [] } }]);
     expect(verdict.feedback).toBe(`${UNSURE}${UNSURE_FOCUSED}`);
-    expect(focusedVerdict(focusedAnswer(0.5, 0.4), undefined, CHOICE.pass)).toMatchObject({ verdict: "unsure", reason: "the decision model passed it, but a judged rule could not be confirmed" });
+    expect(focusedVerdict(focusedAnswer(0.5, 0.4), undefined, CHOICE.pass)).toMatchObject({ verdict: "unsure", reason: "the decision model passed it, but a rule could not be confirmed" });
   });
 
   test.each([
