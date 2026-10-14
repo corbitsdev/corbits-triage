@@ -5,7 +5,9 @@
 import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
-import { inFlight, planTenant, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
+import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
+import { summarizeChecks } from "@corbits/github-reads";
+import type { HeadChecksReader } from "./tenant-open-heads.js";
 import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
@@ -35,6 +37,11 @@ export type TriageReconcilerDeps = {
   rotation: DeploymentRotation;
   /** Undefined when the tenant holds no credential for any pull request host. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
+  /**
+   * For a host that sends no webhook when a build finishes: the build statuses of a settled head whose verdict waits on
+   * CI are read again on the unconfirmed retry interval, with backoff, and the head queued once they changed.
+   */
+  headChecks?: HeadChecksReader;
   /** Reads and records the live deployments' runs, shared with the recording loop. */
   observeTenant: TenantObserver["observe"];
   store: TriageStateStore;
@@ -94,7 +101,53 @@ function mergeRows(theirs: readonly PrTriageRow[], ours: readonly PrTriageRow[])
   return [...merged, ...byHead.values()];
 }
 
+const BUILD_STATUS_CHANGED = "build_status_changed";
+
+type BuildPoll = { polls: number; at: number };
+
+function waitsOnCi(verdict: { checks: ReadonlyArray<{ check: string; result: string }> }): boolean {
+  return verdict.checks.some((check) => check.check === "ci-green" && check.result === "unconfirmed");
+}
+
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
+  /** Heads whose builds were read since their verdict; lost on restart, when the verdict's own time starts the interval again. */
+  const buildPolls = new Map<string, BuildPoll>();
+
+  function latestVerdict(pass: TenantPass, repo: string, row: PrTriageRow) {
+    return pass.runs.verdicts.filter((verdict) => verdict.repo === repo && verdict.number === row.number && verdict.headSha === row.headSha).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
+  }
+
+  /** Queues a settled head whose CI the verdict waited on once its build statuses are no longer pending. */
+  async function pollBuilds(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan): Promise<void> {
+    if (!deps.headChecks) return;
+    const name = repo.record.name;
+    const now = deps.now().getTime();
+    for (const row of plan.rows) {
+      if (row.status !== "triaged") continue;
+      const key = `${pass.tenantId}\n${name}\n${runKey(row.number, row.headSha)}`;
+      const verdict = latestVerdict(pass, name, row);
+      if (!verdict || !waitsOnCi(verdict)) {
+        buildPolls.delete(key);
+        continue;
+      }
+      const poll = buildPolls.get(key) ?? { polls: 0, at: verdict.startedAt.getTime() };
+      if (poll.polls >= deps.policy.maxAttempts || now - poll.at < Math.min(deps.policy.unconfirmedRetryMs * 2 ** poll.polls, deps.policy.backoffMaxMs)) continue;
+      let ci: ReturnType<typeof summarizeChecks>;
+      try {
+        ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
+      } catch (err) {
+        deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
+        continue;
+      }
+      if (ci === "pending") {
+        buildPolls.set(key, { polls: poll.polls + 1, at: now });
+        continue;
+      }
+      buildPolls.delete(key);
+      requeue(plan, row, BUILD_STATUS_CHANGED, deps.now());
+    }
+  }
+
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
@@ -376,6 +429,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     let failure: Failure | undefined;
     for (const repo of loaded) {
       try {
+        await pollBuilds(pass, repo, plans.get(repo.record.name)!);
         failure = await deliverRepo(pass, repo, plans.get(repo.record.name)!, failure);
       } catch (err) {
         failure = { repo: repo.record.name, error: err };
