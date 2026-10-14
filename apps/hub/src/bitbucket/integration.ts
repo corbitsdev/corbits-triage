@@ -1,0 +1,317 @@
+// A workspace's Bitbucket Data Center connection. Secrets are stock credentials written through the stock routes as the
+// caller, so stock authz decides who may store them; the namespace holds only the instance URL.
+import { randomBytes } from "node:crypto";
+import { type } from "arktype";
+import { and, eq } from "drizzle-orm";
+import { schema } from "@intx/db";
+import { credentialAad } from "@intx/types";
+import { ensureTriageRole } from "../github/automation.js";
+import { failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
+import { patchCorbitsTriage, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
+import type { Member } from "../integrations/app.js";
+import { asCaller } from "../stock-caller.js";
+import {
+  BitbucketFailed, bitbucketFetch, createWebhook, defaultBranch, deleteWebhook, InstanceRepo, instanceBaseUrl, pagedValues, readRepo,
+  WEBHOOK_EVENTS, webhookExists, type BitbucketFetch,
+} from "./client.js";
+import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enableRepo, isBitbucketRecord, listedRepos } from "./records.js";
+
+export const BITBUCKET_PATH = "/api/integrations/bitbucket";
+export const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket";
+const PROVIDER = "bitbucket";
+const TOKEN_CREDENTIAL = "bitbucket";
+const HOOK_CREDENTIAL = "bitbucket-hook";
+const HOOK_METADATA = { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } };
+
+export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
+export const Connection = type({ baseUrl: "string", hookUrl: "string" });
+export const Connected = type({ baseUrl: "string", hookUrl: "string", hookSecretSet: "true" });
+export const Disconnected = type({ webhooksLeft: "string[]" });
+const BitbucketRepo = type({ name: "string", connected: "boolean", source: "'bitbucket'", "enabled?": "boolean", "defaultBranch?": "string", "webhookId?": "number" });
+export const BitbucketRepos = type({ repositories: BitbucketRepo.array() });
+export const RepoEnabled = type({
+  repository: BitbucketRepo,
+  webhook: "'created' | 'manual'",
+  hookUrl: "string",
+  "hookSecret?": "string",
+  "events?": "string[]",
+});
+export const RepoDisabled = type({ repository: BitbucketRepo, webhookLeft: "boolean" });
+
+const ApplicationProperties = type({ version: "string", displayName: "string" });
+const StockRow = type({ id: "string", name: "string", "status?": "string", "apiBaseUrl?": "string | null" });
+const StockPage = type({ data: StockRow.array(), "nextCursor?": "string | null" });
+
+export type BitbucketDeps = PortalCredentialDeps & {
+  stockFetch: (req: Request) => Promise<Response>;
+  /** The hub's public origin; behind a TLS proxy the request URL is not. */
+  publicOrigin: string;
+  fetchImpl: typeof fetch;
+  now: () => Date;
+  log: (entry: Record<string, unknown>) => void;
+};
+
+function splitName(name: string): [project: string, slug: string] {
+  const at = name.indexOf("/");
+  return [name.slice(0, at), name.slice(at + 1)];
+}
+
+function instanceFailed(err: unknown): Response {
+  if (err instanceof BitbucketFailed) return failure(502, "bitbucket_failed", err.message);
+  if (err instanceof TypeError) return failure(502, "bitbucket_unreachable", "The Bitbucket instance could not be reached.");
+  throw err;
+}
+
+export function createBitbucketIntegration(deps: BitbucketDeps) {
+  const { db } = deps;
+
+  function hookUrl(tenantId: string): string {
+    return `${deps.publicOrigin}${BITBUCKET_HOOK_PATH}/${encodeURIComponent(tenantId)}`;
+  }
+
+  async function manageRefusal(member: Member): Promise<Response | undefined> {
+    if (await deps.authorize(member.principalId, member.tenantId, `tenant:${member.tenantId}`, "manage")) return undefined;
+    return failure(403, "forbidden", "You do not have permission to manage this workspace.");
+  }
+
+  async function tenantNs(tenantId: string): Promise<CorbitsTriageNs> {
+    const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
+    return triageNs(tenant?.config);
+  }
+
+  async function secretOf(member: Member, name: string): Promise<string | Response> {
+    const credential = await db.query.credential.findFirst({
+      where: and(eq(schema.credential.tenantId, member.tenantId), eq(schema.credential.name, name), eq(schema.credential.status, "active")),
+    });
+    if (!credential) return failure(409, "bitbucket_not_connected", "Connect Bitbucket first.");
+    if (!(await holds(deps, member.principalId, member.tenantId, `credential:${credential.id}`, "use"))) {
+      return failure(403, "forbidden", "You do not have access to the Bitbucket credential.");
+    }
+    return deps.cipher.decrypt(credential.secret, credentialAad(credential.id, "secret"));
+  }
+
+  async function instance(member: Member): Promise<BitbucketFetch | Response> {
+    const connection = bitbucketConnection(await tenantNs(member.tenantId));
+    if (!connection) return failure(409, "bitbucket_not_connected", "Connect Bitbucket first.");
+    const token = await secretOf(member, TOKEN_CREDENTIAL);
+    if (token instanceof Response) return token;
+    return bitbucketFetch(deps.fetchImpl, connection.baseUrl, token);
+  }
+
+  function stock(req: Request, method: string, path: string, body?: unknown): Promise<Response> {
+    return deps.stockFetch(asCaller(req, method, path, body));
+  }
+
+  async function stockRows(req: Request, path: string): Promise<Array<typeof StockRow.infer> | Response> {
+    const rows: Array<typeof StockRow.infer> = [];
+    let cursor: string | null | undefined;
+    do {
+      const res = await stock(req, "GET", `${path}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+      if (!res.ok) return res;
+      const page = StockPage.assert(await res.json());
+      rows.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return rows;
+  }
+
+  async function ensureProvider(req: Request, tenantId: string, apiBaseUrl: string): Promise<string | Response> {
+    const base = `/api/tenants/${encodeURIComponent(tenantId)}/providers`;
+    const rows = await stockRows(req, `${base}?inherited=false&limit=100`);
+    if (rows instanceof Response) return rows;
+    const existing = rows.find((row) => row.name === PROVIDER);
+    if (existing) {
+      if (existing.apiBaseUrl === apiBaseUrl) return existing.id;
+      const patched = await stock(req, "PATCH", `${base}/${encodeURIComponent(existing.id)}`, { plugin: "http", apiBaseUrl });
+      return patched.ok ? existing.id : patched;
+    }
+    const created = await stock(req, "POST", base, { name: PROVIDER, plugin: "http", apiBaseUrl });
+    if (!created.ok) return created;
+    return StockRow.assert(await created.json()).id;
+  }
+
+  async function resolveCredential(req: Request, tenantId: string, name: string): Promise<typeof StockRow.infer | undefined | Response> {
+    const res = await stock(req, "GET", `/api/tenants/${encodeURIComponent(tenantId)}/credentials/resolve/${encodeURIComponent(name)}`);
+    if (res.status === 404) return undefined;
+    if (!res.ok) return res;
+    return StockRow.assert(await res.json());
+  }
+
+  /** Writes the secret, unless `keep` and an active credential already holds one. */
+  async function writeCredential(
+    req: Request,
+    tenantId: string,
+    providerId: string,
+    value: { name: string; secret: string; metadata?: Record<string, unknown>; keep?: boolean },
+  ): Promise<Response | undefined> {
+    const base = `/api/tenants/${encodeURIComponent(tenantId)}/credentials`;
+    const existing = await resolveCredential(req, tenantId, value.name);
+    if (existing instanceof Response) return existing;
+    if (existing === undefined) {
+      const created = await stock(req, "POST", base, { providerId, name: value.name, type: "api_key", secret: value.secret, ...(value.metadata && { metadata: value.metadata }) });
+      return created.ok ? undefined : created;
+    }
+    if (value.keep && existing.status === "active") return undefined;
+    const patched = await stock(req, "PATCH", `${base}/${encodeURIComponent(existing.id)}`, { secret: value.secret, status: "active", ...(value.metadata && { metadata: value.metadata }) });
+    return patched.ok ? undefined : patched;
+  }
+
+  async function removeCredential(req: Request, tenantId: string, name: string): Promise<Response | undefined> {
+    const existing = await resolveCredential(req, tenantId, name);
+    if (existing === undefined || existing instanceof Response) return existing;
+    const deleted = await stock(req, "DELETE", `/api/tenants/${encodeURIComponent(tenantId)}/credentials/${encodeURIComponent(existing.id)}`);
+    return deleted.ok || deleted.status === 404 ? undefined : deleted;
+  }
+
+  /** The token is tried once against the instance and stored only when the instance accepts it. */
+  async function verifyToken(baseUrl: string, token: string): Promise<Response | undefined> {
+    let res: Response;
+    try {
+      res = await bitbucketFetch(deps.fetchImpl, baseUrl, token)("/rest/api/1.0/application-properties");
+    } catch (err) {
+      return instanceFailed(err);
+    }
+    if (res.status === 401) return failure(400, "bitbucket_token_invalid", "The Bitbucket instance did not accept the token.");
+    if (!res.ok) return failure(502, "bitbucket_failed", `Bitbucket answered ${res.status}.`);
+    if (!ApplicationProperties.allows(await res.json())) return failure(400, "not_bitbucket", "That URL is not a Bitbucket Data Center instance.");
+    // Bitbucket answers application properties anonymously too, and names the user only when the token signed in.
+    if (!res.headers.has("x-auserid")) return failure(400, "bitbucket_token_invalid", "The Bitbucket instance did not accept the token.");
+    return undefined;
+  }
+
+  async function connect(body: typeof ConnectBody.infer, member: Member, req: Request): Promise<Response> {
+    const refused = await manageRefusal(member);
+    if (refused) return refused;
+    const baseUrl = instanceBaseUrl(body.baseUrl);
+    if (!baseUrl) return failure(400, "invalid_request", "baseUrl must be an http(s) URL without credentials, query or fragment.");
+    const ns = await tenantNs(member.tenantId);
+    const current = bitbucketConnection(ns);
+    if (current && current.baseUrl !== baseUrl && repoRecords(ns).some(isBitbucketRecord)) {
+      return failure(409, "bitbucket_connected_elsewhere", `This workspace is connected to ${current.baseUrl}. Disconnect it first.`);
+    }
+    const invalid = await verifyToken(baseUrl, body.token);
+    if (invalid) return invalid;
+    const providerId = await ensureProvider(req, member.tenantId, baseUrl);
+    if (providerId instanceof Response) return providerId;
+    const tokenFailed = await writeCredential(req, member.tenantId, providerId, { name: TOKEN_CREDENTIAL, secret: body.token });
+    if (tokenFailed) return tokenFailed;
+    // An existing hook secret is kept: webhooks already on the instance sign with it.
+    const hookFailed = await writeCredential(req, member.tenantId, providerId, {
+      name: HOOK_CREDENTIAL, secret: randomBytes(32).toString("hex"), metadata: HOOK_METADATA, keep: true,
+    });
+    if (hookFailed) return hookFailed;
+    const written = await patchCorbitsTriage(db, member.tenantId, async function setConnection(next, tx) {
+      await ensureTriageRole(tx, member.tenantId, deps.now());
+      return { ...next, bitbucket: { baseUrl } };
+    });
+    if (!written) return failure(404, "not_found", "Workspace not found.");
+    return Response.json({ baseUrl, hookUrl: hookUrl(member.tenantId), hookSecretSet: true });
+  }
+
+  async function connection(member: Member): Promise<Response> {
+    const current = bitbucketConnection(await tenantNs(member.tenantId));
+    if (!current) return failure(404, "bitbucket_not_connected", "Bitbucket is not connected.");
+    return Response.json({ baseUrl: current.baseUrl, hookUrl: hookUrl(member.tenantId) });
+  }
+
+  /** Webhooks triage created that could not be removed, by repository name. */
+  async function removeWebhooks(member: Member, records: RepoRecord[]): Promise<string[]> {
+    const hooked = records.filter((record) => record.webhookId !== undefined);
+    if (hooked.length === 0) return [];
+    const bb = await instance(member);
+    if (bb instanceof Response) return hooked.map((record) => record.name);
+    const left: string[] = [];
+    for (const record of hooked) {
+      try {
+        await deleteWebhook(bb, ...splitName(record.name), record.webhookId!);
+      } catch (err) {
+        deps.log({ level: "warn", msg: "bitbucket_webhook_left", tenantId: member.tenantId, repo: record.name, error: String(err) });
+        left.push(record.name);
+      }
+    }
+    return left;
+  }
+
+  async function disconnectRoute(member: Member, req: Request): Promise<Response> {
+    const refused = await manageRefusal(member);
+    if (refused) return refused;
+    const ns = await tenantNs(member.tenantId);
+    if (!bitbucketConnection(ns)) return failure(404, "bitbucket_not_connected", "Bitbucket is not connected.");
+    const webhooksLeft = await removeWebhooks(member, repoRecords(ns).filter(isBitbucketRecord));
+    for (const name of [TOKEN_CREDENTIAL, HOOK_CREDENTIAL]) {
+      const removeFailed = await removeCredential(req, member.tenantId, name);
+      if (removeFailed) return removeFailed;
+    }
+    await patchCorbitsTriage(db, member.tenantId, disconnect);
+    return Response.json({ webhooksLeft });
+  }
+
+  async function repositories(member: Member): Promise<Response> {
+    const bb = await instance(member);
+    if (bb instanceof Response) return bb;
+    let values: unknown[];
+    try {
+      values = await pagedValues(bb, "/rest/api/1.0/repos");
+    } catch (err) {
+      return instanceFailed(err);
+    }
+    const names = values.map((value) => InstanceRepo.assert(value)).map((repo) => bitbucketRepoName(repo.project.key, repo.slug));
+    return Response.json({ repositories: listedRepos(await tenantNs(member.tenantId), names) });
+  }
+
+  async function keptOrCreatedWebhook(bb: BitbucketFetch, member: Member, project: string, slug: string, previous: number | undefined): Promise<number | undefined | Response> {
+    if (previous !== undefined && (await webhookExists(bb, project, slug, previous))) return previous;
+    const secret = await secretOf(member, HOOK_CREDENTIAL);
+    if (secret instanceof Response) return secret;
+    return createWebhook(bb, project, slug, hookUrl(member.tenantId), secret);
+  }
+
+  async function enable(member: Member, project: string, slug: string): Promise<Response> {
+    const refused = await manageRefusal(member);
+    if (refused) return refused;
+    const bb = await instance(member);
+    if (bb instanceof Response) return bb;
+    try {
+      const repo = await readRepo(bb, project, slug);
+      if (!repo) return failure(404, "repo_not_found", "The Bitbucket instance has no such repository, or the token cannot see it.");
+      const name = bitbucketRepoName(repo.project.key, repo.slug);
+      const branch = await defaultBranch(bb, repo.project.key, repo.slug);
+      if (branch === undefined) return failure(409, "repo_empty", "The repository has no default branch yet. Push one first.");
+      const stored = repoRecords(await tenantNs(member.tenantId)).find((record) => record.name === name);
+      if (stored && !isBitbucketRecord(stored)) return failure(409, "repo_name_taken", `A GitHub repository is already named ${name}.`);
+      const webhookId = await keptOrCreatedWebhook(bb, member, repo.project.key, repo.slug, stored?.webhookId);
+      if (webhookId instanceof Response) return webhookId;
+      const written = await patchCorbitsTriage(db, member.tenantId, function enableBitbucketRepo(ns) {
+        return enableRepo(ns, name, branch, webhookId);
+      });
+      const repository = written && repoRecords(written).find((record) => record.name === name);
+      if (!repository) return failure(404, "not_found", "Workspace not found.");
+      const url = hookUrl(member.tenantId);
+      if (webhookId !== undefined) return Response.json({ repository, webhook: "created", hookUrl: url });
+      const hookSecret = await secretOf(member, HOOK_CREDENTIAL);
+      if (hookSecret instanceof Response) return hookSecret;
+      return Response.json({ repository, webhook: "manual", hookUrl: url, hookSecret, events: WEBHOOK_EVENTS });
+    } catch (err) {
+      return instanceFailed(err);
+    }
+  }
+
+  async function disable(member: Member, project: string, slug: string): Promise<Response> {
+    const refused = await manageRefusal(member);
+    if (refused) return refused;
+    const name = bitbucketRepoName(project, slug);
+    const stored = repoRecords(await tenantNs(member.tenantId)).find((record) => record.name === name && isBitbucketRecord(record));
+    if (!stored) return failure(404, "repo_not_found", "No Bitbucket repository by that name is recorded.");
+    const webhookLeft = (await removeWebhooks(member, [stored])).length > 0;
+    const written = await patchCorbitsTriage(db, member.tenantId, function disableBitbucketRepo(ns) {
+      return disableRepo(ns, name);
+    });
+    const repository = written && repoRecords(written).find((record) => record.name === name);
+    if (!repository) return failure(404, "not_found", "Workspace not found.");
+    return Response.json({ repository, webhookLeft });
+  }
+
+  return { connect, connection, disconnect: disconnectRoute, repositories, enable, disable };
+}
+
+export type BitbucketHandlers = ReturnType<typeof createBitbucketIntegration>;
