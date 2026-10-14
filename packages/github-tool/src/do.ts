@@ -147,7 +147,10 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
     }
     case "close": {
       onHead(pr.sha, request, step);
-      return { status: "done", result: await mirror(gh, { ...request, close: true }) };
+      const result = await mirror(gh, { ...request, close: true }, login);
+      // Closed between the read above and the mirror's own.
+      if ("skipped" in result) return { status: "satisfied", result: { closed: true } };
+      return { status: "done", result };
     }
     case "comment": {
       if (!("body" in target)) throw new Error("this comment Do has no body");
