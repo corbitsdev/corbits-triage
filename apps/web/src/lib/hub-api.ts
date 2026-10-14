@@ -1206,7 +1206,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess, has
 
 export const BITBUCKET_DATACENTER_CREDENTIAL_NAME = "bitbucket-datacenter";
 
-export function hasBitbucketDatacenterCredential(credentials: HubCredential[]): boolean {
+function hasBitbucketDatacenterCredential(credentials: HubCredential[]): boolean {
   return credentials.some((item) => item.name === BITBUCKET_DATACENTER_CREDENTIAL_NAME && item.status.toLowerCase() === "active");
 }
 
@@ -1528,8 +1528,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
   }
 }
 
-
-export type BitbucketDatacenterConnection = { baseUrl: string; hookUrl: string };
+type BitbucketDatacenterConnection = { baseUrl: string; hookUrl: string };
 
 export type BitbucketDatacenterEnabled =
   | { webhook: "created"; hookUrl: string }
@@ -1548,11 +1547,11 @@ const BITBUCKET_DATACENTER_REFUSALS: Record<string, string> = {
   repo_name_taken: "A GitHub repository in this workspace has the same name, so this one cannot be triaged.",
 };
 
-/** The hub takes a mutation only as JSON from the portal, so bodiless ones send `{}`. */
 function bitbucketDatacenterPath(tenantId: string, path: string): string {
   return `/api/integrations/bitbucket-datacenter/${enc(requireTenantId(tenantId))}${path}`;
 }
 
+/** The hub takes a mutation only as JSON from the portal, so bodiless ones send `{}`. */
 async function bitbucketDatacenter<T>(transport: Transport, method: string, tenantId: string, path: string, body?: unknown): Promise<T> {
   try {
     return await transport.fetch<T>(method, bitbucketDatacenterPath(tenantId, path), body);

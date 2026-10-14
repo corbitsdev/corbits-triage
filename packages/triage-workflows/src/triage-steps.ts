@@ -23,7 +23,7 @@ const RULED = { project: outputOf("rules"), fields: ["items", "batch"] } as cons
 // Actions cannot reach a bound credential on this Interchange pin, so the deterministic facts, execute and mirror steps run
 // as directors, reaching GitHub through the tool's credential, until upstream exposes credentials to actions. The judge maps over the
 // rules output's chunks, one System One call each; a second map asks focused's file questions only for the items it failed,
-// and makes no call otherwise. An approval mail skips triage and executes the one held Do it names. The mirror writes the
+// and makes no call otherwise. An approval mail skips triage and executes the one held action it names. The mirror writes the
 // verdict's comment and label (or build status) before execute, so a merge or close finds them on the head it closes; a
 // mirror on a closed pull request would write nothing. Each gate branch evaluates, mirrors and executes on its own: a live run never
 // hands a skipped step's output to a selector, so a join after the gate could not read the judge when it was skipped.

@@ -96,7 +96,8 @@ export type ActiveTenant = { id: string; domain: string };
  */
 export async function activeTenants(db: DB["db"], definitionName: string, what: "runs" | "deployments", endedSince?: Date): Promise<ActiveTenant[]> {
   const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
-  const recent = endedSince === undefined ? undefined : gt(workflowRun.endedAt, endedSince);
+  const running = eq(workflowRun.status, "running");
+  const childRuns = endedSince === undefined ? running : or(running, gt(workflowRun.endedAt, endedSince));
   return db
     .selectDistinct({ id: tenant.id, domain: tenant.domain })
     .from(workflowRun)
@@ -105,7 +106,7 @@ export async function activeTenants(db: DB["db"], definitionName: string, what: 
     .where(and(
       eq(workflowDefinition.name, definitionName),
       what === "runs" ? ne(workflowRun.id, workflowRun.anchorRunId) : eq(workflowRun.id, workflowRun.anchorRunId),
-      what === "runs" ? (recent ? or(eq(workflowRun.status, "running"), recent) : eq(workflowRun.status, "running")) : inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
+      what === "runs" ? childRuns : inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
     ));
 }
 

@@ -123,10 +123,3 @@ export function triageAgents(sources: Sources) {
     }),
   };
 }
-
-const github = triageAgents(GITHUB);
-
-export const factsAgent = github.facts;
-export const judgeAgent = github.judge;
-export const executeAgent = github.execute;
-export const mirrorAgent = github.mirror;

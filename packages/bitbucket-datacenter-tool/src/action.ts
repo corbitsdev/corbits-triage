@@ -1,10 +1,9 @@
 import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
-import { ciRefusal, mergeableCi, type CiState } from "@corbits/github-reads";
-import { defaultReviewers } from "@corbits/bitbucket-datacenter-reads";
+import { ciRefusal, mergeableCi, summarizeChecks } from "@corbits/github-reads";
+import { defaultReviewers, getChecks } from "@corbits/bitbucket-datacenter-reads";
 import { type } from "arktype";
 import {
   addReviewers,
-  buildStates,
   createComment,
   listComments,
   mergePr,
@@ -16,7 +15,6 @@ import {
   statusOf,
   type BitbucketFetch,
   type BitbucketUser,
-  type BuildState,
   type MirrorInput,
   type PullRequest,
 } from "./bitbucket";
@@ -82,13 +80,6 @@ function closedOutcome(kind: ActionKind, pr: PullRequest): ActionOutcome {
   throw new ActionNotRunnableError(NOT_OPEN);
 }
 
-function ciState(states: BuildState[]): CiState {
-  if (!states.length) return "none";
-  if (states.some((s) => s === "FAILED" || s === "CANCELLED")) return "failure";
-  if (states.some((s) => s === "INPROGRESS" || s === "UNKNOWN")) return "pending";
-  return "success";
-}
-
 async function postOnce(bb: BitbucketFetch, input: { repo: string; number: number; userId: number; marker: string; body: string }): Promise<ActionOutcome> {
   const posted = (await listComments(bb, input.repo, input.number)).find((c) => c.author.id === input.userId && c.text.includes(input.marker));
   if (posted) return { status: "satisfied", result: { commentId: posted.id } };
@@ -144,7 +135,7 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
     // Builds and reviews are read again here because a held merge can be approved long after its verdict; Bitbucket's merge checks stay the backstop.
     case "merge": {
       onHead(pr.sha, request, step);
-      const ci = ciState(await buildStates(bb, step.headSha));
+      const ci = summarizeChecks(await getChecks(bb, step.headSha));
       if (!mergeableCi(ci, "ciOptional" in target)) throw new ActionNotRunnableError(ciRefusal(ci));
       const me = await user();
       const requested = pr.reviewers.filter((r) => r.status === "NEEDS_WORK" && r.user.id !== me.id).map((r) => r.user.slug);

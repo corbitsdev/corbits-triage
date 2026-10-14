@@ -7,9 +7,8 @@ import { mailPayload } from "./bridge.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks } from "@corbits/github-reads";
-import type { HeadChecksReader } from "./tenant-open-heads.js";
 import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
-import type { OpenHeadsReader } from "./tenant-open-heads.js";
+import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
@@ -152,12 +151,11 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
     // Without a policy, or with every rule off, triage has nothing to decide: no run starts and nothing is written to the pull request.
-    const skipped = read.status !== "ok" ? "triage_skipped_no_policy" : hasEnabledRules(read.pack) ? undefined : "triage_skipped_no_rules";
-    if (skipped !== undefined) {
-      for (const pr of prs) deps.log({ level: "info", msg: skipped, tenantId: pass.tenantId, repo: repo.record.name, pr: pr.number, headSha: pr.headSha });
+    if (read.status !== "ok" || !hasEnabledRules(read.pack)) {
+      const msg = read.status === "ok" ? "triage_skipped_no_rules" : "triage_skipped_no_policy";
+      for (const pr of prs) deps.log({ level: "info", msg, tenantId: pass.tenantId, repo: repo.record.name, pr: pr.number, headSha: pr.headSha });
       return undefined;
     }
-    if (read.status !== "ok") return undefined;
     const stored = await deps.store.load(pass.tenantId, triageStateKey(repo.record));
     return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored };
   }
