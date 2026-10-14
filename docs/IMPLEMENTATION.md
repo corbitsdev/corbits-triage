@@ -19,11 +19,15 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/portal.ts` | Serves the built portal (`PORTAL_DIR`) and exact-origin CORS (`PORTAL_ORIGIN`). |
 | `src/hooks.ts` | `@corbits/webhooks` mount and its migrations. |
 | `src/integrations/app.ts` | The `/api/integrations/*` routes and their OpenAPI descriptions. |
+| `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role; gives admins the same on older policies at start. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
 | `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`, pull request events → coalescer. |
+| `src/github/check-pack-store.ts` | Reads a repository's policy: the pinned artifact, else the newest titled one, resolved over any workspace policy it extends. |
+| `src/github/policy-read.ts` | The route that serves a repository's policy as triage reads it. |
+| `src/github/backlog-triage.ts` | The route that mails `pr-triage-historical` to triage a repository's open pull requests again. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates `pr-triage` deployments and redeploys failed ones. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
@@ -81,7 +85,9 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
 - `github-tool`: the mirror write (marker-comment upsert), Dos and the sidecar
   tool bundles.
 - `github-write-tool`: build wrapper for the write bundle.
-- `triage-contracts`: policy schema (`schemaVersion` 2), repository settings, triage state,
+- `triage-contracts`: policy schema (`schemaVersion` 2) with the workspace
+  policy and override schemas, `resolve-policy.ts` (a repository policy over
+  the workspace policy it extends), repository settings, triage state,
   verdict labels, trigger mail and shared types.
 - `openai-null-delta`: inference adapter fix for null stream deltas.
 - `common`: dependency-free helpers shared across apps and packages.

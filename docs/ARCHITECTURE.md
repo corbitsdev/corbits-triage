@@ -46,9 +46,13 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   - **Integration routes** under `/api/integrations/`: sign-in methods,
     GitHub App setup and installation sync, open pull requests, details,
     actions, Dos, previews (API only; the portal no longer calls it) and single
-    pull request triage, latest verdicts,
-    triage stats and timeline, the policy schema, invitations, and
-    workflow deploy and versions. Each is described in `/openapi.json`. Pull request
+    pull request triage, latest verdicts, triage stats and timeline, the
+    policy schemas, invitations, and workflow deploy and versions.
+    `GET /api/integrations/github-triage/{tenantId}/policy?repo=` answers a
+    repository's policy as triage reads it, and
+    `POST /api/integrations/github-triage/{tenantId}/backlog` starts backlog
+    triage, so only the hub resolves policies and builds trigger mail.
+    Each is described in `/openapi.json`. Pull request
     actions are synchronous: a maintainer's click must not wait on a
     workflow spin-up.
 - **Sidecars**: one per live deployment, started by the hub's
@@ -67,8 +71,8 @@ executes and ends.
 - `pr-triage`: one mail names one pull request, or a batch of heads from
   the reconciler, and triages them.
 - `pr-triage-historical`: one run that triages every open pull request of a
-  repository. The portal starts it when a user turns triage on for the
-  repository, or clicks **Triage open pull requests again**.
+  repository. The hub mails it through its backlog route when a user turns
+  triage on for the repository, or clicks **Triage open pull requests again**.
 
 The bridge and the reconciler find the target by workflow name per tenant; no
 deployment ids are configured anywhere.
@@ -101,7 +105,7 @@ one does.
 The hub reads which kinds the `pr-triage` system role is granted, `invoke` on
 `triage-do:<kind>:<owner>/<name>`, and mails them with each trigger; the run
 trusts them only from the hub's sender. Close on an Unsure verdict, and merge on anything but Pass,
-are always held. The hub mails the policy twice: `pack` as stored, and `checkPack` in the shape a deployment built before steps reads, without the steps it would run wrongly. At start the hub
+are always held. The hub mails the policy twice: `pack` as resolved from the repository policy and any workspace policy it extends, and `checkPack` in the shape a deployment built before steps reads, without the steps it would run wrongly. At start the hub
 grants the role comment and labels on each repository still set to post
 automatically, then drops that setting. A person holding the same grant approves a held Do, or one the run failed or could
 not write, from the inbox: the hub checks the grants below and mails the
@@ -135,7 +139,9 @@ behalf and never return it; writes are pull request actions and triage; approvin
 A pull request action from the portal that is a Do kind (comment, labels,
 assign, request review, approve, request changes, close, merge) also checks `invoke`
 on `triage-do:<kind>:<owner>/<name>`, the repository name in lowercase; the
-admin role holds `triage-do:*` from GitHub setup, and owners hold every grant. In a run, the repository's policy decides when to
+admin role holds `triage-do:*` from GitHub setup, and owners hold every grant.
+A member given the `pr-triage` role is refused every Do until it is removed,
+so what triage does unattended never becomes what a person may do. In a run, the repository's policy decides when to
 approve, and only a head that passes with CI green is approved, from the
 newest verdict. Where triage mirrors and its policy approves, a settled head
 that may not be approved dismisses the approvals the approve Do made; one
@@ -147,10 +153,33 @@ Hub routes that reach GitHub for the portal use the same adapter.
 
 - Interchange's own tables, artifacts and run logs hold tenants, credentials,
   deployments and runs.
-- Artifacts: the policy (`check-pack/{owner}/{repo}`) and the triage state
-  (`triage-state/{owner}/{repo}`) per repository. The triage state holds each
-  open head's status (`new`, `queued`, `running`, `triaged`, `failed`,
-  `stale`) and attempts.
+- Artifacts: the policy and the triage state (`triage-state/{owner}/{repo}`)
+  per repository. The policy is the artifact the repository's record pins by
+  id (`checkPack.id`), which the portal writes when it saves the policy; a
+  repository not saved since pins existed, or whose pinned policy is
+  archived, falls back to the newest artifact titled `check-pack/{owner}/{repo}`.
+  Reading writes nothing. The triage state holds each open head's status
+  (`new`, `queued`, `running`, `triaged`, `failed`, `stale`) and attempts.
+  Each new artifact is writable and archivable by its creator and the admin
+  role, and owners hold every grant; at start the admin role is granted the
+  same on policies made before.
+- Workspace policies (`workspace-policy/{name}`) have a policy's shape without
+  a repository, and the stock artifact list finds them with
+  `?query=workspace-policy/`. A repository policy that sets `extends` to one's
+  artifact id is resolved over it whenever it is read (`resolvePolicy`):
+  built-in rules merge field by field per rule id, so a repository row with
+  `enabled: false` switches a shared rule off and one that sets only a limit
+  keeps the shared switch; a repository custom rule replaces the shared one of
+  the same id whole and the rest follow the shared ones, at most eight
+  together; `when`, each verdict's steps and each verdict's label come from
+  the repository only when it sets them. A workspace policy is a default, not a floor: an override
+  may switch off or replace any of it, and only the policies' creators, admins
+  and owners can write either. An archived workspace policy still applies to
+  the repositories extending it. The portal shows such a policy resolved and
+  refuses to save over it. Each trigger mail names what its pack was resolved
+  from under `policy.source` (`{ repo: { id, version }, shared?: { id,
+  version } }`), read when the event was accepted, so a run records which
+  versions it used.
 - Triage tables, in the `corbits_triage` schema: `verdict` (verdicts per
   head, with the outcomes of the Dos their run executed), applied from `apps/hub/migrations` at hub start in one
   transaction under an advisory lock. Nothing else is stored: the GitHub App
