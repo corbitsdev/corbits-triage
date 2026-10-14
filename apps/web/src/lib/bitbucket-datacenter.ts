@@ -49,10 +49,13 @@ export function mergeRepositories(stored: RepoRecord[], listed: RepoRecord[] | u
   return [...stored, ...(listed ?? []).filter((repo) => !names.has(repo.name))];
 }
 
-export function useRepositories(): RepoRecord[] {
+/** `pending` until the Bitbucket Data Center repositories are known, or known to be none. */
+export function useRepositories(): { repos: RepoRecord[]; pending: boolean } {
   const { snapshot } = usePortal();
-  const listed = useBitbucketDatacenterRepositories().data;
-  return useMemo(() => mergeRepositories(snapshot?.repos ?? [], listed), [snapshot?.repos, listed]);
+  const connection = useBitbucketDatacenterConnection();
+  const listing = useBitbucketDatacenterRepositories();
+  const repos = useMemo(() => mergeRepositories(snapshot?.repos ?? [], listing.data), [snapshot?.repos, listing.data]);
+  return { repos, pending: connection.isPending || listing.isLoading };
 }
 
 function requireTenant(tenantId: string | undefined): string {
