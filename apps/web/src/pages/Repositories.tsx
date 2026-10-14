@@ -6,6 +6,7 @@ import { errorText } from "@corbits/common";
 import HealthMark from "../components/repo-panel/HealthMark.tsx";
 import RepoPanel from "../components/repo-panel/RepoPanel.tsx";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
+import { useBitbucketDatacenterRepositories, useRepositories } from "../lib/bitbucket-datacenter.ts";
 import { enabledCheckCount, useCheckPacks, type PackState } from "../lib/check-packs.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential } from "../lib/hub-api.ts";
@@ -28,6 +29,13 @@ function plural(n: number, word: string): string {
 function listed(words: string[]): string {
   if (words.length <= 1) return words.join("");
   return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+function sourcesNote(accounts: string[], fromBitbucket: boolean): string {
+  const seen: string[] = [];
+  if (accounts.length > 0) seen.push(`the repositories its GitHub app is installed on, in ${listed(accounts)}`);
+  if (fromBitbucket) seen.push("the Bitbucket Data Center repositories its token can see");
+  return `Triage sees ${seen.join(", and ")}.`;
 }
 
 function checksLabel(row: RepoRow, state: PackState | undefined): string {
@@ -65,7 +73,8 @@ export default function Repositories() {
   const navigate = useNavigate();
   const params = useParams();
   const selection = selectedRepo(params);
-  const repos = snapshot?.repos ?? [];
+  const { repos, pending: reposPending } = useRepositories();
+  const bitbucket = useBitbucketDatacenterRepositories();
   const denied = snapshot?.denied.repos ?? false;
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
@@ -81,7 +90,8 @@ export default function Repositories() {
     () => repoRows(repos, items, active, catchingUp, openPulls, pullsError),
     [repos, items, active, catchingUp, openPulls, pullsError],
   );
-  const accounts = [...new Set(repos.map((repo) => repo.name.split("/")[0]!))];
+  const accounts = [...new Set(repos.filter((repo) => repo.source === "github").map((repo) => repo.name.split("/")[0]!))];
+  const fromBitbucket = repos.some((repo) => repo.source === "bitbucket-datacenter");
   const selectedConfig = repos.find((repo) => repo.name === selection.name);
   const selectedRow = rows.find((row) => row.name === selection.name);
   const lastOpen = useRef<string | null>(null);
@@ -133,6 +143,7 @@ export default function Repositories() {
       <tr key={row.name} className={open ? "on" : undefined} onClick={openRow}>
         <td className="c-name">
           <Link to={row.href} data-repo-link={row.name} aria-current={open ? "true" : undefined}><b title={row.name}>{row.name}</b></Link>
+          {row.source === "bitbucket-datacenter" && <small className="src">Bitbucket Data Center</small>}
           {pulls && pulls.awaiting > 0 && live(<small>{awaitingText(pulls.awaiting)}</small>)}
         </td>
         <td className="c-n mono">{pulls && live(pulls.open)}</td>
@@ -146,7 +157,7 @@ export default function Repositories() {
   }
 
   if (selection.redirect) return <Navigate to={selection.redirect} replace />;
-  if (selection.name && snapshot && !selectedConfig && !denied) return <Navigate to="/repositories" replace />;
+  if (selection.name && snapshot && !reposPending && !selectedConfig && !denied) return <Navigate to="/repositories" replace />;
 
   return (
     <div className={`repos${selectedConfig && selectedRow ? " split" : ""}`}>
@@ -166,6 +177,7 @@ export default function Repositories() {
           {denied && <DeniedNotice section="repositories" />}
           {error && <p role="alert" className="rt-note error">{error}</p>}
           {sync.error && <p role="alert" className="rt-note error">Could not read your repositories from GitHub. {sync.error.message}</p>}
+          {bitbucket.error && <p role="alert" className="rt-note error">Could not read your repositories from Bitbucket Data Center. {bitbucket.error.message}</p>}
           {verdicts.error && <p role="alert" className="rt-note error">Could not read triage results. {verdicts.error.message}</p>}
           {sync.isFetching && repos.length === 0 && <p className="rt-empty" role="status">Reading your repositories from GitHub…</p>}
           {repos.length === 0 && !denied && !sync.isFetching && <p className="rt-empty">No repositories yet. Use Manage repositories on GitHub to add some.</p>}
@@ -185,7 +197,7 @@ export default function Repositories() {
                 </thead>
                 <tbody>{rows.map(renderRow)}</tbody>
               </table>
-              <p className="rt-note">Triage sees the repositories its GitHub app is installed on, in {listed(accounts)}. Open one to change its triage and rules.</p>
+              <p className="rt-note">{sourcesNote(accounts, fromBitbucket)} Open one to change its triage and rules.</p>
             </>
           )}
         </main>

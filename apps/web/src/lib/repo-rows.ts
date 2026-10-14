@@ -1,6 +1,6 @@
 import { repoPolicy } from "@corbits/triage-contracts";
 import { repoNeedsCheckSetup } from "./check-pack.ts";
-import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
+import type { OpenPulls, PrItem, RepoRecord, RepoSource } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
@@ -31,6 +31,7 @@ type RepoPulls =
 
 export type RepoRow = {
   name: string;
+  source: RepoSource;
   href: string;
   needsSetup: boolean;
   pulls: RepoPulls;
@@ -69,6 +70,7 @@ export function repoRows(
     const error = pullsError?.message ?? errors.get(repo.name);
     return {
       name: repo.name,
+      source: repo.source,
       href: `/repositories/${repo.name}`,
       needsSetup,
       pulls: error === undefined ? pullsOf(items.filter((item) => item.repo === repo.name), triageReady(repo)) : { error },

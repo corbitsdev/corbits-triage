@@ -105,6 +105,7 @@ export const ROLES_QUERY_KEY = "roles";
 export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
 export const ALLOWED_QUERY_KEY = "allowed";
 export const INVITATIONS_QUERY_KEY = "invitations";
+export const BITBUCKET_DATACENTER_QUERY_KEY = "bitbucket-datacenter";
 export const INVITE_PATH = "/invite/";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
@@ -120,6 +121,7 @@ const REFRESH_QUERY_KEYS = [
   [DEPLOYED_WORKFLOWS_QUERY_KEY],
   [ALLOWED_QUERY_KEY],
   [INVITATIONS_QUERY_KEY],
+  [BITBUCKET_DATACENTER_QUERY_KEY],
 ];
 
 function isRunLog(value: unknown): value is RunLog {
