@@ -11,7 +11,7 @@ export function summaryOf(view: TriageView | undefined, run: RunState | undefine
   if (run?.error) return { text: "Could not check", tone: "error" };
   if (!view) return { text: "Not checked yet", tone: "open" };
   if (view.decided) return { text: VERDICT_NAMES[view.decided.verdict], tone: view.decided.verdict };
-  return { text: "Needs the decision model", tone: "open" };
+  return { text: view.modelAsked ? "Verdict not named here" : "Needs the decision model", tone: "open" };
 }
 
 export type Chip = { element: HTMLElement; render(view: TriageView | undefined, run: RunState | undefined): void };

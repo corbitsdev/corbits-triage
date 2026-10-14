@@ -6,7 +6,7 @@ import { useState, type ReactNode } from "react";
 import { changesFromDefaults } from "../pack-edit.ts";
 import { readLocalPack } from "../pack-store.ts";
 import type { PrRef } from "../pr.ts";
-import { githubToken, localPacks, policyFiles, runStates, systemOne, views } from "../storage.ts";
+import { localPacks, policyFiles, runStates, systemOne, tokenSaved, views } from "../storage.ts";
 import { DecisionModelForm } from "./DecisionModelForm.tsx";
 import { GithubTokenForm } from "./GithubTokenForm.tsx";
 import { useStorageItem } from "./use-storage.ts";
@@ -60,7 +60,7 @@ function RulesSection({ pr, onManage }: { pr: PrRef | undefined; onManage: (repo
 }
 
 function TokenSection() {
-  const token = useStorageItem(githubToken);
+  const token = useStorageItem(tokenSaved);
   if (token === undefined) return null;
   return (
     <SettingSection id="setting-github" title="GitHub token" status={token ? <Badge tone="success">Saved</Badge> : null} description="Required. Every read is made with it, read-only.">

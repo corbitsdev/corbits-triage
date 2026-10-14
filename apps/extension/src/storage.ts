@@ -8,8 +8,6 @@ import type { TriageView } from "./view.ts";
 export type RunState = {
   running: boolean;
   error?: string;
-  /** When GitHub's hourly limit, which stopped the last attempt, resets. */
-  resetAt?: string;
   at: string;
 };
 
@@ -20,8 +18,10 @@ export const runStates = storage.defineItem<Record<string, RunState>>("local:run
 export const localPacks = storage.defineItem<Record<string, CheckPack>>("local:packs", { fallback: {} });
 export const policyFiles = storage.defineItem<Record<string, KeptPolicyFile>>("local:policy-files", { fallback: {} });
 export const systemOne = storage.defineItem<SystemOneSettings | null>("local:system-one", { fallback: null });
-/** The person's own GitHub token; every read is made with it. */
+/** The person's own GitHub token; every read is made with it. Only the background reads it. */
 export const githubToken = storage.defineItem<string | null>("local:github-token", { fallback: null });
+/** Whether a token is saved, for the side panel, so no page but the background reads the token itself. */
+export const tokenSaved = storage.defineItem<boolean>("local:token-saved", { fallback: false });
 
 let writes: Promise<unknown> = Promise.resolve();
 

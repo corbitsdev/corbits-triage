@@ -6,7 +6,8 @@ export type Request =
   | { type: "open-panel" }
   /** `if-stale` reuses a recent run; `refetch` reads GitHub and the policy file again. */
   | { type: "triage"; pr: PrRef; mode: "if-stale" | "refetch" }
-  | { type: "save-token"; token: string };
+  | { type: "save-token"; token: string }
+  | { type: "remove-token" };
 
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: string };
 
