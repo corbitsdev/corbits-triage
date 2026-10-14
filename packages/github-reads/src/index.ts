@@ -658,20 +658,23 @@ export type AppLogin = () => Promise<string>;
 /** Marks the changes the request-changes Do requested, so a repeat on the same head finds them. */
 export const REQUEST_CHANGES_DO_MARKER = "<!-- corbits-request-changes -->";
 
-const RepoFile = type({ sha: "string", content: "string", encoding: "'base64' | 'none'", html_url: "string" });
+const RepoFile = type({ type: "string", sha: "string", "content?": "string", "encoding?": "string", html_url: "string" });
 
-/** `text` is null for a file over 1 MB, whose content GitHub leaves out. */
-export type RepoFileRead = { sha: string; text: string | null; url: string };
+/** `text` is null for a file over 1 MB, whose content GitHub leaves out; a directory or submodule at the path is not a file. */
+export type RepoFileRead = { kind: "file"; sha: string; text: string | null; url: string } | { kind: "not-a-file" };
 
-/** A file on the default branch, or undefined when it is not there. */
+/** A file on the default branch, or undefined when nothing is there. */
 export async function readRepoFile(gh: GithubFetch, repo: string, path: string): Promise<RepoFileRead | undefined> {
   const url = `/repos/${repo}/contents/${path}`;
   const res = await gh(url, { headers: { accept: "application/vnd.github+json" } });
   if (res.status === 404) return undefined;
   if (!res.ok) throw new Error(`github GET ${url} -> ${res.status}`);
-  const file = RepoFile.assert(await res.json());
-  const text = file.encoding === "none" ? null : Buffer.from(file.content, "base64").toString("utf8");
-  return { sha: file.sha, text, url: file.html_url };
+  const body: unknown = await res.json();
+  if (Array.isArray(body)) return { kind: "not-a-file" };
+  const file = RepoFile.assert(body);
+  if (file.type !== "file") return { kind: "not-a-file" };
+  const text = file.encoding === "base64" && file.content !== undefined ? Buffer.from(file.content, "base64").toString("utf8") : null;
+  return { kind: "file", sha: file.sha, text, url: file.html_url };
 }
 
 export type CodeownersRule = {

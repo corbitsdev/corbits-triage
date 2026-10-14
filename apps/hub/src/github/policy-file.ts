@@ -11,7 +11,7 @@ import { json, readRepoFile, type GithubFetch, type RepoFileRead } from "@corbit
 import { checkPackName, POLICY_FILE_PATH, policyFileText, readPolicyFile, type PolicyFileStatus } from "@corbits/triage-contracts";
 import { fileMarkerOf, repoPolicyRow, type FileMarker } from "./check-pack-store.js";
 import { forInstallation } from "./open-pulls.js";
-import { failure, githubAppGrant, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure, githubAppGrant, holds, type PortalCredentialDeps } from "./portal-credential.js";
 import { repoRecords, triageNs, type RepoRecord } from "./tenant-config.js";
 import { githubFailed } from "./github-refusal.js";
 import { isVersionConflict } from "./triage-state-store.js";
@@ -37,7 +37,7 @@ export type PolicyFileDeps = PortalCredentialDeps & {
   artifacts: ArtifactDb;
   /** GitHub as the tenant's App; undefined when the tenant has no active GitHub App credential. */
   tenantGithub: (tenantId: string) => Promise<GithubFetch | undefined>;
-  /** The principal a sync on push is recorded as. */
+  /** The principal every sync is recorded as, so syncing never makes a member a policy's creator. */
   writerFor: (tenantId: string) => Promise<string>;
   /** Grants a new policy's writers, as the stock artifact route does for one it creates. */
   grantWriters: (tx: ArtifactTx, row: ArtifactRow, scope: ResolvedPrincipal) => Promise<void>;
@@ -50,9 +50,12 @@ export type PolicyFileDeps = PortalCredentialDeps & {
 export type PolicyFileSync =
   | { status: "synced" | "unchanged"; sha: string }
   | { status: "absent" | "removed" }
-  | { status: "invalid"; sha: string; reason: string };
+  | { status: "invalid"; reason: string };
 
 const SYNC_ATTEMPTS = 3;
+
+/** Why the file at the path cannot be used as a policy; a reply, not a GitHub failure. */
+class PolicyFileProblem extends Error {}
 
 function sortedKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortedKeys);
@@ -69,7 +72,7 @@ function samePolicy(content: string, policy: Record<string, unknown>): boolean {
   }
 }
 
-function policyOf(file: RepoFileRead, repo: string): Record<string, unknown> {
+function policyOf(file: Extract<RepoFileRead, { kind: "file" }>, repo: string): Record<string, unknown> {
   if (file.text === null) throw new Error(`${POLICY_FILE_PATH} is too large or uses aliases.`);
   return readPolicyFile(file.text, repo);
 }
@@ -77,6 +80,8 @@ function policyOf(file: RepoFileRead, repo: string): Record<string, unknown> {
 function withoutMarker(metadata: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(asRecord(metadata) ?? {}).filter(([key]) => key !== "policyFile"));
 }
+
+const NOT_A_FILE = `${POLICY_FILE_PATH} is not a file.`;
 
 export function createPolicyFile(deps: PolicyFileDeps) {
   async function connectedRecord(tenantId: string, repo: string): Promise<RepoRecord | undefined> {
@@ -102,7 +107,6 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     });
   }
 
-  /** A removed file leaves the policy as it is, no longer marked as synced from the file. */
   async function dropMarker(scope: ResolvedPrincipal, repo: string): Promise<PolicyFileSync> {
     const row = await repoPolicyRow(deps, scope.tenantId, repo);
     if (!row || !fileMarkerOf(row)) return { status: "absent" };
@@ -116,27 +120,36 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return { status: "removed" };
   }
 
-  /** Reads the file on the default branch and stores it when the hub's copy differs. A repository without the file is untouched. */
-  async function sync(scope: ResolvedPrincipal, record: RepoRecord): Promise<PolicyFileSync> {
+  /**
+   * Reads the file on the default branch and stores it when the hub's copy differs, as the tenant's GitHub sender. Only
+   * a push that lists the file as removed drops the marker; a file not found otherwise writes nothing.
+   */
+  async function sync(tenantId: string, record: RepoRecord, removed: boolean): Promise<PolicyFileSync> {
     const repo = record.name;
-    const file = await readRepoFile(await repoGithub(scope.tenantId, record), repo, POLICY_FILE_PATH);
-    if (!file) return dropMarker(scope, repo);
+    const scope = { tenantId, principalId: await deps.writerFor(tenantId) };
+    const file = await readRepoFile(await repoGithub(tenantId, record), repo, POLICY_FILE_PATH);
+    if (!file && removed) return dropMarker(scope, repo);
+    if (!file) {
+      deps.log({ level: "warn", msg: "policy_file_not_found", tenantId, repo });
+      return { status: "absent" };
+    }
     let policy: Record<string, unknown>;
     try {
+      if (file.kind === "not-a-file") throw new Error(NOT_A_FILE);
       policy = policyOf(file, repo);
     } catch (error) {
       if (!(error instanceof Error)) throw error;
-      deps.log({ level: "warn", msg: "policy_file_invalid", tenantId: scope.tenantId, repo, sha: file.sha, reason: error.message });
-      return { status: "invalid", sha: file.sha, reason: error.message };
+      deps.log({ level: "warn", msg: "policy_file_invalid", tenantId, repo, reason: error.message });
+      return { status: "invalid", reason: error.message };
     }
     const content = JSON.stringify(policy);
     const marker = { path: POLICY_FILE_PATH, sha: file.sha, syncedAt: deps.now().toISOString(), contentSha256: createHash("sha256").update(content).digest("hex") };
     for (let attempt = 1; ; attempt += 1) {
-      const row = await repoPolicyRow(deps, scope.tenantId, repo);
+      const row = await repoPolicyRow(deps, tenantId, repo);
       if (row && samePolicy(row.content, policy) && fileMarkerOf(row)?.sha === file.sha) return { status: "unchanged", sha: file.sha };
       try {
         await store(scope, repo, content, marker, row);
-        deps.log({ level: "info", msg: "policy_file_synced", tenantId: scope.tenantId, repo, sha: file.sha });
+        deps.log({ level: "info", msg: "policy_file_synced", tenantId, repo, sha: file.sha });
         return { status: "synced", sha: file.sha };
       } catch (err) {
         if (!isVersionConflict(err) || attempt === SYNC_ATTEMPTS) throw err;
@@ -149,6 +162,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     const repo = record.name;
     const file = await readRepoFile(await repoGithub(tenantId, record), repo, POLICY_FILE_PATH);
     if (!file) return undefined;
+    if (file.kind === "not-a-file") throw new PolicyFileProblem(NOT_A_FILE);
     const row = await repoPolicyRow(deps, tenantId, repo);
     const marker = row && fileMarkerOf(row);
     const base = { path: POLICY_FILE_PATH, sha: file.sha, url: file.url, ...(marker && { syncedAt: marker.syncedAt }) };
@@ -161,10 +175,9 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     }
   }
 
-  /** Syncs on a push to the default branch that touched the file, as the tenant's GitHub sender. */
-  async function onPush(tenantId: string, repo: string): Promise<PolicyFileSync | undefined> {
+  async function onPush(tenantId: string, repo: string, removed: boolean): Promise<PolicyFileSync | undefined> {
     const record = await connectedRecord(tenantId, repo);
-    return record && sync({ tenantId, principalId: await deps.writerFor(tenantId) }, record);
+    return record && sync(tenantId, record, removed);
   }
 
   async function grantedRecord(member: Member, repo: string, action: "read" | "use"): Promise<RepoRecord | Response> {
@@ -179,18 +192,26 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     try {
       return Response.json({ file: (await status(member.tenantId, record)) ?? null });
     } catch (err) {
+      if (err instanceof PolicyFileProblem) return failure(422, "policy_file_invalid", err.message);
       deps.log({ level: "warn", msg: "policy_file_status_failed", tenantId: member.tenantId, repo, error: errorText(err) });
       return githubFailed(`read ${POLICY_FILE_PATH} from`, err);
     }
   }
 
-  /** "Use file" is the member's choice, so the version is recorded as theirs. */
+  /** Using the file writes the policy, so it needs what a save from the portal needs: write on the policy, or create when there is none. */
+  async function mayWritePolicy(member: Member, repo: string): Promise<boolean> {
+    const row = await repoPolicyRow(deps, member.tenantId, repo);
+    const [resource, action] = row ? [`artifact:${row.id}`, "write"] : ["artifact:*", "create"];
+    return holds(deps, member.principalId, member.tenantId, resource, action);
+  }
+
   async function syncRoute({ repo }: typeof PolicyFileBody.infer, member: Member): Promise<Response> {
     const record = await grantedRecord(member, repo, "use");
     if (record instanceof Response) return record;
+    if (!(await mayWritePolicy(member, repo))) return failure(403, "forbidden", `You may not change ${repo}'s policy.`);
     let synced: PolicyFileSync;
     try {
-      synced = await sync(member, record);
+      synced = await sync(member.tenantId, record, false);
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_file_sync_failed", tenantId: member.tenantId, repo, error: errorText(err) });
       return githubFailed(`read ${POLICY_FILE_PATH} from`, err);
@@ -199,6 +220,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     if (synced.status === "invalid") return failure(422, "policy_file_invalid", synced.reason);
     return Response.json(synced);
   }
+
 
   async function createBranch(gh: GithubFetch, repo: string, sha: string): Promise<boolean> {
     const res = await gh(`/repos/${repo}/git/refs`, { method: "POST", body: JSON.stringify({ ref: `refs/heads/${EXPORT_BRANCH}`, sha }) });
@@ -226,6 +248,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       gh = await repoGithub(member.tenantId, record);
       if (await readRepoFile(gh, repo, POLICY_FILE_PATH)) return failure(409, "policy_file_exists", `${repo} already has ${POLICY_FILE_PATH}.`);
       const { default_branch: base } = await json(gh, `/repos/${repo}`);
+      // Unverified against GitHub for a default branch whose name holds a slash.
       const head = await json(gh, `/repos/${repo}/git/ref/heads/${encodeURIComponent(base)}`);
       branched = await createBranch(gh, repo, head.object.sha);
       if (!branched) return failure(409, "policy_branch_exists", `${repo} already has a ${EXPORT_BRANCH} branch; merge or delete it first.`);

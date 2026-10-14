@@ -27,7 +27,7 @@ export async function memberPrincipal(db: DB["db"], tenantId: string, userId: st
   return member?.id;
 }
 
-async function holds(d: PortalCredentialDeps, principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
+export async function holds(d: PortalCredentialDeps, principalId: string, tenantId: string, resource: string, action: string): Promise<boolean> {
   if (await d.authorize(principalId, tenantId, resource, action)) return true;
   return action === "read" && d.authorize(principalId, tenantId, resource, "use");
 }
