@@ -140,12 +140,11 @@ connection queue for minutes.
    it + `/systemone`), model and key. The key goes to the hub's vault. Every
    save deploys `pr-triage` and `pr-triage-historical` afresh; triage is not
    live until then.
-5. **Turn on triage.** Open a repository under Repositories. Adjust its rules
-   (**Reset to recommended** restores the defaults) and actions (**Start from
-   recommended**), turn on **Triage pull requests in this repository**, and
-   **Save changes**. That triages its open pull requests, and new pull request
-   events are triaged from then on. **Triage open pull requests again**
-   re-runs it.
+5. **Turn on triage.** Open a repository under Repositories and turn on
+   **Triage pull requests in this repository**; the rules, steps and labels
+   below it save as you change them, and turning triage on triages its open
+   pull requests. New pull request events are triaged from then on. **Triage
+   open pull requests again** re-runs it.
 6. **Verify.** Open a test pull request; it appears in the Inbox once its
    triage run completes.
 
