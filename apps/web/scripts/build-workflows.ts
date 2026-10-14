@@ -26,8 +26,12 @@ function interchangeEntries(workflow: WorkflowPackage) {
   return { workflow: workflow.entry, directors: `./${DIRECTORS}`, actions: `./${ACTIONS}` };
 }
 
+function workflowEntries(workflow: WorkflowPackage) {
+  return [workflow, ...(workflow.variants ?? [])];
+}
+
 async function bundle(workflow: WorkflowPackage, outdir: string): Promise<void> {
-  const entries = [[workflow.src, workflow.entry.slice(2)], ["src/directors.ts", DIRECTORS], ["src/actions/index.ts", ACTIONS]];
+  const entries = [...workflowEntries(workflow).map((variant) => [variant.src, variant.entry.slice(2)]), ["src/directors.ts", DIRECTORS], ["src/actions/index.ts", ACTIONS]];
   for (const [src, naming] of entries) {
     await Bun.build({
       entrypoints: [join(WORKFLOW_SRC, src)],
@@ -63,8 +67,9 @@ async function packWorkflow(workflow: WorkflowPackage, tools: PackedTarball[], o
   const stage = await mkdtemp(join(tmpdir(), `${workflow.name}-`));
   try {
     await bundle(workflow, stage);
+    const variants = workflowEntries(workflow).map((variant) => variant.entry);
     const files = {
-      [workflow.entry]: join(stage, workflow.entry),
+      ...Object.fromEntries(variants.map((entry) => [entry, join(stage, entry)])),
       [`./${DIRECTORS}`]: join(stage, DIRECTORS),
       [`./${ACTIONS}`]: join(stage, ACTIONS),
     };
@@ -72,7 +77,7 @@ async function packWorkflow(workflow: WorkflowPackage, tools: PackedTarball[], o
       type: "module",
       dependencies: Object.fromEntries(tools.map((tool) => [tool.name, tool.version])),
       interchange: interchangeEntries(workflow),
-      files: [workflow.entry.slice(2), DIRECTORS, ACTIONS, "package.json"],
+      files: [...variants.map((entry) => entry.slice(2)), DIRECTORS, ACTIONS, "package.json"],
     };
     if (!(await readFile(files[`./${DIRECTORS}`], "utf8")).includes(workflow.packageName)) {
       throw new Error(`${workflow.packageName} directors bundle lacks its package name; the build define was dropped.`);
