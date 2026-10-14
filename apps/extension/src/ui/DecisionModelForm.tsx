@@ -4,7 +4,7 @@ import { Check } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import { systemOne } from "../storage.ts";
 import type { SystemOneSettings } from "../system-one.ts";
-import { errorText } from "../error-text.ts";
+import { errorText } from "@corbits/common";
 import { onRadioKeys } from "./radio-keys.ts";
 
 type DecisionModelFormProps = { current: SystemOneSettings | null; onSaved?: () => void; onCancel?: () => void; variant?: ButtonProps["variant"] };

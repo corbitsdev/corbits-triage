@@ -1,16 +1,13 @@
 import { Badge, Button, ConfirmButton, Switch } from "@corbits/react-ui";
-import { CHECK_CATALOG, CUSTOM_CHECK_CAP, type CatalogId, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { errorText } from "@corbits/common";
+import { catalogSentence, CHECK_CATALOG, CUSTOM_CHECK_CAP, customSentence, isCatalogId, recommendedPack, RULE_KINDS, type CatalogId, type CheckPack, type CustomCheck, type RuleKind } from "@corbits/triage-contracts";
 import { Check, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { defaultLocalPack } from "../local-pack.ts";
 import { send } from "../messages.ts";
-import { changesFromDefaults, customFormOf, isCatalogId, switchableChecks, withCheck, withoutCheck } from "../pack-edit.ts";
-import { localPackFor, readLocalPack, resetLocalPack, saveLocalPack } from "../pack-store.ts";
-import { prKey, type PrRef } from "../pr.ts";
-import { catalogSentence, CHECK_KINDS, customSentence, type CheckKind } from "../prose.ts";
-import { localPacks, runStates, systemOne, views } from "../storage.ts";
-import { stateName } from "../view.ts";
-import { errorText } from "../error-text.ts";
+import { changesFromDefaults, customFormOf, switchableChecks, withCheck, withoutCheck } from "../pack-edit.ts";
+import { readLocalPack, resetLocalPack, savedPackFor, saveLocalPack } from "../pack-store.ts";
+import type { PrRef } from "../pr.ts";
+import { localPacks, systemOne } from "../storage.ts";
 import { CatalogEditor, CustomEditor, EDITABLE_CATALOG } from "./CheckEditors.tsx";
 import { useStorageItem } from "./use-storage.ts";
 
@@ -101,7 +98,7 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
 
 function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
   const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState<CheckKind | null>(null);
+  const [kind, setKind] = useState<RuleKind | null>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   const galleryRef = useRef<HTMLUListElement>(null);
   const wasOpen = useRef(open);
@@ -143,7 +140,7 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
   return (
     <div className="add-check">
       <ul className="gallery" ref={galleryRef} aria-label="New rule">
-        {CHECK_KINDS.map((each) => (
+        {RULE_KINDS.map((each) => (
           <li key={each.title}>
             <button type="button" className="gallery-item" aria-label={`Use ${each.title}`} onClick={() => setKind(each)}>
               <b>{each.title}</b>
@@ -155,21 +152,6 @@ function AddCheck({ pack, onSave }: { pack: CheckPack; onSave: Save }) {
       </ul>
       <div className="row"><Button size="sm" variant="ghost" onClick={cancel}>Cancel</Button></div>
     </div>
-  );
-}
-
-/** The open pull request's score as each change is scored again; quiet, since the saved note beside it is announced. */
-function LiveScore({ pr }: { pr: PrRef }) {
-  const allViews = useStorageItem(views);
-  const states = useStorageItem(runStates);
-  const view = allViews?.[prKey(pr)];
-  if (!view) return null;
-  const running = states?.[prKey(pr)]?.running === true;
-  return (
-    <p className="live-score">
-      <span className="mono live-number">{view.readiness ?? "–"}</span>
-      <span>{running ? "Scoring again…" : `${stateName(view)} on #${pr.number}`}</span>
-    </p>
   );
 }
 
@@ -197,22 +179,18 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
 
   if (packs === undefined || settings === undefined) return null;
   const stored = packs[repo];
-  // The same fallback the background runs with, so the list shows what was scored.
-  const read = stored === undefined ? undefined : readLocalPack(stored, repo);
-  const pack = read && "pack" in read ? read.pack : defaultLocalPack(repo);
-  const changes = stored ? changesFromDefaults(pack) : 0;
-  const rows = rowsOf(pack);
+  const read = stored === undefined ? { pack: recommendedPack(repo) } : readLocalPack(stored, repo);
   const scoring = pr?.repo === repo ? pr : undefined;
 
   function rescore() {
-    if (scoring) send({ type: "triage", pr: scoring, mode: "rescore" });
+    if (scoring) send({ type: "triage", pr: scoring, mode: "refetch" });
   }
 
   // Built on the latest saved pack, so two quick changes never drop the first.
   async function save(change: (pack: CheckPack) => CheckPack, message: string): Promise<boolean> {
     setError(null);
     try {
-      await saveLocalPack(change(await localPackFor(repo)));
+      await saveLocalPack(change(await savedPackFor(repo)));
     } catch (cause) {
       setError(errorText(cause));
       return false;
@@ -235,6 +213,18 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
     rescore();
   }
 
+  if ("error" in read) {
+    return (
+      <div className="manager">
+        <p className="error" role="alert">The rules saved for <span className="mono">{repo}</span> do not read ({read.error}).</p>
+        {error ? <p className="error" role="alert">{error}</p> : null}
+        <div className="row"><ConfirmButton size="sm" variant="outline" confirmLabel="Confirm: reset every rule" onConfirm={reset}>Reset to defaults</ConfirmButton></div>
+      </div>
+    );
+  }
+  const { pack } = read;
+  const changes = stored ? changesFromDefaults(pack) : 0;
+  const rows = rowsOf(pack);
   const locked = (row: Row) => row.model && !settings;
   const on = rows.filter((row) => row.on && !locked(row)).length;
 
@@ -245,7 +235,6 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
         {changes > 0 ? <ConfirmButton size="sm" variant="ghost" confirmLabel="Confirm: reset every rule" onConfirm={reset}>Reset to defaults</ConfirmButton> : null}
       </div>
       <div className="manager-status">
-        {scoring ? <LiveScore pr={scoring} /> : null}
         <p className="saved-status" role="status">{status ? <><Check className="saved-mark" aria-hidden="true" />{status}</> : null}</p>
         {error ? <p className="error" role="alert">{error}</p> : null}
       </div>
