@@ -4,6 +4,7 @@ import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
 import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
 export type PortalCredentialDeps = {
   db: DB["db"];
@@ -44,6 +45,20 @@ export async function githubAppGrant(d: PortalCredentialDeps, principalId: strin
     return failure(403, "forbidden", "You do not have access to the GitHub App credential.");
   }
   return credential;
+}
+
+/** Whether the member holds `action` on the credential of the record's host; a missing credential is a 409 naming the host. */
+export async function sourceCredentialGrant(d: PortalCredentialDeps, principalId: string, tenantId: string, record: Pick<RepoRecord, "name" | "source">, action: CredentialAction): Promise<Response | undefined> {
+  if (sourceOf(record) === "github") {
+    const grant = await githubAppGrant(d, principalId, tenantId, action);
+    return grant instanceof Response ? grant : undefined;
+  }
+  const credential = await d.db.query.credential.findFirst({
+    where: and(eq(schema.credential.tenantId, tenantId), eq(schema.credential.name, "bitbucket-datacenter"), eq(schema.credential.status, "active")),
+  });
+  if (!credential) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket Data Center first.");
+  if (!(await holds(d, principalId, tenantId, `credential:${credential.id}`, action))) return failure(403, "forbidden", "You do not have access to the Bitbucket Data Center credential.");
+  return undefined;
 }
 
 export async function githubAppCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction): Promise<string | Response> {

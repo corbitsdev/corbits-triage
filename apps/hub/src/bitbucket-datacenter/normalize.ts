@@ -64,8 +64,8 @@ function mergedOf(p: Json): HookIntake | null {
 function refsChangedOf(p: Json): HookIntake | null {
   const repo = repoNameOf(p.repository);
   const changes: Json[] = Array.isArray(p.changes) ? p.changes : [];
-  const updated = changes.some((change) => change?.ref?.type === "BRANCH" && change.type !== "DELETE");
-  return repo !== null && updated ? { kind: "policy-push", push: { repo, removed: false } } : null;
+  const branches = changes.filter((change) => change?.ref?.type === "BRANCH" && change.type !== "DELETE" && typeof change.ref.displayId === "string").map((change) => change.ref.displayId as string);
+  return repo !== null && branches.length > 0 ? { kind: "policy-push", push: { repo, removed: false }, branches } : null;
 }
 
 export function normalizeBitbucket(eventKey: string, deliveryId: string, p: Json): HookIntake | null {

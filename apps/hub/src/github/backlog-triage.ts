@@ -24,7 +24,7 @@ export function createGithubBacklog(deps: GithubBacklogDeps) {
     if (ready instanceof Response) return ready;
     const { tenantId, principalId } = member;
     try {
-      await deps.sendMail(tenantId, { ...mailPayload(repo, ready.policy, ready.pack, {}), kind: "backlog" });
+      await deps.sendMail(tenantId, { ...mailPayload(ready.record, ready.policy, ready.pack, {}), kind: "backlog" });
     } catch (err) {
       if (err instanceof DeploymentNotReadyError) return failure(409, err.code, err.message);
       if (err instanceof NoLiveDeploymentError || isRunTriggerUnroutable(err)) return failure(503, "service_not_running", "The pr-triage-historical service is not running.");

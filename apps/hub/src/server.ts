@@ -46,6 +46,7 @@ import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
 import { createIntegrationsApp, INTEGRATIONS_PREFIX, PACK_SCHEMA_PATH } from "./integrations/app.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
+import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
@@ -81,7 +82,7 @@ import { loadCheckPack } from "./github/check-pack-store.js";
 import { createAutomation } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
-import { createPullHeadReader, createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads } from "./github/tenant-open-heads.js";
+import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved } from "./github/triage-queue.js";
@@ -90,13 +91,14 @@ import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManagerRefusal
 import { PR_TRIAGE_ADDRESS, workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage";
 import { PR_TRIAGE_HISTORICAL_ADDRESS, workflow as prTriageHistoricalWorkflow } from "@corbits/triage-workflows/pr-triage-historical";
 import { githubRead, githubWrite } from "@corbits/github-tool";
+import { bitbucketRead, bitbucketWrite } from "@corbits/bitbucket-datacenter-tool";
 
 const EXPECTED_DEPLOYMENT_SET = {
   workflows: [
     { address: PR_TRIAGE_ADDRESS, id: prTriageWorkflow.id },
     { address: PR_TRIAGE_HISTORICAL_ADDRESS, id: prTriageHistoricalWorkflow.id },
   ],
-  tools: [githubRead.id, githubWrite.id],
+  tools: [githubRead.id, githubWrite.id, bitbucketRead.id, bitbucketWrite.id],
 };
 
 // Runs whose trigger and outcome the reconciler remembers between passes.
@@ -324,7 +326,10 @@ const deploymentRotation = createDeploymentRotation({
     return authorizePortal(principalId, tenantId, "workflow:*", "create");
   },
 });
-const tenantOpenHeads = createTenantOpenHeads({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
+const tenantBitbucket = createTenantBitbucket({ db: composition.db, cipher: composition.credentialCipher, fetchImpl: fetch });
+const tenantSources = { db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin, tenantBitbucket };
+const tenantOpenHeads = createTenantOpenHeads(tenantSources);
+const tenantOpenHead = createTenantOpenHead(tenantSources);
 const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
 const observeTriageRuns = createTriageRuns({
   runReader: composition.runReader,
@@ -374,7 +379,11 @@ const githubPrTriage = createGithubPrTriage({
   db: composition.db,
   cipher: composition.credentialCipher,
   authorize: authorizePortal,
-  pullHead: createPullHeadReader({ githubApiOrigin: githubOrigin }),
+  pullHead: async function pullHead(tenantId, record, number) {
+    const openHead = await tenantOpenHead(tenantId);
+    if (!openHead) throw new Error("no active source credential");
+    return (await openHead(record, number))?.headSha;
+  },
   readCheckPack,
   liveDeployments: livePrTriageDeployments,
   observeRuns: observeTriageRuns,
@@ -410,7 +419,7 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
 coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendBridgeMail,
-  headChecks: createTenantHeadChecks({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  headChecks: createTenantHeadChecks(tenantSources),
   window: triageCoalesceWindow(env, reconcilePolicy),
   setTimer,
   now,
@@ -428,6 +437,7 @@ const policyFile = createPolicyFile({
   cipher: composition.credentialCipher,
   authorize: authorizePortal,
   tenantGithub: createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  tenantBitbucket,
   writerFor: githubSenderPrincipal,
   grantWriters: createArtifactGrants(now),
   schemaUrl: `${new URL(env.BETTER_AUTH_BASE_URL).origin}${PACK_SCHEMA_PATH}`,
@@ -441,7 +451,7 @@ const bridge = createBridgeHandler({
   cache: deliveryCache,
   coalescer,
   readCheckPack,
-  openHeadFor: createTenantOpenHead({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  openHeadFor: tenantOpenHead,
   recheckOpenPulls,
   syncPolicyFile: policyFile.onPush,
 });
@@ -565,6 +575,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     },
     publicOrigin: new URL(env.BETTER_AUTH_BASE_URL).origin,
     fetchImpl: fetch,
+    onEnabled: triageLoop.kick,
     now,
     log: logJson,
   }),

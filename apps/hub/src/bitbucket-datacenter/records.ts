@@ -2,6 +2,10 @@ import { asRecord } from "@corbits/common";
 import { repoPolicy } from "@corbits/triage-contracts";
 import { repoRecords, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
 
+export const PROVIDER = "bitbucket-datacenter";
+export const TOKEN_CREDENTIAL = "bitbucket-datacenter";
+export const HOOK_CREDENTIAL = "bitbucket-datacenter-hook";
+
 export type BitbucketConnection = { baseUrl: string };
 
 export function bitbucketConnection(ns: CorbitsTriageNs): BitbucketConnection | undefined {
