@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { checkFailed, checkPending, isTriageComment, latestDecisive, reviewedOnHead, summarizeChecks } from "@corbits/github-reads";
+import { checkFailed, checkPending, latestDecisive, reviewedOnHead, summarizeChecks } from "@corbits/github-reads";
 import { POLICY_FILE_MAX_BYTES } from "@corbits/triage-contracts";
-import { defaultReviewers, getChecks, getPr, getReviews, listIssueComments, listOpenPrs, listPrCommits, listPrFiles, readRepoFile, type BitbucketFetch } from "./index.js";
+import { defaultReviewers, getChecks, getPr, getReviews, isTriageComment, listIssueComments, listOpenPrs, listPrCommits, listPrFiles, readRepoFile, type BitbucketFetch } from "./index.js";
 import activities from "./fixtures/activities.json";
 import branchDefault from "./fixtures/branch-default.json";
 import browseType from "./fixtures/browse-type.json";
@@ -122,11 +122,11 @@ describe("getReviews", () => {
 });
 
 describe("listIssueComments", () => {
-  test("comments come oldest first with replies, and the triage marker comment is recognised", async () => {
+  test("comments come oldest first with replies, and only the link reference marker, not an HTML comment, marks triage", async () => {
     const { bb } = instance(recorded);
     const comments = await listIssueComments(bb, "TRI/widgets", 1);
-    expect(comments.map((comment) => comment.id)).toEqual([2, 3, 4, 6]);
-    expect(comments.filter((comment) => isTriageComment(comment.body)).map((comment) => comment.id)).toEqual([3]);
+    expect(comments.map((comment) => comment.id)).toEqual([2, 3, 4, 6, 8, 10]);
+    expect(comments.filter((comment) => isTriageComment(comment.body)).map((comment) => comment.id)).toEqual([8, 10]);
     expect(comments[0]).toMatchObject({ author: "admin", bot: false, createdAt: "2026-10-14T17:41:13.731Z" });
   });
 });
