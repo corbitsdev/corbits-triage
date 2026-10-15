@@ -55,6 +55,7 @@ import {
   listHref,
   listRoot,
   matchesQuery,
+  needsYou,
   postedLabel,
   primaryAction,
   regroupInbox,
@@ -115,7 +116,7 @@ function listsOpen(view: ListView): boolean {
 function viewEntries(view: ListView, open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
   switch (view) {
     case "needs-you":
-      return open.filter((entry) => entry.handled === null);
+      return needsYou(open, enabled);
     case "all-open":
       return allOpen(open, enabled);
     case "first-timers":

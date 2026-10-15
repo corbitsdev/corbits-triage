@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrItem } from "./hub-api.ts";
-import { allOpen, firstTimers, groupInbox, groupOpen, inboxAction, inboxStatus, listCounts, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
+import { allOpen, firstTimers, groupInbox, groupOpen, inboxAction, inboxStatus, listCounts, needsYou, postedLabel, primaryAction, waitsOn, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -205,9 +205,14 @@ describe("All open", () => {
     expect(firstTimers(open, new Set())).toEqual([]);
   });
 
-  test("Needs you counts its rows in every repository; All open and First-timers count their lists", () => {
-    expect(listCounts(open, READY)).toEqual({ "needs-you": 2, "all-open": 3, "first-timers": 1 });
-    expect(listCounts(open, new Set())).toEqual({ "needs-you": 2, "all-open": 0, "first-timers": 0 });
+  test("Needs you, All open and First-timers count only repositories with triage enabled", () => {
+    expect(listCounts(open, READY)).toEqual({ "needs-you": 1, "all-open": 3, "first-timers": 1 });
+    expect(listCounts(open, new Set())).toEqual({ "needs-you": 0, "all-open": 0, "first-timers": 0 });
     expect(listCounts([], READY)).toEqual({ "needs-you": 0, "all-open": 0, "first-timers": 0 });
+  });
+
+  test("Needs you keeps a pending approval of a repository with triage off", () => {
+    const held = { item: item({ key: "acme/off#5", repo: "acme/off", pendingApprovalId: "a1" }), handled: null };
+    expect(needsYou([...open, held], READY).map((entry) => entry.item.key)).toEqual(["acme/widgets#1", "acme/widgets#2", "acme/off#5"]);
   });
 });

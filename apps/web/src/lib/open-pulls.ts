@@ -4,6 +4,7 @@ import { projectQueue, type PrItem, type PullTriage } from "./hub-api.ts";
 import { repoOf, type HandledKind, type HandledMark, type OpenItem } from "./inbox-view.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
 import { usePortal } from "./portal.tsx";
+import { triageEnabledRepos } from "./repo-rows.ts";
 import { useApprovals, useApprovalsFirstLoad } from "./tenant-entities.ts";
 import { usePullTriage, useTriageVerdicts } from "./triage-verdicts.ts";
 
@@ -224,7 +225,9 @@ export function usePullPageItems(repo: string | null, number: number | null): Pr
   const named = (pull: { repo: string; number: number }) => pull.repo === repo && pull.number === number;
   const listed = verdicts.data?.pulls.some(named) === true;
   const open = openPulls.data?.repos.some((row) => row.repo === repo && row.prs.some((pr) => pr.number === number)) === true;
-  const single = usePullTriage(repo ?? "", number, repo !== null && verdicts.data !== undefined && !listed && !open);
+  const { snapshot } = usePortal();
+  const enabled = repo !== null && triageEnabledRepos(snapshot?.repos ?? []).has(repo);
+  const single = usePullTriage(repo ?? "", number, repo !== null && verdicts.data !== undefined && !listed && !(open && enabled));
   return usePullRequestItems(single?.pulls);
 }
 
