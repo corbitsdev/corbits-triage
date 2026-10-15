@@ -137,18 +137,16 @@ describe("reconcile plan", () => {
     });
   });
 
-  test("a workflow bump re-triages settled heads in bursts of maxInFlight while the rest wait as new", () => {
-    const prs = Array.from({ length: 50 }, (_, i) => pr(i + 1));
-    const rows = prs.map((open) => triaged(open.number, OLDER));
-    const first = plan(prs, rows, at(0), [], policy.maxInFlight);
-    expect(enqueued(first)).toEqual([1, 2, 3, 4, 5]);
-    expect(first.enqueue.every((queued) => queued.reason === `verdict from workflow version ${OLDER}, current is ${VERSION}`)).toBe(true);
-    expect(first.rows.filter((row) => row.status === "new")).toHaveLength(45);
-    expect(enqueued(plan(prs, first.rows, at(1), [], policy.maxInFlight))).toEqual([]);
+  test("a workflow bump keeps settled verdicts, a legacy integer version included", () => {
+    const rows = [triaged(1, OLDER), triaged(2, 3)];
+    const kept = plan([pr(1), pr(2)], rows, at(0));
+    expect(enqueued(kept)).toEqual([]);
+    expect(kept.rows).toEqual(rows);
   });
 
   test("a deployment not pinned from the package registry resets nothing and stamps no version", () => {
-    expect(enqueued(plan([pr(1)], [triaged(1, OLDER)], at(0), [], 1, null))).toEqual([]);
+    const capped = row(1, { status: "failed", attempts: policy.maxAttempts, queuedAt: at(-500).toISOString() }, OLDER);
+    expect(enqueued(plan([pr(1)], [capped], at(100_000), [], 1, null))).toEqual([]);
     expect(plan([pr(1)], [], at(0), [], 1, null).rows[0]?.workflowVersion).toBeUndefined();
   });
 
@@ -158,29 +156,12 @@ describe("reconcile plan", () => {
     expect(legacy.rows[0]).toEqual(triaged(1, null));
   });
 
-  test("a head settled under a legacy integer version is triaged again once, while the old deployment's verdict is still observed", () => {
-    const old: Array<[OpenPr, ObservedRun[]]> = [[pr(1), [run("old1", "completed", -400, OLDER)]]];
-    const reset = plan([pr(1)], [triaged(1, 3)], at(0), old);
-    expect(enqueued(reset)).toEqual([1]);
-    expect(reset.enqueue[0]?.reason).toBe(`verdict from workflow version 3, current is ${VERSION}`);
-    expect(reset.rows[0]).toMatchObject({ status: "queued", workflowVersion: VERSION });
-    const settled = plan([pr(1)], reset.rows, at(10), [[pr(1), [...old[0]![1], run("run_new", "completed", 5)]]]);
-    expect(settled.rows[0]).toMatchObject({ status: "triaged", runId: "run_new", workflowVersion: VERSION });
-    expect(enqueued(plan([pr(1)], settled.rows, at(20), old))).toEqual([]);
-  });
-
-  test("an unpinned deployment's verdict still observed does not undo the reset", () => {
-    const unpinned: ObservedRun = { runId: "old1", status: "completed", startedAt: at(-400).toISOString() };
-    expect(enqueued(plan([pr(1)], [triaged(1, 3)], at(0), [[pr(1), [unpinned]]]))).toEqual([1]);
-  });
-
-  test("a head in flight on the old version settles on its run, then is triaged again once", () => {
+  test("a head in flight on the old version settles on its run and keeps it", () => {
     const running = row(1, { status: "running", runId: "old1", queuedAt: at(-10).toISOString(), updatedAt: at(-5).toISOString() }, OLDER);
     const old: Array<[OpenPr, ObservedRun[]]> = [[pr(1), [run("old1", "completed", -5, OLDER)]]];
     const settled = plan([pr(1)], [running], at(0), old);
     expect(settled.rows[0]).toMatchObject({ status: "triaged", runId: "old1", workflowVersion: OLDER });
-    const reset = plan([pr(1)], settled.rows, at(1), old);
-    expect(reset.enqueue.map((queued) => queued.reason)).toEqual([`verdict from workflow version ${OLDER}, current is ${VERSION}`]);
+    expect(enqueued(plan([pr(1)], settled.rows, at(1), old))).toEqual([]);
   });
 
   test("a verdict waiting on an unconfirmed check is retried after its own delay, up to the attempt cap", () => {
@@ -210,7 +191,7 @@ describe("reconcile plan", () => {
     const upgraded = plan([pr(1)], [capped], at(100_000), [], 1, NEWER);
     expect(enqueued(upgraded)).toEqual([1]);
     expect(upgraded.rows[0]).toMatchObject({ status: "queued", attempts: 1, workflowVersion: NEWER });
-    expect(upgraded.enqueue[0]?.reason).toBe(`verdict from workflow version ${VERSION}, current is ${NEWER}`);
+    expect(upgraded.enqueue[0]?.reason).toBe(`attempts from workflow version ${VERSION}, current is ${NEWER}`);
     const triaged = plan([pr(1)], upgraded.rows, at(100_010), [[pr(1), [run("run_new", "completed", 100_001, NEWER)]]], 1, NEWER);
     expect(triaged.rows[0]).toMatchObject({ status: "triaged", runId: "run_new", workflowVersion: NEWER });
     expect(enqueued(plan([pr(1)], triaged.rows, at(100_020), [], 1, NEWER))).toEqual([]);
@@ -255,13 +236,13 @@ describe("reconcile plan", () => {
   });
 
   test("never-triaged heads are queued before heads due again, even when they were seen later", () => {
-    const stale = [1, 2, 3, 4].map((number) => row(number, { firstSeenAt: at(-100 + number).toISOString(), error: "verdict from workflow version 1, current is 2" }));
+    const stale = [1, 2, 3, 4].map((number) => row(number, { firstSeenAt: at(-100 + number).toISOString(), error: "attempts from workflow version 1, current is 2" }));
     const result = plan([pr(5), pr(6), pr(7), ...stale.map((row) => pr(row.number))], stale, at(0), [], policy.maxInFlight);
     expect(enqueued(result)).toEqual([5, 6, 7, 1, 2]);
   });
 
   test("a never-attempted head whose mail failed to deliver still goes before version-stale heads", () => {
-    const stale = [1, 2, 3].map((number) => row(number, { firstSeenAt: at(-100 + number).toISOString(), error: "verdict from workflow version 1, current is 2" }));
+    const stale = [1, 2, 3].map((number) => row(number, { firstSeenAt: at(-100 + number).toISOString(), error: "attempts from workflow version 1, current is 2" }));
     const undelivered = row(9, { firstSeenAt: at(-5).toISOString(), error: "delivery failed: Error: unroutable" });
     const result = plan([pr(9), pr(1), pr(2), pr(3)], [undelivered, ...stale], at(0), [], 1);
     expect(enqueued(result)).toEqual([9]);

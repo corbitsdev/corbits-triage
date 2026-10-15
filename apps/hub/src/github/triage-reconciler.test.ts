@@ -716,20 +716,14 @@ describe("triage reconciler", () => {
     });
   });
 
-  test("heads settled under another workflow version than the live deployment's, a legacy integer included, are queued again", async () => {
-    const logs: Logs = { [repoKey(LIVE.runId)]: { run_current: [started(9), rendered(current(9)), completed] } };
-    const { reconcile, delivered, saved, logged } = harness(logs, [head(1), head(2), head(9)]);
+  test("heads settled under another workflow version than the live deployment's, a legacy integer included, keep their verdicts", async () => {
+    const { reconcile, delivered, saved } = harness({}, [head(1), head(2)]);
     const settled = (number: number, workflowVersion: string | number): PrTriageRow => ({ number, headSha: `sha${number}`, status: "triaged", attempts: 0, runId: `old_${number}`, workflowVersion, firstSeenAt: LONG_AGO, updatedAt: LONG_AGO });
-    saved.set(REPO, [settled(1, 3), settled(2, "0.1.0-sha-00000000")]);
+    const rows = [settled(1, 3), settled(2, "0.1.0-sha-00000000")];
+    saved.set(REPO, rows);
     await reconcile();
-    expect(mailedNumbers(delivered)).toEqual([1, 2]);
-    expect(logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"])).toEqual([
-      `verdict from workflow version 3, current is ${VERSION}`,
-      `verdict from workflow version 0.1.0-sha-00000000, current is ${VERSION}`,
-    ]);
-    const rows = saved.get(REPO) ?? [];
-    expect(rows.filter((row) => row.number !== 9).every((row) => row.status === "queued" && row.attempts === 1 && row.workflowVersion === VERSION)).toBe(true);
-    expect(rows.find((row) => row.number === 9)).toMatchObject({ status: "triaged", runId: "run_current", workflowVersion: VERSION });
+    expect(mailedNumbers(delivered)).toEqual([]);
+    expect(saved.get(REPO)).toEqual(rows);
   });
 
   test("a finished run's log is read once and then left out of later passes", async () => {

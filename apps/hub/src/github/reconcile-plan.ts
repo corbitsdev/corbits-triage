@@ -14,7 +14,7 @@ export type ObservedRun = {
   unsettled?: string;
   /** The verdict only waits on GitHub for a machine check, so the head is retried after `unconfirmedRetryMs` rather than at once. */
   unconfirmed?: true;
-  /** Workflow package version of the deployment the run ran on; the row remembers it so a later deployment can tell the head needs triage again. */
+  /** Workflow package version of the deployment the run ran on; the row keeps it to reset failed heads on a later deployment and to carry judge answers. */
   workflowVersion?: string;
   trigger?: string;
   offeringId?: string;
@@ -205,15 +205,15 @@ function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: 
   return now.getTime() >= Math.max(last + backoffMs(row.attempts, policy), unconfirmedUntil);
 }
 
-const STALE_VERDICT = "verdict from workflow version";
+const STALE_VERDICT = "attempts from workflow version";
 
-/** A head settled or capped under another workflow version starts over, once: its verdict may no longer be in the live log and its attempts were spent on other code. A row that names no version is not stale; a legacy integer always differs. */
+/** A head capped under another workflow version starts over, once: its attempts were spent on other code. A settled verdict is kept; the next event triages the head on the current version. A row that names no version is not stale; a legacy integer always differs. */
 function fresh(pr: OpenPr, prior: PrTriageRow | undefined, workflowVersion: string | undefined, at: string): PrTriageRow {
   if (prior === undefined) {
     return { number: pr.number, headSha: pr.headSha, status: "new", attempts: 0, ...(workflowVersion !== undefined && { workflowVersion }), firstSeenAt: at, updatedAt: at };
   }
   if (workflowVersion === undefined || prior.workflowVersion === undefined || prior.workflowVersion === workflowVersion) return prior;
-  if (prior.status !== "triaged" && prior.status !== "failed") return prior;
+  if (prior.status !== "failed") return prior;
   const { runId: _run, queuedAt: _queued, ...rest } = prior;
   return { ...rest, status: "new", attempts: 0, workflowVersion, error: `${STALE_VERDICT} ${prior.workflowVersion}, current is ${workflowVersion}`, updatedAt: at };
 }
@@ -238,7 +238,7 @@ function runningHeads(runs: TenantPlanInput["runs"], now: Date, policy: Reconcil
   return busy;
 }
 
-/** Once a head is on the live version, a run of any other, such as one on a deployment still being cancelled, neither settles nor fails it; it still holds its slot. A head still on an older version keeps every run, so one in flight settles before it is reset. */
+/** Once a head is on the live version, a run of any other, such as one on a deployment still being cancelled, neither settles nor fails it; it still holds its slot. A head still on an older version keeps every run, so one in flight settles. */
 function counts(run: ObservedRun, row: PrTriageRow, workflowVersion: string | undefined): boolean {
   return workflowVersion === undefined || row.workflowVersion !== workflowVersion || run.workflowVersion === workflowVersion;
 }
