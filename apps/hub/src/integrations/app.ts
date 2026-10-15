@@ -33,7 +33,7 @@ import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
 import { WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
 export const INTEGRATIONS_PREFIX = "/api/integrations/";
-export const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
+const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
 const packSchemas = {
   checkPack: checkPackSchema.toJsonSchema(),
   sharedPolicy: sharedPolicySchema.toJsonSchema(),

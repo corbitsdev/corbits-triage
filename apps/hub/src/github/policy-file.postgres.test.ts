@@ -114,7 +114,6 @@ beforeAll(async () => {
       return "prn_github";
     },
     async grantWriters() {},
-    schemaUrl: "https://hub.test/api/integrations/pack-schema",
     now: () => new Date("2026-10-13T12:00:00Z"),
     log() {},
   });
@@ -237,7 +236,8 @@ test("PostgreSQL: exporting opens one pull request adding the file the hub's pol
   expect(opened).toEqual([expect.objectContaining({ head: EXPORT_BRANCH, base: "main" })]);
   expect(committed).toHaveLength(1);
   expect(committed[0]!.branch).toBe(EXPORT_BRANCH);
-  expect(committed[0]!.text.startsWith("# Corbits Triage policy. Schema: https://hub.test/api/integrations/pack-schema")).toBe(true);
+  expect(committed[0]!.text.startsWith("# Corbits Triage policy.\n")).toBe(true);
+  expect(committed[0]!.text).not.toMatch(/https?:\/\//);
   expect(readPolicyFile(committed[0]!.text, EXPORTED)).toEqual(JSON.parse(JSON.stringify(pack)));
 
   const again = await policyFile.exportRoute({ repo: EXPORTED }, MEMBER);

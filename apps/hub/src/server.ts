@@ -44,7 +44,7 @@ import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync } from "./github/installation-sync.js";
 import { authMethods } from "./auth.js";
-import { createIntegrationsApp, INTEGRATIONS_PREFIX, PACK_SCHEMA_PATH } from "./integrations/app.js";
+import { createIntegrationsApp, INTEGRATIONS_PREFIX } from "./integrations/app.js";
 import { createBitbucketIntegration } from "./bitbucket-datacenter/integration.js";
 import { createTenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
 import { connectedSources, createSourceDeployments, TRIAGE_WORKFLOWS, triageWorkflowFor, triageWorkflowOf, type TriageWorkflow } from "./github/source-workflow.js";
@@ -567,7 +567,6 @@ const policyFile = createPolicyFile({
   tenantBitbucket,
   writerFor: githubSenderPrincipal,
   grantWriters: createArtifactGrants(now),
-  schemaUrl: `${new URL(env.BETTER_AUTH_BASE_URL).origin}${PACK_SCHEMA_PATH}`,
   now,
   log: logJson,
 });
