@@ -123,6 +123,8 @@ export type BaselineState = typeof BaselineState.infer;
 export const TriageOutcomes = type({
   state: "'measured'",
   triaged: OutcomeMedians,
+  /** Distinct people, bots excluded, who commented, reviewed, merged or closed the triaged pull requests. */
+  humans: "number",
   baseline: OutcomeMedians.or("null"),
   baselineBefore: "string | null",
   baselineState: BaselineState,

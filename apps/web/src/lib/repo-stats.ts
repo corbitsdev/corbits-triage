@@ -53,7 +53,7 @@ export const OUTCOME_NAMES: Record<OutcomeField, string> = {
   humanTouchGapMs: "Longest wait",
 };
 
-export type OutcomesView = { missing: string } | { triaged: OutcomeMedians; baseline: OutcomeMedians | null; baselineMissing: string | null };
+export type OutcomesView = { missing: string } | { triaged: OutcomeMedians; humans: number; baseline: OutcomeMedians | null; baselineMissing: string | null };
 
 function noAnswer(source: RepoSource): string {
   return `${hostName(source)} did not answer; the numbers will return when it does.`;
@@ -70,13 +70,17 @@ function baselineMissing(outcomes: Extract<TriageOutcomes, { state: "measured" }
 export function outcomesView(outcomes: TriageOutcomes | null, source: RepoSource): OutcomesView | null {
   if (outcomes?.state === "measuring") return null;
   if (outcomes === null) return { missing: `Not connected to ${hostName(source)}.` };
-  if (outcomes.state === "measured") return { triaged: outcomes.triaged, baseline: outcomes.baseline, baselineMissing: baselineMissing(outcomes, source) };
+  if (outcomes.state === "measured") return { triaged: outcomes.triaged, humans: outcomes.humans, baseline: outcomes.baseline, baselineMissing: baselineMissing(outcomes, source) };
   if (outcomes.state === "no_credential") return { missing: `Needs a ${hostName(source)} credential you can use.` };
   return { missing: noAnswer(source) };
 }
 
 export function outcomeCounts(medians: OutcomeMedians): string {
   return `${medians.prs} PRs, ${medians.closed} closed`;
+}
+
+export function humansText(humans: number): string {
+  return `${humans} ${humans === 1 ? "person" : "people"} involved`;
 }
 
 export function actedOn(stats: TriageStats): number {

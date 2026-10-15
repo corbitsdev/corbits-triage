@@ -28,6 +28,7 @@ const STATS: TriageStats = {
   outcomes: {
     state: "measured",
     triaged: { prs: 3, closed: 2, mergeOrCloseMs: 90_000_000, firstHumanResponseMs: 3_600_000, firstApprovalMs: null, humanTouchGapMs: 7_200_000 },
+    humans: 4,
     baseline: null,
     baselineBefore: "2026-01-01T00:00:00.000Z",
     baselineState: "measured",
@@ -83,6 +84,7 @@ test("the outcomes show the triaged medians with their counts, and each missing 
   const html = card(measured);
   expect(html).toContain("3 PRs, 2 closed");
   expect(html).toContain("1d 1h");
+  expect(html).toContain("4 people involved");
   expect(html).toContain("No pull requests closed before Triage was switched on.");
 
   expect(card({ ...measured, baselineBefore: null, baselineState: "no_policy" })).toContain("The baseline needs a saved policy.");

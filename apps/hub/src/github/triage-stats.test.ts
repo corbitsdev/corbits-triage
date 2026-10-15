@@ -7,6 +7,7 @@ const NOW = new Date("2026-10-14T12:00:00Z");
 const MEASURED: TriageOutcomes = {
   state: "measured",
   triaged: { prs: 0, closed: 0, mergeOrCloseMs: null, firstHumanResponseMs: null, firstApprovalMs: null, humanTouchGapMs: null },
+  humans: 0,
   baseline: null,
   baselineBefore: null,
   baselineState: "no_policy",
