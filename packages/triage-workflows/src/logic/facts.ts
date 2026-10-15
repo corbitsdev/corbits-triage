@@ -6,7 +6,7 @@ import type { PrFacts, PrFileFacts } from "./checks.js";
 import { isRecord } from "@corbits/common";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./quality.js";
 
-export type RepoDocs = Required<Pick<PrFacts, "docs" | "rules">>;
+export type RepoDocs = Pick<PrFacts, "docs" | "rules">;
 
 export interface PrData {
   title?: string;
@@ -54,7 +54,7 @@ export function buildFacts(
   reviews: Review[],
   comments: IssueComment[],
   policy: RepoPolicy,
-): PrFacts {
+): Omit<PrFacts, keyof ItemFacts> {
   const latest = latestDecisive(reviews);
   const author = pr.author ?? "";
   const changesRequested = reviewersWith(latest, "CHANGES_REQUESTED");
@@ -85,7 +85,6 @@ export function buildFacts(
     changedFiles: Number(pr.changedFiles ?? 0),
     additions: Number(pr.additions ?? 0),
     deletions: Number(pr.deletions ?? 0),
-    paths: [],
     body: pr.body ?? "",
     branch: pr.branch,
   };
@@ -211,6 +210,8 @@ function membership(read: PullData["authorTeams"], pack: CheckPack, repo: string
   return { authorTeams, authorTeamsUnknown };
 }
 
+type ItemFacts = Pick<PrFacts, "paths" | "files" | "commits" | "commitMessages" | "events" | "docs" | "rules" | "authorTeams" | "authorTeamsUnknown">;
+
 export interface ItemContext {
   repo: string;
   policy: RepoPolicy;
@@ -227,6 +228,6 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
   const commitMessages = data.commits.slice(0, COMMIT_MESSAGES_MAX).map((commit) => commit.message ?? "");
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, ...docs, ...membership(data.authorTeams, pack, repo) };
+  const facts: PrFacts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, ...docs, ...membership(data.authorTeams, pack, repo) };
   return { facts, pack };
 }

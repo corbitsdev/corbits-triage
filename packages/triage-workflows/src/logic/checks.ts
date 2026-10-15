@@ -44,33 +44,33 @@ export interface PrFacts {
   draft: boolean;
   mergeable: boolean | null;
   checks: "success" | "failure" | "pending" | "none";
-  failingChecks?: string[];
-  pendingChecks?: string[];
-  reviewers?: string[];
+  failingChecks: string[];
+  pendingChecks: string[];
+  reviewers: string[];
   approvals: number;
-  changesRequested?: string[];
-  triageRequested?: boolean;
-  reviewAnswered?: boolean;
-  reviewedBy?: string[];
-  labels?: string[];
-  assignees?: string[];
-  changedFiles?: number;
-  additions?: number;
-  deletions?: number;
-  paths?: string[];
-  files?: PrFileFacts[];
-  body?: string;
-  commits?: string[];
+  changesRequested: string[];
+  triageRequested: boolean;
+  reviewAnswered: boolean;
+  reviewedBy: string[];
+  labels: string[];
+  assignees: string[];
+  changedFiles: number;
+  additions: number;
+  deletions: number;
+  paths: string[];
+  files: PrFileFacts[];
+  body: string;
+  commits: string[];
   /** In full, the first 100. */
-  commitMessages?: string[];
-  docs?: Record<string, string>;
-  rules?: Record<string, string>;
-  branch?: string;
-  authorTeams?: string[];
+  commitMessages: string[];
+  docs: Record<string, string>;
+  rules: Record<string, string>;
+  branch: string;
+  authorTeams: string[];
   /** Membership GitHub would not confirm either way. */
-  authorTeamsUnknown?: string[];
+  authorTeamsUnknown: string[];
   /** Empty for webhook actions no pack event names. */
-  events?: TriageEvent[];
+  events: TriageEvent[];
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */
@@ -108,8 +108,8 @@ type CiRule = { status: string; reason: string; failed: boolean | null; names: (
 // checks to wait for and the rule passes.
 const CI_RULE: Record<PrFacts["checks"], CiRule> = {
   success: { status: "passing", reason: "required checks are passing", failed: false, names: () => [] },
-  failure: { status: "failing", reason: "required checks are failing", failed: true, names: (facts) => facts.failingChecks ?? [] },
-  pending: { status: "pending", reason: "checks are still running", failed: null, names: (facts) => facts.pendingChecks ?? [] },
+  failure: { status: "failing", reason: "required checks are failing", failed: true, names: (facts) => facts.failingChecks },
+  pending: { status: "pending", reason: "checks are still running", failed: null, names: (facts) => facts.pendingChecks },
   none: { status: "none", reason: "no checks configured", failed: false, names: () => [] },
 };
 
@@ -164,17 +164,17 @@ const GITHUB_BRANCH_REF = /^(\d+)-/;
 const LINEAR_BRANCH_REF = /\b([a-z][a-z0-9]+-\d+)\b/i;
 
 export function issueReference(facts: Pick<PrFacts, "title" | "body" | "commits" | "branch">, tracker: IssueTracker): string | null {
-  const text = [facts.title, facts.body ?? "", ...(facts.commits ?? [])].join("\n");
+  const text = [facts.title, facts.body, ...facts.commits].join("\n");
   if (tracker !== "linear") {
     const inText = GITHUB_ISSUE_REF.exec(text);
     if (inText) return inText[0].trim().replace(/^\(/, "");
-    const inBranch = facts.branch === undefined ? null : GITHUB_BRANCH_REF.exec(facts.branch);
+    const inBranch = GITHUB_BRANCH_REF.exec(facts.branch);
     if (inBranch) return `#${inBranch[1]}`;
   }
   if (tracker !== "github") {
     const inText = LINEAR_ISSUE_REF.exec(text);
     if (inText) return inText[0];
-    const inBranch = facts.branch === undefined ? null : LINEAR_BRANCH_REF.exec(facts.branch);
+    const inBranch = LINEAR_BRANCH_REF.exec(facts.branch);
     if (inBranch) return inBranch[1].toUpperCase();
   }
   return null;
@@ -193,8 +193,8 @@ type TextItem = { where: string; what: string; text: string };
 function textItems(facts: PrFacts, rule: TextCustomCheck): TextItem[] {
   return rule.fields.flatMap(function items(field): TextItem[] {
     if (field === "title") return [{ where: "title", what: "the title", text: facts.title }];
-    if (field === "description") return [{ where: "description", what: "the description", text: facts.body ?? "" }];
-    return (facts.commitMessages ?? []).map((message) => ({ where: `commit "${excerpt(message.split("\n", 1)[0]!)}"`, what: "a commit message", text: message }));
+    if (field === "description") return [{ where: "description", what: "the description", text: facts.body }];
+    return facts.commitMessages.map((message) => ({ where: `commit "${excerpt(message.split("\n", 1)[0]!)}"`, what: "a commit message", text: message }));
   });
 }
 
@@ -258,9 +258,9 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       result("ci-green", ci.failed, ci.reason, ci.names(facts), { kind: "values", values: { status: ci.status } });
     }
     if (on("no-merge-conflicts") && facts.mergeable === false) add("no-merge-conflicts", "blocked", "merge conflicts with base");
-    const requested = facts.changesRequested ?? [];
+    const requested = facts.changesRequested;
     if (requested.length) add(NO_CHANGES_REQUESTED, "needs-author-update", "a reviewer requested changes");
-    const requestedReason = facts.reviewAnswered === true ? REVIEW_ANSWERED_REASON : "a reviewer requested changes";
+    const requestedReason = facts.reviewAnswered ? REVIEW_ANSWERED_REASON : "a reviewer requested changes";
     result(NO_CHANGES_REQUESTED, requested.length > 0, requested.length ? requestedReason : "no changes requested", requested.map((login) => `changes requested by @${login}`), {
       kind: "values",
       values: { changesRequested: requested.length },
@@ -274,7 +274,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       });
     }
     if (on("max-files-changed")) {
-      const changedFiles = facts.changedFiles ?? 0;
+      const changedFiles = facts.changedFiles;
       const over = rules.maxFiles !== undefined && changedFiles > rules.maxFiles;
       if (over) add("max-files-changed", "needs-author-update", `pull request touches ${changedFiles} files (max ${rules.maxFiles})`);
       result("max-files-changed", over, over ? "pull request is over the files limit" : "pull request is within the files limit", rules.maxFiles === undefined ? [] : [`${changedFiles} files (max ${rules.maxFiles})`], {
@@ -283,7 +283,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       });
     }
     if (on("max-lines-changed")) {
-      const lines = (facts.additions ?? 0) + (facts.deletions ?? 0);
+      const lines = facts.additions + facts.deletions;
       const over = rules.maxLines !== undefined && lines > rules.maxLines;
       if (over) add("max-lines-changed", "needs-author-update", `pull request changes ${lines} lines (max ${rules.maxLines})`);
       result("max-lines-changed", over, over ? "pull request is over the lines limit" : "pull request is within the lines limit", rules.maxLines === undefined ? [] : [`${lines} lines changed (max ${rules.maxLines})`], {
@@ -292,7 +292,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
       });
     }
     if (on("no-forbidden-paths") && rules.forbiddenGlobs.length > 0) {
-      const matched = (facts.paths ?? []).filter((path) => rules.forbiddenGlobs.some((glob) => globMatch(path, glob)));
+      const matched = facts.paths.filter((path) => rules.forbiddenGlobs.some((glob) => globMatch(path, glob)));
       if (matched.length) add("no-forbidden-paths", "needs-author-update", "pull request touches a forbidden path");
       result("no-forbidden-paths", matched.length > 0, matched.length ? "pull request touches a forbidden path" : "no forbidden paths touched", matched, {
         kind: "values",

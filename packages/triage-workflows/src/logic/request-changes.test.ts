@@ -4,9 +4,11 @@ import { DEFAULT_REPO_POLICY, defaultActions, emptyPack, type CheckPack } from "
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals } from "./actions.js";
 import { deriveState, type PrFacts } from "./checks.js";
 import { buildFacts } from "./facts.js";
+import { NO_FACTS } from "./item.js";
 import { renderVerdict } from "./render.js";
 
 const facts: PrFacts = {
+  ...NO_FACTS,
   repo: "acme/widgets",
   number: 8,
   title: "feat: search",

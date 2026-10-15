@@ -1,10 +1,12 @@
 import { deriveState, type PrFacts } from "../packages/triage-workflows/src/logic/checks.js";
 import { prepareQualityEvaluation } from "../packages/triage-workflows/src/logic/quality.js";
 import { renderVerdict, type RenderOutput } from "../packages/triage-workflows/src/logic/render.js";
+import { NO_FACTS } from "../packages/triage-workflows/src/logic/item.js";
 import type { PRRecord } from "../packages/triage-contracts/src/types.js";
 
 function toFacts(pr: PRRecord): PrFacts {
   return {
+    ...NO_FACTS,
     repo: pr.repo,
     number: pr.id,
     title: pr.title,

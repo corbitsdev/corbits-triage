@@ -46,8 +46,7 @@ export interface ActionInput {
 
 /** Catch-up runs the policy's actions whatever woke it. */
 export function wakes(pack: CheckPack, facts: PrFacts): boolean {
-  const events = facts.events ?? [];
-  return events.includes("catch-up") || events.some((event) => (pack.actions.when as readonly string[]).includes(event));
+  return facts.events.includes("catch-up") || facts.events.some((event) => (pack.actions.when as readonly string[]).includes(event));
 }
 
 /** GitHub takes team slugs, and only the repository owner's teams can review. */
@@ -88,7 +87,7 @@ function changesBody(input: ActionInput): string {
 /** The labels a derived step wants, and the ones it owns on the pull request that no longer apply. */
 function derivedLabels(wanted: string[], owns: (label: string) => boolean, facts: PrFacts): ResolvedTarget {
   const keep = new Set(wanted.map((label) => label.toLowerCase()));
-  return { labels: wanted, unlabel: (facts.labels ?? []).filter((label) => owns(label) && !keep.has(label.toLowerCase())) };
+  return { labels: wanted, unlabel: facts.labels.filter((label) => owns(label) && !keep.has(label.toLowerCase())) };
 }
 
 /**
@@ -119,7 +118,7 @@ function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): Re
     case "request-review": {
       const resolved = people(step, input);
       if ("unresolved" in resolved) return resolved;
-      const { author, reviewers = [], reviewedBy = [] } = input.facts;
+      const { author, reviewers, reviewedBy } = input.facts;
       const users = missingFrom([author], resolved.users);
       if (!users.length && !resolved.teams.length) throw new Error("no reviewer is left once the author is excluded");
       return { users: missingFrom([...reviewers, ...reviewedBy], users), teams: missingFrom(reviewers, resolved.teams) };
@@ -215,7 +214,7 @@ export function packApproves(pack: CheckPack): boolean {
  * longer requests changes, the App's standing requests are taken back. Undefined when there is nothing to take back or decide.
  */
 export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "facts">): boolean | undefined {
-  if (!lists(input.pack, "request-changes")) return input.facts.triageRequested === true ? false : undefined;
+  if (!lists(input.pack, "request-changes")) return input.facts.triageRequested ? false : undefined;
   return changesFor(input).length > 0;
 }
 

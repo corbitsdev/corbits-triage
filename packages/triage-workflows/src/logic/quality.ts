@@ -162,7 +162,7 @@ export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the de
 
 /** Lockfiles say nothing the judge decides on, so it never reads them. */
 function judgedFiles(facts: PrFacts) {
-  return (facts.files ?? []).filter((file) => !isGeneratedPath(file.path));
+  return facts.files.filter((file) => !isGeneratedPath(file.path));
 }
 
 // Custom checks are the repository's own rules, so their requests carry its contribution rules and say where they are.
@@ -219,11 +219,11 @@ export type JudgeState = {
 type PathList = Pick<JudgeState["pullRequest"], "paths" | "directories">;
 
 function directories(facts: PrFacts): NonNullable<JudgeState["pullRequest"]["directories"]> {
-  const changed = new Map((facts.files ?? []).map((file) => [file.path, (file.additions ?? 0) + (file.deletions ?? 0)]));
+  const changed = new Map(facts.files.map((file) => [file.path, (file.additions ?? 0) + (file.deletions ?? 0)]));
   let summary: NonNullable<JudgeState["pullRequest"]["directories"]> = {};
   for (let depth = 4; depth > 0; depth--) {
     summary = {};
-    for (const path of facts.paths ?? []) {
+    for (const path of facts.paths) {
       const directory = path.split("/").slice(0, -1).slice(0, depth).join("/") || ".";
       const row = summary[directory] ?? { files: 0, changed: 0 };
       summary[directory] = { files: row.files + 1, changed: row.changed + (changed.get(path) ?? 0) };
@@ -235,28 +235,27 @@ function directories(facts: PrFacts): NonNullable<JudgeState["pullRequest"]["dir
 
 /** The first 200. */
 function pathList(facts: PrFacts, focused: boolean): PathList {
-  const paths = facts.paths ?? [];
-  if (!focused) return { paths: paths.slice(0, MAX_PATHS) };
+  if (!focused) return { paths: facts.paths.slice(0, MAX_PATHS) };
   const listed: string[] = [];
   let bytes = 2;
-  for (const path of paths) {
+  for (const path of facts.paths) {
     bytes += jsonBytes(path) + (listed.length > 0 ? 1 : 0);
     if (bytes > FOCUSED_PATH_BYTES) break;
     listed.push(path);
   }
-  return listed.length < paths.length ? { paths: listed, directories: directories(facts) } : { paths };
+  return listed.length < facts.paths.length ? { paths: listed, directories: directories(facts) } : { paths: facts.paths };
 }
 
 function judgeState(facts: PrFacts, files: StateFile[], withRules: boolean, listed: PathList): JudgeState {
   return {
     pullRequest: {
       title: facts.title,
-      body: (facts.body ?? "").slice(0, MAX_BODY),
-      commits: (facts.commits ?? []).slice(0, MAX_COMMITS).map((subject) => subject.slice(0, MAX_SUBJECT)),
+      body: facts.body.slice(0, MAX_BODY),
+      commits: facts.commits.slice(0, MAX_COMMITS).map((subject) => subject.slice(0, MAX_SUBJECT)),
       ...listed,
       files,
     },
-    repository: withRules ? withContributionRules(facts.docs ?? {}, facts.rules ?? {}) : { docs: facts.docs ?? {} },
+    repository: withRules ? withContributionRules(facts.docs, facts.rules) : { docs: facts.docs },
   };
 }
 
@@ -364,7 +363,7 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
   const plan: QualityPlan = {};
   if (sources.quality.some((source) => source.id === "docs")) {
     // Deleting a doc does not cover a change.
-    const changed = (facts.files ?? []).filter((file) => file.status !== "removed" && isDocPath(file.path));
+    const changed = facts.files.filter((file) => file.status !== "removed" && isDocPath(file.path));
     plan.docs = { changed: changed.map((file) => file.path), asked: {}, unread: [] };
   }
   const focused: FocusedPlan | undefined = isFocused(sources) ? { slices: {}, unread: [], parts: {} } : undefined;
