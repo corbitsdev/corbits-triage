@@ -83,7 +83,7 @@ function rendered(verdict: Record<string, unknown>): WorkflowRunEvent {
 const completed: WorkflowRunEvent = { seq: 2, type: "RunCompleted", body: { type: "RunCompleted", seq: 2 } };
 
 type Logs = Record<string, Record<string, WorkflowRunEvent[]>>;
-type Delivered = Array<{ address: string; payload: Record<string, unknown> }>;
+type Delivered = Array<{ address: string | undefined; payload: Record<string, unknown> }>;
 
 function mailedHeads(delivered: Delivered): Array<[string, number]> {
   return delivered.flatMap((entry) => (entry.payload["items"] as Array<{ prNumber: number }>).map((item): [string, number] => [entry.payload["repo"] as string, item.prNumber]));
@@ -211,9 +211,10 @@ function fakeReader(logs: Logs) {
 type HarnessOptions = {
   github?: boolean;
   batchSize?: number;
+  batched?: boolean;
   maxInFlight?: string;
   failDeliveryAt?: number;
-  deliver?: (tenantId: string, address: string, payload: unknown) => Promise<void>;
+  deliver?: (tenantId: string, address: string | undefined, payload: unknown) => Promise<void>;
   refuseSaves?: number;
   onRefusedSave?: (repo: string) => void;
   onSave?: (repo: string, rows: PrTriageRow[]) => void;
@@ -317,13 +318,14 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       if (options.noPack) return { status: "missing" };
       return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
     },
-    deliver: async function deliver(tenantId, address, payload) {
+    send: async function send({ tenantId, address, payload }) {
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
       await options.deliver?.(tenantId, address, payload);
       delivered.push({ address, payload: payload as Record<string, unknown> });
     },
     policy: triageReconcilePolicy({ ...(options.maxInFlight !== undefined && { TRIAGE_MAX_IN_FLIGHT: options.maxInFlight }) }),
     batchSize: options.batchSize ?? DEFAULT_RECONCILE_POLICY.maxInFlight,
+    batched: options.batched ?? true,
     now,
     log: (entry) => logged.push(entry),
   });
@@ -760,6 +762,12 @@ describe("triage reconciler", () => {
     expect(delivered.map((entry) => mailedNumbers([entry]))).toEqual([[1, 2], [3, 4], [5]]);
   });
 
+  test("under the coordinator each head is its own job, keyed by that head", async () => {
+    const { reconcile, delivered } = harness({}, heads(1, 3), { batched: false });
+    await reconcile();
+    expect(delivered.map((entry) => mailedNumbers([entry]))).toEqual([[1], [2], [3]]);
+  });
+
   test("a batch run's verdicts settle each head it named; a batch degraded before rendering queues every head again", async () => {
     const logs: Logs = {
       [repoKey(LIVE.runId)]: {
@@ -830,7 +838,8 @@ describe("triage reconciler", () => {
       senderLocalPart: "github",
       systemSender: { resolve },
     });
-    async function deliver(tenantId: string, address: string, payload: unknown) {
+    async function deliver(tenantId: string, address: string | undefined, payload: unknown) {
+      if (address === undefined) throw new Error("no listener address");
       await trigger.to(address, JSON.stringify(payload), tenantId, undefined);
     }
     const { reconcile, delivered, saved } = harness({}, [head(1)], { deliver });

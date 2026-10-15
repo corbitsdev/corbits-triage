@@ -74,7 +74,7 @@ async function withHub(body: (hub: ReturnType<typeof harness>) => Promise<void>)
 function harness(db: ReturnType<typeof createDB>["db"]) {
   const launchSpecs = createWorkflowRunLaunchSpecStore(db);
   const prepared: PrepareProvisionedWorkflowDeploymentArgs[] = [];
-  const delivered: { address: string; payload: unknown }[] = [];
+  const delivered: { address: string | undefined; payload: unknown }[] = [];
   const logged: Record<string, unknown>[] = [];
   const rows = new Map<string, PrTriageRow[]>();
   const runs = new Map<string, ObservedRuns>();
@@ -159,11 +159,12 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
       },
     },
     readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
-    deliver: async function deliver(_tenantId, address, payload) {
+    send: async function send({ address, payload }) {
       delivered.push({ address, payload });
     },
     policy: DEFAULT_RECONCILE_POLICY,
     batchSize: DEFAULT_RECONCILE_POLICY.maxInFlight,
+    batched: true,
     now: () => NOW,
     log: (entry) => logged.push(entry),
   });

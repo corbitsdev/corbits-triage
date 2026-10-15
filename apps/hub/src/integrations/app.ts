@@ -24,6 +24,7 @@ import { PolicyQuery } from "../github/policy-read.js";
 import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
+import { TRIAGE_QUEUE_PATH, TriageQueue } from "../github/triage-queue-view.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
 import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, RepoWebhook, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
@@ -71,6 +72,7 @@ export type IntegrationHandlers = {
   prPreview: (body: typeof PreviewBody.infer, member: Member, signal: AbortSignal) => Promise<Response>;
   triageStats: MemberHandler;
   triageTimeline: MemberHandler;
+  triageQueue: (member: Member) => Promise<Response>;
   triageVerdicts: MemberHandler;
   audit: MemberHandler;
   workflowDeploy: BodyHandler<typeof DeployBody.infer>;
@@ -497,6 +499,21 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     requireGrant("workflow-run:*", "read"),
     function triageTimeline(c) {
       return handlers.triageTimeline(c.req.raw, memberOf(c));
+    },
+  );
+
+  app.get(
+    `${TRIAGE_QUEUE_PATH}/:tenantId`,
+    describeRoute({
+      summary: "Triage jobs waiting and running in the workspace",
+      description: "Needs `workflow-run:*` read. The triage coordinator's queue for the workspace: jobs waiting for a worker and workers running, each with its repository, pull request head, where it came from (`event`, `retry`, `reconcile`) and `ageMs` since it was queued. Read from the hub's memory; with the coordinator off both lists are empty.",
+      tags: TAGS,
+      responses: { 200: json("Queued and running jobs", TriageQueue), 401: failures[401], 403: failures[403] },
+    }),
+    member,
+    requireGrant("workflow-run:*", "read"),
+    function triageQueue(c) {
+      return handlers.triageQueue(memberOf(c));
     },
   );
 

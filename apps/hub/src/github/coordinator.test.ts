@@ -62,7 +62,7 @@ function fakeSpawner() {
 }
 
 function job(tenantId: string, number: number, payload = {}): TriageJob {
-  return { tenantId, workflow: "pr-triage-github", repo: "acme/widgets", number, headSha: "sha1", payload };
+  return { tenantId, workflow: "pr-triage-github", repo: "acme/widgets", number, headSha: "sha1", source: "event", payload };
 }
 
 async function noFailure(): Promise<void> {}
@@ -201,4 +201,22 @@ test("a spawn refused for capacity is retried with backoff, not failed", async (
   await clock.advance(3_000);
   expect(fake.spawned.map((j) => j.number)).toEqual([1]);
   expect(failed).toEqual([]);
+});
+
+test("a job from another source for a running pull request waits for its worker, and the queue says so", async () => {
+  const { clock, fake, coordinator } = setup(NO_LIMITS);
+  coordinator.enqueue(job("t1", 1));
+  await clock.advance(0);
+  coordinator.enqueue({ ...job("t1", 1, { head: "retry" }), source: "retry" });
+  coordinator.enqueue({ ...job("t1", 1, { head: "reconcile" }), source: "reconcile" });
+  await clock.advance(0);
+  expect(fake.spawned.map((j) => j.source)).toEqual(["event"]);
+  expect(coordinator.snapshot("t1")).toMatchObject({
+    queued: [{ number: 1, source: "reconcile", queuedAt: clock.now().toISOString() }],
+    running: [{ number: 1, source: "event", runId: "run_1" }],
+  });
+  expect(coordinator.snapshot("t2")).toEqual({ queued: [], running: [] });
+  await fake.end("run_1");
+  expect(fake.spawned.at(-1)).toMatchObject({ source: "reconcile", payload: { head: "reconcile" } });
+  expect(fake.spawned).toHaveLength(2);
 });

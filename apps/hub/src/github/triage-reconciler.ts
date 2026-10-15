@@ -4,6 +4,8 @@
 // stored state, then queues what the plan says to the newest deployment.
 import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
+import type { TriageJob } from "./coordinator.js";
+import { triageWorkflowFor } from "./source-workflow.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks } from "@corbits/github-reads";
@@ -45,10 +47,12 @@ export type TriageReconcilerDeps = {
   observeTenant: TenantObserver["observe"];
   store: TriageStateStore;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
-  deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
+  send: (job: TriageJob) => Promise<void>;
   policy: ReconcilePolicy;
-  /** Heads one mail carries at most. */
+  /** Heads one listener mail carries at most; one job per head when not `batched`. */
   batchSize: number;
+  /** Mail to a listener carries a batch of heads; the coordinator spawns one worker per head. */
+  batched: boolean;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -220,12 +224,14 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     const claimed = await claim(pass.tenantId, key, repo.stored, plan);
     if (claimed === undefined) return undefined;
-    // One mail carries up to `batchSize` heads: each mail costs the deployment a fixed set of commits, whatever it carries.
-    for (let from = 0; from < claimed.enqueue.length; from += deps.batchSize) {
-      const batch = claimed.enqueue.slice(from, from + deps.batchSize);
+    // One listener mail carries up to `batchSize` heads: each mail costs the deployment a fixed set of commits, whatever it carries.
+    const size = deps.batched ? deps.batchSize : 1;
+    for (let from = 0; from < claimed.enqueue.length; from += size) {
+      const batch = claimed.enqueue.slice(from, from + size);
       const items = batch.map((queued) => ({ prNumber: queued.number, headSha: claimed.rows.find((row) => row.number === queued.number)!.headSha, ...(queued.judged && { judged: queued.judged }) }));
+      const head = deps.batched ? { number: 0, headSha: "" } : { number: items[0]!.prNumber, headSha: items[0]!.headSha };
       try {
-        await deps.deliver(pass.tenantId, pass.deployment.address, mailPayload(repo.record, repo.policy, repo, { items }));
+        await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, ...head, source: "reconcile", address: pass.deployment.address, payload: mailPayload(repo.record, repo.policy, repo, { items }) });
       } catch (err) {
         const restored = claimed.enqueue.slice(from).map((queued) => ({ ...queued.undelivered, error: `delivery failed: ${String(err)}` }));
         await restoreRows(pass.tenantId, key, claimed, restored);
