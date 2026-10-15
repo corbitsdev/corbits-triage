@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { emptyPack } from "@corbits/triage-contracts";
+import { BITBUCKET_DATACENTER_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { CoalescedEvent } from "../github/coalescer.js";
 import { DeliveryCache } from "../github/dedupe.js";
 import { createProviderHookApp } from "../provider-hooks/app.js";
@@ -19,7 +20,7 @@ const HOOK_ROW = {
   name: "bitbucket-datacenter-hook",
   status: "active",
   secret: "sealed",
-  metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } },
+  metadata: xHubHookMetadata("pr-triage", BITBUCKET_DATACENTER_HOOK_HEADERS),
 };
 
 const repository = { slug: "widgets", project: { key: "TRI" } };

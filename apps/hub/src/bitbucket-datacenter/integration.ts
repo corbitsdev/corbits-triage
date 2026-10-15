@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { type } from "arktype";
 import { credentialAad } from "@intx/types";
+import { BITBUCKET_DATACENTER_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { ensureTriageRole, grantEnabledKinds } from "../github/automation.js";
 import { tenantConfigOf } from "../github/bridge.js";
@@ -20,7 +21,7 @@ import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enable
 export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
 const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
 const NO_STORE = { headers: { "Cache-Control": "no-store" } };
-const HOOK_METADATA = { webhook: { verify: "standard-webhooks", workflow: triageWorkflowFor("bitbucket-datacenter").id } };
+const HOOK_METADATA = xHubHookMetadata(triageWorkflowFor("bitbucket-datacenter").id, BITBUCKET_DATACENTER_HOOK_HEADERS);
 
 export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
 export const Connection = type({ baseUrl: "string", hookUrl: "string" });

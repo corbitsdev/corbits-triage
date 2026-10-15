@@ -4,6 +4,7 @@ import { type } from "arktype";
 import type { DB } from "@intx/db";
 import { schema } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
+import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { generateId } from "@intx/hub-common";
 import { grantAdminGithub } from "./admin-github-grant.js";
 import { ensureTriageRole } from "./automation.js";
@@ -217,7 +218,7 @@ export async function prepareCanonicalManifestWrite(
     replacement: state.replacement,
     values: [
       { id: appCredentialId, name: "github", secret: encryptedApp, metadata: { appSlug: conversion.slug } },
-      { id: hookCredentialId, name: "github-hook", secret: encryptedHook, metadata: { webhook: { verify: "standard-webhooks", workflow: triageWorkflowFor("github").id } } },
+      { id: hookCredentialId, name: "github-hook", secret: encryptedHook, metadata: xHubHookMetadata(triageWorkflowFor("github").id, GITHUB_HOOK_HEADERS) },
     ] as const,
   };
 }

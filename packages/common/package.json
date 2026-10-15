@@ -6,7 +6,9 @@
   "type": "module",
   "module": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./hook-metadata": "./src/hook-metadata.ts",
+    "./x-hub-signature": "./src/x-hub-signature.ts"
   },
   "main": "./src/index.ts",
   "description": "Helpers shared across Corbits Triage packages"

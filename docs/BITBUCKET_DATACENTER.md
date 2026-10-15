@@ -13,7 +13,8 @@ is a wrapper over them.
 - The token is the stock credential `bitbucket-datacenter` (type `api_key`) on the stock
   provider `bitbucket-datacenter` (plugin `http`, `apiBaseUrl` = the instance URL).
 - The webhook secret is the stock credential `bitbucket-datacenter-hook`, with
-  `metadata.webhook` as the GitHub hook credential has it.
+  `metadata.webhook` `{ verify: "x-hub-signature", workflow, headers }`, the
+  headers being Data Center's (see [Webhook](#webhook)).
 - Repositories are records in `corbitsTriage.repos` with `source: "bitbucket-datacenter"`,
   named `PROJECTKEY/slug` (for example `TRI/widgets`), with `defaultBranch` and,
   when triage created the webhook, `webhookId`.
@@ -136,7 +137,13 @@ true when the webhook could not be removed, including when the caller lacks
 ## Webhook
 
 URL: `POST {hub}/api/hooks/bitbucket-datacenter/{tenantId}`, signed with the
-`bitbucket-datacenter-hook` secret. Events:
+`bitbucket-datacenter-hook` secret. Data Center signs as GitHub does, `sha256=`
+and the hex HMAC of the raw body, in `X-Hub-Signature`, with the event in
+`X-Event-Key` and the delivery id in `X-Request-Id`; the hook credential's
+`metadata.webhook.headers` names these three. The hub verifies it with the
+shared X-Hub-Signature verifier (`@corbits/common/x-hub-signature`), the scheme
+`@corbits/webhooks` 0.4 adds; once that release is in the hub, this route moves
+onto the stock hook routes. Events:
 
 - Pull request: `pr:opened`, `pr:modified`, `pr:from_ref_updated`,
   `pr:reviewer:approved`, `pr:reviewer:unapproved`, `pr:reviewer:needs_work`,

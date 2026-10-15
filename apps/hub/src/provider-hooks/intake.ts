@@ -1,9 +1,11 @@
 // Webhook intake for providers other than GitHub, which keeps its own bridge. A provider is a descriptor: which
-// tenant credential holds its hook secret, which headers carry the signature, event and delivery id, and a pure
+// tenant credential holds its hook secret, which headers carry its X-Hub-Signature, event and delivery id, and a pure
 // normaliser that turns its payload into the shapes the GitHub bridge produces. Everything after verification is
 // shared and has no provider branches. A failed queue write is 500 so the provider retries.
 import { hasEnabledRules, repoPolicy, triageEventOf, type RepoSource } from "@corbits/triage-contracts";
 import { errorText, isRecord } from "@corbits/common";
+import type { HookHeaders } from "@corbits/common/hook-metadata";
+import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
 import { loadBridgeHook, logJson, resolvedPack, tenantConfigOf, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
 import type { Accepted } from "../github/coalescer.js";
 import type { BaseMove, PolicyPush, PrMail } from "../github/normalize.js";
@@ -20,10 +22,7 @@ export type ProviderHook = {
   source: RepoSource;
   /** Tenant credential holding the hook secret, with metadata.webhook naming the workflow. */
   credential: string;
-  signatureHeader: string;
-  verify: (secret: string, body: string, signature: string | null) => boolean;
-  eventHeader: string;
-  deliveryHeader: string;
+  headers: HookHeaders;
   normalize: (event: string, deliveryId: string, payload: Record<string, unknown>) => HookIntake | null;
   /** The user the tenant's token acts as, whose own events must not wake triage. */
   ownUser?: (ns: CorbitsTriageNs) => string | undefined;
@@ -132,9 +131,9 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       log({ level: "warn", msg: "payload_too_large", hook: hook.credentialId });
       return json(413, { error: "payload_too_large" });
     }
-    const delivery = req.headers.get(provider.deliveryHeader);
-    const event = req.headers.get(provider.eventHeader);
-    if (!provider.verify(hook.secret, body, req.headers.get(provider.signatureHeader))) {
+    const delivery = req.headers.get(provider.headers.delivery);
+    const event = req.headers.get(provider.headers.event);
+    if (!verifyXHubSignature(hook.secret, req.headers.get(provider.headers.signature), body)) {
       log({ level: "warn", msg: "bad_signature", delivery, hook: hook.credentialId });
       return json(401, { error: "invalid_signature" });
     }

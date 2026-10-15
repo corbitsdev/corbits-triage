@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { emptyPack, recommendedPack, repoPolicy, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { applyInstallationListing, createBridgeHandler, loadBridgeHook, mailPayload, type BridgeDeps } from "./bridge.js";
 import { MAX_BODY_BYTES } from "../read-json.js";
 import { repoRecords } from "./tenant-config.js";
 import { DeliveryCache } from "./dedupe.js";
 import type { CoalescedEvent } from "./coalescer.js";
-import { verifySignature } from "./signature.js";
 
 const SECRET = "test-webhook-secret";
 const HOOK_ID = "crd_test123";
@@ -126,7 +126,7 @@ function hookRow(overrides: Partial<Row> = {}): Row {
     name: "github-hook",
     status: "active",
     secret: "sealed",
-    metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } },
+    metadata: xHubHookMetadata("pr-triage", GITHUB_HOOK_HEADERS),
     ...overrides,
   };
 }
@@ -185,17 +185,6 @@ function flakyCoalescer(sent: Sent[], failures: number): BridgeDeps["coalescer"]
     },
   };
 }
-
-describe("verifySignature", () => {
-  test("accepts a valid HMAC", () => {
-    expect(verifySignature(SECRET, prPayload, sign(prPayload))).toBe(true);
-  });
-  test("rejects wrong secret, missing prefix and missing header", () => {
-    expect(verifySignature("other", prPayload, sign(prPayload))).toBe(false);
-    expect(verifySignature(SECRET, prPayload, "md5=abc")).toBe(false);
-    expect(verifySignature(SECRET, prPayload, null)).toBe(false);
-  });
-});
 
 describe("loadBridgeHook", () => {
   test("loads an active tenant-owned hook credential", async () => {

@@ -8,20 +8,21 @@
 // write is 500 so GitHub retries. A pull request merged into the default
 // branch marks the repository's other heads outdated for the reconciler.
 //
-// TODO (upstream github verifier): delete this bridge once @corbits/webhooks
-// ships an X-Hub-Signature-256 verifier (with X-GitHub-Delivery replay keyed
-// per credential). The hook URL stays the same; GitHub traffic then flows
-// through the stock deliverer and this file goes away.
+// TODO (upstream github verifier): delete this bridge once the hub runs
+// @corbits/webhooks 0.4, whose x-hub-signature verifier this one shares
+// (@corbits/common/x-hub-signature). The hook URL stays the same; GitHub
+// traffic then flows through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
 import { asRecord, errorText, isRecord } from "@corbits/common";
+import { GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
+import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
 import { baseMoveOf, normalize, policyPushOf, type BaseMove, type PolicyPush } from "./normalize.js";
 import type { PolicyFileSync } from "./policy-file.js";
 import { readCappedBody } from "../read-json.js";
-import { verifySignature } from "./signature.js";
 import {
   dropReposByInstallation,
   dropReposByName,
@@ -39,7 +40,7 @@ import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
 
-const HOOK_VERIFY = ["bearer", "standard-webhooks", "slack"] as const;
+const HOOK_VERIFY = ["bearer", "standard-webhooks", "slack", "x-hub-signature"] as const;
 
 export interface BridgeHook {
   credentialId: string;
@@ -426,9 +427,9 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "warn", msg: "payload_too_large", hook: loaded.credentialId });
       return json(413, { error: "payload_too_large" });
     }
-    const delivery = req.headers.get("x-github-delivery");
-    const event = req.headers.get("x-github-event");
-    if (!verifySignature(loaded.secret, body, req.headers.get("x-hub-signature-256"))) {
+    const delivery = req.headers.get(GITHUB_HOOK_HEADERS.delivery);
+    const event = req.headers.get(GITHUB_HOOK_HEADERS.event);
+    if (!verifyXHubSignature(loaded.secret, req.headers.get(GITHUB_HOOK_HEADERS.signature), body)) {
       log({ level: "warn", msg: "bad_signature", delivery, hook: loaded.credentialId });
       return json(401, { error: "invalid_signature" });
     }
