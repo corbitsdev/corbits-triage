@@ -111,19 +111,21 @@ export const OutcomeMedians = type({
 });
 export type OutcomeMedians = typeof OutcomeMedians.infer;
 
-export const OutcomesUnavailable = type("'no_policy' | 'no_credential' | 'source_failed'");
-export type OutcomesUnavailable = typeof OutcomesUnavailable.infer;
+/** Why the baseline is missing: no saved policy marks when triage began, or the host did not answer. */
+export const BaselineState = type("'measured' | 'no_policy' | 'source_failed'");
+export type BaselineState = typeof BaselineState.infer;
 
 /**
  * Pull requests triaged in the window against those closed before `baselineBefore`, when the repository's policy was
- * first saved. `unavailable` says why a part is missing: `no_policy` leaves only the baseline out; any other reason, both.
+ * first saved; a measured baseline is null when none closed before. Any other state means nothing could be read.
  */
 export const TriageOutcomes = type({
-  triaged: OutcomeMedians.or("null"),
+  state: "'measured'",
+  triaged: OutcomeMedians,
   baseline: OutcomeMedians.or("null"),
   baselineBefore: "string | null",
-  "unavailable?": OutcomesUnavailable,
-});
+  baselineState: BaselineState,
+}).or({ state: "'no_credential' | 'source_failed'" });
 export type TriageOutcomes = typeof TriageOutcomes.infer;
 
 export const TriageStats = type({
@@ -137,7 +139,6 @@ export const TriageStats = type({
   checks: type({ "[string]": CheckStats }),
   actions: type({ "[string]": ActionStats }),
   comments: "number",
-  medianTimeToVerdictMs: "number | null",
   daily: type({ date: "string", triaged: "number" }).array(),
   /** Null when the hub reads no host for the repository. */
   outcomes: TriageOutcomes.or("null"),

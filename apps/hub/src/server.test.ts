@@ -594,12 +594,11 @@ test("triage stats count a repository's recorded verdicts and Dos", async () => 
       checks: { "ci-green": { pass: 1, fail: 0, unconfirmed: 1 } },
       actions: { pass: { suggested: 1, executed: 1, failed: 0 }, fail: { suggested: 1, executed: 0, failed: 0 } },
       comments: 1,
-      medianTimeToVerdictMs: 120_000,
     });
     expect(body.daily).toHaveLength(7);
     expect(body.daily.filter((d) => d.triaged > 0)).toEqual([{ date: verdictAt.toISOString().slice(0, 10), triaged: 2 }]);
 
-    expect(await stats(otherTenantId)).toMatchObject({ since: null, triaged: 0, verdicts: {}, checks: {}, actions: {}, comments: 0, medianTimeToVerdictMs: null });
+    expect(await stats(otherTenantId)).toMatchObject({ since: null, triaged: 0, verdicts: {}, checks: {}, actions: {}, comments: 0 });
   } finally {
     github.stop();
     await close();
