@@ -1543,6 +1543,10 @@ export type BitbucketDatacenterEnabled =
   | { webhook: "created"; hookUrl: string }
   | { webhook: "manual"; hookUrl: string; hookSecret: string; events: string[] };
 
+export type BitbucketDatacenterManualWebhook = Extract<BitbucketDatacenterEnabled, { webhook: "manual" }>;
+
+export type BitbucketDatacenterWebhook = BitbucketDatacenterManualWebhook | { webhook: "registered"; webhookId: number };
+
 /** The hub's refusals as sentences; any other refusal keeps the hub's own text. */
 const BITBUCKET_DATACENTER_REFUSALS: Record<string, string> = {
   bitbucket_datacenter_token_invalid: "Bitbucket Data Center did not accept this token. Check it has not expired and has project read and repository write.",
@@ -1601,6 +1605,10 @@ export async function listBitbucketDatacenterRepositories(transport: Transport, 
 
 export async function enableBitbucketDatacenterRepository(transport: Transport, tenantId: string, repo: string): Promise<BitbucketDatacenterEnabled> {
   return bitbucketDatacenter<BitbucketDatacenterEnabled>(transport, "POST", tenantId, `${bitbucketDatacenterRepoPath(repo)}/enable`, {});
+}
+
+export async function loadBitbucketDatacenterWebhook(transport: Transport, tenantId: string, repo: string): Promise<BitbucketDatacenterWebhook> {
+  return bitbucketDatacenter<BitbucketDatacenterWebhook>(transport, "GET", tenantId, `${bitbucketDatacenterRepoPath(repo)}/webhook`);
 }
 
 /** `webhookLeft` is true when the webhook triage created could not be removed. */
