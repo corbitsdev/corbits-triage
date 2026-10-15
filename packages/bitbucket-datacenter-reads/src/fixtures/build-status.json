@@ -1,32 +1,8 @@
 {
-  "size": 3,
-  "limit": 100,
   "isLastPage": true,
   "values": [
-    {
-      "state": "INPROGRESS",
-      "key": "e2e",
-      "name": "e2e",
-      "url": "http://ci.example/e2e/1",
-      "description": null,
-      "dateAdded": 1791999692327
-    },
-    {
-      "state": "FAILED",
-      "key": "test",
-      "name": "test",
-      "url": "http://ci.example/test/1",
-      "description": null,
-      "dateAdded": 1791999692266
-    },
-    {
-      "state": "SUCCESSFUL",
-      "key": "lint",
-      "name": "lint",
-      "url": "http://ci.example/lint/1",
-      "description": null,
-      "dateAdded": 1791999692119
-    }
-  ],
-  "start": 0
+    { "state": "INPROGRESS", "key": "e2e", "name": "e2e" },
+    { "state": "FAILED", "key": "test", "name": "test" },
+    { "state": "SUCCESSFUL", "key": "lint", "name": "lint" }
+  ]
 }

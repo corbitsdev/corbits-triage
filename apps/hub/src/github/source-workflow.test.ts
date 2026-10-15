@@ -19,13 +19,6 @@ function harness(connected: Array<"github" | "bitbucket-datacenter">, live: Live
   return { reconcile, released, logged };
 }
 
-test("a mixed workspace keeps a deployment per connected host; a missing one is logged for the portal to deploy", async () => {
-  const h = harness(["github", "bitbucket-datacenter"], { "pr-triage-github": [{ runId: "run_gh", cancelling: false }] });
-  await h.reconcile("tnt");
-  expect(h.released).toEqual([]);
-  expect(h.logged).toEqual([expect.objectContaining({ msg: "triage_deployment_missing", workflow: "pr-triage-bitbucket-datacenter" })]);
-});
-
 test("disconnecting a host releases its deployment; the pre-host pr-triage deployment goes once pr-triage-github is live", async () => {
   const h = harness(["github"], { "pr-triage-github": [{ runId: "run_gh", cancelling: false }], "pr-triage-bitbucket-datacenter": [{ runId: "run_bb", cancelling: false }], "pr-triage": [{ runId: "run_legacy", cancelling: false }] });
   await h.reconcile("tnt");

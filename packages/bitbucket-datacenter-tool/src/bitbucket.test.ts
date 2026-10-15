@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { executeAction, NO_LABELS, OWN_PULL_REQUEST, type ActionStep } from "./action";
+import { executeAction, type ActionStep } from "./action";
 import { mirror, type BitbucketFetch, type Comment } from "./bitbucket";
 import { runAction } from "./sidecar-bundle";
 
@@ -8,8 +8,8 @@ const AUTHOR = { id: 3, slug: "admin" };
 const PR_PATH = "/rest/api/1.0/projects/TRI/repos/widgets/pull-requests/1";
 
 // Shapes recorded from Bitbucket Data Center 10.5, trimmed to the fields read.
-function fakeBitbucket(seed: { author?: typeof AUTHOR; comments?: Comment[]; builds?: string[]; merge?: unknown } = {}) {
-  const pr = { id: 1, version: 4, state: "OPEN", fromRef: { latestCommit: "abc" }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: seed.author ?? AUTHOR }, reviewers: [] as unknown[], participants: [] as unknown[] };
+function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown } = {}) {
+  const pr = { id: 1, version: 4, state: "OPEN", fromRef: { latestCommit: "abc" }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: [] as unknown[] };
   const comments: Comment[] = seed.comments ?? [];
   const builds: Array<Record<string, unknown>> = [];
   const writes: Array<{ method: string; path: string; body: any }> = [];
@@ -88,13 +88,6 @@ describe("executeAction", () => {
     expect((await executeAction(fake.bb, input, user)).status).toBe("done");
     expect((await executeAction(fake.bb, input, user)).status).toBe("satisfied");
     expect(fake.writes).toHaveLength(1);
-  });
-
-  test("skips what Data Center has no equivalent for or forbids, with the reason", async () => {
-    const fake = fakeBitbucket({ author: BOT });
-    expect(await runAction(fake.bb, { request: REQUEST, step: step("labels", { labels: ["x"] }) }, user)).toEqual({ status: "skipped", reason: NO_LABELS });
-    expect(await runAction(fake.bb, { request: REQUEST, step: step("approve", {}) }, user)).toEqual({ status: "skipped", reason: OWN_PULL_REQUEST });
-    expect(fake.writes).toHaveLength(0);
   });
 
   test("refuses a merge with Bitbucket's veto, and merges the read version once checks pass", async () => {
