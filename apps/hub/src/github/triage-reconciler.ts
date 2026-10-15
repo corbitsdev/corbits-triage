@@ -392,8 +392,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   async function reconcileTenant(tenant: ReconcileTenant): Promise<boolean> {
     const repos = enabledRepos(tenant.config, deps.source);
     if (repos.length === 0) return false;
-    // Only live deployments' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
-    const { deployments, observed } = await deps.observeTenant(tenant.id, tenant.domain);
+    // Only live deployments' and recent workers' logs are read; heads triaged under a released one stay settled in the stored state until the live deployment runs another workflow version.
+    const { deployments, observed, workers } = await deps.observeTenant(tenant.id, tenant.domain);
     if (deployments.length === 0) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_live_deployment" });
       return heal(tenant.id);
@@ -403,7 +403,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       deps.log({ level: "warn", msg: "triage_reconcile_skipped", tenantId: tenant.id, reason: "no_source_credential" });
       return false;
     }
-    const runs = mergeObservedRuns(observed);
+    const runs = mergeObservedRuns([...observed, ...workers]);
     let deployment = newestLive(deployments);
     try {
       deployment = await route(tenant, deployments, observed);

@@ -1,6 +1,6 @@
 # Plan: pr-triage coordinator and per-triage worker deployments (CL-10705)
 
-Status: step 0 (spike) done, results in section 12; 12.4 reproduced and decided (12.6); step 1 built behind `TRIAGE_COORDINATOR`. Paths are repository-relative; `vendor/` is the
+Status: step 0 (spike) done, results in section 12; 12.4 reproduced and decided (12.6); step 1 built behind `TRIAGE_COORDINATOR`; step 2 (worker observation) built, proof in 12.8. Paths are repository-relative; `vendor/` is the
 vendored Interchange at stock `cd02c313` (`vendor/interchange/VENDORED.md`).
 Upstream docs are cited by name at that ref.
 
@@ -372,7 +372,12 @@ Each PR is one concern, small, behind the version switch until cutover.
    `corbitsTriageWorker` in its deploy content and hidden from every live
    deployment lookup but the spawner's; on start the hub releases workers a
    restart orphaned (section 5).
-2. PR: worker observation in tenant observer and triage-runs (45 min).
+2. PR: worker observation in the tenant observer (45 min). Built, section
+   12.8: the observer reads worker deployments live or released within two
+   reconciler intervals (`recentWorkers`, `deployment.ts`) after the
+   listeners, so the reconciler and the recording pass see a worker's one run
+   exactly as a listener's; rotation, mail and the portal's deployment list
+   still see listeners only.
 3. PR: priority classes; reconciler, approvals and backlog enqueue to the
    coordinator (90 min).
 4. PR: queue route and portal display (45 min).
@@ -638,3 +643,78 @@ What this changes: step 2 (worker observation) is the gate for the verdict,
 the supersede and the retriage paths, and should ship before the flag is
 turned on anywhere. The spawn-to-fire cost is the sidecar boot measured in
 12.2; the end poll adds up to 2 s.
+
+### 12.8 Live proof of step 2, worker observation (2026-10-14, local stack)
+
+Same setup as 12.7, hub from this branch, `TRIAGE_COORDINATOR=on`,
+`TRIAGE_RECONCILE_INTERVAL_MS=30000`. The observer now reads, after the host's
+live listeners, every worker deployment live or released within
+`2 * TRIAGE_RECONCILE_INTERVAL_MS + 2 * TRIAGE_RECORD_MS` (64 s here, 10 min
+4 s by default), so a worker's log is read while its run goes and until the
+reconciler pass that settles its head; its run is recorded and settles its
+head through the unchanged recorder and plan. Two intervals because the
+reconcile loop skips a kick while a pass drains, so passes can be two
+intervals apart; the record interval on top because an observation is reused
+for that long. "Ended since the last reconciler pass" was considered and
+rejected: the observer is shared with the 2 s recording pass, which would move
+that mark and hide the worker from the reconciler. (The proof below ran with
+the one-interval window.)
+
+Accepted limit: a worker that fails after its judge step posted comments is
+requeued, and the retry's run posts its own; when the judged verdict differs,
+the pull request carries both runs' comments. Each scenario pushes a commit to
+TRI/widgets#20; the verdict is read through the triage-verdicts route.
+
+(a) One commit, pass. Pushed 03:46:36.8, `worker_spawned` 03:46:43.376
+(`run_f926bf48…`), verdict recorded at 03:46:43.929 from the worker's body run,
+before `worker_ended` 03:46:45.387; the route answered it at 03:46:45.44:
+
+```
+{"verdict":{"runId":"run_f926bf48b6741f5469009912d947b0dc__events__0","headSha":"5d7a5ce4…","at":"2026-10-15T03:46:43.929Z","state":"ready-monitoring","verdict":"pass"},"run":null}
+```
+
+(e) Retry after the worker, pass. `POST /api/integrations/github-triage/:tenantId
+{repo, number: 20}` at 03:47:58.9, after one reconciler pass, answered `202
+{"status":"queued"}` where 12.7 saw `409 already_queued`: the head was settled
+by the worker's run. The retry ran on the listener (`triage_requested`
+03:47:59.118, `run_e0352aba…__events__3`, verdict 03:47:59.971); the retry
+enqueues to the coordinator in step 3.
+
+(c) Second commit while the worker runs, pass. Pushed 417917c at 03:48:23.8,
+`worker_spawned` 03:48:30.142 (`run_2d7de25e…`), second push 9e1b9d1 at
+03:48:30.6 queued while that worker was alive, `worker_ended` 03:48:32.150, the
+second worker `run_fbc40d7d…` spawned 03:48:36.971 and ended 03:48:38.986. Both
+verdicts are recorded (timeline entries 03:48:30.794 for 417917c and
+03:48:37.493 for 9e1b9d1); the route's latest verdict for #20 is the second
+worker's, for 9e1b9d1.
+
+(d) Hub restart mid-worker, pass. Pushed 0c4b2e5 at 03:49:12.1,
+`worker_spawned` 03:49:20.405 (`run_bb582960…`), SIGTERM 03:49:20.671, hub up
+03:49:22.87:
+
+```
+{"msg":"worker_released_on_start","tenantId":"tnt_bc3681ef…","runId":"run_bb582960f8fa9c7d90942a8ba7ae8add"}   03:49:22.029
+{"msg":"triage_requeued","tenantId":"tnt_bc3681ef…","repo":"TRI/widgets","pr":20,"headSha":"0c4b2e59…","reason":"run failed"}   03:49:52.129
+```
+
+The orphan's body run `run_bb582960…__events__0` is `failed` (ended
+03:49:24.395) and its anchor `cancelled` (03:49:26.057). The first reconciler
+pass after the restart read the released worker, failed the head on its run
+and requeued it; the listener's run `run_e0352aba…__events__4` recorded the
+verdict for 0c4b2e5 at 03:49:52.892, 40 s after the push, 30 s of which is the
+reconciler interval. The one `ERR` line in the session is the dying child's
+`event-channel send failed … EPIPE` at the SIGTERM.
+
+Totals since the hub started from this branch: `worker_spawned` 4,
+`worker_ended` 3, `worker_released_on_start` 1, `triage_requeued` 1,
+`triage_runs_unobserved` 0, `triage_verdicts_unrecorded` 0,
+`triage_rotation_adopted` 0.
+
+Cost: a released worker's log is read once after its run ended and kept in the
+observer's memory until the window drops the worker; a live worker's log is
+listed every recording pass (2 s), settled runs not read again
+(`createTriageRuns`). With the
+default 5-minute interval that is one small listing per worker released in
+the last five minutes; step 3 can shorten it once the reconciler is told of a
+worker's end directly.
+

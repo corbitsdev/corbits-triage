@@ -57,6 +57,7 @@ const OBSERVATION: TenantObservation = {
     verdicts: [],
     approved: [],
   }],
+  workers: [],
 };
 
 const OPEN: RepoPulls[] = [

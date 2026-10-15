@@ -60,7 +60,7 @@ test("a tenant whose logs cannot be read is retried with backoff, logged once pe
       async observe(tenantId) {
         reads.push(tenantId);
         if (tenantId === "bad") throw new Error("unreadable");
-        return { deployments: [], observed: [] };
+        return { deployments: [], observed: [], workers: [] };
       },
     },
     activeTenants: async (what) => (what === "deployments" ? [bad, good] : []),

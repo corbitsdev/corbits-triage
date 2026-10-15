@@ -34,7 +34,7 @@ export function readyMaterializer(materialize: RunTriggerMaterialize): RunTrigge
  * once read from its launch spec, for one pinned from the package registry; `offeringId`, the decision-model offering
  * the deployment resolved, once read from its launch spec.
  */
-export type LiveDeployment = { runId: string; address: string; createdAt: Date; cancelling: boolean; workflowVersion?: string; offeringId?: string };
+export type LiveDeployment = { runId: string; address: string; createdAt: Date; cancelling: boolean; endedAt?: Date; workflowVersion?: string; offeringId?: string };
 
 export type TenantDeployment = LiveDeployment & { workflow: string };
 
@@ -52,14 +52,12 @@ function markedAs(kind: DeploymentKind) {
   return kind === "worker" ? eq(marker, "true") : isNull(marker);
 }
 
-/** Matches how the hub lists deployments: a deployment is its anchor run. Newest first; every workflow's when no name is given; listeners unless workers are asked for. */
-export async function resolveLiveDeployments(
-  db: DB["db"],
-  tenantId: string,
-  definitionName?: string,
-  kind: DeploymentKind = "listener",
-): Promise<TenantDeployment[]> {
+type DeploymentQuery = { tenantId: string; definitionName?: string; kind: DeploymentKind; endedSince?: Date };
+
+/** Matches how the hub lists deployments: a deployment is its anchor run. Newest first; live, or ended since `endedSince`. */
+async function deploymentsWhere(db: DB["db"], query: DeploymentQuery): Promise<TenantDeployment[]> {
   const { workflowRun, workflowDefinition, workflowRunLaunchSpec, tenant, liveWorkflowRunStatuses } = schema;
+  const live = inArray(workflowRun.status, [...liveWorkflowRunStatuses]);
   const rows = await db
     .select({
       runId: workflowRun.id,
@@ -67,18 +65,19 @@ export async function resolveLiveDeployments(
       domain: tenant.domain,
       createdAt: workflowRun.createdAt,
       cancellationRequestedAt: workflowRun.cancellationRequestedAt,
+      endedAt: workflowRun.endedAt,
     })
     .from(workflowRun)
     .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
     .innerJoin(tenant, eq(workflowRun.tenantId, tenant.id))
     .leftJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
     .where(and(
-      eq(workflowRun.tenantId, tenantId),
-      definitionName === undefined ? undefined : eq(workflowDefinition.name, definitionName),
+      eq(workflowRun.tenantId, query.tenantId),
+      query.definitionName === undefined ? undefined : eq(workflowDefinition.name, query.definitionName),
       isNotNull(workflowRun.anchorRunId),
       eq(workflowRun.id, workflowRun.anchorRunId),
-      inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
-      markedAs(kind),
+      query.endedSince === undefined ? live : or(live, gt(workflowRun.endedAt, query.endedSince)),
+      markedAs(query.kind),
     ))
     .orderBy(desc(workflowRun.createdAt), desc(workflowRun.id));
   return rows.map((row) => ({
@@ -86,8 +85,19 @@ export async function resolveLiveDeployments(
     address: `${row.runId}@${row.domain}`,
     createdAt: row.createdAt,
     cancelling: row.cancellationRequestedAt !== null,
+    ...(row.endedAt !== null && { endedAt: row.endedAt }),
     workflow: row.workflow,
   }));
+}
+
+/** Live deployments; every workflow's when no name is given; listeners unless workers are asked for. */
+export function resolveLiveDeployments(db: DB["db"], tenantId: string, definitionName?: string, kind: DeploymentKind = "listener"): Promise<TenantDeployment[]> {
+  return deploymentsWhere(db, { tenantId, definitionName, kind });
+}
+
+/** Workers live or released since `endedSince`: a worker's one body run lands in its log before the coordinator cancels the anchor, so the log outlives the deployment. */
+export function recentWorkers(db: DB["db"], tenantId: string, definitionName: string, endedSince: Date): Promise<TenantDeployment[]> {
+  return deploymentsWhere(db, { tenantId, definitionName, kind: "worker", endedSince });
 }
 
 /** Every tenant's live worker deployments, for the release of workers a hub restart orphaned. */
