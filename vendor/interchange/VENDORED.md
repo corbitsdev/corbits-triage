@@ -6,8 +6,8 @@
 - Stock ref: `9ae471437453db9ef1af1eca6d94c524cecf05f1`
 - Composite pin: stock `9ae47143` (upstream main on 2026-10-15) plus the
   step-env director threading from PR #193, the local CL-10210 carry and the
-  INTR-666 adaptive-thinking model ids. Do not treat any delta as a new stock
-  pin.
+  INTR-666 adaptive-thinking model ids and Anthropic structured outputs. Do
+  not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -102,6 +102,33 @@ Upstream reference: INTR-666.
 
 Kill date: **2026-11-01**. Remove on the first bump whose stock set includes
 the four ids.
+
+### Anthropic structured outputs (INTR-666)
+
+Stock `rejectUnsupportedResponseFormat` throws on every non-text
+`responseFormat`, on the premise that Anthropic has no structured-outputs
+surface. The Messages API now takes `output_config.format = { type:
+"json_schema", schema }` (GA, no beta header). The carry maps `json-schema`
+to that field, merged into any `output_config.effort` from adaptive thinking;
+`name` and `strict` have no wire slot and are dropped. `json` with no schema
+still throws, with a message that asks for a schema. The two
+`responseFormat` boundary tests in `anthropic.test.ts` follow the change.
+
+- The discovery support matrix
+  (`packages/inference-discovery/src/catalog/support-matrix.ts`) still marks
+  Anthropic structured output unsupported; nothing gates on it at runtime.
+- With `strict` dropped, Anthropic always validates strictly: a schema using
+  a keyword it does not support gets a 400.
+
+Allowed files:
+
+- `packages/inference/src/providers/anthropic.ts`
+- `packages/inference/src/providers/anthropic.test.ts`
+
+Upstream reference: INTR-666.
+
+Kill date: **2026-11-01**. Remove when upstream's Anthropic adapter supports
+structured outputs.
 
 ## Dropped deltas
 

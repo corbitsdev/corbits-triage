@@ -24,6 +24,8 @@ packages/hub-sessions/src/substrate.ts
 packages/workflow-host/src/supervisor/supervisor.ts
 
 # INTR-666: the Anthropic adapter's adaptive-thinking set gains the Claude 5.5
-# models and Fable 5.1. Remove by 2026-11-01 or on the first bump whose stock
-# set includes them.
+# models and Fable 5.1, and json-schema responseFormat maps to
+# output_config.format (structured outputs). Remove by 2026-11-01 or on the
+# first bump whose stock adapter has both.
 packages/inference/src/providers/anthropic.ts
+packages/inference/src/providers/anthropic.test.ts

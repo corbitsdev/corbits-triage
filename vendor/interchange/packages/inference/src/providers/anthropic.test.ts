@@ -800,20 +800,25 @@ describe("Anthropic adapter — responseFormat boundary", () => {
       adapter.buildRequest(conversation, "claude-sonnet-5", {
         responseFormat: { kind: "json" },
       }),
-    ).toThrow(/does not support structured outputs/);
+    ).toThrow(/need a schema/);
   });
 
-  test("responseFormat.kind=json-schema throws and names the kind", () => {
+  test("responseFormat.kind=json-schema sets output_config.format beside effort", () => {
+    const schema = {
+      type: "object",
+      properties: { answer: { type: "integer" } },
+      required: ["answer"],
+      additionalProperties: false,
+    };
     const adapter = createAnthropicAdapter(TEST_SOURCE);
-    expect(() =>
-      adapter.buildRequest(conversation, "claude-sonnet-5", {
-        responseFormat: {
-          kind: "json-schema",
-          name: "user",
-          schema: { type: "object" },
-        },
-      }),
-    ).toThrow(/json-schema/);
+    const req = adapter.buildRequest(conversation, "claude-haiku-5-5", {
+      effort: "low",
+      responseFormat: { kind: "json-schema", name: "answer", schema },
+    });
+    expect(JSON.parse(req.body).output_config).toEqual({
+      effort: "low",
+      format: { type: "json_schema", schema },
+    });
   });
 });
 
