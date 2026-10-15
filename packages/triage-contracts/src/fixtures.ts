@@ -14,14 +14,26 @@ const titles = [
 ];
 const authors = ["maya", "eli", "sam", "jules", "ren", "alex"] as const;
 
+function repoOf(i: number): string {
+  if (i < 8) return "toolkit";
+  if (i < 18) return "portal";
+  return "engine";
+}
+
+function tierOf(i: number): PRRecord["tier"] {
+  if (i % 3 === 0) return "external";
+  if (i % 3 === 1) return "approved";
+  return "internal";
+}
+
 function makeRecord(i: number): PRRecord {
   return {
     id: 284 + i,
-    repo: i < 8 ? "toolkit" : i < 18 ? "portal" : "engine",
+    repo: repoOf(i),
     title: titles[i % titles.length] + (i >= 10 ? ` · ${Math.floor(i / 10) + 1}` : ""),
     body: "Routine change with tests.",
     author: authors[i % 6],
-    tier: i % 3 === 0 ? "external" : i % 3 === 1 ? "approved" : "internal",
+    tier: tierOf(i),
     revision: `seed-${i + 1}`,
     state: "open",
     draft: i % 13 === 0,

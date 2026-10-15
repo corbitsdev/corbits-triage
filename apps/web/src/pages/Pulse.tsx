@@ -123,6 +123,7 @@ function OutcomeNote({ view }: { view: OutcomesView | null }) {
 function RepoWeek({ store, repo }: { store: RepoPackStore | null; repo: RepoRecord }) {
   const { data: stats, isError } = useQuery(repoStatsQuery(store, repo.name, WEEK_DAYS));
   const view = stats ? outcomesView(stats.outcomes, repo.source) : null;
+  const note = isError ? "Could not load this repository's numbers." : "Loading…";
   return (
     <TableRow>
       <TableHead scope="row">{repo.name}<OutcomeNote view={view} /></TableHead>
@@ -134,7 +135,7 @@ function RepoWeek({ store, repo }: { store: RepoPackStore | null; repo: RepoReco
           <TableCell>{actedOn(stats)}</TableCell>
           <OutcomeCells view={view} />
         </>
-      ) : <TableCell colSpan={4 + PULSE_OUTCOMES.length} className="note">{isError ? "Could not load this repository's numbers." : "Loading…"}</TableCell>}
+      ) : <TableCell colSpan={4 + PULSE_OUTCOMES.length} className="note">{note}</TableCell>}
     </TableRow>
   );
 }

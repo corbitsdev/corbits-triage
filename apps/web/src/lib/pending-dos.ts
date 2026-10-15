@@ -15,7 +15,8 @@ function label(action: SuggestedAction, repo: string): string | null {
   switch (kind) {
     case "labels": {
       const labels = strings(target.labels);
-      return labels.length ? `Add ${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}` : null;
+      if (labels.length === 0) return null;
+      return `Add ${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}`;
     }
     case "assign": {
       const assignees = strings(target.users);

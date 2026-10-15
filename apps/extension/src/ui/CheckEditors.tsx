@@ -199,7 +199,7 @@ export function CustomEditor({ shape, pack, id, form, defaultName, onSave, onCan
       {shape === "choose" ? (
         <>
           <Field label="Which of these is it" hint="One choice per line, at least two.">{(fid, hid) => <Textarea id={fid} aria-describedby={hid} rows={3} value={text.options} onChange={set("options")} />}</Field>
-          {linesOf(text.options).length ? <p className="hint">Fail on</p> : null}
+          {linesOf(text.options).length > 0 && <p className="hint">Fail on</p>}
           {linesOf(text.options).map((option) => <Checkbox key={option} checked={text.failOn.includes(option)} onCheckedChange={failOn(option)} label={option} />)}
         </>
       ) : null}

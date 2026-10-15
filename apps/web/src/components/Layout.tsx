@@ -74,6 +74,14 @@ function UserBlock() {
   );
 }
 
+function roomOf(path: string, pullPage: boolean) {
+  if (path.startsWith("/settings")) return "settings";
+  if (path.startsWith("/repositories")) return "repos";
+  if (pullPage) return "pr";
+  if (path.startsWith("/pulse")) return "pulse";
+  return "inbox";
+}
+
 export default function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const { snapshot } = usePortal();
@@ -83,12 +91,13 @@ export default function Layout({ children }: { children: ReactNode }) {
   const openPullsUnanswered = useOpenPullsUnanswered();
   const path = location.pathname;
   const pullPage = path.startsWith("/triage/pr/") || path.startsWith("/prs/");
-  const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : pullPage ? "pr" : path.startsWith("/pulse") ? "pulse" : "inbox";
+  const room = roomOf(path, pullPage);
   const needsYouActive = path.startsWith("/inbox") || path.startsWith("/triage") || pullPage;
   const allOpenActive = path.startsWith("/open");
   const firstTimersActive = path.startsWith("/first-timers");
   // The inbox and the repositories table draw their own inset panels, so they skip the stage card.
   const ownPanels = room === "inbox" || room === "repos";
+  const stageClass = room === "pr" ? "stage has-sliver" : "stage";
 
   useEffect(function markBody() {
     document.body.dataset.room = room;
@@ -131,7 +140,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           <UserBlock />
         </nav>
         {ownPanels ? children : (
-          <div className={room === "pr" ? "stage has-sliver" : "stage"} id="stage">
+          <div className={stageClass} id="stage">
             {children}
           </div>
         )}

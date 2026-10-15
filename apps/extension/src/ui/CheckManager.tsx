@@ -21,6 +21,17 @@ function rowsOf(pack: CheckPack): Row[] {
   });
 }
 
+function changesNote(changes: number): string {
+  if (changes > 0) return `· ${changes} ${changes === 1 ? "change" : "changes"}`;
+  return "· Defaults";
+}
+
+function editLabel(editing: boolean, id: string): string {
+  if (editing) return "Close the editor";
+  if (isCatalogId(id)) return "Edit the limits";
+  return "Edit the rule";
+}
+
 function EvalBadge({ model }: { model: boolean }) {
   return <span className="eval">{model ? <Badge tone="info">Decision model</Badge> : <Badge tone="neutral">Rule</Badge>}</span>;
 }
@@ -83,7 +94,7 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
       <div className="row">
         {editable && row.on ? (
           <button type="button" ref={editRef} className="text-button" aria-expanded={editing} onClick={startEdit}>
-            {editing ? "Close the editor" : isCatalogId(row.id) ? "Edit the limits" : "Edit the rule"}
+            {editLabel(editing, row.id)}
           </button>
         ) : null}
         {custom ? <ConfirmButton size="sm" variant="ghost" confirmLabel={`Confirm: remove ${custom.name}`} onConfirm={remove}>Remove the rule</ConfirmButton> : null}
@@ -231,7 +242,7 @@ export function CheckManager({ repo, pr, onAddModel }: CheckManagerProps) {
   return (
     <div className="manager">
       <div className="scope" data-changed={changes > 0}>
-        <p><span className="mono repo-name">{repo}</span> {changes > 0 ? `· ${changes} ${changes === 1 ? "change" : "changes"}` : "· Defaults"}</p>
+        <p><span className="mono repo-name">{repo}</span> {changesNote(changes)}</p>
         {changes > 0 ? <ConfirmButton size="sm" variant="ghost" confirmLabel="Confirm: reset every rule" onConfirm={reset}>Reset to defaults</ConfirmButton> : null}
       </div>
       <div className="manager-status">

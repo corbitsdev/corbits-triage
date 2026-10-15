@@ -271,7 +271,7 @@ function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo, o
 
   return (
     <div className="bar bar3">
-      {primary === null ? null : (
+      {primary !== null && (
         <Button type="button" disabled={primary.blocker !== null} onClick={() => onRun(primary.kind)}>
           {primary.kind === "reply" && draft?.edited ? "Send edited feedback" : primary.label}
           {primary.detail === null ? null : <span className="det">{primary.detail}</span>}
@@ -281,7 +281,7 @@ function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo, o
       <span className="sp" />
       <div className="menu-wrap" ref={menuRef}>
         <Button type="button" variant="ghost" aria-haspopup="menu" aria-expanded={menu} disabled={running} onClick={() => setMenu(!menu)}>More <DownIcon /></Button>
-        {menu ? (
+        {menu && (
           <div className="menu up" role="menu">
             {narrowOnly === undefined ? null : <button type="button" role="menuitem" className="m-only" onClick={() => choose(() => onRun(narrowOnly.kind))}>{narrowOnly.label}</button>}
             {onEdit === null ? null : <button type="button" role="menuitem" onClick={() => choose(onEdit)}>Edit feedback</button>}
@@ -293,7 +293,7 @@ function BottomBar({ bar, draft, dos, doBlocked, running, onRun, onEdit, onDo, o
               <button key={`${pending.key}:skip`} type="button" role="menuitem" onClick={() => choose(() => onSkip(pending))}>Hide for me: {pending.label}</button>,
             ])}
           </div>
-        ) : null}
+        )}
       </div>
     </div>
   );
@@ -437,7 +437,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
           <ReportRows item={item} pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} pack={pack} />
         </div>
       </div>
-      {ended ? null : <BottomBar
+      {!ended && <BottomBar
         bar={bar}
         draft={draft}
         dos={dos}
@@ -558,6 +558,7 @@ export default function Inbox({ view }: { view: ListView }) {
   const selectedMark = entries.find((entry) => entry.item.key === selected?.key)?.handled ?? null;
   // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
   const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
+  const paneMark = listsOpen(view) ? selectedMark : null;
   const groupings: Array<InboxGrouping | OpenGrouping> = listsOpen(view) ? OPEN_GROUPINGS : INBOX_GROUPINGS;
   const grouping = listsOpen(view) ? openGrouping : needsYouGrouping;
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
@@ -688,7 +689,7 @@ export default function Inbox({ view }: { view: ListView }) {
         <Pane
           key={paneKey}
           item={selected}
-          handled={listsOpen(view) ? selectedMark : null}
+          handled={paneMark}
           listTitle={LIST_TITLE[view]}
           restored={paneDraft}
           sectionRef={sectionRef}
@@ -697,7 +698,7 @@ export default function Inbox({ view }: { view: ListView }) {
         />
       ) : (
         <section className="panel pane" aria-label="Selected pull request">
-          {loading ? null : <div className="pane-empty">Select a pull request.</div>}
+          {!loading && <div className="pane-empty">Select a pull request.</div>}
         </section>
       )}
       <Toasts notices={held.notices} onUndo={() => held.undo()} />

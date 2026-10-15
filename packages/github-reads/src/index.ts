@@ -323,6 +323,11 @@ export type IssueComment = {
   createdAt: string;
 };
 
+function firstString(...values: unknown[]): string {
+  for (const value of values) if (typeof value === "string") return value;
+  return "";
+}
+
 export async function listPrCommits(gh: GithubFetch, repo: string, number: number): Promise<PrCommit[]> {
   const rows = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/commits?per_page=100`);
   return rows.map((row) => {
@@ -330,8 +335,8 @@ export async function listPrCommits(gh: GithubFetch, repo: string, number: numbe
     return {
       sha: typeof row.sha === "string" ? row.sha : "",
       message: typeof commit.message === "string" ? commit.message : "",
-      author: typeof row.author?.login === "string" ? row.author.login : (typeof commit.author?.name === "string" ? commit.author.name : ""),
-      committedAt: typeof commit.committer?.date === "string" ? commit.committer.date : (typeof commit.author?.date === "string" ? commit.author.date : ""),
+      author: firstString(row.author?.login, commit.author?.name),
+      committedAt: firstString(commit.committer?.date, commit.author?.date),
     };
   });
 }

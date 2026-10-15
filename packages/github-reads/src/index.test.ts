@@ -144,11 +144,16 @@ describe("listPrFilesPage", () => {
     const big = `${[1, 2, 3, 4].map(hunk).join("\n")}\n+${"\"".repeat(9_000)}`;
     const { gh } = recorder(() => [row("a.ts", hunk(1)), row("big.ts", big), row("c.ts", hunk(1))]);
     const pages: PrFilesPage[] = [];
+    function nextCursor(page: PrFilesPage): { offset: number; patchOffset?: number } | undefined {
+      if (page.next === undefined) return undefined;
+      if (page.patchNext === undefined) return { offset: page.next };
+      return { offset: page.next, patchOffset: page.patchNext };
+    }
     let cursor: { offset: number; patchOffset?: number } | undefined = { offset: 0 };
     while (cursor) {
       const page: PrFilesPage = await listPrFilesPage(gh, "acme/widgets", 8, cursor);
       pages.push(page);
-      cursor = page.next === undefined ? undefined : { offset: page.next, ...(page.patchNext === undefined ? {} : { patchOffset: page.patchNext }) };
+      cursor = nextCursor(page);
     }
     expect(pages.every((page) => JSON.stringify(page).length <= 10_000)).toBe(true);
     const files = pages.flatMap((page) => page.files);

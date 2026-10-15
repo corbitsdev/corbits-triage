@@ -61,8 +61,14 @@ function IssueList({ item, issues, pending, error }: { item: PrItem; issues: Git
 
 const GATE_RESULT: Record<CheckResult["result"], string> = { pass: "matched", fail: "did not match", unconfirmed: "unknown" };
 
+function checkTone(check: CheckResult): string {
+  if (check.result === "unconfirmed") return "wait";
+  if (check.gate) return "match";
+  return check.result;
+}
+
 function CheckRow({ check, name, repo, sha }: { check: CheckResult; name: string | null; repo: string; sha: string | null }) {
-  const tone = check.result === "unconfirmed" ? "wait" : check.gate ? "match" : check.result;
+  const tone = checkTone(check);
   const value = checkValueText(check);
   return (
     <li className={`verdict-check check-item ${tone}`}>
@@ -111,6 +117,41 @@ function About({ item }: { item: PrItem }) {
   const wait = checks.filter((row) => /pend|wait|progress|queued/i.test(row.status)).length;
   const pass = checks.filter((row) => /pass|success/i.test(row.status)).length;
   const pending = pull.isPending && pull.fetchStatus !== "idle";
+
+  function renderCi() {
+    if (pending) return <p className="muted">Loading checks…</p>;
+    if (pull.error) return <p className="muted">Could not load checks.</p>;
+    if (checks.length === 0) return <p className="muted">No checks reported.</p>;
+    return (
+      <>
+        <p className="check-counts">
+          <span className="fail">{fail} fail</span>
+          <span className="wait">{wait} wait</span>
+          <span className="pass">{pass} pass</span>
+        </p>
+        <div className="brief-chips">
+          {checks.map((job) => (
+            <Badge key={job.name} className="verbatim">{job.name} · {job.status}</Badge>
+          ))}
+        </div>
+      </>
+    );
+  }
+
+  function requestedText(): string {
+    if (pr) return pr.requestedReviewers > 0 ? `${pr.requestedReviewers} requested` : "None requested";
+    if (pending) return "Loading…";
+    return "Unavailable";
+  }
+
+  function approvalsText(): string {
+    const joined = approvals.join(", ");
+    if (joined) return joined;
+    if (pending) return "Loading…";
+    if (pull.error) return "Unavailable";
+    return "None yet";
+  }
+
   return (
     <article className="pr-overview" aria-label="About">
       <header className="brief brief-lead">
@@ -130,7 +171,7 @@ function About({ item }: { item: PrItem }) {
             </div>
           )}
           {fileCount === null ? null : <div><dt>Files</dt><dd>{fileCount}</dd></div>}
-          {draft === null ? null : <div><dt>Ready</dt><dd>{draft ? "Draft" : "Ready for review"}</dd></div>}
+          {draft !== null && <div><dt>Ready</dt><dd>{draft ? "Draft" : "Ready for review"}</dd></div>}
         </dl>
       </section>
       <section className="brief">
@@ -156,26 +197,13 @@ function About({ item }: { item: PrItem }) {
       </section>
       <section className="brief">
         <h2>CI</h2>
-        {pending ? <p className="muted">Loading checks…</p> : pull.error ? <p className="muted">Could not load checks.</p> : checks.length === 0 ? <p className="muted">No checks reported.</p> : (
-          <>
-          <p className="check-counts">
-            <span className="fail">{fail} fail</span>
-            <span className="wait">{wait} wait</span>
-            <span className="pass">{pass} pass</span>
-          </p>
-          <div className="brief-chips">
-            {checks.map((job) => (
-              <Badge key={job.name} className="verbatim">{job.name} · {job.status}</Badge>
-            ))}
-          </div>
-          </>
-        )}
+        {renderCi()}
       </section>
       <section className="brief">
         <h2>Reviews</h2>
         <dl className="facts">
-          <div><dt>Requested</dt><dd>{pr ? (pr.requestedReviewers > 0 ? `${pr.requestedReviewers} requested` : "None requested") : pending ? "Loading…" : "Unavailable"}</dd></div>
-          <div><dt>Approvals</dt><dd>{approvals.join(", ") || (pending ? "Loading…" : pull.error ? "Unavailable" : "None yet")}</dd></div>
+          <div><dt>Requested</dt><dd>{requestedText()}</dd></div>
+          <div><dt>Approvals</dt><dd>{approvalsText()}</dd></div>
         </dl>
       </section>
       <section className="brief">
@@ -259,6 +287,12 @@ function RecommendedComment({ item, posted, onPosted, onDismiss }: {
       </div>
     </section>
   );
+}
+
+function MissingPull({ denied, loading }: { denied: boolean; loading: boolean }) {
+  if (denied) return <DeniedNotice section="approvals" />;
+  if (loading) return null;
+  return <div className="empty">Unknown pull request.</div>;
 }
 
 export default function PRDetail() {
@@ -418,7 +452,7 @@ export default function PRDetail() {
           <h1 tabIndex={-1}>Pull request</h1>
         </header>
         <main id="main" className="scroller">
-          {denied ? <DeniedNotice section="approvals" /> : loading ? null : <div className="empty">Unknown pull request.</div>}
+          <MissingPull denied={denied} loading={loading} />
         </main>
       </div>
     );
@@ -426,15 +460,54 @@ export default function PRDetail() {
 
   const link = pullUrl(item);
   const host = hostName(item.source);
-  let pane: ReactNode = <About item={item} />;
-  const loadState = pullPending
-    ? <p className="muted">Loading from {host}…</p>
-    : pull.error ? <p role="alert" className="error">Could not load from {host}. {errorText(pull.error)}</p> : null;
-  if (tab === "files") {
-    pane = loadState ? <div className="diff-empty">{loadState}</div>
-      : selected ? <DiffView file={selected} layout={diffLayout.layout} canSplit={diffLayout.splitFits} onLayout={diffLayout.choose} />
-      : <div className="diff-empty"><p>No files changed.</p></div>;
+
+  function loadNotice(): ReactNode {
+    if (pullPending) return <p className="muted">Loading from {host}…</p>;
+    if (pull.error) return <p role="alert" className="error">Could not load from {host}. {errorText(pull.error)}</p>;
+    return null;
   }
+
+  function filesPane(): ReactNode {
+    if (loadState) return <div className="diff-empty">{loadState}</div>;
+    if (selected) return <DiffView file={selected} layout={diffLayout.layout} canSplit={diffLayout.splitFits} onLayout={diffLayout.choose} />;
+    return <div className="diff-empty"><p>No files changed.</p></div>;
+  }
+
+  function mergeBadge(): ReactNode {
+    if (closed) return <Badge>{pull.data?.pr.merged ? "Merged" : "Closed"}</Badge>;
+    if (mergeable === null) return null;
+    return <Badge>{mergeable ? "Mergeable" : "Not mergeable"}</Badge>;
+  }
+
+  function sliverText(what: string, loaded: string): string {
+    if (pullPending) return `Loading ${what}…`;
+    if (pull.error) return `Could not load ${what}.`;
+    return loaded;
+  }
+
+  function renderSliver(): ReactNode {
+    if (tab === "files") {
+      if (loadState) return <p className="sliver-empty">{pullPending ? "Loading files…" : "Could not load files."}</p>;
+      if (files.length === 0) return <p className="sliver-empty">No files changed.</p>;
+      return (
+        <div className="sliver-list">
+          {files.map((file) => (
+            <button type="button" className={`sliver-file${selected?.path === file.path ? " is-on" : ""}`} key={file.path} onClick={() => selectFile(file.path)}>
+              <span className="sliver-file-name">{file.path}</span>
+              <span className="sliver-file-stat"><span className="add">+{file.additions}</span> <span className="del">−{file.deletions}</span></span>
+            </button>
+          ))}
+        </div>
+      );
+    }
+    if (tab === "commits") return <p className="sliver-empty">{sliverText("commits", `${commits.length} commits`)}</p>;
+    if (tab === "issue") return <p className="sliver-empty">{sliverText("issues", `${pull.data?.issues.length ?? 0} linked issues`)}</p>;
+    if (tab === "conversation") return <p className="sliver-empty">{sliverText("conversation", `${comments.length} comments`)}</p>;
+    return <p className="sliver-empty">Overview of this pull request.</p>;
+  }
+  let pane: ReactNode = <About item={item} />;
+  const loadState = loadNotice();
+  if (tab === "files") pane = filesPane();
   if (tab === "commits") {
     pane = (
       <div className="pr-pane" aria-label="Commits">
@@ -476,21 +549,20 @@ export default function PRDetail() {
             <div className="pr-id-row">
               <span className={`pri ${(item.priority ?? "").toLowerCase()}`}>{item.priority ?? "—"}</span>
               <Badge>{QUEUE_STATE_LABEL[item.state]}</Badge>
-              {closed ? <Badge>{pull.data?.pr.merged ? "Merged" : "Closed"}</Badge>
-                : mergeable === null ? null : <Badge>{mergeable ? "Mergeable" : "Not mergeable"}</Badge>}
+              {mergeBadge()}
               <VerdictChip item={item} />
               {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source)}</a> : null}
             </div>
           </div>
           <div className="pr-actions">
             <div className="pr-actions-row">
-              {pending ? (
+              {pending && (
                 <>
-                  {closed ? null : <Button type="button" variant={gated ? "primary" : "outline"} disabled={busy || readOnly} onClick={() => void act("once")}>Confirm</Button>}
+                  {!closed && <Button type="button" variant={gated ? "primary" : "outline"} disabled={busy || readOnly} onClick={() => void act("once")}>Confirm</Button>}
                   <Button type="button" variant="outline" disabled={busy || readOnly} onClick={() => void act("deny")}>Dismiss</Button>
                 </>
-              ) : null}
-              {closed ? null : (
+              )}
+              {!closed && (
                 <>
                   <Button type="button" variant="outline" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</Button>
                   <Button type="button" variant={canMerge && !gated ? "primary" : "outline"} disabled={!item.number || !canMerge || busy || readOnly} onClick={() => void requestWrite("merge")}>Merge</Button>
@@ -499,7 +571,7 @@ export default function PRDetail() {
                     <MenuContent align="end">
                       <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("approve")}>Approve</MenuItem>
                       <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("changes")}>Request changes</MenuItem>
-                      {offersClose(item) ? null : <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("close")}>Close pull request</MenuItem>}
+                      {!offersClose(item) && <MenuItem disabled={!item.number || busy || readOnly} onSelect={() => void requestWrite("close")}>Close pull request</MenuItem>}
                     </MenuContent>
                   </Menu>
                 </>
@@ -507,7 +579,7 @@ export default function PRDetail() {
             </div>
           </div>
         </header>
-        {composer ? (
+        {composer && (
           <form className="pr-composer" onSubmit={submitComposerForm}>
             <textarea
               value={composer.body}
@@ -521,7 +593,7 @@ export default function PRDetail() {
               <Button type="button" variant="outline" disabled={busy} onClick={() => setComposer(null)}>Cancel</Button>
             </div>
           </form>
-        ) : null}
+        )}
         {showRecommended ? (
           <RecommendedComment
             key={`${handledKey}@${item.runId}`}
@@ -550,28 +622,7 @@ export default function PRDetail() {
           <SliverTabButton id="conversation" label="Talk" current={tab} onSelect={setTab} />
         </div>
         <div className="sliver-body">
-          {tab === "files" ? (
-            loadState
-              ? <p className="sliver-empty">{pullPending ? "Loading files…" : "Could not load files."}</p>
-              : files.length === 0
-                ? <p className="sliver-empty">No files changed.</p>
-                : <div className="sliver-list">
-                    {files.map((file) => (
-                      <button type="button" className={`sliver-file${selected?.path === file.path ? " is-on" : ""}`} key={file.path} onClick={() => selectFile(file.path)}>
-                        <span className="sliver-file-name">{file.path}</span>
-                        <span className="sliver-file-stat"><span className="add">+{file.additions}</span> <span className="del">−{file.deletions}</span></span>
-                      </button>
-                    ))}
-                  </div>
-          ) : tab === "commits" ? (
-            <p className="sliver-empty">{pullPending ? "Loading commits…" : pull.error ? "Could not load commits." : `${commits.length} commits`}</p>
-          ) : tab === "issue" ? (
-            <p className="sliver-empty">{pullPending ? "Loading issues…" : pull.error ? "Could not load issues." : `${pull.data?.issues.length ?? 0} linked issues`}</p>
-          ) : tab === "conversation" ? (
-            <p className="sliver-empty">{pullPending ? "Loading conversation…" : pull.error ? "Could not load conversation." : `${comments.length} comments`}</p>
-          ) : (
-            <p className="sliver-empty">Overview of this pull request.</p>
-          )}
+          {renderSliver()}
         </div>
       </aside>
     </>

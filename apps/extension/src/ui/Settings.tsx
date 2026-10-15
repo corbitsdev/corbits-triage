@@ -29,7 +29,8 @@ function changesLine(stored: unknown, repo: string): string {
   const read = readLocalPack(stored, repo);
   if ("error" in read) return "Saved rules do not read";
   const count = changesFromDefaults(read.pack);
-  return count ? `${count} ${count === 1 ? "change" : "changes"}` : "Recommended rules";
+  if (!count) return "Recommended rules";
+  return `${count} ${count === 1 ? "change" : "changes"}`;
 }
 
 function RepoRules({ repo, usesFile, stored, onManage }: { repo: string; usesFile: boolean; stored: unknown; onManage: (repo: string) => void }) {

@@ -237,10 +237,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const invitations = enabled && portalQuery.data && isInvited(portalQuery.data) ? portalQuery.data.invitations : NO_INVITATIONS;
   const loading = enabled && portalQuery.isPending;
   const unauthorized = portalQuery.error instanceof ApiError && portalQuery.error.status === 401;
-  const loadError = enabled && !portalQuery.data && portalQuery.isError && !unauthorized
-    ? (portalQuery.error instanceof Error ? portalQuery.error.message : String(portalQuery.error))
-    : "";
   const readOnly = Boolean(enabled && !portalQuery.data && portalQuery.isError && !unauthorized);
+  const loadError = readOnly ? errorText(portalQuery.error) : "";
 
   useEffect(function clearSnapshotWhenDisabled() {
     if (!enabled) {

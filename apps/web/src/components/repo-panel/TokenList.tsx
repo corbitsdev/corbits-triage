@@ -15,6 +15,7 @@ export default function TokenList({ values, noun, placeholder, mono, disabled, o
   const addRef = useRef<HTMLButtonElement>(null);
   /** Set when the focused control is about to disappear, so focus lands on the add button rather than the page. */
   const refocus = useRef(false);
+  const inputClass = mono ? "val w mono-val" : "val w";
 
   useEffect(function returnFocusToAdd() {
     if (adding || !refocus.current) return;
@@ -53,7 +54,7 @@ export default function TokenList({ values, noun, placeholder, mono, disabled, o
         <span key={value} className="glob">{value}<button type="button" aria-label={`Remove ${value}`} disabled={disabled} onClick={() => remove(value)}>×</button></span>
       ))}
       {adding
-        ? <input className={mono ? "val w mono-val" : "val w"} aria-label={`Add ${noun}`} placeholder={placeholder} autoFocus value={text} onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown} onBlur={commit} />
+        ? <input className={inputClass} aria-label={`Add ${noun}`} placeholder={placeholder} autoFocus value={text} onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown} onBlur={commit} />
         : <button type="button" className="linkish" ref={addRef} disabled={disabled} onClick={() => setAdding(true)}>Add {noun}</button>}
     </span>
   );

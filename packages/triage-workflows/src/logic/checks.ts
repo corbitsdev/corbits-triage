@@ -230,6 +230,16 @@ interface CheckRules {
   tracker: IssueTracker;
 }
 
+function resultOf(failed: boolean | null): CheckResult["result"] {
+  if (failed === null) return "unconfirmed";
+  return failed ? "fail" : "pass";
+}
+
+function conflictReason(conflicted: boolean | null): string {
+  if (conflicted === null) return "mergeability not yet computed";
+  return conflicted ? "merge conflicts with base" : "no merge conflicts";
+}
+
 function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): DeterministicResult {
   const findings: Finding[] = [];
   const checks: CheckResult[] = [];
@@ -240,7 +250,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
     checks.push({
       check,
       kind: "machine",
-      result: failed === null ? "unconfirmed" : failed ? "fail" : "pass",
+      result: resultOf(failed),
       reason,
       evidence,
       output: failed === null ? { kind: "could-not-check", reason } : output,
@@ -268,7 +278,7 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
     if (on("no-merge-conflicts") && !findings.length && facts.mergeable === null) add("no-merge-conflicts", "stale-unknown", "mergeability not yet computed");
     if (on("no-merge-conflicts")) {
       const conflicted = facts.mergeable === null ? null : !facts.mergeable;
-      result("no-merge-conflicts", conflicted, conflicted === null ? "mergeability not yet computed" : conflicted ? "merge conflicts with base" : "no merge conflicts", [], {
+      result("no-merge-conflicts", conflicted, conflictReason(conflicted), [], {
         kind: "values",
         values: { hasConflicts: conflicted === true },
       });

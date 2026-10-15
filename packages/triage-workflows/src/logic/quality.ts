@@ -471,7 +471,8 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const hunks = typeof file.patch === "string" ? patchHunks(file.patch) : [];
     const read = stateFile(file, hunks);
     const custom = scoped.some((row) => inScope(row, file.path));
-    const fitted = hunks.length > 0 ? fitFile(custom || (asksCustom && chunk.length === 0) ? rulesRoom : room, read) : undefined;
+    const budget = custom || (asksCustom && chunk.length === 0) ? rulesRoom : room;
+    const fitted = hunks.length > 0 ? fitFile(budget, read) : undefined;
     const docs = asksDocs(file.path);
     const readsAll = focused !== undefined || docs;
     if (focused && file.patchTruncated) focused.unread.push(file.path);

@@ -35,6 +35,20 @@ export default function Audit() {
   const repos = useMemo(() => (snapshot?.repos ?? []).map((row) => row.name).sort(), [snapshot]);
   const entries = useMemo(() => matchingEntries(log.data?.entries ?? [], search), [log.data, search]);
 
+  function renderLog() {
+    if (log.error) return <p className="empty-line" role="alert">Could not load the audit log. {errorText(log.error)}</p>;
+    if (log.data === undefined) return <p className="empty-line" role="status">Loading…</p>;
+    if (entries.length === 0) return <p className="empty-line">{search.trim() === "" ? "Nothing recorded yet." : "Nothing matches this search."}</p>;
+    return (
+      <Table>
+        <TableHeader>
+          <TableRow><TableHead scope="col">Time</TableHead><TableHead scope="col">Actor</TableHead><TableHead scope="col">Action</TableHead><TableHead scope="col">Target</TableHead><TableHead scope="col">Detail</TableHead></TableRow>
+        </TableHeader>
+        <TableBody>{entries.map((entry, i) => <EntryRow key={`${entry.time}-${i}`} entry={entry} />)}</TableBody>
+      </Table>
+    );
+  }
+
   return (
     <main className="audit" id="main">
       <h1>Audit</h1>
@@ -47,17 +61,7 @@ export default function Audit() {
         </select>
         <Button type="button" variant="outline" disabled={entries.length === 0} onClick={() => download(entries, repo)}>Export</Button>
       </div>
-      {log.error ? <p className="empty-line" role="alert">Could not load the audit log. {errorText(log.error)}</p>
-        : log.data === undefined ? <p className="empty-line" role="status">Loading…</p>
-        : entries.length === 0 ? <p className="empty-line">{search.trim() === "" ? "Nothing recorded yet." : "Nothing matches this search."}</p>
-        : (
-          <Table>
-            <TableHeader>
-              <TableRow><TableHead scope="col">Time</TableHead><TableHead scope="col">Actor</TableHead><TableHead scope="col">Action</TableHead><TableHead scope="col">Target</TableHead><TableHead scope="col">Detail</TableHead></TableRow>
-            </TableHeader>
-            <TableBody>{entries.map((entry, i) => <EntryRow key={`${entry.time}-${i}`} entry={entry} />)}</TableBody>
-          </Table>
-        )}
+      {renderLog()}
     </main>
   );
 }
