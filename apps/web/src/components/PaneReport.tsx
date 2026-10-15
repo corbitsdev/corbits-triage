@@ -75,6 +75,12 @@ function Disclosure({ label, children }: { label: ReactNode; children: ReactNode
   );
 }
 
+function descClass(expanded: boolean, long: boolean): string {
+  if (expanded) return "desc-t";
+  if (long) return "desc-t clamp fade";
+  return "desc-t clamp";
+}
+
 /** The author's own account, open above the folds; a long one shows its first part until expanded. */
 export function Description({ pull }: { pull: PullState }) {
   const [expanded, setExpanded] = useState(false);
@@ -114,19 +120,22 @@ export function Description({ pull }: { pull: PullState }) {
     );
   }
   if (pull.data === undefined) return null;
+  if (body === null) {
+    return (
+      <section ref={sectionRef} className="desc" aria-label="Description">
+        <p className="none">No description.</p>
+      </section>
+    );
+  }
   return (
     <section ref={sectionRef} className="desc" aria-label="Description">
-      {body === null ? <p className="none">No description.</p> : (
-        <>
-          <div id={id} ref={textRef} className={expanded ? "desc-t" : `desc-t clamp${long ? " fade" : ""}`}>
-            <Markdown text={body} />
-          </div>
-          {long || expanded ? (
-            <button type="button" className="desc-more" aria-expanded={expanded} aria-controls={id} onClick={toggle}>
-              {expanded ? "Show less" : "Show more"}
-            </button>
-          ) : null}
-        </>
+      <div id={id} ref={textRef} className={descClass(expanded, long)}>
+        <Markdown text={body} />
+      </div>
+      {(long || expanded) && (
+        <button type="button" className="desc-more" aria-expanded={expanded} aria-controls={id} onClick={toggle}>
+          {expanded ? "Show less" : "Show more"}
+        </button>
       )}
     </section>
   );

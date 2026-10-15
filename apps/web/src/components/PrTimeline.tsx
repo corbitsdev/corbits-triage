@@ -35,20 +35,25 @@ export function PrTimeline({ item }: { item: PrItem }) {
   const pack = useRepoPack(item.repo);
   const entries = timeline.data?.entries ?? [];
   const trend = entries.flatMap((verdict) => (verdict.settled && verdict.readiness !== null ? [verdict.readiness] : []));
+
+  function renderEntries() {
+    if (timeline.isPending) return <p className="muted">Loading history…</p>;
+    if (timeline.error) return <p className="muted">Could not load history. {errorText(timeline.error)}</p>;
+    if (entries.length <= 1) return <p className="muted">The history starts with the next triage.</p>;
+    return (
+      <>
+        {trend.length > 1 ? <p className="timeline-trend mono">{trend.join(" → ")}</p> : null}
+        <ol className="timeline">
+          {entries.map((verdict) => <VerdictRow key={verdict.runId} verdict={verdict} pack={pack} />)}
+        </ol>
+      </>
+    );
+  }
+
   return (
     <section className="brief pr-timeline">
       <h2>Readiness history</h2>
-      {timeline.isPending ? <p className="muted">Loading history…</p>
-        : timeline.error ? <p className="muted">Could not load history. {errorText(timeline.error)}</p>
-        : entries.length <= 1 ? <p className="muted">The history starts with the next triage.</p>
-        : (
-          <>
-            {trend.length > 1 ? <p className="timeline-trend mono">{trend.join(" → ")}</p> : null}
-            <ol className="timeline">
-              {entries.map((verdict) => <VerdictRow key={verdict.runId} verdict={verdict} pack={pack} />)}
-            </ol>
-          </>
-        )}
+      {renderEntries()}
     </section>
   );
 }

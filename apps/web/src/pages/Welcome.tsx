@@ -16,6 +16,11 @@ function returnedSignInError(): string {
   return code === null ? "" : `Google sign-in failed (${code.replaceAll("_", " ")}). Use an allowed account, then try again.`;
 }
 
+function submitLabel(signingUp: boolean, pending: boolean): string {
+  if (signingUp) return pending ? "Signing up…" : "Sign up";
+  return pending ? "Signing in…" : "Sign in";
+}
+
 /** `intro` explains why sign-in is asked for, such as an invite waiting behind it. */
 export function Welcome({ intro }: { intro?: string }) {
   const { signIn, signUp, error } = useSession();
@@ -144,7 +149,7 @@ export function Welcome({ intro }: { intro?: string }) {
           {methods.passwordReset && !signingUp && (
             <button type="button" className="signin-link signin-forgot" disabled={pending} onClick={() => switchTo("reset")}>Forgot password?</button>
           )}
-          <Button type="submit" size="lg" disabled={pending}>{pending ? (signingUp ? "Signing up…" : "Signing in…") : signingUp ? "Sign up" : "Sign in"}</Button>
+          <Button type="submit" size="lg" disabled={pending}>{submitLabel(signingUp, pending)}</Button>
         </form>
       )}
       {methods?.google && (

@@ -60,10 +60,15 @@ export function createHoldQueue(timers: Timers, holdMs: number): HoldQueue {
     return null;
   }
 
-  function publish(outcome: Notices["outcome"]) {
+  function heldNotice(): Notices["held"] {
     const held = heldEntry();
-    const heldNotice = held === null ? null : notices.held?.id === held.id ? notices.held : { id: held.id, message: held.action.pending };
-    notices = { held: heldNotice, outcome };
+    if (held === null) return null;
+    if (notices.held?.id === held.id) return notices.held;
+    return { id: held.id, message: held.action.pending };
+  }
+
+  function publish(outcome: Notices["outcome"]) {
+    notices = { held: heldNotice(), outcome };
     for (const listener of listeners) listener();
   }
 

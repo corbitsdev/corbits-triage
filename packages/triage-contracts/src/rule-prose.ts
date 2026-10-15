@@ -69,7 +69,8 @@ type Target = Record<string, unknown>;
 const DO_SENTENCES: Record<ActionKind, (target: Target, repo: string) => string | null> = {
   labels(target) {
     const labels = strings(target.labels);
-    return labels.length ? `Add ${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}` : null;
+    if (labels.length === 0) return null;
+    return `Add ${labels.length === 1 ? "label" : "labels"} ${labels.join(", ")}`;
   },
   assign(target) {
     const users = strings(target.users);

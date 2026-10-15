@@ -60,6 +60,12 @@ function compareOwners(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
+function sortedValues(values: Iterable<string>, facet: FilterFacet): string[] {
+  if (facet === "age") return AGE_BUCKETS;
+  if (facet === "owner") return [...values].sort(compareOwners);
+  return [...values].sort((a, b) => a.localeCompare(b));
+}
+
 export function facetOptions(items: PrItem[], filters: InboxFilters, facet: FilterFacet, now: number): FilterOption[] {
   const others = { ...filters, [facet]: [] };
   const counts = new Map<string, number>();
@@ -69,8 +75,7 @@ export function facetOptions(items: PrItem[], filters: InboxFilters, facet: Filt
     counts.set(value, (counts.get(value) ?? 0) + (matchesFilters(item, others, now) ? 1 : 0));
   }
   for (const value of filters[facet]) if (!counts.has(value)) counts.set(value, 0);
-  const values = facet === "age" ? AGE_BUCKETS : [...counts.keys()].sort(facet === "owner" ? compareOwners : (a, b) => a.localeCompare(b));
-  return values.map((value) => ({ value, label: optionLabel(facet, value), count: counts.get(value) ?? 0 }));
+  return sortedValues(counts.keys(), facet).map((value) => ({ value, label: optionLabel(facet, value), count: counts.get(value) ?? 0 }));
 }
 
 export function activeFilters(filters: InboxFilters): ActiveFilter[] {

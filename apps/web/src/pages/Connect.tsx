@@ -32,6 +32,14 @@ import { hasDecisionModelCredential } from "../lib/decision-models.ts";
 
 type GuidedStep = "create" | "install" | "select" | "model";
 
+const STEP_PHASE: Record<GuidedStep, number> = { create: 0, install: 1, select: 1, model: 2 };
+
+function stepState(phase: number, index: number): "done" | "active" | "todo" {
+  if (phase > index) return "done";
+  if (phase === index) return "active";
+  return "todo";
+}
+
 /** GitHub appends `installation_id` when it sends the browser back from installing the App. */
 function returnedFromInstall(): boolean {
   return new URLSearchParams(window.location.search).has("installation_id");
@@ -215,10 +223,10 @@ export default function Connect() {
     return <div key={repo.name} className="install-row"><strong className="mono">{repo.name}</strong>{catchingUp ? <span className="catching-up"><StatusDot label="In progress" live tone="emphasis" />Catching up open pull requests…</span> : <Badge tone="success">Connected</Badge>}</div>;
   }
 
-  const phase = step === "create" ? 0 : step === "model" ? 2 : 1;
+  const phase = STEP_PHASE[step];
 
   function renderStep(index: number, title: string, doneNote: string, renderBody: () => ReactNode) {
-    const state = phase > index ? "done" : phase === index ? "active" : "todo";
+    const state = stepState(phase, index);
     return <li className={`setup-step is-${state}`} aria-current={state === "active" ? "step" : undefined}>
       <span className="setup-step-no" aria-hidden="true">{state === "done" ? <Check strokeWidth={2} /> : index + 1}</span>
       <div className="setup-step-body">

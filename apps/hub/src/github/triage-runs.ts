@@ -262,6 +262,12 @@ function terminalOf(status: Terminal["status"], verdict: Record<string, unknown>
   return { status, ...unsettledBy(verdict, headSha) };
 }
 
+function headVerdictOf<T>(verdicts: readonly T[], heads: number, index: number): T | undefined {
+  if (verdicts.length === heads) return verdicts[index];
+  if (verdicts.length === 1) return verdicts[0];
+  return undefined;
+}
+
 /** The verdict step's output is the verdict: one per head in mail order, or one degraded verdict for every head. Any other count pairs nothing, so no head settles on another's verdict. */
 function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger[]): Head[] {
   const status = TERMINAL_EVENTS[events.at(-1)?.type ?? ""];
@@ -271,7 +277,7 @@ function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger
   const ruled = ruledOf(events);
   // The verdict is kept from when its step completed, so a run that fails after it still shows it.
   return triggers.map(function headVerdict(trigger, i) {
-    const verdict = verdicts.length === triggers.length ? verdicts[i] : verdicts.length === 1 ? verdicts[0] : undefined;
+    const verdict = headVerdictOf(verdicts, triggers.length, i);
     const summary = verdict && summaryOf(verdict, verdictAt, trigger, mirrored, ruled.get(`${trigger.repo}#${trigger.number}`));
     const kept = { trigger, ...(summary && { summary }) };
     if (status === undefined) return kept;

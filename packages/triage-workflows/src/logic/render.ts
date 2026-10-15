@@ -249,10 +249,17 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
   const parsed = answerSet(det.needsJudgment ? answers : null);
-  const unavailable = !det.needsJudgment ? NOT_ASKED_REASON : judgeSkipped ? NEEDS_JUDGE_REASON : judgeLimitExceeded ? judgeError! : UNAVAILABLE_REASON;
+  const unavailable = unavailableReason();
   const invalid = isInvalid(parsed, askedQuestionIds(sources, plan, focused));
   const checks: CheckResult[] = [];
   let anyUnanswered = false;
+
+  function unavailableReason(): string {
+    if (!det.needsJudgment) return NOT_ASKED_REASON;
+    if (judgeSkipped) return NEEDS_JUDGE_REASON;
+    if (judgeLimitExceeded) return judgeError!;
+    return UNAVAILABLE_REASON;
+  }
 
   function noulOf(id: string): number | undefined {
     const answer = invalid ? undefined : parsed.decisions[id];
@@ -263,9 +270,11 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
   }
 
   function push(check: string, decided: Decided, output: CheckOutput, evidence: string[] = [], reason?: string) {
-    checks.push(decided.result === "unconfirmed"
-      ? { check, kind: "model", result: "unconfirmed", reason: decided.reason, evidence: [], output }
-      : { check, kind: "model", result: decided.result, reason: reason ?? (decided.result === "fail" ? failureText(check, sources) : passText(check, sources)), evidence, output });
+    if (decided.result === "unconfirmed") {
+      checks.push({ check, kind: "model", result: "unconfirmed", reason: decided.reason, evidence: [], output });
+      return;
+    }
+    checks.push({ check, kind: "model", result: decided.result, reason: reason ?? (decided.result === "fail" ? failureText(check, sources) : passText(check, sources)), evidence, output });
   }
 
   function unchecked(check: string, reason: string) {
@@ -433,7 +442,11 @@ const SIZE_RULES: readonly string[] = ["max-files-changed", "max-lines-changed"]
 function oneSplit(failed: CheckResult[]): CheckResult[] {
   const sized = failed.filter((c) => SIZE_RULES.includes(c.check));
   if (sized.length < 2) return failed;
-  return failed.flatMap((c) => (c === sized[0] ? [{ ...c, evidence: sized.flatMap((s) => s.evidence) }] : sized.includes(c) ? [] : [c]));
+  return failed.flatMap(function splitStep(c) {
+    if (c === sized[0]) return [{ ...c, evidence: sized.flatMap((s) => s.evidence) }];
+    if (sized.includes(c)) return [];
+    return [c];
+  });
 }
 
 function nextStep(checks: CheckResult[], sources: Sources, reviewers: string[], verdict: VerdictWord): { actor: Actor; nextAction: string } {
