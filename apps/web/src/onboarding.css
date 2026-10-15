@@ -52,6 +52,10 @@ body:has(.setup-flow),
   grid-template-columns: 2fr 1fr;
   background: var(--background);
 }
+/* From 721px the page cannot scroll (index.css), so the sign-in page scrolls itself. */
+@media (min-width: 721px) {
+  .signin { height: 100dvh; overflow: auto; }
+}
 .signin-main { display: flex; align-items: center; justify-content: center; padding: 48px 16px; }
 .signin-column { display: grid; gap: 28px; width: 100%; max-width: 384px; }
 .signin-head h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
