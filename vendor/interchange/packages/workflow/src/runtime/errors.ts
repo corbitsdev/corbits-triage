@@ -10,14 +10,14 @@
  * entry in the reconstructed `state.steps` is either aligned on a step
  * boundary or left in one of the resumable carve-outs (an in-flight
  * `loop` container, or an `awaitSignal` step still `awaiting-signal`
- * [re-parked] or -- with no timeout -- left `in-flight` by an
- * already-logged `SignalReceived`), or is a crash-mid-invocation step
- * (an agent `step` or `action` left `in-flight`) which the runtime
- * settles as a terminal `StepFailed` rather than re-arming. A log that
- * stops while a step is `awaiting-timer`, mid-`map`, or otherwise
- * `in-flight` (a `childWorkflow`, or a timeout-bearing `awaitSignal`
- * left `in-flight`) has no schedulable primitive to advance it -- the
- * runtime cannot re-arm the timer scheduler entry or rebuild the
+ * [re-parked] or left `in-flight` after a mover already logged, a
+ * `SignalReceived` or a timed gate's `TimerFired`), or is a
+ * crash-mid-invocation step (an agent `step` or `action` left
+ * `in-flight`) which the runtime settles as a terminal `StepFailed`
+ * rather than re-arming. A log that stops while a step is
+ * `awaiting-timer`, mid-`map`, or otherwise `in-flight` with no
+ * resumable carve-out has no schedulable primitive to advance it.
+ * The runtime cannot re-arm the timer scheduler entry or rebuild the
  * inner-map iteration state from the log alone. The run records that
  * throw as `RunFailed`.
  *

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { errorText } from "@corbits/common";
-import type { CredentialCipher } from "@intx/types";
+import type { AdapterManifest, CredentialCipher } from "@intx/types";
 
 export type LocalSidecarManifest = {
   readonly allocationId: string;
@@ -13,6 +13,7 @@ export type LocalSidecarManifest = {
   readonly hubWebSocketUrl: string;
   readonly dataDir: string;
   readonly token: string;
+  readonly adapterManifest?: AdapterManifest;
 };
 
 export interface LocalSidecarManifestStore {

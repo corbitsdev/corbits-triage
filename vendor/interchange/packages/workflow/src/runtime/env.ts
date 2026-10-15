@@ -8,7 +8,11 @@
 // source-level test in `run.test.ts` asserts the discipline.
 
 import type { AgentDefinition, BaseEnv, DirectorRegistry } from "@intx/agent";
-import type { ApprovalSnapshot, ControlParkKind } from "@intx/types/runtime";
+import type {
+  ApprovalSnapshot,
+  ControlParkKind,
+  PerCallInferenceOptions,
+} from "@intx/types/runtime";
 
 import type {
   AuthorizeContext,
@@ -168,6 +172,12 @@ export interface StepInvokeRequest {
   agent: AgentDefinition<BaseEnv>;
   /** The materialized input the runtime resolved from the step's `input` selector. */
   input: unknown;
+  /**
+   * Per-call inference options resolved from the step's `inference`
+   * selector. Applies to this invocation's send alone. Absent means the
+   * agent's defaults.
+   */
+  inference?: PerCallInferenceOptions;
   /** Workflow-runtime context for every authz call inside the step. */
   authzContext: AuthorizeContext;
   /** Cancelled when the step is being torn down (timeout, cancellation). */
@@ -313,7 +323,14 @@ export interface BlobSubstrate {
  * inline child -- to a concrete `WorkflowDefinition` using whatever in-memory
  * lookup the runtime supplies (a lifted-body map in `runLocal`, the parent's
  * re-evaluated closure map in production), constructs the child run against
- * the supplied id, and returns the terminal status.
+ * the supplied id, and returns a live handle. `runChildWorkflow` drives that
+ * handle across the child's parks and relays each one onto the parent run.
+ * The child run stays unaddressable. A parked child survives a process
+ * restart: the caller passes `resumeFromEvents` from the child log and the
+ * parent reestablishes the relay. The spawn step defaults to `"wait"`, so
+ * the drain signal does not abort it, whether the child is parked or still
+ * mid-step. An explicit `"cancel"` still aborts the child through
+ * `localAbort`.
  *
  * The runtime body does not carry a definition lookup of its own.
  */
@@ -333,16 +350,24 @@ export type SpawnChildWorkflow = (input: {
   depth: number;
   /** The tree-wide spawn-depth ceiling, threaded to the child run. */
   maxChildSpawnDepth: number;
-}) => Promise<{
-  terminalStatus: "completed" | "failed" | "cancelled";
-}>;
+  /**
+   * Re-adopt a child that was mid-flight when the process crashed. Drive
+   * `runtimeRun` from this durable log instead of `input`. Omit the field
+   * when the child log is empty: an empty array is a resume with no
+   * payload, and a child that died after `ChildSpawned` and before its own
+   * `RunStarted` must start from `input`. A re-park does not re-fire
+   * `onPark` or `onSignalPark`.
+   */
+  resumeFromEvents?: readonly WorkflowEvent[];
+}) => Promise<SuspendableChildHandle>;
 
 /**
  * An approval park surfaced from a suspendable child body: the reserved
  * correlation the child parked on and the approver-facing snapshot, so the
  * parent (runOnTrigger) can proxy the approval up its OWN run's park
- * machinery on the same correlation. A child body's `input` parks are the
- * section's re-arm, not surfaced here.
+ * machinery on the same correlation. An input park is not an approval: a
+ * handle built with `surfaceInputPark` returns it as its own event, and
+ * every other handle rejects it.
  */
 export type SuspendableChildPark = {
   correlationId: string;
@@ -354,15 +379,23 @@ export type SuspendableChildPark = {
  * time the child parks on an approval (the caller proxies it up and, once
  * granted, calls `resume`), parks on an author `awaitSignal` gate (surfaced as
  * `signal-park` so the caller proxies it up as a signal-relay await and
- * `deliverSignal`s the resolved signal back), or reaches a terminal. `resume`
+ * `deliverSignal`s the resolved signal back), surfaces an input park when the
+ * handle was built to, or reaches a terminal. `resume`
  * delivers the granted decision to the child's reserved correlation channel;
  * `deliverSignal` delivers a signal on the body's own author-chosen name.
  * Both unblock the body's awaiter so it continues.
+ *
+ * `next` returns whatever was queued, including a sibling park, and it does
+ * not notice that the gate has since moved on. A caller that relays one
+ * signal at a time reads `readParkRelease` before it accepts a signal that
+ * is already waiting, and uses `waitForParkRelease` to learn that the open
+ * park ended without consuming a sibling.
  */
 export type SuspendableChildHandle = {
   next(): Promise<
     | { kind: "park"; park: SuspendableChildPark }
-    | { kind: "signal-park"; name: string }
+    | { kind: "signal-park"; name: string; timeout?: number }
+    | { kind: "input-park"; correlationId: string }
     | { kind: "terminal"; terminalStatus: "completed" | "failed" | "cancelled" }
   >;
   resume(correlationId: string, decision: unknown): Promise<void>;
@@ -377,17 +410,65 @@ export type SuspendableChildHandle = {
     payload: unknown,
     signalId: string,
   ): Promise<void>;
+  /**
+   * One read of the child log. `open` means a step is still
+   * `awaiting-signal` on `name`, or that await has not been recorded yet.
+   * `released` means the await was recorded and no step is awaiting that
+   * name. A signal already waiting on the caller must not be relayed once
+   * the read is `released` or `terminal`: `next` can still return the park
+   * event after the gate has moved on.
+   *
+   * Present on the same handles as {@link waitForParkRelease}.
+   */
+  readParkRelease?(name: string): Promise<
+    | { kind: "open" }
+    | { kind: "released" }
+    | {
+        kind: "terminal";
+        terminalStatus: "completed" | "failed" | "cancelled";
+      }
+  >;
+  /**
+   * Resolve when no step in the child run is `awaiting-signal` on `name`,
+   * or the child run has reached a terminal. A sibling park does not
+   * resolve it and is left queued for a later `next`. Abort rejects.
+   *
+   * Present on a handle whose caller can have several parks live at once.
+   * A loop iteration and an onTrigger body are driven one step at a time,
+   * so their callers keep racing `next` and do not need this.
+   */
+  waitForParkRelease?(
+    name: string,
+    abort: AbortSignal,
+  ): Promise<
+    | { kind: "released" }
+    | {
+        kind: "terminal";
+        terminalStatus: "completed" | "failed" | "cancelled";
+      }
+  >;
+  /**
+   * Resolves once a re-park of `name` has entered `awaitNext`. A caller
+   * that already holds the decision delivers after this, so a channel
+   * that tails from head sees the blob. Rejects if the child settles
+   * before the gate re-arms.
+   *
+   * Present on the live suspendable handle. A terminal handle has no
+   * channel and omits it.
+   */
+  whenSignalAwaiter?(name: string): Promise<void>;
 };
 
 /**
- * Spawn a body sub-DAG as a child run that MAY suspend on an approval park.
- * Unlike `spawnChild` (which awaits a terminal), this returns a live handle
- * the caller drives across parks: the child's control-plane approval parks
- * surface via `handle.next()` so the caller proxies them up its own run's
- * park machinery, and `handle.resume` relays the granted decision back into
- * the child. onTrigger runs every event's body through this seam, so a body
- * step's approval is serviced without the body child ever needing to reach a
- * terminal to unblock the parent.
+ * Spawn a body sub-DAG as a child run that may suspend. `spawnChild` is the
+ * `childWorkflow` seam and returns the same handle shape. This callback is
+ * the loop and `onTrigger` seam. The caller drives the handle: approval parks
+ * and author-signal parks surface via `handle.next()`, the caller proxies
+ * them up its own run, and `resume` relays a granted decision back into the
+ * child. The handle this seam builds rejects an input park. onTrigger runs
+ * every event's body through this seam, so a body step's approval is
+ * serviced without the body child ever needing to reach a terminal to
+ * unblock the parent.
  *
  * `resumeFromEvents` re-adopts a body child that was mid-flight when the
  * process crashed: the seam drives `runtimeRun` from the supplied durable log
@@ -479,6 +560,12 @@ export type WorkflowPark = {
 export type WorkflowSignalPark = {
   runId: string;
   name: string;
+  /**
+   * Set when the gate carries a timeout. Absent means the gate is untimed
+   * and needs a delivery from upstream. A parent tells the two apart from
+   * this field: its own timer can still resolve a timed gate.
+   */
+  timeout?: number;
 };
 
 /**
@@ -551,12 +638,11 @@ export interface WorkflowRuntimeEnv {
    * {@link SpawnSuspendableChild}). Optional: a host that does not wire it
    * does not support onTrigger sections, and `runOnTrigger` fails loudly.
    *
-   * This is a second child-drive seam alongside the terminal-only
-   * `spawnChild` that `childWorkflow` uses, rather than one unified
-   * park-aware seam. The two are kept separate because unifying them would
-   * require migrating `childWorkflow`'s terminal-only path onto the
-   * park-aware drive; that is a deliberate, separate decision, not an
-   * oversight.
+   * Both seams return a {@link SuspendableChildHandle}. `runChildWorkflow`
+   * drives `spawnChild` across the child's parks, including an input park.
+   * This callback is driven across approval and author-signal parks. An
+   * input park here is rejected: a loop or `onTrigger` body has no separate
+   * input channel of its own.
    */
   spawnSuspendableChild?: SpawnSuspendableChild;
   /**
@@ -599,10 +685,10 @@ export interface WorkflowRuntimeEnv {
    *
    * An untimed park waits on a signal that has to arrive from outside the
    * run. That only happens when the run is reachable from the control plane:
-   * either it is the deployment's addressable run, or it is a suspendable
-   * child whose container relays a decision back down. A terminal
-   * `childWorkflow` child is neither -- it has no address of its own and no
-   * relay above it -- so a park there can never be answered.
+   * either it is the deployment's addressable run, or it is a child whose
+   * parent relays a decision back down. A `childWorkflow` spawner forces
+   * this true, because the parent relays. A run that sets it false refuses
+   * an untimed park, whether or not a parent exists.
    *
    * The seam that spawns a run is the only layer that knows which case it is
    * in, so it states the fact here and the runtime enforces it at the park.
@@ -646,6 +732,15 @@ export interface WorkflowRuntimeEnv {
    * off any suspendable-child path parks silently as before.
    */
   onSignalPark?: (park: WorkflowSignalPark) => void;
+  /**
+   * Fired when a re-park enters `awaitNext`, after that call has registered
+   * its subscriber and before the runtime waits on it. A host channel tails
+   * from head and does not replay a blob that landed before this
+   * subscription. A re-park does not re-fire `onSignalPark`, so the caller
+   * that already holds the decision waits for this registration and
+   * delivers after it. Fresh parks do not fire it.
+   */
+  onSignalAwaiter?: (park: { runId: string; name: string }) => void;
   /**
    * Optional read-only recovery hook: enumerate the durable pending approval
    * operations a step left behind, keyed by `{ runId, stepId, attempt }`. The

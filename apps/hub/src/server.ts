@@ -151,7 +151,6 @@ const local = createLocalProcessSidecarProvisioner({
   spawnSidecar: createSpawnLocalSidecar({
     interchangeDir: V,
     credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
-    adapterManifest: sidecarAdapterManifest,
     processEnv: childProcessEnv(env),
   }),
   manifests: createLocalSidecarManifestStore({
@@ -159,6 +158,7 @@ const local = createLocalProcessSidecarProvisioner({
     cipher: credentialCipher,
     log: logJson,
   }),
+  adapterManifest: sidecarAdapterManifest,
   log: logJson,
 });
 
@@ -197,6 +197,7 @@ const composition = await createInterchangeHub({
   settings: interchangeSettings(env),
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { sendResetPassword: smtp.passwordReset }) },
   credentialCipher,
+  adapterManifest: sidecarAdapterManifest,
   sidecarProvisioners: [local.provisioner],
   probeSidecarProvisioners: [local.provisioner],
 });

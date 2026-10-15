@@ -76,11 +76,13 @@ import {
 import { restoreWorkflowRunToAllocation } from "./workflow-run-restore";
 import { committedReadsToSourceTree } from "./committed-source-tree";
 import {
+  describeProbeGateRefusal,
   installAndApproveWorkflowDefinition,
   type InstallAndApproveArgs,
   type InstallAndApproveResult,
 } from "./workflow-probe-gate";
 import { buildReferencedWorkflowSourcePins } from "./workflow-source-pins";
+import { workflowSourceRepoKind } from "./workflow-source-repo-kind";
 import type { SidecarReconciliationContext } from "./sidecar-allocation/operation";
 
 const logger = getLogger(["interchange", "hub", "session-service"]);
@@ -152,7 +154,7 @@ export type InstallAndApproveWorkflowSourceParams = {
    * and asset-`tarball` variants; omitted for the asset-`source` variant.
    */
   pin?: string;
-  /** The `workflow`-kind asset the frozen definition projects a definition over. */
+  /** The definition asset: a workflow source tree or package-registry tarball. */
   definitionAssetId: string;
   /** The exact provisioned generation that executes the probe. */
   allocationTarget: AllocatedSidecarTarget;
@@ -560,7 +562,7 @@ async function prepareSourceRefDeploy(
   const { approval, projection, closure } = args.approved;
   if (!approval.ok) {
     throw new Error(
-      `deployCodeSourcedWorkflow: refusing to deploy an unapproved workflow (gate reason: ${approval.reason})`,
+      `deployCodeSourcedWorkflow: refusing to deploy an unapproved workflow (${describeProbeGateRefusal(approval)})`,
     );
   }
 
@@ -1421,7 +1423,7 @@ export function createSessionService(
         const committed =
           await agentRepoStore.repoStore.openCommittedReadsAtCommit(
             HUB_PRINCIPAL,
-            { kind: "workflow", id: source.assetId },
+            { kind: workflowSourceRepoKind(source), id: source.assetId },
             source.package.commitSha,
           );
         if (committed === null) {
@@ -1495,7 +1497,7 @@ export function createSessionService(
     return source.kind === "asset"
       ? bindAssetAttachmentResolver(
           source.assetId,
-          source.package.format === "source" ? "workflow" : "package-registry",
+          workflowSourceRepoKind(source),
         )
       : null;
   }
@@ -1528,7 +1530,7 @@ export function createSessionService(
     if (!approved.approval.ok) {
       throw new WorkflowDefinitionInvalidError(
         approved.projection.id,
-        `code-sourced workflow install did not approve (reason: ${approved.approval.reason})`,
+        `code-sourced workflow install did not approve (${describeProbeGateRefusal(approved.approval)})`,
       );
     }
     return approved;

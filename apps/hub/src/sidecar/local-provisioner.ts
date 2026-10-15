@@ -13,6 +13,7 @@ import type {
   EnsureSidecarResult,
   SidecarProvisioner,
 } from "@intx/hub-sessions";
+import type { AdapterManifest } from "@intx/types";
 import type { LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
@@ -32,6 +33,8 @@ export type CreateLocalProcessSidecarProvisionerOpts = {
   readonly dataRoot: string;
   readonly spawnSidecar: SpawnLocalSidecar;
   readonly manifests: LocalSidecarManifestStore;
+  /** Restores records written before manifests carried `adapterManifest`. */
+  readonly adapterManifest: AdapterManifest;
   readonly stopTimeoutMs?: number;
   readonly log: (entry: Record<string, unknown>) => void;
 };
@@ -106,6 +109,7 @@ export function createLocalProcessSidecarProvisioner({
   dataRoot,
   spawnSidecar,
   manifests,
+  adapterManifest,
   stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
   log,
 }: CreateLocalProcessSidecarProvisionerOpts): LocalProcessSidecarProvisioner {
@@ -267,6 +271,7 @@ export function createLocalProcessSidecarProvisioner({
         hubWebSocketUrl: request.hubWebSocketUrl,
         dataDir,
         token: request.token,
+        ...(request.adapterManifest !== undefined && { adapterManifest: request.adapterManifest }),
       });
       return { kind: "accepted" as const, externalRef: String(handle.pid) };
     } catch (error) {
@@ -322,7 +327,8 @@ export function createLocalProcessSidecarProvisioner({
       logAllocation("local_sidecar_removed", manifest);
       return;
     }
-    const handle = spawnSidecar({ request: manifest, dataDir: manifest.dataDir });
+    const request = { ...manifest, adapterManifest: manifest.adapterManifest ?? adapterManifest };
+    const handle = spawnSidecar({ request, dataDir: manifest.dataDir });
     const managed: ManagedProcess = { handle, exited: false };
     void trackExit(managed);
     allocations.set(manifest.allocationId, {

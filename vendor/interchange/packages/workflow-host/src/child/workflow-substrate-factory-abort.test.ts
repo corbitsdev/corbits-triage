@@ -6,8 +6,9 @@
 // own controller directly, its parked step fails, and the run settles `failed`
 // under its own principal with no `CancelRequested` in the log.
 //
-// Both in-process spawners are covered: the terminal-only `createSidecarRunChild`
-// and the suspendable `createSidecarSpawnSuspendableChild`. Each abort is driven
+// Both in-process spawners are covered: `createSidecarRunChild`, which returns
+// a live handle the parent drives, and the suspendable
+// `createSidecarSpawnSuspendableChild`. Each abort is driven
 // while the child is live and parked on an approval -- the reachable drain-window
 // path -- so the test exercises the real teardown, not a child that already
 // settled.
@@ -313,7 +314,10 @@ describe("in-process child parent-abort", () => {
     abort.abort();
 
     const result = await settled;
-    expect(result.terminalStatus).toBe("failed");
+    const event = await result.next();
+    expect(event.kind).toBe("terminal");
+    if (event.kind !== "terminal") throw new Error("expected a terminal");
+    expect(event.terminalStatus).toBe("failed");
     await expectLocalFailTeardown(substrate, childRunId);
   });
 
