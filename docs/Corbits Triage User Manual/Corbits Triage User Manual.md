@@ -126,6 +126,8 @@ A file can also start from a workspace-wide policy with `extends`, and then set 
 
 Enabling a repository switches on Comment and Labels; every other action stays off until you switch it on. Turning triage off and on again switches Comment and Labels back on.
 
+Under the switch, **Actions Triage takes on its own** lists each action with its own switch. On, Triage does that action in this repository without asking; off, it waits for you in the Inbox, in this repository only. An action allowed in every repository under Settings → Access shows on and changes only there. Bitbucket Data Center repositories do not list Add labels or Assign.
+
 ### Rules
 
 A rule asks one question about a pull request and answers pass, fail or unconfirmed. The rules are grouped into three cards, and each rule has a switch. The heading shows how many are on. Hover over the small **i** beside a rule for a one-line explanation of how it is checked.

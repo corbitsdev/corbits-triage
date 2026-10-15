@@ -49,7 +49,7 @@
 
 .repos .sentence.rule { padding: 10px 0; min-height: 48px; }
 .repos .sentence.rule.off { min-height: 40px; padding: 6px 0; }
-.repos .sentence.rule.off .w, .repos .sentence.rule.off .model { color: var(--ink-mute); opacity: 0.8; }
+.repos .sentence.rule.off .w, .repos .sentence.rule.off .model, .repos .alone .sentence.off .txt { color: var(--ink-mute); opacity: 0.8; }
 .repos .sentence.invalid { box-shadow: inset 3px 0 0 var(--orange); padding-left: 10px; }
 .repos .stat { font-size: 12px; white-space: nowrap; min-width: 112px; text-align: right; }
 .repos .rm { border: 0; background: none; width: 18px; padding: 0; font: 600 15px/1 var(--font); color: var(--ink-mute); cursor: pointer; flex: none; }
@@ -62,6 +62,10 @@
 .repos .fb, .repos .lbl-field { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-mute); white-space: nowrap; }
 .repos .lbl-code { font: 400 12px var(--mono); color: var(--ink-mute); }
 .repos .labels-card { margin-top: 28px; }
+
+/* Actions on its own: one sentence and switch per action kind */
+.repos .alone .gcard { padding-top: 2px; }
+.repos .alone .wide { display: block; font-size: 12px; color: var(--ink-mute); }
 
 /* Then: steps under each verdict */
 .repos .then-t { border-top: 1px solid var(--rule); }
