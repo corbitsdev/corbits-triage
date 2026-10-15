@@ -138,13 +138,14 @@ A rule asks one question about a pull request and answers pass, fail or unconfir
   - **No merge conflicts with the base branch.**
   - **CI must pass.** The repository's automated checks must be green. While they are still running, the rule is unconfirmed rather than passed.
   - **Never accept changes to** certain paths, such as vendored code. Add as many paths as you like.
+  - **+ Fail when …** adds a text rule of your own, such as "Fail when any commit message contains "Co-Authored-By:"". Choose where to look (the title, the description, any commit message, or several of them), whether the rule fails when the text **contains** or **does not contain** your phrases, and add the phrases. Case does not matter. Only the first 100 commits are read. The rule's evidence quotes the line that matched. Text rules count toward the eight rules of your own.
 - **Judgement**, questions the decision model answers from the diff and the documentation. These are optional, and each carries a **decision model** tag:
   - **The change is focused on one thing.**
   - **Docs are updated when behavior changes.**
 
 Two rules always run and have no switch: a draft pull request waits until it is ready for review, and a pull request with changes requested fails.
 
-Below the Judgement rules you can add up to eight rules of your own. Each one is a question for the decision model:
+Below the Judgement rules you can add rules of your own that are questions for the decision model:
 
 - **+ Is it true that …** asks a yes-or-no question, such as "Is it true that the title says what changed?" The rule fails when the answer is no.
 - **+ Score …** asks the decision model to place the pull request on a scale of levels you name, worst first, such as poor, fair, good and great. Choose the level it **fails** below, or **never** to record the score without failing anyone.

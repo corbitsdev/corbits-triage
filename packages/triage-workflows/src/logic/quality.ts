@@ -1,6 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type CustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
+import { isDocPath, isGeneratedPath, isTestPath, type CheckItem, type ModelCustomCheck, type QualityCheckId } from "@corbits/triage-contracts";
 import type { DeterministicResult, PrFacts, PrFileFacts } from "./checks.js";
 import { boundedPath, hunkCitations, patchHunks } from "./hunks.js";
 import { globMatch } from "./glob.js";
@@ -94,9 +94,9 @@ function hunkQuestionId(check: string, file: number, hunk: number): string {
   return `${check}-hunk-${ordinal(file)}-${ordinal(hunk)}`;
 }
 
-export type ScopedCheck = CustomCheck & { shape: "is-true"; scope: "file" | "hunk" };
+export type ScopedCheck = ModelCustomCheck & { shape: "is-true"; scope: "file" | "hunk" };
 
-export function isScoped(row: CustomCheck): row is ScopedCheck {
+export function isScoped(row: ModelCustomCheck): row is ScopedCheck {
   return row.shape === "is-true" && (row.scope === "file" || row.scope === "hunk");
 }
 
@@ -169,7 +169,7 @@ function judgedFiles(facts: PrFacts) {
 const AGAINST_RULES = "Judge it by the pull request and the repository's contribution rules in `repository.rules`.";
 
 /** An is-true rule is one yes/no question, a score rule one Score question over its levels, a choose rule one Choice over its options. */
-function customQuestion(row: CustomCheck): QualityQuestion {
+function customQuestion(row: ModelCustomCheck): QualityQuestion {
   switch (row.shape) {
     case "is-true":
       return { id: row.id, type: "boolean", instructions: `${row.name}: ${row.claim} ${AGAINST_RULES}` };

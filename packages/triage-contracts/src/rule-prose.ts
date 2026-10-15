@@ -1,5 +1,5 @@
 // Plain-text words for a policy's rules and Dos; only the browser extension uses them today.
-import { RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type ModelShape } from "./check-pack.js";
+import { RECOMMENDED_ISSUE, type ActionKind, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type IssueTracker, type ModelShape, type TextCheck, type TextField, type TextMatch } from "./check-pack.js";
 import type { ResolvedTarget } from "./do.js";
 
 export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
@@ -33,7 +33,22 @@ export const RULE_KINDS: RuleKind[] = [
   { shape: "choose", title: "Which of these is it", line: "Fails on the answers you pick." },
 ];
 
+export const TEXT_FIELD_NAMES: Record<TextField, string> = { title: "the title", description: "the description", commits: "any commit message" };
+
+export const TEXT_MATCH_NAMES: Record<TextMatch, string> = { contains: "contains", "not-contains": "does not contain" };
+
+/** "the title, the description or any commit message" */
+export function textFieldsPhrase(fields: readonly TextField[]): string {
+  const names = fields.map((field) => TEXT_FIELD_NAMES[field]);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0]!;
+}
+
+export function textSentence(check: TextCheck): string {
+  return `Fail when ${textFieldsPhrase(check.fields)} ${TEXT_MATCH_NAMES[check.failWhen]} ${check.phrases.map((phrase) => `"${phrase}"`).join(", ")}`.trim();
+}
+
 export function customSentence(check: CustomCheck): string {
+  if (check.kind === "text") return textSentence(check);
   switch (check.shape) {
     case "is-true":
       return `Is it true that ${check.claim}?`;

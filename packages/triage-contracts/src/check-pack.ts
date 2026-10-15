@@ -96,6 +96,15 @@ export const RECOMMENDED_SIZE = { maxFiles: 30, maxLines: 3000 } as const;
 // An author who edits `.github/**` can change which checks run and turn CI green.
 export const RECOMMENDED_PATHS = { forbiddenGlobs: ["vendor/**", "node_modules/**", ".github/**"] } as const;
 export const RECOMMENDED_ISSUE = { tracker: "either" } as const;
+export const RECOMMENDED_TEXT: Readonly<TextCustomCheck> = {
+  id: "no-attribution-trailers",
+  name: "No attribution trailers",
+  group: "pull-request",
+  kind: "text",
+  fields: ["description", "commits"],
+  failWhen: "contains",
+  phrases: ["Co-Authored-By:", "Generated with", "Claude-Session:"],
+};
 
 export type CatalogCheck = {
   enabled: boolean;
@@ -143,8 +152,26 @@ type ModelParams = {
 };
 export type ModelCheck = { [K in ModelShape]: { shape: K } & ModelParams[K] }[ModelShape];
 
-/** A custom rule is asked of the decision model; `enabled` is stored only as false, and an absent flag means it runs. */
-export type CustomCheck = { id: string; name: string; group: CheckPackGroup; enabled?: boolean; kind: "model" } & ModelCheck;
+export const TEXT_FIELDS = ["title", "description", "commits"] as const;
+export type TextField = (typeof TEXT_FIELDS)[number];
+
+export const TEXT_MATCHES = ["contains", "not-contains"] as const;
+export type TextMatch = (typeof TEXT_MATCHES)[number];
+
+/**
+ * Fails when any of `fields` (the title, the description, each commit message) contains any of `phrases`, or with
+ * `not-contains` when one contains none of them; matched without regard to case.
+ */
+export type TextCheck = { fields: TextField[]; failWhen: TextMatch; phrases: string[] };
+
+/**
+ * A custom rule is asked of the decision model, or a text rule read from the pull request without it; `enabled` is
+ * stored only as false, and an absent flag means it runs.
+ */
+type CustomBase = { id: string; name: string; group: CheckPackGroup; enabled?: boolean };
+export type ModelCustomCheck = CustomBase & { kind: "model" } & ModelCheck;
+export type TextCustomCheck = CustomBase & { kind: "text" } & TextCheck;
+export type CustomCheck = ModelCustomCheck | TextCustomCheck;
 
 const LEVELS_MIN = 2;
 const LEVELS_MAX = 10;
@@ -296,7 +323,8 @@ const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
 const CustomCheckSchema = type({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Texts })
   .or({ ...MODEL, shape: "'score'", subject: Text, levels: Text.array().atLeastLength(LEVELS_MIN).atMostLength(LEVELS_MAX), "failBelow?": Text })
-  .or({ ...MODEL, shape: "'choose'", options: Text.array().atLeastLength(2), failOn: Texts });
+  .or({ ...MODEL, shape: "'choose'", options: Text.array().atLeastLength(2), failOn: Texts })
+  .or({ ...CUSTOM_BASE, kind: "'text'", fields: type.enumerated(...TEXT_FIELDS).array().atLeastLength(1), failWhen: type.enumerated(...TEXT_MATCHES), phrases: Texts });
 
 const CatalogChecksSchema = type(
   Object.fromEntries(CATALOG_IDS.map((id) => [`${id}?`, CatalogCheckSchema])) as Record<`${CatalogId}?`, typeof CatalogCheckSchema>,
@@ -395,6 +423,7 @@ export function recommendedPack(repo: string): CheckPack {
       "ci-green": { enabled: true },
       "no-forbidden-paths": { enabled: true, forbiddenGlobs: [...RECOMMENDED_PATHS.forbiddenGlobs] },
     },
+    custom: [{ ...RECOMMENDED_TEXT, fields: [...RECOMMENDED_TEXT.fields], phrases: [...RECOMMENDED_TEXT.phrases] }],
     actions: { ...defaultActions(), pass: [{ do: "approve" }] },
   };
 }
@@ -543,6 +572,11 @@ function parseModel(row: Record<string, unknown>, where: string): ModelCheck {
   }
 }
 
+function parseText(row: Record<string, unknown>, where: string): TextCheck {
+  const fields = new Set(list(row.fields, `${where} fields`).map((field) => oneOf(field, TEXT_FIELDS, `${where} fields`)));
+  return { fields: TEXT_FIELDS.filter((field) => fields.has(field)), failWhen: oneOf(row.failWhen, TEXT_MATCHES, `${where} failWhen`), phrases: texts(row.phrases, `${where} phrases`) };
+}
+
 function parseCustomRow(row: Record<string, unknown>, index: number): CustomCheck {
   const where = `Custom rule ${typeof row.id === "string" ? row.id : index + 1}`;
   if (typeof row.id !== "string") throw new Error(`${where} id must be a string.`);
@@ -550,9 +584,9 @@ function parseCustomRow(row: Record<string, unknown>, index: number): CustomChec
   if (problem) throw new Error(`${where} id ${problem}.`);
   if (row.enabled !== undefined && typeof row.enabled !== "boolean") throw new Error(`${where} enabled must be true or false.`);
   if (row.kind === "rule") throw new Error(`${where} is a ${String(row.rule)} rule over GitHub data, which Triage no longer runs; remove it.`);
-  if (row.kind !== "model") throw new Error(`${where} kind must be model.`);
+  const kind = oneOf(row.kind, ["model", "text"] as const, `${where} kind`);
   const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }) };
-  return { ...base, kind: "model", ...parseModel(row, where) };
+  return kind === "text" ? { ...base, kind, ...parseText(row, where) } : { ...base, kind, ...parseModel(row, where) };
 }
 
 /** The last row of an id wins. */
@@ -915,9 +949,17 @@ export function hasEnabledRules(pack: CheckPack): boolean {
   return CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
 }
 
-export function classificationSources(pack: CheckPack): { quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>; custom: CustomCheck[] } {
+export function isModelCheck(row: CustomCheck): row is ModelCustomCheck {
+  return row.kind === "model";
+}
+
+export function isTextCheck(row: CustomCheck): row is TextCustomCheck {
+  return row.kind === "text";
+}
+
+export function classificationSources(pack: CheckPack): { quality: Array<{ id: QualityCheckId; group: CheckPackGroup }>; custom: ModelCustomCheck[] } {
   return {
     quality: QUALITY_CHECK_IDS.filter((id) => catalogCheckEnabled(pack, id)).map((id) => ({ id, group: CHECK_CATALOG[id].group })),
-    custom: pack.custom.filter(customCheckEnabled),
+    custom: pack.custom.filter(isModelCheck).filter(customCheckEnabled),
   };
 }

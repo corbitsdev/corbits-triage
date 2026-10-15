@@ -171,6 +171,9 @@ export function fileFacts(value: unknown): PrFileFacts[] {
   }];
 }
 
+/** Text rules read the first this many commit messages in full. */
+const COMMIT_MESSAGES_MAX = 100;
+
 function firstLine(commit: { message?: string }): string {
   return (commit.message ?? "").split("\n", 1)[0]!;
 }
@@ -223,6 +226,7 @@ export function assembleItem(number: number, data: PullData, { repo, policy, pac
   if (typeof docs === "string") return { error: docs };
   const paths = files.map((file) => file.path);
   const commits = data.commits.map(firstLine);
-  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, events, ...docs, ...membership(data.authorTeams, pack, repo) };
+  const commitMessages = data.commits.slice(0, COMMIT_MESSAGES_MAX).map((commit) => commit.message ?? "");
+  const facts = { ...buildFacts(repo, number, pr, data.checks, data.reviews, data.comments, policy), paths, files, commits, commitMessages, events, ...docs, ...membership(data.authorTeams, pack, repo) };
   return { facts, pack };
 }

@@ -1,5 +1,5 @@
 import { errorText } from "@corbits/common";
-import { CATALOG_IDS, CATALOG_ORDER, customCheckEnabled, customRuleId, isCatalogId, readCheckPack, recommendedPack, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type ModelCheck } from "@corbits/triage-contracts";
+import { CATALOG_IDS, CATALOG_ORDER, customCheckEnabled, customRuleId, isCatalogId, readCheckPack, recommendedPack, type CatalogCheck, type CatalogId, type CheckPack, type CustomCheck, type ModelCheck, type ModelCustomCheck } from "@corbits/triage-contracts";
 
 export type Refusal = { reason: string };
 
@@ -51,7 +51,7 @@ export function withCustomCheck(pack: CheckPack, form: CustomForm, id?: string):
   return "reason" in next ? next : { pack: next, id: checkId };
 }
 
-export function customFormOf(check: CustomCheck): CustomForm {
+export function customFormOf(check: ModelCustomCheck): CustomForm {
   const { id: _id, group: _group, enabled: _enabled, ...form } = check;
   return form as CustomForm;
 }

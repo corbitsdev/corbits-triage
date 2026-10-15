@@ -48,7 +48,7 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
 
   const custom = row.custom;
   const label = custom?.name ?? CHECK_CATALOG[row.id as CatalogId].name;
-  const editable = isCatalogId(row.id) ? EDITABLE_CATALOG.includes(row.id) : custom !== undefined;
+  const editable = isCatalogId(row.id) ? EDITABLE_CATALOG.includes(row.id) : custom?.kind === "model";
 
   async function toggle(on: boolean) {
     await onSave((current) => withCheck(current, row.id, on), `${label} is ${on ? "on" : "off"}.`);
@@ -89,7 +89,7 @@ function CheckRow({ row, pack, editing, onEdit, onSave, locked }: RowProps) {
         {custom ? <ConfirmButton size="sm" variant="ghost" confirmLabel={`Confirm: remove ${custom.name}`} onConfirm={remove}>Remove the rule</ConfirmButton> : null}
       </div>
       {editing && isCatalogId(row.id) ? <CatalogEditor id={row.id as CatalogId} pack={pack} onSave={saveEdit} onCancel={stopEdit} /> : null}
-      {editing && custom ? (
+      {editing && custom?.kind === "model" ? (
         <CustomEditor shape={custom.shape} pack={pack} id={custom.id} form={customFormOf(custom)} defaultName={custom.name} onSave={saveEdit} onCancel={stopEdit} />
       ) : null}
     </li>

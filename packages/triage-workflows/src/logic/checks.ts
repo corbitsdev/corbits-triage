@@ -2,6 +2,8 @@ import {
   catalogCheckEnabled,
   CLOSED_FINDING,
   classificationSources,
+  customCheckEnabled,
+  isTextCheck,
   parseCheckPack,
   NO_CHANGES_REQUESTED,
   NOT_A_DRAFT,
@@ -11,6 +13,7 @@ import {
   type CheckOutput,
   type CheckPack,
   type IssueTracker,
+  type TextCustomCheck,
   type TriageEvent,
   type TrustTier,
   type WorkflowState,
@@ -58,6 +61,8 @@ export interface PrFacts {
   files?: PrFileFacts[];
   body?: string;
   commits?: string[];
+  /** In full, the first 100. */
+  commitMessages?: string[];
   docs?: Record<string, string>;
   rules?: Record<string, string>;
   branch?: string;
@@ -175,6 +180,48 @@ export function issueReference(facts: Pick<PrFacts, "title" | "body" | "commits"
   return null;
 }
 
+const EXCERPT_MAX = 120;
+const TEXT_EVIDENCE_MAX = 10;
+
+function excerpt(text: string): string {
+  const line = text.trim();
+  return line.length > EXCERPT_MAX ? `${line.slice(0, EXCERPT_MAX - 1)}…` : line;
+}
+
+type TextItem = { where: string; what: string; text: string };
+
+function textItems(facts: PrFacts, rule: TextCustomCheck): TextItem[] {
+  return rule.fields.flatMap(function items(field): TextItem[] {
+    if (field === "title") return [{ where: "title", what: "the title", text: facts.title }];
+    if (field === "description") return [{ where: "description", what: "the description", text: facts.body ?? "" }];
+    return (facts.commitMessages ?? []).map((message) => ({ where: `commit "${excerpt(message.split("\n", 1)[0]!)}"`, what: "a commit message", text: message }));
+  });
+}
+
+/** Each line of the item holding a phrase, as evidence quoting it. */
+function phraseLines(item: TextItem, phrases: string[]): string[] {
+  const lowered = phrases.map((phrase) => phrase.toLowerCase());
+  return item.text.split("\n").filter((line) => lowered.some((phrase) => line.toLowerCase().includes(phrase))).map((line) => `${item.where}: ${excerpt(line)}`);
+}
+
+function quoted(phrases: string[]): string {
+  return phrases.map((phrase) => `"${phrase}"`).join(", ");
+}
+
+/** Matched without regard to case; the evidence quotes each matching line, or names each item missing every phrase. */
+function textResult(rule: TextCustomCheck, facts: PrFacts): { failed: boolean; reason: string; evidence: string[] } {
+  const items = textItems(facts, rule);
+  const phrases = quoted(rule.phrases);
+  if (rule.failWhen === "contains") {
+    const hits = items.filter((item) => phraseLines(item, rule.phrases).length > 0);
+    const what = [...new Set(hits.map((item) => item.what))].join(" and ");
+    return { failed: hits.length > 0, reason: hits.length ? `${what} contains ${phrases}` : `no ${phrases} found`, evidence: hits.flatMap((item) => phraseLines(item, rule.phrases)).slice(0, TEXT_EVIDENCE_MAX) };
+  }
+  const missing = items.filter((item) => phraseLines(item, rule.phrases).length === 0);
+  const what = [...new Set(missing.map((item) => item.what))].join(" and ");
+  return { failed: missing.length > 0, reason: missing.length ? `${what} does not contain ${phrases}` : `contains ${phrases}`, evidence: missing.map((item) => item.where).slice(0, TEXT_EVIDENCE_MAX) };
+}
+
 interface CheckRules {
   enabled(id: CatalogId): boolean;
   maxFiles?: number;
@@ -259,6 +306,11 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
         kind: "values",
         values: { linkedIssue: ref !== null },
       });
+    }
+    for (const rule of pack?.custom.filter(isTextCheck).filter(customCheckEnabled) ?? []) {
+      const { failed, reason, evidence } = textResult(rule, facts);
+      if (failed) add(rule.id, "needs-author-update", reason);
+      checks.push({ check: rule.id, kind: "machine", result: failed ? "fail" : "pass", reason, evidence, output: { kind: "values", values: { matched: failed } } });
     }
   }
 
