@@ -1,7 +1,14 @@
-import { ACTION_KINDS, ANY_DO_RESOURCE, DO_GRANT_ACTION, DO_GRANT_PREFIX, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { ACTION_KINDS, ANY_DO_RESOURCE, DO_GRANT_ACTION, DO_GRANT_PREFIX, doResource, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import type { HubGrant, HubRole } from "./hub-api.ts";
 
 export const GRID_KINDS = ACTION_KINDS;
+
+/** Bitbucket Data Center has no labels or assignees; its labels grant still drives the build status, so it stays granted, just unshown. */
+const HOSTLESS_KINDS: Record<RepoSource, readonly ActionKind[]> = { github: [], "bitbucket-datacenter": ["labels", "assign"] };
+
+export function panelKinds(source: RepoSource): ActionKind[] {
+  return ACTION_KINDS.filter((kind) => !HOSTLESS_KINDS[source].includes(kind));
+}
 
 /**
  * `grants` are the role's grants of the kind, on every repository (`*`) or on some; `repos` names those some. Turning
