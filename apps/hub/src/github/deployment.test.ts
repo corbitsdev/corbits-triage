@@ -60,6 +60,7 @@ function selectReturning(rows: unknown[]) {
   const chain = {
     from: () => chain,
     innerJoin: () => chain,
+    leftJoin: () => chain,
     where: () => chain,
     orderBy: async () => rows,
   };

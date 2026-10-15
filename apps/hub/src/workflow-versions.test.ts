@@ -35,7 +35,7 @@ const ROWS = [
 ];
 
 function db() {
-  const chain = { from: () => chain, innerJoin: () => chain, where: () => chain, orderBy: async () => ROWS };
+  const chain = { from: () => chain, innerJoin: () => chain, leftJoin: () => chain, where: () => chain, orderBy: async () => ROWS };
   return {
     select: () => chain,
     query: {

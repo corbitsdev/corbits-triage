@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNotNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { schema, type DB, type WorkflowRunLaunchSpecStore } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
@@ -38,13 +38,28 @@ export type LiveDeployment = { runId: string; address: string; createdAt: Date; 
 
 export type TenantDeployment = LiveDeployment & { workflow: string };
 
-/** Matches how the hub lists deployments: a deployment is its anchor run. Newest first; every workflow's when no name is given. */
+/**
+ * A worker deployment carries this key in its deploy content, so the hub can tell it from the listener it was copied
+ * from: a worker is spawned for one mail and released when that run ends, and nothing else may mail it or count it as a
+ * rotation.
+ */
+export const WORKER_MARKER = "corbitsTriageWorker";
+
+export type DeploymentKind = "listener" | "worker";
+
+function markedAs(kind: DeploymentKind) {
+  const marker = sql`${schema.workflowRunLaunchSpec.deployContent} ->> ${WORKER_MARKER}`;
+  return kind === "worker" ? eq(marker, "true") : isNull(marker);
+}
+
+/** Matches how the hub lists deployments: a deployment is its anchor run. Newest first; every workflow's when no name is given; listeners unless workers are asked for. */
 export async function resolveLiveDeployments(
   db: DB["db"],
   tenantId: string,
   definitionName?: string,
+  kind: DeploymentKind = "listener",
 ): Promise<TenantDeployment[]> {
-  const { workflowRun, workflowDefinition, tenant, liveWorkflowRunStatuses } = schema;
+  const { workflowRun, workflowDefinition, workflowRunLaunchSpec, tenant, liveWorkflowRunStatuses } = schema;
   const rows = await db
     .select({
       runId: workflowRun.id,
@@ -56,12 +71,14 @@ export async function resolveLiveDeployments(
     .from(workflowRun)
     .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
     .innerJoin(tenant, eq(workflowRun.tenantId, tenant.id))
+    .leftJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
     .where(and(
       eq(workflowRun.tenantId, tenantId),
       definitionName === undefined ? undefined : eq(workflowDefinition.name, definitionName),
       isNotNull(workflowRun.anchorRunId),
       eq(workflowRun.id, workflowRun.anchorRunId),
       inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
+      markedAs(kind),
     ))
     .orderBy(desc(workflowRun.createdAt), desc(workflowRun.id));
   return rows.map((row) => ({
@@ -71,6 +88,16 @@ export async function resolveLiveDeployments(
     cancelling: row.cancellationRequestedAt !== null,
     workflow: row.workflow,
   }));
+}
+
+/** Every tenant's live worker deployments, for the release of workers a hub restart orphaned. */
+export async function liveWorkers(db: DB["db"]): Promise<{ tenantId: string; runId: string }[]> {
+  const { workflowRun, workflowRunLaunchSpec, liveWorkflowRunStatuses } = schema;
+  return db
+    .select({ tenantId: workflowRun.tenantId, runId: workflowRun.id })
+    .from(workflowRun)
+    .innerJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
+    .where(and(eq(workflowRun.id, workflowRun.anchorRunId), inArray(workflowRun.status, [...liveWorkflowRunStatuses]), markedAs("worker")));
 }
 
 /** A deployment in any status: `cancelling` tells one released on purpose from one Interchange failed. */
@@ -191,7 +218,8 @@ export type Redeployed = { status: "deployed"; runId: string } | { status: "skip
  * entry, offerings, deploy content and the principal that deployed it. The
  * copy keeps that principal because the workflow runs as it; it is used only
  * while the stock route would still accept it: an active member holding the
- * route's grant.
+ * route's grant. `content` is added to the copy's deploy content; a worker is
+ * marked that way.
  */
 export function createDeploymentRotation(deps: DeploymentRotationDeps) {
   /** A tarball source is the shared package registry, so the workflow asset is read from the run's definition. */
@@ -206,7 +234,7 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
     return row.assetId;
   }
 
-  async function redeploy(tenantId: string, anchorRunId: string): Promise<Redeployed> {
+  async function redeploy(tenantId: string, anchorRunId: string, content: Record<string, unknown> = {}): Promise<Redeployed> {
     const spec = await deps.launchSpecs.get(anchorRunId);
     if (!spec) throw new Error(`deployment ${anchorRunId} has no launch spec`);
     const { source, entry } = spec.frozenApprovalBundle;
@@ -235,7 +263,7 @@ export function createDeploymentRotation(deps: DeploymentRotationDeps) {
       sourceAuthorityPrincipalId: spec.sourceAuthorityPrincipalId,
       sourceOfferingIds: spec.sourceOfferingIds,
       defaultSourceOfferingId: spec.defaultSourceOfferingId,
-      deployContent: { ...spec.deployContent, systemPrompt },
+      deployContent: { ...spec.deployContent, ...content, systemPrompt },
     });
     return { status: "deployed", runId: prepared.anchorRunId };
   }

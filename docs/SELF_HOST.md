@@ -79,6 +79,10 @@ All optional; the defaults suit most installs.
 | `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
 | `TRIAGE_ROTATE_AFTER_RUNS` | 15 | Runs a pr-triage deployment's log may hold before the hub deploys a fresh copy. |
 | `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run; at most four times this after the first. A new commit or a newly opened pull request waits only 3 seconds (or this, if shorter). Must stay below 150000. |
+| `TRIAGE_COORDINATOR` | off | `on` runs each coalesced pull request in a worker deployment of its own, spawned from the host's live pr-triage deployment and released when its run ends, instead of mailing that deployment. |
+| `TRIAGE_WORKERS_GLOBAL` | 8 | Worker deployments alive at once on this hub, with the coordinator on. |
+| `TRIAGE_WORKERS_PER_TENANT` | 4 | Worker deployments one workspace may have alive at once. |
+| `TRIAGE_SPAWNS_PER_SECOND` | 2 | Worker deployments the coordinator starts per second. |
 
 ### Hub and sidecars
 

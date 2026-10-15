@@ -52,13 +52,15 @@ import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
 import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
+import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
+import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
@@ -87,7 +89,7 @@ import { createTriageReconciler } from "./github/triage-reconciler.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
 import { createSettledStatusReader, createTriageRuns } from "./github/triage-runs.js";
 import { createTriageStateStore } from "./github/triage-state-store.js";
-import { markBaseMoved } from "./github/triage-queue.js";
+import { failHead, markBaseMoved } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
 import { migrateRepoEnabledFlag, prepareCorbitsTriagePatch, tenantManagerRefusal } from "./github/tenant-config.js";
 import { workflow as prTriageGithub } from "@corbits/triage-workflows/pr-triage-github";
@@ -117,6 +119,8 @@ const TRIAGE_RETRY_MS = 15_000;
 const TRIAGE_RETRY_MAX_MS = 120_000;
 /** How often the live logs of tenants with a pr-triage run in flight are read and recorded, and how stale a shared read may be. */
 const TRIAGE_RECORD_MS = 2_000;
+const WORKER_FIRE_TIMEOUT_MS = 120_000;
+const WORKER_POLL_MS = 2_000;
 /** A tenant whose logs could not be read is left at most this long before the recording loop tries again. */
 const TRIAGE_RECORD_MAX_BACKOFF_MS = 5 * 60_000;
 
@@ -162,6 +166,7 @@ let cronTicker: CronTicker | undefined;
 let triageLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let recordLoop: ReturnType<typeof createReconcileLoop> | undefined;
 let coalescer: Coalescer | undefined;
+let coordinator: Coordinator | undefined;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -169,6 +174,7 @@ async function shutdown(): Promise<void> {
   triageLoop?.stop();
   recordLoop?.stop();
   coalescer?.stop();
+  coordinator?.stop();
   try {
     await local.shutdown();
   } finally {
@@ -489,9 +495,48 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
     clearTimeout(handle);
   };
 }
+const coordination = triageCoordinator(env);
+function failTriageHead(job: TriageJob, error: string): Promise<void> {
+  return failHead(triageStateStore, job, error, now());
+}
+/** The coalescer sends triage mail only, so a workflow name it carries always names a host's triage workflow. */
+function triageWorkflowId(name: string): string {
+  const workflow = triageWorkflowOf(name);
+  if (!workflow) throw new Error(`Not a triage workflow: ${name}`);
+  return workflow.id;
+}
+async function mailListener(job: TriageJob): Promise<void> {
+  await sendBridgeMail(job.tenantId, job.workflow, job.payload);
+}
+let sendTriageMail = mailListener;
+if (coordination.enabled) {
+  await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleService, logJson);
+  const triageCoordination = createCoordinator({
+    spawner: createWorkerSpawner({
+      db: composition.db,
+      redeploy: github.rotation.redeploy,
+      deliver: deliverToDeployment,
+      lifecycle: composition.workflowLifecycleService,
+      sleep: Bun.sleep,
+      fireTimeoutMs: WORKER_FIRE_TIMEOUT_MS,
+      pollMs: WORKER_POLL_MS,
+    }),
+    limits: coordination.limits,
+    retry: { minMs: TRIAGE_RETRY_MS, maxMs: TRIAGE_RETRY_MAX_MS },
+    failed: failTriageHead,
+    setTimer,
+    now,
+    log: logJson,
+  });
+  coordinator = triageCoordination;
+  sendTriageMail = function enqueueTriage(job: TriageJob): Promise<void> {
+    triageCoordination.enqueue({ ...job, workflow: triageWorkflowId(job.workflow) });
+    return Promise.resolve();
+  };
+}
 coalescer = createCoalescer({
   store: triageStateStore,
-  sendMail: sendBridgeMail,
+  sendMail: sendTriageMail,
   headChecks: tenantHeadChecks,
   window: triageCoalesceWindow(env, reconcilePolicy),
   setTimer,
