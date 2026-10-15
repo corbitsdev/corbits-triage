@@ -81,7 +81,7 @@ import { createPolicyFile } from "./github/policy-file.js";
 import { createGithubPolicyRead } from "./github/policy-read.js";
 import { createGithubBacklog } from "./github/backlog-triage.js";
 import { loadCheckPack } from "./github/check-pack-store.js";
-import { createAutomation } from "./github/automation.js";
+import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
 import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, createTenantOpenHeads, createTenantOpenPrs } from "./github/tenant-open-heads.js";
@@ -714,7 +714,9 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       }
       const refused = await tenantManagerRefusal({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
       if (refused) return refused;
-      const prepared = await prepareCorbitsTriagePatch(composition.db, tenantId, req);
+      const prepared = await prepareCorbitsTriagePatch(composition.db, tenantId, req, function grantEnabled(tx, repo) {
+        return grantEnabledKinds(tx, tenantId, repo, now());
+      });
       if (prepared instanceof Response) return prepared;
       return stock.fetch(prepared, server);
     }

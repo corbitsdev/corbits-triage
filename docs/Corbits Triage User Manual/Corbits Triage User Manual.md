@@ -26,7 +26,7 @@ Think of it as a first reader. It does the routine checking (Did the tests pass?
 
 ### What it never does on its own
 
-Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center only records your repositories, with triage switched off. A repository is checked only after someone turns on **Triage pull requests in this repository**. Even then, a new workspace automates nothing: Triage suggests actions, and a person clicks to carry them out, until you decide which actions Triage may run by itself, and in which repositories.
+Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center only records your repositories, with triage switched off. A repository is checked only after someone turns on **Triage pull requests in this repository**. Enabling a repository switches on Comment and Labels for it; every other action waits for a person to click until you decide which actions Triage may run by itself, and in which repositories.
 
 ### The three parts
 
@@ -124,6 +124,8 @@ The **Policy** card says where the repository's rules and actions are kept. At f
 
 A file can also start from a workspace-wide policy with `extends`, and then set only what differs for this repository. This is useful when many repositories should follow the same rules.
 
+Enabling a repository switches on Comment and Labels; every other action stays off until you switch it on. Turning triage off and on again switches Comment and Labels back on.
+
 ### Rules
 
 A rule asks one question about a pull request and answers pass, fail or unconfirmed. The rules are grouped into three cards, and each rule has a switch. The heading shows how many are on. Hover over the small **i** beside a rule for a one-line explanation of how it is checked.
@@ -180,7 +182,7 @@ The **for** choice limits a step to some authors: **anyone**, **first-timers**, 
 
 Each step shows whether it **Waits for you** or runs on its own. If something is incomplete, such as a comment with no text, the step says **Not saved yet** in red and the rest of your changes are still saved.
 
-Triage only carries out an action on its own when the workspace allows that action in that repository under [Settings → Access](#access). Everything else waits in the Inbox for a person to click. A brand-new workspace automates nothing, so you can watch what Triage suggests before you let it act. Two actions are always held for a person: Close on Unsure, and Merge on anything but Pass.
+Triage only carries out an action on its own when the workspace allows that action in that repository under [Settings → Access](#access). Everything else waits in the Inbox for a person to click. Enabling a repository allows Comment and Labels on it; every other action waits until you allow it, so you can watch what Triage suggests before you let it act. Two actions are always held for a person: Close on Unsure, and Merge on anything but Pass.
 
 While a pull request's CI is still running, Triage holds every action, and its comment on the pull request lists them under **Waiting for checks to finish**. They go ahead once the checks are done.
 
@@ -393,7 +395,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **A pull request shows "Not triaged yet" for a long time.** Check that triage is on for its repository, that its source is still connected under Settings → Sources, and that a decision model is saved under Settings → Decision model. If all three look right, open the repository and press **Triage open pull requests again**. On Bitbucket, also check the repository has its **Corbits Triage** webhook.
 
-**Does Triage ever merge, close or approve on its own?** Only if you allow it. Each action has a list of repositories under **What Triage does on its own** in Settings → Access, and every list starts empty. Close is never run automatically on an Unsure verdict, and Merge never on anything but Pass, even when they are allowed.
+**Does Triage ever merge, close or approve on its own?** Only if you allow it. Each action has a list of repositories under **What Triage does on its own** in Settings → Access. Enabling a repository adds it to the Comment and Labels lists only; the others start empty. Close is never run automatically on an Unsure verdict, and Merge never on anything but Pass, even when they are allowed.
 
 **Why did Triage not call the decision model for a failing pull request?** When a rule fails, the answer is already Fail, so the model is not asked the verdict question. A repository with no Judgement rules never asks it at all. This saves money and keeps verdicts predictable.
 
