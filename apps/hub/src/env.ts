@@ -2,6 +2,7 @@ import { type, type ArkError } from "arktype";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 import type { CoalesceWindow } from "./github/coalescer.js";
+import type { CoordinatorLimits } from "./github/coordinator.js";
 import { DEFAULT_RECONCILE_POLICY, type ReconcilePolicy } from "./github/reconcile-plan.js";
 
 const secret = type("string").narrow((value, ctx) =>
@@ -43,6 +44,10 @@ const HubEnvSchema = type({
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
   "TRIAGE_CAPPED_RETRY_MS?": positiveInteger,
   "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
+  "TRIAGE_COORDINATOR?": "'on' | 'off'",
+  "TRIAGE_WORKERS_GLOBAL?": positiveInteger,
+  "TRIAGE_WORKERS_PER_TENANT?": positiveInteger,
+  "TRIAGE_SPAWNS_PER_SECOND?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -157,6 +162,18 @@ export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" |
 }
 
 const COALESCE_BURST_MS = 3_000;
+
+/** Off by default: coalesced mail goes to the host's live listener. On, each window closes into a worker deployment of its own. */
+export function triageCoordinator(env: HubEnv): { enabled: boolean; limits: CoordinatorLimits } {
+  return {
+    enabled: env.TRIAGE_COORDINATOR === "on",
+    limits: {
+      global: numberOr(env.TRIAGE_WORKERS_GLOBAL, 8),
+      perTenant: numberOr(env.TRIAGE_WORKERS_PER_TENANT, 4),
+      spawnsPerSecond: numberOr(env.TRIAGE_SPAWNS_PER_SECOND, 2),
+    },
+  };
+}
 
 /**
  * A pull request's webhook events go out as one mail once none arrived for the quiet period, or at most four quiet periods after the first; the window must close before the reconciler gives up on its queued head.

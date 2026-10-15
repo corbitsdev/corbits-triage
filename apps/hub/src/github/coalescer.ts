@@ -11,6 +11,7 @@
 // replica.
 import type { ActionKind, CheckPack, PolicySource, PrTriageRow, RepoPolicy, TriageEvent } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
+import type { TriageJob } from "./coordinator.js";
 import type { PrMail } from "./normalize.js";
 import { triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader } from "./tenant-open-heads.js";
@@ -40,7 +41,7 @@ export type Accepted = "queued" | "coalesced";
 
 export type CoalescerDeps = {
   store: TriageStateStore;
-  sendMail: (tenantId: string, workflow: string, payload: unknown) => Promise<unknown>;
+  sendMail: (job: TriageJob) => Promise<unknown>;
   headChecks: HeadChecksReader;
   window: CoalesceWindow;
   setTimer: SetTimer;
@@ -149,7 +150,8 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       return;
     }
     try {
-      await deps.sendMail(head.tenantId, latest.workflow, mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events }));
+      const payload = mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events });
+      await deps.sendMail({ ...head, workflow: latest.workflow, payload });
     } catch (err) {
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
       await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());
