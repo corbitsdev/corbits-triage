@@ -49,16 +49,19 @@ webhook ─► bridge ─► coalescer (windows kept) ─┐
 reconciler (catch-up, batches) ────────────────┼─► coordinator queue (hub)
 approvals, backlog ────────────────────────────┘     │ capacity check
                                                      ▼
-                         spawn worker deployment (one PR or a batch)
-                         allocation.prepareProvisionedDeployment
+                spawn worker deployment: a copy of the live listener,
+                marked a worker in its deploy content
+                (rotation's redeploy → allocation.prepareProvisionedDeployment)
                                                      │ provisioner selected by
                                                      │ tenant capabilities
                                                      ▼
                      sidecar (local process | Docker | E2B, reused or new)
-                     worker = top-level run, fired once by mail, ends
-                                                     │ terminal
+                     worker = the listener definition, fired with one mail;
+                     its one body run is a child of the anchor
+                                                     │ body run terminal
                                                      ▼
-          lifecycle releases capacity (capacityRetention.completed 0s)
+          coordinator requests cancellation of the worker's anchor
+          lifecycle releases capacity (capacityRetention.cancelled 0s)
           observer records the verdict from the worker's run log
           coordinator frees the slot and spawns the next
 ```
@@ -72,7 +75,7 @@ Stock Interchange (used as is):
   the hub uses the same path in-process (`runTriggerDeliverer`, `server.ts:286-290`).
 - Deploy primitive: `WorkflowAllocationService.prepareProvisionedDeployment`
   (`vendor/interchange/packages/hub-sessions/src/workflow-allocation-service.ts:84-123`),
-  already called from hub code by rotation (`deployment.ts:226`) and the
+  already called from hub code by rotation (`deployment.ts`, `redeploy`) and the
   portal's deploy route (`apps/hub/src/workflow-deploy.ts:68`).
 - Lifecycle: `maxLifetime`, `capacityRetention.completed|failed|cancelled`,
   tenant `config.lifecycle` and per-definition overrides (upstream lifecycle.md
@@ -86,21 +89,21 @@ Stock Interchange (used as is):
   (`sidecar-allocation/contracts.ts:58-77`); at most 128 deployments per sidecar
   (`vendor/interchange/packages/types/src/sidecar.ts:48`).
 
-Settled shape (owner, 2026-10-14): ONE coordinator for the hub, a hub module,
-not one per tenant. It folds webhook events per (tenant, repository, pull
-request) exactly as the coalescer does today; when a window closes it deploys
-ONE fresh pr-triage deployment for that job. That deployment has ONE body run:
-no trigger listener, its input is the folded mail, and the deployment is
-released when the run ends. Capacity is the number of such deployments alive,
-bounded by `TRIAGE_WORKERS_GLOBAL`, `TRIAGE_WORKERS_PER_TENANT` and
-`TRIAGE_SPAWNS_PER_SECOND`.
+Settled shape (owner, 2026-10-14; worker shape 12.6): ONE coordinator for the
+hub, a hub module, not one per tenant. It takes the mail the coalescer folds
+per (tenant, repository, pull request); when a window closes it deploys ONE
+fresh pr-triage deployment for that job. That deployment is today's listener
+definition, `onTrigger({ body: perPr })`, fired with exactly that one mail, so
+it runs ONE body run; the deployment is released when that run ends. Capacity
+is the number of such deployments alive, bounded by `TRIAGE_WORKERS_GLOBAL`,
+`TRIAGE_WORKERS_PER_TENANT` and `TRIAGE_SPAWNS_PER_SECOND`.
 
 Ours:
 - Coordinator: the one hub module (section 3) owning queue, limits, priority,
   spawn.
-- Worker definition: `prTriage({ sources })` changes from an `onTrigger`
-  listener to a top-level run over the same `triageSteps`; one deployment,
-  one run, one job.
+- Worker: no definition change. The worker is a copy of the live listener,
+  told apart by a marker in its deploy content (section 5), so nothing that
+  looks for "the live deployment" mails or rotates a worker.
 - Recording: observer reads worker deployments instead of one listener log.
 - Queue route for the portal (OpenAPI, arktype).
 - Later, provisioners: Docker and E2B as `SidecarProvisioner` plugins.
@@ -178,25 +181,42 @@ principal on REST routes.
 ## 5. Worker lifecycle
 
 - One deployment per job, one run per deployment, released when the run ends:
-  `prepareProvisionedDeployment` with the seed
-  deployment's launch spec (source, entry, pin, offerings, deployer), as
-  `createDeploymentRotation.redeploy` does today (`deployment.ts:209-241`).
-- Fire: once the allocation is routable, the coordinator delivers the existing
-  mail payload (`mailPayload`, `bridge.ts:167`) with `deliverToDeployment`.
-  A `notReady` materialization already throws `DeploymentNotReadyError`
-  (`deployment.ts:24-30`); the coordinator retries delivery with backoff up to
-  the 2-minute first-connect window (lifecycle.md line 128).
-- Definition: top-level run, `trigger: manual`, steps `triageSteps(...)`, same
-  `credentialBindings` and `grantRequirements` (`pr-triage.ts:15-28` minus the
-  `onTrigger` wrapper). The approval branch stays the first step.
-- Lifecycle policy: tenant `capacityRetention.completed: "0s"`,
-  `cancelled: "0s"`, `failed: "15m"`; worker definition override
-  `maxLifetime: "1h"` (15-minute step timeouts with retries,
-  `triage-steps.ts:5`). Set by the portal through the stock tenant PATCH and
-  `PATCH .../workflows/definitions/:definitionId/lifecycle` (lifecycle.md
-  lines 60-74). Today the portal sets `maxLifetime: 36500d` tenant-wide
-  (`apps/web/src/lib/workflow-deploy.ts:82-96`); that moves to the listener
-  definition only, while it exists.
+  `createDeploymentRotation.redeploy` with the seed listener's launch spec
+  (source, entry, pin, offerings, deployer), plus `corbitsTriageWorker: true`
+  in the copy's deploy content (`apps/hub/src/github/deployment.ts`,
+  `WORKER_MARKER`). The marker is read back from the launch spec row, so a
+  worker is told from a listener without a table of its own.
+- Seed: the newest live listener of the workflow. `resolveLiveDeployments`
+  returns listeners unless workers are asked for, so the seed, the
+  reconciler's rotation and adoption, `sendBridgeMail`, held actions and the
+  portal's deployment list never see a worker; only the spawner's fire and
+  wait look workers up.
+- Fire: once the copy is routable, the spawner delivers the coalescer's mail
+  payload (`mailPayload`, `bridge.ts`) with `deliverToDeployment`. A `notReady`
+  materialization throws `DeploymentNotReadyError` (`deployment.ts`); the
+  spawner retries delivery up to the 2-minute first-connect window
+  (lifecycle.md line 128), then cancels the copy and fails the head.
+- Capacity refusal: a `prepareProvisionedDeployment` rejected for capacity
+  (`WorkflowProvisioningError`, code `capacity_unavailable`) is a retry, not a
+  failure: the job goes back on the queue with a doubling wait between
+  `TRIAGE_RETRY_MS` and `TRIAGE_RETRY_MAX_MS`.
+- End: the body run, a child of the anchor, leaves the live `workflow_run`
+  statuses (or the anchor does, read through `lifecycle.getStatus`), polled
+  every 2 s. Then `lifecycle.requestCancellation` on the anchor, always, even
+  when the wait itself failed.
+- Definition: unchanged, `prTriage({ sources })` with its `onTrigger` wrapper,
+  `credentialBindings` and `grantRequirements`. The approval branch stays the
+  first step.
+- Lifecycle policy: tenant `capacityRetention.cancelled: "0s"`,
+  `completed: "0s"`, `failed: "15m"`; worker `maxLifetime` is the listener's
+  until step 5 sets the lifecycle at publish (`PATCH
+  .../workflows/definitions/:definitionId/lifecycle`, lifecycle.md lines 60-74).
+- Same pull request again while its worker runs: the newer job waits in the
+  queue until that worker ends, then spawns; the reconciler's supersede rule
+  retires the older run's result.
+- Restart: the queue is in process. On start the hub releases every live
+  deployment carrying the worker marker (`releaseOrphanedWorkers`), logged;
+  their heads are `queued` rows the reconciler picks up.
 - Failure: a failed or expired worker marks its heads `failed` with the run's
   error; the reconciler requeues by its existing attempts rule. No heal, no
   rotation: a broken worker affects one triage, not the tenant.
@@ -204,7 +224,7 @@ principal on REST routes.
   respawned worker for the same head writes nothing already on GitHub.
 - Recording: the observer reads worker deployments that are live or ended since
   the last pass, not the newest listener (`tenant-observer.ts:53-67`,
-  `activeTenants`, `deployment.ts:93-112`, already supports `endedSince`). Each log holds one
+  `activeTenants`, `deployment.ts`, already supports `endedSince`). Each log holds one
   run, so reads are small. The verdict table and triage-state writes are
   unchanged (`triage-runs.ts`).
 - Cost per spawn, local process today: one probe allocation (definition
@@ -212,9 +232,7 @@ principal on REST routes.
   as the deployment's sidecar because the same provisioner is in both lists
   (`server.ts:192-193`, adoption at `workflow-allocation-service.ts:715-719`),
   so one new sidecar process per triage, plus closure install and child ready
-  (up to 30 s, lifecycle.md line 133). Not measured yet; step 0 measures p50/p95
-  of deploy-to-first-step on the local stack. Expect seconds, against a triage
-  of tens of seconds to minutes (judge calls).
+  (up to 30 s, lifecycle.md line 133). Measured in 12.2.
 - With a reusing provisioner: `ensure` answers with a warm sidecar of the same
   tenant and manifest digest (SIDECAR_PLACEMENT.md lines 83-127), skipping
   boot and install; the probe evaluation per deploy remains. Reuse must be
@@ -348,9 +366,12 @@ Each PR is one concern, small, behind the version switch until cutover.
 
 0. Spike, no PR: done, section 12. Its blocker (12.4) is decided in 12.6.
 1. PR: coordinator skeleton behind `TRIAGE_COORDINATOR` (off by default):
-   queue, limits, spawn from the live deployment, release on run end; the
+   queue, limits, spawn from the live listener, release on run end; the
    coalescer enqueues to it when on. Built, section 12.6. No worker
-   definition change: the worker is the listener definition (12.6).
+   definition change: the worker is the listener definition (12.6), marked
+   `corbitsTriageWorker` in its deploy content and hidden from every live
+   deployment lookup but the spawner's; on start the hub releases workers a
+   restart orphaned (section 5).
 2. PR: worker observation in tenant observer and triage-runs (45 min).
 3. PR: priority classes; reconciler, approvals and backlog enqueue to the
    coordinator (90 min).
@@ -489,7 +510,7 @@ Step 1 as built (`TRIAGE_COORDINATOR=on`, off by default so the listener path is
 - `apps/hub/src/github/coordinator.ts`: the queue, keyed per (tenant, repository, pull request) so a newer job replaces a queued one; global and per-tenant worker caps; spawn spacing from `TRIAGE_SPAWNS_PER_SECOND`; round-robin across tenants at the cap; the slot is held through the spawn and released when the worker's run has ended. The per-pull-request fold stays the coalescer's, unchanged: the coordinator takes the mail it would have sent.
 - `apps/hub/src/github/worker-spawn.ts`: the seed is the host's live pr-triage deployment; the copy is `createDeploymentRotation.redeploy` (the `prepareProvisionedDeployment` call the spike used); fire is `deliverToDeployment` retried on `DeploymentNotReadyError` within the two-minute first-connect window; end is the child run leaving the live statuses (or the anchor leaving them); release is `requestCancellation`.
 - `apps/hub/src/env.ts`: `TRIAGE_COORDINATOR`, `TRIAGE_WORKERS_GLOBAL`, `TRIAGE_WORKERS_PER_TENANT`, `TRIAGE_SPAWNS_PER_SECOND`.
-- Known limits of the skeleton, for steps 2 and 3: the seed lookup takes the newest live deployment of the workflow, which after the first spawn is a worker (same source, so the copy is identical); the reconciler, approvals and backlog still mail the listener; the queue is not yet a route.
+- Known limits of the skeleton, for steps 2 and 3: the reconciler, approvals and backlog still mail the listener; the queue is not yet a route.
 
 ### 12.5 Credential and grants in this shape
 

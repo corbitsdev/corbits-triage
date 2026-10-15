@@ -83,8 +83,8 @@ function harness(rows: PrTriageRow[] = [], overrides: Partial<CoalescerDeps> = {
   const mails: Array<Record<string, unknown>> = [];
   const coalescer = createCoalescer({
     store: state.store,
-    async sendMail(_tenant, _workflow, payload) {
-      mails.push(payload as Record<string, unknown>);
+    async sendMail(job) {
+      mails.push(job.payload as Record<string, unknown>);
     },
     async headChecks() {
       return [{ name: "build", status: "completed", conclusion: "success" }];
