@@ -100,9 +100,11 @@ deployment ids are configured anywhere.
 Every run is the same steps; the repository's policy decides what each
 one does.
 
-1. **facts**: reads the pull requests, their files, reviews, CI, the
-   repository's docs and its contribution rules from GitHub.
-2. **rules**: runs the hard rules and, unless one failed or the pull request
+1. **facts**: reads the pull requests, their files, reviews, CI, commits (the
+   first 100 messages in full), the repository's docs and its contribution
+   rules from GitHub.
+2. **rules**: runs the hard rules (the built-in rules over GitHub data and
+   the policy's text rules) and, unless one failed or the pull request
    is a draft or closed, builds the judged rules' questions; with none left
    to ask, it builds the verdict question instead.
 3. **route**: skips the judge when no question needs asking.

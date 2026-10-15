@@ -166,3 +166,43 @@ describe("a policy stored with the old rule ids", () => {
     });
   });
 });
+
+describe("text rules", () => {
+  const open: PrFacts = { ...noisy, draft: false, mergeable: true, checks: "success", title: "feat: Add login", body: "Adds login.\nGenerated with a tool", commitMessages: ["feat: add login\n\nCo-Authored-By: Bot <bot@example.com>", "docs: login"] };
+
+  function textCheck(fields: string[], failWhen: string, phrases: string[]) {
+    const pack = readCheckPack({ ...emptyPack("acme/widgets"), custom: [{ id: "words", name: "Words", group: "pull-request", kind: "text", fields, failWhen, phrases }] });
+    return deriveState(open, undefined, pack).checks.find((check) => check.check === "words");
+  }
+
+  test("the title contains, case-insensitively", () => {
+    expect(textCheck(["title"], "contains", ["FEAT:"])).toMatchObject({ kind: "machine", result: "fail", evidence: ["title: feat: Add login"] });
+  });
+
+  test("the title does not contain", () => {
+    expect(textCheck(["title"], "not-contains", ["fix:", "chore:"])).toMatchObject({ result: "fail", evidence: ["title"] });
+  });
+
+  test("the description contains, quoting the line", () => {
+    expect(textCheck(["description"], "contains", ["generated with"])).toMatchObject({ result: "fail", reason: 'the description contains "generated with"', evidence: ["description: Generated with a tool"] });
+  });
+
+  test("the description does not contain", () => {
+    expect(textCheck(["description"], "not-contains", ["Adds"])).toMatchObject({ result: "pass", evidence: [] });
+  });
+
+  test("any commit message contains, past its subject", () => {
+    expect(textCheck(["commits"], "contains", ["co-authored-by:"])).toMatchObject({ result: "fail", reason: 'a commit message contains "co-authored-by:"', evidence: ['commit "feat: add login": Co-Authored-By: Bot <bot@example.com>'] });
+  });
+
+  test("any commit message does not contain", () => {
+    expect(textCheck(["commits"], "not-contains", ["login"])).toMatchObject({ result: "pass" });
+    expect(textCheck(["commits"], "not-contains", ["feat"])).toMatchObject({ result: "fail", evidence: ['commit "docs: login"'] });
+  });
+
+  test("a failed text rule fails the pull request without the decision model", () => {
+    const result = deriveState(open, undefined, recommendedPack("acme/widgets"));
+    expect(result.checks.find((check) => check.check === "no-attribution-trailers")?.result).toBe("fail");
+    expect(result.needsJudgment).toBe(false);
+  });
+});

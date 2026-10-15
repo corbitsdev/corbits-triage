@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, RECOMMENDED_PATHS, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type TriageStats } from "@corbits/triage-contracts";
+import { CATALOG_IDS, CUSTOM_CHECK_CAP, RECOMMENDED_ISSUE, RECOMMENDED_PATHS, TEXT_MATCH_NAMES, TEXT_MATCHES, textFieldsPhrase, textSentence, type CatalogCheck, type CatalogId, type CheckPack, type IssueTracker, type TextField, type TextMatch, type TriageStats } from "@corbits/triage-contracts";
 import { catalogValue, checkOn, removeCustom, setCatalogCheck, setCustomEnabled, type DraftProblem, type RepoDraft } from "../../lib/pack-draft.ts";
 import type { RepoPack } from "../../lib/repo-pack.ts";
-import type { JudgementRule, PolicyView } from "../../lib/use-policy-view.ts";
+import type { JudgementRule, PolicyView, TextRule } from "../../lib/use-policy-view.ts";
 import CountField from "./CountField.tsx";
 import RuleRow from "./RuleRow.tsx";
 import TokenList from "./TokenList.tsx";
@@ -26,17 +26,23 @@ const CATALOG: Record<CatalogId, { off: string; tip: string }> = {
   docs: { off: "Docs are updated when behavior changes", tip: "For each changed file the decision model asks whether the docs are now wrong or missing something. Any yes fails the rule. Changing a doc passes it." },
 };
 
+const TEXT_TIP = `Reads the title, description or each of the first 100 commit messages for the phrases, ignoring case. ${HARD}`;
+
+/** In the policy's field order, so a stored rule's fields name one of them. */
+const FIELD_CHOICES: TextField[][] = [["title"], ["description"], ["commits"], ["title", "description"], ["description", "commits"], ["title", "commits"], ["title", "description", "commits"]];
+
 const IS_TRUE_TIP = "A yes or no question the decision model answers from the pull request. No fails the rule.";
 
-type Group = { name: string; sub: string; ids: CatalogId[]; cap?: string; note?: string; judgement?: boolean };
+type Group = { name: string; sub: string; ids: CatalogId[]; cap?: string; note?: string; judgement?: boolean; text?: boolean };
 
 const GROUPS: Group[] = [
   { name: "Size", sub: "Flag large pull requests", ids: ["max-files-changed", "max-lines-changed"] },
   {
     name: "Checks",
-    sub: "Facts the host already knows: issue, conflicts, CI, paths",
+    sub: "Facts the host already knows: issue, conflicts, CI, paths, text",
     ids: ["linked-issue", "no-merge-conflicts", "ci-green", "no-forbidden-paths"],
     note: "Always on: drafts wait until they are ready for review, and a pull request with changes requested fails.",
+    text: true,
   },
   {
     name: "Judgement",
@@ -185,6 +191,45 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
     );
   }
 
+  function textRow(rule: TextRule) {
+    const label = textSentence(rule);
+    const words = (
+      <>Fail when{" "}
+        <select className="val" aria-label="Where to look" disabled={disabled} value={rule.fields.join(",")} onChange={(event) => view.patchTextRule(rule.id, { fields: event.target.value.split(",") as TextField[] })}>
+          {FIELD_CHOICES.map((fields) => <option key={fields.join(",")} value={fields.join(",")}>{textFieldsPhrase(fields)}</option>)}
+        </select>{" "}
+        <select className="val" aria-label="Contains or not" disabled={disabled} value={rule.failWhen} onChange={(event) => view.patchTextRule(rule.id, { failWhen: event.target.value as TextMatch })}>
+          {TEXT_MATCHES.map((match) => <option key={match} value={match}>{TEXT_MATCH_NAMES[match]}</option>)}
+        </select>{" "}
+        <TokenList values={rule.phrases} noun="phrase" placeholder="Co-Authored-By:" disabled={disabled} onChange={(phrases) => view.patchTextRule(rule.id, { phrases })} />
+      </>
+    );
+    return (
+      <RuleRow
+        key={rule.key}
+        id={rule.id}
+        label={label}
+        on={rule.on}
+        words={rule.on ? words : label}
+        tip={TEXT_TIP}
+        stat={passed(rule.id)}
+        reason={rule.problem}
+        disabled={disabled}
+        onToggle={(next) => edit((current) => setCustomEnabled(current, rule.id, next))}
+        onRemove={() => edit((current) => removeCustom(current, rule.id))}
+      />
+    );
+  }
+
+  function addText() {
+    if (pack.custom.length >= CUSTOM_CHECK_CAP) return null;
+    return (
+      <div className="sentence add-row">
+        <button type="button" className="linkish quiet" disabled={disabled} onClick={() => setAdded(view.addTextRule())}>+ Fail when …</button>
+      </div>
+    );
+  }
+
   function add(shape: JudgementRule["shape"]) {
     setAdded(view.addRule(shape));
   }
@@ -205,6 +250,8 @@ export default function RulesSection({ draft, saved, view, stats, disabled, edit
         <header><b>{group.name}</b><span>{group.sub}</span>{group.cap ? <em>{group.cap}</em> : null}</header>
         <div className="sentences">
           {group.ids.map(catalogRow)}
+          {group.text ? view.textRules.map(textRow) : null}
+          {group.text ? addText() : null}
           {group.judgement ? view.rules.map(judgementRow) : null}
           {group.judgement ? addRow() : null}
         </div>

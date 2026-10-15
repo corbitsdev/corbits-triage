@@ -87,8 +87,14 @@ requested change waits on the author). The recommended forbidden paths are
 `vendor/**`, `node_modules/**` and `.github/**`: an author who edits the
 workflows can change which checks run and turn CI green.
 
-Custom rules are decision-model rules only (below). Who opened the pull request
-is a step's **for** (see [Steps](#steps)), not a rule.
+A custom rule is a decision-model rule (below) or a text rule. A text rule
+fails when the title, the description or any commit message (the first 100,
+read in full) contains one of its phrases, or with `not-contains` when one
+contains none of them; phrases match without regard to case, and the evidence
+quotes each matching line. The recommended policy has one on: fail when the
+description or any commit message contains `Co-Authored-By:`, `Generated with`
+or `Claude-Session:`. Who opened the pull request is a step's **for** (see
+[Steps](#steps)), not a rule.
 
 ### Decision models
 
@@ -304,7 +310,18 @@ default branch, so policy changes are reviewed like code. The file holds what
 the stored policy holds, without `kind`, `schemaVersion` and `repo`; it may
 `extends` a workspace policy; any other key is refused. Its JSON Schema is
 `policyFile` at the hub's `/api/integrations/pack-schema`. Only YAML is read
-today, up to 64 KB and without anchors or aliases.
+today, up to 64 KB and without anchors or aliases. A text rule in the file:
+
+```yaml
+custom:
+  - id: no-attribution-trailers
+    name: No attribution trailers
+    group: pull-request
+    kind: text
+    fields: [description, commits] # any of title, description, commits
+    failWhen: contains # or not-contains
+    phrases: ["Co-Authored-By:", "Generated with", "Claude-Session:"]
+```
 
 The file becomes the repository's policy; a workspace policy it extends fills
 what it leaves out. A push to the default branch that changes the file (or a

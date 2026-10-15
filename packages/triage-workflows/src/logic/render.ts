@@ -1,4 +1,4 @@
-import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type CustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { citationOf, citationUrl, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type CheckItem, type CheckOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
@@ -375,7 +375,7 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
    * The likeliest level is the rule's answer. It fails only below `failBelow`, by how likely the level is below it on
    * the unsure band, and without `failBelow` it always passes.
    */
-  function scoreCheck(row: Extract<CustomCheck, { shape: "score" }>, byLevel: Record<string, number>) {
+  function scoreCheck(row: Extract<ModelCustomCheck, { shape: "score" }>, byLevel: Record<string, number>) {
     const level = likeliest(byLevel, row.levels);
     const output: CheckOutput = { kind: "level", level, levels: row.levels, ...(row.failBelow && { failBelow: row.failBelow }) };
     const reason = `rated ${level} for ${row.subject}`;
@@ -385,7 +385,7 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
   }
 
   /** The likeliest option is the rule's answer; it fails by how likely the answer is one of `failOn`, on the unsure band. */
-  function chooseCheck(row: Extract<CustomCheck, { shape: "choose" }>, probabilities: Record<string, number>) {
+  function chooseCheck(row: Extract<ModelCustomCheck, { shape: "choose" }>, probabilities: Record<string, number>) {
     const chosen = likeliest(probabilities, row.options);
     const failing = row.failOn.reduce((total, option) => total + probabilities[option]!, 0);
     push(row.id, band(1 - failing, true), { kind: "values", values: { chosen } }, [chosen], `best described as ${chosen}`);
@@ -413,7 +413,9 @@ function failedStep(c: CheckResult, sources: Sources): Step {
         : { actor: "author", action: `Address requested changes from ${reviewers}` };
     }
     case "focused": return { actor: "author", action: c.evidence.length ? `Split out unrelated change: ${c.evidence.join("; ")}` : "Split out unrelated changes" };
-    default: return { actor: "author", action: c.kind === "model" && sources ? actionText(c.check, sources) : `Fix ${c.check}` };
+    default:
+      if (c.kind === "machine") return { actor: "author", action: `Fix: ${c.reason}` };
+      return { actor: "author", action: sources ? actionText(c.check, sources) : `Fix ${c.check}` };
   }
 }
 
