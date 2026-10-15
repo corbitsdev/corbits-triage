@@ -117,7 +117,8 @@ export type BaselineState = typeof BaselineState.infer;
 
 /**
  * Pull requests triaged in the window against those closed before `baselineBefore`, when the repository's policy was
- * first saved; a measured baseline is null when none closed before. Any other state means nothing could be read.
+ * first saved; a measured baseline is null when none closed before. `measuring` is before the first read finished; any
+ * other state means nothing could be read.
  */
 export const TriageOutcomes = type({
   state: "'measured'",
@@ -125,7 +126,7 @@ export const TriageOutcomes = type({
   baseline: OutcomeMedians.or("null"),
   baselineBefore: "string | null",
   baselineState: BaselineState,
-}).or({ state: "'no_credential' | 'source_failed'" });
+}).or({ state: "'measuring' | 'no_credential' | 'source_failed'" });
 export type TriageOutcomes = typeof TriageOutcomes.infer;
 
 export const TriageStats = type({

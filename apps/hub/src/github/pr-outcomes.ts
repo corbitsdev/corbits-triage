@@ -41,7 +41,13 @@ export type OutcomeReaderDeps = {
   log: (entry: Record<string, unknown>) => void;
 };
 
-export type OutcomeReader = (member: Member, repo: string, triaged: readonly number[]) => Promise<TriageOutcomes | null>;
+/** What a member is answered instead of the outcomes: null when the repository is not connected, undefined when they may read it. */
+type Refusal = { state: "no_credential" } | null | undefined;
+
+export type OutcomeReader = {
+  refusal: (member: Member, repo: string) => Promise<Refusal>;
+  read: (member: Member, repo: string, triaged: readonly number[]) => Promise<TriageOutcomes | null>;
+};
 
 type Outcome = {
   closed: boolean;
@@ -207,14 +213,23 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
     return { state: "measured", triaged: medians(outcomes), ...baselineOutcome(enabledAt, baselineRead) };
   }
 
-  return async function outcomes({ tenantId, principalId }, repo, triaged) {
+  async function refusal({ tenantId, principalId }: Member, repo: string): Promise<Refusal> {
+    const source = await deps.host(tenantId, principalId, repo);
+    if (source === undefined) return null;
+    if ("state" in source) return source;
+    return undefined;
+  }
+
+  async function outcomes({ tenantId, principalId }: Member, repo: string, triaged: readonly number[]): Promise<TriageOutcomes | null> {
     try {
       return await read(tenantId, principalId, repo, triaged);
     } catch (error) {
       deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId, repo, error: errorText(error) });
       return { state: "source_failed" };
     }
-  };
+  }
+
+  return { refusal, read: outcomes };
 }
 
 type HostReadsDeps = SourceFetchDeps & { artifacts: ArtifactDb };

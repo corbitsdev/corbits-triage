@@ -59,11 +59,19 @@ function fakeHost() {
 
 function route(records: VerdictRecord[], deps: Partial<OutcomeReaderDeps> & Pick<OutcomeReaderDeps, "host">, clock = { now: NOW }) {
   const outcomes = createOutcomeReader({ enabledAt: async () => ENABLED, now: () => clock.now, log: () => {}, ...deps });
-  const handle = createTriageStats({ verdicts: { since: async () => records, earliest: async () => ENABLED }, outcomes, now: () => clock.now });
+  const handle = createTriageStats({ verdicts: { since: async () => records, earliest: async () => ENABLED }, outcomes, now: () => clock.now, log: () => {} });
   return async function stats() {
-    const res = await handle(new Request(`http://hub.test/api/integrations/triage-stats/${TENANT}?repo=${REPO}`), { tenantId: TENANT, principalId: "prn_outcomes" });
-    return TriageStats.assert(await res.json());
+    for (;;) {
+      const res = await handle(new Request(`http://hub.test/api/integrations/triage-stats/${TENANT}?repo=${REPO}`), { tenantId: TENANT, principalId: "prn_outcomes" });
+      const body = TriageStats.assert(await res.json());
+      if (body.outcomes?.state !== "measuring") return body;
+      await Bun.sleep(1);
+    }
   };
+}
+
+async function until(done: () => boolean): Promise<void> {
+  while (!done()) await Bun.sleep(1);
 }
 
 test("medians count only people other than the author as responses, leaving bots and the triage user out", async () => {
@@ -108,6 +116,7 @@ test("the baseline is read once a day, and closed pull requests are not read aga
   expect(reads).toMatchObject({ prTimes: 2, timeline: 3, closedBefore: 1 });
   clock.now = new Date(NOW.getTime() + 20 * 60_000);
   await stats();
+  await until(() => reads.timeline === 4);
   expect(reads).toMatchObject({ prTimes: 3, timeline: 4, closedBefore: 1 });
 });
 

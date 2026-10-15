@@ -1,8 +1,9 @@
 // A repository's triage over a window of days, from the recorded verdicts, with
-// the outcomes of the pull requests it triaged, read from the host and cached, so
-// the portal and the extension can ask for it on every view.
+// the outcomes of the pull requests it triaged, read from the host in the background
+// and cached, so the portal and the extension can ask for it on every view.
 import { type } from "arktype";
-import { currentRows, parseCheckOutput, TriageStats } from "@corbits/triage-contracts";
+import { errorText } from "@corbits/common";
+import { currentRows, parseCheckOutput, TriageStats, type TriageOutcomes } from "@corbits/triage-contracts";
 import { failure } from "./portal-credential.js";
 import type { OutcomeReader } from "./pr-outcomes.js";
 import { runKey } from "./reconcile-plan.js";
@@ -16,6 +17,7 @@ const CACHE_MS = 60_000;
 const CACHE_ENTRIES = 1_000;
 const DEFAULT_DAYS = 7;
 const MAX_OUTCOMES = 50;
+const RETRY_MS = 10_000;
 
 const StatsQuery = type({
   repo: /^[\w.-]+\/[\w.-]+$/,
@@ -26,6 +28,7 @@ export type TriageStatsDeps = {
   verdicts: Pick<VerdictRecordStore, "since" | "earliest">;
   outcomes: OutcomeReader;
   now: () => Date;
+  log: (entry: Record<string, unknown>) => void;
 };
 
 const EXECUTED = new Set(["done", "satisfied"]);
@@ -144,9 +147,42 @@ function aggregate(repo: string, days: number, from: Date, since: Date | null, r
 
 type Aggregate = { stats: Omit<TriageStats, "outcomes">; triaged: number[] };
 
-/** The aggregate is cached per repository; the outcomes are read per request, since they depend on the member's grants. */
+type Measurement = { answer?: { outcomes: TriageOutcomes | null; at: number }; reading: boolean; failedAt?: number };
+
+/**
+ * The aggregate and the outcomes are cached per repository, since the host is read with the tenant's credential; only
+ * whether the member may read it is checked per request. Outcomes are never awaited: the last answer is served, or
+ * `measuring` before the first; one background read starts when the answer is a minute old, or ten seconds after a failed read.
+ */
 export function createTriageStats(deps: TriageStatsDeps) {
   const cache = new Map<string, Aggregate & { at: number }>();
+  const measurements = new Map<string, Measurement>();
+
+  async function measure(entry: Measurement, member: Member, repo: string, triaged: readonly number[]): Promise<void> {
+    entry.reading = true;
+    try {
+      entry.answer = { outcomes: await deps.outcomes.read(member, repo, triaged), at: deps.now().getTime() };
+      entry.failedAt = undefined;
+    } catch (error) {
+      entry.failedAt = deps.now().getTime();
+      deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId: member.tenantId, repo, error: errorText(error) });
+    } finally {
+      entry.reading = false;
+    }
+  }
+
+  function outcomes(member: Member, repo: string, days: number, triaged: readonly number[], now: number): TriageOutcomes | null {
+    const key = `${member.tenantId}\n${repo}\n${days}`;
+    let entry = measurements.get(key);
+    if (entry === undefined) {
+      if (measurements.size >= CACHE_ENTRIES) measurements.delete(measurements.keys().next().value!);
+      entry = { reading: false };
+      measurements.set(key, entry);
+    }
+    const due = entry.failedAt === undefined ? entry.answer === undefined || now - entry.answer.at >= CACHE_MS : now - entry.failedAt >= RETRY_MS;
+    if (due && !entry.reading) void measure(entry, member, repo, triaged);
+    return entry.answer === undefined ? { state: "measuring" } : entry.answer.outcomes;
+  }
 
   function cached(key: string, now: number): Aggregate | undefined {
     for (const [stale, entry] of cache) if (now - entry.at >= CACHE_MS) cache.delete(stale);
@@ -169,7 +205,8 @@ export function createTriageStats(deps: TriageStatsDeps) {
     const query = StatsQuery(Object.fromEntries(new URL(req.url).searchParams));
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
     const { repo, days = DEFAULT_DAYS } = query;
-    const { stats, triaged } = await aggregated(member.tenantId, repo, days, deps.now());
-    return Response.json({ ...stats, outcomes: await deps.outcomes(member, repo, triaged) } satisfies TriageStats);
+    const now = deps.now();
+    const [{ stats, triaged }, refused] = await Promise.all([aggregated(member.tenantId, repo, days, now), deps.outcomes.refusal(member, repo)]);
+    return Response.json({ ...stats, outcomes: refused === undefined ? outcomes(member, repo, days, triaged, now.getTime()) : refused } satisfies TriageStats);
   };
 }

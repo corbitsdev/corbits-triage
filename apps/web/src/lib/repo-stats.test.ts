@@ -90,4 +90,5 @@ test("the outcomes show the triaged medians with their counts, and each missing 
   expect(card({ state: "no_credential" }, "bitbucket-datacenter")).toContain("Needs a Bitbucket credential you can use.");
   expect(card({ state: "source_failed" })).toContain("GitHub did not answer; the numbers will return when it does.");
   expect(card(null)).toContain("Not connected to GitHub.");
+  expect(card({ state: "measuring" })).toBe("");
 });
