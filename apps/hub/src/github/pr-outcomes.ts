@@ -7,7 +7,7 @@ import type { ArtifactDb } from "@corbits/artifacts";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { getPrTimes, listPrTimeline, searchClosedPrsBefore, type PrTimes, type TimelineEvent } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
-import type { OutcomeMedians, OutcomesUnavailable, TriageOutcomes } from "@corbits/triage-contracts";
+import type { OutcomeMedians, TriageOutcomes } from "@corbits/triage-contracts";
 import { bitbucketConnection } from "../bitbucket-datacenter/records.js";
 import { repoPolicyRow } from "./check-pack-store.js";
 import { sourceCredentialGrant } from "./portal-credential.js";
@@ -31,7 +31,7 @@ export type Host = {
 };
 
 /** Undefined when the repository is not connected. */
-type HostRead = { host: Host } | { unavailable: OutcomesUnavailable } | undefined;
+type HostRead = { host: Host } | { state: "no_credential" } | undefined;
 
 export type OutcomeReaderDeps = {
   host: (tenantId: string, principalId: string, repo: string) => Promise<HostRead>;
@@ -51,7 +51,7 @@ type Outcome = {
   humanTouchGapMs: number | null;
 };
 
-export function median(values: number[]): number | null {
+function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = values.toSorted((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
@@ -127,10 +127,6 @@ function boundedCache<T>() {
   };
 }
 
-function unavailable(reason: OutcomesUnavailable): TriageOutcomes {
-  return { triaged: null, baseline: null, baselineBefore: null, unavailable: reason };
-}
-
 function utcDay(at: Date): string {
   return at.toISOString().slice(0, 10);
 }
@@ -142,6 +138,15 @@ async function settledOutcomes(reads: readonly Promise<Outcome>[]): Promise<{ ou
 }
 
 type Baseline = { medians: OutcomeMedians | null; failed: number };
+
+type MeasuredBaseline = Pick<Extract<TriageOutcomes, { state: "measured" }>, "baseline" | "baselineBefore" | "baselineState">;
+
+function baselineOutcome(enabledAt: Date | undefined, read: PromiseSettledResult<Baseline> | undefined): MeasuredBaseline {
+  if (enabledAt === undefined || read === undefined) return { baseline: null, baselineBefore: null, baselineState: "no_policy" };
+  const baselineBefore = enabledAt.toISOString();
+  if (read.status === "rejected") return { baseline: null, baselineBefore, baselineState: "source_failed" };
+  return { baseline: read.value.medians, baselineBefore, baselineState: "measured" };
+}
 
 /**
  * A closed pull request's outcome holds for a day, an open one's for 15 minutes; a baseline for the UTC day it was read.
@@ -185,7 +190,7 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
   async function read(tenantId: string, principalId: string, repo: string, triaged: readonly number[]): Promise<TriageOutcomes | null> {
     const source = await deps.host(tenantId, principalId, repo);
     if (source === undefined) return null;
-    if ("unavailable" in source) return unavailable(source.unavailable);
+    if ("state" in source) return source;
     const { host } = source;
     const now = deps.now();
     const at = now.getTime();
@@ -198,9 +203,8 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
     const baselineFailed = baselineRead?.status === "rejected";
     const failedReads = failed + (baselineFailed ? 1 : (baseline?.failed ?? 0));
     if (failedReads > 0) deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId, repo, failed: failedReads });
-    if (failed > 0 && outcomes.length === 0 && (enabledAt === undefined || baselineFailed)) return unavailable("source_failed");
-    if (enabledAt === undefined) return { triaged: medians(outcomes), baseline: null, baselineBefore: null, unavailable: "no_policy" };
-    return { triaged: medians(outcomes), baseline: baseline?.medians ?? null, baselineBefore: enabledAt.toISOString() };
+    if (failed > 0 && outcomes.length === 0 && (enabledAt === undefined || baselineFailed)) return { state: "source_failed" };
+    return { state: "measured", triaged: medians(outcomes), ...baselineOutcome(enabledAt, baselineRead) };
   }
 
   return async function outcomes({ tenantId, principalId }, repo, triaged) {
@@ -208,7 +212,7 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
       return await read(tenantId, principalId, repo, triaged);
     } catch (error) {
       deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId, repo, error: errorText(error) });
-      return unavailable("source_failed");
+      return { state: "source_failed" };
     }
   };
 }
@@ -224,9 +228,9 @@ export function createHostReads(deps: HostReadsDeps): Pick<OutcomeReaderDeps, "h
     const ns = triageNs(tenant?.config);
     const record = repoRecords(ns).find((row) => row.name === repo && row.connected);
     if (!record) return undefined;
-    if (await sourceCredentialGrant(deps, principalId, tenantId, record, "read")) return { unavailable: "no_credential" };
+    if (await sourceCredentialGrant(deps, principalId, tenantId, record, "read")) return { state: "no_credential" };
     const source = await sourceFetch(tenantId, principalId, record);
-    if (!source) return { unavailable: "no_credential" };
+    if (!source) return { state: "no_credential" };
     if ("bb" in source) {
       const { bb } = source;
       const own = bitbucketConnection(ns)?.user;

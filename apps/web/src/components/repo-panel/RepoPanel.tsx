@@ -16,6 +16,7 @@ import { hasRuleOn } from "../../lib/pack-draft.ts";
 import { usePolicyFile } from "../../lib/policy-file.ts";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import LabelsCard from "./LabelsCard.tsx";
+import OutcomesCard from "./OutcomesCard.tsx";
 import OnItsOwn from "./OnItsOwn.tsx";
 import PolicyCard from "./PolicyCard.tsx";
 import RemoveRepository from "./RemoveRepository.tsx";
@@ -102,6 +103,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
           <StepsSection view={view} automatic={grantsKnown ? runsAlone : undefined} disabled={locked} />
           <LabelsCard view={view} automatic={grantsKnown ? runsAlone("labels") : undefined} disabled={locked} />
         </div>
+        {stats ? <OutcomesCard outcomes={stats.outcomes} source={repo.source} /> : null}
         <RemoveRepository repo={repo.name} source={repo.source} disabled={readOnly || snapshot?.denied.repos === true} onRemoved={onClose} />
       </>
     );
