@@ -668,6 +668,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
       log: logJson,
     }),
     now,
+    log: logJson,
   }),
   triageTimeline: createTriageTimeline({ verdicts: verdictRecordStore }),
   triageVerdicts: createTriageVerdicts({

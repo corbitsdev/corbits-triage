@@ -99,13 +99,14 @@ function OutcomeCell({ field, view }: { field: OutcomeField; view: Exclude<Outco
   );
 }
 
-function OutcomeCells({ view }: { view: OutcomesView }) {
+function OutcomeCells({ view }: { view: OutcomesView | null }) {
+  if (view === null) return <TableCell colSpan={PULSE_OUTCOMES.length} />;
   if ("missing" in view) return <TableCell colSpan={PULSE_OUTCOMES.length} className="note">{view.missing}</TableCell>;
   return <>{PULSE_OUTCOMES.map((field) => <OutcomeCell key={field} field={field} view={view} />)}</>;
 }
 
-function OutcomeNote({ view }: { view: OutcomesView }) {
-  if ("missing" in view) return null;
+function OutcomeNote({ view }: { view: OutcomesView | null }) {
+  if (view === null || "missing" in view) return null;
   return (
     <>
       <span className="was">median of {view.triaged.prs}</span>
@@ -116,11 +117,11 @@ function OutcomeNote({ view }: { view: OutcomesView }) {
 
 function RepoWeek({ store, repo }: { store: RepoPackStore | null; repo: RepoRecord }) {
   const { data: stats, isError } = useQuery(repoStatsQuery(store, repo.name, WEEK_DAYS));
-  const view = stats && outcomesView(stats.outcomes, repo.source);
+  const view = stats ? outcomesView(stats.outcomes, repo.source) : null;
   return (
     <TableRow>
-      <TableHead scope="row">{repo.name}{view && <OutcomeNote view={view} />}</TableHead>
-      {stats && view ? (
+      <TableHead scope="row">{repo.name}<OutcomeNote view={view} /></TableHead>
+      {stats ? (
         <>
           <TableCell>{stats.triaged}</TableCell>
           <TableCell>{stats.neededYou}</TableCell>

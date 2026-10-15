@@ -20,6 +20,7 @@ type OutcomesCardProps = { outcomes: TriageOutcomes | null; source: RepoSource }
 /** What happened to the pull requests Triage saw, beside those closed before it. */
 export default function OutcomesCard({ outcomes, source }: OutcomesCardProps) {
   const view = outcomesView(outcomes, source);
+  if (view === null) return null;
   return (
     <section className="gcard outcomes-card" aria-label="Outcomes">
       <header><b>Outcomes</b><span>Medians from opening, over the newest triaged pull requests and those closed before Triage.</span></header>

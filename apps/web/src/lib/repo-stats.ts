@@ -7,12 +7,19 @@ const REPO_STATS_QUERY_KEY = "triage-stats";
 
 export const WEEK_DAYS = 7;
 
+const MEASURING_POLL_MS = 5_000;
+
+/** The hub measures outcomes in the background, so while it is still measuring the stats are read again shortly. */
+function pollWhileMeasuring(query: Query<TriageStats>): number | false {
+  return query.state.data?.outcomes?.state === "measuring" ? MEASURING_POLL_MS : false;
+}
+
 /** The hub caches the stats for a minute, so reading sooner returns the same answer. */
 export function repoStatsQuery(store: RepoPackStore | null, repo: string, days: number) {
   const queryFn = store === null ? skipToken : async function loadStats() {
     return store.loadStats(repo, days);
   };
-  return queryOptions({ queryKey: [REPO_STATS_QUERY_KEY, store?.tenantId, repo, days], queryFn, staleTime: 60_000 });
+  return queryOptions({ queryKey: [REPO_STATS_QUERY_KEY, store?.tenantId, repo, days], queryFn, staleTime: 60_000, refetchInterval: pollWhileMeasuring });
 }
 
 export function isRepoStatsQuery(query: Query): boolean {
@@ -59,8 +66,9 @@ function baselineMissing(outcomes: Extract<TriageOutcomes, { state: "measured" }
   return null;
 }
 
-/** The triaged medians beside the baseline, or why either is missing as one sentence. */
-export function outcomesView(outcomes: TriageOutcomes | null, source: RepoSource): OutcomesView {
+/** The triaged medians beside the baseline, or why either is missing as one sentence; null while the hub is still measuring. */
+export function outcomesView(outcomes: TriageOutcomes | null, source: RepoSource): OutcomesView | null {
+  if (outcomes?.state === "measuring") return null;
   if (outcomes === null) return { missing: `Not connected to ${hostName(source)}.` };
   if (outcomes.state === "measured") return { triaged: outcomes.triaged, baseline: outcomes.baseline, baselineMissing: baselineMissing(outcomes, source) };
   if (outcomes.state === "no_credential") return { missing: `Needs a ${hostName(source)} credential you can use.` };
