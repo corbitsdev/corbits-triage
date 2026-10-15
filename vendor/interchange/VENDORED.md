@@ -4,12 +4,9 @@
 
 - Upstream: <https://github.com/faremeter/interchange>
 - Stock ref: `9ae471437453db9ef1af1eca6d94c524cecf05f1`
-- Pin: stock `9ae47143` (upstream main on 2026-10-15), byte-identical to
-  upstream in every vendored path. The PR #193 step-env director threading and
-  the CL-10210 signal carry below are not yet re-applied on this pin (CL-10725,
-  next slice); until they are, custom directors fail at step build and a
-  replayed signal mail can wedge a deployment inbox. Do not treat any delta as
-  a new stock pin.
+- Composite pin: stock `9ae47143` (upstream main on 2026-10-15) plus the
+  step-env director threading from PR #193 and the local CL-10210 carry. Do
+  not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -28,7 +25,7 @@ Re-vendoring: check out the stock ref and `rsync -a --delete` it over
 `node_modules`, `*.tsbuildinfo`, `.DS_Store` and this file. Then re-apply the
 allowed deltas and update the gate's default ref and the allowlist.
 
-## Allowed deltas (pending re-application on 9ae47143)
+## Allowed deltas
 
 ### Step-env director threading (upstream PR #193)
 
@@ -68,7 +65,9 @@ records as a `SignalReceived`, without redelivering it or dropping the run's
 input channel. `hasRecordedSignal` reads the run's event log for that check.
 Stock `cb0bdfb4` stops the child appending a duplicate `SignalReceived`, but
 `dispatchOne` still redelivers the mail and waits for the run to park, which
-a dropped duplicate does not do, so the carry stays.
+a dropped duplicate does not do, so the carry stays. The three files are
+unchanged upstream between `cd02c313` and `9ae47143`, so the carry applies
+as-is.
 
 Allowed files:
 
@@ -87,7 +86,6 @@ replayed signal mail the run already recorded.
   contains `5185df1a` (`Accept operator-registered provider plugins in the
   model catalog`), the merged form of `44170ebb`; the catalog files and
   `parse-row.test.ts` are stock again.
-
 - The rest of PR #193 / INTR-581 (dependency-package directors, owned-id
   namespace checks, the definition-scoped loader): stock already loaded the
   workflow package's own `interchange.directors` into the runtime env, which

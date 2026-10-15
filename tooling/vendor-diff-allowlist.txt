@@ -8,6 +8,17 @@
 # ignored. Keep entries justified: each must cite the tracking issue for
 # its upstream resolution.
 #
-# Stock pin: 9ae471437453db9ef1af1eca6d94c524cecf05f1, no deltas yet. The
-# PR #193 step-env director threading and the CL-10210 signal carry are
-# pending re-application on this pin; see vendor/interchange/VENDORED.md.
+# Composite pin: stock 9ae471437453db9ef1af1eca6d94c524cecf05f1 plus the
+# allowlisted deltas below. Full rationale is in vendor/interchange/VENDORED.md.
+#
+# Upstream PR #193 step-env director threading: the step env and spawned-child
+# deps resolve the closure's own directors. Remove by 2026-11-01 or when
+# upstream's step env loads the closure registry.
+packages/workflow-host/src/child/substrate-factory.ts
+
+# CL-10210 local carry: consume a replayed signal mail the run already
+# recorded instead of wedging the deployment inbox. Not upstream yet.
+# Remove by 2026-11-01 or when re-pinning to a stock commit that fixes it.
+packages/hub-sessions/src/workflow-run-kind.ts
+packages/hub-sessions/src/substrate.ts
+packages/workflow-host/src/supervisor/supervisor.ts
