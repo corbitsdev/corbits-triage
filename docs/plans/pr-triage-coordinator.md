@@ -526,3 +526,115 @@ worker definition keeps `credentialBindings` and `grantRequirements`
 deployment binds the host credential itself and the `triage-do:` grants ride
 in the mail as today. Nothing new is needed; the cost is one grant
 materialization per worker instead of per listener.
+
+### 12.7 Live proof of step 1 (2026-10-14, local stack)
+
+Setup: hub from this checkout on a fresh database, `TRIAGE_COORDINATOR=on`,
+`TRIAGE_WORKERS_GLOBAL=1`, `TRIAGE_WORKERS_PER_TENANT=1`,
+`TRIAGE_RECONCILE_INTERVAL_MS=30000`, tenant lifecycle `capacityRetention`
+`completed`/`cancelled` `0s`; local Bitbucket Data Center (Docker) with
+TRI/widgets enabled through the hub routes, a two-rule deterministic policy
+(`no-merge-conflicts`, `max-files-changed`), a placeholder decision-model
+credential (no judge call is made by this policy), and the webhook created on
+the instance by hand because the service token cannot manage webhooks. Each
+scenario pushes a commit to the branch of TRI/widgets#20; the wait for
+`worker_spawned` in the hub log decides when the mid-worker action fires.
+
+(a) One commit, pass. Push accepted 03:31:03.0; the hook was queued at
+03:31:03.265; the coalescer's 3 s window closed and the worker anchor row was
+created at 03:31:07.570 (`workflow_run_launch_spec.deploy_content ->>
+'corbitsTriageWorker' = 'true'`); the sidecar reported `Deployed
+'run_e54cb687…@proof-….localhost' generation '0'` at 03:31:09.846; the one
+mail was accepted on the first delivery:
+
+```
+{"msg":"worker_spawned","tenantId":"tnt_bc3681ef…","repo":"bitbucket-datacenter:TRI/widgets","pr":20,"workflow":"pr-triage-bitbucket-datacenter","runId":"run_e54cb6871cf48f724e6e120329b894e6"}   03:31:11.640
+inbound mail signature verdict 'valid'/'match' for 'github@proof-….localhost'   03:31:11.643
+{"msg":"worker_ended",…,"runId":"run_e54cb6871cf48f724e6e120329b894e6"}   03:31:13.653
+```
+
+The body run `run_e54cb687…__events__0` completed at 03:31:12.578; the anchor
+is `cancelled` with `ended_at` 03:31:14.478; `sidecar_allocation` for the
+anchor is `released` (updated 03:31:17.483). From push to worker released:
+11.5 s; from the window closing to the run fired: 4.1 s (sidecar boot and
+closure install); run to release: 1.9 s (the 2 s end poll). Five workers over
+the session, every one within 8 to 10 s from anchor row to cancellation.
+
+The worker's run log landed in full before the cancellation
+(`hub-data/workflow-runs/run_e54cb687…`: `RunStarted` … `StepCompleted..RunCompleted`,
+`compact run …__events__0 events`, `ChildCompleted`, all at 03:31:12, then
+`CancelRequested`, `CancelPropagated..RunCancelled` at 03:31:14). One pack was
+refused after it, as 12.4 describes for a top-level run that ends:
+
+```
+WRN hub·lookups: Workflow-run pack rejected for 'run_e54cb6871cf48f724e6e120329b894e6-proof-…-localhost': source address has no live deployment anchor   03:31:14.562
+```
+
+It carries only the anchor's own terminal events; nothing of the body run is in
+it.
+
+Not met: the verdict. The timeline for #20 shows no entry for the worker's
+head; the only entries are the listener's (`run_e0352aba…__events__1` for the
+head before the proof, and (f) below). The observer reads the host's live
+listener deployments (`resolveLiveDeployments`, listeners by default), so a
+worker's body run is never read and its verdict never recorded. That is step 2
+of section 11, worker observation, which this step does not include; the data
+it needs is there, as the landed log shows. Until step 2 lands the head stays
+`queued` after its worker, which also shapes (d) and (e).
+
+(b) Reconciler pass with a worker alive, pass. Commit pushed 03:33:18.4,
+`worker_spawned` 03:33:27.107 (`run_c3b1a63a…`), `POST
+/repositories/TRI/widgets/enable` at 03:33:27.39 (its `onEnabled` runs a
+reconciler pass), `worker_ended` 03:33:29.115. No `triage_rotation_adopted` in
+the whole session's log (0 lines), the worker's anchor holds exactly one child
+run, and the listener anchor `run_e0352aba…` stays `running` throughout. An
+idle pass writes no log line, so the pass itself is evidenced only by the
+route's 200 and the absence of effects.
+
+(c) Second commit while the worker runs, pass for the queue, not exercised for
+the wait. First head queued 03:35:15.678, `worker_spawned` 03:35:21.912
+(`run_fcc6b706…`); second head `7798a82b…` queued 03:35:22.834 while that
+worker was alive; `worker_ended` 03:35:23.920; the coalescer's window for the
+second head closed after that, so the coordinator spawned it at once
+(`run_8c21a73e…`, anchor 03:35:27.124, `worker_spawned` 03:35:29.163,
+`worker_ended` 03:35:31.189). With a 2 s run and a 3 s window the queue never
+had to hold a job behind a running worker; the unit test covers that branch.
+Superseding the older result needs the verdict recorded (step 2).
+
+(d) Hub restart mid-worker, pass for the release. `worker_spawned` 03:36:16.638
+(`run_3365073b…`), SIGTERM 03:36:17.010, hub down 03:36:17.122, restarted
+03:36:17.125:
+
+```
+{"msg":"worker_released_on_start","tenantId":"tnt_bc3681ef…","runId":"run_3365073be6e677a96d421d0d004e08e9"}   03:36:18.482
+```
+
+The orphan's body run is `failed` (03:36:20.817) and its anchor `cancelled`
+(03:36:22.518). Not seen within the two minutes watched: the retriage of head
+`7acb8b0b…`. The head's stored state is still `queued` from the coalescer's
+hand-off (no observer writes for workers, see (a)), so the reconciler's
+requeue rule waits on its attempt policy rather than on the failed run.
+
+(e) Retry with a worker alive, pass for isolation, blocked for delivery.
+`worker_spawned` 03:34:19.207 (`run_2972928f…`), `POST
+/api/integrations/github-triage/:tenantId {repo, number: 20}` at 03:34:19.35
+answered `409 already_queued`; no mail reached the worker (one child run) and
+none the listener. The same call at 03:34:48, with no worker alive, answered
+`409 already_queued` again, for the reason in (a): the head is never marked
+done. The retry's path to the listener is unchanged code
+(`sendBridgeMail`), but it could not be shown here.
+
+(f) Flag off, pass. Hub restarted with `TRIAGE_COORDINATOR=off` at 03:38:16;
+commit pushed 03:38:23.7, hook queued 03:38:23.775, listener child run
+`run_e0352aba…__events__2` completed 03:38:27.705, verdict recorded for
+`31d8404c…` at 03:38:27.516 (`ready-monitoring`); no worker row, no
+coordinator log line.
+
+Totals over the session: `worker_spawned` 6, `worker_ended` 5,
+`worker_released_on_start` 1, `worker_spawn_failed` 0, `worker_wait_failed` 0,
+`worker_release_failed` 0, `triage_rotation_adopted` 0.
+
+What this changes: step 2 (worker observation) is the gate for the verdict,
+the supersede and the retriage paths, and should ship before the flag is
+turned on anywhere. The spawn-to-fire cost is the sidecar boot measured in
+12.2; the end poll adds up to 2 s.
