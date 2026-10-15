@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { gridCell, triageRunsAlone, triageScope } from "./automation-grid.ts";
+import { gridCell, panelKinds, triageRunsAlone, triageScope } from "./automation-grid.ts";
 import type { HubGrant } from "./hub-api.ts";
 
 const TRIAGE = { id: "rol_triage", name: "pr-triage", isSystem: true };
@@ -27,5 +27,10 @@ describe("automation grid", () => {
     const grants = [grant("g1", "triage-do:comment:acme/api"), grant("g2", "triage-do:comment:*"), grant("g3", "triage-do:labels:acme/web")];
     expect(triageScope(TRIAGE, "comment", grants)).toEqual({ locked: false, everywhere: grants[1], repos: [{ repo: "acme/api", grant: grants[0] }] });
     expect(triageScope(TRIAGE, "comment", [grant("g4", "triage-do:*")])).toEqual({ locked: true, everywhere: undefined, repos: [] });
+  });
+
+  test("the repository panel leaves out the kinds a Bitbucket Data Center host has no way to do", () => {
+    expect(panelKinds("github")).toEqual(["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "merge"]);
+    expect(panelKinds("bitbucket-datacenter")).toEqual(["request-review", "comment", "approve", "request-changes", "close", "merge"]);
   });
 });
