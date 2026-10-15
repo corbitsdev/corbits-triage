@@ -12,8 +12,8 @@ import { patchCorbitsTriage, repoRecords, type CorbitsTriageNs, type RepoRecord 
 
 export type AutomationDeps = { db: DB["db"]; now: () => Date };
 
-/** What a repository set to post automatically wrote unattended before grants decided it. */
-const POSTED_KINDS: readonly ActionKind[] = ["comment", "labels"];
+/** What triage writes unattended on a repository from the moment it is enabled. */
+export const ENABLED_KINDS: readonly ActionKind[] = ["comment", "labels"];
 
 async function findRole(db: DB["db"] | Tx, tenantId: string): Promise<string | undefined> {
   const { role } = schema;
@@ -29,6 +29,11 @@ export async function ensureTriageRole(tx: Tx, tenantId: string, stamp: Date): P
   const id = generateId("role");
   await tx.insert(schema.role).values({ id, tenantId, name: TRIAGE_ROLE, description: "What triage does on its own", isSystem: true, createdAt: stamp, updatedAt: stamp });
   return id;
+}
+
+export async function grantEnabledKinds(tx: Tx, tenantId: string, repo: string, stamp: Date): Promise<void> {
+  const roleId = await ensureTriageRole(tx, tenantId, stamp);
+  for (const kind of ENABLED_KINDS) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);
 }
 
 function postingMode(record: Record<string, unknown>): unknown {
@@ -61,12 +66,11 @@ export function createAutomation(deps: AutomationDeps) {
    */
   function carryPostingMode(tenantId: string) {
     return async function carry(ns: CorbitsTriageNs, tx: Tx): Promise<CorbitsTriageNs | undefined> {
-      const roleId = await ensureTriageRole(tx, tenantId, deps.now());
+      await ensureTriageRole(tx, tenantId, deps.now());
       const records = repoRecords(ns) as Array<RepoRecord & Record<string, unknown>>;
       if (records.every((record) => postingMode(record) === undefined)) return undefined;
       for (const record of records) {
-        if (postingMode(record) !== "automated") continue;
-        for (const kind of POSTED_KINDS) await allowRole(tx, tenantId, roleId, doResource(kind, record.name), DO_GRANT_ACTION, deps.now());
+        if (postingMode(record) === "automated") await grantEnabledKinds(tx, tenantId, record.name, deps.now());
       }
       return { ...ns, repos: ns.repos?.map((row) => (records.includes(row) ? (stripPostingMode(row) as RepoRecord) : row)) };
     };
