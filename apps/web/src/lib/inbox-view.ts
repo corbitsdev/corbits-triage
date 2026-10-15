@@ -224,13 +224,18 @@ export function allOpen(open: OpenItem[], enabled: ReadonlySet<string>): OpenIte
   return open.filter((entry) => enabled.has(entry.item.repo));
 }
 
+/** A pending approval still needs a person after its repository's triage is turned off. */
+export function needsYou(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
+  return open.filter((entry) => entry.handled === null && (enabled.has(entry.item.repo) || entry.item.pendingApprovalId !== null));
+}
+
 export function firstTimers(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
   return allOpen(open, enabled).filter((entry) => entry.item.authorKind === "first-timer");
 }
 
 export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Record<ListView, number> {
   return {
-    "needs-you": open.filter((entry) => entry.handled === null && inNeedsYou(entry.item)).length,
+    "needs-you": needsYou(open, enabled).filter((entry) => inNeedsYou(entry.item)).length,
     "all-open": allOpen(open, enabled).length,
     "first-timers": firstTimers(open, enabled).length,
   };
