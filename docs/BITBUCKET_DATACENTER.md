@@ -112,6 +112,19 @@ and on again switches Comment and Labels back on.
 | 409 | `bitbucket_datacenter_not_connected`, `repo_empty` (no default branch), `repo_name_taken` (a GitHub repository has the same name) |
 | 502 | `bitbucket_datacenter_failed`, `bitbucket_datacenter_unreachable` |
 
+### `GET /repositories/{project}/{slug}/webhook`
+
+Needs `manage` on the workspace and `use` on the `bitbucket-datacenter-hook`
+credential. 200 `{ "webhook": "registered", "webhookId" }` when triage created
+the webhook, otherwise `{ "webhook": "manual", "hookUrl", "hookSecret", "events" }`.
+Answered with `Cache-Control: no-store`, as is enable's `manual` answer.
+
+| Status | Body |
+| --- | --- |
+| 403 | `forbidden` (no `manage`, or no `use` on the hook credential) |
+| 404 | `repo_not_found` (no such repository recorded) |
+| 409 | `bitbucket_datacenter_not_connected`, `triage_off` |
+
 ### `POST /repositories/{project}/{slug}/disable`
 
 Needs `manage` on the workspace, and `use` on the `bitbucket-datacenter`
@@ -151,3 +164,7 @@ When enable answers `"webhook": "manual"`, a repository admin on the instance:
 3. Pastes `hookSecret` as the secret.
 4. Selects the events above and leaves the webhook active.
 5. Saves.
+
+The hub never learns of a hand-made webhook, so the repository panel keeps the
+URL, secret and events available while triage is on, collapsed under Webhook
+setup except right after triage is turned on there.
