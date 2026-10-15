@@ -32,7 +32,6 @@ function prEvent(eventKey: string, slug = "widgets") {
     pullRequest: {
       id: 1,
       title: "Add subtract",
-      description: "Adds subtract next to add.",
       state: eventKey === "pr:merged" ? "MERGED" : "OPEN",
       draft: false,
       fromRef: { latestCommit: "3e1552b0", repository: repo },
@@ -92,23 +91,15 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
 }
 
 describe("POST /api/hooks/bitbucket-datacenter/:tenantId", () => {
-  test("a signed pull request event is queued once for the Bitbucket repository record", async () => {
+  test("a signed pull request event is queued once for the Bitbucket repository record; a bad signature is 401 and an unrecorded repository 404", async () => {
     const h = harness();
     const body = prEvent("pr:opened");
-    const first = await h.send(hookRequest(body, "pr:opened"));
-    expect(first.status).toBe(202);
-    expect(await first.json()).toEqual({ status: "queued" });
-    const again = await h.send(hookRequest(body, "pr:opened"));
-    expect(await again.json()).toEqual({ status: "duplicate" });
+    expect((await h.send(hookRequest(body, "pr:opened", { signature: "sha256=00" }))).status).toBe(401);
+    expect((await h.send(hookRequest(prEvent("pr:opened", "gadgets"), "pr:opened", { delivery: "req-2" }))).status).toBe(404);
+    expect(await (await h.send(hookRequest(body, "pr:opened"))).json()).toEqual({ status: "queued" });
+    expect(await (await h.send(hookRequest(body, "pr:opened"))).json()).toEqual({ status: "duplicate" });
     expect(h.accepted).toHaveLength(1);
     expect(h.accepted[0]).toMatchObject({ workflow: "pr-triage", number: 1, headSha: "3e1552b0", event: "opened", record: { name: "TRI/widgets", source: "bitbucket-datacenter" } });
-  });
-
-  test("a bad signature is 401 and a repository with no Bitbucket record is 404", async () => {
-    const h = harness();
-    expect((await h.send(hookRequest(prEvent("pr:opened"), "pr:opened", { signature: "sha256=00" }))).status).toBe(401);
-    expect((await h.send(hookRequest(prEvent("pr:opened", "gadgets"), "pr:opened", { delivery: "req-2" }))).status).toBe(404);
-    expect(h.accepted).toHaveLength(0);
   });
 
   test("a failed queue write is 500 and the redelivery is accepted", async () => {

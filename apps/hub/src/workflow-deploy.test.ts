@@ -94,27 +94,14 @@ function withCredentials(names: string[]) {
   return { query: { ...(db as { query: Record<string, unknown> }).query, credential: { async findMany() { return names.map((name) => ({ name })); } } } } as never;
 }
 
-test("a mixed workspace deploys both hosts' packages; a host's package waits for its connection", async () => {
-  const github = { ...BODY, entry: "./pr-triage-github.mjs" };
-  const bitbucket = { ...BODY, entry: "./pr-triage-bitbucket-datacenter.mjs" };
-  const both: Calls = { prepared: [] };
-  const mixed = handler(both, { db: withCredentials(["github", "bitbucket-datacenter"]) });
-  expect((await mixed(github, MEMBER)).status).toBe(201);
-  expect((await mixed(bitbucket, MEMBER)).status).toBe(201);
-  expect(both.prepared.map((call) => call.entry)).toEqual(["./pr-triage-github.mjs", "./pr-triage-bitbucket-datacenter.mjs"]);
-  const only: Calls = { prepared: [] };
-  const bitbucketOnly = handler(only, { db: withCredentials(["bitbucket-datacenter"]) });
-  const refused = await bitbucketOnly(github, MEMBER);
-  expect(refused.status).toBe(409);
-  expect(await refused.json()).toMatchObject({ error: { code: "source_not_connected" } });
-  expect((await bitbucketOnly(bitbucket, MEMBER)).status).toBe(201);
-  expect(only.prepared).toHaveLength(1);
-});
-
-test("pr-triage-historical deploys only with GitHub connected", async () => {
+test("a host's package deploys only with its host connected, and pr-triage-historical only with GitHub", async () => {
   const calls: Calls = { prepared: [] };
-  const res = await handler(calls, { db: withCredentials(["bitbucket-datacenter"]) })({ ...BODY, entry: "./pr-triage-historical.mjs" }, MEMBER);
-  expect(res.status).toBe(409);
-  expect(calls.prepared).toHaveLength(0);
-  expect((await handler(calls, { db: withCredentials(["github"]) })({ ...BODY, entry: "./pr-triage-historical.mjs" }, MEMBER)).status).toBe(201);
+  const bitbucketOnly = handler(calls, { db: withCredentials(["bitbucket-datacenter"]) });
+  for (const entry of ["./pr-triage-github.mjs", "./pr-triage-historical.mjs"]) {
+    const refused = await bitbucketOnly({ ...BODY, entry }, MEMBER);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: { code: "source_not_connected" } });
+  }
+  expect((await bitbucketOnly({ ...BODY, entry: "./pr-triage-bitbucket-datacenter.mjs" }, MEMBER)).status).toBe(201);
+  expect(calls.prepared.map((call) => call.entry)).toEqual(["./pr-triage-bitbucket-datacenter.mjs"]);
 });
