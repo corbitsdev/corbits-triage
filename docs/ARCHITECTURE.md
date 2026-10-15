@@ -131,9 +131,9 @@ one does.
    When includes checks, as it does by default, the completed `check_run`
    webhook triages the head again and resolves the held actions; a Bitbucket
    head is polled for its build statuses instead.
-7. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`; on Bitbucket the
-   `Corbits Triage` build status) when the `pr-triage` role holds the labels grant, and one marker comment when it holds the comment
-   grant. It runs before execute so a merge or close finds the final verdict on the head it closes.
+7. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`) when the
+   `pr-triage` role holds the labels grant, and one marker comment when it holds the comment grant; on Bitbucket the comment
+   grant also writes the verdict as the `Corbits Triage` build status. It runs before execute so a merge or close finds the final verdict on the head it closes.
 8. **execute**: runs the actions whose kind the `pr-triage` role holds on the host.
    Every other action is held in the verdict (`held: true`) and the run finishes.
 

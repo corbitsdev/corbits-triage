@@ -293,7 +293,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       if (webhookId instanceof Response) return webhookId;
       const written = await patchCorbitsTriage(db, member.tenantId, async function enableBitbucketRepo(ns, tx) {
         const prev = repoRecords(ns).find((record) => isBitbucketRecord(record) && record.name === name);
-        if (prev?.enabled !== true) await grantEnabledKinds(tx, member.tenantId, name, deps.now());
+        if (prev?.enabled !== true) await grantEnabledKinds(tx, member.tenantId, name, "bitbucket-datacenter", deps.now());
         return enableRepo(ns, name, branch, webhookId);
       });
       const repository = written && repoRecords(written).find((record) => record.name === name);

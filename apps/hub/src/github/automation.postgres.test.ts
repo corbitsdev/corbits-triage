@@ -13,8 +13,9 @@ const TENANT = "tnt_automation";
 const AUTOMATED = "acme/api";
 const MANUAL = "acme/web";
 const NESTED = "acme/docs";
+const BITBUCKET = "TRI/widgets";
 
-test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its kind's grant; an automated repository's posting carries over once", async () => {
+test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its kind's grant; an automated repository's posting carries over once; a Bitbucket repository loses the kinds its host lacks", async () => {
   const database = `corbits_automation_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
   await admin.db.execute(sql.raw(`create database ${database}`));
@@ -28,6 +29,7 @@ test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its k
       { name: AUTOMATED, connected: true, enabled: true, cleanupMode: "automated" },
       { name: MANUAL, connected: true, enabled: true, cleanupMode: "human-approved" },
       { name: NESTED, connected: true, policy: { enabled: true, cleanupMode: "automated" } },
+      { name: BITBUCKET, source: "bitbucket-datacenter", connected: true, enabled: true },
     ];
     await db.insert(schema.tenant).values([
       { id: TENANT, name: "Automation", slug: "automation", domain: "automation.test", config: { corbitsTriage: { repos } } },
@@ -62,6 +64,12 @@ test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its k
     expect(await grants()).toEqual([]);
     expect(await held(AUTOMATED, "comment")).toBe(true);
     expect(await db.select().from(schema.role).where(eq(schema.role.tenantId, TENANT))).toHaveLength(1);
+
+    const kept = [`triage-do:comment:${BITBUCKET.toLowerCase()}`, `triage-do:labels:${AUTOMATED}`];
+    await db.insert(schema.grant).values([...kept, `triage-do:labels:${BITBUCKET.toLowerCase()}`].map((resource, i) => ({ id: `grt_held_${i}`, tenantId: TENANT, roleId: role!.id, resource, action: "invoke", effect: "allow" as const, origin: "role" as const })));
+    await automation.startUp();
+    await automation.startUp();
+    expect((await grants()).map((row) => row.resource).sort()).toEqual(kept.sort());
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

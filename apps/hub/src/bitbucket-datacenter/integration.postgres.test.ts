@@ -62,7 +62,7 @@ async function withDatabase(run: (db: ReturnType<typeof createDB>["db"], cipher:
   }
 }
 
-test("PostgreSQL: enabling a Bitbucket repository grants comment and labels and registers its webhook", async () => {
+test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enabled kind the host has, and registers its webhook", async () => {
   await withDatabase(async function enableGrants(db, cipher) {
     const integration = createBitbucketIntegration({
       db, cipher, async authorize() { return true; },
@@ -75,7 +75,7 @@ test("PostgreSQL: enabling a Bitbucket repository grants comment and labels and 
     expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual([]);
     const res = await integration.enable(MEMBER, "TRI", "widgets");
     expect(res.status).toBe(200);
-    expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual(["labels", "comment"]);
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual(["comment"]);
     expect(await (await integration.webhook(MEMBER, "TRI", "widgets")).json()).toEqual({ webhook: "registered", webhookId: 9 });
   });
 }, 120_000);

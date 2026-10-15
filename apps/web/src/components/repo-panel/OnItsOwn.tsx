@@ -2,8 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Switch } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { DO_GRANT_ACTION, doResource, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
-import { findTriageRole, panelKinds, triageScope } from "../../lib/automation-grid.ts";
+import { DO_GRANT_ACTION, doResource, hostKinds, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
+import { findTriageRole, triageScope } from "../../lib/automation-grid.ts";
 import { canRemoveGrant } from "../../lib/grant-actions.ts";
 import type { HubGrant, HubRole } from "../../lib/hub-api.ts";
 import { DO_NAMES } from "../../lib/pack-prose.ts";
@@ -19,6 +19,11 @@ const DOES: Record<ActionKind, string> = {
   close: "closes the pull request",
   merge: "merges the pull request",
 };
+
+/** A host without labels shows the verdict as a build status, written with the comment. */
+function does(source: RepoSource, kind: ActionKind): string {
+  return kind === "comment" && !hostKinds(source).includes("labels") ? "posts its comment and the verdict build status" : DOES[kind];
+}
 
 type Change = { roleId: string; kind: ActionKind; on: boolean; own: HubGrant[] };
 
@@ -46,7 +51,7 @@ export default function OnItsOwn({ repo, source, roles, grants, disabled }: OnIt
     return (
       <div key={kind} className={`sentence${on ? "" : " off"}`}>
         <span className="txt">
-          <b>{DO_NAMES[kind]}</b>: Triage {DOES[kind]} without asking.
+          <b>{DO_NAMES[kind]}</b>: Triage {does(source, kind)} without asking.
           {wider ? <span className="wide">On in every repository (<Link to="/settings/access">Settings → Access</Link>)</span> : null}
         </span>
         <Switch className="sw" checked={on} onCheckedChange={(next) => change.mutate({ roleId: triage.id, kind, on: next, own })} label={`${DO_NAMES[kind]} on its own`} disabled={disabled || change.isPending || wider || !own.every(canRemoveGrant)} />
@@ -58,8 +63,8 @@ export default function OnItsOwn({ repo, source, roles, grants, disabled }: OnIt
     <section className="rs alone" aria-labelledby="rs-alone" id="rp-alone">
       <h3 id="rs-alone">Actions Triage takes on its own</h3>
       <p className="help">The rest wait for you in the inbox.</p>
-      <div className="gcard"><div className="sentences">{panelKinds(source).map((kind) => row(triage, kind))}</div></div>
-      {change.error && change.variables ? <p role="alert" className="error">Could not change whether Triage {DOES[change.variables.kind]} on its own. {errorText(change.error)} Try again.</p> : null}
+      <div className="gcard"><div className="sentences">{hostKinds(source).map((kind) => row(triage, kind))}</div></div>
+      {change.error && change.variables ? <p role="alert" className="error">Could not change whether Triage {does(source, change.variables.kind)} on its own. {errorText(change.error)} Try again.</p> : null}
     </section>
   );
 }

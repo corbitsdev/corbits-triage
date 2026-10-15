@@ -106,7 +106,7 @@ The secret is shown only this once. Turning triage off removes a webhook Triage 
 
 A few things work differently from GitHub, because Bitbucket works differently:
 
-- **No labels.** Bitbucket Data Center has no labels, so the Labels card and **Add label…** steps have no effect there. Triage shows its verdict as a build status named **Corbits Triage** on the pull request's latest commit instead.
+- **No labels.** Bitbucket Data Center has no labels, so the Labels card and **Add label…** steps have no effect there. Triage shows its verdict as a build status named **Corbits Triage** on the pull request's latest commit instead, while Comment is on for the repository.
 - **No assignments.** Bitbucket has no assignees, so **Assign to…** steps are not carried out.
 - **Bitbucket's own reviews.** Approve, Request changes, Close and Merge become Bitbucket's approve, needs work, decline and merge.
 - **CI is checked on a timer.** Bitbucket sends no event when a build finishes, so while the **CI must pass** rule is waiting on a build, or failing because of one, Triage looks at the build again after five minutes, then less often, and checks the pull request again once it has changed.
@@ -124,9 +124,9 @@ The **Policy** card says where the repository's rules and actions are kept. At f
 
 A file can also start from a workspace-wide policy with `extends`, and then set only what differs for this repository. This is useful when many repositories should follow the same rules.
 
-Enabling a repository switches on Comment and Labels; every other action stays off until you switch it on. Turning triage off and on again switches Comment and Labels back on.
+Enabling a repository switches on Comment and Labels (Comment only on Bitbucket, which has no labels); every other action stays off until you switch it on. Turning triage off and on again switches them back on.
 
-Under the switch, **Actions Triage takes on its own** lists each action with its own switch. On, Triage does that action in this repository without asking; off, it waits for you in the Inbox, in this repository only. An action allowed in every repository under Settings → Access shows on and changes only there. Bitbucket Data Center repositories do not list Add labels or Assign.
+Under the switch, **Actions Triage takes on its own** lists each action with its own switch. On, Triage does that action in this repository without asking; off, it waits for you in the Inbox, in this repository only. An action allowed in every repository under Settings → Access shows on and changes only there. Bitbucket Data Center repositories do not list Add labels or Assign, and Settings → Access does not offer them for those actions.
 
 ### Rules
 

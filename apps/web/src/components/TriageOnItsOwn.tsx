@@ -1,11 +1,11 @@
 import { useState, type ChangeEvent } from "react";
 import { Select, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
-import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { DO_GRANT_ACTION, doResource, hostKinds, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { findTriageRole, GRID_KINDS, triageScope, type TriageScope } from "../lib/automation-grid.ts";
+import { findTriageRole, GRID_KINDS, hostCased, triageScope, type TriageScope } from "../lib/automation-grid.ts";
 import { canRemoveGrant, type CreateGrantInput } from "../lib/grant-actions.ts";
-import type { HubGrant, HubRole } from "../lib/hub-api.ts";
+import type { HubGrant, HubRole, RepoRecord } from "../lib/hub-api.ts";
 import { DO_NAMES } from "../lib/pack-prose.ts";
 
 const EVERYWHERE = "*";
@@ -13,7 +13,7 @@ const EVERYWHERE = "*";
 type TriageOnItsOwnProps = {
   roles: HubRole[];
   grants: HubGrant[];
-  repos: string[];
+  repos: RepoRecord[];
   loading: boolean;
   denied: boolean;
   disabled: boolean;
@@ -37,7 +37,7 @@ function GrantChip({ label, action, grant, disabled, onRemove }: GrantChipProps)
 type ScopeRowProps = {
   kind: ActionKind;
   scope: TriageScope;
-  repos: string[];
+  repos: RepoRecord[];
   disabled: boolean;
   add: (kind: ActionKind, repo: string) => void;
   remove: (kind: ActionKind, grant: HubGrant) => void;
@@ -46,7 +46,8 @@ type ScopeRowProps = {
 function ScopeRow({ kind, scope, repos, disabled, add, remove }: ScopeRowProps) {
   const name = DO_NAMES[kind];
   const listed = new Set(scope.repos.map((entry) => entry.repo));
-  const addable = repos.filter((repo) => !listed.has(repo.toLowerCase()));
+  const names = repos.map((repo) => repo.name);
+  const addable = repos.filter((repo) => hostKinds(repo.source).includes(kind) && !listed.has(repo.name.toLowerCase())).map((repo) => repo.name);
   const { everywhere } = scope;
 
   function pick(event: ChangeEvent<HTMLSelectElement>) {
@@ -64,7 +65,7 @@ function ScopeRow({ kind, scope, repos, disabled, add, remove }: ScopeRowProps) 
         <span className="tokens">
           {scope.locked && <span className="glob">All repositories, through a grant of every action</span>}
           {everywhere && <GrantChip label="All repositories" action={name} grant={everywhere} disabled={disabled} onRemove={removeGrant} />}
-          {scope.repos.map((entry) => <GrantChip key={entry.repo} label={entry.repo} action={name} grant={entry.grant} disabled={disabled} onRemove={removeGrant} />)}
+          {scope.repos.map((entry) => <GrantChip key={entry.repo} label={hostCased(names, entry.repo)} action={name} grant={entry.grant} disabled={disabled} onRemove={removeGrant} />)}
           {!scope.locked && (
             <Select className="add-repo" aria-label={`Add a repository where Triage does ${name} on its own`} value="" disabled={disabled} onChange={pick}>
               <option value="" disabled>Add repository…</option>
