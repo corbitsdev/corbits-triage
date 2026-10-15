@@ -612,6 +612,43 @@ export async function listIssueComments(gh: GithubFetch, repo: string, number: n
   }));
 }
 
+/** Something an account did on a pull request; `state` is a review's, upper case as the reviews API gives it. */
+export type TimelineEvent = { kind: string; actor: string; bot: boolean; at: string; state?: string };
+
+/** When a pull request was opened and closed; `author` is null for a deleted account. */
+export type PrTimes = { number: number; author: string | null; createdAt: string; closedAt: string | null };
+
+function prTimesOf(p: any): PrTimes {
+  return { number: p.number, author: p.user?.login ?? null, createdAt: p.created_at, closedAt: p.closed_at };
+}
+
+export async function getPrTimes(gh: GithubFetch, repo: string, number: number): Promise<PrTimes> {
+  return prTimesOf(await json(gh, `/repos/${repo}/pulls/${number}`));
+}
+
+/** Commits carry a git identity rather than an account, so events without an actor are left out. */
+function timelineEvent(row: any): TimelineEvent[] {
+  const user = row.actor ?? row.user;
+  const at = row.created_at ?? row.submitted_at;
+  if (typeof user?.login !== "string" || typeof at !== "string") return [];
+  return [{ kind: row.event, actor: user.login, bot: user.type === "Bot", at, ...(typeof row.state === "string" && { state: row.state.toUpperCase() }) }];
+}
+
+/** The first page only, oldest first, which holds the first responses and approvals of all but the busiest pull requests. */
+export async function listPrTimeline(gh: GithubFetch, repo: string, number: number): Promise<TimelineEvent[]> {
+  const rows: unknown = await json(gh, `/repos/${repo}/issues/${number}/timeline?per_page=100`);
+  if (!Array.isArray(rows)) throw new Error(`github returned an invalid timeline for ${repo}#${number}`);
+  return rows.flatMap(timelineEvent);
+}
+
+/** The 50 newest-created pull requests closed before `before`; one search call. */
+export async function searchClosedPrsBefore(gh: GithubFetch, repo: string, before: Date): Promise<PrTimes[]> {
+  const q = `repo:${repo} is:pr is:closed closed:<${before.toISOString().slice(0, 19)}Z`;
+  const page = await json(gh, `/search/issues?q=${encodeURIComponent(q)}&sort=created&order=desc&per_page=50`);
+  if (!Array.isArray(page?.items)) throw new Error(`github returned an invalid search page for ${repo}`);
+  return page.items.map(prTimesOf);
+}
+
 export type LinkedIssue = {
   number: number;
   title: string;

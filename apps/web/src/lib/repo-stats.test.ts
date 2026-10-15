@@ -25,6 +25,7 @@ const STATS: TriageStats = {
   actions: { pass: { suggested: 2, executed: 1, failed: 0 } },
   comments: 4,
   medianTimeToVerdictMs: 4_320_000,
+  outcomes: null,
   daily: [0, 1, 0, 2, 0, 0, 2].map((triaged, i) => ({ date: `2026-10-0${i + 1}`, triaged })),
 };
 
