@@ -106,8 +106,13 @@ function approvalOf(started: Record<string, unknown>): Approval | undefined {
   return { repo, number, ...(typeof principalId === "string" && { principalId }) };
 }
 
+function terminalStatus(events: readonly WorkflowRunEvent[]): Terminal["status"] | undefined {
+  const last = events.at(-1);
+  return last && TERMINAL_EVENTS[last.type];
+}
+
 function approvedOf(approval: Approval, events: readonly WorkflowRunEvent[]): Approval {
-  if (TERMINAL_EVENTS[events.at(-1)?.type ?? ""] === undefined) return approval;
+  if (terminalStatus(events) === undefined) return approval;
   const { repo, number } = approval;
   return { ...approval, approved: [...doResults(events, APPROVED_STEPS).values()].map((result) => ({ repo, number, ...result })) };
 }
@@ -264,7 +269,7 @@ function terminalOf(status: Terminal["status"], verdict: Record<string, unknown>
 
 /** The verdict step's output is the verdict: one per head in mail order, or one degraded verdict for every head. Any other count pairs nothing, so no head settles on another's verdict. */
 function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger[]): Head[] {
-  const status = TERMINAL_EVENTS[events.at(-1)?.type ?? ""];
+  const status = terminalStatus(events);
   const verdicts = verdictsOf(events);
   const verdictAt = lastCompleted(events, VERDICT_STEPS)?.body["at"];
   const mirrored = mirroredCalls(events);
