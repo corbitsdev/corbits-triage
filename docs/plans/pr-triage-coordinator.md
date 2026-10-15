@@ -1,6 +1,6 @@
 # Plan: pr-triage coordinator and per-triage worker deployments (CL-10705)
 
-Status: design, no code; step 0 (spike) done, results in section 12. Paths are repository-relative; `vendor/` is the
+Status: step 0 (spike) done, results in section 12; 12.4 reproduced and decided (12.6); step 1 built behind `TRIAGE_COORDINATOR`. Paths are repository-relative; `vendor/` is the
 vendored Interchange at stock `cd02c313` (`vendor/interchange/VENDORED.md`).
 Upstream docs are cited by name at that ref.
 
@@ -346,12 +346,14 @@ verdict table, hook verification.
 
 Each PR is one concern, small, behind the version switch until cutover.
 
-0. Spike, no PR: done, section 12. Its blocker (12.4) is the gate for 2.
-1. PR: worker definition, new major version of the per-host packages
-   (30 min).
+0. Spike, no PR: done, section 12. Its blocker (12.4) is decided in 12.6.
+1. PR: coordinator skeleton behind `TRIAGE_COORDINATOR` (off by default):
+   queue, limits, spawn from the live deployment, release on run end; the
+   coalescer enqueues to it when on. Built, section 12.6. No worker
+   definition change: the worker is the listener definition (12.6).
 2. PR: worker observation in tenant observer and triage-runs (45 min).
-3. PR: coordinator with limits, priority and spawn; coalescer, reconciler,
-   approvals enqueue to it when the newest deployment is a worker (90 min).
+3. PR: priority classes; reconciler, approvals and backlog enqueue to the
+   coordinator (90 min).
 4. PR: queue route and portal display (45 min).
 5. PR: portal publish sets lifecycle and seeds workers; cancels the listener
    (30 min).
@@ -454,6 +456,40 @@ still break verdict recording; (2) a stock retention or ordering setting that
 holds the anchor live until the pack lands; (3) raise upstream when the owner
 asks (`feedback-no-upstream-interchange`). Until resolved, step 2 of the build
 plan (worker observation) is blocked; steps 1 and 3 are not.
+
+Reproduced four more times (2026-10-14, same stack, fresh `HUB_DATA_DIR` each hub start), two with the echo step returning at once and two with the step sleeping 5 s, so the run outlives any push debounce:
+
+| hub retention | step | run | `ended_at` | first pack rejection | rejections | `capacity_release_at` | DB status | `GET …/runs/:id` status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1s | immediate | `run_9fefb780…` | 02:55:05.481 | 02:55:05.639 (+158 ms) | 1 | 02:55:06.481 | completed | stopped |
+| 1s | immediate | `run_633652ce…` | 02:55:26.631 | 02:55:26.763 (+132 ms) | 2 | 02:55:27.631 | completed | stopped |
+| 30s | 5 s sleep | `run_c026511b…` | 02:56:42.657 | 02:56:42.722 (+65 ms) | 3 | 02:57:12.657 | completed | stopped |
+| 30s | 5 s sleep | `run_ffee8826…` | 02:57:25.121 | 02:57:25.188 (+67 ms) | 3 | 02:57:55.121 | completed | stopped |
+
+Log lines, every run the same pair (hub then sidecar):
+
+```
+WRN hub·lookups: Workflow-run pack rejected for 'run_c026511b2026be283aa0c82c7eb62b90-spike-mv8y6chn-localhost': source address has no live deployment anchor
+WRN interchange·sidecar·workflow-run-pack-client: workflow-run pack push failed for deployment 'run_c026511b2026be283aa0c82c7eb62b90-spike-mv8y6chn-localhost' ('run_c026511b2026be283aa0c82c7eb62b90@spike-mv8y6chn.localhost'): …
+```
+
+Findings:
+- Every pack is lost, because there is only one: with the step sleeping 5 s, no pack was pushed during the run; the first push came 65 ms after `ended_at` and was refused. The pack client coalesces local commits into one push, and for this shape the first push carries the whole log, terminal events included. No pack ever landed: `hub-data/workflow-runs/<run>` holds only `.git` and `.gitignore` in all four cases.
+- Not a retention race: `WORKFLOW_DEFAULT_RETENTION_COMPLETED=30s` changes nothing. The refusal comes 65 to 158 ms after `ended_at`, 1 s to 30 s before `capacity_release_at`. The anchor check in `hub-session-lookups.ts:348-373` tests the row's status (`deployed`/`running`), not its retention, and the terminal status is projected from the control frame before the pack arrives.
+- The hub run row does reach `completed` in `workflow_run` (`ended_at` set, `capacity_release_at` = `ended_at` + retention, allocation `released` on time). The stock run read route reports `stopped` for the same run throughout, and the run's events route serves the event collector's `RunStarted, StepStarted, StepCompleted, RunCompleted` for all four, so the status and events the portal reads are available; only the run-log repository, which the observer reads today, is empty.
+- Upstream head does not change this (`hub-session-lookups.ts` identical; upstream PR #227 hardens "terminal anchor rejects later receives"), so it is by design, not a bug to file. No retention setting makes the worker's own pack land.
+
+### 12.6 Decision: the worker keeps the listener shape
+
+Settled 2026-10-14, on the current pin, no bump. The worker is today's definition, `onTrigger({ body: perPr })`, deployed fresh per job and fired with exactly one mail. The body run is a child of the anchor, so its pack lands while the anchor stays `running`; the coordinator sees the body run end (the stock `workflow_run` row of the child leaves the live statuses) and calls `lifecycle.requestCancellation` on the anchor, the call rotation uses today (`apps/hub/src/github/deployment.ts`, `release`). One deployment, one run, released on end: the owner's shape holds without a top-level run and without an upstream change. The observer path (step 2) reads these body runs exactly as it reads listener body runs today, so step 2 is no longer blocked; it is not in step 1's PR.
+
+What this changes in the plan: section 2's "no trigger listener" and section 5's "Definition: top-level run, `trigger: manual`" are replaced by this shape; the `prTriage({ sources })` definition does not change for step 1 and no new package major is needed. 12.1 stands for the record (a top-level run reads mail as `trigger.payload`), but it is not used.
+
+Step 1 as built (`TRIAGE_COORDINATOR=on`, off by default so the listener path is untouched):
+- `apps/hub/src/github/coordinator.ts`: the queue, keyed per (tenant, repository, pull request) so a newer job replaces a queued one; global and per-tenant worker caps; spawn spacing from `TRIAGE_SPAWNS_PER_SECOND`; round-robin across tenants at the cap; the slot is held through the spawn and released when the worker's run has ended. The per-pull-request fold stays the coalescer's, unchanged: the coordinator takes the mail it would have sent.
+- `apps/hub/src/github/worker-spawn.ts`: the seed is the host's live pr-triage deployment; the copy is `createDeploymentRotation.redeploy` (the `prepareProvisionedDeployment` call the spike used); fire is `deliverToDeployment` retried on `DeploymentNotReadyError` within the two-minute first-connect window; end is the child run leaving the live statuses (or the anchor leaving them); release is `requestCancellation`.
+- `apps/hub/src/env.ts`: `TRIAGE_COORDINATOR`, `TRIAGE_WORKERS_GLOBAL`, `TRIAGE_WORKERS_PER_TENANT`, `TRIAGE_SPAWNS_PER_SECOND`.
+- Known limits of the skeleton, for steps 2 and 3: the seed lookup takes the newest live deployment of the workflow, which after the first spawn is a worker (same source, so the copy is identical); the reconciler, approvals and backlog still mail the listener; the queue is not yet a route.
 
 ### 12.5 Credential and grants in this shape
 
