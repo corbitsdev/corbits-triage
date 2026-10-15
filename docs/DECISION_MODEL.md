@@ -135,7 +135,7 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 
 ## Measured accuracy
 
-`evals/judge` replays frozen, labelled pull requests of this repository through the deployed pr-triage definition on Interchange's local runner (`runLocal` with the production step invoker, agents and directors; `evals/judge/run-definition.ts`), triggered by the mail the hub sends, with GitHub served from the snapshot and the judge calling OpenCode Zen `jev-1.13`, with focused and docs enabled. Each judge call is attempted once, as deployed: the judge director answers an inference error as a judge error, so the step's retry never runs. The harness before CL-10638 retried timeouts, network errors, 429s and 5xx up to three times, which may account for its one or two fewer docs unsures. Each case expects the verdict to fail when docs or focused is expected to fail, and to pass otherwise.
+`packages/triage-workflows/evals` replays labelled pull requests of this repository through the deployed pr-triage definition on Interchange's local runner (`runLocal` with the production step invoker, agents and directors; `evals/run-definition.ts` over the shared `evals/run-local.ts`), triggered by the mail the hub sends, with GitHub served from fixtures fetched through `gh` on first use into the gitignored `evals/.cache/`, each at the head and base sha `labels.json` pins so later pushes do not change it, and the judge calling OpenCode Zen `jev-1.13`, with focused and docs enabled. Each judge call is attempted once, as deployed: the judge director answers an inference error as a judge error, so the step's retry never runs. The harness before CL-10638 retried timeouts, network errors, 429s and 5xx up to three times, which may account for its one or two fewer docs unsures. Each case expects the verdict to fail when docs or focused is expected to fail, and to pass otherwise.
 
 - **Cases**: 49 in `cases.jsonl`. These are 34 pull requests labelled in `labels.json` (needs docs), 4 variants with their docs removed (body and matching commit messages dropped too), 7 mixes of two unrelated pull requests that focused must fail, and 4 of those mixes again with a title and body describing both halves (`describedMixes`). #190 and #191 are one feature each spread across hub, portal, contracts and workflows, which focused must pass.
 - **Allowed misses**: docs 7, focused 2, verdict 4 (`judge.eval.ts`). An unsure answer counts as a miss; the run prints how many were unsure.
@@ -184,8 +184,8 @@ These cover one repository's pull requests. Custom rules and other repositories 
    ```
 
 4. **For a built-in rule**, change `logic/quality.ts` (questions) and `logic/render.ts` (how answers decide).
-5. **Measure before and after** with `bun run eval:judge`. It calls OpenCode Zen with `OPENCODE_API_KEY` from the environment (Bun also reads `.env`).
-6. **To add cases**, label pull requests in `evals/judge/labels.json` (`needsDocs`, a note; `mixes` for unfocused pairs). Then run `bun evals/judge/snapshot.ts`, which needs an authenticated `gh` CLI. It freezes the pull requests of the repository named in `labels.json` and regenerates `cases.jsonl`. Change the allowances only with a measured reason.
+5. **Measure before and after** with `bun run eval` in `packages/triage-workflows`. It calls OpenCode Zen with `OPENCODE_API_KEY` from the environment (Bun also reads `.env`).
+6. **To add cases**, label pull requests in `packages/triage-workflows/evals/labels.json` (`needsDocs`, a note, the `headSha` and `baseSha` it was measured at; `mixes` for unfocused pairs). Then run `bun packages/triage-workflows/evals/generate-cases.ts`, which needs an authenticated `gh` CLI. It fetches the labelled pull requests and regenerates `cases.jsonl`. Change the allowances only with a measured reason.
 
 The eval covers focused, docs and the verdict only.
 

@@ -8,8 +8,7 @@
     }
   },
   "include": [
-    "*.ts",
-    "../evals/**/*.ts"
+    "*.ts"
   ],
   "exclude": [
     "vendor-health.test.ts",

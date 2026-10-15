@@ -1,5 +1,5 @@
 import type { Case } from "@corbits/evals";
-import { isDocPath } from "../../packages/triage-contracts/src/paths.js";
+import { isDocPath } from "../../triage-contracts/src/paths.js";
 
 type Outcome = "pass" | "fail";
 
@@ -10,14 +10,16 @@ export const SCORED = [...MODEL_CHECKS, "verdict"] as const;
 export type Scored = typeof SCORED[number];
 export type Expected = Record<Scored, Outcome>;
 
-/** What a reviewer decided about a merged pull request; snapshot.ts derives each case's expectations from it. */
+/** What a reviewer decided about a merged pull request; generate-cases.ts derives each case's expectations from it. */
 interface Label {
   needsDocs: boolean;
   note: string;
+  /** The head and base the label was measured at, so later pushes to the pull request do not change its fixture. */
+  headSha: string;
+  baseSha: string;
 }
 
 export interface Labels {
-  repo: string;
   pulls: Record<string, Label>;
   /** Pull requests whose files are merged into one unfocused pull request, the first giving the title and body. */
   mixes: Array<[number, number]>;
@@ -35,7 +37,7 @@ export interface FileRow {
   patch?: string;
 }
 
-/** A merged pull request frozen as GitHub served it, with the repository's docs at its base by path. */
+/** A merged pull request as GitHub served it, with the repository's docs at its base by path. */
 export interface Snapshot {
   repo: string;
   number: number;
@@ -46,9 +48,6 @@ export interface Snapshot {
   files: FileRow[];
   docs: Record<string, string>;
 }
-
-/** A snapshot as stored: each doc names its text in docs/<hash>.md, which pull requests share. */
-export type StoredSnapshot = Omit<Snapshot, "docs"> & { docs: Record<string, string> };
 
 /** Which snapshot a case reads, and what it removes or adds. */
 export interface CaseInput {

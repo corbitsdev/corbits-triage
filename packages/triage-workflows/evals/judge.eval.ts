@@ -1,16 +1,16 @@
-// Judge eval: replays frozen pull requests through the deployed pr-triage definition on Interchange's local runner (the
-// production step invoker, agents and directors, with GitHub served from the snapshot and the judge calling the
+// Judge eval: replays labelled pull requests through the deployed pr-triage definition on Interchange's local runner (the
+// production step invoker, agents and directors, with GitHub served from the fixtures and the judge calling the
 // production decision model) and checks each judged rule's answer and the verdict against its label. The judge is not
 // deterministic, so each may miss a few cases. Each judge call is attempted once, as deployed: the judge director answers
 // an inference error as a judge error instead of failing its step, so the step's retry never runs and those rules stay unsure.
 //
-//   bun run eval:judge
+//   bun run eval   (in packages/triage-workflows)
 import { EvalFailure, evaluate, type CheckFn, type Report } from "@corbits/evals";
-import { readFileSync } from "node:fs";
-import { mailPayload } from "../../apps/hub/src/github/bridge.js";
-import { DEFAULT_REPO_POLICY, emptyPack, TRIAGE_MAIL_SENDER, type CheckPack } from "../../packages/triage-contracts/src/index.js";
-import { PR_TRIAGE_ADDRESS } from "../../packages/triage-workflows/src/pr-triage.js";
-import { MODEL_CHECKS, SCORED, variant, type CaseInput, type Expected, type Scored, type Snapshot, type StoredSnapshot } from "./cases.js";
+import { mailPayload } from "../../../apps/hub/src/github/bridge.js";
+import { DEFAULT_REPO_POLICY, emptyPack, TRIAGE_MAIL_SENDER, type CheckPack } from "../../triage-contracts/src/index.js";
+import { PR_TRIAGE_ADDRESS } from "../src/pr-triage.js";
+import { MODEL_CHECKS, SCORED, variant, type CaseInput, type Expected, type ModelCheck, type Scored, type Snapshot } from "./cases.js";
+import { fixture } from "./fixtures.js";
 import { runDefinition, type Endpoint } from "./run-definition.js";
 
 // The OpenCode Zen preset the production workspace's decision model uses.
@@ -27,14 +27,8 @@ const here = new URL(".", import.meta.url).pathname;
 
 type Outcomes = Record<Scored, "pass" | "fail" | "unsure">;
 
-function snapshot(number: number): Snapshot {
-  const stored = JSON.parse(readFileSync(`${here}pulls/${number}.json`, "utf8")) as StoredSnapshot;
-  const docs = Object.fromEntries(Object.entries(stored.docs).map(([path, hash]) => [path, readFileSync(`${here}docs/${hash}.md`, "utf8")]));
-  return { ...stored, docs };
-}
-
-/** Serves a snapshot as GitHub would: the open pull request, its paged file rows, and its docs as the default branch's tree and blobs. */
-function frozenGithub(pr: Snapshot) {
+/** Serves a fixture as GitHub would: the open pull request, its paged file rows, and its docs as the default branch's tree and blobs. */
+function fixtureGithub(pr: Snapshot) {
   const repo = `/repos/${pr.repo}`;
   const docs = Object.entries(pr.docs);
   const pull = {
@@ -43,7 +37,7 @@ function frozenGithub(pr: Snapshot) {
     additions: pr.files.reduce((sum, file) => sum + file.additions, 0), deletions: pr.files.reduce((sum, file) => sum + file.deletions, 0),
     changed_files: pr.files.length, labels: [], requested_reviewers: [], requested_teams: [], assignees: [],
   };
-  return async function fetchFrozen(url: URL): Promise<Response> {
+  return async function fetchFixture(url: URL): Promise<Response> {
     const path = url.pathname;
     if (path === "/app") return Response.json({ slug: "triage-eval" });
     if (path === repo) return Response.json({ default_branch: "main", owner: { login: pr.repo.split("/")[0], type: "Organization" } });
@@ -80,12 +74,13 @@ function triggerMail(pr: Snapshot) {
 }
 
 async function judge(input: CaseInput): Promise<Outcomes> {
-  const pr = variant(snapshot(input.pull), input, input.mix === undefined ? undefined : snapshot(input.mix));
-  const { verdict } = await runDefinition({ fetch: frozenGithub(pr), apiKey, endpoint: ENDPOINT, triggerPayload: triggerMail(pr) });
-  const checks = Object.fromEntries(MODEL_CHECKS.map((check) => {
+  const pr = variant(fixture(input.pull), input, input.mix === undefined ? undefined : fixture(input.mix));
+  const { verdict } = await runDefinition({ fetch: fixtureGithub(pr), apiKey, endpoint: ENDPOINT, triggerPayload: triggerMail(pr) });
+  function answer(check: ModelCheck): [ModelCheck, Outcomes[Scored]] {
     const result = verdict.checks.find((row) => row.check === check)?.result;
     return [check, result === "pass" || result === "fail" ? result : "unsure"];
-  }));
+  }
+  const checks = Object.fromEntries(MODEL_CHECKS.map(answer));
   return { ...checks, verdict: verdict.verdict } as Outcomes;
 }
 

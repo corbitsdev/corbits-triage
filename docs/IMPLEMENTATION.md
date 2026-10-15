@@ -120,7 +120,7 @@ GitHub emulator).
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run lint` | oxlint. |
 | `bun run holdback`, `injection`, `report` | Eval scripts: holdback replay, prompt-injection run, cost and latency report. |
-| `bun run eval:judge` | Decision-model eval over `evals/judge`. |
+| `bun run eval` in `packages/triage-workflows` | Decision-model eval over `packages/triage-workflows/evals`. |
 | `bun run vendor:health`, `sh tooling/vendor-diff-check.sh` | Vendored Interchange health and drift gate. |
 
 ## Build and deploy

@@ -10,6 +10,7 @@ tooling/shots/
 .emulate-secrets.json
 packages/github-tool/dist/
 packages/github-write-tool/dist/
+packages/triage-workflows/evals/.cache/
 
 # vendored interchange local state
 vendor/interchange/tmp/

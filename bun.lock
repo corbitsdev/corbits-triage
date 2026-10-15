@@ -224,7 +224,12 @@
         "re2js": "2.8.6",
       },
       "devDependencies": {
+        "@corbits/evals": "0.1.1",
+        "@intx/authz": "workspace:*",
+        "@intx/harness": "workspace:*",
         "@intx/inference": "workspace:*",
+        "@intx/storage-isogit": "workspace:*",
+        "@intx/workflow-host": "workspace:*",
       },
     },
     "vendor/interchange/apps/hub": {
