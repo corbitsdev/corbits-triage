@@ -74,12 +74,13 @@ async function until(done: () => boolean): Promise<void> {
   while (!done()) await Bun.sleep(1);
 }
 
-test("medians count only people other than the author as responses, leaving bots and the triage user out", async () => {
+test("medians count only people other than the author as responses, and humans count each person once across pull requests, leaving bots and the triage user out", async () => {
   const { host } = fakeHost();
   const stats = await route([1, 2, 3].map(verdict), { host: async () => ({ host }) })();
   expect(stats.outcomes).toEqual({
     state: "measured",
     triaged: { prs: 3, closed: 2, mergeOrCloseMs: 15 * HOUR, firstHumanResponseMs: 2 * HOUR, firstApprovalMs: 4 * HOUR, humanTouchGapMs: 2 * HOUR },
+    humans: 3,
     baseline: null,
     baselineBefore: ENABLED.toISOString(),
     baselineState: "measured",

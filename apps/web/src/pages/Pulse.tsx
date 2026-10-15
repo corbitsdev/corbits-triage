@@ -99,6 +99,11 @@ function OutcomeCell({ field, view }: { field: OutcomeField; view: Exclude<Outco
   );
 }
 
+function HumansCell({ view }: { view: OutcomesView | null }) {
+  if (view === null || "missing" in view) return <TableCell />;
+  return <TableCell>{view.humans}</TableCell>;
+}
+
 function OutcomeCells({ view }: { view: OutcomesView | null }) {
   if (view === null) return <TableCell colSpan={PULSE_OUTCOMES.length} />;
   if ("missing" in view) return <TableCell colSpan={PULSE_OUTCOMES.length} className="note">{view.missing}</TableCell>;
@@ -125,10 +130,11 @@ function RepoWeek({ store, repo }: { store: RepoPackStore | null; repo: RepoReco
         <>
           <TableCell>{stats.triaged}</TableCell>
           <TableCell>{stats.neededYou}</TableCell>
+          <HumansCell view={view} />
           <TableCell>{actedOn(stats)}</TableCell>
           <OutcomeCells view={view} />
         </>
-      ) : <TableCell colSpan={3 + PULSE_OUTCOMES.length} className="note">{isError ? "Could not load this repository's numbers." : "Loading…"}</TableCell>}
+      ) : <TableCell colSpan={4 + PULSE_OUTCOMES.length} className="note">{isError ? "Could not load this repository's numbers." : "Loading…"}</TableCell>}
     </TableRow>
   );
 }
@@ -151,7 +157,7 @@ function ThisWeek() {
       {repos.length === 0 ? <p className="empty-line">No repository has triage on.</p> : (
         <Table>
           <TableHeader>
-            <TableRow><TableHead scope="col">Repository</TableHead><TableHead scope="col">Triaged</TableHead><TableHead scope="col">Needed you</TableHead><TableHead scope="col">Acted on</TableHead>{PULSE_OUTCOMES.map((field) => <TableHead key={field} scope="col">{OUTCOME_NAMES[field]}</TableHead>)}</TableRow>
+            <TableRow><TableHead scope="col">Repository</TableHead><TableHead scope="col">Triaged</TableHead><TableHead scope="col">Needed you</TableHead><TableHead scope="col">Humans involved</TableHead><TableHead scope="col">Acted on</TableHead>{PULSE_OUTCOMES.map((field) => <TableHead key={field} scope="col">{OUTCOME_NAMES[field]}</TableHead>)}</TableRow>
           </TableHeader>
           <TableBody>{repos.map((repo) => <RepoWeek key={repo.name} store={store} repo={repo} />)}</TableBody>
         </Table>

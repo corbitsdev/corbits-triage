@@ -55,6 +55,7 @@ type Outcome = {
   firstHumanResponseMs: number | null;
   firstApprovalMs: number | null;
   humanTouchGapMs: number | null;
+  humans: string[];
 };
 
 function median(values: number[]): number | null {
@@ -78,10 +79,11 @@ export function outcomeOf(pr: PrTimes, events: readonly TimelineEvent[], { autho
     firstHumanResponseMs: others[0] ? Date.parse(others[0].at) - opened : null,
     firstApprovalMs: approval ? Date.parse(approval.at) - opened : null,
     humanTouchGapMs: gaps.length === 0 ? null : Math.max(...gaps),
+    humans: [...new Set(people.map((event) => event.actor))],
   };
 }
 
-function medianOf(outcomes: readonly Outcome[], field: Exclude<keyof Outcome, "closed">): number | null {
+function medianOf(outcomes: readonly Outcome[], field: Exclude<keyof Outcome, "closed" | "humans">): number | null {
   return median(outcomes.flatMap((outcome) => (outcome[field] === null ? [] : [outcome[field]])));
 }
 
@@ -210,7 +212,7 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
     const failedReads = failed + (baselineFailed ? 1 : (baseline?.failed ?? 0));
     if (failedReads > 0) deps.log({ level: "warn", msg: "triage_outcomes_failed", tenantId, repo, failed: failedReads });
     if (failed > 0 && outcomes.length === 0 && (enabledAt === undefined || baselineFailed)) return { state: "source_failed" };
-    return { state: "measured", triaged: medians(outcomes), ...baselineOutcome(enabledAt, baselineRead) };
+    return { state: "measured", triaged: medians(outcomes), humans: new Set(outcomes.flatMap((outcome) => outcome.humans)).size, ...baselineOutcome(enabledAt, baselineRead) };
   }
 
   async function refusal({ tenantId, principalId }: Member, repo: string): Promise<Refusal> {
