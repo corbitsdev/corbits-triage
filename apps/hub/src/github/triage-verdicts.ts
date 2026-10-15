@@ -68,7 +68,7 @@ function pullKey(pull: PullRef): string {
 
 function livePulls(observation: TenantObservation | undefined): Map<string, LivePull> {
   const byPull = new Map<string, LivePull>();
-  for (const runs of observation?.observed ?? []) {
+  for (const runs of observation ? [...observation.observed, ...observation.workers] : []) {
     for (const [repo, byHead] of runs.byRepo) {
       for (const [key, list] of byHead) {
         const ref = { repo, number: runKeyNumber(key) };
