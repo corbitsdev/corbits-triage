@@ -4,14 +4,12 @@ import type { SpawnLocalSidecar } from "./local-provisioner.js";
 export type CreateSpawnLocalSidecarOpts = {
   readonly interchangeDir: string;
   readonly credentialEncryptionKey: string;
-  readonly adapterManifest: string;
   readonly processEnv: ChildProcessEnv;
 };
 
 export function createSpawnLocalSidecar({
   interchangeDir,
   credentialEncryptionKey,
-  adapterManifest,
   processEnv,
 }: CreateSpawnLocalSidecarOpts): SpawnLocalSidecar {
   return function spawnSidecar({ request, dataDir }) {
@@ -24,7 +22,7 @@ export function createSpawnLocalSidecar({
         SIDECAR_TOKEN: request.token,
         SIDECAR_DATA_DIR: dataDir,
         SIDECAR_CREDENTIAL_ENCRYPTION_KEY: credentialEncryptionKey,
-        SIDECAR_ADAPTER_MANIFEST: adapterManifest,
+        SIDECAR_ADAPTER_MANIFEST: JSON.stringify(request.adapterManifest ?? []),
       },
       stdin: "ignore",
       stdout: "inherit",

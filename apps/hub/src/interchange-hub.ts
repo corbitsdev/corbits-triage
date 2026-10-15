@@ -62,7 +62,7 @@ import {
   type WsHandle,
 } from "@intx/hub-sessions";
 import { generateKeyPair } from "@intx/crypto";
-import { hexEncode } from "@intx/types";
+import { hexEncode, type AdapterManifest } from "@intx/types";
 import { MAX_SIDECAR_FRAME_BYTES } from "@intx/types/sidecar";
 import { upgradeWebSocket, websocket } from "hono/bun";
 import { setup, getLogger } from "@intx/log";
@@ -89,6 +89,8 @@ export type CreateHubServerOpts = {
   readonly sidecarAllocationConcurrency?: number;
   /** Deadline for provider calls, allocation claims, lease validation, and connection waits. Defaults to 120 seconds. */
   readonly sidecarOperationTimeoutMs?: number;
+  /** Adapters every sidecar boots with; forwarded on each ensure request. */
+  readonly adapterManifest?: AdapterManifest;
 };
 
 export async function createInterchangeHub({
@@ -96,6 +98,7 @@ export async function createInterchangeHub({
   settings,
   authConfig,
   credentialCipher,
+  adapterManifest,
   sidecarProvisioners = [],
   sidecarProvisionerChooser,
   probeSidecarProvisioners = [],
@@ -295,6 +298,7 @@ export async function createInterchangeHub({
     allocationRouter: sidecarRouter,
     hubWebSocketUrl: settings.sidecarWebSocketUrl,
     defaultLifecyclePolicy: settings.defaultLifecyclePolicy,
+    ...(adapterManifest !== undefined ? { adapterManifest } : {}),
     ...(sidecarOperationTimeoutMs !== undefined
       ? { operationTimeoutMs: sidecarOperationTimeoutMs }
       : {}),
@@ -343,6 +347,7 @@ export async function createInterchangeHub({
     plugins: sidecarPlugins,
     router: sidecarRouter,
     hubWebSocketUrl: settings.sidecarWebSocketUrl,
+    ...(adapterManifest !== undefined ? { adapterManifest } : {}),
     ...(sidecarOperationTimeoutMs !== undefined
       ? { operationTimeoutMs: sidecarOperationTimeoutMs }
       : {}),
