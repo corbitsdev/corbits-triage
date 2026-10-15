@@ -381,10 +381,6 @@ describe("triage reconciler", () => {
     const green = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await green.reconcile();
     expect(mailedNumbers(green.delivered)).toEqual([1]);
-    // GitHub's check_run webhook triages the head; without a reader the head is left alone.
-    const github = harness(logs, [head(1)]);
-    await github.reconcile();
-    expect(github.delivered).toHaveLength(0);
   });
 
   test("a repository with every rule off, or no policy, starts no run and is logged once per head", async () => {

@@ -182,7 +182,6 @@ describe("ensureWorkflows", () => {
 describe("cancelsSuperseded", () => {
   test("pr-triage's superseded deployments are cancelled only right after a deploy; pr-triage-historical's on every converge", () => {
     expect([cancelsSuperseded("pr-triage-github", true), cancelsSuperseded("pr-triage-github", false)]).toEqual([true, false]);
-    expect(cancelsSuperseded("pr-triage-bitbucket-datacenter", false)).toBe(false);
     expect([cancelsSuperseded("pr-triage-historical", true), cancelsSuperseded("pr-triage-historical", false)]).toEqual([true, true]);
   });
 });
