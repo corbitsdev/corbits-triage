@@ -5,8 +5,9 @@
 - Upstream: <https://github.com/faremeter/interchange>
 - Stock ref: `9ae471437453db9ef1af1eca6d94c524cecf05f1`
 - Composite pin: stock `9ae47143` (upstream main on 2026-10-15) plus the
-  step-env director threading from PR #193 and the local CL-10210 carry. Do
-  not treat any delta as a new stock pin.
+  step-env director threading from PR #193, the local CL-10210 carry and the
+  INTR-666 adaptive-thinking model ids. Do not treat any delta as a new stock
+  pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -79,6 +80,28 @@ Upstream status: to be filed.
 
 Kill date: **2026-11-01**. Remove when the stock pin consumes or skips a
 replayed signal mail the run already recorded.
+
+### Adaptive thinking for the Claude 5.5 models and Fable 5.1 (INTR-666)
+
+Stock `ADAPTIVE_THINKING_MODELS` lacks `claude-opus-5-5`, `claude-sonnet-5-5`,
+`claude-haiku-5-5` and `claude-fable-5-1`, so the Anthropic adapter sends them
+the classic `thinking: { type: "enabled", budget_tokens }` shape, which they
+reject with `invalid_request_error` ("thinking.type.enabled is not supported
+for this model"). The carry adds the four ids to the set, so thinking calls
+use `thinking: { type: "adaptive" }` with `output_config.effort`. Opus 5.5
+and Haiku 5.5 default to `medium` effort, so thinking on with no effort sends
+no effort for them instead of the adapter's `high`. The
+discovery plug-in's matching set lives in the pruned
+`packages/inference-discovery-anthropic`, so only the runtime set is patched.
+
+Allowed files:
+
+- `packages/inference/src/providers/anthropic.ts`
+
+Upstream reference: INTR-666.
+
+Kill date: **2026-11-01**. Remove on the first bump whose stock set includes
+the four ids.
 
 ## Dropped deltas
 

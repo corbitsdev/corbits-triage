@@ -40,6 +40,10 @@ const ANTHROPIC_TOOL_NAME_LIMIT: ToolNameLimit = {
 // plug-in's ADAPTIVE_THINKING_MODELS set must match this one; a guard test in
 // the anthropic discovery package pins the two equal so they cannot drift.
 export const ADAPTIVE_THINKING_MODELS: ReadonlySet<string> = new Set([
+  "claude-opus-5-5",
+  "claude-sonnet-5-5",
+  "claude-haiku-5-5",
+  "claude-fable-5-1",
   "claude-sonnet-5",
   "claude-opus-5",
   "claude-fable-5",
@@ -60,6 +64,13 @@ export const ADAPTIVE_THINKING_MODELS: ReadonlySet<string> = new Set([
 // values, by contrast, are meant to differ. A guard test in the discovery
 // package checks both effort values.
 export const ADAPTIVE_THINKING_EFFORT = "high";
+
+// Adaptive models whose API default effort is "medium", not "high". Thinking
+// on with no effort sends no effort for them, so the API default applies.
+const MEDIUM_DEFAULT_EFFORT_MODELS: ReadonlySet<string> = new Set([
+  "claude-opus-5-5",
+  "claude-haiku-5-5",
+]);
 
 // ---------------------------------------------------------------------------
 // Request building
@@ -164,7 +175,7 @@ function applyReasoning(
     }
     if (effort !== undefined) {
       body["output_config"] = { effort };
-    } else if (thinkingOn) {
+    } else if (thinkingOn && !MEDIUM_DEFAULT_EFFORT_MODELS.has(model)) {
       body["output_config"] = { effort: ADAPTIVE_THINKING_EFFORT };
     }
     if (thinking?.budgetTokens !== undefined) {
