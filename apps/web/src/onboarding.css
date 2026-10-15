@@ -46,11 +46,16 @@ body:has(.setup-flow),
 .setup-flow input:focus,
 .setup-flow textarea:focus { outline: none; border-color: var(--heat); box-shadow: var(--focus); }
 
+/* The signed-in app's stage: same inset, edge and corners. It scrolls itself because the page cannot from 721px up. */
 .signin {
-  min-height: 100svh;
+  height: calc(100dvh - 24px);
+  margin: 12px;
   display: grid;
   grid-template-columns: 2fr 1fr;
-  background: var(--background);
+  border: 1px solid rgba(92, 85, 85, 0.18);
+  border-radius: 16px;
+  background: #ffffff;
+  overflow: auto;
 }
 .signin-main { display: flex; align-items: center; justify-content: center; padding: 48px 16px; }
 .signin-column { display: grid; gap: 28px; width: 100%; max-width: 384px; }
@@ -69,7 +74,7 @@ body:has(.setup-flow),
   gap: 12px;
   margin-left: -24px;
   padding: 48px 0;
-  background: var(--background);
+  background: #ffffff;
   color: var(--foreground);
   font-size: 2.5rem;
   font-weight: 600;
