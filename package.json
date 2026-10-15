@@ -26,12 +26,11 @@
   "scripts": {
     "dev": "bun --conditions=intx-src tooling/dev.ts",
     "test": "bun --conditions=intx-src test ./apps/ ./packages/ ./tooling/",
-    "check": "tsc --noEmit -p tooling && tsc -b apps/web && tsc --noEmit -p apps/extension && tsc --noEmit -p apps/extension/e2e && tsc --noEmit -p apps/hub && bun build --conditions=intx-src apps/hub/src/server.ts --target bun --outfile /dev/null",
+    "check": "tsc --noEmit -p tooling && tsc -b apps/web && tsc --noEmit -p apps/extension && tsc --noEmit -p apps/extension/e2e && tsc --noEmit -p apps/hub && tsc --noEmit -p packages/triage-workflows && bun build --conditions=intx-src apps/hub/src/server.ts --target bun --outfile /dev/null",
     "lint": "oxlint",
     "holdback": "bun --conditions=intx-src tooling/holdback-replay.ts",
     "injection": "bun --conditions=intx-src tooling/injection-run.ts",
     "report": "bun --conditions=intx-src tooling/cost-latency-report.ts",
-    "eval:judge": "bun --conditions=intx-src evals/judge/judge.eval.ts",
     "hub": "bun --conditions=intx-src apps/hub/src/server.ts",
     "vendor:health": "sh tooling/vendor-health-check.sh"
   },

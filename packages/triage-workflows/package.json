@@ -17,7 +17,9 @@
       "pr-triage-bitbucket-datacenter": "./src/pr-triage-bitbucket-datacenter.ts"
     }
   },
-  "scripts": {},
+  "scripts": {
+    "eval": "bun --conditions=intx-src evals/judge.eval.ts"
+  },
   "dependencies": {
     "@corbits/common": "workspace:*",
     "@corbits/github-reads": "workspace:*",
@@ -33,6 +35,11 @@
     "re2js": "2.8.6"
   },
   "devDependencies": {
-    "@intx/inference": "workspace:*"
+    "@corbits/evals": "0.1.1",
+    "@intx/authz": "workspace:*",
+    "@intx/harness": "workspace:*",
+    "@intx/inference": "workspace:*",
+    "@intx/storage-isogit": "workspace:*",
+    "@intx/workflow-host": "workspace:*"
   }
 }
