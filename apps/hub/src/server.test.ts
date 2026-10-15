@@ -247,6 +247,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/bitbucket-datacenter/{tenantId}/connection": ["put", "get", "delete"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/repositories": ["get"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/repositories/{project}/{slug}/enable": ["post"],
+    "/api/integrations/bitbucket-datacenter/{tenantId}/repositories/{project}/{slug}/webhook": ["get"],
     "/api/integrations/bitbucket-datacenter/{tenantId}/repositories/{project}/{slug}/disable": ["post"],
   });
 

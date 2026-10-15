@@ -7,7 +7,7 @@ import {
   enableBitbucketDatacenterRepository,
   listBitbucketDatacenterRepositories,
   loadBitbucketDatacenterConnection,
-  type BitbucketDatacenterEnabled,
+  loadBitbucketDatacenterWebhook,
   type RepoRecord,
 } from "./hub-api.ts";
 import { createHubTransport, type Transport } from "./hub-transport.ts";
@@ -103,21 +103,28 @@ function webhookKey(tenantId: string | undefined, repo: string) {
   return [BITBUCKET_DATACENTER_QUERY_KEY, tenantId, "webhook", repo] as const;
 }
 
-/** Turning triage on or off also creates or removes the webhook, which only the hub's routes do; a webhook the token may not create is kept for the panel to show. */
+/** Turning triage on or off also creates or removes the webhook, which only the hub's routes do. */
 export async function switchBitbucketDatacenterTriage(queryClient: QueryClient, transport: Transport, tenantId: string, repo: string, enabled: boolean): Promise<void> {
   if (!enabled) {
     await disableBitbucketDatacenterRepository(transport, tenantId, repo);
     queryClient.removeQueries({ queryKey: webhookKey(tenantId, repo) });
     return;
   }
-  const result = await enableBitbucketDatacenterRepository(transport, tenantId, repo);
-  if (result.webhook === "manual") queryClient.setQueryData(webhookKey(tenantId, repo), result);
+  await enableBitbucketDatacenterRepository(transport, tenantId, repo);
+  await queryClient.invalidateQueries({ queryKey: webhookKey(tenantId, repo) });
 }
 
-/** The webhook to set up by hand after triage was turned on with a token that may not manage webhooks. */
-export function useBitbucketDatacenterManualWebhook(repo: string) {
+/** The webhook to set up by hand while triage is on and the token could not create it; read again on each visit, never persisted. */
+export function useBitbucketDatacenterManualWebhook(repo: string, triaging: boolean) {
   const tenantId = usePortal().snapshot?.workspace.tenantId;
-  return useQuery<Extract<BitbucketDatacenterEnabled, { webhook: "manual" }>>({ queryKey: webhookKey(tenantId, repo), queryFn: skipToken }).data;
+  const { data } = useQuery({
+    queryKey: webhookKey(tenantId, repo),
+    staleTime: Infinity,
+    queryFn: tenantId === undefined || !triaging ? skipToken : async function loadWebhook() {
+      return loadBitbucketDatacenterWebhook(createHubTransport(), tenantId, repo);
+    },
+  });
+  return triaging && data?.webhook === "manual" ? data : undefined;
 }
 
 export function bitbucketDatacenterRepoUrl(baseUrl: string, repo: string): string {

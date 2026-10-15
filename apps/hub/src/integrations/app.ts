@@ -25,7 +25,7 @@ import { BacklogBody } from "../github/backlog-triage.js";
 import { TRIAGE_STATS_PATH } from "../github/triage-stats.js";
 import { TRIAGE_TIMELINE_PATH, TriageTimeline } from "../github/triage-timeline.js";
 import { TRIAGE_VERDICTS_PATH } from "../github/triage-verdicts.js";
-import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
+import { BITBUCKET_PATH, BitbucketRepos, ConnectBody, Connected, Connection, Disconnected, RepoDisabled, RepoEnabled, RepoWebhook, type BitbucketHandlers } from "../bitbucket-datacenter/integration.js";
 import { ACCEPT_PATH, AcceptBody, Accepted, INVITATIONS_PATH, InviteBody } from "../invitations/invitations.js";
 import { SESSIONS_PATH } from "../sessions.js";
 import { DeployBody, WORKFLOW_DEPLOY_PATH } from "../workflow-deploy.js";
@@ -798,6 +798,21 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     member,
     function enableBitbucketRepo(c) {
       return handlers.bitbucketDatacenter.enable(memberOf(c), c.req.param("project"), c.req.param("slug"));
+    },
+  );
+
+  app.get(
+    `${BITBUCKET_PATH}/:tenantId/repositories/:project/:slug/webhook`,
+    describeRoute({
+      summary: "A Bitbucket repository's webhook",
+      description: "Needs `manage` on the workspace and `use` on the `bitbucket-datacenter-hook` credential. `registered` when triage created the webhook; otherwise `manual` with the hook URL, secret and events to set up by hand.",
+      tags: TAGS,
+      parameters: repoParameters,
+      responses: { 200: json("The webhook", RepoWebhook), 401: failures[401], 403: failures[403], 404: json("No such repository recorded", Failure), 409: json("Bitbucket is not connected, or triage is off for the repository", Failure) },
+    }),
+    member,
+    function bitbucketRepoWebhook(c) {
+      return handlers.bitbucketDatacenter.webhook(memberOf(c), c.req.param("project"), c.req.param("slug"));
     },
   );
 

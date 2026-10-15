@@ -19,6 +19,7 @@ import { bitbucketConnection, bitbucketRepoName, disableRepo, disconnect, enable
 
 export const BITBUCKET_PATH = "/api/integrations/bitbucket-datacenter";
 const BITBUCKET_HOOK_PATH = "/api/hooks/bitbucket-datacenter";
+const NO_STORE = { headers: { "Cache-Control": "no-store" } };
 const HOOK_METADATA = { webhook: { verify: "standard-webhooks", workflow: triageWorkflowFor("bitbucket-datacenter").id } };
 
 export const ConnectBody = type({ baseUrl: "string > 0", token: "string > 0" });
@@ -35,6 +36,8 @@ export const RepoEnabled = type({
   "events?": "string[]",
 });
 export const RepoDisabled = type({ repository: BitbucketRepo, webhookLeft: "boolean" });
+export const RepoWebhook = type({ webhook: "'manual'", hookUrl: "string", hookSecret: "string", events: "string[]" })
+  .or({ webhook: "'registered'", webhookId: "number" });
 
 const ApplicationProperties = type({ version: "string", displayName: "string" });
 const StockRow = type({ id: "string", name: "string", "status?": "string", "apiBaseUrl?": "string | null" });
@@ -299,10 +302,23 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       if (webhookId !== undefined) return Response.json({ repository, webhook: "created", hookUrl: url });
       const hookSecret = await secretOf(member, HOOK_CREDENTIAL);
       if (hookSecret instanceof Response) return hookSecret;
-      return Response.json({ repository, webhook: "manual", hookUrl: url, hookSecret, events: WEBHOOK_EVENTS });
+      return Response.json({ repository, webhook: "manual", hookUrl: url, hookSecret, events: WEBHOOK_EVENTS }, NO_STORE);
     } catch (err) {
       return instanceFailed(err);
     }
+  }
+
+  async function webhook(member: Member, project: string, slug: string): Promise<Response> {
+    const refused = await manageRefusal(member);
+    if (refused) return refused;
+    const name = bitbucketRepoName(project, slug);
+    const stored = repoRecords(await tenantNs(member.tenantId)).find((record) => record.name === name && isBitbucketRecord(record));
+    if (!stored) return failure(404, "repo_not_found", "No Bitbucket repository by that name is recorded.");
+    if (stored.enabled !== true) return failure(409, "triage_off", "Triage is off for this repository.");
+    if (stored.webhookId !== undefined) return Response.json({ webhook: "registered", webhookId: stored.webhookId }, NO_STORE);
+    const hookSecret = await secretOf(member, HOOK_CREDENTIAL);
+    if (hookSecret instanceof Response) return hookSecret;
+    return Response.json({ webhook: "manual", hookUrl: hookUrl(member.tenantId), hookSecret, events: WEBHOOK_EVENTS }, NO_STORE);
   }
 
   async function disable(member: Member, project: string, slug: string): Promise<Response> {
@@ -320,7 +336,7 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     return Response.json({ repository, webhookLeft });
   }
 
-  return { connect, connection, disconnect: disconnectRoute, repositories, enable, disable };
+  return { connect, connection, disconnect: disconnectRoute, repositories, enable, webhook, disable };
 }
 
 export type BitbucketHandlers = ReturnType<typeof createBitbucketIntegration>;

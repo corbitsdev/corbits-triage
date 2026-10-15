@@ -46,9 +46,11 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
   const grantsKnown = ![grants, roles].some((section) => section.loading || section.unavailable || section.denied);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [closing, setClosing] = useState(false);
-  const manualWebhook = useBitbucketDatacenterManualWebhook(repo.name);
   const instance = useBitbucketDatacenterConnection().data;
   const fromBitbucket = repo.source === "bitbucket-datacenter";
+  const manualWebhook = useBitbucketDatacenterManualWebhook(repo.name, fromBitbucket && settings.saved.policy.enabled);
+  const [sawTriageOff, setSawTriageOff] = useState(false);
+  if (settings.status === "ready" && !settings.saved.policy.enabled && !sawTriageOff) setSawTriageOff(true);
   const disabled = readOnly || snapshot?.denied.repos === true || settings.status !== "ready";
   const gated = !draft.policy.enabled;
   const locked = disabled || gated || fromFile;
@@ -95,7 +97,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
     return (
       <>
         <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} rerunnable={repo.source === "github"} />
-        {manualWebhook && settings.saved.policy.enabled ? <BitbucketDatacenterWebhook webhook={manualWebhook} /> : null}
+        {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
         {grantsKnown ? <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><OnItsOwn repo={repo.name} source={repo.source} roles={roles.rows} grants={grants.rows} disabled={disabled} /></div> : null}
         <PolicyCard repo={repo.name} source={repo.source} policyFile={policyFile} disabled={disabled} />
         <div className={gated ? "gated" : undefined} inert={gated}>
