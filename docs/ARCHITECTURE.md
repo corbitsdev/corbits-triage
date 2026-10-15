@@ -23,8 +23,16 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     request, review, comment and `check_run` events to the coalescer. A pull
     request merged into the default branch marks the repository's other
     triaged heads `stale`. A push to the default branch that touches
-    `.corbits-triage.yaml` syncs the policy file. Temporary until
-    `@corbits/webhooks` verifies GitHub signatures.
+    `.corbits-triage.yaml` syncs the policy file. Signatures are checked by
+    the X-Hub-Signature verifier in `@corbits/common/x-hub-signature`, the
+    same scheme `@corbits/webhooks` 0.4 adds as `verify: "x-hub-signature"`
+    (`sha256=` and the hex HMAC of the raw body, the header names taken from
+    `metadata.webhook.headers`). Every writer of the GitHub and Bitbucket
+    hook credentials (hub and portal) builds that metadata from
+    `@corbits/common/hook-metadata`; the bridges do not read it yet, and
+    credentials written with `standard-webhooks` keep working.
+    Temporary until the hub runs `@corbits/webhooks` 0.4, which is the next
+    step: release the package, then fold the bridges into the coordinator.
   - **Policy file sync**: a repository may keep its policy in
     `.corbits-triage.yaml` on its default branch. A sync stores the file as a
     new version of the repository's policy, marked with its blob sha, so

@@ -11,6 +11,7 @@ import { PreviewResponse } from "./github/pr-preview.js";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
 import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
+import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage-github";
 import { verdictRecord } from "./github/verdict-record-store.js";
@@ -625,7 +626,7 @@ test("a burst of webhook deliveries for one pull request queues its head once an
     const hook = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ providerId, name: "github-hook", type: "api_key", secret: HOOK_SECRET, metadata: { webhook: { verify: "standard-webhooks", workflow: prTriageWorkflow.id } } }),
+      body: JSON.stringify({ providerId, name: "github-hook", type: "api_key", secret: HOOK_SECRET, metadata: xHubHookMetadata(prTriageWorkflow.id, GITHUB_HOOK_HEADERS) }),
     });
     expect(hook.status).toBe(201);
     const hookId = type({ id: "string" }).assert(await hook.json()).id;

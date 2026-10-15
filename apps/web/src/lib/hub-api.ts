@@ -4,6 +4,7 @@ import {
   type WorkflowRunEvent,
 } from "@intx/hub-client";
 import { asRecord, asRepo } from "@corbits/common";
+import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
 import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, PolicySynced, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
@@ -626,8 +627,8 @@ export async function configureGithubApp(
 /**
  * Converges the app-level hook credential GitHub posts to. The secret is the
  * GitHub webhook signing secret (never the GitHub API credential); the
- * metadata lets the stock /api/hooks routes verify (standard-webhooks) and
- * resolve the pr-triage workflow. Returns the credential id for the hook URL.
+ * metadata names the X-Hub-Signature verifier, its headers and the pr-triage
+ * workflow. Returns the credential id for the hook URL.
  */
 export async function ensureHookCredential(
   transport: Transport,
@@ -638,7 +639,7 @@ export async function ensureHookCredential(
   const hookSecret = requireSecret(secret);
   const providerId = await ensureGitHubProvider(transport, tenantId);
   const name = GITHUB_HOOK_CREDENTIAL_NAME;
-  const metadata = { webhook: { verify: "standard-webhooks", workflow: HOOK_WORKFLOW } };
+  const metadata = xHubHookMetadata(HOOK_WORKFLOW, GITHUB_HOOK_HEADERS);
   try {
     const created = await transport.fetch<HubCredential>("POST", `/api/tenants/${tid}/credentials`, {
       providerId,
