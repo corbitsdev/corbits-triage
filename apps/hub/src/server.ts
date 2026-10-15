@@ -68,6 +68,7 @@ import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { createSessions } from "./sessions.js";
 import { migrateTriageTables } from "./triage-db.js";
 import { createTriageStats } from "./github/triage-stats.js";
+import { createHostReads, createOutcomeReader } from "./github/pr-outcomes.js";
 import { createTriageTimeline } from "./github/triage-timeline.js";
 import { createAuditLog } from "./audit-log.js";
 import { createRunRecorder } from "./github/run-recorder.js";
@@ -598,7 +599,22 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     authorize: authorizePortal,
     readCheckPack,
   }),
-  triageStats: createTriageStats({ verdicts: verdictRecordStore, now }),
+  triageStats: createTriageStats({
+    verdicts: verdictRecordStore,
+    outcomes: createOutcomeReader({
+      ...createHostReads({
+        db: composition.db,
+        artifacts: composition.db,
+        cipher: composition.credentialCipher,
+        githubApiOrigin: githubOrigin,
+        tenantBitbucket,
+        authorize: authorizePortal,
+      }),
+      now,
+      log: logJson,
+    }),
+    now,
+  }),
   triageTimeline: createTriageTimeline({ verdicts: verdictRecordStore }),
   triageVerdicts: createTriageVerdicts({
     db: composition.db,

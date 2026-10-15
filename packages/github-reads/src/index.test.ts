@@ -7,6 +7,7 @@ import {
   listOpenPrs,
   listPrFiles,
   listPrFilesPage,
+  listPrTimeline,
   parseCodeowners,
   readRepoDocsPage,
   REPO_DOCS_MAX_BYTES,
@@ -228,4 +229,17 @@ describe("readRepoDocsPage", () => {
     expect(sent.filter((path, index) => sent.indexOf(path) !== index && sent[index - 1] !== path)).toEqual([]);
     expect(requests.filter((request) => request.path.includes("/git/blobs/"))).toHaveLength(sent.length);
   });
+});
+
+test("listPrTimeline: comments and reviews by account, upper-case review states, commits without an account left out", async () => {
+  const { gh, requests } = recorder(() => [
+    { event: "committed", author: { name: "Alice", date: "2026-10-01T00:00:00Z" } },
+    { event: "commented", actor: { login: "renovate[bot]", type: "Bot" }, created_at: "2026-10-01T01:00:00Z" },
+    { event: "reviewed", user: { login: "bob", type: "User" }, submitted_at: "2026-10-01T02:00:00Z", state: "approved" },
+  ]);
+  expect(await listPrTimeline(gh, "acme/widgets", 7)).toEqual([
+    { kind: "commented", actor: "renovate[bot]", bot: true, at: "2026-10-01T01:00:00Z" },
+    { kind: "reviewed", actor: "bob", bot: false, at: "2026-10-01T02:00:00Z", state: "APPROVED" },
+  ]);
+  expect(requests.map((r) => r.path)).toEqual(["/repos/acme/widgets/issues/7/timeline?per_page=100"]);
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkFailed, checkPending, latestDecisive, reviewedOnHead } from "@corbits/github-reads";
-import { getChecks, getPr, getReviews, isTriageComment, listIssueComments, readRepoFile, type BitbucketFetch } from "./index.js";
+import { getChecks, getPr, getReviews, isTriageComment, listIssueComments, listPrTimeline, readRepoFile, type BitbucketFetch } from "./index.js";
 import activities from "./fixtures/activities.json";
 import buildStatus from "./fixtures/build-status.json";
 import pullRequest from "./fixtures/pull-request.json";
@@ -80,6 +80,16 @@ test("listIssueComments: oldest first with replies, and only the link reference 
   const comments = await listIssueComments(instance([[`${REPO}/pull-requests/1/activities`, activities]]), "TRI/widgets", 1);
   expect(comments.map((comment) => comment.id)).toEqual([2, 3, 4, 6, 8, 10]);
   expect(comments.filter((comment) => isTriageComment(comment.body)).map((comment) => comment.id)).toEqual([8, 10]);
+});
+
+test("listPrTimeline: comments and review statuses oldest first in GitHub's terms, other activity left out", async () => {
+  const events = await listPrTimeline(instance([[`${REPO}/pull-requests/1/activities`, activities]]), "TRI/widgets", 1);
+  expect(events.map((event) => [event.kind, event.actor, event.state])).toEqual([
+    ...Array.from({ length: 5 }, () => ["commented", "admin", undefined]),
+    ["reviewed", "reviewer", "CHANGES_REQUESTED"],
+    ["reviewed", "reviewer", "APPROVED"],
+  ]);
+  expect(events[0]).toEqual({ kind: "commented", actor: "admin", bot: false, at: "2026-10-14T17:41:13.750Z" });
 });
 
 test("readRepoFile: the file at the default branch head, its sha the commit that last changed it; a missing file is undefined", async () => {
