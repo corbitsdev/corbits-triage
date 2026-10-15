@@ -3,7 +3,7 @@ import {
   type Transport,
   type WorkflowRunEvent,
 } from "@intx/hub-client";
-import { asRecord, asRepo } from "@corbits/common";
+import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
 import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, PolicySynced, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
@@ -239,7 +239,7 @@ function appConfig(config: unknown): AppConfig {
 
 function sortedKeys(_key: string, value: unknown): unknown {
   return value && typeof value === "object" && !Array.isArray(value)
-    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : 1)))
+    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => compare(a, b)))
     : value;
 }
 
@@ -530,7 +530,7 @@ function pickProvider(providers: ProviderBody[], name: string): ProviderBody | u
   if (matches.length > 1) {
     console.warn(`hub-api: ${matches.length} ${name} providers; picking deterministically by id.`);
   }
-  return [...matches].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+  return [...matches].sort((a, b) => compare(a.id, b.id))[0];
 }
 
 export async function ensureGitHubProvider(transport: Transport, tenantId: string): Promise<string> {

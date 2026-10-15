@@ -154,6 +154,7 @@
       "name": "@corbits/github-reads",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "arktype": "catalog:",
         "minimatch": "^10.2.6",
