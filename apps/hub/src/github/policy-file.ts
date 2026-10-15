@@ -27,15 +27,11 @@ export const EXPORT_BRANCH = "corbits-triage/policy";
 
 const PR_TITLE = "chore: keep the Corbits Triage policy in .corbits-triage.yaml";
 
-function prBody(schemaUrl: string): string {
-  return [
-    `Adds \`${POLICY_FILE_PATH}\` with this repository's current Corbits Triage policy.`,
-    "",
-    "Once merged, the hub reads the policy from this file on every push to the default branch, and the portal shows it read-only with a link here. Edit the policy by changing this file.",
-    "",
-    `Schema: ${schemaUrl} (\`policyFile\`).`,
-  ].join("\n");
-}
+const PR_BODY = [
+  `Adds \`${POLICY_FILE_PATH}\` with this repository's current Corbits Triage policy.`,
+  "",
+  "Once merged, the hub reads the policy from this file on every push to the default branch, and the portal shows it read-only with a link here. Edit the policy by changing this file.",
+].join("\n");
 
 export type PolicyFileDeps = PortalCredentialDeps & {
   artifacts: ArtifactDb;
@@ -46,7 +42,6 @@ export type PolicyFileDeps = PortalCredentialDeps & {
   writerFor: (tenantId: string) => Promise<string>;
   /** Grants a new policy's writers, as the stock artifact route does for one it creates. */
   grantWriters: (tx: ArtifactTx, row: ArtifactRow, scope: ResolvedPrincipal) => Promise<void>;
-  schemaUrl: string;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -263,7 +258,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       stored = undefined;
     }
     if (!stored) return failure(409, "policy_corrupt", `${repo}'s policy is not readable; save it again first.`);
-    const text = policyFileText(stored, deps.schemaUrl);
+    const text = policyFileText(stored);
     let gh: GithubFetch | undefined;
     let branched = false;
     try {
@@ -278,7 +273,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
         method: "PUT",
         body: JSON.stringify({ message: `chore: add ${POLICY_FILE_PATH}`, content: Buffer.from(text, "utf8").toString("base64"), branch: EXPORT_BRANCH }),
       });
-      const pull = await json(gh, `/repos/${repo}/pulls`, { method: "POST", body: JSON.stringify({ title: PR_TITLE, head: EXPORT_BRANCH, base, body: prBody(deps.schemaUrl) }) });
+      const pull = await json(gh, `/repos/${repo}/pulls`, { method: "POST", body: JSON.stringify({ title: PR_TITLE, head: EXPORT_BRANCH, base, body: PR_BODY }) });
       deps.log({ level: "info", msg: "policy_file_exported", tenantId: member.tenantId, repo, number: pull.number });
       return Response.json({ status: "opened", url: pull.html_url, number: pull.number });
     } catch (err) {

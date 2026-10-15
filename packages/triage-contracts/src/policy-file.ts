@@ -78,8 +78,8 @@ export function readPolicyFile(text: string, repo: string): Record<string, unkno
   return pack;
 }
 
-/** The file for a stored policy, headed by where its schema is published. */
-export function policyFileText(stored: Record<string, unknown>, schemaUrl: string): string {
+/** The file for a stored policy. Repositories can be public, so it names nothing about the hub that wrote it. */
+export function policyFileText(stored: Record<string, unknown>): string {
   const body = Object.fromEntries(Object.entries(stored).filter(([key]) => !(IMPLIED_KEYS as readonly string[]).includes(key) && key !== "dropped"));
-  return `# Corbits Triage policy. Schema: ${schemaUrl} (policyFile)\n${dump(body, { schema: JSON_SCHEMA, lineWidth: -1 })}`;
+  return `# Corbits Triage policy.\n${dump(body, { schema: JSON_SCHEMA, lineWidth: -1 })}`;
 }
