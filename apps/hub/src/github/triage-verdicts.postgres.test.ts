@@ -8,7 +8,9 @@ import { createDB, runMigrations, schema } from "@intx/db";
 import { TriageVerdicts } from "@corbits/triage-contracts";
 import { guardedApp } from "../integrations/test-app.js";
 import { migrateTriageTables } from "../triage-db.js";
-import { createOpenPullsCache, type RepoPulls } from "./open-pulls.js";
+import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/records.js";
+import { createGithubOpenPulls, createOpenPullsCache, GITHUB_OPEN_PULLS_PATH, type RepoPulls } from "./open-pulls.js";
+import type { RepoRecord } from "./tenant-config.js";
 import type { ObservedRun } from "./reconcile-plan.js";
 import { createTenantVersions, type TenantObservation } from "./tenant-observer.js";
 import { createTriageVerdicts } from "./triage-verdicts.js";
@@ -232,5 +234,76 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
     expect(body.triaged).toEqual([REPO, off]);
     await db.update(schema.tenant).set({ config: config(true) }).where(eq(schema.tenant.id, TENANT));
     expect((await listed()).pulls.map((pull) => `${pull.repo}#${pull.number}`).sort()).toEqual([`${off}#1`, `${off}#2`, `${REPO}#1`]);
+  });
+}, 120_000);
+
+test("PostgreSQL: a host with no credential costs only its own repositories, while a member barred from a host's credential is refused and leaves the shared listing as it was", async () => {
+  await withDatabase(async function hostWithoutCredential(db) {
+    const bitbucket = "TRI/widgets";
+    const config = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true }, { name: bitbucket, connected: true, source: "bitbucket-datacenter", enabled: true }] } };
+    await db.insert(schema.tenant).values({ id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config });
+    await db.insert(schema.principal).values({ id: "prn_verdicts", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" });
+    await db.insert(schema.provider).values({ id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: "https://api.github.test" });
+    await db.insert(schema.credential).values({
+      id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key", secret: "unused", status: "active",
+    });
+    const verdicts = createVerdictRecordStore(db);
+    await verdicts.record(TENANT, [verdict("run_1", 1, 0)]);
+    let now = minutes(0);
+    const openPulls = createOpenPullsCache(() => now);
+    const listed: string[] = [];
+    const deps = {
+      db,
+      cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
+      async authorize(_principalId: string, _tenantId: string, resource: string) {
+        return resource !== "credential:crd_bitbucket";
+      },
+      openPulls,
+      async list(_tenantId: string, record: RepoRecord) {
+        listed.push(record.name);
+        return [{ number: 1, title: "PR 1", author: "ada", draft: false, sha: "sha1", updatedAt: minutes(0).toISOString(), labels: [], url: null, authorAssociation: "MEMBER", authorBot: false }];
+      },
+    };
+    const triageVerdicts = createTriageVerdicts({
+      ...deps,
+      verdicts,
+      observer: { last: () => undefined },
+      ready: () => true,
+      versions: createTenantVersions(),
+      now: () => now,
+    });
+    const githubOpenPulls = createGithubOpenPulls({ ...deps, cache: openPulls });
+    const grants: GrantRule[] = [{ id: "grt_runs", resource: "workflow-run:*", action: "read", effect: "allow", origin: "system", conditions: null, expiresAt: null, roleId: null, principalId: "prn_verdicts" }];
+    const app = guardedApp(db, async () => ({ user: { id: "usr_member" } }) as never, createInMemoryGrantStore(grants), { triageVerdicts, openPulls: githubOpenPulls });
+    async function get(path: string): Promise<Response> {
+      return app.request(`${path}/${TENANT}`, { headers: { "sec-fetch-site": "same-origin" } });
+    }
+    async function pullsListed(): Promise<string[]> {
+      const res = await get("/api/integrations/triage-verdicts");
+      expect(res.status).toBe(200);
+      return TriageVerdicts.assert(await res.json()).pulls.map((pull) => `${pull.repo}#${pull.number}`);
+    }
+
+    expect(await pullsListed()).toEqual([`${REPO}#1`]);
+    expect(listed).toEqual([REPO]);
+    const res = await get(GITHUB_OPEN_PULLS_PATH);
+    expect(res.status).toBe(200);
+    const { repos } = await res.json() as { repos: RepoPulls[] };
+    expect(repos.map((row) => [row.repo, row.source, row.prs.length, row.error])).toEqual([
+      [REPO, "github", 1, undefined],
+      [bitbucket, "bitbucket-datacenter", 0, "Connect Bitbucket Data Center first."],
+    ]);
+
+    await db.insert(schema.credential).values({
+      id: "crd_bitbucket", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: TOKEN_CREDENTIAL, type: "api_key", secret: "unused", status: "active",
+    });
+    now = minutes(5);
+    const kept = openPulls.kept(TENANT, Infinity);
+    const refused = await get(GITHUB_OPEN_PULLS_PATH);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: { code: "forbidden", message: "You do not have access to the Bitbucket Data Center credential." } });
+    expect(await pullsListed()).toEqual([`${REPO}#1`]);
+    expect(listed).toEqual([REPO]);
+    expect(openPulls.kept(TENANT, Infinity)).toBe(kept);
   });
 }, 120_000);

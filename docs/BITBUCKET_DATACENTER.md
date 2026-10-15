@@ -26,7 +26,7 @@ workflow, the same steps as `pr-triage-github` built over the Bitbucket tools
 `bitbucket-datacenter` credential, so the hub deploys it once the instance is
 connected (`POST /api/integrations/workflow-deploy` answers 409
 `source_not_connected` before that); a workspace with GitHub as well runs both.
-Disconnecting releases the deployment. The webhook credential names this
+Disconnecting releases the deployment and leaves the Bitbucket repository records disabled and disconnected, so the open pull request listing carries on with the other hosts. The webhook credential names this
 workflow, and every mail carries `repoSource: "bitbucket-datacenter"`.
 
 Triage with every rule switched off starts no run and writes nothing to the
