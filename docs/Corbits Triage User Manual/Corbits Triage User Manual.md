@@ -195,6 +195,10 @@ On Bitbucket Data Center this card has no effect; see [Bitbucket Data Center rep
 - **Label each pull request with its verdict** is always on. Triage puts the verdict's label on the pull request and takes the other two off. The defaults are **Triage: Ready** for Pass, **Triage: Not Ready** for Fail and **Triage: Needs Human Review** for Unsure. You can rename them.
 - **Also label each failed rule** adds a label such as `rule: linked-issue` for every rule that failed.
 
+### Removing a repository
+
+**Remove repository**, at the bottom of the repository page, asks you to confirm, then stops Triage on that repository and takes it off Repositories. Its pull requests leave the Inbox and Pulse. For a Bitbucket Data Center repository it also deletes the webhook Triage created; if the token may not, Triage tells you to delete it by hand.
+
 ## Day to day: the Inbox
 
 Once triage is on, the **Inbox** is where you will spend most of your time. It lists open pull requests, shows each one's verdict and reasons, and offers the next step as a button. Nothing happens on GitHub or Bitbucket until you press one of those buttons, unless you have told Triage otherwise in Settings.
