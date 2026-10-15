@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "@corbits/common";
 import { queryOptions, skipToken, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { emptyPack, repoPolicy } from "@corbits/triage-contracts";
+import { emptyPack, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { isBitbucketDatacenterRepo, switchBitbucketDatacenterTriage } from "./bitbucket-datacenter.ts";
 import { writeCheckPack } from "./check-pack.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackQuery } from "./check-packs.ts";
 import { loadRepoPolicy } from "./hub-api.ts";
@@ -35,6 +36,14 @@ function hubRepoPackStore(queryClient: QueryClient, tenantId: string): RepoPackS
       const written = await writeCheckPack(transport, tenantId, pack.repo, pack, loaded);
       queryClient.setQueryData(checkPackQuery(tenantId, pack.repo).queryKey, written);
       return { id: written.id, version: written.version };
+    },
+    /** A Bitbucket Data Center repository is recorded, enabled and disabled by the hub's routes, after the pack it runs is saved. */
+    async writePolicy(repo, policy, packId) {
+      if (isBitbucketDatacenterRepo(queryClient, tenantId, repo)) {
+        const stored = await loadRepoPolicy(transport, tenantId, repo);
+        if (stored.enabled !== policy.enabled) await switchBitbucketDatacenterTriage(queryClient, transport, tenantId, repo, policy.enabled);
+      }
+      await direct.writePolicy(repo, policy, packId);
     },
   };
 }
@@ -73,7 +82,7 @@ export type RepoPack = {
 
 type SaveInput = { session: PackSession; draft: RepoDraft };
 
-export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack {
+export function useRepoPack(store: RepoPackStore | null, repo: string, source: RepoSource): RepoPack {
   const { refreshNow, runBacklog } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
   const [attempt, setAttempt] = useState(0);
@@ -114,7 +123,8 @@ export function useRepoPack(store: RepoPackStore | null, repo: string): RepoPack
   async function afterSave(before: PackSession, after: PackSession) {
     setAfterError("");
     try {
-      if (!before.saved.policy.enabled && after.saved.policy.enabled) await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
+      // Open pull requests are triaged on turning on through GitHub's backlog route only.
+      if (source === "github" && !before.saved.policy.enabled && after.saved.policy.enabled) await runBacklog(repo, "Triage enabled. Triaging open pull requests.");
       await refreshNow();
     } catch (cause) {
       signOutWhenRejected(cause);

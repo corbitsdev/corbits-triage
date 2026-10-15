@@ -18,7 +18,7 @@ const REPO = "acme/widgets";
 const NOW = new Date("2026-10-12T12:00:00Z");
 const MINUTE = 60_000;
 const CONFIG = { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true, installationId: 1 }] } };
-const PACK = emptyPack(REPO);
+const PACK = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true } } };
 const BUNDLE = {
   source: { kind: "asset", assetId: "ast_triage", package: { format: "source", commitSha: "c0ffee", packageName: "@corbits/pr-triage-workflow" } },
   entry: "./pr-triage.mjs",
@@ -97,6 +97,8 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
   }
 
   const reconcile = createTriageReconciler({
+    source: "github",
+    rotationKey: "rotation",
     tenants: async () => [{ id: TENANT, domain: DOMAIN, config: CONFIG }],
     liveDeployments,
     latestDeployments: (tenantId, limit) => latestDeployments(db, tenantId, WORKFLOW, limit),

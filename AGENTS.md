@@ -24,6 +24,8 @@
 - Credentials, grants and tenants are Interchange's. Secrets live in the hub vault and are delivered to sidecars at launch and rotation; never read them anywhere else, never persist them. Where stock lacks a path, such as an `action` step reaching a bound credential, raise it upstream; a vendored carry needs owner approval and the allowlist.
 - Rules say how they are evaluated: rule (GitHub data, no inference) or decision model (a fixed question shape that cites evidence). Actions are one policy-wide When and an ordered list of steps for each verdict (Pass, Fail, Unsure); each step names an action and which authors it is for. A failed rule (hard or judged) decides Fail without the Choice question; an unconfirmed judged rule makes a pass Unsure; a policy with no decision-model rule passes when every rule passes; otherwise one Choice question decides. An action runs on its own only when the workspace's `pr-triage` role holds the grant for its kind.
 
+- Pull request hosts are GitHub and Bitbucket Data Center. A repository record carries `source` (absent = GitHub), every mail names it as `repoSource`, and each host has its own pr-triage package (`pr-triage-github`, `pr-triage-bitbucket-datacenter`) built by `prTriage({ sources })`, binding only that host's credential; docs/BITBUCKET_DATACENTER.md has the Bitbucket routes, webhook and build-status poll.
+
 ## Interchange reference
 
 Before writing anything that touches the hub, sidecars or workflows, check these for a stock route or primitive first. Links follow upstream main; the commit we actually run is the stock ref in `vendor/interchange/VENDORED.md`.

@@ -10,7 +10,7 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, classificationSources, isFromTriageSender, PolicySourceShape, repoPolicy, triageEventsOf, type ActionKind, type CheckPack, type PolicySource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, classificationSources, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, ruleLabel, triageEventsOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoInput, DoOutcome } from "@corbits/github-tool/do";
 import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
@@ -110,6 +110,16 @@ function call(name: string, args: Record<string, unknown>, id = name): ToolCall 
 
 const TRUNCATED_RESULT = "[Tool output truncated";
 
+/** Each host's tools are named after it; the GitHub names are the original ones. */
+const TOOL_PREFIX: Record<RepoSource, string> = { github: "github_", "bitbucket-datacenter": "bitbucket_datacenter_" };
+
+function toolName(source: RepoSource, name: string): string {
+  return `${TOOL_PREFIX[source]}${name}`;
+}
+
+/** The unattended action tool: the GitHub one keeps the name it was deployed with. */
+const EXECUTE_TOOL: Record<RepoSource, string> = { github: "github_execute_do_auto", "bitbucket-datacenter": "bitbucket_datacenter_execute_action_auto" };
+
 function ruleSpans(rows: unknown[]): RuleSpan[] {
   return rows.flatMap((span) => {
     if (!isRecord(span) || typeof span.path !== "string") return [];
@@ -120,24 +130,24 @@ function ruleSpans(rows: unknown[]): RuleSpan[] {
 }
 
 /** A cut-off or unreadable docs page would hide docs the judge needs, so it is an error instead. */
-function docsPage(r: ToolResult | undefined): RepoDocsPage | string {
-  if (!r) return "github_read_repo_docs did not answer";
-  if (r.isError) return `github_read_repo_docs failed: ${asText(r.content)}`;
-  if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return "github_read_repo_docs result was truncated";
+function docsPage(tool: string, r: ToolResult | undefined): RepoDocsPage | string {
+  if (!r) return `${tool} did not answer`;
+  if (r.isError) return `${tool} failed: ${asText(r.content)}`;
+  if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return `${tool} result was truncated`;
   const content = data<{ docs?: unknown; rules?: unknown; ref?: unknown; next?: unknown }>(r);
-  if (!content || !Array.isArray(content.docs) || !Array.isArray(content.rules) || typeof content.ref !== "string") return "github_read_repo_docs result is unreadable";
+  if (!content || !Array.isArray(content.docs) || !Array.isArray(content.rules) || typeof content.ref !== "string") return `${tool} result is unreadable`;
   const next = optionalCount(content.next);
   const docs = content.docs.flatMap((doc) => (isRecord(doc) && typeof doc.path === "string" && typeof doc.text === "string" ? [{ path: doc.path, text: doc.text }] : []));
   return { docs, rules: ruleSpans(content.rules), ref: content.ref, ...(next === undefined ? {} : { next }) };
 }
 
 /** A cut-off or unreadable file list would read as a pull request that changes nothing, so it is an error instead. */
-function filesPage(r: ToolResult | undefined): FilesPage | string {
-  if (!r) return "github_list_pr_files did not answer";
-  if (r.isError) return `github_list_pr_files failed: ${asText(r.content)}`;
-  if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return "github_list_pr_files result was truncated";
+function filesPage(tool: string, r: ToolResult | undefined): FilesPage | string {
+  if (!r) return `${tool} did not answer`;
+  if (r.isError) return `${tool} failed: ${asText(r.content)}`;
+  if (typeof r.content === "string" && r.content.includes(TRUNCATED_RESULT)) return `${tool} result was truncated`;
   const content = data<{ files?: unknown; next?: unknown; patchNext?: unknown }>(r);
-  if (!content || !Array.isArray(content.files)) return "github_list_pr_files result is unreadable";
+  if (!content || !Array.isArray(content.files)) return `${tool} result is unreadable`;
   const next = optionalCount(content.next);
   const patchNext = optionalCount(content.patchNext);
   return { files: content.files.flatMap(fileFacts), ...(next === undefined ? {} : { next }), ...(patchNext === undefined ? {} : { patchNext }) };
@@ -170,6 +180,10 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   let carried = new Map<number, Judged>();
   let automatic: ActionKind[] = [];
   let source: PolicySource | undefined;
+  let repoSource: RepoSource = "github";
+  function tool(name: string): string {
+    return toolName(repoSource, name);
+  }
   function reply(items: RulesItem[], batch: boolean) {
     return caps.reply(JSON.stringify({ items, batch }));
   }
@@ -180,10 +194,10 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   function fetchTargets(repo: string, numbers: number[], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[], docs: RepoDocs | string) {
     function prCalls(n: number): ToolCall[] {
       return [
-        call("github_get_pr", { repo, number: n }, `pr:${n}`),
-        call("github_get_reviews", { repo, number: n }, `reviews:${n}`),
-        call("github_list_issue_comments", { repo, number: n }, `comments:${n}`),
-        call("github_list_pr_commits", { repo, number: n }, `commits:${n}`),
+        call(tool("get_pr"), { repo, number: n }, `pr:${n}`),
+        call(tool("get_reviews"), { repo, number: n }, `reviews:${n}`),
+        call(tool("list_issue_comments"), { repo, number: n }, `comments:${n}`),
+        call(tool("list_pr_commits"), { repo, number: n }, `commits:${n}`),
         filesCall(n, FIRST_FILES_PAGE),
       ];
     }
@@ -198,11 +212,11 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
 
     function filesCall(n: number, cursor: FilesCursor): ToolCall {
       const { offset, patchOffset, patches } = cursor;
-      return call("github_list_pr_files", { repo, number: n, offset, ...(patchOffset === undefined ? {} : { patchOffset }), ...(patches ? {} : { patches: false }) }, filesId(n, cursor));
+      return call(tool("list_pr_files"), { repo, number: n, offset, ...(patchOffset === undefined ? {} : { patchOffset }), ...(patches ? {} : { patches: false }) }, filesId(n, cursor));
     }
 
     function addFiles(n: number, cursor: FilesCursor, result: ToolResult | undefined): FilesCursor | undefined {
-      const page = filesPage(result);
+      const page = filesPage(tool("list_pr_files"), result);
       const read = listed.get(n) ?? { files: [], patchChars: 0 };
       listed.set(n, read);
       const next = typeof page === "string" ? page : addFilesPage(read, cursor, page);
@@ -216,13 +230,13 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
 
       function checkCall(n: number): ToolCall[] {
         const sha = prs.get(n)?.sha;
-        return sha ? [call("github_get_checks", { repo, sha }, `checks:${n}`)] : [];
+        return sha ? [call(tool("get_checks"), { repo, sha }, `checks:${n}`)] : [];
       }
 
       function teamsCalls(): ToolCall[] {
         if (!teams.length) return [];
         const authors = new Set(numbers.flatMap((n) => prs.get(n)?.author ?? []));
-        return [...authors].map((author) => call("github_author_teams", { repo, author, teams }, `teams:${author}`));
+        return [...authors].map((author) => call(tool("author_teams"), { repo, author, teams }, `teams:${author}`));
       }
 
       function readFiles(r: BatchResults, cursors: Array<[number, FilesCursor]>): DirectorActions {
@@ -250,7 +264,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           }, { repo, policy, pack, events, docs });
           const judged = carried.get(n);
           if ("error" in item) return item;
-          const stamped = { ...item, automatic, ...(source && { source }) };
+          const stamped = { ...item, automatic, ...(source && { source }), ...(repoSource !== "github" && { repoSource }) };
           return judged === undefined ? stamped : { ...stamped, judged };
         }
         return reply(numbers.map(itemFor), batch);
@@ -263,16 +277,16 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   }
 
   function docsCall(repo: string, offset: number, ref?: string): ToolCall {
-    return call("github_read_repo_docs", { repo, offset, ...(ref === undefined ? {} : { ref }) }, `docs:${offset}`);
+    return call(tool("read_repo_docs"), { repo, offset, ...(ref === undefined ? {} : { ref }) }, `docs:${offset}`);
   }
 
   function readDocs(repo: string, offset: number, result: ToolResult | undefined, pages: RepoDocsPage[], then: (docs: RepoDocs | string) => DirectorActions): DirectorActions {
-    const page = docsPage(result);
+    const page = docsPage(tool("read_repo_docs"), result);
     if (typeof page === "string") return then(page);
     pages.push(page);
     const { next, ref } = page;
     if (next === undefined) return then(repoDocs(pages));
-    if (next <= offset) return then(`github_read_repo_docs did not advance past offset ${offset}`);
+    if (next <= offset) return then(`${tool("read_repo_docs")} did not advance past offset ${offset}`);
     function onNextDocs(r: BatchResults) {
       return readDocs(repo, next!, r.get(`docs:${next}`), pages, then);
     }
@@ -281,9 +295,10 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
 
   function fetchListed(repo: string, targets: number[] | undefined, batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[]) {
     const judged = hasModelChecks(classificationSources(pack));
-    return b.run([call("github_list_open_prs", { repo }), ...(judged ? [docsCall(repo, 0)] : [])], function onPrList(r) {
-      const list = data<{ prs: Array<{ number: number; draft?: boolean }> }>(r.get("github_list_open_prs"));
-      if (!list && targets === undefined) return fail("github_list_open_prs failed");
+    const listTool = tool("list_open_prs");
+    return b.run([call(listTool, { repo }), ...(judged ? [docsCall(repo, 0)] : [])], function onPrList(r) {
+      const list = data<{ prs: Array<{ number: number; draft?: boolean }> }>(r.get(listTool));
+      if (!list && targets === undefined) return fail(`${listTool} failed`);
       const listed = list?.prs ?? [];
       const triageable = listed.filter((p) => p.draft !== true).map((p) => p.number);
       function withDocs(docs: RepoDocs | string) {
@@ -303,6 +318,7 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     if (!pack) return fail(NEEDS_SETUP_REASON);
     automatic = automaticKinds(message, input);
     source = policySource(input);
+    repoSource = repoSourceOf(input?.repoSource);
     if (input?.kind === "backlog") return fetchListed(repo, undefined, true, policy, pack, ["catch-up"]);
     if (input?.kind !== "pr") return fail("facts: input is neither pr nor backlog");
     // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.
@@ -364,6 +380,17 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
 
 const MIRRORED_KINDS: readonly ActionKind[] = ["comment", "labels", "approve", "request-changes"];
 
+const BUILD_STATES = { pass: "SUCCESSFUL", fail: "FAILED", unsure: "INPROGRESS" } as const;
+const BUILD_WORDS = { pass: "Pass", fail: "Fail", unsure: "Needs review" } as const;
+const BUILD_DESCRIPTION_MAX = 255;
+
+/** A host without labels shows the verdict as a build status on the head; the rule labels it would carry name the failed rules in its description. */
+function verdictBuild(v: Verdict) {
+  const failed = v.checks.filter((c) => c.result === "fail").map((c) => ruleLabel(c.check));
+  const description = failed.length ? `${BUILD_WORDS[v.verdict]}: ${failed.join(", ")}` : BUILD_WORDS[v.verdict];
+  return { state: BUILD_STATES[v.verdict], description: description.slice(0, BUILD_DESCRIPTION_MAX) };
+}
+
 /**
  * A settled head that may not be approved takes back the approve Do's approvals, of it or earlier heads, in a pack that approves;
  * one with nothing left for the author to fix takes back the request-changes Do's requests, in a pack that requests changes.
@@ -404,9 +431,10 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
 
   function mirrorCall(v: Verdict): ToolCall {
     const r = v.request;
-    const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
+    const source = repoSourceOf(v.repoSource);
+    const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned, ...(source === "bitbucket-datacenter" && { build: verdictBuild(v) }) } : { labels: [], owned: [] };
     const comment = v.automatic.includes("comment") ? { comment: r.comment, ...(r.header && { header: r.header }) } : {};
-    return call("github_mirror_auto", { repo: r.repo, number: r.number, ...labels, ...comment, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
+    return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
   return {
@@ -457,28 +485,31 @@ function refusal({ verdict, step }: AutomaticDo): string | undefined {
   return verdict.headSha !== null && decidesDos(verdict) ? unrunnable(step) : NOT_SETTLED;
 }
 
-function doInput({ verdict, step }: AutomaticDo): DoInput {
-  return { request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha!, kind: step.kind, target: step.target } };
+type QueuedDo = DoInput & { repoSource?: RepoSource };
+
+function doInput({ verdict, step }: AutomaticDo): QueuedDo {
+  return { request: verdict.request, step: { effectId: step.effectId, headSha: verdict.headSha!, kind: step.kind, target: step.target }, ...(verdict.repoSource && { repoSource: verdict.repoSource }) };
 }
 
 /** The call id is the effect id, so each result names its Do. */
-function doCall({ request, step }: DoInput): ToolCall {
-  return call("github_execute_do_auto", { request, step }, step.effectId);
+function doCall({ request, step, repoSource }: QueuedDo): ToolCall {
+  return call(EXECUTE_TOOL[repoSourceOf(repoSource)], { request, step }, step.effectId);
 }
 
-function outcome(r: ToolResult): DoResult {
+function outcome(tool: string, r: ToolResult): DoResult {
   if (r.isError) return { effectId: r.callId, status: "failed", error: asText(r.content) };
   const result = data<{ status?: DoResult["status"]; reason?: string }>(r);
   if (result?.status === "skipped" && typeof result.reason === "string") return { effectId: r.callId, status: "skipped", error: result.reason };
   if (result?.status === "done" || result?.status === "satisfied") return { effectId: r.callId, status: result.status };
-  return { effectId: r.callId, status: "failed", error: "github_execute_do_auto result is unreadable" };
+  return { effectId: r.callId, status: "failed", error: `${tool} result is unreadable` };
 }
 
 /** Writes one Do at a time, so a run never floods a pull request, and replies what it has so far when interrupted. An approval's input is the one held Do to write. */
 function executeDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   const results: DoResult[] = [];
-  let queue: DoInput[] = [];
+  let queue: QueuedDo[] = [];
+  let running: ToolCall | undefined;
 
   function reply(reason?: string) {
     return caps.reply(JSON.stringify({ dos: results, ...(reason === undefined ? {} : { reason }) }));
@@ -486,11 +517,13 @@ function executeDirector(caps: ReactorCapabilities): ReactorDirector {
 
   function next(): DirectorActions {
     const head = queue.shift();
-    return head === undefined ? reply() : b.run([doCall(head)], onResult);
+    if (head === undefined) return reply();
+    running = doCall(head);
+    return b.run([running], onResult);
   }
 
   function onResult(r: BatchResults): DirectorActions {
-    results.push(...[...r.values()].map(outcome));
+    results.push(...[...r.values()].map((result) => outcome(running!.name, result)));
     return next();
   }
 

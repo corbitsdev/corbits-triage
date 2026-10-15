@@ -1,0 +1,15 @@
+{
+  "id": 1,
+  "title": "Add subtract",
+  "description": "Adds subtract next to add.",
+  "state": "OPEN",
+  "draft": false,
+  "createdDate": 1791998938863,
+  "updatedDate": 1791999674033,
+  "fromRef": { "id": "refs/heads/feature/subtract", "displayId": "feature/subtract", "latestCommit": "3e1552b04f0b3f223574cb43ccb9ced7771bc41e", "repository": { "id": 2 } },
+  "toRef": { "id": "refs/heads/main", "displayId": "main", "latestCommit": "66af7477a3b53db35d1556d16823b6e07970b09a", "repository": { "id": 2 } },
+  "links": { "self": [{ "href": "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] },
+  "author": { "user": { "slug": "admin" }, "role": "AUTHOR", "status": "UNAPPROVED" },
+  "reviewers": [{ "user": { "slug": "reviewer" }, "role": "REVIEWER", "status": "APPROVED", "lastReviewedCommit": "3e1552b04f0b3f223574cb43ccb9ced7771bc41e" }],
+  "participants": []
+}

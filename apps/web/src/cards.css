@@ -11,9 +11,9 @@
 :is(.repos, .settings) .rs > .help:last-child { margin: 8px 0 0; }
 /* Rule cards: a plain title and subtitle over sentence rows */
 :is(.repos, .settings) .gcard { margin-top: 12px; padding: 4px 16px 10px; border: 1px solid var(--rule); border-radius: var(--r-md); }
-:is(.repos, .settings) .gcard header { display: grid; gap: 1px; padding: 10px 0 8px; }
-:is(.repos, .settings) .gcard header b { font-size: 14px; }
-:is(.repos, .settings) .gcard header span { font-size: 12px; color: var(--ink-mute); }
+:is(.repos, .settings) .gcard header, .gcard.source header { display: grid; gap: 1px; padding: 10px 0 8px; }
+:is(.repos, .settings) .gcard header b, .gcard.source header b { font-size: 14px; }
+:is(.repos, .settings) .gcard header span, .gcard.source header span { font-size: 12px; color: var(--ink-mute); }
 :is(.repos, .settings) .gcard header em { font-style: normal; font-size: 12px; margin-top: 2px; }
 :is(.repos, .settings) .sentences { display: grid; border-top: 1px solid var(--rule); }
 :is(.repos, .settings) .sentence { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 5px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }

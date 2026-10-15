@@ -34,7 +34,7 @@ const GROUPS: Group[] = [
   { name: "Size", sub: "Flag large pull requests", ids: ["max-files-changed", "max-lines-changed"] },
   {
     name: "Checks",
-    sub: "Facts GitHub already knows: issue, conflicts, CI, paths",
+    sub: "Facts the host already knows: issue, conflicts, CI, paths",
     ids: ["linked-issue", "no-merge-conflicts", "ci-green", "no-forbidden-paths"],
     note: "Always on: drafts wait until they are ready for review, and a pull request with changes requested fails.",
   },

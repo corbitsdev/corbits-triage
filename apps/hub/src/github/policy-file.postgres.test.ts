@@ -104,6 +104,7 @@ beforeAll(async () => {
     db,
     artifacts: db,
     cipher,
+    tenantBitbucket: async () => undefined,
     async authorize(principalId, _tenantId, resource, action) {
       if (resource === "credential:crd_github") return action === "use" && ["prn_user", "prn_viewer"].includes(principalId);
       return principalId === "prn_user" && ((resource === "artifact:*" && action === "create") || (resource.startsWith("artifact:") && action === "write"));

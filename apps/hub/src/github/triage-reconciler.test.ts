@@ -4,6 +4,7 @@ import { decodeMail, extractAddrSpec } from "@intx/mime";
 import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
 import { emptyPack, stockTriggerMail, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import type { CheckRun } from "@corbits/github-reads";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
@@ -223,6 +224,9 @@ type HarnessOptions = {
   rotation?: RotationRecord;
   sameSource?: boolean;
   pack?: CheckPack;
+  noPack?: boolean;
+  /** Build statuses of every head, for a host whose builds the reconciler polls. */
+  headChecks?: CheckRun[];
 };
 
 function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: HarnessOptions = {}) {
@@ -268,6 +272,8 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     now,
   });
   const reconcile = createTriageReconciler({
+    source: "github",
+    rotationKey: "rotation",
     tenants: async function tenants() {
       return [tenant()];
     },
@@ -305,9 +311,11 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       };
     },
     observeTenant: observer.observe,
+    ...(options.headChecks && { headChecks: async () => options.headChecks! }),
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
-      return { status: "ok", pack: options.pack ?? emptyPack(repo), automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
+      if (options.noPack) return { status: "missing" };
+      return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
     },
     deliver: async function deliver(tenantId, address, payload) {
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
@@ -354,6 +362,40 @@ function rotationLogs(logged: ReadonlyArray<Record<string, unknown>>): unknown[]
 }
 
 describe("triage reconciler", () => {
+  test("a host without build webhooks: a head whose verdict waits on CI is queued again once its builds stop pending", async () => {
+    const waiting = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }] };
+    const logs: Logs = { [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(waiting), completed] } };
+    const pending = harness(logs, [head(1)], { headChecks: [{ name: "build", status: "in_progress", conclusion: null }] });
+    await pending.reconcile();
+    expect(pending.delivered).toHaveLength(0);
+    const finished = harness(logs, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    await finished.reconcile();
+    expect(mailedNumbers(finished.delivered)).toEqual([1]);
+    expect(finished.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "build_status_changed" }));
+    // A verdict that failed on CI is polled too: red turning green is caught without another event.
+    const failed = { ...waiting, checks: [{ check: "ci-green", kind: "machine", result: "fail" }] };
+    const red = { [repoKey(LIVE.runId)]: { run_1: [started(1), rendered(failed), completed] } };
+    const stillRed = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "failure" }] });
+    await stillRed.reconcile();
+    expect(stillRed.delivered).toHaveLength(0);
+    const green = harness(red, [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    await green.reconcile();
+    expect(mailedNumbers(green.delivered)).toEqual([1]);
+  });
+
+  test("a repository with every rule off, or no policy, starts no run and is logged once per head", async () => {
+    const off = harness({ [repoKey(LIVE.runId)]: {} }, [head(1), head(2)], { pack: emptyPack(REPO) });
+    await off.reconcile();
+    expect(off.delivered).toHaveLength(0);
+    await off.reconcile();
+    expect(off.logged.filter((entry) => entry.msg === "triage_skipped_no_rules").map((entry) => entry.pulls)).toEqual([[1, 2]]);
+    const unset = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { noPack: true });
+    await unset.reconcile();
+    await unset.reconcile();
+    expect(unset.delivered).toHaveLength(0);
+    expect(unset.logged.filter((entry) => entry.msg === "triage_skipped_no_policy")).toEqual([expect.objectContaining({ pulls: [1] })]);
+  });
+
   test("reads only the live deployment's runs and queues to it", async () => {
     const logs: Logs = {
       [repoKey("run_old")]: { run_old_pr: [started(1), rendered(current(1)), completed] },
@@ -1001,6 +1043,6 @@ describe("triage reconciler", () => {
     const { reconcile, delivered, logged } = harness({}, [head(1)], { github: false });
     await reconcile();
     expect(delivered).toEqual([]);
-    expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_reconcile_skipped", reason: "no_github_credential" }));
+    expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_reconcile_skipped", reason: "no_source_credential" }));
   });
 });

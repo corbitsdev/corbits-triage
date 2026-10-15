@@ -64,6 +64,7 @@ test("a tenant whose logs cannot be read is retried with backoff, logged once pe
       },
     },
     activeTenants: async (what) => (what === "deployments" ? [bad, good] : []),
+    endedWithinMs: 4_000,
     backoffMs: 2_000,
     maxBackoffMs: 8_000,
     now: () => new Date(now),

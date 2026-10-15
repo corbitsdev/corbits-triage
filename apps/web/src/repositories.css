@@ -14,6 +14,7 @@
 .repos .rt .c-name a { color: inherit; text-decoration: none; }
 .repos .rt .c-name b { display: block; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; }
 .repos .rt .c-name small { display: block; font-size: 12px; }
+.repos .rt .c-name .src { color: var(--ink-mute); }
 .repos .rt .c-n { text-align: right; }
 .repos .rt td.c-n { font-size: 12px; }
 .repos .hl { display: inline-flex; align-items: center; gap: 7px; }
@@ -40,7 +41,6 @@
 
 /* Triage switch: the one prominent block; everything under it is gated */
 .repos .switch-card { display: flex; align-items: center; gap: 16px; margin-top: 10px; padding: 14px 16px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
-.repos .switch-card.invalid { box-shadow: inset 3px 0 0 var(--orange); }
 .repos .sc-t { flex: 1; display: grid; gap: 2px; justify-items: start; }
 .repos .sc-t b { font-size: 15px; }
 .repos .gate-note { font-size: 13px; color: var(--ink-mute); }

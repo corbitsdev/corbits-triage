@@ -17,11 +17,12 @@ function repoName(repo: RepoRecord): string {
   return repo.connected ? repo.name : `${repo.name} (not connected)`;
 }
 
-export function GithubSection({ snapshot }: { snapshot: PortalSnapshot }) {
+export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
   const { syncFromGithub } = usePortal();
   const [error, setError] = useState("");
   const canManage = useGithubManageAccess().data === true;
-  const { credentials, repos } = snapshot;
+  const { credentials } = snapshot;
+  const repos = snapshot.repos.filter((repo) => repo.source !== "bitbucket-datacenter");
   const ready = hasActiveGithubCredential(credentials);
   const secrets = namedSecrets(githubSecrets(credentials));
   const others = namedSecrets(otherSecrets(credentials));
@@ -52,12 +53,12 @@ export function GithubSection({ snapshot }: { snapshot: PortalSnapshot }) {
   }
 
   return (
-    <section className="sec" id="github" aria-labelledby="sec-github">
+    <div className="gcard source" aria-labelledby="source-github" role="group">
       <header>
-        <h2 id="sec-github">GitHub</h2>
-        <p>The Triage GitHub App reads pull requests and acts on them on your behalf.</p>
+        <b id="source-github">GitHub</b>
+        <span>The Triage GitHub App reads pull requests and acts on them on your behalf.</span>
       </header>
-      <div>
+      <div className="source-body">
         {error && <p role="alert" className="error">{error}</p>}
         <div className="sentences">
           <div className="sentence">
@@ -87,6 +88,6 @@ export function GithubSection({ snapshot }: { snapshot: PortalSnapshot }) {
         {snapshot.denied.credentials && <DeniedNotice section="credentials" />}
         <CopyField label="Webhook URL" value={githubWebhookUrl(snapshot.workspace.tenantId)} help="GitHub sends pull request events here. It is the Webhook URL in your GitHub App's settings." />
       </div>
-    </section>
+    </div>
   );
 }

@@ -7,6 +7,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import { generateId } from "@intx/hub-common";
 import { grantAdminGithub } from "./admin-github-grant.js";
 import { ensureTriageRole } from "./automation.js";
+import { triageWorkflowFor } from "./source-workflow.js";
 
 const { credential, principal, provider } = schema;
 
@@ -216,7 +217,7 @@ export async function prepareCanonicalManifestWrite(
     replacement: state.replacement,
     values: [
       { id: appCredentialId, name: "github", secret: encryptedApp, metadata: { appSlug: conversion.slug } },
-      { id: hookCredentialId, name: "github-hook", secret: encryptedHook, metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } } },
+      { id: hookCredentialId, name: "github-hook", secret: encryptedHook, metadata: { webhook: { verify: "standard-webhooks", workflow: triageWorkflowFor("github").id } } },
     ] as const,
   };
 }

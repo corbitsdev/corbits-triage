@@ -71,7 +71,7 @@ function pack(repo: string): CheckPack {
 
 /** The mail the hub's bridge sends when a pull request opens, as stock hands it to the run. */
 function triggerMail(pr: Snapshot) {
-  const request = mailPayload(pr.repo, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack: pack(pr.repo), automatic: [], source: { repo: { id: "eval", version: 1 } } }, { prNumber: pr.number, headSha: "eval", events: ["opened"] });
+  const request = mailPayload({ name: pr.repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack: pack(pr.repo), automatic: [], source: { repo: { id: "eval", version: 1 } } }, { prNumber: pr.number, headSha: "eval", events: ["opened"] });
   return {
     headers: { from: `${TRIAGE_MAIL_SENDER}@${DOMAIN}`, to: [`${PR_TRIAGE_ADDRESS}@${DOMAIN}`] },
     rawHeaders: {},
