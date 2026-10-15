@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Button, Input } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { getAuthMethods, requestPasswordReset, signInWithGoogle, type AuthMethods } from "../lib/hub-auth.ts";
 import { useSession } from "../lib/session.tsx";
+import { SignInShell } from "../components/SignInShell.tsx";
 
 type Mode = "sign-in" | "sign-up" | "reset";
 
@@ -153,19 +154,6 @@ export function Welcome() {
         </>
       )}
     </SignInShell>
-  );
-}
-
-function SignInShell({ children }: { children: ReactNode }) {
-  return (
-    <div className="signin">
-      <main className="signin-main">
-        <div className="signin-column">{children}</div>
-      </main>
-      <div className="signin-brand" aria-hidden="true">
-        <span className="signin-wordmark"><img src="/triage-logo.svg" width="48" height="48" alt="" />Corbits Triage</span>
-      </div>
-    </div>
   );
 }
 
