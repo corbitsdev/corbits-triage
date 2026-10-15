@@ -1,10 +1,8 @@
 import { asRecord } from "@corbits/common";
 import { repoPolicy } from "@corbits/triage-contracts";
 import { repoRecords, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
-
-export const PROVIDER = "bitbucket-datacenter";
-export const TOKEN_CREDENTIAL = "bitbucket-datacenter";
-export const HOOK_CREDENTIAL = "bitbucket-datacenter-hook";
+import { PROVIDER, TOKEN_CREDENTIAL, HOOK_CREDENTIAL } from "./names.js";
+export { PROVIDER, TOKEN_CREDENTIAL, HOOK_CREDENTIAL };
 
 /** `user` is the slug the token acts as, recorded at connect; a connection recorded before it has none. */
 type BitbucketConnection = { baseUrl: string; user?: string };

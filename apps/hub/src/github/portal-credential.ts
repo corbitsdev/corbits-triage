@@ -4,7 +4,7 @@ import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
 import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
-import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/records.js";
+import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
 export type PortalCredentialDeps = {
