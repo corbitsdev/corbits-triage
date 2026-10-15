@@ -1,6 +1,6 @@
 # Plan: pr-triage coordinator and per-triage worker deployments (CL-10705)
 
-Status: design, no code. Paths are repository-relative; `vendor/` is the
+Status: design, no code; step 0 (spike) done, results in section 12. Paths are repository-relative; `vendor/` is the
 vendored Interchange at stock `cd02c313` (`vendor/interchange/VENDORED.md`).
 Upstream docs are cited by name at that ref.
 
@@ -86,10 +86,21 @@ Stock Interchange (used as is):
   (`sidecar-allocation/contracts.ts:58-77`); at most 128 deployments per sidecar
   (`vendor/interchange/packages/types/src/sidecar.ts:48`).
 
+Settled shape (owner, 2026-10-14): ONE coordinator for the hub, a hub module,
+not one per tenant. It folds webhook events per (tenant, repository, pull
+request) exactly as the coalescer does today; when a window closes it deploys
+ONE fresh pr-triage deployment for that job. That deployment has ONE body run:
+no trigger listener, its input is the folded mail, and the deployment is
+released when the run ends. Capacity is the number of such deployments alive,
+bounded by `TRIAGE_WORKERS_GLOBAL`, `TRIAGE_WORKERS_PER_TENANT` and
+`TRIAGE_SPAWNS_PER_SECOND`.
+
 Ours:
-- Coordinator: a hub module (section 3) owning queue, limits, priority, spawn.
+- Coordinator: the one hub module (section 3) owning queue, limits, priority,
+  spawn.
 - Worker definition: `prTriage({ sources })` changes from an `onTrigger`
-  listener to a top-level run over the same `triageSteps`.
+  listener to a top-level run over the same `triageSteps`; one deployment,
+  one run, one job.
 - Recording: observer reads worker deployments instead of one listener log.
 - Queue route for the portal (OpenAPI, arktype).
 - Later, provisioners: Docker and E2B as `SidecarProvisioner` plugins.
@@ -166,7 +177,8 @@ principal on REST routes.
 
 ## 5. Worker lifecycle
 
-- One deployment per spawn: `prepareProvisionedDeployment` with the seed
+- One deployment per job, one run per deployment, released when the run ends:
+  `prepareProvisionedDeployment` with the seed
   deployment's launch spec (source, entry, pin, offerings, deployer), as
   `createDeploymentRotation.redeploy` does today (`deployment.ts:209-241`).
 - Fire: once the allocation is routable, the coordinator delivers the existing
@@ -334,8 +346,7 @@ verdict table, hook verification.
 
 Each PR is one concern, small, behind the version switch until cutover.
 
-0. Spike, no PR (30 agent minutes): fire a manual-trigger worker by mail on the
-   local stack; measure spawn latency p50/p95. Gate for the rest.
+0. Spike, no PR: done, section 12. Its blocker (12.4) is the gate for 2.
 1. PR: worker definition, new major version of the per-host packages
    (30 min).
 2. PR: worker observation in tenant observer and triage-runs (45 min).
@@ -350,3 +361,111 @@ Each PR is one concern, small, behind the version switch until cutover.
    the "Where triage runs" setting (CL-10687 dependency).
 
 Proof after 3 and after 5: CL-10688 numbers, before and after.
+
+## 12. Spike results (2026-10-14, local stack)
+
+Setup: hub from this checkout (`bun --conditions=intx-src apps/hub/src/server.ts`,
+Postgres `interchange` on 5432, fresh `HUB_DATA_DIR`,
+`WORKFLOW_DEFAULT_RETENTION_COMPLETED=1s`), local-process sidecars. A throwaway
+package `@spike/worker`: `defineWorkflow({ id, steps: { echo: action({ handler:
+"echo", input: { from: "trigger.payload" } }) } })`, no `onTrigger`, no
+`trigger` field, packed with `tooling/pack-tarball.ts`, published to a
+package-registry asset and deployed through `POST
+/api/integrations/workflow-deploy/:tenantId` (same `prepareProvisionedDeployment`
+call as the stock route). Fired with `POST
+/api/tenants/:t/workflows/:runId/mail` `{ content: "<job json>" }`.
+
+### 12.1 Input delivery
+
+- The pinned Interchange has no input field on deployment create: the stock
+  route (`vendor/interchange/packages/hub-api/src/routes/workflows.ts:240-378`)
+  and `PrepareProvisionedWorkflowDeploymentArgs`
+  (`vendor/interchange/packages/hub-sessions/src/workflow-allocation-service.ts:84-102`)
+  carry only `deployContent.systemPrompt`.
+- The first mail is the run's input. The supervisor forwards the resolved
+  `Mail` as `trigger.fire` with the message as the run's trigger payload
+  (`vendor/interchange/packages/workflow-host/src/supervisor/supervisor.ts:3363-3385`);
+  the child makes it `triggerPayload`
+  (`vendor/interchange/packages/workflow-host/src/child/run-child.ts:1218-1258`);
+  a definition without triggers snapshots it as `{ type: "manual", payload }`
+  (`vendor/interchange/packages/workflow/src/runtime/run.ts:1307-1314`), so a
+  step's `input: { from: "trigger.payload" }` reads it. Proven: the echo step
+  ran on the mail body. Section 10's first question is answered: no `mail`
+  trigger declaration is needed; declare none.
+
+### 12.2 Timing, one sample (hub log and `workflow_run` row, run `run_7d12c7bd…`)
+
+| point | wall clock | from deploy request |
+| --- | --- | --- |
+| deploy POST accepted (probe sidecar connected 54.800) | 02:46:54.3 | 0 |
+| anchor `deployed` (sidecar "Deployed …") | 02:46:55.622 | 1.3 s |
+| mail accepted, run fired | 02:46:55.698 | 1.4 s |
+| run `completed` (`ended_at`) | 02:46:55.787 | 1.5 s |
+| allocation `released`, sidecar disconnected | 02:46:58.25 | 4.0 s |
+
+The run started 1.4 s and the deployment was released 4.0 s after the deploy
+request, with `capacityRetention.completed` at 1 s (`capacity_release_at` =
+`ended_at` + 1 s). Five samples were not collected: the harness waited on
+`GET /workflows/runs/:runId` to report `completed`, which never happened (12.4).
+The earlier sample (`run_556f2ff6…`) reached `deployed` 0.6 s after its deploy
+request. The probe sidecar is adopted as the deployment's sidecar, so one
+process per worker; `local-sidecars/<allocation>` is created per deploy.
+
+### 12.3 Internal routes
+
+- Create: `WorkflowAllocationService.prepareProvisionedDeployment`
+  (`workflow-allocation-service.ts:84-123`), the function the stock deploy
+  route calls (`routes/workflows.ts:309-323`); the hub already calls it
+  in-process from `createDeploymentRotation.redeploy`
+  (`apps/hub/src/github/deployment.ts:226-239`) and `apps/hub/src/workflow-deploy.ts:68`.
+  No HTTP, no session: the principal is a parameter
+  (`sourceAuthorityPrincipalId`), checked by `mayDeploy` as the route would.
+- Fire: `createRunTriggerDeliverer` from `@intx/hub-sessions`, built in
+  `apps/hub/src/server.ts:220-231` with the mail-triggered grants materializer
+  and used for cron and for every triage mail today
+  (`deliverToDeployment`, `server.ts:288-290`). In-process, system sender,
+  no session. The HTTP mail route is the same path behind a session
+  (`routes/workflows.ts:676-729`).
+- Option (b) stands: both calls exist in-process and are already in production
+  hub code. No session-as-API-key is needed.
+
+### 12.4 Blocker: the one-run deployment's final log push is rejected
+
+Observed on the sample: 114 ms after the run's `ended_at`, the sidecar pushed
+the run log pack and the hub refused it twice: `Workflow-run pack rejected for
+run_7d12…: source address has no live deployment anchor`, reported to the
+sidecar as `path_violation`. The check is
+`vendor/interchange/packages/hub-sessions/src/hub-session-lookups.ts:348-373`:
+a workflow-run pack is accepted only while the anchor row is in a live status.
+When the top-level run is the anchor, its terminal status (projected from the
+control frame) lands before the pack carrying its terminal events, so the
+events never reach the hub repository: `hub-data/workflow-runs/<run>` holds
+only `.git` and `.gitignore`, `GET /workflows/runs/:runId` stays at the event
+collector's last state, and the run's events route is empty.
+
+Consequence: the plan's recording path (observer reads each worker's run log,
+sections 2 and 5) has nothing to read. Unverified hypothesis: the listener
+shape never hits this because its anchor stays live across body runs; it is
+specific to a top-level run that ends. Reproduced once; needs reproducing on
+a second deploy and on the listener shape before it is filed upstream.
+Options, in order: (1) check whether an earlier pack (step events before the
+terminal one) is accepted and only the terminal pack is lost, which would
+still break verdict recording; (2) a stock retention or ordering setting that
+holds the anchor live until the pack lands; (3) raise upstream when the owner
+asks (`feedback-no-upstream-interchange`). Until resolved, step 2 of the build
+plan (worker observation) is blocked; steps 1 and 3 are not.
+
+### 12.5 Credential and grants in this shape
+
+Unchanged from the listener. The materializer in the fire path
+(`createMailTriggeredRunGrantsMaterializer`,
+`vendor/interchange/packages/hub-api/src/run-grant-materialization.ts:777-830`)
+derives the run's grants from the receiving deployment's frozen snapshot and
+the anchor's resolved credential-binding grants, per deployment, at first
+fire; `readyMaterializer` (`apps/hub/src/github/deployment.ts:24-30`) throws
+`DeploymentNotReadyError` until credential resolution is published. The
+worker definition keeps `credentialBindings` and `grantRequirements`
+(`packages/triage-workflows/src/pr-triage.ts:22-23`), so each worker
+deployment binds the host credential itself and the `triage-do:` grants ride
+in the mail as today. Nothing new is needed; the cost is one grant
+materialization per worker instead of per listener.
