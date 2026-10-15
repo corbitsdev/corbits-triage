@@ -47,9 +47,6 @@ const GROUPS: Group[] = [
   },
 ];
 
-/** The two rules every pull request runs outside the policy's switches. */
-const ALWAYS_ON = 2;
-
 /** The fail-below choice that never fails; no level is blank, so it cannot clash with one. */
 const NEVER = "";
 
@@ -72,7 +69,7 @@ type RulesSectionProps = {
 
 export default function RulesSection({ draft, saved, view, stats, disabled, edit, problem }: RulesSectionProps) {
   const pack = draft.pack;
-  const on = [...CATALOG_IDS, ...pack.custom.map((row) => row.id)].filter((id) => checkOn(pack, id)).length + ALWAYS_ON;
+  const on = [...CATALOG_IDS, ...pack.custom.map((row) => row.id)].filter((id) => checkOn(pack, id)).length;
   const [added, setAdded] = useState<string | null>(null);
   const where = problem?.where;
   const reason = where?.section === "pack" || (where?.section === "custom" && where.id === undefined) ? problem?.reason : undefined;
