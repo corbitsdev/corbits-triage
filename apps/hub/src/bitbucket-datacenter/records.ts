@@ -63,8 +63,8 @@ function withoutWebhook(record: RepoRecord): RepoRecord {
   return rest;
 }
 
-/** The connection goes and every Bitbucket repository is disabled; their records stay so reconnecting keeps their settings. */
+/** The connection goes and every Bitbucket repository is disabled and disconnected, so nothing refers to the gone credential; their records stay so reconnecting keeps their settings. */
 export function disconnect(ns: CorbitsTriageNs): CorbitsTriageNs {
   const { bitbucketDatacenter: _bitbucketDatacenter, ...rest } = ns;
-  return { ...rest, repos: repoRecords(ns).map((row) => (isBitbucketRecord(row) ? withoutWebhook({ ...row, enabled: false }) : row)) };
+  return { ...rest, repos: repoRecords(ns).map((row) => (isBitbucketRecord(row) ? withoutWebhook({ ...row, enabled: false, connected: false }) : row)) };
 }
