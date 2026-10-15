@@ -30,7 +30,8 @@ wakes the policy as if it were opened.
   files and the rules that passed. A bar at the bottom offers the next step
   for that state (merge, request changes, comment, reply, approve, close,
   triage again); the rest and the policy's actions are under More. Merging from the
-  portal is pinned to the commit Triage checked.
+  portal is pinned to the commit Triage checked. Needs you lists repositories
+  with triage on; a pull request with a pending approval stays until it is answered.
 - **Pulse**: what changed since your last visit and what is stuck.
 - **Repositories**: per repository, its Size, Checks and Judgement rules,
   the steps for each verdict, its labels, the triage switch and **Triage open

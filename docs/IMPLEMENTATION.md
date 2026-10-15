@@ -34,7 +34,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates `pr-triage` deployments and redeploys failed ones. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
 | `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and records verdicts. |
-| `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict records and the routes that serve them. |
+| `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict records and the routes that serve them. The triage-verdicts list lists pull requests only for repositories with triage on, plus any a pending approval names. |
 | `src/github/manifest.ts` | GitHub App Manifest flow: start and callback. The setup state is an HMAC-SHA256 token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes and bound to the user who started it; nothing is stored. |
 | `src/github/pr-*.ts` | Pull request actions, details, previews (API only) and single-PR triage. |
 | `src/github/held-dos.ts` | Approves a held action by mailing it to `pr-triage`. |
