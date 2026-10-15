@@ -9,7 +9,7 @@ import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { PR_TRIAGE_STUCK_RUN_MS, repoPolicy, TriageVerdicts, type VerdictWord } from "@corbits/triage-contracts";
-import { listingRefusal, listRepoPulls, type OpenPrsLister, type OpenPullsCache, type OpenPullsRead, type RepoPulls } from "./open-pulls.js";
+import { listConnectedPulls, listingRefusal, refusedSources, type OpenPrsLister, type OpenPullsCache, type OpenPullsRead, type RepoPulls } from "./open-pulls.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { runKeyNumber, type ObservedRun } from "./reconcile-plan.js";
@@ -144,15 +144,16 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
 
   /**
    * The listing kept from the last 30 seconds, else one read now on each repository's host, like github-open-pulls, when
-   * the caller holds `read` on every host's credential. Without it the route asks the hosts nothing and uses the last
-   * listing of any age, or none, rather than refusing: the verdicts themselves need only the run grant.
+   * the caller holds `read` on every host's credential, a host with none listed as errors. When github-open-pulls would refuse,
+   * the route asks nothing and uses the last listing of any age, or none, rather than refusing: the verdicts themselves need only the run grant.
    */
   async function listingOf(member: Member, connected: readonly RepoRecord[]): Promise<OpenPullsRead | undefined> {
     const { tenantId } = member;
     const fresh = deps.openPulls.kept(tenantId, LISTING_MS);
     if (fresh) return fresh;
-    if (await listingRefusal(deps, member, connected)) return deps.openPulls.kept(tenantId, Infinity);
-    return deps.openPulls.read(tenantId, () => listRepoPulls(deps.list, tenantId, connected));
+    const refused = await refusedSources(deps, member, connected);
+    if (listingRefusal(connected, refused)) return deps.openPulls.kept(tenantId, Infinity);
+    return deps.openPulls.read(tenantId, () => listConnectedPulls(deps.list, tenantId, connected, refused));
   }
 
   async function activityOf(tenantId: string, pulls: readonly PullRef[], live: Map<string, LivePull>): Promise<Map<string, string>> {

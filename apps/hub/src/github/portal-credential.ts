@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
-import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { DO_GRANT_ACTION, doResource, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/records.js";
 import { sourceOf, type RepoRecord } from "./tenant-config.js";
 
@@ -42,26 +42,44 @@ export function activeCredential(db: DB["db"], tenantId: string, name: string) {
   });
 }
 
-/** The App credential's row when the member holds `action` on it, or the error response to return. Holding `use` also allows `read`. */
-export async function githubAppGrant(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction) {
-  const credential = await activeCredential(d.db, tenantId, "github");
-  if (!credential) return failure(409, "github_not_connected", "Connect GitHub first.");
+/** Why a member may not act with a host's credential: 409 when the workspace has none, the same for every member; 403 when this member lacks the grant. */
+export type CredentialRefusal = { status: 403 | 409; code: string; message: string };
+
+const HOST_CREDENTIAL = {
+  github: { name: "github", label: "GitHub App", connect: "Connect GitHub first." },
+  "bitbucket-datacenter": { name: TOKEN_CREDENTIAL, label: "Bitbucket Data Center", connect: "Connect Bitbucket Data Center first." },
+} as const;
+
+async function hostCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, source: RepoSource, action: CredentialAction) {
+  const host = HOST_CREDENTIAL[source];
+  const credential = await activeCredential(d.db, tenantId, host.name);
+  if (!credential) return { status: 409, code: `${source.replace("-", "_")}_not_connected`, message: host.connect } satisfies CredentialRefusal;
   if (!(await holds(d, principalId, tenantId, `credential:${credential.id}`, action))) {
-    return failure(403, "forbidden", "You do not have access to the GitHub App credential.");
+    return { status: 403, code: "forbidden", message: `You do not have access to the ${host.label} credential.` } satisfies CredentialRefusal;
   }
   return credential;
 }
 
+export function refusalResponse(refusal: CredentialRefusal): Response {
+  return failure(refusal.status, refusal.code, refusal.message);
+}
+
+/** The App credential's row when the member holds `action` on it, or the error response to return. Holding `use` also allows `read`. */
+export async function githubAppGrant(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction) {
+  const credential = await hostCredential(d, principalId, tenantId, "github", action);
+  return "code" in credential ? refusalResponse(credential) : credential;
+}
+
+/** Why the member may not hold `action` on the credential of the record's host, if they may not. */
+export async function sourceCredentialRefusal(d: PortalCredentialDeps, principalId: string, tenantId: string, record: Pick<RepoRecord, "source">, action: CredentialAction): Promise<CredentialRefusal | undefined> {
+  const credential = await hostCredential(d, principalId, tenantId, sourceOf(record), action);
+  return "code" in credential ? credential : undefined;
+}
+
 /** Whether the member holds `action` on the credential of the record's host; a missing credential is a 409 naming the host. */
 export async function sourceCredentialGrant(d: PortalCredentialDeps, principalId: string, tenantId: string, record: Pick<RepoRecord, "source">, action: CredentialAction): Promise<Response | undefined> {
-  if (sourceOf(record) === "github") {
-    const grant = await githubAppGrant(d, principalId, tenantId, action);
-    return grant instanceof Response ? grant : undefined;
-  }
-  const credential = await activeCredential(d.db, tenantId, TOKEN_CREDENTIAL);
-  if (!credential) return failure(409, "bitbucket_datacenter_not_connected", "Connect Bitbucket Data Center first.");
-  if (!(await holds(d, principalId, tenantId, `credential:${credential.id}`, action))) return failure(403, "forbidden", "You do not have access to the Bitbucket Data Center credential.");
-  return undefined;
+  const refusal = await sourceCredentialRefusal(d, principalId, tenantId, record, action);
+  return refusal && refusalResponse(refusal);
 }
 
 export async function githubAppCredential(d: PortalCredentialDeps, principalId: string, tenantId: string, action: CredentialAction): Promise<string | Response> {
