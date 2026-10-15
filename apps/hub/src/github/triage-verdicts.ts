@@ -5,11 +5,11 @@
 // until any of those changes, so polling tabs are answered from memory. It
 // needs the grant the portal needed to read run logs, `workflow-run:*` read.
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
-import { PR_TRIAGE_STUCK_RUN_MS, TriageVerdicts, type VerdictWord } from "@corbits/triage-contracts";
-import { listingRefusal, listRepoPulls, type OpenPrsLister, type OpenPullsCache, type OpenPullsRead } from "./open-pulls.js";
+import { PR_TRIAGE_STUCK_RUN_MS, repoPolicy, TriageVerdicts, type VerdictWord } from "@corbits/triage-contracts";
+import { listingRefusal, listRepoPulls, type OpenPrsLister, type OpenPullsCache, type OpenPullsRead, type RepoPulls } from "./open-pulls.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { runKeyNumber, type ObservedRun } from "./reconcile-plan.js";
@@ -109,11 +109,22 @@ function newest(times: ReadonlyArray<string | undefined>): string | null {
   return times.reduce<string | null>((latest, at) => (at !== undefined && (latest === null || at > latest) ? at : latest), null);
 }
 
-/** Open pull request numbers per repository GitHub listed; a repository it could not list is left out. */
-function openNumbers(listed: OpenPullsRead | undefined): Map<string, Set<number>> {
+/**
+ * Open pull request numbers per listed repository among `repos`, plus the `held` ones elsewhere: an approval still needs a person
+ * after triage is turned off. A repository GitHub could not list is left out.
+ */
+function openNumbers(listed: OpenPullsRead | undefined, repos: readonly string[], held: readonly PullRef[]): Map<string, Set<number>> {
   if (!listed) return new Map();
-  return new Map(listed.repos.flatMap((row) => (row.error === undefined ? [[row.repo, new Set(row.prs.map((pr) => pr.number))] as const] : [])));
+  function numbersOf(row: RepoPulls): Array<readonly [string, Set<number>]> {
+    if (row.error !== undefined) return [];
+    const wanted = repos.includes(row.repo);
+    const numbers = row.prs.map((pr) => pr.number).filter((number) => wanted || held.some((pull) => pull.repo === row.repo && pull.number === number));
+    return wanted || numbers.length > 0 ? [[row.repo, new Set(numbers)]] : [];
+  }
+  return new Map(listed.repos.flatMap(numbersOf));
 }
+
+const ApprovalPull = type({ repo: "string", number: "number.integer" });
 
 type Body = { json: string; etag: string };
 
@@ -189,10 +200,20 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     };
   }
 
-  async function openList(tenantId: string, connected: readonly RepoRecord[], listed: OpenPullsRead | undefined, live: Map<string, LivePull>): Promise<TriageVerdicts> {
-    const names = connected.map((record) => record.name);
-    const open = openNumbers(listed);
-    const unknown = names.filter((repo) => !open.has(repo));
+  /** The pull requests a pending approval names. */
+  async function heldPulls(tenantId: string): Promise<PullRef[]> {
+    const rows = await deps.db.select({ args: schema.approval.toolArguments }).from(schema.approval).where(and(eq(schema.approval.tenantId, tenantId), eq(schema.approval.status, "pending")));
+    function pullOf(row: { args: unknown }): PullRef[] {
+      const pull = ApprovalPull(row.args);
+      return pull instanceof type.errors ? [] : [{ repo: pull.repo, number: pull.number }];
+    }
+    return rows.flatMap(pullOf);
+  }
+
+  /** Lists the pull requests of `enabled` repositories and the `held` ones; `names`, every connected one, still decides which count as triaged. */
+  async function openList(tenantId: string, enabled: readonly string[], held: readonly PullRef[], names: readonly string[], listed: OpenPullsRead | undefined, live: Map<string, LivePull>): Promise<TriageVerdicts> {
+    const open = openNumbers(listed, enabled, held);
+    const unknown = enabled.filter((repo) => !open.has(repo));
     const pairs = [...open].flatMap(([repo, numbers]) => [...numbers].map((number) => ({ repo, number })));
     const since = new Date(deps.now().getTime() - RECENT_MS);
     const [known, recent] = await Promise.all([deps.verdicts.latest(tenantId, pairs), deps.verdicts.latestSince(tenantId, unknown, since)]);
@@ -222,11 +243,12 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       return respond(req, bodyOf(one.pulls.length > 0 ? one : { ...one, pulls: [{ ...pull, activityAt: null, verdict: null, run: runOf(undefined, deps.now(), deps.ready(tenantId)) }] }));
     }
 
-    const listed = await listingOf(member, connected);
-    const key = [deps.versions.get(tenantId), listed?.at, deps.ready(tenantId), Math.floor(deps.now().getTime() / REBUILD_MS), ...names].join("\n");
+    const enabledNames = connected.filter((record) => repoPolicy(record).enabled).map((record) => record.name);
+    const [listed, held] = await Promise.all([listingOf(member, connected), heldPulls(tenantId)]);
+    const key = [deps.versions.get(tenantId), listed?.at, deps.ready(tenantId), Math.floor(deps.now().getTime() / REBUILD_MS), ...names, "--", ...enabledNames, "--", ...held.map(pullKey).sort()].join("\n");
     const hit = kept.get(tenantId);
     if (hit?.key === key) return respond(req, hit.body);
-    const body = bodyOf(await openList(tenantId, connected, listed, live));
+    const body = bodyOf(await openList(tenantId, enabledNames, held, names, listed, live));
     kept.set(tenantId, { key, body });
     return respond(req, body);
   };
