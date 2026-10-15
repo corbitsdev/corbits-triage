@@ -5,7 +5,7 @@ import { schema } from "@intx/db";
 import { authorAssociation, authorKindOf, type AuthorKind, type RepoSource } from "@corbits/triage-contracts";
 import { INSTALLATION_SELECTOR_HEADER, listOpenPrs, type GithubFetch } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
-import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure, refusalResponse, sourceCredentialRefusal, type CredentialRefusal, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 
@@ -47,14 +47,37 @@ export function listRepoPulls(list: OpenPrsLister, tenantId: string, records: re
   return Promise.all(records.map((record) => pullsFor(list, tenantId, record)));
 }
 
-/** Refuses when the member may not read a host's credential among the records' hosts; a host with no record needs nothing. */
-export async function listingRefusal(deps: PortalCredentialDeps, member: Member, records: readonly RepoRecord[]): Promise<Response | undefined> {
-  const sources = new Set<RepoSource>(records.map(sourceOf));
-  for (const source of sources) {
-    const refused = await sourceCredentialGrant(deps, member.principalId, member.tenantId, { source }, "read");
-    if (refused) return refused;
+export type SourceRefusal = CredentialRefusal & { source: RepoSource };
+
+/** The hosts among the records whose credential the member may not read, each with why; a host with no record needs nothing. */
+export async function refusedSources(deps: PortalCredentialDeps, member: Member, records: readonly RepoRecord[]): Promise<SourceRefusal[]> {
+  const refused: SourceRefusal[] = [];
+  for (const source of new Set(records.map(sourceOf))) {
+    const refusal = await sourceCredentialRefusal(deps, member.principalId, member.tenantId, { source }, "read");
+    if (refusal) refused.push({ source, ...refusal });
   }
-  return undefined;
+  return refused;
+}
+
+/**
+ * The refusal to answer with. Any 403 refuses outright: the listing is shared by the workspace, so a member barred from one host
+ * neither sees it nor writes it. A host with no credential is the same for every member and costs only its own repositories,
+ * unless no host among the records has one.
+ */
+export function listingRefusal(records: readonly RepoRecord[], refused: readonly SourceRefusal[]): Response | undefined {
+  const forbidden = refused.find((refusal) => refusal.status === 403);
+  if (forbidden) return refusalResponse(forbidden);
+  const [first] = refused;
+  const unconnected = new Set(refused.map((refusal) => refusal.source));
+  return first && records.every((record) => unconnected.has(sourceOf(record))) ? refusalResponse(first) : undefined;
+}
+
+/** Lists the records of every host with a credential; each repository of a host without one is an error row. */
+export async function listConnectedPulls(list: OpenPrsLister, tenantId: string, records: readonly RepoRecord[], unconnected: readonly SourceRefusal[]): Promise<RepoPulls[]> {
+  const messages = new Map(unconnected.map((refusal) => [refusal.source, refusal.message]));
+  const listed = await listRepoPulls(list, tenantId, records.filter((record) => !messages.has(sourceOf(record))));
+  const skipped = records.filter((record) => messages.has(sourceOf(record))).map((record): RepoPulls => ({ repo: record.name, source: sourceOf(record), prs: [], error: messages.get(sourceOf(record)) }));
+  return [...listed, ...skipped];
 }
 
 export type OpenPullsRead = { at: number; repos: RepoPulls[] };
@@ -102,9 +125,10 @@ export function createGithubOpenPulls(deps: PortalCredentialDeps & { list: OpenP
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
     const connected = repoRecords(triageNs(tenant.config)).filter((record) => record.connected);
-    const refused = await listingRefusal(deps, member, connected);
-    if (refused) return refused;
-    const listed = deps.cache.kept(tenantId, RELIST_MS) ?? await deps.cache.read(tenantId, () => listRepoPulls(deps.list, tenantId, connected));
+    const refused = await refusedSources(deps, member, connected);
+    const refusal = listingRefusal(connected, refused);
+    if (refusal) return refusal;
+    const listed = deps.cache.kept(tenantId, RELIST_MS) ?? await deps.cache.read(tenantId, () => listConnectedPulls(deps.list, tenantId, connected, refused));
     return Response.json({ repos: listed.repos });
   };
 }
