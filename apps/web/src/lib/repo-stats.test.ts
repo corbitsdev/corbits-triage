@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { dehydrate, hydrate, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { emptyPack, repoPolicy, type TriageStats } from "@corbits/triage-contracts";
+import { emptyPack, repoPolicy, type RepoSource, type TriageStats } from "@corbits/triage-contracts";
+import OutcomesCard from "../components/repo-panel/OutcomesCard.tsx";
 import RulesSection from "../components/repo-panel/RulesSection.tsx";
 import { fakeHub } from "./fake-hub.ts";
 import { fromPack } from "./pack-draft.ts";
@@ -24,8 +25,13 @@ const STATS: TriageStats = {
   checks: { "max-files-changed": { pass: 3, fail: 1, unconfirmed: 0 } },
   actions: { pass: { suggested: 2, executed: 1, failed: 0 } },
   comments: 4,
-  medianTimeToVerdictMs: 4_320_000,
-  outcomes: null,
+  outcomes: {
+    state: "measured",
+    triaged: { prs: 3, closed: 2, mergeOrCloseMs: 90_000_000, firstHumanResponseMs: 3_600_000, firstApprovalMs: null, humanTouchGapMs: 7_200_000 },
+    baseline: null,
+    baselineBefore: "2026-01-01T00:00:00.000Z",
+    baselineState: "measured",
+  },
   daily: [0, 1, 0, 2, 0, 0, 2].map((triaged, i) => ({ date: `2026-10-0${i + 1}`, triaged })),
 };
 
@@ -69,4 +75,19 @@ test("persisted stats render from the cache after a reload", () => {
   hydrate(after, persisted);
 
   expect(render(after, store)).toContain("3 of 4 passed");
+});
+
+test("the outcomes show the triaged medians with their counts, and each missing state as one sentence", () => {
+  const card = (outcomes: TriageStats["outcomes"], source: RepoSource = "github") => renderToStaticMarkup(createElement(OutcomesCard, { outcomes, source }));
+  const measured = STATS.outcomes!;
+  const html = card(measured);
+  expect(html).toContain("3 PRs, 2 closed");
+  expect(html).toContain("1d 1h");
+  expect(html).toContain("No pull requests closed before Triage was switched on.");
+
+  expect(card({ ...measured, baselineBefore: null, baselineState: "no_policy" })).toContain("The baseline needs a saved policy.");
+  expect(card({ ...measured, baselineState: "source_failed" }, "bitbucket-datacenter")).toContain("Bitbucket did not answer; the numbers will return when it does.");
+  expect(card({ state: "no_credential" }, "bitbucket-datacenter")).toContain("Needs a Bitbucket credential you can use.");
+  expect(card({ state: "source_failed" })).toContain("GitHub did not answer; the numbers will return when it does.");
+  expect(card(null)).toContain("Not connected to GitHub.");
 });

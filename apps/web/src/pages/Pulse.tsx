@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { StatGrid, StatGridItem, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@corbits/react-ui";
 import { useQuery } from "@tanstack/react-query";
-import type { PrItem } from "../lib/hub-api.ts";
+import type { PrItem, RepoRecord } from "../lib/hub-api.ts";
 import { titleText } from "../lib/inbox-pane.ts";
 import { ageText, listHref } from "../lib/inbox-view.ts";
 import { relativeTime } from "../lib/duration.ts";
@@ -12,7 +12,7 @@ import { usePulse, type Pulse as PulseData } from "../lib/pulse-visit.tsx";
 import type { RepoPackStore } from "../lib/repo-pack-store.ts";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
-import { WEEK_DAYS, actedOn, medianText, repoStatsQuery } from "../lib/repo-stats.ts";
+import { OUTCOME_NAMES, WEEK_DAYS, actedOn, medianText, outcomesView, repoStatsQuery, type OutcomeField, type OutcomesView } from "../lib/repo-stats.ts";
 import { ExternalIcon } from "../components/inbox-icons.tsx";
 
 function OpenLine({ item, note }: { item: PrItem; note?: string }) {
@@ -87,36 +87,72 @@ function Stuck({ stuck }: { stuck: PrItem[] }) {
   );
 }
 
-function RepoWeek({ store, repo }: { store: RepoPackStore | null; repo: string }) {
-  const { data: stats, isError } = useQuery(repoStatsQuery(store, repo, WEEK_DAYS));
+const PULSE_OUTCOMES: OutcomeField[] = ["mergeOrCloseMs", "firstHumanResponseMs"];
+
+function OutcomeCell({ field, view }: { field: OutcomeField; view: Exclude<OutcomesView, { missing: string }> }) {
+  const { baseline } = view;
+  return (
+    <TableCell className="outcome">
+      <b>{medianText(view.triaged[field])}</b>
+      {baseline && <span className="was">vs {medianText(baseline[field])} before</span>}
+    </TableCell>
+  );
+}
+
+function OutcomeCells({ view }: { view: OutcomesView }) {
+  if ("missing" in view) return <TableCell colSpan={PULSE_OUTCOMES.length} className="note">{view.missing}</TableCell>;
+  return <>{PULSE_OUTCOMES.map((field) => <OutcomeCell key={field} field={field} view={view} />)}</>;
+}
+
+function OutcomeNote({ view }: { view: OutcomesView }) {
+  if ("missing" in view) return null;
+  return (
+    <>
+      <span className="was">median of {view.triaged.prs}</span>
+      {view.baselineMissing && <span className="was">{view.baselineMissing}</span>}
+    </>
+  );
+}
+
+function RepoWeek({ store, repo }: { store: RepoPackStore | null; repo: RepoRecord }) {
+  const { data: stats, isError } = useQuery(repoStatsQuery(store, repo.name, WEEK_DAYS));
+  const view = stats && outcomesView(stats.outcomes, repo.source);
   return (
     <TableRow>
-      <TableHead scope="row">{repo}</TableHead>
-      {stats ? (
+      <TableHead scope="row">{repo.name}{view && <OutcomeNote view={view} />}</TableHead>
+      {stats && view ? (
         <>
           <TableCell>{stats.triaged}</TableCell>
           <TableCell>{stats.neededYou}</TableCell>
           <TableCell>{actedOn(stats)}</TableCell>
-          <TableCell>{medianText(stats.medianTimeToVerdictMs)}</TableCell>
+          <OutcomeCells view={view} />
         </>
-      ) : <TableCell colSpan={4} className="note">{isError ? "Could not load this repository's numbers." : "Loading…"}</TableCell>}
+      ) : <TableCell colSpan={3 + PULSE_OUTCOMES.length} className="note">{isError ? "Could not load this repository's numbers." : "Loading…"}</TableCell>}
     </TableRow>
   );
+}
+
+function byName(a: RepoRecord, b: RepoRecord): number {
+  return a.name.localeCompare(b.name);
 }
 
 function ThisWeek() {
   const { snapshot } = usePortal();
   const store = useHubRepoPackStore();
-  const repos = useMemo(() => [...triageEnabledRepos(snapshot?.repos ?? [])].sort(), [snapshot]);
+  const repos = useMemo(function enabledRepos() {
+    const all = snapshot?.repos ?? [];
+    const enabled = triageEnabledRepos(all);
+    return all.filter((repo) => enabled.has(repo.name)).toSorted(byName);
+  }, [snapshot]);
   return (
     <section aria-labelledby="pulse-week">
       <h2 id="pulse-week">This week, per repository</h2>
       {repos.length === 0 ? <p className="empty-line">No repository has triage on.</p> : (
         <Table>
           <TableHeader>
-            <TableRow><TableHead scope="col">Repository</TableHead><TableHead scope="col">Triaged</TableHead><TableHead scope="col">Needed you</TableHead><TableHead scope="col">Acted on</TableHead><TableHead scope="col">Median to verdict</TableHead></TableRow>
+            <TableRow><TableHead scope="col">Repository</TableHead><TableHead scope="col">Triaged</TableHead><TableHead scope="col">Needed you</TableHead><TableHead scope="col">Acted on</TableHead>{PULSE_OUTCOMES.map((field) => <TableHead key={field} scope="col">{OUTCOME_NAMES[field]}</TableHead>)}</TableRow>
           </TableHeader>
-          <TableBody>{repos.map((repo) => <RepoWeek key={repo} store={store} repo={repo} />)}</TableBody>
+          <TableBody>{repos.map((repo) => <RepoWeek key={repo.name} store={store} repo={repo} />)}</TableBody>
         </Table>
       )}
     </section>

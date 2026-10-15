@@ -4,7 +4,7 @@
 import { type } from "arktype";
 import { currentRows, parseCheckOutput, TriageStats } from "@corbits/triage-contracts";
 import { failure } from "./portal-credential.js";
-import { median, type OutcomeReader } from "./pr-outcomes.js";
+import type { OutcomeReader } from "./pr-outcomes.js";
 import { runKey } from "./reconcile-plan.js";
 import type { Member } from "../integrations/app.js";
 import { evidenceOf, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
@@ -138,7 +138,6 @@ function aggregate(repo: string, days: number, from: Date, since: Date | null, r
     checks,
     actions,
     comments: records.filter((verdict) => verdict.commented).length + [...ran.values()].filter((action) => action.kind === "comment" && action.status === "done").length,
-    medianTimeToVerdictMs: median(judged.map((verdict) => verdict.verdictAt.getTime() - verdict.startedAt.getTime())),
     daily,
   };
 }

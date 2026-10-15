@@ -107,6 +107,8 @@
 .pulse .note { font: 700 12px var(--mono); white-space: nowrap; }
 .pulse table { font-size: 13px; }
 .pulse th, .pulse td { padding: 9px 12px 9px 0; border-top: 1px solid var(--rule); text-align: right; white-space: nowrap; }
+.pulse .was { display: block; font: 400 11px var(--font); color: var(--ink-mute); white-space: normal; }
+.pulse :is(td.outcome, td.note) { white-space: normal; }
 .pulse th:first-child { text-align: left; font-weight: 600; color: inherit; }
 .pulse thead th { border-top: 0; font-size: 12px; font-weight: 700; }
 .pulse td { font-family: var(--mono); }
@@ -312,6 +314,8 @@
   :is(.pulse, .settings) { padding: 24px 16px 100px; }
   :is(.pulse, .settings) h1 { font-size: 28px; }
   .pulse { gap: 28px; }
+  .pulse :is(th, td) { white-space: normal; padding-right: 8px; }
+  .pulse tbody th { overflow-wrap: anywhere; }
   .inbox .tools { flex-wrap: wrap; }
   .inbox .search { flex-basis: 100%; }
   .inbox .row.open-row .merge-chip { display: none; }
