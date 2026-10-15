@@ -1,27 +1,48 @@
 // End-to-end exercise of the Bun.spawn-backed `defaultSubprocessSpawner`.
-// The supervisor's `wireChild` consumes
-// four behaviours from the handle:
+// The supervisor relies on four behaviours of the spawner:
 //
 //   1. The control channel surfaces NDJSON lines the child writes
 //      to its stdout. A real child writes a signed `ready` envelope
 //      here; the test stub writes a sentinel NDJSON line.
 //   2. The handle's `exited` future resolves with the child's
-//      terminal exit code so the supervisor can race spawn-time
-//      crashes against `readyPromise`.
-//   3. A `Bun.spawn` that fails immediately (binary missing) settles
-//      `exited` with a non-zero code rapidly enough for that race
-//      to fire.
+//      terminal exit code.
+//   3. A child that cannot launch (binary missing) makes the spawner
+//      throw synchronously, so no handle is returned.
 //   4. The child's runtime env is exactly the supervisor-supplied
 //      env -- unrelated `process.env` entries do not leak in.
 
-import { describe, test, expect, beforeAll, afterAll, spyOn } from "bun:test";
+import {
+  describe,
+  test,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  spyOn,
+} from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { createLogCapture } from "@intx/workflow-host/testing";
+
 import { defaultSubprocessSpawner } from "./workflow-child-spawner";
 
 let tmpRoot: string;
+const logs = createLogCapture();
+
+beforeAll(() => {
+  logs.install();
+});
+
+afterAll(() => {
+  logs.restore();
+});
+
+beforeEach(() => {
+  logs.reset();
+});
 
 beforeAll(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "intx-spawner-test-"));
@@ -30,6 +51,24 @@ beforeAll(async () => {
 afterAll(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
+
+// A killed process whose parent also died stays a zombie until init reaps
+// it, which a container without an init never does, so a zombie counts as
+// gone.
+function processGone(pid: number): boolean {
+  const ps = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(pid)]);
+  const state = ps.stdout.toString().trim();
+  return state === "" || state.startsWith("Z");
+}
+
+function killGroupIfAlive(pid: number): void {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (err) {
+    if (!(err instanceof Error && "code" in err && err.code === "ESRCH"))
+      throw err;
+  }
+}
 
 async function writeChildScript(body: string): Promise<string> {
   const file = path.join(tmpRoot, `child-${String(Date.now())}.ts`);
@@ -130,16 +169,11 @@ eventStream.write(event, () => {
     }
   });
 
-  test("spawn-time failure surfaces fast enough for the supervisor's readyPromise race", async () => {
-    // The supervisor's `wireChild` races `handle.exited` against
-    // the child's `readyPromise`. A child that fails to reach
-    // `ready` (the production binary's failure mode for malformed
-    // env: throws in `parseSpawnTimeEnv` before opening the
-    // control channel) must surface as `exited` settling with a
-    // non-zero code -- otherwise the supervisor wedges in
-    // `starting`. The inline child below exits 1 without writing
-    // a single byte; the spawner's `exited` future must observe
-    // the terminal code.
+  test("a child that exits before writing anything resolves exited with its code", async () => {
+    // The production binary fails this way on a malformed env: it
+    // throws in `parseSpawnTimeEnv` before writing `ready`. The
+    // inline child below exits 7 without writing a single byte; the
+    // spawner's `exited` future must observe the terminal code.
     const childScript = `process.exit(7);`;
     const scriptPath = await writeChildScript(childScript);
     const wrapperPath = path.join(
@@ -162,14 +196,12 @@ eventStream.write(event, () => {
   });
 
   test("Bun.spawn synchronous throws on a missing binary surface to the caller", () => {
-    // The other half of the spawn-time race: a binary path that
-    // does not exist on disk surfaces as a synchronous throw from
-    // `Bun.spawn`, which the supervisor's `spawn(opts)` propagates
-    // to its caller. The supervisor never reaches the
-    // readyPromise race in this branch; the throw IS the failure
-    // signal. Pin the synchronous-throw behaviour here so a future
-    // Bun release that swaps to an async failure mode does not
-    // silently change the supervisor's spawn-error surface.
+    // A binary path that does not exist on disk surfaces as a
+    // synchronous throw from `Bun.spawn`, which the supervisor's
+    // `spawn(opts)` propagates to its caller; the throw is the
+    // failure signal. Pin the synchronous-throw behaviour here so a
+    // future Bun release that swaps to an async failure mode does
+    // not silently change the supervisor's spawn-error surface.
     expect(() => {
       defaultSubprocessSpawner({
         binaryPath: "/nonexistent-binary-for-spawner-test",
@@ -276,6 +308,96 @@ process.exit(0);
       expect(kill).not.toHaveBeenCalled();
     } finally {
       kill.mockRestore();
+    }
+  });
+
+  test("reports the missing event channel fd when the group kill fails", () => {
+    // On this path the spawner reads only `stdio`, and `pid` for the group
+    // kill, so a fake process is enough and no real child needs cleaning up.
+    const pid = 424242;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the stub returns only the fields the spawner reads on its missing-fd path
+    const spawn = spyOn(Bun, "spawn").mockImplementation((() => ({
+      pid,
+      stdio: [undefined, undefined, undefined, undefined],
+    })) as unknown as typeof Bun.spawn);
+    const kill = spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("operation not permitted"), {
+        code: "EPERM",
+      });
+    });
+    try {
+      expect(() =>
+        defaultSubprocessSpawner({ binaryPath: "/bin/true", env: {} }),
+      ).toThrow(/numeric fd/);
+      expect(kill).toHaveBeenCalledWith(-pid, "SIGKILL");
+    } finally {
+      kill.mockRestore();
+      spawn.mockRestore();
+    }
+    const failure = logs
+      .errors()
+      .find((message) => message.includes("that has no event channel"));
+    expect(failure).toContain(String(pid));
+    expect(failure).toContain("operation not permitted");
+  });
+
+  test("stops the child's process group when Bun.spawn returns no event channel fd", async () => {
+    // The child starts a grandchild and records its pid, so the test can
+    // prove the kill reached the whole group and not only the leader.
+    const pidFile = path.join(
+      tmpRoot,
+      `no-fd-grandchild-${String(Date.now())}`,
+    );
+    const binaryPath = await writeShellChild(
+      "shell-no-fd",
+      `/bin/sleep 60 &\necho $! > "${pidFile}"\nwait`,
+    );
+    const realSpawn = Bun.spawn;
+    let child: Bun.Subprocess | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the stub returns only the fields the spawner reads before its fd check
+    const spawn = spyOn(Bun, "spawn").mockImplementation(((
+      ...args: Parameters<typeof realSpawn>
+    ) => {
+      const real = realSpawn(...args);
+      child = real;
+      // The spawner is synchronous, so the grandchild must exist before
+      // the stub returns for the kill to have something to reach.
+      const deadline = Date.now() + 2_000;
+      while (!existsSync(pidFile) || readFileSync(pidFile, "utf-8") === "") {
+        if (Date.now() > deadline) throw new Error("grandchild never started");
+        Bun.sleepSync(5);
+      }
+      return {
+        pid: real.pid,
+        exited: real.exited,
+        stdio: [real.stdio[0], real.stdio[1], real.stdio[2], undefined],
+      };
+    }) as unknown as typeof Bun.spawn);
+    try {
+      try {
+        expect(() => defaultSubprocessSpawner({ binaryPath, env: {} })).toThrow(
+          /numeric fd/,
+        );
+      } finally {
+        spawn.mockRestore();
+      }
+      if (child === undefined) throw new Error("Bun.spawn stub never ran");
+      const exited = await Promise.race([
+        child.exited.then(() => true),
+        Bun.sleep(2_000).then(() => false),
+      ]);
+      if (!exited) throw new Error("child survived");
+      expect(child.signalCode).toBe("SIGKILL");
+
+      const grandchild = Number(readFileSync(pidFile, "utf-8").trim());
+      const deadline = Date.now() + 2_000;
+      while (!processGone(grandchild)) {
+        if (Date.now() > deadline) throw new Error("grandchild survived");
+        await Bun.sleep(5);
+      }
+    } finally {
+      // A failed assertion must not leave the detached group running.
+      if (child !== undefined) killGroupIfAlive(child.pid);
     }
   });
 });

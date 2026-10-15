@@ -8,7 +8,7 @@ import {
   type SidecarAllocationStore,
 } from "@intx/db";
 import { getLogger } from "@intx/log";
-import { hexEncode } from "@intx/types";
+import { hexEncode, type AdapterManifest } from "@intx/types";
 
 import type {
   AllocatedSidecarTarget,
@@ -22,6 +22,7 @@ import {
   EnsureSidecarResult,
   type SidecarProvisioner,
 } from "./contracts";
+import { adapterManifestDigest } from "./adapter-manifest-digest";
 import type { SidecarPluginRegistry } from "./plugin-registry";
 import {
   DEFAULT_SIDECAR_OPERATION_TIMEOUT_MS,
@@ -76,6 +77,12 @@ export type SidecarAllocationReconcilerDeps = {
     | "waitForAllocatedSidecar"
   >;
   readonly hubWebSocketUrl: string;
+  /**
+   * Operator-declared custom adapter manifest forwarded to every provisioned
+   * sidecar via the ensure request. Opaque here — the sidecar's adapter
+   * registry is the authority that admits `model_provider.plugin` values.
+   */
+  readonly adapterManifest?: AdapterManifest;
   /**
    * Resolve the previous attempt's deferred mail under the newly claimed
    * lease, before connection waits or cleanup.
@@ -183,6 +190,7 @@ export function createSidecarAllocationReconciler({
   plugins,
   router,
   hubWebSocketUrl,
+  adapterManifest,
   onInitializationRecovery,
   onReady,
   classifyParkedRun,
@@ -206,6 +214,8 @@ export function createSidecarAllocationReconciler({
   if (!Number.isSafeInteger(maxConcurrentClaims) || maxConcurrentClaims <= 0) {
     throw new Error("maxConcurrentClaims must be a positive integer");
   }
+
+  const currentAdapterManifestDigest = adapterManifestDigest(adapterManifest);
 
   const activeAllocations = new Map<
     string,
@@ -701,6 +711,7 @@ export function createSidecarAllocationReconciler({
               sidecarId,
               token,
               hubWebSocketUrl,
+              ...(adapterManifest !== undefined ? { adapterManifest } : {}),
             }),
           operationTimeoutMs,
         ),
@@ -818,12 +829,14 @@ export function createSidecarAllocationReconciler({
     const token = createToken();
     const sidecarId = createSidecarId();
     const connectDeadline = new Date(now().getTime() + connectTimeoutMs);
+    const digest = await currentAdapterManifestDigest;
     const bound = replacement
       ? await allocationStore.bindReplacementSidecar({
           allocationId: allocation.id,
           generation: allocation.generation,
           sidecarId,
           tokenHashSha256: await sha256(token),
+          adapterManifestDigest: digest,
           connectDeadline,
           expectedLeaseId: leaseId,
           now: now(),
@@ -833,6 +846,7 @@ export function createSidecarAllocationReconciler({
           expectedGeneration: allocation.generation,
           sidecarId,
           tokenHashSha256: await sha256(token),
+          adapterManifestDigest: digest,
           connectDeadline,
           expectedLeaseId: leaseId,
           now: now(),

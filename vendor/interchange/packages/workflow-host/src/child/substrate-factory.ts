@@ -38,13 +38,13 @@ import type {
   PendingOperation,
 } from "@intx/types/runtime-core";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
+import {
+  type AdapterManifest,
+  parseAdapterManifestEnv,
+} from "@intx/types/adapter-manifest";
 import { evaluateGrants } from "@intx/authz";
 import type { GrantRule } from "@intx/authz";
-import {
-  AdapterManifest,
-  createDependencies,
-  type AdapterRegistry,
-} from "@intx/inference";
+import { createDependencies, type AdapterRegistry } from "@intx/inference";
 import { loadAdapterRegistry } from "@intx/inference/providers";
 import type {
   AnnotatedPluginFactory,
@@ -86,7 +86,6 @@ import {
   emptyState,
   enumerateInlineLoopBodies,
   rewriteInlineChildWorkflowBodies,
-  runtimeRun,
   walkWorkflowSteps,
   LOOP_BODY_DESCENT,
   type ActionHandler,
@@ -130,7 +129,6 @@ import {
 } from "../supervisor/credentials";
 import {
   loadWorkflowActionHandlersFromClosure,
-  loadWorkflowDirectorRegistryFromClosure,
   loadWorkflowLoopFnsFromClosure,
   loadWorkflowPluginFactoriesFromClosure,
   loadWorkflowPluginToolDefinitionsFromClosure,
@@ -338,22 +336,21 @@ function parseBodyInferenceSources(raw: string): BodyInferenceSources {
  * every child.
  */
 export function parseAdapterManifest(raw: string): AdapterManifest {
-  let parsed: unknown;
+  let manifest: AdapterManifest | undefined;
   try {
-    parsed = JSON.parse(raw);
+    manifest = parseAdapterManifestEnv(raw);
   } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`sidecar workflow-child substrate config: ${message}`, {
+      cause,
+    });
+  }
+  if (manifest === undefined) {
     throw new Error(
-      "sidecar workflow-child substrate config: SIDECAR_ADAPTER_MANIFEST is not valid JSON",
-      { cause },
+      "sidecar workflow-child substrate config: SIDECAR_ADAPTER_MANIFEST must be a serialized manifest",
     );
   }
-  const validated = AdapterManifest(parsed);
-  if (validated instanceof type.errors) {
-    throw new Error(
-      `sidecar workflow-child substrate config: SIDECAR_ADAPTER_MANIFEST failed validation: ${validated.summary}`,
-    );
-  }
-  return validated;
+  return manifest;
 }
 
 /**
@@ -906,19 +903,6 @@ export function createSidecarStepBuildEnv(
   sourcesRef: SourcesSnapshotRef,
   credentialContext?: SidecarStepCredentialContext,
 ) => Promise<StepEnvBase> {
-  // Local delta (upstream PR #193): the run-child already resolves the
-  // workflow package's own `interchange.directors`, so the step env must use
-  // the same registry or a step naming that director fails at its first build.
-  let closureDirectors: Promise<DirectorRegistry> | undefined;
-  function directors(): Promise<DirectorRegistry> {
-    closureDirectors ??=
-      deps.closurePackageDir === undefined
-        ? Promise.resolve(createDefaultDirectorRegistry())
-        : loadWorkflowDirectorRegistryFromClosure({
-            packageDir: deps.closurePackageDir,
-          });
-    return closureDirectors;
-  }
   return async (
     req: StepInvokeRequest,
     sourcesRef: SourcesSnapshotRef,
@@ -1172,7 +1156,7 @@ export function createSidecarStepBuildEnv(
       // scratch dir, so the two coincide.
       toolCwd: workdir,
       audit: storage,
-      directors: await directors(),
+      directors: createDefaultDirectorRegistry(),
       // Resolve inference adapters through the child's boot-built
       // registry (built-ins + operator custom adapters), so a
       // custom-provider step source resolves in the child the same way
@@ -1420,21 +1404,20 @@ async function writeChildRunGrants(args: {
  * delegates to. The returned callback, when invoked with the parent
  * runtime's attribution + the parent-allocated `childRunId` + the
  * resolved `WorkflowDefinition`, builds a fresh `WorkflowRuntimeEnv`
- * scoped to `childRunId`, invokes `runtimeRun`, and returns the
- * child's terminal status.
+ * scoped to `childRunId` and returns a live handle. The parent drives
+ * the child across its parks. The child run stays unaddressable.
  *
- * Abort propagation: the parent-supplied `signal` is wired to the child
- * run's local-abort seam (`RuntimeRunOptions.localAbort`). If it aborts --
- * mid-flight or pre-aborted -- the child's own cancel controller aborts, an
- * in-flight step fails, and the returned promise resolves with
- * `terminalStatus: "failed"`. There is no durable `CancelRequested`: an
- * in-process child writes through the proxy substrate and cannot sign the
- * supervisor cancel one would require.
+ * Abort propagation: the parent-supplied `signal` is the handle's
+ * local-abort seam. If it aborts -- mid-flight or pre-aborted -- the
+ * child's own cancel controller aborts, an in-flight step fails, and the
+ * handle's terminal is `"failed"`. There is no durable `CancelRequested`:
+ * an in-process child writes through the proxy substrate and cannot sign
+ * the supervisor cancel one would require.
  *
- * Resource lifecycle: the child's per-run signal channel handle is
- * `stop()`ped in a finally block so any background `subscribeKind`
- * loop tied to the child's runId tears down before the callback
- * returns. The blob substrate, repo store, and scheduler entries are
+ * Resource lifecycle: the child's per-run signal channel is stopped when
+ * the child settles, from the handle's cleanup, so `resume` and
+ * `deliverSignal` can still write while a park is open. The blob
+ * substrate, repo store, and scheduler entries are
  * either per-call (no handle to dispose) or shared with the parent
  * (the scheduler).
  */
@@ -1445,7 +1428,7 @@ export function createSidecarRunChild(
   const clock = deps.clock ?? defaultClock;
   const newId = deps.newId ?? defaultNewId;
   // No `controlPlanePrincipal`: an in-process child tears down through the
-  // runtime's local-abort seam (see the `runtimeRun` call below), not a durable
+  // runtime's local-abort seam (the handle aborts the child controller), not a durable
   // `CancelRequested`, so it never writes a control-plane cancel this repo store
   // would have to sign. Run-body events use the workflow-process `principal`.
   // Created once and shared across every child this factory spawns (the
@@ -1465,7 +1448,7 @@ export function createSidecarRunChild(
   // out when a rung's `WorkflowDefinition` has no `childWorkflow`
   // primitive. Sub-namespace scoping continues to hold at every depth
   // because `childRunId` flows verbatim into the per-rung
-  // `blobs`/`signalChannel`/`runtimeRun` calls, keeping every rung's
+  // `blobs`/`signalChannel` and the handle's run, keeping every rung's
   // events under `runs/<runId>/...` of the parent's workflow-run repo.
   const runChild: RunChildWorkflow = async (
     {
@@ -1476,6 +1459,7 @@ export function createSidecarRunChild(
       signal,
       depth,
       maxChildSpawnDepth,
+      resumeFromEvents,
     },
     onEvent,
     credentialMaterial,
@@ -1495,49 +1479,46 @@ export function createSidecarRunChild(
       childRunId,
       parentRunId,
       onEvent,
-      // Terminal: the caller awaits this child's terminal rather than driving
-      // it across parks, and no signal can be addressed to a child run, so a
-      // park inside it has nothing that could answer it.
-      hasUpstreamSignalResolver: false,
+      // The parent drives this child across its parks and relays each one
+      // down onto this channel. The child run itself stays unaddressable.
+      hasUpstreamSignalResolver: true,
       ...(credentialMaterial !== undefined
         ? { materialCell: credentialMaterial }
         : {}),
     });
-    try {
-      // Thread this rung's depth/ceiling into the child run so its own
-      // childWorkflow spawns keep counting against the tree-wide bound (the
-      // guard lives in the runtime's runChildWorkflow). Without this the
-      // in-process sidecar recursion would reset to depth 0 each rung.
-      // A parent abort tears the child down through `runtimeRun`'s local-abort
-      // seam, not a control-plane cancel: the in-process child writes through
-      // the workflow-run PROXY substrate, which cannot sign the supervisor
-      // `CancelRequested` a cancel needs (the kind handler refuses a
-      // workflow-process-signed cancel). Local teardown aborts the child's own
-      // controller directly, so an in-flight step fails and the child settles
-      // `failed` under its own principal -- no durable cancel, no wedge while the
-      // parent awaits the terminal below.
-      const handle = runtimeRun(rewrittenDefinition, env, {
-        runId: childRunId,
-        triggerPayload: input,
-        depth,
-        maxChildSpawnDepth,
-        localAbort: signal,
-      });
-      const result = await handle.complete;
-      return { terminalStatus: result.terminalStatus };
-    } finally {
-      await signalChannel.stop();
-    }
+    // Thread this rung's depth/ceiling into the child run so its own
+    // childWorkflow spawns keep counting against the tree-wide bound (the
+    // guard lives in the runtime's runChildWorkflow). Without this the
+    // in-process sidecar recursion would reset to depth 0 each rung.
+    // A parent abort tears the child down through the handle's local-abort
+    // seam, not a control-plane cancel: the in-process child writes through
+    // the workflow-run PROXY substrate, which cannot sign the supervisor
+    // `CancelRequested` a cancel needs (the kind handler refuses a
+    // workflow-process-signed cancel). Local teardown aborts the child's own
+    // controller directly, so an in-flight step fails and the child settles
+    // `failed` under its own principal, with no durable cancel.
+    // The channel stays up until the child settles. `resume` and
+    // `deliverSignal` still write to it while a park is open.
+    return createSuspendableChildHandle(env, {
+      definition: rewrittenDefinition,
+      childRunId,
+      input,
+      depth,
+      maxChildSpawnDepth,
+      ...(resumeFromEvents !== undefined ? { resumeFromEvents } : {}),
+      signal,
+      surfaceInputPark: true,
+      cleanup: () => signalChannel.stop(),
+    });
   };
   return runChild;
 }
 
 /**
  * Construct the `RunSuspendableChild` callback the suspendable-spawn
- * adapter delegates to. The park-aware analog of
- * {@link createSidecarRunChild}: instead of awaiting the child's terminal,
- * it returns a live {@link SuspendableChildHandle} the caller (`runOnTrigger`)
- * drives across the body's approval parks.
+ * adapter delegates to. Like {@link createSidecarRunChild}, it returns a
+ * live {@link SuspendableChildHandle}. The caller (`runOnTrigger`) drives
+ * that handle across the body's approval parks.
  *
  * Park surfacing: the built env's `onPark` sink translates the child body's
  * control-plane parks into the handle's `next()` stream. An `"approval"`
@@ -1551,14 +1532,13 @@ export function createSidecarRunChild(
  * hard error on `next()` and tears the child down locally so the section run
  * ends loudly (failed).
  *
- * Signal-channel lifecycle: unlike `createSidecarRunChild`, which stops the
- * channel in a `finally` around a single awaited terminal, this keeps the
- * channel alive across every park (so `resume` can deliver) and ties its
- * teardown to the run's terminal -- the one lifecycle moment every path
- * funnels through (normal completion, a parent-abort local teardown, an
- * illegal-input-park local teardown, or a runtime failure). Tearing down
- * per-`next()` would leak the channel when a parent abort makes `runOnTrigger`
- * stop calling `next()` mid-park.
+ * Signal-channel lifecycle: the channel stays up until the child settles,
+ * so `resume` can deliver on an open park. Teardown is the handle's
+ * cleanup, the same place {@link createSidecarRunChild} stops its channel.
+ * That runs when the run reaches a terminal: normal completion, a
+ * parent-abort local teardown, an illegal-input-park local teardown, or a
+ * runtime failure. Stopping the channel on each `next()` would drop it
+ * when a parent abort makes `runOnTrigger` stop calling `next()` mid-park.
  *
  * Abort propagation: the parent-supplied `signal` tears the body down through
  * `createSuspendableChildHandle`'s local-teardown seam -- the in-process body
@@ -1583,11 +1563,11 @@ export function createSidecarSpawnSuspendableChild(
     principal: deps.principal,
     ref: deps.workflowRunRef,
   });
-  // A body's own `childWorkflow` grandchildren spawn terminal-only: the
-  // suspendable seam is exercised only by onTrigger sections, and
-  // `buildChildRunEnv` wires the body env's `spawnChild` (not
-  // `spawnSuspendableChild`), so a nested onTrigger inside a body fails loud
-  // rather than silently spawning.
+  // A body's own `childWorkflow` grandchildren use this same live handle:
+  // `buildChildRunEnv` wires the body env's `spawnChild` to
+  // `createSidecarRunChild`, so a park inside the grandchild relays through
+  // the body. A nested onTrigger inside a body still fails loud.
+  // `spawnSuspendableChild` is not wired on a body env.
   const runChild = createSidecarRunChild(deps);
 
   return async (
@@ -1646,6 +1626,7 @@ export function createSidecarSpawnSuspendableChild(
       ...(resumeFromEvents !== undefined ? { resumeFromEvents } : {}),
       signal,
       cleanup: () => signalChannel.stop(),
+      surfaceInputPark: false,
     });
   };
 }
@@ -1775,8 +1756,8 @@ async function buildChildRunEnv(args: {
    * Whether a park in this child can be answered from outside it. The two
    * seams that share this builder differ precisely here, so neither gets a
    * default: a suspendable body is driven across its parks by a container
-   * that relays a decision back down, while a terminal child has no address
-   * and no relay above it.
+   * that relays a decision back down, while a childWorkflow child is
+   * driven by its parent, which relays each park down onto this channel.
    */
   hasUpstreamSignalResolver: boolean;
 }): Promise<{
@@ -1802,7 +1783,7 @@ async function buildChildRunEnv(args: {
   // definition whose children are refs -- the shape the runtime dispatches --
   // and keep the lifted definitions in an in-memory map the rung's own
   // terminal resolver serves from, so a grandchild spawns with no on-disk read
-  // at any depth. Returned to the caller so `runtimeRun` drives the rewritten
+  // at any depth. Returned to the caller so the handle drives the rewritten
   // form.
   const { workflow: rewrittenDefinition, bodies: grandchildBodies } =
     rewriteInlineChildWorkflowBodies(definition);
@@ -2688,12 +2669,6 @@ export function createSidecarSubstrateFactory(
       collectDeclaredCredentialConsumers:
         deps.collectDeclaredCredentialConsumers,
       filterGrantsToDeclaredResources: deps.filterGrantsToDeclaredResources,
-      // Local delta (upstream PR #193): an onTrigger body's grant cap walks
-      // its steps against this registry, so it must know the closure's own
-      // directors or the cap drops their `director:` grants.
-      directors: await loadWorkflowDirectorRegistryFromClosure({
-        packageDir: env.spawn.closurePackageDir,
-      }),
     };
     // Terminal childWorkflow executor. `run-child` builds the in-memory
     // resolver from this plus the lifted-body map it extracts after loading

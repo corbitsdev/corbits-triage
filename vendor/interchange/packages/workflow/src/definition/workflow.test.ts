@@ -1397,7 +1397,7 @@ describe("concurrent awaitSignal name validation", () => {
     ).not.toThrow();
   });
 
-  test("accepts a same-name awaiter across a childWorkflow boundary", () => {
+  test("rejects a same-name awaiter across a childWorkflow boundary", () => {
     expect(() =>
       defineWorkflow({
         id: "wf",
@@ -1413,7 +1413,7 @@ describe("concurrent awaitSignal name validation", () => {
           }),
         },
       }),
-    ).not.toThrow();
+    ).toThrow(/can concurrently await signal name go/);
   });
 
   test("rejects a nested inner-loop body awaiting a name concurrent with a parent gate", () => {
@@ -1522,7 +1522,7 @@ describe("concurrent awaitSignal name validation", () => {
     ).toThrow(/can concurrently await signal name go/);
   });
 
-  test("accepts a childWorkflow nested in a loop body awaiting the parent's name", () => {
+  test("rejects a childWorkflow nested in a loop body awaiting the parent's name", () => {
     expect(() =>
       defineWorkflow({
         id: "wf",
@@ -1551,7 +1551,7 @@ describe("concurrent awaitSignal name validation", () => {
           esc: step({ agent: makeAgent("e"), after: ["rework"] }),
         },
       }),
-    ).not.toThrow();
+    ).toThrow(/can concurrently await signal name go/);
   });
 
   test("rejects same-name awaiters on a gate's then and else branches (conservative)", () => {
@@ -1902,6 +1902,16 @@ describe("primitive defaults", () => {
     const m = map({ over: { from: "trigger.payload" }, step: inner });
     expect(m.step.drainBehavior).toBe("wait");
   });
+
+  test("childWorkflow defaults drainBehavior to wait", () => {
+    const spawned = childWorkflow({ definition: simpleBody() });
+    expect(spawned.drainBehavior).toBe("wait");
+    const explicit = childWorkflow({
+      definition: simpleBody(),
+      drainBehavior: "cancel",
+    });
+    expect(explicit.drainBehavior).toBe("cancel");
+  });
 });
 
 describe("hashDefinition", () => {
@@ -2059,6 +2069,19 @@ describe("onFailure straddler validation", () => {
         }),
       ),
     ).toThrow(/narrowed steps.unit.output/);
+  });
+
+  test("rejects a straddler whose inference selector reads the unit output", () => {
+    expect(
+      wf(
+        step({
+          agent: makeAgent("j"),
+          after: ["unit", "handler"],
+          input: { from: "steps.unit.output" },
+          inference: { from: "steps.unit.output" },
+        }),
+      ),
+    ).toThrow(/inference selector reads steps.unit.output/);
   });
 
   test("rejects a diamond straddler with an indexed read", () => {

@@ -1,10 +1,10 @@
 import { type } from "arktype";
-import { eq, and, sql } from "drizzle-orm";
-import { Hono } from "hono";
+import { eq, sql } from "drizzle-orm";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { describeRoute, validator } from "hono-openapi";
-import { authorize } from "@intx/authz";
+import { getLogger } from "@intx/log";
 
-import { tenant, principal, role, principalRole, grant } from "@intx/db/schema";
+import { tenant, role, principalRole, grant } from "@intx/db/schema";
 import {
   createPrincipalStore,
   parseTenantRow,
@@ -12,7 +12,6 @@ import {
   validateLifecyclePolicyEdit,
 } from "@intx/db";
 import type { DB, PrincipalKeyStore } from "@intx/db";
-import type { GrantStore, ConditionRegistry } from "@intx/types/authz";
 import {
   CreateTenant,
   ErrorResponse,
@@ -22,13 +21,29 @@ import {
   type TenantConfigPatch,
 } from "@intx/types";
 
-import { unauthorizedResponse, type AppEnv } from "../context";
+import { unauthorizedResponse, type AppEnv, type TenantEnv } from "../context";
 import { errorResponse, tenantConfigErrorResponse } from "../error-response";
+import {
+  idResource,
+  type AuthorizeGrant,
+  type RequireGrant,
+} from "../middleware/grant";
 import { first, ts } from "../format";
+import { findUserPrincipal } from "../principal-lookup";
 import { jsonResponse } from "../openapi";
 import { generateId } from "@intx/hub-common";
 
+const log = getLogger(["hub", "tenants"]);
+
 const SYSTEM_ROLES = ["owner", "admin", "member"] as const;
+
+function forbiddenUnderParent(c: Context): Response {
+  return errorResponse(
+    c,
+    "forbidden",
+    "You do not have permission to create a tenant under this parent",
+  );
+}
 
 function formatTenant(row: typeof tenant.$inferSelect) {
   const parsed = parseTenantRow(row);
@@ -62,15 +77,17 @@ function mergeTenantConfig(
 export type CreateTenantRoutesDeps = {
   db: DB["db"];
   principalKeyStore: PrincipalKeyStore;
-  grantStore: GrantStore;
-  conditionRegistry: ConditionRegistry;
+  authorizeGrant: AuthorizeGrant;
+  resolveTenant: MiddlewareHandler<TenantEnv>;
+  requireGrant: RequireGrant;
 };
 
 export function createTenantRoutes({
   db,
   principalKeyStore,
-  grantStore,
-  conditionRegistry,
+  authorizeGrant,
+  resolveTenant,
+  requireGrant,
 }: CreateTenantRoutesDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const principalStore = createPrincipalStore(db, principalKeyStore);
@@ -81,10 +98,16 @@ export function createTenantRoutes({
       tags: ["Tenants"],
       summary: "Create a tenant",
       description:
-        "Creates a new tenant. The authenticated user becomes the owner with a principal and default owner role.",
+        "Creates a new tenant. The authenticated user becomes the owner with a principal and default owner role. A tenant created under `parentId` inherits the parent's credentials, providers, catalogs, assets and OAuth clients, so the caller must be an active member of the parent and hold `create` on `tenant:*` there.",
       responses: {
         201: jsonResponse("Tenant created", TenantResponse),
         400: jsonResponse("Validation error", ErrorResponse),
+        401: jsonResponse("Authentication required", ErrorResponse),
+        403: jsonResponse(
+          "Not permitted to create a tenant under the parent",
+          ErrorResponse,
+        ),
+        409: jsonResponse("Slug already taken", ErrorResponse),
       },
     }),
     validator("json", CreateTenant),
@@ -95,6 +118,36 @@ export function createTenantRoutes({
       }
 
       const body = c.req.valid("json");
+
+      // A child inherits the parent's tenant-owned surface, so attaching one
+      // takes authority in the parent. Every refusal returns the same 403, so
+      // the route does not reveal whether a tenant id exists or who belongs to
+      // it. A principal row cannot outlive its tenant, so a missing parent lands
+      // in the same branch as a non-member. The check stays outside the insert
+      // transaction because the grant store does not read through it; only a
+      // lock on the parent row would close the window, and the cost of the race
+      // is a parent deleted in between failing the insert's foreign key as a 500.
+      if (body.parentId != null) {
+        const parentId = body.parentId;
+        const parentPrincipal = await findUserPrincipal(db, {
+          tenantId: parentId,
+          userId: user.id,
+        });
+        if (parentPrincipal?.status !== "active") {
+          log.info(
+            "Tenant creation denied for {userId}: no active membership in parent {parentId}",
+            { userId: user.id, parentId },
+          );
+          return forbiddenUnderParent(c);
+        }
+        const allowed = await authorizeGrant({
+          principalId: parentPrincipal.id,
+          tenantId: parentId,
+          resource: "tenant:*",
+          action: "create",
+        });
+        if (!allowed) return forbiddenUnderParent(c);
+      }
 
       const tenantId = generateId("tenant");
       // Derive the domain from a lowercased slug and check the slug conflict
@@ -250,37 +303,14 @@ export function createTenantRoutes({
       summary: "Get tenant details",
       responses: {
         200: jsonResponse("Tenant details", TenantResponse),
-        403: jsonResponse("Not a member of this tenant", ErrorResponse),
+        403: jsonResponse("Not an active member of this tenant", ErrorResponse),
         404: jsonResponse("Tenant not found", ErrorResponse),
         409: jsonResponse("Stored tenant config is invalid", ErrorResponse),
       },
     }),
+    resolveTenant,
     async (c) => {
-      const user = c.get("user");
-      if (!user) {
-        return unauthorizedResponse(c);
-      }
-
-      const tenantId = c.req.param("tenantId");
-
-      const tenantRow = await db.query.tenant.findFirst({
-        where: eq(tenant.id, tenantId),
-      });
-      if (!tenantRow) {
-        return errorResponse(c, "not_found", "Tenant not found");
-      }
-
-      const membership = await db.query.principal.findFirst({
-        where: and(
-          eq(principal.tenantId, tenantId),
-          eq(principal.kind, "user"),
-          eq(principal.refId, user.id),
-        ),
-      });
-      if (!membership) {
-        return errorResponse(c, "forbidden", "Not a member of this tenant");
-      }
-
+      const tenantRow = c.get("tenant");
       try {
         return c.json(formatTenant(tenantRow));
       } catch (err) {
@@ -311,43 +341,13 @@ export function createTenantRoutes({
         ),
       },
     }),
+    resolveTenant,
+    requireGrant(idResource("tenant", "tenantId"), "manage"),
     validator("json", UpdateTenant),
     async (c) => {
-      const user = c.get("user");
-      if (!user) {
-        return unauthorizedResponse(c);
-      }
-
-      const tenantId = c.req.param("tenantId");
+      const tenantId = c.get("tenant").id;
       const body = c.req.valid("json");
 
-      const membership = await db.query.principal.findFirst({
-        where: and(
-          eq(principal.tenantId, tenantId),
-          eq(principal.kind, "user"),
-          eq(principal.refId, user.id),
-          eq(principal.status, "active"),
-        ),
-      });
-      if (!membership) {
-        return errorResponse(c, "forbidden", "Not a member of this tenant");
-      }
-
-      const authorization = await authorize(
-        grantStore,
-        membership.id,
-        tenantId,
-        `tenant:${tenantId}`,
-        "manage",
-        conditionRegistry,
-      );
-      if (authorization.effect !== "allow") {
-        return errorResponse(
-          c,
-          "forbidden",
-          "You do not have permission to manage this tenant",
-        );
-      }
       const result = await db.transaction(async (tx) => {
         // A concurrent update waits here, then merges into the committed result.
         const [current] = await tx

@@ -21,7 +21,11 @@ import type { ConditionRegistry, GrantStore } from "@intx/types/authz";
 
 import type { AppEnv } from "./context";
 import { createSessionMiddleware } from "./middleware/session";
-import { createRequireGrant, type RequireGrant } from "./middleware/grant";
+import {
+  createAuthorizeGrant,
+  createRequireGrant,
+  type RequireGrant,
+} from "./middleware/grant";
 import { createResolveTenant, requireAuth } from "./middleware/tenant";
 import type { GetSession } from "./session";
 import type {
@@ -218,6 +222,10 @@ export function mountHubRoutes(
   const conditionRegistry: ConditionRegistry = opts.conditionRegistry ?? {
     time_window: timeWindowEvaluator,
   };
+  const authorizeGrant = createAuthorizeGrant({
+    grantStore,
+    conditionRegistry,
+  });
   const requireGrant: RequireGrant = createRequireGrant({
     grantStore,
     conditionRegistry,
@@ -282,14 +290,17 @@ export function mountHubRoutes(
   // so Hono includes it in the middleware chain.
   app.use("/api/tenants/:tenantId/*", resolveTenant);
 
-  // Global tenant routes (create needs auth, detail/update handle auth inline)
+  // Tenant create, detail and update. Detail and update mount resolveTenant
+  // and requireGrant on their own handlers, so their gate does not depend on
+  // the wildcard above also matching the bare tenant path.
   app.route(
     "/api/tenants",
     createTenantRoutes({
       db,
       principalKeyStore,
-      grantStore,
-      conditionRegistry,
+      authorizeGrant,
+      resolveTenant,
+      requireGrant,
     }),
   );
 
@@ -379,6 +390,7 @@ export function mountHubRoutes(
         sidecarRouter,
         repoStore,
         grantStore,
+        authorizeGrant,
         requireGrant,
       }),
     );
