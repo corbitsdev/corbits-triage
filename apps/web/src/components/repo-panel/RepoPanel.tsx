@@ -16,6 +16,7 @@ import { hasRuleOn } from "../../lib/pack-draft.ts";
 import { usePolicyFile } from "../../lib/policy-file.ts";
 import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import LabelsCard from "./LabelsCard.tsx";
+import OnItsOwn from "./OnItsOwn.tsx";
 import PolicyCard from "./PolicyCard.tsx";
 import RepoByline from "./RepoByline.tsx";
 import RulesSection from "./RulesSection.tsx";
@@ -93,6 +94,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
       <>
         <TriageSwitch repo={repo.name} enabled={draft.policy.enabled} triaging={settings.saved.policy.enabled} disabled={disabled} edit={settings.edit} ruleOn={hasRuleOn(draft.pack)} rerunnable={repo.source === "github"} />
         {manualWebhook && settings.saved.policy.enabled ? <BitbucketDatacenterWebhook webhook={manualWebhook} /> : null}
+        {grantsKnown ? <div className={settings.saved.policy.enabled ? undefined : "gated"} inert={!settings.saved.policy.enabled}><OnItsOwn repo={repo.name} source={repo.source} roles={roles.rows} grants={grants.rows} disabled={disabled} /></div> : null}
         <PolicyCard repo={repo.name} source={repo.source} policyFile={policyFile} disabled={disabled} />
         <div className={gated ? "gated" : undefined} inert={gated}>
           <RulesSection draft={draft} saved={settings.saved.pack} view={view} stats={stats} disabled={locked} edit={settings.edit} problem={problem} />
