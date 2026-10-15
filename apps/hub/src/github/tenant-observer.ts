@@ -6,7 +6,8 @@ import type { ActiveTenant, LiveDeployment } from "./deployment.js";
 import type { RecordRuns } from "./run-recorder.js";
 import { isRunning, mergeObservedRuns, observeDeployments, type ObserveRuns, type ObservedRuns } from "./triage-runs.js";
 
-export type TenantObservation = { deployments: LiveDeployment[]; observed: ObservedRuns[] };
+/** `observed` pairs with `deployments` by index; `workers` holds the runs of the coordinator's workers read with them. */
+export type TenantObservation = { deployments: LiveDeployment[]; observed: ObservedRuns[]; workers: ObservedRuns[] };
 
 /**
  * Bumped whenever what the portal is shown of a tenant may have changed; the verdict route's cache key. Kept in this process's
@@ -28,6 +29,13 @@ export function createTenantVersions(): TenantVersions {
 
 export type TenantObserverDeps = {
   liveDeployments: (tenantId: string) => Promise<LiveDeployment[]>;
+  /** The coordinator's workers, read for their one run and never mailed or rotated. */
+  workers?: {
+    /** Worker deployments live or released since `endedSince`. */
+    deployments: (tenantId: string, endedSince: Date) => Promise<LiveDeployment[]>;
+    /** How long a released worker's log is still read: long enough for the next reconciler pass to see the run and settle its head. */
+    endedWithinMs: number;
+  };
   observeRuns: ObserveRuns;
   recordRuns: RecordRuns;
   versions: TenantVersions;
@@ -49,14 +57,33 @@ export function createTenantObserver(deps: TenantObserverDeps): TenantObserver {
   const inFlight = new Map<string, Promise<TenantObservation>>();
   /** `fingerprint` is undefined after a read whose recording failed, so the next read that records bumps the version. */
   const finished = new Map<string, { at: number; observation: TenantObservation; fingerprint?: string }>();
+  /** A released worker's log never changes once its run ends, so it is read once and kept until the window drops the worker. */
+  const endedWorkers = new Map<string, { tenantId: string; runs: ObservedRuns }>();
+
+  async function readWorkers(tenantId: string, domain: string): Promise<ObservedRuns[]> {
+    if (!deps.workers) return [];
+    const workers = await deps.workers.deployments(tenantId, new Date(deps.now().getTime() - deps.workers.endedWithinMs));
+    for (const [runId, kept] of endedWorkers) {
+      if (kept.tenantId === tenantId && !workers.some((worker) => worker.runId === runId)) endedWorkers.delete(runId);
+    }
+    const observed: ObservedRuns[] = [];
+    for (const worker of workers) {
+      const kept = endedWorkers.get(worker.runId);
+      const runs = kept?.runs ?? (await observeDeployments(deps.observeRuns, [worker], domain))[0]!;
+      if (!kept && worker.endedAt !== undefined && !isRunning(runs)) endedWorkers.set(worker.runId, { tenantId, runs });
+      observed.push(runs);
+    }
+    return observed;
+  }
 
   async function read(tenantId: string, domain: string): Promise<TenantObservation> {
     try {
       const deployments = await deps.liveDeployments(tenantId);
       const observed = await observeDeployments(deps.observeRuns, deployments, domain);
-      const runs = mergeObservedRuns(observed);
+      const workers = await readWorkers(tenantId, domain);
+      const runs = mergeObservedRuns([...observed, ...workers]);
       const recorded = await deps.recordRuns(tenantId, runs);
-      const observation = { deployments, observed };
+      const observation = { deployments, observed, workers };
       const seen = fingerprint(runs);
       if (finished.get(tenantId)?.fingerprint !== seen) deps.versions.bump(tenantId);
       finished.set(tenantId, { at: deps.now().getTime(), observation, ...(recorded && { fingerprint: seen }) });
@@ -116,7 +143,8 @@ export function createRecordPass(deps: RecordPassDeps): RecordPass {
     const backoff = failing.get(tenant.id);
     if (backoff && deps.now().getTime() < backoff.until) return { ok: false, running: true };
     try {
-      const running = (await deps.observer.observe(tenant.id, tenant.domain)).observed.some(isRunning);
+      const observation = await deps.observer.observe(tenant.id, tenant.domain);
+      const running = [...observation.observed, ...observation.workers].some(isRunning);
       failing.delete(tenant.id);
       return { ok: true, running };
     } catch (err) {

@@ -62,7 +62,7 @@ import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
-import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
+import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
 import { createGithubOpenPulls, createOpenPullsCache } from "./github/open-pulls.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
@@ -355,8 +355,13 @@ function triageStack(triage: TriageWorkflow) {
   function liveDeployments(tenantId: string) {
     return liveTriageDeployments(tenantId, triage.id);
   }
+  async function workerDeployments(tenantId: string, endedSince: Date) {
+    return withWorkflowVersions(launchSpecs, await recentWorkers(composition.db, tenantId, triage.id, endedSince));
+  }
   const observer = createTenantObserver({
     liveDeployments,
+    // Reconciler passes can be two intervals apart (a kick is skipped while one drains), and an observation is reused for a record interval.
+    workers: { deployments: workerDeployments, endedWithinMs: 2 * triageReconcileIntervalMs(env) + 2 * TRIAGE_RECORD_MS },
     observeRuns: observeTriageRuns,
     recordRuns: runRecorder,
     versions: tenantVersions,
@@ -415,7 +420,11 @@ const tenantObserver = {
   last(tenantId: string) {
     const observations = stacks.flatMap((stack) => stack.observer.last(tenantId) ?? []);
     if (observations.length === 0) return undefined;
-    return { deployments: observations.flatMap((observation) => observation.deployments), observed: observations.flatMap((observation) => observation.observed) };
+    return {
+      deployments: observations.flatMap((observation) => observation.deployments),
+      observed: observations.flatMap((observation) => observation.observed),
+      workers: observations.flatMap((observation) => observation.workers),
+    };
   },
 };
 function recordsReady(tenantId: string): boolean {
