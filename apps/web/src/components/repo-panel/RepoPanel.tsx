@@ -18,6 +18,7 @@ import BitbucketDatacenterWebhook from "./BitbucketDatacenterWebhook.tsx";
 import LabelsCard from "./LabelsCard.tsx";
 import OnItsOwn from "./OnItsOwn.tsx";
 import PolicyCard from "./PolicyCard.tsx";
+import RemoveRepository from "./RemoveRepository.tsx";
 import RepoByline from "./RepoByline.tsx";
 import RulesSection from "./RulesSection.tsx";
 import StepsSection from "./StepsSection.tsx";
@@ -101,6 +102,7 @@ export default function RepoPanel({ repo, row, live, store, onClose }: RepoPanel
           <StepsSection view={view} automatic={grantsKnown ? runsAlone : undefined} disabled={locked} />
           <LabelsCard view={view} automatic={grantsKnown ? runsAlone("labels") : undefined} disabled={locked} />
         </div>
+        <RemoveRepository repo={repo.name} source={repo.source} disabled={readOnly || snapshot?.denied.repos === true} onRemoved={onClose} />
       </>
     );
   }
