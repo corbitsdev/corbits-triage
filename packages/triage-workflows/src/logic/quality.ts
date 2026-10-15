@@ -414,8 +414,12 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     return isAsked(path) && plan.docs?.changed.length === 0;
   }
 
+  function docsFileQuestion(id: string, path: string): FileQuestion {
+    return { check: "docs", id, item: path, instructions: docsQuestion, criteria: DOCS_CRITERIA };
+  }
+
   function fileQuestions(path: string, position: number, read: number, cited: CheckItem[]): FileQuestion[] {
-    const out: FileQuestion[] = asksDocs(path) ? [{ check: "docs", id: fileQuestionId("docs", position), item: path, instructions: docsQuestion, criteria: DOCS_CRITERIA }] : [];
+    const out: FileQuestion[] = asksDocs(path) ? [docsFileQuestion(fileQuestionId("docs", position), path)] : [];
     for (const row of scoped) {
       if (!inScope(row, path)) continue;
       if (row.scope === "file") {
@@ -430,13 +434,25 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     return out;
   }
 
-  /** Focused reads the hunks of `file` past `kept` in requests of their own, as many as they need, a hunk too large for one in pieces. */
-  function addRest(file: StateFile, kept: number) {
+  function ask(question: FileQuestion) {
+    const instructions = question.instructions(chunk.length - 1);
+    questions.push(question.criteria ? { id: question.id, type: "choice", instructions, criteria: question.criteria } : { id: question.id, type: "boolean", instructions });
+    plan[question.check]!.asked[question.id] = question.item;
+    if (question.check !== "docs") asksCustom = true;
+  }
+
+  /**
+   * Focused and docs read the hunks of `file` past `kept` in requests of their own, as many as they need, a hunk too
+   * large for one in pieces; docs asks about each part.
+   */
+  function addRest(file: StateFile, kept: number, path: string, position: number) {
     let rest = file.hunks.slice(kept);
     let continued = kept > 0;
+    let parts = 0;
     function addPart(part: StateFile) {
       flush();
       add(part, jsonBytes(part));
+      if (asksDocs(path)) ask(docsFileQuestion(`${fileQuestionId("docs", position)}-part-${ordinal(parts++)}`, path));
       continued = true;
     }
     while (rest.length > 0) {
@@ -457,16 +473,21 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     const read = stateFile(file, hunks);
     const custom = scoped.some((row) => inScope(row, file.path));
     const fitted = hunks.length > 0 ? fitFile(custom || (asksCustom && chunk.length === 0) ? rulesRoom : room, read) : undefined;
+    const docs = asksDocs(file.path);
+    const readsAll = focused !== undefined || docs;
     if (focused && file.patchTruncated) focused.unread.push(file.path);
+    if (docs && file.patchTruncated) plan.docs!.unread.push(file.path);
     if (!fitted) {
       // A pure rename or a binary file has no lines to read, so there is nothing to judge.
       const unchanged = file.additions === 0 && file.deletions === 0;
       if (!unchanged) {
-        if (focused && hunks.length === 0 && !file.patchTruncated) focused.unread.push(file.path);
-        if (asksDocs(file.path)) plan.docs!.unread.push(file.path);
+        if (hunks.length === 0 && !file.patchTruncated) {
+          if (focused) focused.unread.push(file.path);
+          if (docs) plan.docs!.unread.push(file.path);
+        }
         for (const row of scoped) if (inScope(row, file.path)) plan[row.id]!.unread.push(file.path);
       }
-      if (focused && hunks.length > 0) addRest(read, 0);
+      if (readsAll && hunks.length > 0) addRest(read, 0, file.path, position);
       continue;
     }
     // Lines left out of a file may break a custom rule, so a scoped check cannot pass on what was read.
@@ -477,12 +498,9 @@ export function prepareQualityEvaluation(facts: PrFacts, sources: DeterministicR
     add(fitted, bytes);
     for (const question of asking) {
       makeRoom(fitted, bytes);
-      const instructions = question.instructions(chunk.length - 1);
-      questions.push(question.criteria ? { id: question.id, type: "choice", instructions, criteria: question.criteria } : { id: question.id, type: "boolean", instructions });
-      plan[question.check]!.asked[question.id] = question.item;
-      if (question.check !== "docs") asksCustom = true;
+      ask(question);
     }
-    if (focused && fitted.hunks.length < hunks.length) addRest(read, fitted.hunks.length);
+    if (readsAll && fitted.hunks.length < hunks.length) addRest(read, fitted.hunks.length, file.path, position);
   }
   flush();
   if (requests.length > MAX_JUDGE_REQUESTS) return { plan, ...(focused && { focused }), requests: [], judgeError: `${QUALITY_EVALUATION_LIMIT_ERROR} (${requests.length} requests)` };

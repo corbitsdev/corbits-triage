@@ -300,7 +300,8 @@ export function evaluateModel({ det, answers, plan = {}, focused, judgeError, ju
     anyUnanswered ||= unanswered;
     const needing = answered.filter(([, short]) => short >= YES).sort((a, b) => b[1] - a[1]);
     if (needing.length > 0) {
-      const named = needing.slice(0, MAX_FILE_EVIDENCE).map(([item]) => item);
+      // Docs asks once per part of a file split across requests, so a file can need docs more than once.
+      const named = [...new Set(needing.map(([item]) => item))].slice(0, MAX_FILE_EVIDENCE);
       return push(check, { result: "fail" }, scored(1 - needing[0]![1], PASS_AT, named), named.map(itemText));
     }
     if (unanswered) return unchecked(check, unavailable);

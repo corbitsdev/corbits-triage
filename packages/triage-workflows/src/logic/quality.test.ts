@@ -144,6 +144,23 @@ test("quality preflight leaves a cut patch unread for focused even when its firs
   expect(focused!.unread).toEqual(["src/big.ts"]);
 });
 
+test("quality preflight leaves a cut patch unread for docs even when its read part fits", () => {
+  const sources = { ...SOURCES, quality: [...SOURCES.quality, { id: "docs" as const, group: "code-vs-ci" as const }] };
+  const { plan } = prepareQualityEvaluation(facts([{ path: "src/cut.ts", additions: 9_000, deletions: 0, patch: compactHunks(2), patchTruncated: true }]), sources);
+  expect(plan.docs!.unread).toEqual(["src/cut.ts"]);
+});
+
+test("quality preflight asks docs about every part of a file too large for one request instead of leaving it unread", () => {
+  const sources = { quality: [{ id: "docs" as const, group: "code-vs-ci" as const }], custom: [], rules: [] };
+  const { plan, requests } = prepareQualityEvaluation(facts([{ path: "src/wide.ts", additions: 20, deletions: 0, patch: widePatch() }]), sources);
+  expect(requests.length).toBeGreaterThan(1);
+  expect(requests.every(withinBudget)).toBe(true);
+  expect(requests.flatMap((request) => request.state.pullRequest.files.flatMap((file) => file.hunks))).toEqual(patchHunks(widePatch()));
+  expect(requests.map((request) => request.questions.map((question) => question.id))).toEqual(requests.map((_, index) => [index === 0 ? "docs-file-001" : `docs-file-001-part-${String(index).padStart(3, "0")}`]));
+  expect(Object.values(plan.docs!.asked)).toEqual(requests.map(() => "src/wide.ts"));
+  expect(plan.docs!.unread).toEqual([]);
+});
+
 test("focused's follow-up asks a failing slice's request again, one question per file it holds, at most 30 in all", () => {
   const files = Array.from({ length: 60 }, (_, index) => ({
     path: `src/file${index}.ts`,
