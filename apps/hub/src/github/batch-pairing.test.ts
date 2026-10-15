@@ -8,6 +8,7 @@ import type { RulesOutput, JudgeChunk } from "@corbits/triage-workflows/actions/
 import { createTriageRuns } from "./triage-runs.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR } from "@corbits/triage-workflows/logic/quality";
+import { NO_FACTS } from "@corbits/triage-workflows/logic/item";
 
 const REPO = "acme/widgets";
 const DOMAIN = "acme.test";
@@ -169,12 +170,7 @@ describe("verdicts the decision model was never asked about", () => {
   test("deterministic and ambiguous human gates settle while a real inference outage requeues", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { focused: { enabled: true } } };
     function facts(files: Array<{ path: string; patch?: string }>) {
-      return {
-        repo: REPO, number: 1, title: "Change", author: "octocat", tier: "external", headSha: "sha1", state: "open", draft: false,
-        mergeable: true, checks: "success", approvals: 0,
-        files,
-        paths: files.map((file) => file.path),
-      };
+      return { ...NO_FACTS, repo: REPO, number: 1, title: "Change", author: "octocat", headSha: "sha1", mergeable: true, checks: "success", files, paths: files.map((file) => file.path) };
     }
     async function triage(files: Array<{ path: string; patch?: string }>, event?: ReactorInboundEvent) {
       const ruled = await rules({ items: [{ facts: facts(files), pack }], batch: true }, ctx, signal);

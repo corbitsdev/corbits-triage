@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { defaultActions, emptyPack, type Step, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
 import { doEffectId, evaluateActions, heldApprovals, holdDos, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
 import type { PrFacts } from "./checks.js";
+import { NO_FACTS } from "./item.js";
 
 const facts: PrFacts = {
+  ...NO_FACTS,
   repo: "acme/widgets",
   number: 8,
   title: "feat(api): add search",

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_REPO_POLICY, emptyPack, readCheckPack, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
 import { deriveState, REVIEW_ANSWERED_REASON, type PrFacts } from "./checks.ts";
+import { NO_FACTS } from "./item.ts";
 
 const noisy: PrFacts = {
+  ...NO_FACTS,
   repo: "acme/widgets",
   number: 8,
   title: "Fix login",

@@ -5,6 +5,7 @@ import { MAX_DOS_PER_RUN, triageDirectorFactory, type DoResult } from "./directo
 import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS } from "@corbits/triage-contracts";
 import { NEEDS_SETUP_REASON } from "./logic/checks.js";
 import { unsettledBy } from "./logic/settled.js";
+import { NO_FACTS } from "./logic/item.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
 import { evaluate, parts, rules } from "./actions/index.js";
@@ -426,6 +427,7 @@ describe("judge on a blocked pull request", () => {
 describe("focused judge input", () => {
   function prFacts(files: Array<Record<string, unknown>>) {
     return {
+      ...NO_FACTS,
       repo: "acme/widgets",
       number: 8,
       title: "Refactor",

@@ -47,8 +47,9 @@ function factsFor(n: number): PrFacts {
     ...(typeof row.patch === "string" ? { patch: row.patch } : {}),
   }));
   const paths = files.map((file) => file.path);
-  const commits = gh<any[]>(`repos/${repo}/pulls/${n}/commits`).map((c) => String(c.commit.message).split("\n", 1)[0]!);
-  return { ...buildFacts(repo, n, pr, checks, reviews, [], DEFAULT_REPO_POLICY), paths, files, commits };
+  const commitMessages = gh<any[]>(`repos/${repo}/pulls/${n}/commits`).map((c) => String(c.commit.message));
+  const commits = commitMessages.map((message) => message.split("\n", 1)[0]!);
+  return { ...buildFacts(repo, n, pr, checks, reviews, [], DEFAULT_REPO_POLICY), paths, files, commits, commitMessages, events: [], docs: {}, rules: {}, authorTeams: [], authorTeamsUnknown: [] };
 }
 
 const endpoint = process.env.AI_GATEWAY_API_KEY ? { kind: "gateway" as const } : { kind: "official" as const };

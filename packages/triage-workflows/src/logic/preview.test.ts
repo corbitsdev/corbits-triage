@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import { emptyPack } from "@corbits/triage-contracts";
 import type { ActionInput } from "./actions.js";
+import { NO_FACTS } from "./item.js";
 import { previewActions } from "./preview.js";
 
 const facts: ActionInput["facts"] = {
+  ...NO_FACTS,
   repo: "acme/widgets", number: 8, title: "Add search", author: "octocat", tier: "external", headSha: "abc", state: "open", draft: false,
   mergeable: true, checks: "success", approvals: 0, events: ["opened"],
 };

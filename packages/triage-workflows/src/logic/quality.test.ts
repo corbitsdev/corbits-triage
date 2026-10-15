@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { patchHunks } from "./hunks.js";
+import { NO_FACTS } from "./item.js";
 import { focusedPartRequests, MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES, prepareQualityEvaluation, type JudgeRequest } from "./quality.js";
 
 const SOURCES = { quality: [{ id: "focused" as const, group: "pull-request" as const }], custom: [], rules: [] };
 
 function facts(files: PrFileFacts[]): PrFacts {
   return {
+    ...NO_FACTS,
     repo: "acme/widgets",
     number: 8,
     title: "Réorganiser 設定",
