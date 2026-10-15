@@ -20,9 +20,11 @@ import { PrTimeline } from "../components/PrTimeline.tsx";
 import { SuggestedActions } from "../components/SuggestedActions.tsx";
 import { DiffView } from "../components/DiffView.tsx";
 import { CitedEvidence } from "../components/CitedEvidence.tsx";
+import { Markdown } from "../components/Markdown.tsx";
 import { useDiffLayout } from "../lib/diff-layout.ts";
 import { useRepoPack } from "../lib/check-packs.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
+import { hostName, pullUrl, viewOnHost } from "../lib/pull-link.ts";
 import {
   approvalHeadline,
   checkValueText,
@@ -33,10 +35,19 @@ import {
 
 type SliverTab = "about" | "files" | "commits" | "issue" | "conversation";
 
-function IssueList({ issues, pending, error }: { issues: GithubPullDetail["issues"]; pending: boolean; error: unknown }) {
+/** Bitbucket resolves no issue records; the reference the linked-issue rule found stands in for them. */
+function ruleIssueReference(item: PrItem): string | null {
+  const check = item.checks.find((row) => row.check === "linked-issue" && row.result === "pass");
+  return check?.evidence[0] ?? null;
+}
+
+function IssueList({ item, issues, pending, error }: { item: PrItem; issues: GithubPullDetail["issues"]; pending: boolean; error: unknown }) {
   if (pending) return <p className="muted">Loading issues…</p>;
   if (error) return <p className="muted">Could not load issues. {errorText(error)}</p>;
-  if (issues.length === 0) return <p className="muted">No linked issue.</p>;
+  if (issues.length === 0) {
+    const reference = ruleIssueReference(item);
+    return reference === null ? <p className="muted">No linked issue.</p> : <p className="mono">{reference}</p>;
+  }
   return (
     <ul>
       {issues.map((issue) => (
@@ -105,7 +116,7 @@ function About({ item }: { item: PrItem }) {
       <header className="brief brief-lead">
         <h1>{title}</h1>
         <p className="verdict-why">{item.evidence[0] ?? item.nextAction ?? "No evidence recorded."}</p>
-        {item.comment ? <pre className="mono small-text">{item.comment}</pre> : null}
+        {item.comment ? <Markdown text={item.comment} /> : null}
       </header>
       <section className="brief">
         <h2>Pull request</h2>
@@ -124,7 +135,7 @@ function About({ item }: { item: PrItem }) {
       </section>
       <section className="brief">
         <h2>Issue</h2>
-        <IssueList issues={issues} pending={pending} error={pull.error} />
+        <IssueList item={item} issues={issues} pending={pending} error={pull.error} />
       </section>
       <section className="brief">
         <h2>Repository</h2>
@@ -413,11 +424,12 @@ export default function PRDetail() {
     );
   }
 
-  const github = item.number ? `https://github.com/${item.repo}/pull/${item.number}` : null;
+  const link = pullUrl(item);
+  const host = hostName(item.source);
   let pane: ReactNode = <About item={item} />;
   const loadState = pullPending
-    ? <p className="muted">Loading from GitHub…</p>
-    : pull.error ? <p role="alert" className="error">Could not load from GitHub. {errorText(pull.error)}</p> : null;
+    ? <p className="muted">Loading from {host}…</p>
+    : pull.error ? <p role="alert" className="error">Could not load from {host}. {errorText(pull.error)}</p> : null;
   if (tab === "files") {
     pane = loadState ? <div className="diff-empty">{loadState}</div>
       : selected ? <DiffView file={selected} layout={diffLayout.layout} canSplit={diffLayout.splitFits} onLayout={diffLayout.choose} />
@@ -438,7 +450,7 @@ export default function PRDetail() {
     );
   }
   if (tab === "issue") {
-    pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><IssueList issues={pull.data?.issues ?? []} pending={pullPending} error={pull.error} /></div>;
+    pane = <div className="pr-pane" aria-label="Issue"><h1>Issue</h1><IssueList item={item} issues={pull.data?.issues ?? []} pending={pullPending} error={pull.error} /></div>;
   }
   if (tab === "conversation") {
     pane = (
@@ -467,7 +479,7 @@ export default function PRDetail() {
               {closed ? <Badge>{pull.data?.pr.merged ? "Merged" : "Closed"}</Badge>
                 : mergeable === null ? null : <Badge>{mergeable ? "Mergeable" : "Not mergeable"}</Badge>}
               <VerdictChip item={item} />
-              {github ? <a className="ghost-link" href={github} target="_blank" rel="noreferrer">View on GitHub</a> : null}
+              {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">{viewOnHost(item.source)}</a> : null}
             </div>
           </div>
           <div className="pr-actions">

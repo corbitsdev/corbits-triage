@@ -10,7 +10,6 @@ import { isTerminalRunEvents } from "@intx/hub-client";
 import { ApiError, createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
 import {
   configureGithubApp,
-  hasActiveGithubCredential,
   configureGithubHook,
   createGrant,
   deleteGrant,
@@ -18,6 +17,7 @@ import {
   loadPortal,
   legacyHookCredentials,
   legacyGithubCredentials,
+  connectedSources,
   portalConnected,
   replaceCredential,
   removeRepository,
@@ -43,7 +43,7 @@ import { ensureWorkflows, suggestOfferings } from "./workflow-deploy.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { hasDecisionModelCredential } from "./decision-models.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
-import { checkPackName } from "@corbits/triage-contracts";
+import { checkPackName, type RepoSource } from "@corbits/triage-contracts";
 
 /** `now` confirms the write with a toast; `held` writes were announced by the inbox's Undo toast; `leaving` ones are held writes sent as the page goes away, so they must outlive it. */
 type GithubDelivery = "now" | "held" | "leaving";
@@ -105,6 +105,7 @@ export const ROLES_QUERY_KEY = "roles";
 export const DEPLOYED_WORKFLOWS_QUERY_KEY = "deployed-workflows";
 export const ALLOWED_QUERY_KEY = "allowed";
 export const INVITATIONS_QUERY_KEY = "invitations";
+export const BITBUCKET_DATACENTER_QUERY_KEY = "bitbucket-datacenter";
 export const INVITE_PATH = "/invite/";
 const REFRESH_QUERY_KEYS = [
   [CHECK_PACK_INDEX_QUERY_KEY],
@@ -120,6 +121,7 @@ const REFRESH_QUERY_KEYS = [
   [DEPLOYED_WORKFLOWS_QUERY_KEY],
   [ALLOWED_QUERY_KEY],
   [INVITATIONS_QUERY_KEY],
+  [BITBUCKET_DATACENTER_QUERY_KEY],
 ];
 
 function isRunLog(value: unknown): value is RunLog {
@@ -154,6 +156,7 @@ export function useSignOutWhenRejected(): (cause: unknown) => void {
   }, [signOut]);
 }
 
+/** Each tenant's converge, keyed by the hosts it was connected to, so connecting or disconnecting one converges again. */
 const convergedTenants = new Set<string>();
 
 type PortalLoad = PortalSnapshot | InvitedAccess;
@@ -246,20 +249,22 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [enabled, queryClient]);
 
   const tenantId = snapshot?.workspace.tenantId;
-  const githubConnected = snapshot ? hasActiveGithubCredential(snapshot.credentials) : false;
+  const credentials = snapshot?.credentials;
+  const sources = useMemo(() => (credentials ? connectedSources(credentials) : []), [credentials]);
   const decisionModelConnected = snapshot ? hasDecisionModelCredential(snapshot.credentials) : false;
-  const convergeWorkflows = useCallback(function convergeWorkflows(id: string, redeploy: boolean) {
-    if (!redeploy && convergedTenants.has(id)) return;
-    convergedTenants.add(id);
+  const convergeWorkflows = useCallback(function convergeWorkflows(id: string, connected: RepoSource[], redeploy: boolean) {
+    const key = `${id}:${connected.join(",")}`;
+    if (!redeploy && convergedTenants.has(key)) return;
+    convergedTenants.add(key);
     async function deploy() {
       try {
         const transport = createHubTransport();
         const offerings = await suggestOfferings(transport, id);
         if (!offerings) throw new Error("No decision model offering found. Save it again in Settings → Model.");
-        const deployed = await ensureWorkflows(transport, id, offerings, redeploy);
+        const deployed = await ensureWorkflows(transport, id, offerings, connected, redeploy);
         if (deployed.length) refresh();
       } catch (cause: unknown) {
-        convergedTenants.delete(id);
+        convergedTenants.delete(key);
         warn(`Could not deploy triage workflows. ${errorText(cause)}`);
       }
     }
@@ -267,8 +272,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [refresh, warn]);
 
   useEffect(function convergeOnConnect() {
-    if (tenantId && githubConnected && decisionModelConnected) convergeWorkflows(tenantId, false);
-  }, [convergeWorkflows, decisionModelConnected, githubConnected, tenantId]);
+    if (tenantId && sources.length > 0 && decisionModelConnected) convergeWorkflows(tenantId, sources, false);
+  }, [convergeWorkflows, decisionModelConnected, sources, tenantId]);
 
   const requireSnapshot = useCallback(function requireSnapshot() {
     if (readOnly || !snapshot) {
@@ -433,7 +438,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       await saveInference(createHubTransport(), current.workspace.tenantId, input);
       notify("Decision model saved.");
       refresh();
-      if (hasActiveGithubCredential(current.credentials)) convergeWorkflows(current.workspace.tenantId, true);
+      const connected = connectedSources(current.credentials);
+      if (connected.length > 0) convergeWorkflows(current.workspace.tenantId, connected, true);
     },
     [convergeWorkflows, notify, refresh, requireSnapshot],
   );

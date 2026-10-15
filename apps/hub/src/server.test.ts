@@ -12,7 +12,7 @@ import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
 import { checkPackName, emptyPack, parseTriageState, stockTriggerMail, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
-import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage";
+import { workflow as prTriageWorkflow } from "@corbits/triage-workflows/pr-triage-github";
 import { verdictRecord } from "./github/verdict-record-store.js";
 import { ensureTriageRole } from "./github/automation.js";
 import { homedir, tmpdir } from "node:os";
@@ -244,6 +244,10 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/invite-accept": ["post"],
     "/api/integrations/sessions": ["get"],
     "/api/integrations/sessions/{sessionId}": ["delete"],
+    "/api/integrations/bitbucket-datacenter/{tenantId}/connection": ["put", "get", "delete"],
+    "/api/integrations/bitbucket-datacenter/{tenantId}/repositories": ["get"],
+    "/api/integrations/bitbucket-datacenter/{tenantId}/repositories/{project}/{slug}/enable": ["post"],
+    "/api/integrations/bitbucket-datacenter/{tenantId}/repositories/{project}/{slug}/disable": ["post"],
   });
 
   const headers = await signedIn(origin);

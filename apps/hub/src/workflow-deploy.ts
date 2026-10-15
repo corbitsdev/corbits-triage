@@ -9,6 +9,7 @@ import { parsePin } from "@intx/tool-packaging";
 import type { WorkflowDeploymentResponse } from "@intx/types";
 import { WorkflowDefinitionInvalidError } from "@intx/workflow-deploy";
 import { failure } from "./github/portal-credential.js";
+import { connectedSources, HISTORICAL_ENTRY, triageWorkflowOf } from "./github/source-workflow.js";
 import type { Member } from "./integrations/app.js";
 
 export const WORKFLOW_DEPLOY_PATH = "/api/integrations/workflow-deploy";
@@ -39,6 +40,8 @@ export const DeployBody = type({
 export type WorkflowDeployDeps = {
   db: DB["db"];
   allocation: Pick<WorkflowAllocationService, "prepareProvisionedDeployment">;
+  /** After a deployment: the hub releases what the new one supersedes, such as the pre-host `pr-triage` deployment, and keeps the host deployments to the connected hosts. */
+  onDeployed: (tenantId: string) => Promise<void>;
 };
 
 export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
@@ -54,6 +57,11 @@ export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
     if (!tenant) return failure(404, "not_found", "Workspace not found");
     if (!(await tenantAsset(tenantId, body.definitionAssetId, "workflow"))) return failure(404, "not_found", "Workflow asset not found");
     if (!(await tenantAsset(tenantId, body.registryAssetId, "package-registry"))) return failure(404, "not_found", "Package registry asset not found");
+    // A host's package binds that host's credential, which an unresolved binding would fail: it deploys once the host is connected.
+    const needs = triageWorkflowOf(body.entry)?.source ?? (body.entry === HISTORICAL_ENTRY ? "github" : undefined);
+    if (needs !== undefined && !(await connectedSources(deps.db, tenantId)).includes(needs)) {
+      return failure(409, "source_not_connected", `Connect ${needs} before deploying ${body.entry.slice(2, -4)}.`);
+    }
 
     let prepared;
     try {
@@ -90,6 +98,7 @@ export function createWorkflowDeploy(deps: WorkflowDeployDeps) {
       status: prepared.status,
       createdAt: run.createdAt.toISOString(),
     };
+    await deps.onDeployed(tenantId);
     return Response.json(deployment, { status: 201 });
   };
 }

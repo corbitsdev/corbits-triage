@@ -14,7 +14,7 @@
 // through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
 import { asRecord, errorText, isRecord } from "@corbits/common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { DeliveryCache } from "./dedupe.js";
@@ -28,6 +28,7 @@ import {
   patchCorbitsTriage,
   repoRecords,
   setConnectedForInstallation,
+  sourceOf,
   triageNs,
   upsertConnectedRepos,
   type CorbitsTriageNs,
@@ -62,8 +63,8 @@ export interface BridgeDeps {
   log?: (entry: Record<string, unknown>) => void;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
-  /** Has the repository's open pull requests but `except` triaged again; resolves to how many were due. */
-  recheckOpenPulls: (tenantId: string, repo: string, except: number) => Promise<number>;
+  /** Has the repository's open pull requests but `except` triaged again, by its triage state key; resolves to how many were due. */
+  recheckOpenPulls: (tenantId: string, key: string, except: number) => Promise<number>;
   /** Reads the repository's policy file into its policy; undefined when the repository is not connected. */
   syncPolicyFile: (tenantId: string, repo: string, removed: boolean) => Promise<PolicyFileSync | undefined>;
 }
@@ -163,11 +164,15 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
  * live deployment reads `pack`. `policy.source` names the policy artifact versions `pack` was resolved from, so the
  * run records what it used.
  */
-export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic, source }: StoredPack, extra: Record<string, unknown>) {
+export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { pack, automatic, source }: StoredPack, extra: Record<string, unknown>) {
+  const repo = record.name;
+  const repoSource = sourceOf(record);
   return {
     ...extra,
     kind: "pr",
     repo,
+    // Absent on GitHub, so a deployment built before other hosts reads the mail unchanged.
+    ...(repoSource !== "github" && { repoSource }),
     policy: { ...policy, checkPack: { name: checkPackName(repo) }, source },
     checkPack: legacyCheckPack(pack),
     pack,
@@ -175,7 +180,7 @@ export function mailPayload(repo: string, policy: RepoPolicy, { pack, automatic,
   };
 }
 
-async function resolvedPack(
+export async function resolvedPack(
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>,
   tenantId: string,
   repo: string,
@@ -337,7 +342,7 @@ async function handleInstallEvent(
   return json(202, { status: "accepted" });
 }
 
-async function tenantConfigOf(d: BridgeDeps, tenantId: string): Promise<unknown> {
+export async function tenantConfigOf(d: Pick<BridgeDeps, "db">, tenantId: string): Promise<unknown> {
   return (await d.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } }))?.config;
 }
 
@@ -510,6 +515,10 @@ export function createBridgeHandler(d: BridgeDeps) {
     if (!stored) {
       log({ level: "info", msg: "needs_setup", delivery, event, repo: mail.repo, hook: loaded.credentialId });
       return json(202, { status: "needs-setup" });
+    }
+    if (!hasEnabledRules(stored.pack)) {
+      log({ level: "info", msg: "triage_skipped_no_rules", delivery, event, repo: mail.repo, pr: mail.prNumber, headSha, hook: loaded.credentialId });
+      return json(202, { status: "ignored" });
     }
     let accepted: Accepted;
     try {

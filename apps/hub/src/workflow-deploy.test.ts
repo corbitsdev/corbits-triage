@@ -11,7 +11,7 @@ const BODY = {
   registryAssetId: "ast_registry",
   definitionAssetId: "ast_workflow",
   pin: "@corbits/pr-triage-workflow@0.1.0",
-  entry: "./pr-triage.mjs",
+  entry: "./pr-triage-github.mjs",
   sourceOfferingIds: ["mof_1"],
   defaultSourceOfferingId: "mof_1",
 };
@@ -24,12 +24,14 @@ const db = {
     tenant: { async findFirst() { return { id: TENANT_ID, domain: "tenant.example" }; } },
     asset: { async findFirst() { return { id: "asset" }; } },
     workflowRun: { async findFirst() { return { createdAt: CREATED_AT }; } },
+    credential: { async findMany() { return [{ name: "github" }]; } },
   },
 } as never;
 
 function handler(calls: Calls, overrides: Partial<WorkflowDeployDeps> = {}) {
   return createWorkflowDeploy({
     db,
+    onDeployed: async () => {},
     allocation: {
       async prepareProvisionedDeployment(args) {
         calls.prepared.push(args);
@@ -68,7 +70,7 @@ describe("createWorkflowDeploy", () => {
       anchorRunId: expect.stringMatching(/^run_/),
       deploymentDomain: "tenant.example",
       source: { kind: "asset", assetId: "ast_registry", package: { format: "tarball" } },
-      entry: "./pr-triage.mjs",
+      entry: "./pr-triage-github.mjs",
       pin: "@corbits/pr-triage-workflow@0.1.0",
       definitionAssetId: "ast_workflow",
       sessionId: expect.stringMatching(/^ses/),
@@ -86,4 +88,20 @@ describe("createWorkflowDeploy", () => {
       createdAt: CREATED_AT.toISOString(),
     });
   });
+});
+
+function withCredentials(names: string[]) {
+  return { query: { ...(db as { query: Record<string, unknown> }).query, credential: { async findMany() { return names.map((name) => ({ name })); } } } } as never;
+}
+
+test("a host's package deploys only with its host connected, and pr-triage-historical only with GitHub", async () => {
+  const calls: Calls = { prepared: [] };
+  const bitbucketOnly = handler(calls, { db: withCredentials(["bitbucket-datacenter"]) });
+  for (const entry of ["./pr-triage-github.mjs", "./pr-triage-historical.mjs"]) {
+    const refused = await bitbucketOnly({ ...BODY, entry }, MEMBER);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: { code: "source_not_connected" } });
+  }
+  expect((await bitbucketOnly({ ...BODY, entry: "./pr-triage-bitbucket-datacenter.mjs" }, MEMBER)).status).toBe(201);
+  expect(calls.prepared.map((call) => call.entry)).toEqual(["./pr-triage-bitbucket-datacenter.mjs"]);
 });

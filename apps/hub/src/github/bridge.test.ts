@@ -105,8 +105,13 @@ const stubCipher = {
   },
 } as never;
 
-function packsFor(repos: string[]): BridgeDeps["readCheckPack"] {
-  const packs = new Map(repos.map((repo) => [repo, emptyPack(repo)]));
+/** One rule on, so the hub starts runs; `emptyPack` alone has every rule off. */
+function rulePack(repo: string): CheckPack {
+  return { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } };
+}
+
+function packsFor(repos: string[], pack = rulePack): BridgeDeps["readCheckPack"] {
+  const packs = new Map(repos.map((repo) => [repo, pack(repo)]));
   return async function readCheckPack(_tenant, repo) {
     const pack = packs.get(repo);
     return pack ? { status: "ok", pack, automatic: [], source: { repo: { id: "art_pack", version: 1 } } } : { status: "missing" };
@@ -454,6 +459,15 @@ describe("bridge handler", () => {
     expect(sent.map(({ event, headSha }) => [event, headSha])).toEqual([["drafted", "abc"]]);
   });
 
+  test("a policy with every rule off starts no run and writes nothing", async () => {
+    const sent: Sent[] = [];
+    const logged: Array<Record<string, unknown>> = [];
+    const res = await bridge({ sent, readCheckPack: packsFor(["octocat/hello"], emptyPack), log: (entry) => logged.push(entry) })(githubRequest(prPayload), TARGET);
+    expect(await res.json()).toEqual({ status: "ignored" });
+    expect(sent).toHaveLength(0);
+    expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_skipped_no_rules", repo: "octocat/hello" }));
+  });
+
   test("a repo without a check pack is needs-setup and does not mail", async () => {
     const sent: Sent[] = [];
     const res = await bridge({ sent, readCheckPack: packsFor([]) })(githubRequest(prPayload), TARGET);
@@ -650,7 +664,7 @@ test("mailPayload mails the pack whole as `pack`, as `checkPack` only the steps 
     actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, for: "first-timers" }, { do: "labels", target: { from: "rules" } }] },
   };
   const source = { repo: { id: "art_pack", version: 3 }, shared: { id: "art_shared", version: 7 } };
-  const mail = mailPayload("octocat/hello", repoPolicy({ enabled: true }), { pack, automatic: [], source }, {});
+  const mail = mailPayload({ name: "octocat/hello" }, repoPolicy({ enabled: true }), { pack, automatic: [], source }, {});
   expect(mail.policy.source).toEqual(source);
   expect(mail.pack).toBe(pack);
   expect(mail.checkPack).toMatchObject({ schemaVersion: 1 });

@@ -1,0 +1,133 @@
+import { describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
+import { emptyPack } from "@corbits/triage-contracts";
+import type { CoalescedEvent } from "../github/coalescer.js";
+import { DeliveryCache } from "../github/dedupe.js";
+import { createProviderHookApp } from "../provider-hooks/app.js";
+import { createProviderHookHandler, type ProviderHookDeps } from "../provider-hooks/intake.js";
+
+const SECRET = "bitbucket-secret";
+const TENANT_ID = "tnt_test";
+const REPOS = [
+  { name: "TRI/widgets", source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" },
+  { name: "TRI/gadgets", connected: true, enabled: true },
+];
+const HOOK_ROW = {
+  id: "crd_bitbucket",
+  tenantId: TENANT_ID,
+  principalId: null,
+  name: "bitbucket-datacenter-hook",
+  status: "active",
+  secret: "sealed",
+  metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage" } },
+};
+
+const repository = { slug: "widgets", project: { key: "TRI" } };
+
+function prEvent(eventKey: string, slug = "widgets") {
+  const repo = { ...repository, slug };
+  return JSON.stringify({
+    eventKey,
+    actor: { slug: "rev" },
+    pullRequest: {
+      id: 1,
+      title: "Add subtract",
+      state: eventKey === "pr:merged" ? "MERGED" : "OPEN",
+      draft: false,
+      fromRef: { latestCommit: "3e1552b0", repository: repo },
+      toRef: { displayId: "main", repository: repo },
+      author: { user: { slug: "admin" } },
+    },
+  });
+}
+
+function sign(body: string): string {
+  return `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
+}
+
+function hookRequest(body: string, eventKey: string, init: { delivery?: string; signature?: string } = {}): Request {
+  return new Request(`https://hub.example/api/hooks/bitbucket-datacenter/${TENANT_ID}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-event-key": eventKey, "x-request-id": init.delivery ?? "req-1", "x-hub-signature": init.signature ?? sign(body) },
+    body,
+  });
+}
+
+function harness(overrides: Partial<ProviderHookDeps> = {}) {
+  const accepted: CoalescedEvent[] = [];
+  const rechecked: Array<[string, number]> = [];
+  const synced: string[] = [];
+  const deps: ProviderHookDeps = {
+    db: {
+      query: {
+        credential: { async findFirst() { return HOOK_ROW; } },
+        tenant: { async findFirst() { return { id: TENANT_ID, config: { corbitsTriage: { repos: REPOS } } }; } },
+      },
+    } as never,
+    cipher: { async decrypt() { return SECRET; } } as never,
+    cache: new DeliveryCache(),
+    coalescer: {
+      async accept(input) {
+        accepted.push(input);
+        return "queued";
+      },
+    },
+    log() {},
+    async readCheckPack(_tenant, repo) {
+      return { status: "ok", pack: { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
+    },
+    async recheckOpenPulls(_tenant, repo, except) {
+      rechecked.push([repo, except]);
+      return 2;
+    },
+    async syncPolicyFile(_tenant, repo) {
+      synced.push(repo);
+      return { status: "unchanged", sha: "abc" };
+    },
+    ...overrides,
+  };
+  const app = createProviderHookApp(createProviderHookHandler(deps));
+  return { accepted, rechecked, synced, send: (req: Request) => app.fetch(req) };
+}
+
+describe("POST /api/hooks/bitbucket-datacenter/:tenantId", () => {
+  test("a signed pull request event is queued once for the Bitbucket repository record; a bad signature is 401 and an unrecorded repository 404", async () => {
+    const h = harness();
+    const body = prEvent("pr:opened");
+    expect((await h.send(hookRequest(body, "pr:opened", { signature: "sha256=00" }))).status).toBe(401);
+    expect((await h.send(hookRequest(prEvent("pr:opened", "gadgets"), "pr:opened", { delivery: "req-2" }))).status).toBe(404);
+    expect(await (await h.send(hookRequest(body, "pr:opened"))).json()).toEqual({ status: "queued" });
+    expect(await (await h.send(hookRequest(body, "pr:opened"))).json()).toEqual({ status: "duplicate" });
+    expect(h.accepted).toHaveLength(1);
+    expect(h.accepted[0]).toMatchObject({ workflow: "pr-triage", number: 1, headSha: "3e1552b0", event: "opened", record: { name: "TRI/widgets", source: "bitbucket-datacenter" } });
+  });
+
+  test("a failed queue write is 500 and the redelivery is accepted", async () => {
+    let fail = true;
+    const h = harness({
+      coalescer: {
+        async accept() {
+          if (fail) throw new Error("db down");
+          return "queued";
+        },
+      },
+    });
+    const body = prEvent("pr:from_ref_updated");
+    expect((await h.send(hookRequest(body, "pr:from_ref_updated"))).status).toBe(500);
+    fail = false;
+    expect(await (await h.send(hookRequest(body, "pr:from_ref_updated"))).json()).toEqual({ status: "queued" });
+  });
+
+  test("a merge rechecks the other open pull requests and a branch update syncs the policy file", async () => {
+    const h = harness();
+    expect((await h.send(hookRequest(prEvent("pr:merged"), "pr:merged"))).status).toBe(202);
+    const refs = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/main", displayId: "main", type: "BRANCH" }, type: "UPDATE" }] });
+    expect((await h.send(hookRequest(refs, "repo:refs_changed", { delivery: "req-3" }))).status).toBe(202);
+    // The triage state of another host's repository is keyed by its source, so it never shares a GitHub repository's.
+    expect(h.rechecked).toEqual([["bitbucket-datacenter:TRI/widgets", 1]]);
+    expect(h.synced).toEqual(["TRI/widgets"]);
+    const other = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/feature", displayId: "feature", type: "BRANCH" }, type: "UPDATE" }] });
+    expect(await (await h.send(hookRequest(other, "repo:refs_changed", { delivery: "req-4" }))).json()).toEqual({ status: "ignored" });
+    expect(h.synced).toEqual(["TRI/widgets"]);
+  });
+});

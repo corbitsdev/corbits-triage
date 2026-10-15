@@ -82,8 +82,9 @@ export default function Layout({ children }: { children: ReactNode }) {
   const counts = useMemo(() => listCounts(open, enabled), [open, enabled]);
   const openPullsUnanswered = useOpenPullsUnanswered();
   const path = location.pathname;
-  const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : path.startsWith("/triage/pr/") ? "pr" : path.startsWith("/pulse") ? "pulse" : "inbox";
-  const needsYouActive = path.startsWith("/inbox") || path.startsWith("/triage");
+  const pullPage = path.startsWith("/triage/pr/") || path.startsWith("/prs/");
+  const room = path.startsWith("/settings") ? "settings" : path.startsWith("/repositories") ? "repos" : pullPage ? "pr" : path.startsWith("/pulse") ? "pulse" : "inbox";
+  const needsYouActive = path.startsWith("/inbox") || path.startsWith("/triage") || pullPage;
   const allOpenActive = path.startsWith("/open");
   const firstTimersActive = path.startsWith("/first-timers");
   // The inbox and the repositories table draw their own inset panels, so they skip the stage card.

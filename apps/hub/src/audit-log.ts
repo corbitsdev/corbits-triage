@@ -46,7 +46,8 @@ export type AuditLogDeps = {
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
   sameSource: (anchorRunId: string, otherAnchorRunId: string) => Promise<boolean>;
   authorize: (principalId: string, tenantId: string, resource: string, action: string) => Promise<boolean>;
-  workflow: string;
+  /** The pr-triage workflows whose approval runs are read, one per pull request host. */
+  workflows: readonly string[];
 };
 
 function after(column: Parameters<typeof gte>[0], since: Date | undefined): SQL | undefined {
@@ -111,7 +112,7 @@ export function createAuditLog(deps: AuditLogDeps) {
       .innerJoin(tenant, eq(workflowRun.tenantId, tenant.id))
       .where(and(
         eq(workflowRun.tenantId, tenantId),
-        eq(workflowDefinition.name, deps.workflow),
+        inArray(workflowDefinition.name, [...deps.workflows]),
         isNotNull(workflowRun.anchorRunId),
         ne(workflowRun.id, workflowRun.anchorRunId),
         after(workflowRun.createdAt, since),

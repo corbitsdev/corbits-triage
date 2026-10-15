@@ -6,13 +6,13 @@ import { usePortal } from "../lib/portal.tsx";
 import { useDeployedWorkflows, usePrincipals, type TenantSection } from "../lib/tenant-entities.ts";
 import { AccessSection } from "../components/settings/AccessSection.tsx";
 import { AccountSection } from "../components/settings/AccountSection.tsx";
-import { GithubSection } from "../components/settings/GithubSection.tsx";
 import { ModelSection } from "../components/settings/ModelSection.tsx";
+import { SourcesSection } from "../components/settings/SourcesSection.tsx";
 import { TriageSection } from "../components/settings/TriageSection.tsx";
 
 const SECTIONS = [
   { id: "triage", label: "Triage" },
-  { id: "github", label: "GitHub" },
+  { id: "sources", label: "Sources" },
   { id: "model", label: "Decision model" },
   { id: "access", label: "Access" },
   { id: "account", label: "Your account" },
@@ -83,7 +83,7 @@ export default function Settings() {
         {SECTIONS.map((section) => <span key={section.id}><Link className="linkish quiet" to={`/settings/${section.id}`} replace onClick={() => jumpTo(section.id)}>{section.label}</Link></span>)}
       </nav>
       <TriageSection snapshot={snapshot} deployed={deployed} />
-      <GithubSection snapshot={snapshot} />
+      <SourcesSection snapshot={snapshot} />
       <ModelSection snapshot={snapshot} />
       <AccessSection repos={snapshot.repos} />
       <AccountSection />

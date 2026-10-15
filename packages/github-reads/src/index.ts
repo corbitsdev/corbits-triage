@@ -110,6 +110,7 @@ export async function listOpenPrs(gh: GithubFetch, repo: string) {
     sha: p.head?.sha,
     updatedAt: p.updated_at,
     labels: p.labels?.map((l: any) => l.name) ?? [],
+    url: typeof p.html_url === "string" ? p.html_url : null,
   }));
 }
 

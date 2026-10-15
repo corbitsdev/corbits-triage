@@ -91,7 +91,7 @@ describe("paneStatus", () => {
   test("each state reads as one line with its tone", () => {
     expect(statusOf({ checks: [FAIL, UNSURE, CANT], comment: "Please add a test." })).toMatchObject({ tone: "you", text: "Needs your reply · 1 thing to fix, 2 to check" });
     expect(statusOf({ checks: [UNSURE, CANT, check({})] })).toMatchObject({ tone: "you", text: "Not sure about 2 things — your call" });
-    expect(statusOf({ checks: [CANT, check({})] })).toMatchObject({ tone: "you", text: "Couldn't check 1 thing" });
+    expect(statusOf({ checks: [CANT, check({})] })).toMatchObject({ tone: "you", text: "Couldn't check 1 thing: Mergeability not yet computed" });
     expect(statusOf({ state: "ready", checks: [check({})] })).toMatchObject({ tone: "ready", text: "Ready to merge" });
     expect(statusOf({ state: "ready" }, { approved: true })).toMatchObject({ tone: "ready", text: "Approved by Triage · ready for you to merge" });
     expect(statusOf({ running: true })).toMatchObject({ text: "Triage running…", live: true });
