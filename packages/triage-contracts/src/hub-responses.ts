@@ -100,6 +100,32 @@ export type TriageVerdicts = typeof TriageVerdicts.infer;
 const CheckStats = type({ pass: "number", fail: "number", unconfirmed: "number", "levels?": "Record<string, number>" });
 const ActionStats = type({ suggested: "number", executed: "number", failed: "number" });
 
+/** Medians over `prs` pull requests, `closed` of them merged or closed; times are from opening, the gap is the longest wait between two people's touches, the author's included. */
+export const OutcomeMedians = type({
+  prs: "number",
+  closed: "number",
+  mergeOrCloseMs: "number | null",
+  firstHumanResponseMs: "number | null",
+  firstApprovalMs: "number | null",
+  humanTouchGapMs: "number | null",
+});
+export type OutcomeMedians = typeof OutcomeMedians.infer;
+
+export const OutcomesUnavailable = type("'no_policy' | 'no_credential' | 'source_failed'");
+export type OutcomesUnavailable = typeof OutcomesUnavailable.infer;
+
+/**
+ * Pull requests triaged in the window against those closed before `baselineBefore`, when the repository's policy was
+ * first saved. `unavailable` says why a part is missing: `no_policy` leaves only the baseline out; any other reason, both.
+ */
+export const TriageOutcomes = type({
+  triaged: OutcomeMedians.or("null"),
+  baseline: OutcomeMedians.or("null"),
+  baselineBefore: "string | null",
+  "unavailable?": OutcomesUnavailable,
+});
+export type TriageOutcomes = typeof TriageOutcomes.infer;
+
 export const TriageStats = type({
   repo: "string",
   days: "number",
@@ -113,6 +139,8 @@ export const TriageStats = type({
   comments: "number",
   medianTimeToVerdictMs: "number | null",
   daily: type({ date: "string", triaged: "number" }).array(),
+  /** Null when the hub reads no host for the repository. */
+  outcomes: TriageOutcomes.or("null"),
 });
 export type TriageStats = typeof TriageStats.infer;
 

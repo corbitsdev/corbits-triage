@@ -8,11 +8,9 @@ import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, type GithubFetch } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
-import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
-import { forInstallation } from "./open-pulls.js";
-import { appGithubFetch, failure, githubAppCredential, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
+import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
+import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 
 export const GITHUB_PR_DETAILS_PATH = "/api/integrations/github-pull";
@@ -48,18 +46,13 @@ async function bitbucketDetails(bb: bitbucket.BitbucketFetch, repo: string, numb
   return { pr, files: files.map((file) => ({ ...file, additions: 0, deletions: 0 })), commits, comments, issues: [], checks, reviews };
 }
 
-export function createGithubPrDetails(deps: PortalCredentialDeps & { githubApiOrigin: string; tenantBitbucket: TenantBitbucket; log: (entry: Record<string, unknown>) => void }) {
-  const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
+export function createGithubPrDetails(deps: SourceFetchDeps & { log: (entry: Record<string, unknown>) => void }) {
+  const sourceFetch = createSourceFetch(deps);
 
   async function detailsOf(tenantId: string, principalId: string, record: RepoRecord, number: number) {
-    if (sourceOf(record) === "bitbucket-datacenter") {
-      const bb = await deps.tenantBitbucket(tenantId);
-      if (!bb) throw new Error("no active bitbucket-datacenter credential");
-      return bitbucketDetails(bb, record.name, number);
-    }
-    const appJson = await githubAppCredential(deps, principalId, tenantId, "read");
-    if (appJson instanceof Response) throw new Error("the GitHub App credential is not readable");
-    return githubDetails(forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, appJson), record.installationId), record.name, number);
+    const source = await sourceFetch(tenantId, principalId, record);
+    if (!source) throw new Error(`no readable ${sourceOf(record)} credential`);
+    return "bb" in source ? bitbucketDetails(source.bb, record.name, number) : githubDetails(source.gh, record.name, number);
   }
 
   return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {

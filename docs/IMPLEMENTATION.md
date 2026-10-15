@@ -35,6 +35,8 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
 | `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and records verdicts. |
 | `src/github/verdict-record-store.ts`, `triage-verdicts.ts`, `triage-stats.ts`, `triage-timeline.ts` | Verdict records and the routes that serve them. The triage-verdicts list lists pull requests only for repositories with triage on, plus any a pending approval names. |
+| `src/github/pr-outcomes.ts` | Triage stats' `outcomes`: medians of time to merge or close, first response, first approval (over approved pull requests only) and longest wait, for up to 50 newest triaged pull requests against a baseline of pull requests closed before the policy was first saved (GitHub: the 50 newest-created; Bitbucket Data Center: the newest page holding any, at most 8 pages of 50). Read from the host with at most 8 reads at once, cached per pull request and per UTC day; failed reads are left out of the medians. |
+| `src/github/source-fetch.ts` | A connected repository's host fetch, as the tenant's GitHub App or Bitbucket Data Center token, for the PR view and outcomes. |
 | `src/github/manifest.ts` | GitHub App Manifest flow: start and callback. The setup state is an HMAC-SHA256 token keyed from `BETTER_AUTH_SECRET`, valid 10 minutes and bound to the user who started it; nothing is stored. |
 | `src/github/pr-*.ts` | Pull request actions, details, previews (API only) and single-PR triage. |
 | `src/github/held-dos.ts` | Approves a held action by mailing it to `pr-triage`. |
