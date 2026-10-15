@@ -1,13 +1,10 @@
-import { type } from "arktype";
 import type { Review } from "@corbits/github-reads";
 import { isoTime, json, jsonAll, repoPath, type BitbucketFetch } from "./client.js";
-import { Participant, PullRequest, User } from "./shapes.js";
+import { Activity, Participant, PullRequest } from "./shapes.js";
 
 const REVIEW_STATES: Record<string, string> = { APPROVED: "APPROVED", NEEDS_WORK: "CHANGES_REQUESTED" };
 
 const REVIEW_ACTIONS = new Set(["APPROVED", "REVIEWED", "UNAPPROVED"]);
-
-const Activity = type({ action: "string", createdDate: "number", user: User });
 
 /** When each user last changed their review status; participants carry no time of their own. */
 async function reviewedAt(bb: BitbucketFetch, repo: string, number: number): Promise<Map<string, number>> {

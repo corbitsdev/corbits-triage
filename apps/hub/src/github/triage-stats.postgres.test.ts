@@ -43,7 +43,7 @@ test("PostgreSQL: only verdicts of completed runs count as triaged", async () =>
       { ...verdict("run_4", 4, null), checks: [{ check: "size", result: "pass" }] },
     ]);
 
-    const stats = createTriageStats({ verdicts, now: () => AT });
+    const stats = createTriageStats({ verdicts, outcomes: async () => null, now: () => AT });
     const res = await stats(new Request(`http://hub.test/api/integrations/triage-stats/${TENANT}?repo=${REPO}`), { tenantId: TENANT, principalId: "prn_stats" });
     expect(TriageStats.assert(await res.json())).toMatchObject({
       triaged: 2,

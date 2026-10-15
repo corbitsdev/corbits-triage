@@ -3,9 +3,9 @@ import { type } from "arktype";
 /** Pinned to the instance base URL; the caller's fetch adds the credential. */
 export type BitbucketFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
-const PAGE_LIMIT = 100;
+export const PAGE_LIMIT = 100;
 
-const Page = type({ values: "unknown[]", isLastPage: "boolean", "nextPageStart?": "number | null" });
+export const Page = type({ values: "unknown[]", isLastPage: "boolean", "nextPageStart?": "number | null" });
 
 /** A repository is named `PROJECTKEY/slug`. */
 export function repoParts(repo: string): { project: string; slug: string } {
@@ -33,14 +33,15 @@ export async function json(bb: BitbucketFetch, path: string): Promise<unknown> {
   return (await request(bb, path)).json();
 }
 
-export async function jsonAll(bb: BitbucketFetch, path: string, limit = PAGE_LIMIT): Promise<unknown[]> {
+/** Every page, or the first `maxPages`. */
+export async function jsonAll(bb: BitbucketFetch, path: string, limit = PAGE_LIMIT, maxPages = Infinity): Promise<unknown[]> {
   const separator = path.includes("?") ? "&" : "?";
   const rows: unknown[] = [];
   let start = 0;
-  for (;;) {
+  for (let pages = 1; ; pages++) {
     const page = Page.assert(await json(bb, `${path}${separator}limit=${limit}&start=${start}`));
     rows.push(...page.values);
-    if (page.isLastPage) return rows;
+    if (page.isLastPage || pages >= maxPages) return rows;
     if (typeof page.nextPageStart !== "number") throw new Error(`bitbucket returned a page without nextPageStart for ${path}`);
     start = page.nextPageStart;
   }

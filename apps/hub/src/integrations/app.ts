@@ -466,7 +466,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${TRIAGE_STATS_PATH}/:tenantId`,
     describeRoute({
       summary: "Triage stats of a repository over the last whole UTC days",
-      description: "Needs `workflow-run:*` read. From the recorded verdicts and the Dos their runs executed, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. Cached for a minute.",
+      description: "Needs `workflow-run:*` read. From the recorded verdicts and the Dos their runs executed, degraded verdicts left out; states, needed-you and check results count each head's latest verdict. `since` is the earliest recorded verdict. `outcomes` holds medians read from the repository's host for up to the 50 newest triaged pull requests, against a baseline of pull requests closed before the policy was first saved (host limits: see docs/IMPLEMENTATION.md). `firstApprovalMs` is over approved pull requests only. Failed host reads are left out of the medians; `unavailable` says why a part is missing. The verdict counts are cached for a minute; `outcomes` is read per request with the member's credential grant, host reads cached longer.",
       tags: TAGS,
       parameters: [
         { in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } },
