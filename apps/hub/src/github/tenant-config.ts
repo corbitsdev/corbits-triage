@@ -171,15 +171,22 @@ export async function tenantManagerRefusal(
   return failure(403, "forbidden", "You do not have permission to manage this tenant");
 }
 
+function enabledGithubNames(ns: CorbitsTriageNs): Set<string> {
+  return new Set(repoRecords(ns).filter((record) => record.enabled === true && sourceOf(record) === "github").map((record) => record.name));
+}
+
 /**
  * CAS for portal PATCH /api/tenants/:id that carries `config.corbitsTriage`.
- * Matching rev ⇒ rewrite body to current+1 and let stock.fetch do the write.
+ * Matching rev ⇒ grant each GitHub repository the write switches on, rewrite body to current+1 and let stock.fetch
+ * do the write. Granting first leaves nothing to retry if the write fails: grants are idempotent and inert while a
+ * repository is off.
  * Stale rev ⇒ 409 `{ error: "config_conflict" }`. Over 1 MB ⇒ 413.
  */
 export async function prepareCorbitsTriagePatch(
   db: DB["db"],
   tenantId: string,
   req: Request,
+  grantEnabled: (tx: Tx, repo: string) => Promise<void>,
 ): Promise<Request | Response> {
   const raw = await readCappedBody(req);
   if (raw === null) return failure(413, "payload_too_large", "Request body too large");
@@ -197,8 +204,13 @@ export async function prepareCorbitsTriagePatch(
   const incomingRev = incomingNs["rev"] ?? 0;
   const outcome = await db.transaction(async function compareRev(tx) {
     const [row] = await tx.select().from(schema.tenant).where(eq(schema.tenant.id, tenantId)).for("update");
-    const currentRev = nsRev(triageNs(row?.config));
+    const current = triageNs(row?.config);
+    const currentRev = nsRev(current);
     if (incomingRev !== currentRev) return { conflict: true as const };
+    const wasEnabled = enabledGithubNames(current);
+    for (const name of enabledGithubNames(incomingNs)) {
+      if (!wasEnabled.has(name)) await grantEnabled(tx, name);
+    }
     return { conflict: false as const, nextRev: currentRev + 1 };
   });
   if (outcome.conflict) {

@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { type } from "arktype";
 import { credentialAad } from "@intx/types";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { ensureTriageRole } from "../github/automation.js";
+import { ensureTriageRole, grantEnabledKinds } from "../github/automation.js";
 import { tenantConfigOf } from "../github/bridge.js";
 import { activeCredential, failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
 import { patchCorbitsTriage, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
@@ -287,7 +287,9 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       if (stored && !isBitbucketRecord(stored)) return failure(409, "repo_name_taken", `A GitHub repository is already named ${name}.`);
       const webhookId = await keptOrCreatedWebhook(bb, member, repo.project.key, repo.slug, stored?.webhookId);
       if (webhookId instanceof Response) return webhookId;
-      const written = await patchCorbitsTriage(db, member.tenantId, function enableBitbucketRepo(ns) {
+      const written = await patchCorbitsTriage(db, member.tenantId, async function enableBitbucketRepo(ns, tx) {
+        const prev = repoRecords(ns).find((record) => isBitbucketRecord(record) && record.name === name);
+        if (prev?.enabled !== true) await grantEnabledKinds(tx, member.tenantId, name, deps.now());
         return enableRepo(ns, name, branch, webhookId);
       });
       const repository = written && repoRecords(written).find((record) => record.name === name);

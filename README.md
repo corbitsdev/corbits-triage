@@ -8,6 +8,8 @@ identity, grants, credentials, runs and audit.
 
 Nothing runs by default: a repository is triaged only after someone sets up
 its rules and enables it.
+Enabling a repository switches on Comment and Labels; every other action stays off
+until you switch it on. Turning triage off and on again switches Comment and Labels back on.
 
 ## Quickstart
 
