@@ -205,7 +205,7 @@ principal on REST routes.
   every 2 s. Then `lifecycle.requestCancellation` on the anchor, always, even
   when the wait itself failed.
 - Definition: unchanged, `prTriage({ sources })` with its `onTrigger` wrapper,
-  `credentialBindings` and `grantRequirements`. The approval branch stays the
+  `credentialBindings`. The approval branch stays the
   first step.
 - Lifecycle policy: tenant `capacityRetention.cancelled: "0s"`,
   `completed: "0s"`, `failed: "15m"`; worker `maxLifetime` is the listener's
@@ -533,8 +533,8 @@ derives the run's grants from the receiving deployment's frozen snapshot and
 the anchor's resolved credential-binding grants, per deployment, at first
 fire; `readyMaterializer` (`apps/hub/src/github/deployment.ts:24-30`) throws
 `DeploymentNotReadyError` until credential resolution is published. The
-worker definition keeps `credentialBindings` and `grantRequirements`
-(`packages/triage-workflows/src/pr-triage.ts:22-23`), so each worker
+worker definition keeps `credentialBindings`
+(`packages/triage-workflows/src/pr-triage.ts:23`), so each worker
 deployment binds the host credential itself and the `triage-do:` grants ride
 in the mail as today. Nothing new is needed; the cost is one grant
 materialization per worker instead of per listener.

@@ -24,8 +24,6 @@ const BUNDLES: Record<RepoSource, Bundles> = {
 //   `credential:{id}` / `use` grant scoped by `{ tool: "tool:<packageName>" }` (toolConsumer, package granularity).
 //   Requirement authors cannot know the credential id, so the narrowest form is the per-package binding, not a requirement.
 // - Because the consumer identity is the package name, read and write need separate packages to get separate credential grants.
-// - `conditions.tool` is only evaluated on the credential-use path (CREDENTIAL_USE_CONDITIONS); on `tool:` requirements it is
-//   not a bundle scoper, so tool requirements are scoped by the bundle id in the resource itself.
 function credentialBinding(pkg: string, credential: RepoSource) {
   return {
     package: pkg,
@@ -35,23 +33,6 @@ function credentialBinding(pkg: string, credential: RepoSource) {
     locator: "tenant",
   } as const;
 }
-
-// This hub does not stamp credential-use grants from bindings (verified: runs/<id>/grants.json had none and the tool failed
-// closed), so each package gets an explicit creator-sourced `credential:*` / `use` requirement scoped by `{ tool }`.
-function credentialGrant(pkg: string) {
-  return {
-    resource: "credential:*",
-    action: "use",
-    source: "creator",
-    conditions: { tool: `tool:${pkg}` },
-  } as const;
-}
-
-/** The unattended tools of each host's write bundle; the GitHub ones keep the names they were deployed with. */
-const AUTO_TOOLS: Record<RepoSource, readonly string[]> = {
-  github: ["github_mirror_auto", "github_execute_do_auto"],
-  "bitbucket-datacenter": ["bitbucket_datacenter_mirror_auto", "bitbucket_datacenter_execute_action_auto"],
-};
 
 export type Sources = readonly RepoSource[];
 
@@ -65,19 +46,7 @@ export function credentialBindingsFor(sources: Sources) {
   });
 }
 
-export function grantRequirementsFor(sources: Sources) {
-  return sources.flatMap(function requirements(source) {
-    const { read, write } = BUNDLES[source];
-    return [
-      ...[read.id, write.id].map(credentialGrant),
-      { resource: `tool:${read.id}:*`, action: "invoke", source: "creator" } as const,
-      ...AUTO_TOOLS[source].map((tool) => ({ resource: `tool:${write.id}:${tool}`, action: "invoke", source: "creator" } as const)),
-    ];
-  });
-}
-
 export const credentialBindings = credentialBindingsFor(GITHUB);
-export const grantRequirements = grantRequirementsFor(GITHUB);
 
 export type TriageAgents = ReturnType<typeof triageAgents>;
 

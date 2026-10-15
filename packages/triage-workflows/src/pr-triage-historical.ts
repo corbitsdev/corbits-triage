@@ -1,5 +1,5 @@
 import { defineWorkflow, onTrigger } from "@intx/workflow";
-import { credentialBindings, grantRequirements } from "./agents.js";
+import { credentialBindings } from "./agents.js";
 import { triageSteps } from "./triage-steps.js";
 
 export const PR_TRIAGE_HISTORICAL_ADDRESS = "pr-triage-historical";
@@ -15,7 +15,6 @@ const perBacklog = defineWorkflow({
 export const workflow = defineWorkflow({
   id: PR_TRIAGE_HISTORICAL_ADDRESS,
   credentialBindings,
-  grantRequirements,
   steps: {
     events: onTrigger({ on: { type: "mail", to: PR_TRIAGE_HISTORICAL_ADDRESS }, body: perBacklog, onBodyFailure: "tolerate" }),
   },

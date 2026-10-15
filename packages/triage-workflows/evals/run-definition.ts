@@ -1,11 +1,10 @@
-import { evaluateGrants } from "@intx/authz";
 import type { WorkflowAuthorizeFn } from "@intx/workflow";
 import * as actions from "../src/actions/index.js";
-import { credentialBindings, grantRequirements } from "../src/agents.js";
+import { credentialBindings } from "../src/agents.js";
 import { triageDirector } from "../src/directors.js";
 import type { Verdict } from "../src/logic/render.js";
 import { workflow } from "../src/pr-triage.js";
-import { grantsFor, runLocalWorkflow } from "./run-local.js";
+import { runLocalWorkflow } from "./run-local.js";
 
 const INFERENCE_CREDENTIAL = "system-one";
 
@@ -25,16 +24,14 @@ interface RunDefinitionInput {
 
 type Write = { method: string; path: string; body: unknown };
 
-const GRANTS = grantsFor(grantRequirements);
 const logged = new Set<string>();
 
 /**
- * Logs each distinct decision the definition's grants make, once per process, and allows the call. The tools ask for
- * bare `tool:<name>` resources that only the sidecar's tool floor grants, and @intx/workflow-host does not export it.
+ * Logs each distinct request once per process and allows it. The tools ask for bare `tool:<name>` resources that only
+ * the sidecar's tool floor grants, and @intx/workflow-host does not export it.
  */
 const loggedAuthorize: WorkflowAuthorizeFn = async function loggedAuthorize(resource, action) {
-  const { effect } = await evaluateGrants(GRANTS, resource, action);
-  const line = `authorize ${action} ${resource}: ${effect ?? "no grant"}`;
+  const line = `authorize ${action} ${resource}`;
   if (!logged.has(line)) {
     logged.add(line);
     console.error(line);
@@ -63,7 +60,6 @@ export async function runDefinition({ fetch, apiKey, endpoint, triggerPayload }:
     workflow,
     director: triageDirector.factory,
     actions,
-    grantRequirements,
     credentialBindings,
     authorize: loggedAuthorize,
     github: recordingGithub(fetch, writes),

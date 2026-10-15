@@ -14,8 +14,6 @@ import { createWorkflowStepInvoker } from "@intx/workflow-host";
 
 const GITHUB_ORIGIN = "https://api.github.com";
 
-type GrantRequirement = { resource: string; action: string; conditions?: GrantRule["conditions"] };
-
 type Source = { id: string; provider: string; baseURL: string; credentialId: string; model: string; quirks?: Record<string, unknown> };
 
 interface RunLocalInput {
@@ -23,7 +21,6 @@ interface RunLocalInput {
   /** The workflow's director factory, as its package exports it. */
   director: Parameters<typeof createWorkflowDirectorRegistry>[0][number];
   actions: Record<string, unknown>;
-  grantRequirements: readonly GrantRequirement[];
   credentialBindings: readonly { handle: string; package: string }[];
   authorize: WorkflowAuthorizeFn;
   /** GitHub's requests, reads and writes alike. */
@@ -35,15 +32,15 @@ interface RunLocalInput {
   triggerPayload: unknown;
 }
 
-/** The creator grants a definition asks for, as the hub stamps them on a run. */
-export function grantsFor(requirements: readonly GrantRequirement[]): GrantRule[] {
-  return requirements.map((rule, index) => ({
+/** The credential-use grants the hub stamps on a run from a definition's bindings. */
+function grantsFor(bindings: RunLocalInput["credentialBindings"]): GrantRule[] {
+  return bindings.map((binding, index) => ({
     id: `grant-${index}`,
-    resource: rule.resource,
-    action: rule.action,
+    resource: "credential:github",
+    action: "use",
     effect: "allow",
-    origin: "creator",
-    conditions: rule.conditions ?? null,
+    origin: "system",
+    conditions: { tool: `tool:${binding.package}` },
     expiresAt: null,
     roleId: null,
     principalId: null,
@@ -56,7 +53,7 @@ export function grantsFor(requirements: readonly GrantRequirement[]): GrantRule[
  */
 export async function runLocalWorkflow(input: RunLocalInput) {
   const { workflow, authorize, inference } = input;
-  const grants = grantsFor(input.grantRequirements);
+  const grants = grantsFor(input.credentialBindings);
   const cell: { current: CredentialDelivery } = {
     current: {
       bindings: input.credentialBindings.map((binding) => ({ handle: binding.handle, credentialId: "github", consumer: `tool:${binding.package}` })),
