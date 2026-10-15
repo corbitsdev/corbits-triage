@@ -20,11 +20,12 @@ interface Label {
 }
 
 export interface Labels {
+  /** By number in this repository, or `owner/name#number` in another. */
   pulls: Record<string, Label>;
   /** Pull requests whose files are merged into one unfocused pull request, the first giving the title and body. */
-  mixes: Array<[number, number]>;
+  mixes: Array<[string, string]>;
   /** Mixes whose title and body describe both pull requests, as an author bundling two changes would. */
-  describedMixes: Array<[number, number]>;
+  describedMixes: Array<[string, string]>;
 }
 
 /** A file row as GitHub's pull request files API returns it. */
@@ -51,9 +52,9 @@ export interface Snapshot {
 
 /** Which snapshot a case reads, and what it removes or adds. */
 export interface CaseInput {
-  pull: number;
+  pull: string;
   drop?: "docs";
-  mix?: number;
+  mix?: string;
   /** The mix's title and body describe both pull requests. */
   described?: true;
 }
@@ -66,7 +67,7 @@ const MENTIONS_DOCS = /\b(docs?|readme|documentation)\b/i;
 /** The snapshot a case describes: files dropped or merged in, with text that would contradict the variant removed. */
 export function variant(base: Snapshot, input: CaseInput, other?: Snapshot): Snapshot {
   if (input.mix !== undefined) {
-    if (!other) throw new Error(`case ${input.pull}+${input.mix} needs #${input.mix}`);
+    if (!other) throw new Error(`case ${input.pull}+${input.mix} needs ${input.mix}`);
     const mixed = { ...base, files: [...base.files, ...other.files], commits: [...base.commits, ...other.commits] };
     return input.described ? { ...mixed, title: `${base.title}; also ${other.title}`, body: `${base.body}\n\nAlso: ${other.body}` } : mixed;
   }

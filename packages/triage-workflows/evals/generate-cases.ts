@@ -16,8 +16,8 @@ function expected(pr: Snapshot, needsDocs: boolean, focused: Expected["focused"]
   return { docs, focused, verdict: docs === "fail" || focused === "fail" ? "fail" : "pass" };
 }
 
-const pulls = new Map<number, Snapshot>();
-for (const key of Object.keys(labels.pulls)) pulls.set(Number(key), fixture(Number(key)));
+const pulls = new Map<string, Snapshot>();
+for (const key of Object.keys(labels.pulls)) pulls.set(key, fixture(key));
 
 const cases: JudgeCase[] = [];
 function add(id: string, input: CaseInput, needsDocs: boolean, focused: Expected["focused"]) {
@@ -25,11 +25,10 @@ function add(id: string, input: CaseInput, needsDocs: boolean, focused: Expected
   const pr = variant(base, input, input.mix === undefined ? undefined : pulls.get(input.mix));
   cases.push({ name: id, input, expect: expected(pr, needsDocs, focused) });
 }
-for (const [key, label] of Object.entries(labels.pulls)) {
-  const pull = Number(key);
+for (const [pull, label] of Object.entries(labels.pulls)) {
   const pr = pulls.get(pull)!;
-  add(key, { pull }, label.needsDocs, "pass");
-  if (label.needsDocs && pr.files.some((file) => isDocPath(file.filename))) add(`${key}-no-docs`, { pull, drop: "docs" }, true, "pass");
+  add(pull, { pull }, label.needsDocs, "pass");
+  if (label.needsDocs && pr.files.some((file) => isDocPath(file.filename))) add(`${pull}-no-docs`, { pull, drop: "docs" }, true, "pass");
 }
 for (const [pull, mix] of labels.mixes) {
   add(`${pull}+${mix}`, { pull, mix }, labels.pulls[pull]!.needsDocs || labels.pulls[mix]!.needsDocs, "fail");
