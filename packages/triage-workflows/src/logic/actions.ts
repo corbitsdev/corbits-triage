@@ -4,7 +4,7 @@ import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
 import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, stepForAuthor, type ActionKind, type CheckPack, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import type { CheckResult, PrFacts } from "./checks.js";
 import { authorFailures } from "./render.js";
-import { errorText } from "@corbits/common";
+import { compare, errorText } from "@corbits/common";
 import { unrunnable } from "./execute-do.js";
 
 /**
@@ -17,7 +17,7 @@ export type DoRef = { repo: string; number: number; headSha: string; list: Verdi
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const entries = Object.entries(value).sort(([a], [b]) => compare(a, b));
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
   }
   return JSON.stringify(value);

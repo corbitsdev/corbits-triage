@@ -21,3 +21,10 @@ export function asRepo(value: unknown): string | undefined {
   }
   return trimmed;
 }
+
+/** Code-unit order, unlike `localeCompare`, so sorted output is the same on every machine. */
+export function compare(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}

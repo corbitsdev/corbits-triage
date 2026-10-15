@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { minimatch } from "minimatch";
+import { compare } from "@corbits/common";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
 
@@ -446,7 +447,7 @@ function docRank(path: string): number {
 }
 
 function byPath(a: Pick<DocBlob, "path">, b: Pick<DocBlob, "path">): number {
-  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  return compare(a.path, b.path);
 }
 
 function byDocOrder(a: Pick<DocBlob, "path">, b: Pick<DocBlob, "path">): number {
