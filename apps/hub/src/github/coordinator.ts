@@ -1,0 +1,205 @@
+// One queue for the hub over the triage jobs the coalescer closes: each job is
+// one pull request's folded mail, spawned as a fresh worker deployment and
+// released when its one run ends. Capacity is the number of workers alive,
+// bounded globally and per tenant, and spawns are spaced so probe allocations
+// do not pile up. A queued job for a pull request whose head moved is replaced,
+// not added, as the coalescer keys its windows; a job for a pull request whose
+// worker is still running waits for it, and the reconciler supersedes the old
+// run's result. The queue lives in process: the hub runs as one replica, and
+// the heads stay `queued` rows for the reconciler.
+export type TriageJob = {
+  tenantId: string;
+  workflow: string;
+  repo: string;
+  number: number;
+  headSha: string;
+  payload: unknown;
+};
+
+export type CoordinatorLimits = { global: number; perTenant: number; spawnsPerSecond: number };
+
+/** A spawn the host refused for want of capacity; the job is retried, not failed. */
+export class WorkerCapacityError extends Error {}
+
+export type WorkerSpawner = {
+  /** Deploys a fresh worker and fires it with the job's mail; resolves with the worker's anchor run id. */
+  spawn: (job: TriageJob) => Promise<string>;
+  /** Resolves when the worker's one run has ended. */
+  ended: (tenantId: string, runId: string) => Promise<void>;
+  /** Releases the worker deployment once its run has ended. */
+  release: (tenantId: string, runId: string) => Promise<void>;
+};
+
+export type CoordinatorDeps = {
+  spawner: WorkerSpawner;
+  limits: CoordinatorLimits;
+  /** How long a job refused for capacity waits before its next spawn: doubled each time from `min`, never past `max`. */
+  retry: { minMs: number; maxMs: number };
+  /** The job's head is failed here when its worker could not be spawned or fired. */
+  failed: (job: TriageJob, error: string) => Promise<void>;
+  setTimer: (fire: () => Promise<void>, ms: number) => () => void;
+  now: () => Date;
+  log: (entry: Record<string, unknown>) => void;
+};
+
+/** A held slot; `runId` is set once the worker is spawned. */
+type Running = { tenantId: string; repo: string; number: number; runId?: string };
+
+export type Coordinator = {
+  enqueue: (job: TriageJob) => void;
+  /** Cancels the spawn timer; queued heads stay queued for the reconciler. */
+  stop: () => void;
+};
+
+function keyOf({ tenantId, repo, number }: { tenantId: string; repo: string; number: number }): string {
+  return `${tenantId}\n${repo}\n${number}`;
+}
+
+export function createCoordinator(deps: CoordinatorDeps): Coordinator {
+  const queue = new Map<string, TriageJob>();
+  const running = new Map<number, Running>();
+  let slots = 0;
+  /** Tenants in the order they last spawned, so a full hub rotates across them. */
+  const lastSpawned = new Map<string, number>();
+  /** Jobs refused for capacity: how often, and when they may spawn again. */
+  const refused = new Map<string, { attempts: number; notBefore: number }>();
+  let lastSpawnAt = -Infinity;
+  let cancelTimer: (() => void) | undefined;
+  let pumping = false;
+  let stopped = false;
+
+  function runningFor(tenantId: string): number {
+    let count = 0;
+    for (const worker of running.values()) if (worker.tenantId === tenantId) count += 1;
+    return count;
+  }
+
+  function isRunning(job: TriageJob): boolean {
+    for (const worker of running.values()) if (keyOf(worker) === keyOf(job)) return true;
+    return false;
+  }
+
+  function next(now: number): { job?: TriageJob; waitMs?: number } {
+    if (running.size >= deps.limits.global) return {};
+    let pick: TriageJob | undefined;
+    let waitMs: number | undefined;
+    for (const job of queue.values()) {
+      if (runningFor(job.tenantId) >= deps.limits.perTenant || isRunning(job)) continue;
+      const notBefore = refused.get(keyOf(job))?.notBefore ?? -Infinity;
+      if (notBefore > now) {
+        waitMs = Math.min(waitMs ?? Infinity, notBefore - now);
+        continue;
+      }
+      if (pick === undefined || (lastSpawned.get(job.tenantId) ?? -Infinity) < (lastSpawned.get(pick.tenantId) ?? -Infinity)) pick = job;
+    }
+    return pick ? { job: pick } : { waitMs };
+  }
+
+  function requeue(job: TriageJob): void {
+    const key = keyOf(job);
+    if (queue.has(key)) return;
+    queue.set(key, job);
+  }
+
+  function deferForCapacity(job: TriageJob): number {
+    const key = keyOf(job);
+    const attempts = (refused.get(key)?.attempts ?? 0) + 1;
+    const waitMs = Math.min(deps.retry.minMs * 2 ** (attempts - 1), deps.retry.maxMs);
+    refused.set(key, { attempts, notBefore: deps.now().getTime() + waitMs });
+    requeue(job);
+    return waitMs;
+  }
+
+  async function failJob(job: TriageJob, error: string, entry: Record<string, unknown>): Promise<void> {
+    try {
+      await deps.failed(job, error);
+    } catch (err) {
+      deps.log({ level: "error", msg: "worker_fail_unrecorded", ...entry, error: String(err) });
+    }
+  }
+
+  async function spawn(slot: number, job: TriageJob): Promise<void> {
+    const entry = { tenantId: job.tenantId, repo: job.repo, pr: job.number, workflow: job.workflow };
+    const at = deps.now().getTime();
+    lastSpawnAt = at;
+    lastSpawned.set(job.tenantId, at);
+    let runId: string;
+    try {
+      runId = await deps.spawner.spawn(job);
+    } catch (err) {
+      running.delete(slot);
+      if (err instanceof WorkerCapacityError) {
+        deps.log({ level: "warn", msg: "worker_spawn_deferred", ...entry, error: String(err), retryMs: deferForCapacity(job) });
+      } else {
+        deps.log({ level: "error", msg: "worker_spawn_failed", ...entry, error: String(err) });
+        await failJob(job, `spawn failed: ${String(err)}`, entry);
+      }
+      void pump();
+      return;
+    }
+    refused.delete(keyOf(job));
+    running.set(slot, { tenantId: job.tenantId, repo: job.repo, number: job.number, runId });
+    deps.log({ level: "info", msg: "worker_spawned", ...entry, runId });
+    try {
+      await deps.spawner.ended(job.tenantId, runId);
+    } catch (err) {
+      deps.log({ level: "error", msg: "worker_wait_failed", ...entry, runId, error: String(err) });
+    }
+    try {
+      await deps.spawner.release(job.tenantId, runId);
+    } catch (err) {
+      deps.log({ level: "error", msg: "worker_release_failed", ...entry, runId, error: String(err) });
+    }
+    running.delete(slot);
+    deps.log({ level: "info", msg: "worker_ended", ...entry, runId });
+    void pump();
+  }
+
+  function waitThenPump(ms: number): void {
+    cancelTimer?.();
+    cancelTimer = deps.setTimer(async function onSpawnSlot() {
+      cancelTimer = undefined;
+      await pump();
+    }, ms);
+  }
+
+  async function pump(): Promise<void> {
+    if (stopped || pumping) return;
+    pumping = true;
+    try {
+      for (;;) {
+        const now = deps.now().getTime();
+        const { job, waitMs } = next(now);
+        if (!job) {
+          if (waitMs !== undefined) waitThenPump(waitMs);
+          return;
+        }
+        const gapMs = 1000 / deps.limits.spawnsPerSecond;
+        const dueIn = lastSpawnAt + gapMs - now;
+        if (dueIn > 0) {
+          waitThenPump(dueIn);
+          return;
+        }
+        queue.delete(keyOf(job));
+        // Holds the slot through the spawn so a concurrent pump cannot overfill it.
+        const slot = ++slots;
+        running.set(slot, { tenantId: job.tenantId, repo: job.repo, number: job.number });
+        void spawn(slot, job);
+      }
+    } finally {
+      pumping = false;
+    }
+  }
+
+  return {
+    enqueue(job) {
+      queue.set(keyOf(job), job);
+      void pump();
+    },
+    stop() {
+      stopped = true;
+      cancelTimer?.();
+      cancelTimer = undefined;
+    },
+  };
+}
