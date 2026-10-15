@@ -4,8 +4,19 @@ const FOREIGN_PATH = /(^|\/)(vendor|node_modules|dist|build)\//;
 const LEGAL_DOC = /(^|\/)(LICENSE|COPYING|CLA|SECURITY|CODE_OF_CONDUCT)[^/]*$|exception[^/]*$/i;
 const GENERATED_PATH = /(^|\/)(bun\.lockb?|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|Gemfile\.lock|composer\.lock)$/;
 
+const TEST_PATHS: readonly RegExp[] = [
+  /(^|\/)(__tests__|tests?|Tests)\//,
+  /(^|\/)[^/]+\.\w*Tests?\//,
+  /\.(test|spec)\.[cm]?[jt]sx?$/,
+  /(^|\/)test_[^/]*\.(py|rb)$/,
+  /_test\.(py|go|rb|exs|dart)$/,
+  /(^|\/)spec\/.*\.rb$|_spec\.rb$/,
+  /^(?!(.*\/)?src\/main\/).*Tests?\.(java|kt|cs)$/,
+  /^(?!(.*\/)?src\/main\/).*(Test|Spec|Suite)\.scala$/,
+];
+
 export function isTestPath(path: string): boolean {
-  return /(^|\/)(__tests__|tests?)\/|\.(test|spec)\.[cm]?[jt]sx?$/.test(path);
+  return TEST_PATHS.some((pattern) => pattern.test(path));
 }
 
 export function isDocPath(path: string): boolean {
