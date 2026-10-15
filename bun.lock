@@ -27,6 +27,7 @@
       "name": "@corbits/extension",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/bitbucket-datacenter-reads": "workspace:*",
         "@corbits/common": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/react-ui": "0.3.1",

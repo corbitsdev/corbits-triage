@@ -1,0 +1,8 @@
+/* Data Center's header puts the chip before Start review, so it keeps its gap on the right. */
+.chip {
+  margin-inline: 0 8px;
+}
+
+.tb {
+  margin-bottom: 20px;
+}

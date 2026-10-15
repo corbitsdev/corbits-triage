@@ -48,7 +48,7 @@ async function readItem(gh: GithubFetch, { repo, number }: PrRef, pack: CheckPac
   return assembleItem(number, { pr, checks, reviews, comments, commits, files, authorTeams: null }, { repo, policy: repoPolicy({}), pack, events: ["catch-up"], docs });
 }
 
-function stateOf(check: CheckResult): RuleState {
+export function stateOf(check: CheckResult): RuleState {
   if (check.kind === "model" && check.reason === NEEDS_JUDGE_REASON) return "not-evaluated";
   if (check.result === "unconfirmed") return "waiting";
   return check.result;
@@ -64,7 +64,7 @@ function stepSentence(step: SuggestedDo, repo: string): string[] {
 }
 
 /** The labels, comment and other steps the hub would post for a verdict reached without the decision model. */
-function posted(verdict: Verdict, repo: string) {
+export function posted(verdict: Verdict, repo: string) {
   const dos = verdict.actions.filter(isDo);
   const labelDos = dos.flatMap((step) => (step.kind === "labels" && "labels" in step.target ? step.target.labels : []));
   const steps = dos.filter((step) => step.kind !== "labels").flatMap((step) => stepSentence(step, repo));
