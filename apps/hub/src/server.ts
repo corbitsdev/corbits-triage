@@ -60,6 +60,7 @@ import { createProviderHookHandler } from "./provider-hooks/intake.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { createCoalescer, type Coalescer } from "./github/coalescer.js";
 import { createCoordinator, type Coordinator, type TriageJob } from "./github/coordinator.js";
+import { createTriageQueueView } from "./github/triage-queue-view.js";
 import { createWorkerSpawner, releaseOrphanedWorkers } from "./github/worker-spawn.js";
 import { DeliveryCache } from "./github/dedupe.js";
 import { activeTenants, createDeploymentRotation, latestDeployments, NoLiveDeploymentError, readyMaterializer, recentWorkers, resolveLiveDeployment, resolveLiveDeployments, withWorkflowVersions } from "./github/deployment.js";
@@ -302,6 +303,19 @@ async function sendBridgeMail(tenantId: string, workflow: string, payload: unkno
   if (!live) throw new NoLiveDeploymentError(id);
   await deliverToDeployment(tenantId, live.address, payload);
 }
+const coordination = triageCoordinator(env);
+/** The workflow a job's worker is seeded from: a host's triage workflow, by either name it goes by. */
+function workflowIdFor(name: string): string {
+  const triage = triageWorkflowOf(name);
+  if (!triage) throw new Error(`Not a triage workflow: ${name}`);
+  return triage.id;
+}
+/** Every triage mail, whatever started it, goes out through here: to the live listener, or with the coordinator on, to a worker of its own. */
+async function sendTriageMail(job: TriageJob): Promise<void> {
+  if (coordinator) return coordinator.enqueue({ ...job, workflow: workflowIdFor(job.workflow) });
+  if (job.address === undefined) return sendBridgeMail(job.tenantId, job.workflow, job.payload);
+  await deliverToDeployment(job.tenantId, job.address, job.payload);
+}
 function readCheckPack(tenantId: string, repo: string) {
   return loadCheckPack({ db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson }, tenantId, repo);
 }
@@ -404,9 +418,10 @@ function triageStack(triage: TriageWorkflow) {
     observeTenant: observer.observe,
     store: triageStateStore,
     readCheckPack,
-    deliver: deliverToDeployment,
+    send: sendTriageMail,
     policy: reconcilePolicy,
     batchSize: triageBatchSize(env),
+    batched: !coordination.enabled,
     now,
     log: logJson,
   });
@@ -455,7 +470,7 @@ const githubPrTriage = createGithubPrTriage({
   liveDeployments: liveTriageDeployments,
   observeRuns: observeTriageRuns,
   store: triageStateStore,
-  deliver: deliverToDeployment,
+  send: sendTriageMail,
   policy: reconcilePolicy,
   now,
   log: logJson,
@@ -504,20 +519,9 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
     clearTimeout(handle);
   };
 }
-const coordination = triageCoordinator(env);
 function failTriageHead(job: TriageJob, error: string): Promise<void> {
   return failHead(triageStateStore, job, error, now());
 }
-/** The coalescer sends triage mail only, so a workflow name it carries always names a host's triage workflow. */
-function triageWorkflowId(name: string): string {
-  const workflow = triageWorkflowOf(name);
-  if (!workflow) throw new Error(`Not a triage workflow: ${name}`);
-  return workflow.id;
-}
-async function mailListener(job: TriageJob): Promise<void> {
-  await sendBridgeMail(job.tenantId, job.workflow, job.payload);
-}
-let sendTriageMail = mailListener;
 if (coordination.enabled) {
   await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleService, logJson);
   const triageCoordination = createCoordinator({
@@ -538,10 +542,6 @@ if (coordination.enabled) {
     log: logJson,
   });
   coordinator = triageCoordination;
-  sendTriageMail = function enqueueTriage(job: TriageJob): Promise<void> {
-    triageCoordination.enqueue({ ...job, workflow: triageWorkflowId(job.workflow) });
-    return Promise.resolve();
-  };
 }
 coalescer = createCoalescer({
   store: triageStateStore,
@@ -671,6 +671,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     log: logJson,
   }),
   triageTimeline: createTriageTimeline({ verdicts: verdictRecordStore }),
+  triageQueue: createTriageQueueView({ coordinator, now }),
   triageVerdicts: createTriageVerdicts({
     db: composition.db,
     cipher: composition.credentialCipher,

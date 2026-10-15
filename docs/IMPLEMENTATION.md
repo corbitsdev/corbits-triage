@@ -31,6 +31,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/policy-read.ts` | The route that serves a repository's policy as triage reads it. |
 | `src/github/backlog-triage.ts` | The route that mails `pr-triage-historical` to triage a repository's open pull requests again. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
+| `src/github/coordinator.ts`, `worker-spawn.ts`, `triage-queue-view.ts` | With `TRIAGE_COORDINATOR=on`, every triage mail (webhook, retry, reconciler) is a job in one in-memory queue keyed per pull request, run in a worker deployment of its own within the worker limits; `GET /api/integrations/triage-queue/{tenantId}` lists the workspace's queued and running jobs. Off, the same jobs are mailed to the live listener. |
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates `pr-triage` deployments and redeploys failed ones. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
 | `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and coordinator worker runs and records verdicts. |

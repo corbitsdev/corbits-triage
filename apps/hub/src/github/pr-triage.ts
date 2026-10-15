@@ -1,4 +1,4 @@
-// Queues one open pull request's head on the live pr-triage deployment at a
+// Queues one open pull request's head for the live pr-triage deployment at a
 // maintainer's request. The row is marked queued before the mail goes out so
 // repeated clicks and reconcile passes see it; a failed mail puts it back.
 // Attempts are left alone: a head the hub gave up on is only ever retried here.
@@ -9,6 +9,7 @@ import { hasEnabledRules, repoPolicy } from "@corbits/triage-contracts";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
+import type { TriageJob } from "./coordinator.js";
 import type { CheckPackRead } from "./check-pack-store.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
@@ -32,7 +33,7 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   liveDeployments: (tenantId: string, workflow: string) => Promise<LiveDeployment[]>;
   observeRuns: ObserveRuns;
   store: TriageStateStore;
-  deliver: (tenantId: string, address: string, payload: unknown) => Promise<void>;
+  send: (job: TriageJob) => Promise<void>;
   policy: ReconcilePolicy;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
@@ -94,7 +95,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     }
     if (queued.status === "conflict") return failure(409, "conflict", `${repo}#${number} was just updated by the hub. Try again.`);
     try {
-      await deps.deliver(tenantId, deployment.address, mailPayload(record, policy, pack, { prNumber: number, headSha }));
+      await deps.send({ ...head, workflow: triage.id, source: "retry", address: deployment.address, payload: mailPayload(record, policy, pack, { prNumber: number, headSha }) });
     } catch (err) {
       deps.log({ level: "error", msg: "triage_request_failed", tenantId, repo, pr: number, headSha, error: String(err) });
       try {

@@ -151,7 +151,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     }
     try {
       const payload = mailPayload(latest.record, latest.policy, latest, { ...latest.mail, headSha: head.headSha, events });
-      await deps.sendMail({ ...head, workflow: latest.workflow, payload });
+      await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", payload });
     } catch (err) {
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
       await failHead(deps.store, head, `delivery failed: ${String(err)}`, deps.now());

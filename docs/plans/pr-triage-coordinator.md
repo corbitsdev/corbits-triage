@@ -378,9 +378,16 @@ Each PR is one concern, small, behind the version switch until cutover.
    listeners, so the reconciler and the recording pass see a worker's one run
    exactly as a listener's; rotation, mail and the portal's deployment list
    still see listeners only.
-3. PR: priority classes; reconciler, approvals and backlog enqueue to the
-   coordinator (90 min).
-4. PR: queue route and portal display (45 min).
+3. PR: every triage mail through the coordinator and the queue route. Built,
+   sections 12.9 and 12.10: one `sendTriageMail(job)` in the hub for the
+   coalescer, the retry route and the reconciler; each job names its `source`
+   (`event`, `retry`, `reconcile`), the reconciler sends one head per job when
+   the coordinator is on, and `GET /api/integrations/triage-queue/{tenantId}`
+   lists the workspace's queued and running jobs. The coordinator handles
+   inbound triage and spawns runs, nothing else: approvals and backlog still
+   mail their listeners, since anything that waits on a person belongs to
+   pr-triage. No priority classes: one queue, oldest first.
+4. PR: portal display of the queue route (30 min).
 5. PR: portal publish sets lifecycle and seeds workers; cancels the listener
    (30 min).
 6. PR: delete rotation and heal once no tenant runs a listener (30 min).
@@ -718,3 +725,56 @@ default 5-minute interval that is one small listing per worker released in
 the last five minutes; step 3 can shorten it once the reconciler is told of a
 worker's end directly.
 
+
+### 12.9 Live proof of step 3, every mail through the coordinator (2026-10-14, local stack)
+
+Same setup as 12.7, hub from this branch, `TRIAGE_COORDINATOR=on`,
+`TRIAGE_WORKERS_GLOBAL=1`, `TRIAGE_RECONCILE_INTERVAL_MS=30000`. The listener
+anchor `run_e0352aba…` held 5 child runs before the session and 5 after it: no
+scenario mailed the listener.
+
+(a) One commit, pass. Pushed 40b3b8b 05:21:19.6, `forwarded` 05:21:23.106,
+`worker_spawned` 05:21:30.371 (`run_123de65d…`), `worker_ended` 05:21:32.436.
+
+(b) Retry through the coordinator, pass. `POST
+/api/integrations/github-triage/:tenantId {repo: "TRI/widgets", number: 20}` at
+05:21:53.4 answered `202 {"status":"queued"}`; `triage_requested` 05:21:53.567,
+`worker_spawned` 05:22:01.771 (`run_b734526c…`), `worker_ended` 05:22:03.778.
+While it ran, `GET /api/integrations/triage-queue/:tenantId` answered:
+
+```
+{"coordinator":"on","queued":[],"running":[{"repo":"bitbucket-datacenter:TRI/widgets","number":20,"headSha":"40b3b8b5…","source":"retry","workflow":"pr-triage-bitbucket-datacenter","queuedAt":"2026-10-15T05:21:53.567Z","startedAt":"2026-10-15T05:21:53.567Z","ageMs":1039}]}
+```
+
+and `{"coordinator":"on","queued":[],"running":[]}` once the worker ended.
+
+(c) Reconciler requeue through the coordinator, pass. Pushed cfc1d2c
+05:22:18.8, `worker_spawned` 05:22:30.881 (`run_b72af08e…`), SIGTERM
+05:22:31.364, hub up 05:22:31.5, `worker_released_on_start` 05:22:33.949,
+`triage_requeued` 05:23:04.089 (`run failed`), `worker_spawned` 05:23:10.528
+(`run_c47d8108…`), `worker_ended` 05:23:14.543; the verdict for cfc1d2c is the
+requeue worker's (`run_c47d8108…__events__0`, 05:23:11.692, pass,
+`ready-monitoring`).
+
+Sidecars per worker: one. The five allocations of the session (listener and
+four workers) hold five distinct `sidecar_id`s. The pinned Interchange lets a
+provisioner place an allocation on an existing sidecar (`ensure` returns
+`sidecarId`, `sidecar-allocation/contracts.ts`), but the hub's local
+provisioner (`apps/hub/src/sidecar/local-provisioner.ts`, `spawn.ts`) starts
+one `apps/sidecar` process per allocation and never offers an existing one.
+Packing workers is a change to that provisioner, not to the coordinator; it is
+not in this step.
+
+### 12.10 Live proof of two heads after a restart (2026-10-14, local stack)
+
+Same setup as 12.9, `TRIAGE_WORKERS_GLOBAL=1`,
+`TRIAGE_RECONCILE_INTERVAL_MS=30000`.
+
+Reconciler pass with two claimed heads, pass. Hub stopped 05:35:58; pushed
+91108a7 to PR 20 and 1ddc9df to PR 17 at 05:35:59 (webhooks lost); hub up
+05:35:59. The pass at 05:39:31.836 requeued both (`run never started`);
+`worker_spawned` PR 17 05:39:38.258 (`run_664288cc…`), `worker_ended`
+05:39:42.276, `worker_spawned` PR 20 05:39:48.503 (`run_673c69e1…`),
+`worker_ended` 05:39:52.536. Both verdicts recorded (pass, `ready-monitoring`);
+the queue was empty afterwards. One worker at a time is the global limit of 1,
+not a lost head.

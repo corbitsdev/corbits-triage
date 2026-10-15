@@ -14,7 +14,7 @@ const PACK = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: tr
 const ENABLED = { name: REPO, connected: true, enabled: true };
 const ANCHOR = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
 
-type Delivered = { address: string; payload: unknown };
+type Delivered = { address: string | undefined; payload: unknown };
 type Stub = { delivered: Delivered[]; saved: PrTriageRow[][]; authorized: unknown[][] };
 
 function stubDb(repo: Record<string, unknown>) {
@@ -71,7 +71,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
     liveDeployments: async () => [ANCHOR],
     observeRuns: observed([]),
     store: stored([], s.saved),
-    deliver: async (_tenant, address, payload) => {
+    send: async ({ address, payload }) => {
       s.delivered.push({ address, payload });
     },
     policy: DEFAULT_RECONCILE_POLICY,
@@ -209,23 +209,23 @@ describe("createGithubPrTriage", () => {
     const at = (agoMs: number) => new Date(NOW.getTime() - agoMs).toISOString();
     const capped: PrTriageRow = { number: 8, headSha: "abc123", status: "failed", attempts: 5, runId: "run-5", error: "run failed", firstSeenAt: at(7_200_000), queuedAt: at(3_600_000), updatedAt: at(3_600_000) };
     const s = stub();
-    const deliver: GithubPrTriageDeps["deliver"] = async () => { throw new Error("sidecar refused the mail"); };
-    const res = await handler(ENABLED, s, { store: stored([capped], s.saved), deliver })(request(), MEMBER);
+    const send: GithubPrTriageDeps["send"] = async () => { throw new Error("sidecar refused the mail"); };
+    const res = await handler(ENABLED, s, { store: stored([capped], s.saved), send })(request(), MEMBER);
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: { code: "hub_unavailable", message: `Could not queue ${REPO}#8: sidecar refused the mail. Try again.` } });
     const { error: _error, ...kept } = capped;
     expect(s.saved).toEqual([[{ ...kept, status: "queued", queuedAt: NOW.toISOString(), updatedAt: NOW.toISOString() }], [capped]]);
     const fresh = stub();
-    await handler(ENABLED, fresh, { store: stored([], fresh.saved), deliver })(request(), MEMBER);
+    await handler(ENABLED, fresh, { store: stored([], fresh.saved), send })(request(), MEMBER);
     expect(fresh.saved.at(-1)).toEqual([]);
   });
 
   test("a deployment that is not ready yet is refused with deployment_not_ready and the row is put back", async () => {
     const s = stub();
-    async function deliver(): Promise<void> {
+    async function send(): Promise<void> {
       throw new DeploymentNotReadyError();
     }
-    const res = await handler(ENABLED, s, { deliver })(request(), MEMBER);
+    const res = await handler(ENABLED, s, { send })(request(), MEMBER);
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: { code: "deployment_not_ready", message: "The workflow deployment is still starting." } });
     expect(s.saved.at(-1)).toEqual([]);
