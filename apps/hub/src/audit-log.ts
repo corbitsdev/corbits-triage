@@ -74,10 +74,10 @@ function verdictEntries(rows: readonly VerdictRecord[]): Entry[] {
   for (const verdict of rows) {
     const target = pull(verdict.repo, verdict.number);
     for (const action of verdict.detail?.actions ?? []) {
-      const outcome = DO_OUTCOMES[action.status ?? ""];
-      if (outcome === undefined || action.held || action.effectId === undefined || ran.has(action.effectId)) continue;
+      const outcome = action.status === undefined ? undefined : DO_OUTCOMES[action.status];
+      if (outcome === undefined || action.kind === undefined || action.held || action.effectId === undefined || ran.has(action.effectId)) continue;
       ran.add(action.effectId);
-      entries.push({ at: verdict.verdictAt, actor: TRIAGE, action: `${outcome} ${action.kind ?? "Do"}`, target, detail: action.error ?? (action.list === undefined ? "" : `on ${action.list}`) });
+      entries.push({ at: verdict.verdictAt, actor: TRIAGE, action: `${outcome} ${action.kind}`, target, detail: action.error ?? (action.list === undefined ? "" : `on ${action.list}`) });
     }
   }
   return entries;
@@ -230,8 +230,8 @@ export function createAuditLog(deps: AuditLogDeps) {
       entries.push({ at: row.createdAt, actor: rotated ? HUB : row.principalId ?? UNKNOWN, action: "Deployed", target: row.name, detail: row.id });
       if (row.endedAt === null) continue;
       const byHub = row.status === "failed" || row.cancellationReason === ROTATION_REASON;
-      const why = row.failureMessage ?? row.cancellationReason ?? "";
-      entries.push({ at: row.endedAt, actor: byHub ? HUB : UNKNOWN, action: `Deployment ${row.status}`, target: row.name, detail: why === "" ? row.id : `${row.id} · ${why}` });
+      const why = row.failureMessage ?? row.cancellationReason;
+      entries.push({ at: row.endedAt, actor: byHub ? HUB : UNKNOWN, action: `Deployment ${row.status}`, target: row.name, detail: why === null ? row.id : `${row.id} · ${why}` });
     }
     return entries;
   }

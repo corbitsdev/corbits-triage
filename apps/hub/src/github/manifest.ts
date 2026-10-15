@@ -339,8 +339,8 @@ export function createGithubManifestIntegration({
 
   async function callback(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const token = url.searchParams.get("state") ?? "";
-    const code = url.searchParams.get("code") ?? "";
+    const token = url.searchParams.get("state");
+    const code = url.searchParams.get("code");
     const session = await getSession(req.headers);
     if (!session || !token || !code) return securedHtml("GitHub setup could not be verified.", 401);
     const state = verifyManifestState(stateKey, token, now());
