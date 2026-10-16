@@ -1,0 +1,58 @@
+# Sidecar drivers
+
+A workflow says what its sidecar must guarantee; the hub places it on the first driver that offers that. Where a driver runs is the operator's choice.
+
+## How placement works
+
+- A workflow declares rules with `defineWorkflow({ sidecarPlacement: { capabilities: [{ capability: "isolation:workload", effect: "require" }] } })`. A workspace can add its own through the stock tenant config route.
+- Each driver declares capabilities as `{ capability, state: "available" | "blocked" }`. Use stock names (`runtime:posix`, `network:outbound`, `isolation:workload`, `isolation:microvm`) and name guarantees, never vendors or locations.
+- A capability a driver does not declare is unknown and fails every rule that names it. A namespace rule (`runtime:*`) needs a namespace declaration.
+- Drivers are tried in registration order in `apps/hub/src/server.ts`; the first match wins. `local-process` comes first, so a workflow with no rule runs on the hub.
+- When none matches, the deploy answers 409 `provisioner_no_match`, listing for each driver which capability missed.
+
+| Driver | Available | Blocked |
+| --- | --- | --- |
+| `local-process` | `runtime:posix`, `network:outbound` | `isolation:*` |
+| `docker` | `runtime:posix`, `network:outbound`, `isolation:workload` | `isolation:microvm` |
+
+## The seam
+
+`apps/hub/src/sidecar/driver-provisioner.ts` implements the stock `SidecarProvisioner` contract once: per-allocation ordering, idempotent ensure, generation fencing, and destroy that works from the allocation id alone. A driver only starts, stops and finds capacity:
+
+```ts
+interface SidecarDriver {
+  readonly id: string;
+  readonly fingerprint: string;
+  readonly capabilities: readonly SidecarCapabilityDeclaration[];
+  start(launch: SidecarLaunchSpec, env: SidecarEnv): Promise<SidecarHandle>;
+  stop(handle: SidecarHandle): Promise<void>;
+  find(allocationId: string): Promise<SidecarHandle | null>;
+}
+```
+
+- `start` gets the sidecar's whole environment from `buildSidecarEnv` (`sidecar-env.ts`): the hub URL, the sidecar's id and join token, the sidecar credential key and the adapter manifest. The driver adds only `SIDECAR_DATA_DIR`. Never pass the hub's own environment.
+- `find` reads the allocation id, generation and sidecar id back from the backend itself (labels, metadata), so a restarted hub finds what it started. Keep no table of your own.
+- `stop` succeeds when the capacity is already gone.
+- `fingerprint` is stable and non-secret. Changing it leaves allocations placed under the old value unmanaged, so change it only when the backend really is a different one.
+
+## Worked example: Docker
+
+`apps/hub/src/sidecar/docker-driver.ts` talks to the Docker Engine API over its socket.
+
+1. **Image.** The root `Dockerfile`'s `sidecar` stage is the repository with dependencies installed, starting the stock sidecar:
+   ```sh
+   docker build --target sidecar -t corbits-triage-sidecar .
+   ```
+   Adapter modules the hub names by `file://` URL under the repository are rewritten to the same path under `/app`; a module outside the repository refuses the driver at boot, and so does a `GITHUB_API_ORIGIN` override, whose generated adapter entry lives only on the hub.
+2. **Start.** `POST /containers/create` with the env, labels `intx.allocation`, `intx.generation`, `intx.sidecar`, an init process and `host.docker.internal` mapped to the host; then `/start`. A loopback hub URL is rewritten to `host.docker.internal`.
+3. **Find.** `GET /containers/json?all=true` filtered by `intx.allocation`; the newest generation wins.
+4. **Stop.** Stop, then remove with its volumes, every container of the allocation up to that generation.
+5. **Capabilities.** One container per allocation, nothing shared but the kernel: `isolation:workload` available, `isolation:microvm` blocked.
+6. **Configuration.** `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE`, read in `apps/hub/src/env.ts` (`dockerSidecarSettings`). Unset, the driver is not registered.
+7. **Registration.** `server.ts` wraps it with `createDriverProvisioner` and appends it after `local-process`. Probes stay on `local-process`, since they evaluate only the workflow source.
+
+## Adding a driver
+
+1. Write `apps/hub/src/sidecar/<name>-driver.ts` returning a `SidecarDriver`. Declare only what the backend enforces.
+2. Read its settings in `apps/hub/src/env.ts` and register it in `server.ts` only when they are set.
+3. Prove it on a local hub: a workflow that requires one of its capabilities lands on it, its capacity disappears on cancel, and a hub restart with live capacity neither duplicates nor loses it.

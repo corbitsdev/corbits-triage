@@ -89,7 +89,9 @@ All optional; the defaults suit most installs.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. The platform's drain time must exceed it. |
-| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset: it matters only for sidecars on another machine, which are not supported yet. |
+| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. A loopback address reaches Docker sidecars on the same machine as `host.docker.internal`; set it (`wss://`) for sidecars on another machine. |
+| `HUB_SIDECAR_DOCKER_SOCKET` | unset | Docker Engine socket path. With `HUB_SIDECAR_DOCKER_IMAGE`, registers the Docker driver, which runs workflows that require `isolation:workload` ([SIDECAR_DRIVERS.md](SIDECAR_DRIVERS.md)). |
+| `HUB_SIDECAR_DOCKER_IMAGE` | unset | Image built from the `Dockerfile`'s `sidecar` stage. Set together with `HUB_SIDECAR_DOCKER_SOCKET`. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `PG_SCHEMA` | default `search_path` | Postgres schema. |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |
