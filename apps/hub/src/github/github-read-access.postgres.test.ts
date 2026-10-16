@@ -80,7 +80,7 @@ function member(user: string) {
 
 function probe() {
   const pack = emptyPack(REPO);
-  pack.actions.pass = [{ do: "comment", target: { body: "Thanks" }, for: { team: "secret" } }];
+  pack.actions.pass = [{ do: "comment", target: { body: "Thanks" }, when: { author: [{ team: "secret" }] } }];
   return PreviewBody.assert({ repo: REPO, number: 8, pack });
 }
 
@@ -172,7 +172,7 @@ test("PostgreSQL: only a member who may manage the workspace reads the teams a c
   const reader = await prPreview(probe(), member("usr_member"), AbortSignal.timeout(30_000));
   expect(reader.status).toBe(200);
   expect(requested).not.toContain(membership);
-  expect(await probeResult(reader)).toBe("Not run: membership of secret is not known.");
+  expect(await probeResult(reader)).toBe("Not run: it is not known whether the author is secret.");
 
   const admin = await prPreview(probe(), member("usr_admin"), AbortSignal.timeout(30_000));
   expect(admin.status).toBe(200);

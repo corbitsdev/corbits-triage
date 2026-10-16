@@ -101,24 +101,41 @@ describe("evaluateActions", () => {
 
   test("a step not for the author is skipped with why, and one whose author cannot be told apart is skipped too", () => {
     const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [
-      { ...say("maintainers"), for: "maintainers" },
-      { ...say("outside"), for: "external" },
-      { ...say("team"), for: { team: "acme/core" } },
-      { ...say("named"), for: { users: ["OctoCat"] } },
+      { ...say("maintainers"), when: { author: ["maintainers"] } },
+      { ...say("outside"), when: { author: ["external"] } },
+      { ...say("team"), when: { author: [{ team: "acme/core" }] } },
+      { ...say("named"), when: { author: [{ users: ["OctoCat"] }] } },
       { do: "nothing" },
-      { ...say("unknown team"), for: { team: "acme/ops" } },
+      { ...say("unknown team"), when: { author: [{ team: "acme/ops" }] } },
     ] satisfies Step[] } };
     const author = { ...facts, authorKind: "outside" as const, authorTeams: ["acme/core"], authorTeamsUnknown: ["acme/ops"] };
     const ran = evaluateActions({ facts: author, checks: [], verdict: "pass", reason: "passes", pack });
     expect(ran.map((action) => ("skipped" in action ? action.reason : action.index))).toEqual([
-      "Not run: the author is outside, not one of maintainers.",
+      "Not run: the author is outside, not maintainers.",
       1,
       2,
       3,
-      "Not run: membership of acme/ops is not known.",
+      "Not run: it is not known whether the author is acme/ops.",
     ]);
     const unknownKind = evaluateActions({ facts, checks: [], verdict: "pass", reason: "passes", pack });
-    expect(unknownKind[0]).toMatchObject({ skipped: true, reason: "Not run: the author's kind is not known, so it cannot tell whether they are maintainers." });
+    expect(unknownKind[0]).toMatchObject({ skipped: true, reason: "Not run: it is not known whether the author is maintainers." });
+  });
+
+  test("a step runs only when its linked issue, CI and size conditions all hold", () => {
+    const sized = { ...facts, body: "Fixes #12", checks: "failure" as const, changedFiles: 4, additions: 300, deletions: 20 };
+    const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), fail: [
+      { ...say("linked"), when: { linkedIssue: true, ci: ["failing"], lines: { over: 300 } } },
+      { ...say("unlinked"), when: { linkedIssue: false } },
+      { ...say("green"), when: { ci: ["passing", "pending"] } },
+      { ...say("small"), when: { files: { atMost: 3 } } },
+    ] satisfies Step[] } };
+    const ran = evaluateActions({ facts: sized, checks: [], verdict: "fail", reason: "fails", pack });
+    expect(ran.map((action) => ("skipped" in action ? action.reason : action.index))).toEqual([
+      0,
+      "Not run: it links an issue.",
+      "Not run: its CI is failing.",
+      "Not run: it changes 4 files, not at most 3.",
+    ]);
   });
 
   test("rule labels name each failed rule, and take back only their own that no longer apply", () => {

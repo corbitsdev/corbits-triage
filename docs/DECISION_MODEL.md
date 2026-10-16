@@ -162,14 +162,26 @@ Estimates at TypeSafe's direct price, about 3.3 bytes per token (32k tokens ≈ 
 | docs as one Choice per file, `unaffected` first, run 1 | 2026-10-13 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 3, unsure (186-no-docs, 187-no-docs, 190) |
 | same, run 2 | 2026-10-13 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 2, unsure (186-no-docs, 187-no-docs) |
 | `joho/godotenv` cases added (CL-10549) | 2026-10-15 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 2, unsure (186-no-docs, 187-no-docs) |
+| policy file rules and step conditions (CL-10735) | 2026-10-16 | 2, unsure (186-no-docs, 187-no-docs) | 0 | 2, unsure (186-no-docs, 187-no-docs) |
 
 Rows before CL-10549 cover this repository only. Custom rules are unmeasured.
 
 ## Adding a decision-model rule
 
-1. **Prefer a built-in rule.** If GitHub data decides it, a built-in rule over GitHub data (size, linked issue, conflicts, CI, forbidden paths) costs no model call. Who opened the pull request is a step's `for`, not a rule.
+1. **Prefer a built-in rule.** If GitHub data decides it, a built-in rule over GitHub data (size, linked issue, conflicts, CI, forbidden paths) costs no model call. Who opened the pull request, whether it links an issue, its CI and its size are a step's `when` conditions, decided in code after the verdict; they never reach the model.
 2. **Write the question** by the rules above.
-3. **Add it to the repository's policy.** Use the rules section of the repository panel in the portal, or write the policy through the hub's stock artifact route: the artifact the repository's record pins by id under `/api/tenants/{tenantId}/artifacts`, with each save a new version. The portal pins the id when it saves; until then the newest artifact titled `check-pack/<owner>/<repo>` is read. A file-scoped rule in `custom`:
+3. **Add it to the repository's policy.** In the policy file, a yes/no question about the whole pull request is a rule with `check: model`; its `text` is the question's claim:
+
+   ```yaml
+   rules:
+     - id: errors-are-handled
+       check: model
+       text: Every new call that can fail handles or propagates its error.
+       reason: Two outages came from swallowed errors.
+       evidence: ["acme/api#312"]
+   ```
+
+   File- or hunk-scoped rules are written in the stored policy's shape. Use the rules section of the repository panel in the portal, or write the policy through the hub's stock artifact route: the artifact the repository's record pins by id under `/api/tenants/{tenantId}/artifacts`, with each save a new version. The portal pins the id when it saves; until then the newest artifact titled `check-pack/<owner>/<repo>` is read. A file-scoped rule in `custom`:
 
    ```json
    {

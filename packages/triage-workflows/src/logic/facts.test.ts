@@ -18,7 +18,7 @@ test("assembleItem turns an unreadable file list into an error item", () => {
 
 test("assembleItem maps team membership back to every spelling the steps use and leaves every team unknown without a read", () => {
   const pack = emptyPack("acme/widgets");
-  pack.actions.pass = ["@acme/Core", "ops", "core", "@other/x"].map((team) => ({ do: "approve", for: { team } }));
+  pack.actions.pass = ["@acme/Core", "ops", "core", "@other/x"].map((team) => ({ do: "approve", when: { author: [{ team }] } }));
   const context = { repo: "acme/widgets", policy: DEFAULT_REPO_POLICY, pack, events: [] };
   const pull = { pr: { author: "alice", branch: "a", sha: "abc" }, checks: [], reviews: [], comments: [], commits: [], files: [] };
   const all = ["@acme/Core", "ops", "core", "@other/x"];

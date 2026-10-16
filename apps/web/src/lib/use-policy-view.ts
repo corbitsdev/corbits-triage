@@ -2,6 +2,7 @@ import { DEFAULT_SCORE_LEVELS, teamSlug, textSentence, VERDICTS, type CustomChec
 import type { DraftUpdate } from "./pack-autosave.ts";
 import { customProblem, freshRuleId, freshStepId, labelProblem, same, setSteps, stepEntries, stepProblem, STEPS_MAX, type RepoDraft, type StepEntry } from "./pack-draft.ts";
 import { shownReason } from "./pack-prose.ts";
+import { stepFor } from "./policy-view.ts";
 
 export type StepRow = { id: string; position: number; step: Step; problem: string | null };
 
@@ -47,11 +48,12 @@ export function logins(values: string[]): string[] {
 
 function stepMissing(step: Step, repo: string): string | null {
   const owner = repo.split("/", 1)[0];
-  if (typeof step.for === "object" && "team" in step.for) {
-    if (!step.for.team.trim()) return "name the team.";
-    if (teamSlug(step.for.team, repo) === null) return `the team must be in ${owner}.`;
+  const match = stepFor(step);
+  if (typeof match === "object" && "team" in match) {
+    if (!match.team.trim()) return "name the team.";
+    if (teamSlug(match.team, repo) === null) return `the team must be in ${owner}.`;
   }
-  if (typeof step.for === "object" && "users" in step.for && step.for.users.length === 0) return "add the people it is for.";
+  if (typeof match === "object" && "users" in match && match.users.length === 0) return "add the people it is for.";
   if (step.do === "comment" && !step.target.body.trim()) return "write the comment.";
   if (step.do === "labels" && step.target.from === "list" && step.target.labels.length === 0) return "add a label.";
   if ((step.do === "request-review" || step.do === "assign") && "users" in step.target && step.target.users.length === 0) return "add someone.";

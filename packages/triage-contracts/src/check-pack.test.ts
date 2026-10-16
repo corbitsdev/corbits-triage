@@ -28,9 +28,9 @@ const COMMENT = { do: "comment", target: { body: "Thanks!" } } as const;
 const REVIEW = { do: "request-review", target: { to: "teams", teams: ["acme/maintainers"] } } as const;
 const ACTIONS: PolicyActions = {
   when: ["opened", "ready"],
-  pass: [REVIEW, { do: "merge", for: "maintainers" }],
-  fail: [COMMENT, { do: "request-changes", for: { team: "acme/core" } }, { do: "labels", target: { from: "rules" } }],
-  unsure: [{ do: "labels", target: { from: "list", labels: ["needs-triage"] }, for: { users: ["maya"] } }, { do: "nothing", for: "bots" }],
+  pass: [REVIEW, { do: "merge", when: { author: ["maintainers"] } }],
+  fail: [COMMENT, { do: "request-changes", when: { author: [{ team: "acme/core" }] } }, { do: "labels", target: { from: "rules" } }],
+  unsure: [{ do: "labels", target: { from: "list", labels: ["needs-triage"] }, when: { author: [{ users: ["maya"] }] } }, { do: "nothing", when: { author: ["bots"] } }],
 };
 
 describe("check pack contract", () => {
@@ -222,7 +222,7 @@ describe("check pack contract", () => {
       [{ ...ACTIONS, when: [] }, "Actions when must be a non-empty list."],
       [{ ...ACTIONS, unsure: undefined }, "Actions must set exactly when, pass, fail, unsure."],
       [{ ...ACTIONS, pass: [{ do: "comment", target: {} }] }, "Pass step 1 target must set exactly body."],
-      [{ ...ACTIONS, pass: [{ do: "approve", for: "staff" }] }, "Pass step 1 for must be one of anyone, first-timers, maintainers, external, bots."],
+      [{ ...ACTIONS, pass: [{ do: "approve", for: "staff" }] }, "Pass step 1 for must be one of first-timers, maintainers, external, bots."],
       [{ ...ACTIONS, fail: [{ kind: "comment", target: { body: "Hi" } }] }, "Fail step 1 must not set kind."],
     ];
     for (const [actions, reason] of rejected) expect(() => readCheckPack({ ...emptyPack(REPO), actions })).toThrow(reason);
