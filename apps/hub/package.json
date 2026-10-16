@@ -18,6 +18,7 @@
     "@corbits/github-tool": "workspace:*",
     "@corbits/provisioner": "workspace:*",
     "@corbits/provisioner-docker": "workspace:*",
+    "@corbits/provisioner-e2b": "workspace:*",
     "@corbits/provisioner-local": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@corbits/triage-workflows": "workspace:*",
