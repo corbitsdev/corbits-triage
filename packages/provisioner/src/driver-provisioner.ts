@@ -20,7 +20,7 @@ export type SidecarHandle = {
 
 /**
  * A backend that runs one sidecar per allocation. Capabilities are the
- * guarantees it keeps (stock capability names), never a vendor or a location.
+ * guarantees it keeps (stock capability names, see the repository's docs/SIDECAR_DRIVERS.md), never a vendor or a location.
  */
 export interface SidecarDriver {
   readonly id: string;
@@ -37,6 +37,8 @@ export interface SidecarDriver {
 
 export type DriverProvisioner = {
   readonly provisioner: SidecarProvisioner;
+  /** The environment a sidecar of this driver starts with. */
+  envFor(launch: SidecarLaunchSpec): SidecarEnv;
   /** Runs `operation` in the allocation's queue, ordered with its ensure and destroy calls. */
   exclusive<T>(allocationId: string, operation: () => Promise<T>): Promise<T>;
   /** Refuses new operations and waits for the ones in flight. */
@@ -91,7 +93,7 @@ export function createDriverProvisioner(driver: SidecarDriver, credentialEncrypt
     const { signal: _, ...launch } = request;
     let handle: SidecarHandle;
     try {
-      handle = await driver.start(launch, buildSidecarEnv(launch, credentialEncryptionKey));
+      handle = await driver.start(launch, envFor(launch));
     } catch (error) {
       const leftover = await driver.find(request.allocationId);
       if (leftover !== null && leftover.generation === request.generation) await driver.stop(leftover);
@@ -161,5 +163,9 @@ export function createDriverProvisioner(driver: SidecarDriver, credentialEncrypt
     await Promise.all(queues.values());
   }
 
-  return { provisioner, exclusive, drain };
+  function envFor(launch: SidecarLaunchSpec): SidecarEnv {
+    return buildSidecarEnv(launch, credentialEncryptionKey);
+  }
+
+  return { provisioner, envFor, exclusive, drain };
 }
