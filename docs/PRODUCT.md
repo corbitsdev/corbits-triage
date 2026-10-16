@@ -379,8 +379,9 @@ writes are hub routes: `GET …/github-triage/{tenantId}/policy/file`, and
 A code review reads a pull request for defects: correctness bugs in the
 changed lines and breakage the change causes elsewhere in the repository. Each
 defect it reports names the line, why it is wrong, what triggers it and a fix,
-and every one has been checked against the code. A pull request with no
-defects gets one sentence on what it changes and that no defects were found.
+and says how many of its two finders reported it. Every defect found is
+reported, the most severe and most agreed-on first. A pull request with no
+defects gets one sentence on what it changes.
 It reviews GitHub and Bitbucket Data Center pull requests.
 
 ## Triage over time

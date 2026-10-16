@@ -13,12 +13,6 @@ A defect here is breakage the diff alone does not show:
 Each finding must be discrete and actionable, and you must be able to show it from code you have read.
 </what_to_report>
 
-<what_to_leave_out>
-- Style, formatting, naming and other nits.
-- Problems that exist without this change.
-- Behaviour that matches the stated intent of the pull request.
-</what_to_leave_out>
-
 <output>
 Answer with JSON only, in this shape:
 {"findings": [{"path": "src/file.ts", "start": 120, "end": 122, "priority": 1, "confidence": 0.8, "title": "short statement of the defect", "why": "why this is wrong", "trigger": "the input or scenario that makes it go wrong", "code": "the causing line, verbatim"}]}

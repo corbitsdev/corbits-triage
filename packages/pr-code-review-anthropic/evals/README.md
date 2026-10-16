@@ -46,8 +46,9 @@ A clean case becomes a defect case only with a confirmed added bug.
 A bug is caught when a finding on its path overlaps any of its sites within
 three lines. A finding that hits no bug is a false alarm, so a complete key
 makes false alarms meaningful. A clean case is flagged when anything is
-reported on it. `--e2e` scores five stages: the finders' union, after merge,
-after converge, the confirmed candidates and the final review.
+reported on it. `--e2e` scores the finders' union, the consolidated findings,
+the confirmed ones (all of them unless `--check`), the final review, and the
+review's comments found by both finders and by one.
 
 ## Running
 
@@ -57,28 +58,41 @@ Needs `gh` signed in (to fetch cases and check heads out) and
 ```sh
 bun run eval:review -- --e2e \
   --plan-model claude-haiku-5-5 --diff-finder-model claude-opus-5-5 \
-  --repo-finder-model claude-haiku-5-5 --converge-model claude-haiku-5-5 \
-  --check-model claude-opus-5-5 --write-model claude-haiku-5-5 --write-effort low \
-  --out e2e.json
+  --repo-finder-model claude-haiku-5-5 --consolidate-model claude-haiku-5-5 \
+  --write-model claude-haiku-5-5 --write-effort low --out e2e.json
 ```
 
-`--cases a,b` runs a subset. Other modes, listed at the top of
+`--cases a,b` runs a subset. `--check` turns the check step on, with
+`--check-model` and `--check-effort` for it. Other modes, listed at the top of
 `review.eval.ts`: a finder alone with any prompt (`--prompt`) and rescoring
 saved finder runs (`--rescore`).
 
 ## Current numbers
 
-All 25 cases, the models above, every other step at medium effort:
+All 25 cases, the models above, no check, every other step at medium effort:
 
 | Stage | Bugs caught | diff | repo | intent | Findings | False alarms | Clean flagged |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Finders' union | 42/52 | 21/24 | 20/26 | 1/2 | 129 | 47 | 1/3 |
-| Merged | 42/52 | 21/24 | 20/26 | 1/2 | 107 | 42 | 1/3 |
-| Converged | 42/52 | 21/24 | 20/26 | 1/2 | 92 | 38 | 1/3 |
-| Confirmed | 32/52 | 18/24 | 14/26 | 0/2 | 53 | 15 | 0/3 |
-| Final review | 32/52 | 18/24 | 14/26 | 0/2 | 53 | 15 | 0/3 |
+| Finders' union | 45/52 | 23/24 | 20/26 | 2/2 | 142 | 47 | 2/3 |
+| Consolidated | 44/52 | 23/24 | 19/26 | 2/2 | 92 | 34 | 2/3 |
+| Final review | 44/52 | 23/24 | 19/26 | 2/2 | 92 | 34 | 2/3 |
+| Found by both finders | 28/52 | 16/24 | 11/26 | 1/2 | 42 | 11 | 1/3 |
+| Found by one finder | 25/52 | 11/24 | 12/26 | 2/2 | 50 | 23 | 1/3 |
 
-$4.56 in all, $0.18 a pull request on average, 78 seconds each; the Opus diff
-finder is $2.82 of it and the Opus check $1.38. The check drops 10 real bugs
-to remove 23 false alarms, and runs vary: the same configuration once gave 32/52
-with 4 false alarms.
+$3.25 in all, $0.13 a pull request on average, 60 seconds each; the Opus diff
+finder is $2.86 of it. The earlier pipeline, which dropped findings it could
+not ground in the file and ran an Opus check on the rest, caught 32/52 with 15
+false alarms and flagged 0/3 clean cases.
+
+On 42 held-out public pull requests with known bugs (none of them among the
+25 cases), scored on their core bugs:
+
+| Pipeline | Precision | Recall | F1 | Per pull request | Seconds |
+| --- | --- | --- | --- | --- | --- |
+| Earlier, with the check | 51.9 | 40.6 | 45.6 | $0.189 | 91 |
+| Every finding, no check | 35.8 | 60.9 | 45.1 | $0.136 | 71 |
+
+Of the comments in the second run, those both finders reported score
+precision 46.3 and recall 37.6; those one finder reported, 26.7 and 27.1. The
+agreement line on each comment carries that signal to the reader instead of a
+filter.

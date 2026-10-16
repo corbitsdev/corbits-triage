@@ -8,13 +8,6 @@ Read the pull request title and description to understand what the change is mea
 A defect is a correctness problem in the added or changed lines: a logic error, an unhandled edge case or error, wrong null or undefined handling, an off-by-one boundary, a race condition, a resource leak, a security vulnerability or a significant performance problem. Each finding must be discrete and actionable, and you must be able to show it from the diff.
 </what_to_report>
 
-<what_to_leave_out>
-- Style, formatting, naming and other nits.
-- Problems in code this change did not touch.
-- Behaviour that matches the stated intent of the pull request.
-- Speculation about code you cannot see. Assume code outside the diff works as intended.
-</what_to_leave_out>
-
 <output>
 Answer with JSON only, in this shape:
 {"findings": [{"path": "src/file.ts", "start": 120, "end": 122, "priority": 1, "confidence": 0.8, "title": "short statement of the defect", "why": "why this is wrong", "trigger": "the input or scenario that makes it go wrong", "code": "the causing line, verbatim"}]}

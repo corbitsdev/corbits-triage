@@ -178,9 +178,9 @@ step here.
 
 ## Code review pipeline
 
-The pipeline looks for defects with two finders, then drops every candidate
-it cannot ground in the code before a model confirms it. Steps that call a
-model take their effort from the request.
+The pipeline looks for defects with two finders, groups what they report by
+defect and reports every group, ordered so the most severe and most agreed-on
+come first. Steps that call a model take their effort from the request.
 
 1. **plan**: names the risky changed areas and the code outside the diff they
    depend on.
@@ -189,18 +189,28 @@ model take their effort from the request.
    working tree with the host bundle's `*_checkout` and reads it with the
    confined `read_file`, `grep` and `list` tools until its budget of billable
    tokens is spent; a review whose reader ran out says it stopped early.
-3. **gather** (director, no model): reads the files the candidates cite, the
-   first 20, at the head through the host's `*_read_file`.
-4. **merge** (action): keeps a candidate only when its quoted line is in the
-   file, moves it onto that line, and drops repeats of the same code.
-5. **converge**: groups candidates that one edit would fix, and picks a
-   representative for each group.
-6. **check**: one call per group, over the candidate and the file lines around
-   it; only `real` verdicts go on.
-7. **write**: a summary of the change from its title, description and changed
-   files, and one comment per confirmed defect.
+3. **candidates** (action): folds exact duplicates (same file, overlapping
+   lines, same first line of quoted code) into one finding that remembers
+   which finders reported it and how many times.
+4. **consolidate**: its director reads the lines each finding cites at the
+   head through the host's `*_read_file` and moves the finding onto the line
+   its quoted code names; then one model call groups the findings that
+   describe the same defect. A finding left out of every group is a group of
+   its own, and groups whose findings land on the same line with the same
+   first quoted line once moved are joined.
+5. **check**, only when the request sets `check`: one call per group, over
+   its representative and the lines read around it; only `real` verdicts go
+   on. It is off by default: on 42 held-out public pull requests with known
+   bugs it raised precision from 35.8 to 51.9 but cut recall from 60.9 to
+   40.6, for an F1 of 45.6 against 45.1 without it (see the eval README).
+6. **write**: the groups in order of severity (the most severe priority a
+   finder gave) and then agreement (how many finders reported it, then how
+   many findings it stands for): a summary of the change and one comment per
+   group, ending with its agreement. A group the model leaves without a
+   comment gets one from the finder's title, explanation, trigger and quoted
+   code.
 
-The structured steps (plan, converge, check, write) answer against a JSON
+The structured steps (plan, consolidate, check, write) answer against a JSON
 schema. Checkout and file reads reach the host through its bound credential,
 so, as with triage's facts step, they run in directors. The eval and its
 numbers are in `packages/pr-code-review-anthropic/evals/README.md`.

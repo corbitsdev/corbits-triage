@@ -7,10 +7,11 @@
 //   --repo checks each case's head out (with `gh auth token`) and lets the finder read it; every tool call is recorded.
 //   --budget <tokens> sets the repository finder's token budget (default the workflow's).
 //   bun run eval:review -- --rescore <results-dir>   re-scores saved results without model calls
-//   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--out <file.json>]
-//   with <role> one of plan, diff-finder, repo-finder, converge, check, write;
-//   runs the whole pr-code-review workflow on each case's head and scores the finders' union, the merged and converged
-//   candidates, the confirmed ones and the final review, with each step's tokens, dollars and seconds.
+//   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--check] [--out <file.json>]
+//   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write;
+//   runs the whole pr-code-review workflow on each case's head and scores the finders' union, the consolidated findings,
+//   the confirmed ones (all of them unless --check), the final review, and its comments found by both finders and by
+//   one, with each step's tokens, dollars and seconds.
 //
 // Inference is native Anthropic when ANTHROPIC_API_KEY is set, else OpenCode Zen with OPENCODE_API_KEY.
 import { execFileSync } from "node:child_process";
@@ -290,21 +291,21 @@ function rescore(dir: string) {
 
 
 /** Each model step's role in the request, and the flag prefix that sets its model and effort. */
-const ROLE_FLAGS = { plan: "plan", diffFinder: "diff-finder", repoFinder: "repo-finder", converge: "converge", check: "check", write: "write" } as const;
+const ROLE_FLAGS = { plan: "plan", diffFinder: "diff-finder", repoFinder: "repo-finder", consolidate: "consolidate", check: "check", write: "write" } as const;
 type Role = keyof typeof ROLE_FLAGS;
 const ROLES = Object.keys(ROLE_FLAGS) as Role[];
 
-/** The role that sets each agent's model; the gather agent makes no model call. */
+/** The role that sets each agent's model. */
 const ROLE_OF_AGENT: Record<string, Role | undefined> = {
   "code-review-plan": "plan",
   "code-review-finder": "diffFinder",
   "code-review-finder-repo": "repoFinder",
-  "code-review-converge": "converge",
+  "code-review-consolidate": "consolidate",
   "code-review-check": "check",
   "code-review-write": "write",
 };
 
-const STAGES = ["union", "merged", "converged", "confirmed", "final"] as const;
+const STAGES = ["union", "consolidated", "confirmed", "final", "bothFinders", "oneFinder"] as const;
 type Stage = (typeof STAGES)[number];
 
 interface StepCost {
@@ -327,6 +328,7 @@ interface E2EConfig {
   models: Record<Role, string>;
   efforts: Record<Role, Effort>;
   budget?: number;
+  check: boolean;
 }
 
 function effortFlag(value: unknown, fallback: Effort): Effort {
@@ -350,6 +352,7 @@ function e2eConfig(values: Record<string, unknown>): E2EConfig {
     models: Object.fromEntries(ROLES.map(model)) as Record<Role, string>,
     efforts: Object.fromEntries(ROLES.map(effort)) as Record<Role, Effort>,
     ...(typeof values.budget === "string" && { budget: Number(values.budget) }),
+    check: values.check === true,
   };
 }
 
@@ -377,7 +380,7 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     return role ? config.models[role] : DEFAULT_MODEL;
   }
   const head = headOf(testCase.id);
-  const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, checkout: { source: "github", ...head }, efforts: config.efforts, ...(config.budget && { budgets: { repoFinder: config.budget } }) };
+  const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, checkout: { source: "github", ...head }, efforts: config.efforts, check: config.check, ...(config.budget && { budgets: { repoFinder: config.budget } }) };
   const started = performance.now();
   const run = await runLocalWorkflow({
     workflow: prCodeReview({ sources: GITHUB }),
@@ -399,10 +402,14 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     stages[stage] = { ...scoreCase(testCase, findings), findings };
   }
   if (outputs.candidates) score("union", reanchor(findingsAt(outputs.candidates.found), testCase.diff).findings);
-  if (outputs.merge) score("merged", findingsAt(outputs.merge.candidates));
-  if (outputs.checks) score("converged", findingsAt(outputs.checks.candidates));
-  if (outputs.writeInput) score("confirmed", findingsAt(outputs.writeInput.confirmed));
-  if (outputs.review) score("final", findingsAt(outputs.review.comments));
+  if (outputs.checks) score("consolidated", findingsAt(outputs.checks.findings));
+  if (outputs.writeInput) score("confirmed", findingsAt(outputs.writeInput.findings));
+  if (outputs.review) {
+    const comments: (Finding & { agreement: { finders: number } })[] = outputs.review.comments;
+    score("final", findingsAt(comments));
+    score("bothFinders", findingsAt(comments.filter((c) => c.agreement.finders === 2)));
+    score("oneFinder", findingsAt(comments.filter((c) => c.agreement.finders === 1)));
+  }
   const failed = run.terminalStatus === "completed" ? undefined : `ended ${run.terminalStatus}`;
   return { id: testCase.id, ...(failed && { failed }), budgetExhausted: outputs.candidates?.budgetExhausted === true, wallMs, steps, stages, outputs };
 }
@@ -489,6 +496,7 @@ async function main() {
       repo: { type: "boolean", default: false },
       budget: { type: "string" },
       e2e: { type: "boolean", default: false },
+      check: { type: "boolean", default: false },
       ...Object.fromEntries(Object.values(ROLE_FLAGS).flatMap((flag) => [[`${flag}-model`, { type: "string" }], [`${flag}-effort`, { type: "string" }]])),
     },
   });

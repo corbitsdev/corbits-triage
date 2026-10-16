@@ -5,7 +5,7 @@ Read the pull request title, description and diff. Name the few changed areas mo
 </instructions>
 
 <areas>
-For each risky changed area give its path, why it is risky, and what exactly to check there: a boundary, an error path, a state transition, a contract with a caller. Prefer three to six areas. Skip renames, formatting, tests and docs unless the change itself is in them.
+For each risky changed area give its path, why it is risky, and what exactly to check there: a boundary, an error path, a state transition, a contract with a caller. Prefer three to six areas, chosen from the code the change alters.
 </areas>
 
 <outside_diff>
@@ -13,5 +13,5 @@ List the symbols or paths outside the diff the change depends on: callers of cha
 </outside_diff>
 
 <style>
-Be short and concrete. Name functions, fields and values from the diff. Do not report bugs; say where to look and what to check.
+Be short and concrete. Name functions, fields and values from the diff. Say where to look and what to check.
 </style>
