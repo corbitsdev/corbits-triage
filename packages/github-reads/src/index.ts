@@ -747,6 +747,28 @@ export async function readRepoFileResponse(res: Response, url: string): Promise<
   return { kind: "file", sha: file.sha, text, url: file.html_url };
 }
 
+const API_ORIGIN = "https://api.github.com";
+
+/**
+ * GET `url`, following a renamed or transferred repository's permanent redirect to its new API path; the credential
+ * handle does not follow redirects itself.
+ */
+export async function getFollowingMove(gh: GithubFetch, url: string, init?: RequestInit): Promise<Response> {
+  const res = await gh(url, init);
+  const moved = res.headers.get("location");
+  if ((res.status === 301 || res.status === 307) && moved?.startsWith(`${API_ORIGIN}/`)) return gh(moved.slice(API_ORIGIN.length), init);
+  return res;
+}
+
+/** The text of `path` at commit `sha`, or undefined when nothing is there. */
+export async function readFileAt(gh: GithubFetch, repo: string, sha: string, path: string): Promise<string | undefined> {
+  const url = `/repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${sha}`;
+  const res = await getFollowingMove(gh, url, { headers: { accept: "application/vnd.github.raw+json" } });
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new Error(`github GET ${url} -> ${res.status}`);
+  return res.text();
+}
+
 export type CodeownersRule = {
   pattern: string;
   owners: string[];

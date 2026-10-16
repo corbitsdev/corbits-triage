@@ -18,6 +18,7 @@ import {
   listPrFilesPage,
   listInstallations,
   listInstallationRepositories,
+  readFileAt,
   readRepoDocsPage,
   type AppLogin,
   type GithubFetch,
@@ -33,6 +34,8 @@ import {
   requestReviewers,
 } from "./github";
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
+import { cachedLoads, checkTarget, linesOf, MAX_LINES } from "@corbits/repo-read-tool";
+import { checkout } from "./checkout";
 
 export const CREDENTIAL_HANDLE = "github";
 
@@ -109,6 +112,16 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_author_teams",
     description: "Say which of the given teams (@org/slug or slug) the author is an active member of. Teams past the first 20, outside the repository owner's organization, or not confirmable either way are unknown.",
     inputSchema: obj({ repo, author: str, teams: { type: "array", items: str } }),
+  },
+  {
+    name: "github_read_file",
+    description: `Read lines start to end (1-based, inclusive) of a file at a commit sha, at most ${MAX_LINES} lines, each prefixed with its line number.`,
+    inputSchema: obj({ repo, sha: str, path: str, start: { type: "integer" }, end: { type: "integer" } }, ["repo", "sha", "path"]),
+  },
+  {
+    name: "github_checkout",
+    description: "Download a repository's files at a commit sha into the step's working tree, replacing what is there.",
+    inputSchema: obj({ repo, sha: str }),
   },
 ];
 
@@ -188,6 +201,7 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
 
 interface Env extends BaseEnv {
   capabilities: RuntimeCapabilities;
+  toolCwd: string;
 }
 
 type ToolCallInput = { id: string; name: string; arguments: Record<string, any> };
@@ -203,7 +217,17 @@ async function runDo(gh: GithubFetch, args: unknown, login: AppLogin) {
   }
 }
 
-async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): Promise<unknown> {
+/** A file at a commit, fetched once per tool instance however many windows of it are read. */
+type FileAt = (repo: string, sha: string, path: string) => Promise<string | undefined>;
+
+async function readWindow(fileAt: FileAt, a: Record<string, any>) {
+  checkTarget(a.repo, a.sha, a.path);
+  const text = await fileAt(a.repo, a.sha, a.path);
+  if (text === undefined) throw new Error(`${a.path} is not in ${a.repo} at ${a.sha}`);
+  return linesOf(a.path, text, a.start, a.end);
+}
+
+async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin, toolCwd: string, fileAt: FileAt): Promise<unknown> {
   const a = call.arguments;
   switch (call.name) {
     case "github_get_app":
@@ -236,6 +260,10 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): 
       return codeownersForPr(gh, a.repo, a.number);
     case "github_author_teams":
       return authorTeams(gh, { repo: a.repo, author: a.author, teams: a.teams });
+    case "github_read_file":
+      return readWindow(fileAt, a);
+    case "github_checkout":
+      return checkout(gh, a.repo, a.sha, toolCwd);
     case "github_mirror":
     case "github_mirror_auto": {
       const mirrored = await mirror(gh, {
@@ -276,9 +304,10 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): 
   }
 }
 
-/** The App's login is asked of GitHub once per tool instance, so once per step of a run. */
-function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>) {
+/** The App's login and each file read are asked of GitHub once per tool instance, so once per step of a run. */
+function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>, toolCwd: string) {
   let known: string | undefined;
+  const files = cachedLoads<string | undefined>();
   async function run(call: ToolCallInput) {
     try {
       const gh = await getFetch();
@@ -286,7 +315,10 @@ function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promis
         known ??= await appLogin(gh);
         return known;
       }
-      const content = await dispatch(gh, call, login);
+      function fileAt(repo: string, sha: string, path: string) {
+        return files(`${repo}@${sha}:${path}`, () => readFileAt(gh, repo, sha, path));
+      }
+      const content = await dispatch(gh, call, login, toolCwd, fileAt);
       return { callId: call.id, content: content as Record<string, unknown> };
     } catch (err) {
       return {
@@ -302,7 +334,7 @@ function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promis
 function defineGithubTool(id: string, definitions: ToolDefinition[], ask: readonly string[]) {
   return defineTool<Env>({
     id,
-    requires: ["capabilities"],
+    requires: ["capabilities", "toolCwd"],
     definitions: definitions.map((d) => ({
       name: d.name,
       ...(ask.includes(d.name) ? { approval: "ask" as const } : {}),
@@ -319,7 +351,7 @@ function defineGithubTool(id: string, definitions: ToolDefinition[], ask: readon
           return mediated.fetch(path, init);
         };
       }
-      return createGithubTools(definitions, resolveGithubFetch);
+      return createGithubTools(definitions, resolveGithubFetch, env.toolCwd);
     },
   });
 }

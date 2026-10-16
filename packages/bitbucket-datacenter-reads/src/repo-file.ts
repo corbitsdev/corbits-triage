@@ -31,6 +31,15 @@ async function branchHead(bb: BitbucketFetch, base: string, branch: string | und
   return found.latestCommit;
 }
 
+/** The text of `path` at commit `sha`, or undefined when nothing is there. */
+export async function readFileAt(bb: BitbucketFetch, repo: string, sha: string, path: string): Promise<string | undefined> {
+  const url = `${repoPath(repo)}/raw/${filePath(path)}?at=${sha}`;
+  const res = await bb(url);
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new Error(`bitbucket GET ${url} -> ${res.status}`);
+  return res.text();
+}
+
 /**
  * A file on `branch`, the default branch when absent, or undefined when nothing is there. Every read is pinned to the
  * branch head so the file, its type and its sha agree; the sha is the last commit that changed the file, as Data

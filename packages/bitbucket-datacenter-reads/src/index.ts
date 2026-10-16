@@ -6,5 +6,5 @@ export { isTriageComment, listIssueComments } from "./comments.js";
 export { createDocsReader, readRepoDocsPage } from "./docs.js";
 export { authorTeams, defaultReviewers } from "./people.js";
 export { getPr, listOpenPrs } from "./pull-request.js";
-export { readRepoFile } from "./repo-file.js";
+export { readFileAt, readRepoFile } from "./repo-file.js";
 export { getReviews } from "./reviews.js";
