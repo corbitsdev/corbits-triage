@@ -79,10 +79,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     Each is described in `/openapi.json`. Pull request
     actions are synchronous: a maintainer's click must not wait on a
     workflow spin-up.
-- **Sidecars**: one per live deployment, placed on the first driver that
-  offers the capabilities the workflow requires: local child processes
-  (restored on boot) by default, Docker containers when configured. See
-  [SIDECAR_DRIVERS.md](SIDECAR_DRIVERS.md).
+- **Sidecars**: one per live deployment, started by the hub's
+  `SidecarProvisioner`. Today it runs local child processes and restores
+  them on boot; a remote provisioner replaces it without touching other code.
 - **Portal** (`apps/web`): owns setup. After sign-in it converges the tenant,
   GitHub credentials, inference offering, workflow sources and deployments
   over stock hub routes. The hub seeds nothing for it. It is a wrapper over

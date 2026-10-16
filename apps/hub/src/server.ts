@@ -36,7 +36,6 @@ import { runCronMigrations } from "@corbits/cron/migrations";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
-import { createDockerDriver } from "./sidecar/docker-driver.js";
 import { createDriverProvisioner } from "./sidecar/driver-provisioner.js";
 import { createLocalProcessDriver, createSpawnLocalSidecar } from "./sidecar/local-driver.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
@@ -53,7 +52,7 @@ import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, dockerSidecarSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -159,11 +158,6 @@ const localDriver = createLocalProcessDriver({
   log: logJson,
 });
 const local = createDriverProvisioner(localDriver, env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY);
-const docker = dockerSidecarSettings(env);
-// First match in this order wins: a workflow with no placement rule runs on the hub.
-const configuredDrivers = docker === undefined ? [] : [
-  createDriverProvisioner(createDockerDriver({ ...docker, hostRoot: ROOT, adapterManifest: sidecarAdapterManifest }), env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY),
-];
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
@@ -180,7 +174,7 @@ async function shutdown(): Promise<void> {
   coalescer?.stop();
   coordinator?.stop();
   try {
-    await Promise.all([local, ...configuredDrivers].map((driver) => driver.drain()));
+    await local.drain();
     await localDriver.stopAll();
   } finally {
     process.exit(0);
@@ -202,7 +196,7 @@ const composition = await createInterchangeHub({
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { sendResetPassword: smtp.passwordReset }) },
   credentialCipher,
   adapterManifest: sidecarAdapterManifest,
-  sidecarProvisioners: [local, ...configuredDrivers].map((driver) => driver.provisioner),
+  sidecarProvisioners: [local.provisioner],
   probeSidecarProvisioners: [local.provisioner],
 });
 const stock = composition.server;

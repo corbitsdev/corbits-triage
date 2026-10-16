@@ -38,8 +38,6 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
-  "HUB_SIDECAR_DOCKER_SOCKET?": "string",
-  "HUB_SIDECAR_DOCKER_IMAGE?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_BATCH_SIZE?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
@@ -212,22 +210,6 @@ export function signInSettings(env: HubEnv): SignInSettings {
     ...(clientId !== undefined && clientSecret !== undefined && { google: { clientId, clientSecret } }),
     ...(allowedEmails !== undefined && { allowedEmails }),
   };
-}
-
-export type DockerSidecarSettings = { socketPath: string; image: string };
-
-/** Unset means no Docker driver: workflows that require workload isolation are refused. */
-export function dockerSidecarSettings(env: HubEnv): DockerSidecarSettings | undefined {
-  const { HUB_SIDECAR_DOCKER_SOCKET: socketPath, HUB_SIDECAR_DOCKER_IMAGE: image } = env;
-  if ((socketPath === undefined) !== (image === undefined)) {
-    throw new Error("HUB_SIDECAR_DOCKER_SOCKET and HUB_SIDECAR_DOCKER_IMAGE must be set together");
-  }
-  if (socketPath === undefined || image === undefined) return undefined;
-  // That override writes an adapter entry module into the hub's data dir, which no sidecar image has.
-  if (githubApiOrigin(env) !== DEFAULT_GITHUB_API_ORIGIN) {
-    throw new Error("HUB_SIDECAR_DOCKER_SOCKET cannot be combined with GITHUB_API_ORIGIN");
-  }
-  return { socketPath, image };
 }
 
 export type EmailSettings = { smtpUrl: string; from: string };
