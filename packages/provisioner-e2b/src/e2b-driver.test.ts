@@ -106,7 +106,7 @@ test("ensure starts the sidecar in a tagged sandbox, a restarted hub adopts it, 
     templateID: "corbits-sidecar",
     timeout: 3600,
     autoPause: false,
-    metadata: { intxBinding: "e2b:corbits-sidecar", intxAllocation: "sal_1", intxGeneration: "1", intxSidecar: "sc_1", intxTenant: "tnt_1" },
+    metadata: { intxBinding: "e2b:v1", intxAllocation: "sal_1", intxGeneration: "1", intxSidecar: "sc_1", intxTenant: "tnt_1" },
   }]);
   const [started] = fake.started;
   expect(started?.sandboxId).toBe("sbx1");

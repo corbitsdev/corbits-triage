@@ -116,7 +116,7 @@ function handleOf(sandbox: ListedSandbox): SidecarHandle | null {
 
 /** One E2B sandbox (a Firecracker microVM) per allocation; the sandbox's metadata is the durable hold. */
 export function createE2bDriver({ apiKey, template, apiUrl, sandboxUrl, hubRoot, limits = {} }: E2bDriverOpts): SidecarDriver {
-  const fingerprint = `e2b:${template}`;
+  const fingerprint = "e2b:v1";
 
   function api(path: string, init: RequestInit = {}): Promise<Response> {
     return fetch(`${apiUrl}${path}`, {
