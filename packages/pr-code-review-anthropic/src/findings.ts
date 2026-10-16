@@ -13,6 +13,8 @@ export interface Finding extends Site {
   trigger?: string;
   /** 0 blocks release, 1 is urgent, 2 is normal, 3 is low. */
   priority?: number;
+  /** The finder's confidence from 1 to 10, by how much of the cause and its failure it read. */
+  confidence?: number;
 }
 
 const TEXT_FIELDS = ["code", "title", "why", "trigger"] as const;
@@ -106,6 +108,8 @@ function findingOf(raw: unknown): Finding | undefined {
   for (const field of TEXT_FIELDS) if (typeof item[field] === "string") finding[field] = item[field];
   const priority = integerOf(item.priority);
   if (priority !== undefined) finding.priority = priority;
+  const confidence = integerOf(item.confidence);
+  if (confidence !== undefined && confidence >= 1 && confidence <= 10) finding.confidence = confidence;
   return finding;
 }
 

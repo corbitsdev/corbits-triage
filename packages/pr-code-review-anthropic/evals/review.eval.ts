@@ -1,5 +1,5 @@
-// Finder eval: runs the pr-code-review definition with any finder system prompt over the cases in evals/labels/ and
-// scores the findings against each case's answer key: a bug is caught when a finding on its path overlaps any of its
+// Finder eval: runs the pr-code-review definition with any finder system prompt over the cases in evals/labels/, turns
+// the finder's prose into findings with the recover step and scores them against each case's answer key: a bug is caught when a finding on its path overlaps any of its
 // sites within three lines; a finding that hits no bug is a false alarm. A finding with a `code` line is first moved onto
 // that line in the diff. Writes a results JSON beside the table.
 //
@@ -8,7 +8,7 @@
 //   --budget <tokens> sets the repository finder's token budget (default the workflow's).
 //   bun run eval:review -- --rescore <results-dir>   re-scores saved results without model calls
 //   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--check] [--out <file.json>]
-//   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write;
+//   with <role> one of plan, diff-finder, repo-finder, recover, consolidate, check, write;
 //   runs the whole pr-code-review workflow on each case's head and scores the finders' union, the consolidated findings,
 //   the confirmed ones (all of them unless --check), the final review, and its comments found by both finders and by
 //   one, with each step's tokens, dollars and seconds.
@@ -175,10 +175,11 @@ async function runCase(testCase: Case, systemPrompt: string, effort: Effort, mod
     onEvent,
   });
   base.wallMs = Math.round(performance.now() - started);
-  const reply = replyOf(run.outputs["find"] ?? run.outputs["findRepo"]);
-  if (reply === undefined) return { ...base, failed: `ended ${run.terminalStatus} without a reply` };
+  const reply = replyOf(run.outputs["find"]) ?? replyOf(run.outputs["findRepo"]);
+  const recovered = replyOf(run.outputs["recover"]) ?? replyOf(run.outputs["recoverRepo"]);
+  if (reply === undefined || recovered === undefined) return { ...base, failed: `ended ${run.terminalStatus} without a reply` };
   if (reply.startsWith(BUDGET_EXHAUSTED)) base.budgetExhausted = true;
-  const parsed = parseFindings(reply);
+  const parsed = parseFindings(recovered);
   if ("unparsable" in parsed) return { ...base, unparsable: parsed.unparsable, reply };
   const { findings, moved } = reanchor(parsed.findings, testCase.diff);
   return { ...base, ...scoreCase(testCase, findings), findings, reanchored: moved, reply };
@@ -291,7 +292,7 @@ function rescore(dir: string) {
 
 
 /** Each model step's role in the request, and the flag prefix that sets its model and effort. */
-const ROLE_FLAGS = { plan: "plan", diffFinder: "diff-finder", repoFinder: "repo-finder", consolidate: "consolidate", check: "check", write: "write" } as const;
+const ROLE_FLAGS = { plan: "plan", diffFinder: "diff-finder", repoFinder: "repo-finder", recover: "recover", consolidate: "consolidate", check: "check", write: "write" } as const;
 type Role = keyof typeof ROLE_FLAGS;
 const ROLES = Object.keys(ROLE_FLAGS) as Role[];
 
@@ -300,6 +301,7 @@ const ROLE_OF_AGENT: Record<string, Role | undefined> = {
   "code-review-plan": "plan",
   "code-review-finder": "diffFinder",
   "code-review-finder-repo": "repoFinder",
+  "code-review-recover": "recover",
   "code-review-consolidate": "consolidate",
   "code-review-check": "check",
   "code-review-write": "write",
@@ -346,7 +348,7 @@ function e2eConfig(values: Record<string, unknown>): E2EConfig {
     return [role, chosen];
   }
   function effort(role: Role): [Role, Effort] {
-    return [role, effortFlag(values[`${ROLE_FLAGS[role]}-effort`], role === "write" ? "low" : "medium")];
+    return [role, effortFlag(values[`${ROLE_FLAGS[role]}-effort`], role === "write" || role === "recover" ? "low" : "medium")];
   }
   return {
     models: Object.fromEntries(ROLES.map(model)) as Record<Role, string>,
@@ -403,7 +405,7 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
   }
   if (outputs.candidates) score("union", reanchor(findingsAt(outputs.candidates.found), testCase.diff).findings);
   if (outputs.checks) score("consolidated", findingsAt(outputs.checks.findings));
-  if (outputs.writeInput) score("confirmed", findingsAt(outputs.writeInput.findings));
+  if (outputs.writeInput) score("confirmed", findingsAt([...outputs.writeInput.findings, ...outputs.writeInput.held]));
   if (outputs.review) {
     const comments: (Finding & { agreement: { finders: number } })[] = outputs.review.comments;
     score("final", findingsAt(comments));

@@ -9,13 +9,11 @@ A defect is a correctness problem in the added or changed lines: a logic error, 
 </what_to_report>
 
 <output>
-Answer with JSON only, in this shape:
-{"findings": [{"path": "src/file.ts", "start": 120, "end": 122, "priority": 1, "confidence": 0.8, "title": "short statement of the defect", "why": "why this is wrong", "trigger": "the input or scenario that makes it go wrong", "code": "the causing line, verbatim"}]}
-- path, start and end point at the added or changed lines, using head-side line numbers from the diff.
-- priority: 0 blocks release or breaks most users, 1 is urgent, 2 is normal, 3 is low.
-- confidence: from 0.0 to 1.0, how sure you are that the defect is real.
-- code: the exact text of the head-side line at start, verbatim.
-- Keep title, why and trigger concise.
-- Use one finding per distinct defect.
-If the diff has no defect, answer {"findings": []}.
+Write each defect as its own short section in plain prose, giving:
+- The file and the head-side line or lines of the added or changed code that cause it, as numbered in the diff, and the causing line quoted verbatim.
+- What is wrong and why.
+- The input or scenario that makes it go wrong.
+- Its priority: 0 blocks release or breaks most users, 1 is urgent, 2 is normal, 3 is low.
+- Your confidence from 1 to 10 and what you saw that supports it: 9 or 10 when the diff shows both the cause and how it fails, 5 to 8 when the diff shows the cause and the failure depends on code it does not show, 1 to 4 when it rests on experience with code like this rather than on lines you read.
+Write one section per distinct defect. When the diff has no defect, say so in one sentence.
 </output>

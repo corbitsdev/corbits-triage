@@ -79,6 +79,33 @@ const CONSOLIDATE_SCHEMA = {
   },
 };
 
+const RECOVER_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["findings"],
+  properties: {
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "start", "end", "code", "priority", "confidence", "title", "why", "trigger"],
+        properties: {
+          path: { type: "string" },
+          start: { type: "integer" },
+          end: { type: "integer" },
+          code: { type: "string" },
+          priority: { type: "integer" },
+          confidence: { type: "integer" },
+          title: { type: "string" },
+          why: { type: "string" },
+          trigger: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
 const WRITE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -101,7 +128,7 @@ function structuredAgent(id: string, name: string, schema: Record<string, unknow
   return defineAgent({ id, systemPrompt: prompt(name), tools: [], capabilities: [], inference, director: structured.build({ name, schema }) });
 }
 
-/** The diff finder: one model turn over the pull request's diff, no tools. */
+/** The diff finder: one model turn over the pull request's diff, no tools; it writes its findings in prose. */
 export function finderAgent(systemPrompt = prompt("finder-diff")) {
   return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference });
 }
@@ -119,6 +146,9 @@ export function repoFinderAgent(sources: Sources, systemPrompt = prompt("finder-
 }
 
 export const planAgent = structuredAgent("code-review-plan", "plan", PLAN_SCHEMA);
+
+/** Turns one finder's prose into findings. */
+export const recoverAgent = structuredAgent("code-review-recover", "recover", RECOVER_SCHEMA);
 
 export const checkAgent = structuredAgent("code-review-check", "check", CHECK_SCHEMA);
 

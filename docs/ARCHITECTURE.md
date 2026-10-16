@@ -179,8 +179,8 @@ step here.
 ## Code review pipeline
 
 The pipeline looks for defects with two finders, groups what they report by
-defect and reports every group, ordered so the most severe and most agreed-on
-come first. Steps that call a model take their effort from the request.
+defect and posts the most confident groups, ordered so the most severe come
+first. Steps that call a model take their effort from the request.
 
 1. **plan**: names the risky changed areas and the code outside the diff they
    depend on.
@@ -188,32 +188,40 @@ come first. Steps that call a model take their effort from the request.
    in one call. The repository finder checks the head out into the step's
    working tree with the host bundle's `*_checkout` and reads it with the
    confined `read_file`, `grep` and `list` tools until its budget of billable
-   tokens is spent; a review whose reader ran out says it stopped early.
-3. **candidates** (action): folds exact duplicates (same file, overlapping
+   tokens is spent; a review whose reader ran out says it stopped early. Both
+   write their findings in prose, each with a priority and a confidence from
+   1 to 10 tied to what the finder read: both the cause and how it fails, one
+   of them, or neither.
+3. **recoverDiff** and **recoverRepo**: one structured call each turns its
+   finder's prose into findings: file, lines, quoted code, priority,
+   confidence, why and trigger.
+4. **candidates** (action): folds exact duplicates (same file, overlapping
    lines, same first line of quoted code) into one finding that remembers
    which finders reported it and how many times.
-4. **consolidate**: its director reads the lines each finding cites at the
+5. **consolidate**: its director reads the lines each finding cites at the
    head through the host's `*_read_file` and moves the finding onto the line
    its quoted code names; then one model call groups the findings that
    describe the same defect. A finding left out of every group is a group of
    its own, and groups whose findings land on the same line with the same
    first quoted line once moved are joined.
-5. **check**, only when the request sets `check`: one call per group, over
+6. **check**, only when the request sets `check`: one call per group, over
    its representative and the lines read around it; only `real` verdicts go
-   on. It is off by default: on 42 held-out public pull requests with known
-   bugs it raised precision from 35.8 to 51.9 but cut recall from 60.9 to
-   40.6, for an F1 of 45.6 against 45.1 without it (see the eval README).
-6. **write**: the groups in order of severity (the most severe priority a
-   finder gave) and then agreement (how many finders reported it, then how
-   many findings it stands for): a summary of the change and one comment per
-   group, ending with its agreement. A group the model leaves without a
-   comment gets one from the finder's title, explanation, trigger and quoted
-   code.
+   on.
+7. **write**: the groups with a confidence of at least 6, at most the five
+   with the highest confidence and then agreement, are posted. A summary of
+   the change and one comment per posted group, in order of severity (the
+   most severe priority a finder gave), then confidence (the highest a member
+   gave), then agreement (how many finders reported it, then how many
+   findings it stands for), each ending with its agreement. A group the model
+   leaves without a comment gets one from the finder's title, explanation,
+   trigger and quoted code. The groups not posted stay in the result as
+   `held`.
 
-The structured steps (plan, consolidate, check, write) answer against a JSON
-schema. Checkout and file reads reach the host through its bound credential,
-so, as with triage's facts step, they run in directors. The eval and its
-numbers are in `packages/pr-code-review-anthropic/evals/README.md`.
+The structured steps (plan, recover, consolidate, check, write) answer against
+a JSON schema. The finders write prose, because a schema on a finder's answer
+costs recall. Checkout and file reads reach the host through its bound
+credential, so, as with triage's facts step, they run in directors. The eval
+and its numbers are in `packages/pr-code-review-anthropic/evals/README.md`.
 
 ## Tenancy and authority
 

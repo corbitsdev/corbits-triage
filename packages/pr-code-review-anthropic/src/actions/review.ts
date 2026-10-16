@@ -7,10 +7,15 @@ const MAX_OUTPUT_TOKENS = 16_000;
 
 const Effort = type("'low' | 'medium' | 'high'");
 
-const ROLES = ["plan", "diffFinder", "repoFinder", "consolidate", "check", "write"] as const;
+const ROLES = ["plan", "diffFinder", "repoFinder", "recover", "consolidate", "check", "write"] as const;
 type Role = (typeof ROLES)[number];
 
-const DEFAULT_EFFORTS: Record<Role, typeof Effort.infer> = { plan: "medium", diffFinder: "medium", repoFinder: "medium", consolidate: "medium", check: "medium", write: "low" };
+const DEFAULT_EFFORTS: Record<Role, typeof Effort.infer> = { plan: "medium", diffFinder: "medium", repoFinder: "medium", recover: "low", consolidate: "medium", check: "medium", write: "low" };
+
+// The most comments posted on one pull request; the rest are held back in the result.
+const MAX_POSTED = 5;
+// The least finder confidence a posted comment carries.
+const MIN_CONFIDENCE = 6;
 
 const ReviewRequest = type({
   kind: "'code-review'",
@@ -18,7 +23,7 @@ const ReviewRequest = type({
   description: "string",
   diff: "string",
   checkout: Checkout,
-  "efforts?": { "plan?": Effort, "diffFinder?": Effort, "repoFinder?": Effort, "consolidate?": Effort, "check?": Effort, "write?": Effort },
+  "efforts?": { "plan?": Effort, "diffFinder?": Effort, "repoFinder?": Effort, "recover?": Effort, "consolidate?": Effort, "check?": Effort, "write?": Effort },
   "check?": "boolean",
   "budgets?": { "repoFinder?": "number.integer > 0" },
 });
@@ -48,6 +53,8 @@ interface Steps {
   plan?: { output: unknown };
   findDiff?: { output: unknown };
   findRepo?: { output: unknown };
+  recoverDiff?: { output: unknown };
+  recoverRepo?: { output: unknown };
   candidates?: { output: Candidates };
   consolidate?: { output: unknown };
   checks?: { output: Checks };
@@ -95,6 +102,7 @@ interface WriteInput {
   budgetExhausted: boolean;
   verdicts: Verdict[];
   findings: Reported[];
+  held: Reported[];
   text: string;
   inference: StepInference;
 }
@@ -179,10 +187,10 @@ function consolidateMessage(request: ReviewRequest, kept: readonly Candidate[]):
   return `${repositoryTag(request.checkout)}${aboutPullRequest(request)}\n\n<findings>\n${JSON.stringify(listed, null, 2)}\n</findings>\n\nGroup the findings by the defect they describe.`;
 }
 
-/** Both finders' findings, those left once exact duplicates are folded together, whether the repository finder's budget ran out, and the consolidate step's message. */
+/** Both finders' findings as the recover steps read them from their prose, those left once exact duplicates are folded together, whether the repository finder's budget ran out, and the consolidate step's message. */
 export async function candidates(steps: Steps): Promise<Candidates> {
   const { request, inference } = stepOutput(steps, "reviewInput");
-  const found = [...findingsOf(stepOutput(steps, "findDiff"), "diff"), ...findingsOf(stepOutput(steps, "findRepo"), "repo")];
+  const found = [...findingsOf(stepOutput(steps, "recoverDiff"), "diff"), ...findingsOf(stepOutput(steps, "recoverRepo"), "repo")];
   const kept = withoutDuplicates(found);
   const budgetExhausted = replyOf(stepOutput(steps, "findRepo")).startsWith(BUDGET_EXHAUSTED);
   return { found, kept, budgetExhausted, consolidate: consolidateMessage(request, kept), inference: inference.consolidate };
@@ -222,22 +230,48 @@ function joinedAtAnchors(groups: readonly Group[], kept: readonly Candidate[], s
   return joined;
 }
 
-/** The group's representative, at its anchored site, with the most severe priority and the agreement of all its members. */
+/** The group's representative, at its anchored site, with the most severe priority, the highest confidence and the agreement of all its members. */
 function reportedOf(group: Group, kept: readonly Candidate[], sites: readonly Site[]): Reported {
   const members = group.members.map((i) => kept[i]!);
   const { path, start, end } = sites[group.representative]!;
   const { title, why, trigger, code } = kept[group.representative]!;
   const priorities = members.flatMap((m) => (m.priority === undefined ? [] : [m.priority]));
+  const confidences = members.flatMap((m) => (m.confidence === undefined ? [] : [m.confidence]));
   const agreement = { finders: new Set(members.flatMap((m) => m.finders)).size, reports: members.reduce((total, m) => total + m.reports, 0) };
-  return { path, start, end, title, why, trigger, code, ...(priorities.length > 0 && { priority: Math.min(...priorities) }), defect: group.defect, agreement };
+  return {
+    path,
+    start,
+    end,
+    title,
+    why,
+    trigger,
+    code,
+    ...(priorities.length > 0 && { priority: Math.min(...priorities) }),
+    ...(confidences.length > 0 && { confidence: Math.max(...confidences) }),
+    defect: group.defect,
+    agreement,
+  };
 }
 
 function severityOf(finding: Reported): number {
   return finding.priority ?? Number.POSITIVE_INFINITY;
 }
 
-function bySeverityThenAgreement(a: Reported, b: Reported): number {
-  return severityOf(a) - severityOf(b) || b.agreement.finders - a.agreement.finders || b.agreement.reports - a.agreement.reports;
+function confidenceOf(finding: Reported): number {
+  return finding.confidence ?? 0;
+}
+
+function byConfidenceThenAgreement(a: Reported, b: Reported): number {
+  return confidenceOf(b) - confidenceOf(a) || b.agreement.finders - a.agreement.finders || b.agreement.reports - a.agreement.reports;
+}
+
+function bySeverityConfidenceAgreement(a: Reported, b: Reported): number {
+  return severityOf(a) - severityOf(b) || byConfidenceThenAgreement(a, b);
+}
+
+/** The findings worth posting: at least MIN_CONFIDENCE, the MAX_POSTED with the highest confidence and agreement. */
+function postedOf(findings: readonly Reported[]): Set<Reported> {
+  return new Set(findings.filter((f) => confidenceOf(f) >= MIN_CONFIDENCE).sort(byConfidenceThenAgreement).slice(0, MAX_POSTED));
 }
 
 function checkMessage(request: ReviewRequest, finding: Reported, excerpt: string): string {
@@ -251,7 +285,7 @@ function checkMessage(request: ReviewRequest, finding: Reported, excerpt: string
   ].join("\n\n");
 }
 
-/** Every consolidated finding, ordered by severity then agreement, and one check of each when the request asks for the check. */
+/** Every consolidated finding, ordered by severity, then confidence, then agreement, and one check of each when the request asks for the check. */
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { kept } = stepOutput(steps, "candidates");
@@ -259,7 +293,7 @@ export async function checks(steps: Steps): Promise<Checks> {
   function reported(group: Group) {
     return { finding: reportedOf(group, kept, sites), excerpt: excerpts[group.representative]! };
   }
-  const ordered = joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
+  const ordered = joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityConfidenceAgreement(a.finding, b.finding));
   function check({ finding, excerpt }: (typeof ordered)[number]) {
     return { text: checkMessage(request, finding, excerpt), inference: inference.check };
   }
@@ -268,17 +302,23 @@ export async function checks(steps: Steps): Promise<Checks> {
 
 const STOPPED_EARLY = "<stopped_early>The review spent its budget before it finished reading the repository. Say in the summary that it stopped early and reports what it found.</stopped_early>\n\n";
 
-/** The findings to report, all of them or, when the request asks for the check, those it found real, and the write step's user message. */
+/**
+ * The findings to post, of those the check found real or all of them when it did not run, the rest held back, and the
+ * write step's user message.
+ */
 export async function writeInput(steps: Steps): Promise<WriteInput> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { budgetExhausted } = stepOutput(steps, "candidates");
   const { findings: checked } = stepOutput(steps, "checks");
   const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
-  const findings = request.check ? checked.filter((_, i) => verdicts[i]?.verdict === "real") : checked;
+  const confirmed = request.check ? checked.filter((_, i) => verdicts[i]?.verdict === "real") : checked;
+  const posted = postedOf(confirmed);
+  const findings = confirmed.filter((f) => posted.has(f));
+  const held = confirmed.filter((f) => !posted.has(f));
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${request.title}</title>\n<description>${request.description}</description>\n<changed_files>\n${changedFiles(request.diff).join("\n")}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${JSON.stringify(listed, null, 2)}\n</findings>\n\n${budgetExhausted ? STOPPED_EARLY : ""}Write the review.`;
-  return { budgetExhausted, verdicts, findings, text, inference: inference.write };
+  return { budgetExhausted, verdicts, findings, held, text, inference: inference.write };
 }
 
 interface Written {
@@ -298,16 +338,17 @@ function agreementLine({ finders, reports }: Agreement): string {
 }
 
 /**
- * The review to post: the summary, one comment per finding in order, anchored where the finding is and ending with its
- * agreement, and whether it stopped early. A finding the write step left without a comment gets one in its finder's words.
+ * The review to post: the summary, one comment per posted finding in order, anchored where the finding is and ending with
+ * its agreement, the findings held back, and whether it stopped early. A finding the write step left without a comment
+ * gets one in its finder's words.
  */
 export async function review(steps: Steps) {
-  const { findings, budgetExhausted } = stepOutput(steps, "writeInput");
+  const { findings, held, budgetExhausted } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
-    const { path, start, end, agreement, priority } = finding;
+    const { path, start, end, agreement, priority, confidence } = finding;
     const { title, body } = written.comments.find((c) => c.finding === index) ?? ownWords(finding);
-    return { path, start, end, title, body: `${body}\n\n${agreementLine(agreement)}`, ...(priority !== undefined && { priority }), agreement };
+    return { path, start, end, title, body: `${body}\n\n${agreementLine(agreement)}`, ...(priority !== undefined && { priority }), ...(confidence !== undefined && { confidence }), agreement };
   }
-  return { summary: written.summary, comments: findings.map(comment), budgetExhausted };
+  return { summary: written.summary, comments: findings.map(comment), held, budgetExhausted };
 }

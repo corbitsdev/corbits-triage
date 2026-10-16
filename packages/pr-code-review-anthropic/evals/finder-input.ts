@@ -23,9 +23,14 @@ function render(request: FinderRequest): string {
   return request.checkout ? `${repositoryTag(request.checkout)}${budgetTag(request.budget ?? DEFAULT_BUDGET)}${text}` : text;
 }
 
-/** The finder's user message from the trigger mail's request, the per-call options its step infers with, and whether it reads the repository. */
+/** The finder's user message from the trigger mail's request, the per-call options its step and the recover step infer with, and whether it reads the repository. */
 export async function finderInput(input: unknown) {
   const request = FinderRequest(triggerRequestOf(input));
   if (request instanceof type.errors) throw new Error(`finderInput: invalid request: ${request.summary}`);
-  return { text: render(request), inference: { effort: request.effort, maxTokens: MAX_OUTPUT_TOKENS }, withRepo: request.checkout !== undefined };
+  return {
+    text: render(request),
+    inference: { effort: request.effort, maxTokens: MAX_OUTPUT_TOKENS },
+    recoverInference: { effort: "low", maxTokens: MAX_OUTPUT_TOKENS },
+    withRepo: request.checkout !== undefined,
+  };
 }

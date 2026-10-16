@@ -10,7 +10,7 @@ const log = getLogger(["corbits", "pr-code-review", "reader"]);
 
 const READ_TOOLS = new Set(REPO_READ_DEFINITIONS.map((d) => d.name));
 
-const BUDGET_SPENT = "Budget spent. Answer now with your findings in the required JSON.";
+const BUDGET_SPENT = "Budget spent. Write your findings now.";
 
 // Rounds of refused calls before the model's text is taken as its answer.
 const REFUSED_ROUNDS = 2;
