@@ -1,1 +1,1 @@
-export { candidates, checks, findersInput, merge, review, reviewInput, writeInput } from "./review.js";
+export { candidates, checks, findersInput, review, reviewInput, writeInput } from "./review.js";

@@ -5,7 +5,7 @@ import { githubRead } from "@corbits/github-tool";
 import { repoRead } from "@corbits/repo-read-tool";
 import type { RepoSource } from "@corbits/triage-contracts";
 import { reader } from "./reader-director.js";
-import { gather } from "./gather-director.js";
+import { consolidate } from "./consolidate-director.js";
 import { structured } from "./structured-director.js";
 
 export const DEFAULT_MODEL = "claude-haiku-5-5";
@@ -62,7 +62,7 @@ const CHECK_SCHEMA = {
   properties: { verdict: { type: "string", enum: ["real", "not_real"] }, reason: { type: "string" } },
 };
 
-const CONVERGE_SCHEMA = {
+const CONSOLIDATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["groups"],
@@ -72,18 +72,8 @@ const CONVERGE_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["defect", "fix", "members", "representative"],
-        properties: {
-          defect: { type: "string" },
-          fix: {
-            type: "object",
-            additionalProperties: false,
-            required: ["path", "line", "edit"],
-            properties: { path: { type: "string" }, line: { type: "integer" }, edit: { type: "string" } },
-          },
-          members: { type: "array", items: { type: "integer" } },
-          representative: { type: "integer" },
-        },
+        required: ["defect", "members", "representative"],
+        properties: { defect: { type: "string" }, members: { type: "array", items: { type: "integer" } }, representative: { type: "integer" } },
       },
     },
   },
@@ -130,13 +120,18 @@ export function repoFinderAgent(sources: Sources, systemPrompt = prompt("finder-
 
 export const planAgent = structuredAgent("code-review-plan", "plan", PLAN_SCHEMA);
 
-export const convergeAgent = structuredAgent("code-review-converge", "converge", CONVERGE_SCHEMA);
-
 export const checkAgent = structuredAgent("code-review-check", "check", CHECK_SCHEMA);
 
 export const writeAgent = structuredAgent("code-review-write", "write", WRITE_SCHEMA);
 
-/** No model: reads the files the findings cite at the head, through the host's contents API. */
-export function gatherAgent(sources: Sources) {
-  return defineAgent({ id: "code-review-gather", systemPrompt: "", tools: readsOf(sources), capabilities: [], inference, director: gather.build({}) });
+/** Reads the lines each finding cites at the head through the host's contents API, then groups the findings by defect. */
+export function consolidateAgent(sources: Sources) {
+  return defineAgent({
+    id: "code-review-consolidate",
+    systemPrompt: prompt("consolidate"),
+    tools: readsOf(sources),
+    capabilities: [],
+    inference,
+    director: consolidate.build({ name: "consolidate", schema: CONSOLIDATE_SCHEMA }),
+  });
 }

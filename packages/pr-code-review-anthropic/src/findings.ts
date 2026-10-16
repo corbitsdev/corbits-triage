@@ -11,6 +11,8 @@ export interface Finding extends Site {
   title?: string;
   why?: string;
   trigger?: string;
+  /** 0 blocks release, 1 is urgent, 2 is normal, 3 is low. */
+  priority?: number;
 }
 
 const TEXT_FIELDS = ["code", "title", "why", "trigger"] as const;
@@ -64,7 +66,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function lineOf(value: unknown): number | undefined {
+function integerOf(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isInteger(value)) return value;
   if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value);
   return undefined;
@@ -80,10 +82,10 @@ const END_KEYS = ["end", "end_line", "endLine", "line_end", "lineEnd"];
 
 /** A line, or a range written as "120-122", "L120-L122" or [120, 122]. */
 function rangeOf(value: unknown): [number, number] | undefined {
-  const line = lineOf(value);
+  const line = integerOf(value);
   if (line !== undefined) return [line, line];
   if (Array.isArray(value) && value.length > 0) {
-    const [start, end] = [lineOf(value[0]), lineOf(value[value.length - 1])];
+    const [start, end] = [integerOf(value[0]), integerOf(value[value.length - 1])];
     return start === undefined || end === undefined ? undefined : [start, end];
   }
   const match = typeof value === "string" ? /^L?(\d+)(?:\s*[-:]\s*L?(\d+))?$/.exec(value.trim()) : null;
@@ -99,9 +101,11 @@ function findingOf(raw: unknown): Finding | undefined {
   const range = rangeOf(firstOf(item, ["lines", "line_range", "lineRange", "range"])) ?? rangeOf(firstOf(item, START_KEYS));
   if (!range) return undefined;
   const [start, rangeEnd] = range;
-  const end = lineOf(firstOf(item, END_KEYS)) ?? rangeEnd;
+  const end = integerOf(firstOf(item, END_KEYS)) ?? rangeEnd;
   const finding: Finding = { path: path.replace(/^(\.\/|[ab]\/)/, ""), start: Math.min(start, end), end: Math.max(start, end) };
   for (const field of TEXT_FIELDS) if (typeof item[field] === "string") finding[field] = item[field];
+  const priority = integerOf(item.priority);
+  if (priority !== undefined) finding.priority = priority;
   return finding;
 }
 
@@ -112,6 +116,11 @@ export function parseFindings(reply: string): Parsed {
   const list = Object.values(json).find((value) => Array.isArray(value) && value.every(isRecord));
   if (!Array.isArray(list)) return { unparsable: "no findings array" };
   return { findings: list.map(findingOf).filter((finding) => finding !== undefined) };
+}
+
+/** The first non-blank line of the finding's quoted code. */
+export function quotedLine(finding: Finding): string | undefined {
+  return finding.code?.split("\n").find((row) => row.trim() !== "")?.trim();
 }
 
 /** Every file the diff adds, changes or deletes, by its head-side path, or its base-side path when deleted. */
