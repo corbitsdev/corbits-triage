@@ -38,14 +38,6 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
-  "HUB_SIDECAR_DOCKER_SOCKET?": "string",
-  "HUB_SIDECAR_DOCKER_IMAGE?": "string",
-  "HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS?": positiveInteger,
-  "HUB_SIDECAR_DOCKER_MEMORY_MB?": positiveInteger,
-  "HUB_SIDECAR_DOCKER_CPUS?": type("string.numeric").narrow((value, ctx) => Number(value) > 0 || ctx.mustBe("a positive number")),
-  "HUB_SIDECAR_E2B_API_KEY?": "string",
-  "HUB_SIDECAR_E2B_TEMPLATE?": "string",
-  "HUB_SIDECAR_E2B_MAX_ALLOCATIONS?": positiveInteger,
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_BATCH_SIZE?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
@@ -218,54 +210,6 @@ export function signInSettings(env: HubEnv): SignInSettings {
     ...(clientId !== undefined && clientSecret !== undefined && { google: { clientId, clientSecret } }),
     ...(allowedEmails !== undefined && { allowedEmails }),
   };
-}
-
-export type DockerSidecarSettings = {
-  socketPath: string;
-  image: string;
-  hubPort: number;
-  size: { memoryBytes?: number; cpus?: number };
-  limits: { maxAllocations?: number };
-};
-
-/** Unset means no Docker driver: workflows that require workload isolation are refused. */
-export function dockerSidecarSettings(env: HubEnv): DockerSidecarSettings | undefined {
-  const { HUB_SIDECAR_DOCKER_SOCKET: socketPath, HUB_SIDECAR_DOCKER_IMAGE: image } = env;
-  if ((socketPath === undefined) !== (image === undefined)) {
-    throw new Error("HUB_SIDECAR_DOCKER_SOCKET and HUB_SIDECAR_DOCKER_IMAGE must be set together");
-  }
-  if (socketPath === undefined || image === undefined) return undefined;
-  // That override writes an adapter entry module into the hub's data dir, which no sidecar image or template has.
-  if (githubApiOrigin(env) !== DEFAULT_GITHUB_API_ORIGIN) {
-    throw new Error("HUB_SIDECAR_DOCKER_SOCKET cannot be combined with GITHUB_API_ORIGIN");
-  }
-  const { HUB_SIDECAR_DOCKER_MEMORY_MB: memoryMb, HUB_SIDECAR_DOCKER_CPUS: cpus, HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS: max } = env;
-  return {
-    socketPath,
-    image,
-    hubPort: Number(env.PORT),
-    size: { ...(memoryMb !== undefined && { memoryBytes: Number(memoryMb) * 1024 * 1024 }), ...(cpus !== undefined && { cpus: Number(cpus) }) },
-    limits: { ...(max !== undefined && { maxAllocations: Number(max) }) },
-  };
-}
-
-export type E2bSettings = { apiKey: string; template: string; limits: { maxAllocations?: number } };
-
-/** Unset means no E2B driver. A sandbox dials the hub from the internet, so the sidecar URL must be public wss. */
-export function e2bSettings(env: HubEnv): E2bSettings | undefined {
-  const { HUB_SIDECAR_E2B_API_KEY: apiKey, HUB_SIDECAR_E2B_TEMPLATE: template } = env;
-  if ((apiKey === undefined) !== (template === undefined)) {
-    throw new Error("HUB_SIDECAR_E2B_API_KEY and HUB_SIDECAR_E2B_TEMPLATE must be set together");
-  }
-  if (apiKey === undefined || template === undefined) return undefined;
-  if (githubApiOrigin(env) !== DEFAULT_GITHUB_API_ORIGIN) {
-    throw new Error("HUB_SIDECAR_E2B_API_KEY cannot be combined with GITHUB_API_ORIGIN");
-  }
-  if (env.HUB_SIDECAR_WEBSOCKET_URL?.startsWith("wss://") !== true) {
-    throw new Error("HUB_SIDECAR_E2B_API_KEY requires a public wss:// HUB_SIDECAR_WEBSOCKET_URL");
-  }
-  const max = env.HUB_SIDECAR_E2B_MAX_ALLOCATIONS;
-  return { apiKey, template, limits: { ...(max !== undefined && { maxAllocations: Number(max) }) } };
 }
 
 export type EmailSettings = { smtpUrl: string; from: string };

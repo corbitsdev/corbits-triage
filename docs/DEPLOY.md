@@ -63,16 +63,7 @@ Unrelated domains without a rewrite (for example `*.vercel.app` and `*.up.railwa
 
 ## Splitting sidecars out later
 
-Sidecars start through drivers registered in `apps/hub/src/server.ts`: local processes first, then Docker when `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE` are set. A workflow that requires `isolation:workload` lands on Docker. Railway gives no Docker socket, so there it needs a Docker host the hub can reach. Sidecars off the hub's machine dial `HUB_SIDECAR_WEBSOCKET_URL`, which should then be `wss://`. See [SIDECAR_DRIVERS.md](SIDECAR_DRIVERS.md).
-
-## Isolated sidecars on E2B
-
-A workflow that requires `isolation:microvm` runs on E2B, one microVM per allocation, when it is configured; one that requires only `isolation:workload` lands on Docker first when both are configured:
-
-1. Build the template from the repo root: `E2B_API_KEY=... bunx @e2b/cli template create corbits-sidecar` (reads `e2b.Dockerfile`; E2B does not take the multi-stage `Dockerfile`). Rebuild it for every hub release.
-2. Set `HUB_SIDECAR_E2B_API_KEY`, `HUB_SIDECAR_E2B_TEMPLATE=corbits-sidecar` and `HUB_SIDECAR_WEBSOCKET_URL=wss://<hub host>/api/sidecars/ws`. A local hub needs a tunnel for that URL, for example `cloudflared tunnel --url http://localhost:3000`. Neither Docker nor E2B can be combined with a `GITHUB_API_ORIGIN` override.
-
-Each sandbox is tagged with its allocation, so a restarted hub finds it again. E2B kills a sandbox one hour after it starts, which bounds what a hub that dies without cleaning up can leak; an allocation that outlives that hour loses its sidecar (Hobby plan cap; not yet extended while held).
+Sidecars start through Interchange's `SidecarProvisioner` interface. The local-process provisioner is registered in `apps/hub/src/server.ts`; a remote provisioner (QEMU, Kubernetes, E2B) replaces it there. Remote sidecars would dial the hub's `/api/sidecars/ws` at `HUB_SIDECAR_WEBSOCKET_URL`. No remote provisioner exists yet, so this is not supported today.
 
 ## Known limitations
 

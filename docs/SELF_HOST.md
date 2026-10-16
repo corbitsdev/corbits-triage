@@ -89,13 +89,7 @@ All optional; the defaults suit most installs.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. The platform's drain time must exceed it. |
-| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address local and E2B sidecars dial; set it (`wss://`) for sidecars on another machine. Docker sidecars always reach the hub's `PORT` through their relay ([SIDECAR_DRIVERS.md](SIDECAR_DRIVERS.md#docker-containment)). |
-| `HUB_SIDECAR_DOCKER_SOCKET` | unset | Docker Engine socket path. With `HUB_SIDECAR_DOCKER_IMAGE`, registers the Docker driver, which runs workflows that require `isolation:workload` ([SIDECAR_DRIVERS.md](SIDECAR_DRIVERS.md)). |
-| `HUB_SIDECAR_DOCKER_IMAGE` | unset | Image built from the `Dockerfile`'s `sidecar` stage. Set together with `HUB_SIDECAR_DOCKER_SOCKET`. |
-| `HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS` | unbounded | Docker sidecars running at once; more wait and retry. |
-| `HUB_SIDECAR_DOCKER_MEMORY_MB`, `HUB_SIDECAR_DOCKER_CPUS` | unbounded | Memory and CPUs of each Docker sidecar. |
-| `HUB_SIDECAR_E2B_API_KEY`, `HUB_SIDECAR_E2B_TEMPLATE` | unset | Set together to add E2B as isolated sidecar capacity ([DEPLOY.md](DEPLOY.md#isolated-sidecars-on-e2b)). Requires a `wss://` `HUB_SIDECAR_WEBSOCKET_URL`. |
-| `HUB_SIDECAR_E2B_MAX_ALLOCATIONS` | unbounded | E2B sandboxes running at once; more wait and retry. |
+| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset: it matters only for sidecars on another machine, which are not supported yet. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `PG_SCHEMA` | default `search_path` | Postgres schema. |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |

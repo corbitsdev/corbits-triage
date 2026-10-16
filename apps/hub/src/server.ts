@@ -36,11 +36,10 @@ import { runCronMigrations } from "@corbits/cron/migrations";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
-import { createSidecarProvisioners, deriveSidecarKey, type PlacedDriver, type SidecarDriver } from "@corbits/provisioner";
-import { createDockerDriver } from "@corbits/provisioner-docker";
-import { createE2bDriver, E2B_API_URL, E2B_SANDBOX_URL } from "@corbits/provisioner-e2b";
-import { createLocalProcessDriver, createLocalSidecarManifestStore, createSpawnLocalSidecar } from "@corbits/provisioner-local";
+import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
+import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
+import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync } from "./github/installation-sync.js";
@@ -53,7 +52,7 @@ import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, dockerSidecarSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -146,10 +145,14 @@ await migrateWebhooks(database, logJson);
 
 const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
-const localDriver = createLocalProcessDriver({
+const local = createLocalProcessSidecarProvisioner({
   dataRoot: localSidecarDataRoot,
   ...(env.HUB_SIDECAR_STOP_TIMEOUT_MS !== undefined && { stopTimeoutMs: Number(env.HUB_SIDECAR_STOP_TIMEOUT_MS) }),
-  spawnSidecar: createSpawnLocalSidecar(V, childProcessEnv(env)),
+  spawnSidecar: createSpawnLocalSidecar({
+    interchangeDir: V,
+    credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
+    processEnv: childProcessEnv(env),
+  }),
   manifests: createLocalSidecarManifestStore({
     dataRoot: localSidecarDataRoot,
     cipher: credentialCipher,
@@ -157,22 +160,6 @@ const localDriver = createLocalProcessDriver({
   }),
   adapterManifest: sidecarAdapterManifest,
   log: logJson,
-});
-const docker = dockerSidecarSettings(env);
-const e2b = e2bSettings(env);
-function withOwnKey(driver: SidecarDriver): PlacedDriver {
-  return { driver, credentialEncryptionKey: deriveSidecarKey(env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY, driver.id) };
-}
-// Placement order: a workflow with no placement rule runs on the hub. Local sidecars keep the root key,
-// which their existing stores are sealed with.
-const sidecars = createSidecarProvisioners([
-  { driver: localDriver, credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY },
-  ...(docker === undefined ? [] : [withOwnKey(createDockerDriver({ ...docker, hostRoot: ROOT, adapterManifest: sidecarAdapterManifest }))]),
-  ...(e2b === undefined ? [] : [withOwnKey(createE2bDriver({ ...e2b, apiUrl: E2B_API_URL, sandboxUrl: E2B_SANDBOX_URL, hubRoot: ROOT }))]),
-], {
-  onUsage(usage) {
-    logJson({ level: "info", msg: "sidecar_usage", ...usage });
-  },
 });
 
 let shuttingDown = false;
@@ -190,8 +177,7 @@ async function shutdown(): Promise<void> {
   coalescer?.stop();
   coordinator?.stop();
   try {
-    await sidecars.drain();
-    await localDriver.stopAll();
+    await local.shutdown();
   } finally {
     process.exit(0);
   }
@@ -212,14 +198,12 @@ const composition = await createInterchangeHub({
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { sendResetPassword: smtp.passwordReset }) },
   credentialCipher,
   adapterManifest: sidecarAdapterManifest,
-  sidecarProvisioners: sidecars.deployment,
-  sidecarProvisionerChooser: sidecars.chooser,
-  probeSidecarProvisioners: sidecars.probe,
-  probeSidecarProvisionerChooser: sidecars.chooser,
+  sidecarProvisioners: [local.provisioner],
+  probeSidecarProvisioners: [local.provisioner],
 });
 const stock = composition.server;
 
-await restoreLocalSidecars(composition.db, localDriver, sidecars.of(localDriver));
+await restoreLocalSidecars(composition.db, local);
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },
