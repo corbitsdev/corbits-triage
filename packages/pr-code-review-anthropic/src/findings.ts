@@ -1,0 +1,125 @@
+/** A line range of the head side of a file. */
+export interface Site {
+  path: string;
+  start: number;
+  end: number;
+}
+
+export interface Finding extends Site {
+  /** The verbatim line the finding names as the cause, when the reply gives one. */
+  code?: string;
+  title?: string;
+  why?: string;
+  trigger?: string;
+}
+
+const TEXT_FIELDS = ["code", "title", "why", "trigger"] as const;
+
+type Parsed = { findings: Finding[] } | { unparsable: string };
+
+// Haiku sometimes ends a finding with a stray key and no value: `"trigger": "...", "}"}]}`.
+function withoutStrayKeys(json: string): string {
+  return json.replace(/,\s*"\}"\s*\}/g, "}");
+}
+
+function parseJson(json: string): unknown {
+  try {
+    return JSON.parse(json);
+  } catch {
+    try {
+      return JSON.parse(withoutStrayKeys(json));
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+/** The first balanced JSON object in `text` that parses. */
+function firstJsonObject(text: string): unknown {
+  for (let open = text.indexOf("{"); open !== -1; open = text.indexOf("{", open + 1)) {
+    const close = closingBrace(text, open);
+    if (close === -1) return undefined;
+    const json = parseJson(text.slice(open, close + 1));
+    if (json !== undefined) return json;
+  }
+  return undefined;
+}
+
+function closingBrace(text: string, open: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function lineOf(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value);
+  return undefined;
+}
+
+function firstOf(item: Record<string, unknown>, keys: readonly string[]): unknown {
+  return keys.map((key) => item[key]).find((value) => value !== undefined);
+}
+
+const PATH_KEYS = ["path", "file", "filename", "file_path", "filePath"];
+const START_KEYS = ["start", "start_line", "startLine", "line_start", "lineStart", "line", "line_number", "lineNumber"];
+const END_KEYS = ["end", "end_line", "endLine", "line_end", "lineEnd"];
+
+/** A line, or a range written as "120-122", "L120-L122" or [120, 122]. */
+function rangeOf(value: unknown): [number, number] | undefined {
+  const line = lineOf(value);
+  if (line !== undefined) return [line, line];
+  if (Array.isArray(value) && value.length > 0) {
+    const [start, end] = [lineOf(value[0]), lineOf(value[value.length - 1])];
+    return start === undefined || end === undefined ? undefined : [start, end];
+  }
+  const match = typeof value === "string" ? /^L?(\d+)(?:\s*[-:]\s*L?(\d+))?$/.exec(value.trim()) : null;
+  return match ? [Number(match[1]), Number(match[2] ?? match[1])] : undefined;
+}
+
+/** Any finding shape with a path and a line or a line range, flat or under `location`. */
+function findingOf(raw: unknown): Finding | undefined {
+  if (!isRecord(raw)) return undefined;
+  const item = isRecord(raw.location) ? { ...raw, ...raw.location } : raw;
+  const path = firstOf(item, PATH_KEYS);
+  if (typeof path !== "string") return undefined;
+  const range = rangeOf(firstOf(item, ["lines", "line_range", "lineRange", "range"])) ?? rangeOf(firstOf(item, START_KEYS));
+  if (!range) return undefined;
+  const [start, rangeEnd] = range;
+  const end = lineOf(firstOf(item, END_KEYS)) ?? rangeEnd;
+  const finding: Finding = { path: path.replace(/^(\.\/|[ab]\/)/, ""), start: Math.min(start, end), end: Math.max(start, end) };
+  for (const field of TEXT_FIELDS) if (typeof item[field] === "string") finding[field] = item[field];
+  return finding;
+}
+
+/** The findings array: the first array of objects in the reply's first JSON object. */
+export function parseFindings(reply: string): Parsed {
+  const json = firstJsonObject(reply);
+  if (!isRecord(json)) return { unparsable: "no JSON object" };
+  const list = Object.values(json).find((value) => Array.isArray(value) && value.every(isRecord));
+  if (!Array.isArray(list)) return { unparsable: "no findings array" };
+  return { findings: list.map(findingOf).filter((finding) => finding !== undefined) };
+}
+
+/** Every file the diff adds, changes or deletes, by its head-side path, or its base-side path when deleted. */
+export function changedFiles(diff: string): string[] {
+  return [...new Set([...diff.matchAll(/^(?:\+\+\+ b\/|--- a\/)(.+)$/gm)].map((match) => match[1]!))];
+}
+
+/** Whether two paths name the same file, one possibly given relative to a subdirectory of the other's root. */
+export function samePath(a: string, b: string): boolean {
+  return a !== "" && b !== "" && (a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`));
+}

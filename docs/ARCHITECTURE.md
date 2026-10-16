@@ -113,6 +113,13 @@ executes and ends.
   not deployed by the hub yet; proposing rules, replaying them and opening the
   policy pull request come next.
 
+- `pr-code-review-github` and `pr-code-review-bitbucket-datacenter`
+  (`@corbits/pr-code-review-anthropic`): one mail names one pull request
+  (title, description, diff, and the host, repository and head sha to read)
+  and the run returns a review: a summary and comments anchored to lines.
+  Both are built by `prCodeReview({ sources })` and bind only their host's
+  read credential. Nothing mails them or posts their review yet.
+
 The bridge and the reconciler find the target by workflow name per tenant; no
 deployment ids are configured anywhere.
 
@@ -169,6 +176,35 @@ execute and mirror reach GitHub through the GitHub tool's credential, so on
 this Interchange pin they run as directors until actions can reach a bound
 credential. Downstream work on a pull request is its own workflow, never a
 step here.
+
+## Code review pipeline
+
+The pipeline looks for defects with two finders, then drops every candidate
+it cannot ground in the code before a model confirms it. Steps that call a
+model take their effort from the request.
+
+1. **plan**: names the risky changed areas and the code outside the diff they
+   depend on.
+2. **findDiff** and **findRepo**, in parallel: the diff finder reads the diff
+   in one call. The repository finder checks the head out into the step's
+   working tree with the host bundle's `*_checkout` and reads it with the
+   confined `read_file`, `grep` and `list` tools until its budget of billable
+   tokens is spent; a review whose reader ran out says it stopped early.
+3. **gather** (director, no model): reads the files the candidates cite, the
+   first 20, at the head through the host's `*_read_file`.
+4. **merge** (action): keeps a candidate only when its quoted line is in the
+   file, moves it onto that line, and drops repeats of the same code.
+5. **converge**: groups candidates that one edit would fix, and picks a
+   representative for each group.
+6. **check**: one call per group, over the candidate and the file lines around
+   it; only `real` verdicts go on.
+7. **write**: a summary of the change from its title, description and changed
+   files, and one comment per confirmed defect.
+
+The structured steps (plan, converge, check, write) answer against a JSON
+schema. Checkout and file reads reach the host through its bound credential,
+so, as with triage's facts step, they run in directors. The eval and its
+numbers are in `packages/pr-code-review-anthropic/evals/README.md`.
 
 ## Tenancy and authority
 

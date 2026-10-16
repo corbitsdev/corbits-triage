@@ -1,0 +1,30 @@
+{
+  "name": "@corbits/pr-code-review-anthropic",
+  "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "interchange": {
+    "workflow": "./src/pr-code-review.ts",
+    "directors": "./src/directors.ts",
+    "actions": "./src/actions/index.ts",
+    "workflows": {
+      "pr-code-review": "./src/pr-code-review.ts",
+      "pr-code-review-github": "./src/pr-code-review-github.ts",
+      "pr-code-review-bitbucket-datacenter": "./src/pr-code-review-bitbucket-datacenter.ts"
+    }
+  },
+  "dependencies": {
+    "@corbits/bitbucket-datacenter-tool": "workspace:*",
+    "@corbits/github-tool": "workspace:*",
+    "@corbits/repo-read-tool": "workspace:*",
+    "@corbits/triage-contracts": "workspace:*",
+    "@intx/agent": "workspace:*",
+    "@intx/log": "workspace:*",
+    "@intx/types": "workspace:*",
+    "@intx/workflow": "workspace:*",
+    "arktype": "catalog:"
+  }
+}
