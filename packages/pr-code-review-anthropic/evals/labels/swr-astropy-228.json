@@ -1,0 +1,37 @@
+{
+  "id": "swr-astropy-228",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "The new IOError message has placeholders {0} and {1} only but format() is passed three arguments, so ext.name is silently dropped and the error never names the extension whose C file is missing.",
+      "sites": [
+        {
+          "path": "astropy/setup_helpers.py",
+          "start": 320,
+          "end": 322
+        }
+      ],
+      "reach": "diff",
+      "evidence": "astropy/setup_helpers.py:320-322 'Could not find C file {0} for Cython file {1}; ' ... 'checkout'.format(cfn, pyxfn, ext.name) -- the removed log.warn used {2} for ext.name. Fix commit 0b6d11b changed the message to '... for Cython file {1} when building extension {2}. '.",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "cluster (R1 07,13,19,22,24; R2 12,v-grounding-low): missing .c file now aborts the whole build instead of skipping one extension",
+      "why": "Intended behaviour: PR #228 is titled 'Should missing .c files from .pyx raise an error?' and argues a missing C file means a broken build, so raising is the purpose of the change."
+    },
+    {
+      "was": "R2 v-every-instance-medium, v-grounding-high, v-no-speculation-exclusion-high/medium: raises even when Cython is installed",
+      "why": "Wrong claim: the loop sits under `if not HAVE_CYTHON:` (astropy/setup_helpers.py:305), so it only runs when Cython is absent."
+    },
+    {
+      "was": "R1 22, 24; R2 22-medium: IOError is a generic/weak exception type; message lacks an install command",
+      "why": "Style; no behavioural defect."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 4
+}

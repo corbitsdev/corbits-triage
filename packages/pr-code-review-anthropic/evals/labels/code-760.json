@@ -1,0 +1,79 @@
+{
+  "id": "code-760",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "A process that dies while holding the new credential lock file (crash, SIGKILL) leaves the lock behind with no holder tag or staleness check, so every later saveProfile/updateTokens/removeProfile times out after 1s until the user deletes the file by hand.",
+      "sites": [
+        {
+          "path": "src/auth/oauth/store.ts",
+          "start": 123,
+          "end": 123
+        },
+        {
+          "path": "src/auth/oauth/store.ts",
+          "start": 128,
+          "end": 136
+        },
+        {
+          "path": "src/auth/oauth/store.ts",
+          "start": 146,
+          "end": 146
+        }
+      ],
+      "reach": "intent",
+      "evidence": "src/auth/oauth/store.ts:123 `lock = await open(lockPath, \"wx\", 0o600)` writes no holder PID; :128-136 on EEXIST only waits until the deadline then throws 'remove this lock file manually'; :146 unlinks unconditionally. Fix PR #1194 (CL-8998, 'Stale ... credential-file locks from crashed holders brick the auth store until manual removal') writes a `pid:counter` claim into the lock, adds isLockStale/isPidAlive takeover in the EEXIST branch, and checks ownership before unlinking. The four original labels (123, 129-134, 136, 141-146) are sites of this one bug and are merged. Likely, not certain: the PR states the fail-closed orphan lock is deliberate ('Preserve orphan locks for manual recovery'); it is a defect by the later product decision in #1194, hence reach intent.",
+      "confidence": "likely"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "bake-off cluster (~10 prompts): fixed 1s lock timeout fails legitimate contended writers",
+      "why": "The critical section is one small read/write/rename and the PR's 17-process test passes under it; no input shown that exceeds 1s. Follow-up #906 (CL-7318) later queued same-process writers so a slow holder does not fail a whole burst, but that is a robustness change, not a defect shown from this code."
+    },
+    {
+      "was": "bake-off cluster (~9 prompts): lock.close()/unlink() in finally can mask the callback's result or error",
+      "why": "unlink of the lock only fails if the file was removed by someone else; under this PR nothing removes another holder's lock except a manual delete the error text tells users to do only when no process runs. No reachable trigger in normal operation."
+    },
+    {
+      "was": "bake-off findings (19, 06): release unlinks the lock without verifying ownership",
+      "why": "Without lock stealing in this PR no other process can replace a held lock; the concern only arises with the takeover added in #1194 (where ownership checks were added). Not a defect here."
+    },
+    {
+      "was": "round2 findings (v-code-field-medium) and bake-off 06: updateTokens now throws on lock timeout, losing freshly rotated tokens",
+      "why": "Only reachable when a live holder exceeds 1s (no shown trigger; same as the rejected timeout cluster) or an orphan lock exists, which is b1's consequence, not a separate bug."
+    },
+    {
+      "was": "bake-off 00/22, round2 v-grounding-high: timeout message tells the user to delete a lock that may belong to a live process",
+      "why": "The message conditions removal on 'If no Corbits process is running'; a live holder releases within one small read/write/rename, so the timeout path implies an orphan (b1)."
+    },
+    {
+      "was": "bake-off 13/21, round2 v-no-speculation-exclusion-medium: concurrency test can flake under load",
+      "why": "Test-only timing speculation; no failing run shown, the PR reports the test passing."
+    },
+    {
+      "was": "round2 (v-sweep-high, v-no-speculation-exclusion-medium): child stderr read only after exit can deadlock",
+      "why": "Test-only speculation; children write only a short error on failure, far below any pipe buffer."
+    },
+    {
+      "was": "round2 (v-every-instance-high, v-code-field-high, 12-medium) and bake-off 19: test asserts a sorted profile order the store does not produce",
+      "why": "Wrong claim: store.ts:154 listProfiles returns `.sort((a, b) => a.name.localeCompare(b.name))`, which matches the expected order for these ASCII names."
+    },
+    {
+      "was": "round2 22-medium: lock timeout thrown without logError/errorId",
+      "why": "Style/telemetry convention; the error surfaces to the caller with a clear message."
+    },
+    {
+      "was": "round2 v-no-speculation-exclusion-high: fixture barrier wait has no timeout",
+      "why": "Test fixture only; the parent writes the barrier unconditionally in the try block after spawning."
+    },
+    {
+      "was": "bake-off 24: fixture validates the operation only after the barrier",
+      "why": "Style; fixture misuse diagnostics, no behaviour defect."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 12
+}

@@ -1,0 +1,187 @@
+{
+  "id": "martian-grafana-106778",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "List-view rows now pass only promRule to RuleActionsButtons, so for a Grafana alerting rule the menu shows 'Silence notifications' (enabled by the new prom-rule abilities) but the drawer is gated on a ruler rule that is never present, and clicking it does nothing.",
+      "sites": [
+        {
+          "path": "public/app/features/alerting/unified/rule-list/components/RuleActionsButtons.V2.tsx",
+          "start": 104,
+          "end": 106
+        }
+      ],
+      "reach": "repo",
+      "evidence": "GrafanaRuleListItem.tsx:47 `<RuleActionsButtons promRule={rule} groupIdentifier={groupIdentifier} compact />` (no rule). AlertRuleMenu.tsx:94-96 `canSilence = ... || (grafanaSilenceSupported && grafanaSilenceAllowed)` and :126-131 render the item with onClick=handleSilence; useAbilities.ts:323 `[AlertRuleAction.Silence]: [silenceSupported, canSilenceInFolder && isAlertingRule]` for prom rules. RuleActionsButtons.V2.tsx:104-105 (unchanged by the PR) `{rulerRuleType.grafana.alertingRule(rule) && showSilenceDrawer && <SilenceGrafanaRuleDrawer rulerRule={rule} .../>}`; utils/rules.ts:58-63 isGrafanaRulerRule(undefined) is false, and SilenceGrafanaRuleDrawer.tsx:11-12 requires `rulerRule: RulerGrafanaRuleDTO`. Upstream main later replaced the gate with `silenceableRule` and `ruleUid`. Golden comment (Martian grafana.json). No round-1 or round-2 finding targeted this site.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b2",
+      "source": "original",
+      "summary": "The PR drops the key prop when FilterView renders GrafanaRuleListItem inside rules.map, so React warns and reconciles Grafana rows by index as filter results stream in.",
+      "sites": [
+        {
+          "path": "public/app/features/alerting/unified/rule-list/FilterView.tsx",
+          "start": 157,
+          "end": 162
+        }
+      ],
+      "reach": "diff",
+      "evidence": "FilterView.tsx:151-163 `rules.map(...) case 'grafana': return (<GrafanaRuleListItem rule={rule} ... />)` with no key; the removed GrafanaRuleLoader had `key={key}`, and the sibling cases at :165 and :169 still pass `key={key}`. Golden comment. Matches R2 composite-medium, v-code-field-high, v-grounding-medium.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b3",
+      "source": "added",
+      "summary": "In the list view the Pause/Resume and Delete menu items disappear for Grafana rules: canPause/canDelete are now computed from the prom rule, but both items still require a ruler rule, which list rows no longer pass.",
+      "sites": [
+        {
+          "path": "public/app/features/alerting/unified/components/rule-viewer/AlertRuleMenu.tsx",
+          "start": 123,
+          "end": 125
+        },
+        {
+          "path": "public/app/features/alerting/unified/components/rule-viewer/AlertRuleMenu.tsx",
+          "start": 165,
+          "end": 165
+        }
+      ],
+      "reach": "repo",
+      "evidence": "AlertRuleMenu.tsx:81-83 canPause includes grafanaPauseAbility; :123 `{canPause && rulerRuleType.grafana.rule(rulerRule) && ...}` (unchanged) with rulerRule undefined from GrafanaRuleListItem.tsx:47 -> RuleActionsButtons.V2.tsx:95. Before the PR GrafanaRuleLoader passed `rule={rulerRule}`, so the item showed. Likely rather than certain: dropping pause could be an accepted cost of removing ruler calls, but the PR computes the prom pause ability, and upstream main later gated the item on `ruleUid` instead. Delete is the same: AlertRuleMenu.tsx:87 canDelete includes grafanaDeleteAbility, :165 `{canDelete && rulerRule && (` hides it; upstream main now renders `{canDelete && (` and gates pause on `ruleUid`. The PR's own GrafanaGroupLoader.test.tsx:206 asserts exactly 4 menu items although the test grants delete permission, which encodes this loss (the cluster of 'menu item count ignores Delete' findings matches this entry).",
+      "confidence": "likely"
+    },
+    {
+      "id": "b4",
+      "source": "added",
+      "summary": "useAllAlertRuleAbilities (used for CombinedRule by the v1 list and rule viewer via useAlertRuleAbility) now delegates to useAllRulerRuleAbilities, whose isFederated is hard-coded false, so rules in Mimir federated rule groups (source_tenants) become editable, deletable and pausable where they were immutable before.",
+      "sites": [
+        {
+          "path": "public/app/features/alerting/unified/hooks/useAbilities.ts",
+          "start": 227,
+          "end": 228
+        },
+        {
+          "path": "public/app/features/alerting/unified/hooks/useAbilities.ts",
+          "start": 244,
+          "end": 245
+        }
+      ],
+      "reach": "diff",
+      "evidence": "Removed line in useAllAlertRuleAbilities: `const isFederated = isFederatedRuleGroup(rule.group);` feeding `immutableRule = isProvisioned || isFederated || isPluginProvided`. Head useAbilities.ts:227-228 `return useAllRulerRuleAbilities(rule.rulerRule, groupIdentifierV2)` and :244-245 `// const isFederated = isFederatedRuleGroup(); const isFederated = false;` (with a TODO). The isFederatedRuleGroup import is removed. Likely rather than certain: upstream main still has the TODO and isFederated=false, so the maintainers may accept the gap, but the PR description does not mention dropping it.",
+      "confidence": "likely"
+    },
+    {
+      "id": "b5",
+      "source": "added",
+      "summary": "The Grafana rule list item's view link drops the returnTo parameter the removed GrafanaRuleListItem added, so the back button on a Grafana rule's page goes to the unfiltered /alerting/list instead of the filtered list the user came from (datasource rows still pass returnTo).",
+      "sites": [
+        {
+          "path": "public/app/features/alerting/unified/rule-list/GrafanaRuleListItem.tsx",
+          "start": 40,
+          "end": 40
+        }
+      ],
+      "reach": "repo",
+      "evidence": "Removed GrafanaRuleLoader.tsx: `const returnTo = createReturnTo();` ... `href: createRelativeUrl(`/alerting/grafana/${uid}/view`, { returnTo })`. Head GrafanaRuleListItem.tsx:40 `href: createRelativeUrl(`/alerting/grafana/${uid}/view`)`. RuleViewer.tsx:96 `const { returnTo } = useReturnTo('/alerting/list')` feeds the back LinkButton (:123, :304). DataSourceRuleListItem.tsx:36-42 still builds the link with createReturnTo(). Likely rather than certain: upstream main still omits returnTo for Grafana rows, so it may be an accepted simplification.",
+      "confidence": "likely"
+    },
+    {
+      "id": "b6",
+      "source": "added",
+      "summary": "For non-Grafana rules AlertRuleMenu passes skipToken, but useAllGrafanaPromRuleAbilities(undefined) still reports Duplicate as supported and allowed whenever the user holds the Grafana alert.rules:create permission; OR-ed into canDuplicate, the Duplicate item now shows for datasource rules the ruler path denies (no ruler, or no external-write permission).",
+      "sites": [
+        {
+          "path": "public/app/features/alerting/unified/hooks/useAbilities.ts",
+          "start": 309,
+          "end": 318
+        },
+        {
+          "path": "public/app/features/alerting/unified/components/rule-viewer/AlertRuleMenu.tsx",
+          "start": 91,
+          "end": 92
+        }
+      ],
+      "reach": "diff",
+      "evidence": "useAbilities.ts:354-355 useIsGrafanaPromRuleEditable(undefined) returns loading:false; :309 `MaybeSupported = loading ? NotSupported : AlwaysSupported`; :313 duplicateSupported = MaybeSupported; :318 `[Duplicate]: toAbility(duplicateSupported, rulesPermissions.create)` with getRulesPermissions('grafana'). AlertRuleMenu.tsx:91-92 `canDuplicate = (duplicateSupported && duplicateAllowed) || (grafanaDuplicateSupported && grafanaDuplicateAllowed)`. Ruler path for a datasource rule: duplicateSupported = isRulerAvailable (:253,:257) and the external-write permission. Upstream later rewrote this as usePromRuleAdministrationAbility, which returns NotSupported for every action on skipToken (hooks/abilities/rules/promRuleAbilities.ts:55-62). Matches R2 v-sweep-medium, v-grounding-low/high, 01-medium, v-code-field-high, composite-low, 22-medium (Duplicate fail-open).",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "R2 01,12,21,v-code-field-*,v-grounding-*,v-no-speculation-*: possibly undefined rulerRule/rule passed to useRulerRuleAbility(ies)",
+      "why": "Both signatures accept `RulerRuleDTO | undefined` at head (useAbilities.ts:195-197, :207-209) and useAllRulerRuleAbilities handles undefined; no runtime or type error."
+    },
+    {
+      "was": "R2 00,v-code-field-high,v-grounding-high,v-no-speculation-high: isPluginProvidedRule given a GrafanaPromRuleDTO",
+      "why": "utils/rules.ts:239-273 getRulePluginOrigin accepts PromRuleDTO and reads rule.labels, which the prom DTO carries."
+    },
+    {
+      "was": "R2 00 (rules.ts:171), v-code-field-medium: isProvisionedPromRule reads provenance from a type that may not declare it / is passed a Rule",
+      "why": "The PR adds provenance to GrafanaPromRuleDTOBase and the backend serialises it (pkg/.../definitions/prom.go:188 `Provenance ... json:\"provenance,omitempty\"`); type-only concern."
+    },
+    {
+      "was": "R2 v-no-speculation-high, v-every-instance-low: prom abilities limit ModifyExport/Pause/Restore to alerting rules, dropping Grafana recording rules",
+      "why": "Unverified as a defect: upstream's later rewrite keeps the same alertingOnly gating (promRuleAbilities.ts:92, :136), indicating intent."
+    },
+    {
+      "was": "R2 22-medium: folder lookup failure treated as permission denial",
+      "why": "Same as the existing ruler path (useIsRuleEditable returns not editable without a folder); not introduced."
+    },
+    {
+      "was": "R2 v-every-instance-low: stray '// duplicate' comment on useIsGrafanaPromRuleEditable",
+      "why": "Style."
+    },
+    {
+      "was": "R2 v-grounding-low: Silence ability for an undefined rule can be true",
+      "why": "Wrong: useAbilities.ts Silence = [silenceSupported, canSilenceInFolder && isAlertingRule]; isAlertingRule(undefined) is false."
+    },
+    {
+      "was": "R2 12-medium: unguarded type guards on a possibly undefined rule",
+      "why": "prometheusRuleType guards and isPluginProvidedRule accept undefined."
+    },
+    {
+      "was": "R2 v-every-instance-*, v-no-speculation-medium: logWarning called during render",
+      "why": "Only on the no-identifier path (datasource promRule without ruler rule), an analytics log; no user-visible defect."
+    },
+    {
+      "was": "R2 22-medium: RuleActionsButtons returns null silently when no identifier",
+      "why": "Unreachable for inputs that worked before: the props previously required a ruler rule, which still yields an identifier."
+    },
+    {
+      "was": "R2 v-every-instance-low: edit permission from prom rule while identifier comes from ruler rule",
+      "why": "Both describe the same rule; identifier and ability refer to one uid."
+    },
+    {
+      "was": "R2 12-medium: per-row fan-out of ability hooks",
+      "why": "Performance speculation; the PR removes per-row ruler requests."
+    },
+    {
+      "was": "R2 22-medium, v-every-instance-low: rule-not-found/ruler-error handling and Creating/Deleting states removed with matchRules",
+      "why": "Intended: the PR's purpose is removing ruler requests from list view v2."
+    },
+    {
+      "was": "R2 22-medium: matchRules unit tests deleted",
+      "why": "Tests of removed code; process."
+    },
+    {
+      "was": "R2 22-medium: Prometheus fetch error replaced by a generic alert",
+      "why": "Base showed the same generic Alert when both responses were missing; no change in error detail."
+    },
+    {
+      "was": "R2 v-no-speculation-low, v-grounding-medium: labels lose their {} default; ruler is_paused fallback dropped",
+      "why": "AlertRuleListItem guards `labels && labelsSize(labels) > 0` (:107); isPaused is a required boolean on GrafanaPromRuleDTOBase."
+    },
+    {
+      "was": "R2 v-grounding-low: FilterView rule prop type may not match",
+      "why": "FilterView's grafana rules come from the Grafana prom groups generator as GrafanaPromRuleDTO; no mismatch shown."
+    },
+    {
+      "was": "R2 v-no-speculation-medium: ruler abilities evaluated with an undefined rule are OR-ed in for Grafana list rows",
+      "why": "For a Grafana group the ruler path with no rule grants at most Duplicate (isRulerAvailable true + create permission), which the Grafana path grants for the same rule anyway; no action is exposed that should be hidden."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 23
+}

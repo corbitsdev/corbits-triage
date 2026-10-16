@@ -1,0 +1,81 @@
+{
+  "id": "triage-66",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "added",
+      "summary": "When rendering throws for an item that has facts, the degraded fallback verdict is now stamped from `undefined` instead of the item's facts, so it and its mirror request name repo \"\", number 0 and no head instead of the pull request it is about.",
+      "sites": [
+        {
+          "path": "packages/triage-workflows/src/directors.ts",
+          "start": 302,
+          "end": 302
+        }
+      ],
+      "reach": "diff",
+      "evidence": "Base directors.ts:290 built the render-failure verdict with `repo: it.facts?.repo ?? \"\", number: it.facts?.number ?? 0`; head packages/triage-workflows/src/directors.ts:302 uses `...stamp(undefined)`, and stamp (:287-289) maps undefined to `repo: \"\", number: 0, headSha: null`. The catch is reached when parseAnswers/renderVerdict throw (:298-299), where it.facts is present; the stamp doc comment (:286) only justifies dropping identity when facts are missing. `toMirrorRequest(verdict)` (:303) then carries the empty identity. Flagged by 00, 07, 08, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 24.",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "original: redo only verdicts the decision model was never asked about (reconcile-plan.ts:11, :127, :146, :151; triage-runs.ts:79, :87, :89-90)",
+      "why": "Product redirection, not a defect of this diff. Fix PR #85 (CL-10305) (a) stops treating rows with no recorded version as stale, reversing behaviour this PR states as intended ('Rows with no recorded version count as older than any versioned deployment, so pull requests triaged before this change are refreshed five at a time'), and (b) adds a new 'model not asked' redo reason that this PR never claimed. :11 and :79 are doc comments; :127/:146/:151 and :87/:89-90 are where #85 inserted the new rule."
+    },
+    {
+      "was": "bake-off + round 2 cluster (00, 13, 19, 22, 23, r2 00, 22, composite, v-code-field, v-every-instance, v-sweep): deployment workflowVersion is the first verdict seen, not the newest",
+      "why": "triage-runs.ts relies on the stated invariant that every verdict in one deployment's log names the same version (ObservedRuns doc); no path shown where a log mixes versions. Even then the effect is a missed reset (fresh() returns prior), not wrong data."
+    },
+    {
+      "was": "bake-off cluster (4 prompts: 02, 06, 22, 23) + round 2 (00, 21, composite-low, v-sweep-low): runs settled by the stock lifecycle (triage-runs.ts:162-166) lose unsettled reason and verdict version",
+      "why": "Pre-existing: base already rebuilt these runs as `terminal: { status }`, dropping the degraded reason. These runs have no terminal event in the log, so there is no parsed verdict to carry; not introduced here. Also the claim that a completed degraded/wrong-head run then counts as settled is wrong: readSettled (triage-runs.ts:107-116) is only asked about open runs (terminal undefined, :159) and returns only failed/cancelled statuses."
+    },
+    {
+      "was": "bake-off + round 2 (01, 06, 18, r2 00, 22, v-code-field, v-sweep, v-no-speculation-exclusion): unconfirmed-check delay measured from run start, not from the verdict",
+      "why": "The PR states the wait as before the first retry after the run; hub-queued heads are also gated by queuedAt + backoff (base 5 min, reconcile-plan.ts:144) and mergeability takes seconds to compute, so measuring from run start loses nothing observable. Not a defect."
+    },
+    {
+      "was": "round 2 (v-code-field-medium): unconfirmedRetryMs required but may be missing at runtime, giving NaN",
+      "why": "Required field of ReconcilePolicy; the only production policy is DEFAULT_RECONCILE_POLICY (apps/hub/src/server.ts:286), which sets it (reconcile-plan.ts:49). Speculation."
+    },
+    {
+      "was": "bake-off (05, 12): failed/new rows with no recorded version get attempts reset once the deployment is versioned, bypassing the cap",
+      "why": "Intended per PR ('Rows with no recorded version count as older than any versioned deployment'); fresh stamps the version on reset (reconcile-plan.ts:154), so it happens at most once per head, not a loop."
+    },
+    {
+      "was": "round 2 (composite-low): isDue skips the unconfirmed delay when the verdict run is not in the live log",
+      "why": "Falls back to queuedAt + backoff (>= 5 min base), and known runs are retained in memory; no observable early retry shown."
+    },
+    {
+      "was": "round 2 (22): rollback stamps an older version onto rows, causing re-triage on the next upgrade",
+      "why": "Verdicts made under the rolled-back version should be redone after upgrading; that is the purpose of the version stamp. Intended."
+    },
+    {
+      "was": "bake-off (22): unconfirmed-check heads exhaust attempts with no user-facing signal",
+      "why": "Intended and tested ('retried after its own delay, up to the attempt cap'); the reason is kept in the row error and logged on each requeue."
+    },
+    {
+      "was": "bake-off (06): reset row keeps a 'verdict from workflow version' error while status is new",
+      "why": "Deliberate: planTenant uses row.error as the requeue reason (reconcile-plan.ts:208) and the test asserts it."
+    },
+    {
+      "was": "bake-off (22, 00) : a non-degraded verdict with null/absent headSha settles any head",
+      "why": "Non-degraded verdicts always carry facts.headSha as a string (facts.ts:68, stamp :288); null only comes from stamp(undefined) on degraded verdicts, which unsettledBy rejects first. Absent headSha is the documented legacy case (triage-runs.ts:87 comment)."
+    },
+    {
+      "was": "round 2 (v-code-field-low, composite-medium, 22): missing check name rendered as 'undefined' in the reason",
+      "why": "Every machine check is built with a check name (packages/triage-workflows/src/logic/checks.ts:175). Speculation."
+    },
+    {
+      "was": "round 2 (composite-medium, v-no-speculation-exclusion-low): stored workflowVersion not validated as non-negative",
+      "why": "The hub only writes PR_TRIAGE_WORKFLOW_VERSION-derived values; a negative would need corrupted storage. Speculation."
+    },
+    {
+      "was": "round 2 (22): facts-error branch in renderDirector.verdictOf runs outside the try/catch",
+      "why": "degradedVerdict and toMirrorRequest were already called unprotected in the base catch branch; no input shown that makes them throw."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 14
+}

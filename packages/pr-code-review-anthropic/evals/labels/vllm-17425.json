@@ -1,0 +1,46 @@
+{
+  "id": "vllm-17425",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "The profiling warnings pass self._get_mm_num_tokens(mm_inputs), a dict, as a format arg to logger.warning_once, which is the lru_cache-wrapped _print_warning_once, so when the V0 profiling length check fires it raises TypeError: unhashable type: 'dict' instead of logging.",
+      "sites": [
+        {
+          "path": "vllm/multimodal/profiling.py",
+          "start": 224,
+          "end": 224
+        },
+        {
+          "path": "vllm/multimodal/profiling.py",
+          "start": 249,
+          "end": 249
+        }
+      ],
+      "reach": "repo",
+      "evidence": "profiling.py:224 and :249 pass `self._get_mm_num_tokens(mm_inputs)`; _get_mm_num_tokens returns a dict comprehension (profiling.py:185-194); logger.warning_once is bound to `_print_warning_once` via MethodType (logger.py:133-139), which is `@lru_cache` (logger.py:61-64) so all args are hashed for the cache key. Fixed within the same PR by commit 7830858f ('chore: make it hashable'), which wraps both args in str(...); reviewer DarkLight1337: 'It doesn't work because the function is wrapped in lru_cache'. Model findings that flag the generic 'unhashable *args through lru_cache' at logger.py:55-75 (R2: 00,01,12,22,composite-*,v-*) describe this same defect at its root; the concrete trigger at head is the dict at profiling.py:224/:249.",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "AACR: lru_cache keyed on *args breaks 'print once' semantics (logger.py:55-58) (also R2 00,21,22,v-every-instance-low,v-no-speculation-medium,v-sweep-low)",
+      "why": "Not a regression: before the PR call sites embedded the values in f-strings, so the cache key already differed per value; dedupe semantics are unchanged."
+    },
+    {
+      "was": "AACR: unbounded lru_cache growth with dynamic args (logger.py:55-58) (also R2 21,v-sweep-low)",
+      "why": "Same as above: the pre-PR f-string messages already produced one cache entry per distinct value."
+    },
+    {
+      "was": "AACR: weight_utils warning_once may not accept *args (weight_utils.py:718-721)",
+      "why": "warning_once accepts *args at head (logger.py:83-88) and forwards them to logger.warning."
+    },
+    {
+      "was": "AACR: %s vs %d for token counts; double space before noqa (also R2 12: '#  noqa' double space)",
+      "why": "Style only; %s formats any value correctly. flake8 matches '#\\s*noqa', so the double space still suppresses E501."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 5
+}

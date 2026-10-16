@@ -1,0 +1,83 @@
+{
+  "id": "gofr-1696",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "ServeHTTP swaps the shared container's Logger for a per-request ContextLogger and restores it in a defer; with concurrent requests (net/http serves each on its own goroutine, all handlers share one *container.Container) this is a data race: request A's handler code (c.Logger, and the goroutine's h.container.Logger at :87/:91) logs with request B's trace ID, and interleaved restores can leave another request's ContextLogger installed permanently, stamping a stale trace ID on all later logs.",
+      "sites": [
+        {
+          "path": "pkg/gofr/handler.go",
+          "start": 71,
+          "end": 75
+        },
+        {
+          "path": "pkg/gofr/handler.go",
+          "start": 87,
+          "end": 87
+        },
+        {
+          "path": "pkg/gofr/handler.go",
+          "start": 91,
+          "end": 91
+        }
+      ],
+      "reach": "repo",
+      "evidence": "handler.go:71-75 `origLogger := h.container.Logger; ... h.container.Logger = ctxLogger; defer func() { h.container.Logger = origLogger }()`. The container is one shared pointer: handler.go:41 `container *container.Container`, rest.go:45-47 every route gets `handler{..., container: a.container}`, gofr.go:106-108 same for catch-all; context.go:25/144 Context embeds that *container.Container so handler code's c.Logger reads the mutated field; container.go:44 Logger is a plain embedded interface field with no lock. Interleaving A sets ctxA (orig=base), B sets ctxB (orig=ctxA), A restores base, B restores ctxA leaves ctxA installed forever. AACR human Repo-Level comment on handler.go:66-73 plus AI comment on :86-91. The same PR's final head 0cdac32a89 fixed it by keeping a per-request logger on the Context (`reqLogger := logging.NewContextLogger(c, h.container.Logger); c.ContextLogger = *reqLogger`) and no longer writing h.container.Logger.",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "AACR AI comment: formatted methods (Infof etc.) append the trace map to args and break format strings (ctx_logger.go:37)",
+      "why": "logger.go:72 extractTraceIDAndFilterArgs strips the __trace_id__ map before logger.go:81 fmt.Sprintf(format, filteredArgs...); formatted output is unaffected."
+    },
+    {
+      "was": "AACR AI comment: extractTraceIDAndFilterArgs only matches map[string]any (logger.go:254-264)",
+      "why": "The map is produced internally by ContextLogger.withTraceInfo as map[string]any (ctx_logger.go:31); other map types are user args and correctly pass through. Not a defect."
+    },
+    {
+      "was": "AACR AI comment: h.container.Logger at handler.go:86-91 should be the local ctxLogger",
+      "why": "Same race as b1; merged as sites of b1."
+    },
+    {
+      "was": "model cluster: shared container logger swap races / leaks trace IDs (handler.go:66-79, ~25 findings)",
+      "why": "Matches b1."
+    },
+    {
+      "was": "model cluster: handler goroutine reads h.container.Logger after the deferred restore on timeout (handler.go:84-96)",
+      "why": "Matches b1 (sites :87, :91)."
+    },
+    {
+      "was": "model cluster: panic recovery reads the shared logger inside the deferred closure (handler.go:87-88)",
+      "why": "Matches b1 (site :87)."
+    },
+    {
+      "was": "model cluster: sentinel trace map is printed by non-gofr base Logger implementations (ctx_logger.go:24-33, logger.go:247-264)",
+      "why": "Speculative: container.go:96-102 always installs remotelogger.New, which embeds the gofr logging.Logger (dynamic_level_logger.go:38-42), so the map always reaches logf and is stripped; no non-gofr base logger is reachable at runtime."
+    },
+    {
+      "was": "model cluster: append in withTraceInfo writes into the caller's backing array (ctx_logger.go:32)",
+      "why": "Only possible when a caller spreads a slice with spare capacity, and the write lands beyond that slice's len, so the caller's visible elements never change."
+    },
+    {
+      "was": "model cluster: user map with a __trace_id__ key is silently stripped (logger.go:72-76, 245-262)",
+      "why": "Requires user data using the reserved internal key; contrived, not a demonstrated defect."
+    },
+    {
+      "was": "model cluster: only the first trace map is stripped, later ones leak into the message (logger.go:247-262)",
+      "why": "A second map only appears when ContextLoggers nest, which happens only through the b1 race; no separate defect."
+    },
+    {
+      "was": "model finding: empty-arg message changes from null to [] / trace-only call yields empty array (logger.go:72-84)",
+      "why": "Cosmetic JSON shape change for argument-less log calls; no caller depends on null."
+    },
+    {
+      "was": "model finding: test helper comment names mockTracerProvider, not mockTracedContext (ctx_logger_test.go)",
+      "why": "Style in a test comment."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 9
+}

@@ -1,0 +1,41 @@
+{
+  "id": "martian-sentry-1",
+  "verdict": "clean",
+  "bugs": [],
+  "rejected": [
+    {
+      "was": "original: incident_occurrence.py:168 returns monitor.config instead of the copied config with the display schedule_type",
+      "why": "Real defect, but not introduced by this PR: the base mark_failed.py get_monitor_environment_context had the identical copy-then-return-original code; this refactor PR only moves it (diff removes it from mark_failed.py and adds it verbatim to incident_occurrence.py:159-171). Verdict becomes clean under the not-introduced rule; flag for owner if moved code should count."
+    },
+    {
+      "was": "cluster: renamed/moved public helpers break importers or mock targets (00,12,13,18,19,20,21,22,23)",
+      "why": "At head every importer (monitor_consumer.py:33, check_timeout.py:9, check_missed.py:11, test_mark_failed.py:11) imports only mark_failed, which still exists; tests patch sentry.issues.producer.produce_occurrence_to_kafka, which incident_occurrence imports lazily at call time."
+    },
+    {
+      "was": "MonitorStatus import dropped from mark_failed.py (05,19)",
+      "why": "mark_failed.py at head no longer references MonitorStatus; the code using it moved to incidents.py, which imports it."
+    },
+    {
+      "was": "docstring typo 'humam readible'; silent early returns (07,12,22,24)",
+      "why": "Moved text/behaviour, not a functional defect."
+    },
+    {
+      "was": "types.py SimpleCheckIn needs TypedDict/datetime imports not in the hunk",
+      "why": "types.py at head already imports `from datetime import datetime` (:4) and `TypedDict` (:6)."
+    },
+    {
+      "was": "one occurrence emitted per previous check-in in the threshold window (incidents.py:90-100)",
+      "why": "Moved verbatim from base mark_failed_threshold; pre-existing and intended."
+    },
+    {
+      "was": "missing active incident silently suppresses the occurrence while returning True (incidents.py:83-91)",
+      "why": "Moved verbatim from base; pre-existing."
+    },
+    {
+      "was": "empty failure-reason text when no statuses match the map (incident_occurrence.py:139-154)",
+      "why": "Moved verbatim from base get_failure_reason; pre-existing."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 9
+}

@@ -1,0 +1,46 @@
+{
+  "id": "swr-scikit-learn-12915",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "added",
+      "summary": "Removing the np.clip(y_prob, 1e-10, 1 - 1e-10) from the MLP log_loss and binary_log_loss makes the loss inf whenever a wrong class gets a predicted probability of exactly 0 or 1, which a saturated logistic output (expit(x) == 1.0 for x > ~37) or softmax produces.",
+      "sites": [
+        {
+          "path": "sklearn/neural_network/_base.py",
+          "start": 221,
+          "end": 221
+        },
+        {
+          "path": "sklearn/neural_network/_base.py",
+          "start": 244,
+          "end": 245
+        }
+      ],
+      "reach": "diff",
+      "evidence": "sklearn/neural_network/_base.py:221 'return - xlogy(y_true, y_prob).sum() / y_prob.shape[0]' and 244-245 'return -(xlogy(y_true, y_prob) + xlogy(1 - y_true, 1 - y_prob)).sum() / ...' after the removed clip. Reproduced with numpy/scipy: binary_log_loss(y_true=[0,0,1], y_prob=[0.9,1.0,1.0]) = inf, log_loss([[1,0,0],[0,1,0]], [[0,1,0],[.9,.05,.05]]) = inf; expit(40.0) == 1.0. scikit-learn later fixed exactly this in PR #16117 ('BUG Clips log_loss calculation in neural_network', d7c3758), re-adding eps clipping to both functions with tests asserting finite loss on these inputs. Sub-claims in some findings (R2 12, v-code-field-low) that out-of-range probabilities now give nan are covered here; y_prob comes from softmax/logistic and is never outside [0, 1].",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "original 'clean' label (change_introduced=false)",
+      "why": "Overturned by b1: confirmed inf output and a later upstream BUG fix (#16117) restoring the clip."
+    },
+    {
+      "was": "cluster (R1 00-03,05-13,17-24; R2 all variants): removing the tiny offset lets the Platt sigmoid objective in calibration.py:447 become inf",
+      "why": "Mechanism is real (T1 > 0 always, so xlogy(T1, 0) = -inf when P rounds to 1.0, e.g. A*F+B < -37), but no wrong calibration result was shown: inf only occurs at extreme trial points during fmin_bfgs line search, which backtracks from them, and no upstream fix targeted it. Unverified hypothesis, not labelled. Re-checked 2026-10-15: re-implemented _sigmoid_calibration old vs new (numpy 2.5/scipy 1.18) on separable and 10%-noisy data with decision values scaled 1x-1000x; fitted (A, B) identical to 1e-3 in every case."
+    },
+    {
+      "was": "R1 22, R2 22-medium: xlogy in weight_boosting hides the divide-by-zero warning",
+      "why": "y_coding is never 0 (1 or -1/(K-1)) so xlogy equals y*log(p) there; fewer than 4 prompts."
+    },
+    {
+      "was": "07: scipy import out of isort order",
+      "why": "Style."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 4
+}

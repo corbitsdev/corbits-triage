@@ -1,0 +1,134 @@
+{
+  "id": "triage-222",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "automaticKinds checks the hub sender by parsing headers out of message.content, but stock delivers a director the parsed headers on message.headers and only the text part (the request JSON) as content, so isFromTriageSender always returns false and every granted Do kind is dropped: no granted mirror or Do ever runs.",
+      "sites": [
+        {
+          "path": "packages/triage-workflows/src/directors.ts",
+          "start": 153,
+          "end": 155
+        },
+        {
+          "path": "packages/triage-workflows/src/directors.ts",
+          "start": 296,
+          "end": 296
+        }
+      ],
+      "reach": "repo",
+      "evidence": "directors.ts:153-155 `function automaticKinds(content: string | undefined, ...)` / `if (!isFromTriageSender(content) || ...) return [];`, called at :296 `automatic = automaticKinds(message.content, input);`. isFromTriageSender (packages/triage-contracts/src/trigger-mail.ts:18-24, outside the diff) reads `headers.from`/`headers.to` from the parsed payload. Stock InboundMessage (vendor/interchange/packages/types/src/runtime-core.ts:389-406) carries `headers: MessageHeaders` separately from `content?: string` (plain text body), so the request JSON in content has no headers. Fix #225 changes the signature to take `Pick<InboundMessage, \"headers\" | \"content\">` and passes `message` at both call sites; prod evidence in #225: worker received `automatic: [\"labels\"]` and recorded `[]`.",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "original site directors.ts:152 (doc comment)",
+      "why": "Comment line only; merged into b1 as 153-155."
+    },
+    {
+      "was": "same wrong call at directors.ts:303 (`carried = isFromTriageSender(message.content) ...`)",
+      "why": "Unchanged context: identical line exists at base 819df79c; pre-existing, not introduced by this PR (fix #225 also corrected it)."
+    },
+    {
+      "was": "extension page-actions.ts:49-50 auto-applies labels without a grant check (4 findings)",
+      "why": "Intended: the description says the extension, which cannot see grants, now applies only labels on its own."
+    },
+    {
+      "was": "automation.ts:11 / actions.ts:231 automated repos lose unattended approve, assign, request-review (2)",
+      "why": "Intended: description says automated repositories get comment and labels at start-up and nothing else is seeded."
+    },
+    {
+      "was": "automation.ts:27-36 grant evaluation queries the DB per pack read and may create the role from a read path",
+      "why": "Performance/style; role creation is idempotent under an advisory lock, no wrong behaviour."
+    },
+    {
+      "was": "automation.ts:40-58 placeholder about re-seeding (low)",
+      "why": "No concrete claim; carry returns undefined once no record has a mode, and stripping removes the mode in the same transaction."
+    },
+    {
+      "was": "automation.ts:49-54 mixed-case repo names in carried grants",
+      "why": "Wrong claim: doResource (do.ts) lowercases the repo for both the grant written and the grant evaluated."
+    },
+    {
+      "was": "automation.ts:60-62 startUp has no per-tenant try/catch",
+      "why": "Speculation: needs an unshown failure; robustness, not a defect introduced in behaviour."
+    },
+    {
+      "was": "automation.ts:62-66 carry reads repos outside the tx guard (low)",
+      "why": "Wrong claim: carry runs inside patchCorbitsTriage's locked transaction (tenant-config.ts patchLocked, select ... for update)."
+    },
+    {
+      "was": "automation.ts:66-77/88-91 stripping depends on object identity from repoRecords (2)",
+      "why": "Wrong claim: repoRecords (tenant-config.ts:43-44) is ns.repos.filter(isRepoRecord), so it returns the same row objects and includes() matches."
+    },
+    {
+      "was": "bridge.test.ts:476 tests use a non-existent triageDrafts field",
+      "why": "Test file only; no product behaviour."
+    },
+    {
+      "was": "bridge.ts:160-166 withLegacyFlags forces automatic:false on every mailed Do",
+      "why": "Intended rollout shim per description; the current workflow ignores the flag and reads the top-level automatic list."
+    },
+    {
+      "was": "held-dos.ts:64-70 grant checked for body.kind before kind match",
+      "why": "Wrong claim: heldDo refuses with kind_mismatch when step.kind !== body.kind, so the checked grant is always the stored Do's kind."
+    },
+    {
+      "was": "held-dos.ts:97-100 grant checked on unverified body.repo",
+      "why": "Wrong claim: the verdict is looked up by body.repo (verdictFor(events, repo, number)), so a Do of another repo is never found."
+    },
+    {
+      "was": "pr-actions.ts:75-90 COMMENT review gated by the request-changes grant (11 findings)",
+      "why": "Wrong claim: ActionBody (pr-actions.ts:43-44) only admits review events REQUEST_CHANGES and APPROVE; there is no COMMENT review."
+    },
+    {
+      "was": "pr-actions.ts:75-97 merge has no Do grant check",
+      "why": "Intended: doKind's doc says merging is not a Do; merge still needs the App credential use grant."
+    },
+    {
+      "was": "pr-actions.ts:85-90 doRefused uses non-lowercased body.repo",
+      "why": "Wrong claim: doResource lowercases the repo."
+    },
+    {
+      "was": "github.ts:25 absent comment no longer deletes stale triage comments",
+      "why": "Intended: MirrorInput doc 'Absent leaves the triage comment as it is'; the comment-granted path still sends \"\" to delete."
+    },
+    {
+      "was": "do.ts:17-21 agent Dos held only on the always branch",
+      "why": "Intended and unchanged: base parseBranch forbade automatic agent only on always (manualOnly ['close','agent']) and close on unsure; alwaysHeld mirrors that."
+    },
+    {
+      "was": "directors.ts:356-370 approval/change-request dismissals run without approve or request-changes grant (5 findings)",
+      "why": "Intended per code: mirrors' doc says the mirror writes 'what an earlier Do left to take back'; dismissals only remove triage's own stale approvals/requests (which a human-approved held Do can also leave), so withdrawing them without the grant is the designed behaviour (likely; description wording is looser)."
+    },
+    {
+      "was": "directors.ts:432-436 automaticDos runs unheld Dos when holdDos was skipped on degraded verdicts",
+      "why": "Wrong claim: degraded verdicts carry actions: [] (evaluate.ts verdictOf error and catch paths)."
+    },
+    {
+      "was": "directors.ts:436-440 automaticDos approve gate (no-spec low)",
+      "why": "Model itself concluded not a defect."
+    },
+    {
+      "was": "directors.ts:438-441 a Do granted at mail time still runs after revocation",
+      "why": "Speculation/intended: the verdict uses the grants the hub mailed for that run; the next run sees the revocation."
+    },
+    {
+      "was": "actions.ts:231-236 heldApprovals drops the automatic field",
+      "why": "The field was removed from the Do type by design; nothing reads it."
+    },
+    {
+      "was": "actions.ts:237-240 granted close on yes/no runs unattended",
+      "why": "Intended: description says close is an ordinary grantable kind, held only on unsure and on actions with no rules."
+    },
+    {
+      "was": "actions.ts:237-243 alwaysHeld bypassed on degraded/approval path",
+      "why": "Wrong claim: degraded verdicts have no actions; approval mails run a Do a person approved, not an unattended one."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 24
+}

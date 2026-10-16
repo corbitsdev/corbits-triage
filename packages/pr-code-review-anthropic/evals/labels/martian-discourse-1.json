@@ -1,0 +1,80 @@
+{
+  "id": "martian-discourse-1",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "The conditional-include hook is named include_website_name without the ?, so ActiveModel::Serializers never calls it and website_name is always serialized, as null when the user has no website.",
+      "sites": [
+        {
+          "path": "app/serializers/user_serializer.rb",
+          "start": 153,
+          "end": 153
+        }
+      ],
+      "reach": "repo",
+      "evidence": "user_serializer.rb:153 `def include_website_name`; the serializer's other conditional hooks and AMS 0.8 use `include_<attr>?`. Golden comment (Martian discourse.json).",
+      "confidence": "certain"
+    },
+    {
+      "id": "b2",
+      "source": "added",
+      "summary": "website_name is a plain attribute, not an untrusted one, so for a TL0 user viewed anonymously (where website is hidden to deter spam) the serializer still exposes the website's host and path via website_name, and the profile renders the globe and link text.",
+      "sites": [
+        {
+          "path": "app/serializers/user_serializer.rb",
+          "start": 153,
+          "end": 155
+        }
+      ],
+      "reach": "repo",
+      "evidence": "user_serializer.rb:24-33 untrusted_attributes defines include_<attr>? returning false when scope.restrict_user_fields?(object); :105-111 lists :website but not :website_name; :43 adds :website_name to plain attributes and :153-155 `def include_website_name; website.present?; end` (never called, and even as include_website_name? it would not check restriction). lib/guardian/user_guardian.rb:58-60 restrict_user_fields? = TL0 && anonymous. user.hbs now shows {{model.website_name}} when present.",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "cluster: host comparison is case-sensitive (00,06,08,13,18,24)",
+      "why": "A mixed-case website host only falls back to showing the bare host instead of host+path; display choice, no wrong or lost data."
+    },
+    {
+      "was": "cluster: \".\" << website_host mutates a string literal (00,06,08,12,22,23,24)",
+      "why": "Without frozen_string_literal the literal is a fresh String on each call; mutation is harmless."
+    },
+    {
+      "was": "cluster: root path yields a trailing slash (06,07,13,21,23,24)",
+      "why": "Cosmetic display text."
+    },
+    {
+      "was": "cluster: scheme-less website loses its display name (18,21,22)",
+      "why": "Not a regression: the removed client code `website.split(\"/\")[2]` also returned nothing for a scheme-less value."
+    },
+    {
+      "was": "cluster: URI parsed repeatedly / rescue swallows errors (06,08,12,22,24)",
+      "why": "Style; rescue nil is the intended fallback to no display name."
+    },
+    {
+      "was": "cluster: www vs apex and sibling-subdomain matching (00,07,19,22)",
+      "why": "Matches the commented intent of each branch (user_serializer.rb:142-149); product choice, not a code defect."
+    },
+    {
+      "was": "port, query and fragment dropped from display name",
+      "why": "Display text only; the href still uses the full website."
+    },
+    {
+      "was": "same-depth heuristic matches unrelated hosts under multi-part TLDs (foo.co.uk vs bar.co.uk) or single-label website hosts",
+      "why": "Only changes whether the display text includes the path, which is public in the href anyway; cosmetic."
+    },
+    {
+      "was": "removed websiteName computed may still be referenced elsewhere",
+      "why": "At head no template or controller references websiteName (user.hbs switched to model.website_name; user-card has no website)."
+    },
+    {
+      "was": "v-every-instance-high: include_website_name overrides generated trust-gating include_website_name?",
+      "why": "Wrong mechanism (website_name is not in untrusted_attributes), but its consequence, website_name served to restricted viewers, is b2; counted as matching b2."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 14
+}

@@ -1,0 +1,157 @@
+{
+  "id": "martian-grafana-2",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "The async legacy DeleteCollection records its duration and error with recordStorageDuration, so legacy failures are counted as unified-storage metrics.",
+      "sites": [
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 166,
+          "end": 166
+        }
+      ],
+      "reach": "diff",
+      "evidence": "dualwriter_mode3.go:165 `d.Legacy.DeleteCollection(...)` then :166 `d.recordStorageDuration(err != nil, mode3Str, options.Kind, method, startLegacy)`; every other legacy call uses recordLegacyDuration (:56, :113, :140). Golden comment.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b2",
+      "source": "original",
+      "summary": "Delete builds the enriched logger but stores d.Log in the context, so downstream logs lose name/kind/method.",
+      "sites": [
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 97,
+          "end": 97
+        }
+      ],
+      "reach": "diff",
+      "evidence": "dualwriter_mode3.go:96 `log := d.Log.WithValues(\"name\", name, \"kind\", options.Kind, \"method\", method)` then :97 `ctx = klog.NewContext(ctx, d.Log)`; every other method passes `log` (:39, :66, :82, :123, :150). Golden comment.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b3",
+      "source": "original",
+      "summary": "Delete's success metric passes the object name where the kind label goes, creating one metric series per object name.",
+      "sites": [
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 106,
+          "end": 106
+        }
+      ],
+      "reach": "diff",
+      "evidence": "dualwriter_mode3.go:106 `d.recordStorageDuration(false, mode3Str, name, method, startStorage)` vs :103 and every other call using options.Kind. Golden comment.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b4",
+      "source": "added",
+      "summary": "When the unified-storage Create or Update fails, the failure is recorded with recordLegacyDuration, so storage errors show up as legacy errors and the storage metric misses them.",
+      "sites": [
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 45,
+          "end": 45
+        },
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 129,
+          "end": 129
+        }
+      ],
+      "reach": "diff",
+      "evidence": "dualwriter_mode3.go:42-45 `created, err := d.Storage.Create(...)`; on error `d.recordLegacyDuration(true, ...)`; same at :126-129 for Storage.Update. The Delete and DeleteCollection error paths use recordStorageDuration (:103, :156). Upstream later records it as storage (a03652494c: `d.recordStorageDuration(err != nil, ...)` after Storage.Update).",
+      "confidence": "certain"
+    },
+    {
+      "id": "b5",
+      "source": "added",
+      "summary": "The background legacy writes derive their context from the request context, which the API server cancels when the handler returns, so legacy Create/Delete/Update/DeleteCollection can be aborted after the response is sent.",
+      "sites": [
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 51,
+          "end": 51
+        },
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 110,
+          "end": 110
+        },
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 135,
+          "end": 135
+        },
+        {
+          "path": "pkg/apiserver/rest/dualwriter_mode3.go",
+          "start": 163,
+          "end": 163
+        }
+      ],
+      "reach": "repo",
+      "evidence": "dualwriter_mode3.go:50-59 `go func() { ctx, cancel := context.WithTimeoutCause(ctx, ...)` with the handler returning at :59; same at :110, :135, :163. Base ran the legacy write synchronously. Upstream fixed it in a03652494c with `context.WithTimeoutCause(context.WithoutCancel(ctx), ...)` at each site.",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "cluster: removed `p` declaration leaves dualwriter_mode1_test.go / mode3 tests uncompilable (13+ prompts)",
+      "why": "`var p = prometheus.NewRegistry()` is declared at package level in dualwriter_mode1_test.go:27, shared by the package's tests."
+    },
+    {
+      "was": "cluster: legacy Update receives the raw objInfo instead of the storage result (16 prompts)",
+      "why": "Behaviour change from the base updateWrapper, but upstream kept passing objInfo to Legacy.Update (a03652494c updateOnLegacyStorage); divergence needs stores already out of sync. Design choice, not a demonstrated defect."
+    },
+    {
+      "was": "cluster: obj/options shared with the async goroutine (data race)",
+      "why": "Storage.Create has returned before the goroutine starts and nothing shown mutates obj afterwards; speculative."
+    },
+    {
+      "was": "cluster: async legacy errors only metered, never logged",
+      "why": "Observability preference; errors are recorded in the legacy metric."
+    },
+    {
+      "was": "cluster: Delete/DeleteCollection tests lack legacy mocks, goroutines panic (02,07,18,23,24)",
+      "why": "Legacy and storage mocks share one mock.Mock (`ls := legacyStoreMock{m, l}; us := storageMock{m, s}`), so the Delete expectation also serves the legacy call."
+    },
+    {
+      "was": "Delete returns early on NotFound from unified storage, so legacy-only objects are never deleted",
+      "why": "Intended mode-3 behaviour (unified storage is the source of truth); upstream a03652494c keeps the same early return on any Storage.Delete error."
+    },
+    {
+      "was": "options dereferenced without nil check (Create/Get/List/Delete)",
+      "why": "The apiserver always passes non-nil options; base code already read options.Kind (DeleteCollection) the same way."
+    },
+    {
+      "was": "go.work.sum churn / duplicate entries",
+      "why": "Checksum file noise; no behaviour."
+    },
+    {
+      "was": "mode3 tests reference undeclared exampleObj, failingObj, anotherObj, exampleList, legacyStoreMock",
+      "why": "Declared package-level in dualwriter_mode1_test.go:19-27 and storage_mocks_test.go at head."
+    },
+    {
+      "was": "Create error-case test has no storage mock expectation and will panic",
+      "why": "Storage and legacy mocks share one mock.Mock; m.On(\"Create\", ..., failingObj, ...) also answers Storage.Create."
+    },
+    {
+      "was": "tests do not wait for or verify async legacy writes; weak/swapped assert arguments",
+      "why": "Test-quality note; no production behaviour and the tests pass as written."
+    },
+    {
+      "was": "Update goroutine does not cancel the timeout context on all paths",
+      "why": "`defer cancel()` (dualwriter_mode3.go:138) runs on every return of the goroutine; wrong claim."
+    },
+    {
+      "was": "Create returns stale err after launching the goroutine",
+      "why": "err is nil on that path (the error branch returned at :46); returning it is equivalent to nil."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 18
+}
