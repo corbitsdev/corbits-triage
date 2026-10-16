@@ -374,6 +374,15 @@ the current policy on the `corbits-triage/policy` branch. The same reads and
 writes are hub routes: `GET …/github-triage/{tenantId}/policy/file`, and
 `POST …/policy/sync` and `…/policy/export`.
 
+## Code review
+
+A code review reads a pull request for defects: correctness bugs in the
+changed lines and breakage the change causes elsewhere in the repository. Each
+defect it reports names the line, why it is wrong, what triggers it and a fix,
+and every one has been checked against the code. A pull request with no
+defects gets one sentence on what it changes and that no defects were found.
+It reviews GitHub and Bitbucket Data Center pull requests.
+
 ## Triage over time
 
 Turning triage on triages a repository's open pull requests; after that,
@@ -389,3 +398,5 @@ model's earlier answers for anything unchanged. See
 - The repository scan measures a repository's closed pull requests but does
   not propose a policy yet, and the hub does not run it.
 - Sidecars run on the hub's own machine, as processes or, when configured, Docker containers; there is no cloud driver yet.
+- Code review runs as a workflow only: nothing starts it from a pull request
+  event or the portal, and its review is not posted to the pull request yet.

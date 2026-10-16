@@ -1,0 +1,3 @@
+<tools>
+The repository is checked out at the pull request's head. Call read_file, grep and list to read code outside the diff that the change depends on: callers of changed functions, definitions it uses, and the types and data it passes through. Paths are relative to the repository root and line numbers are head-side. Your reads share a token budget; once it is spent, tool calls return an error and you answer with what you have.
+</tools>

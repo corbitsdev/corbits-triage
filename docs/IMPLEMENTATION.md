@@ -98,6 +98,8 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
   and Bitbucket Data Center read bundles add `*_checkout`, which unpacks a
   repository at a commit into that tree, and `*_read_file`, which reads lines
   of one file at a commit through the host API.
+- `pr-code-review-anthropic`: the `pr-code-review` workflow, its directors,
+  deterministic steps (`src/actions/`) and prompts (`prompts/*.txt`).
 - `triage-contracts`: policy schema (`schemaVersion` 2) with the workspace
   policy and override schemas, `resolve-policy.ts` (a repository policy over
   the workspace policy it extends), repository settings, triage state,
