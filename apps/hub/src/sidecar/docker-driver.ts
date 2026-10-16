@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import type { AdapterManifest } from "@intx/types";
-import type { SidecarDriver, SidecarEnv, SidecarHandle, SidecarLaunchSpec } from "@corbits/provisioner";
+import type { SidecarDriver, SidecarHandle } from "./driver-provisioner.js";
+import type { SidecarEnv, SidecarLaunchSpec } from "./sidecar-env.js";
 
 const ALLOCATION_LABEL = "intx.allocation";
 const GENERATION_LABEL = "intx.generation";

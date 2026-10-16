@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AdapterManifest } from "@intx/types";
-import { createDriverProvisioner } from "@corbits/provisioner";
+import { createDriverProvisioner } from "./driver-provisioner.js";
 import { createLocalProcessDriver } from "./local-driver.js";
 import type { LocalSidecarManifest } from "./manifest-store.js";
 
@@ -40,7 +40,7 @@ test("restore launches a record without adapterManifest with the hub's adapters"
     log: () => {},
   });
 
-  await driver.restore(createDriverProvisioner(driver, "key"), async () => true);
+  await driver.restore(createDriverProvisioner(driver, "key"), async () => true, "key");
 
   expect(spawned).toEqual([JSON.stringify(HUB_ADAPTERS)]);
 });

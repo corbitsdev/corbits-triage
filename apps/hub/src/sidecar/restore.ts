@@ -1,12 +1,14 @@
 import { schema, type DB } from "@intx/db";
 import { and, eq, isNull } from "drizzle-orm";
-import type { DriverProvisioner } from "@corbits/provisioner";
-import type { LocalProcessDriver, LocalSidecarManifest } from "@corbits/provisioner-local";
+import type { DriverProvisioner } from "./driver-provisioner.js";
+import type { LocalProcessDriver } from "./local-driver.js";
+import type { LocalSidecarManifest } from "./manifest-store.js";
 
 export async function restoreLocalSidecars(
   db: DB["db"],
   driver: LocalProcessDriver,
   seam: DriverProvisioner,
+  credentialEncryptionKey: string,
 ): Promise<void> {
   async function isLocalSidecarLive(manifest: LocalSidecarManifest): Promise<boolean> {
     const row = await db.query.sidecarAllocation.findFirst({
@@ -22,5 +24,5 @@ export async function restoreLocalSidecars(
     });
     return row !== undefined;
   }
-  await driver.restore(seam, isLocalSidecarLive);
+  await driver.restore(seam, isLocalSidecarLive, credentialEncryptionKey);
 }

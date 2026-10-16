@@ -22,7 +22,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role; gives admins the same on older policies at start. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
-| `src/sidecar/restore.ts` | Respawns the local sidecars the database still holds live at boot. Drivers live in `packages/provisioner*` ([SIDECAR_DRIVERS.md](SIDECAR_DRIVERS.md)). |
+| `src/sidecar/` | One `SidecarProvisioner` over drivers (`driver-provisioner.ts`), the sidecar env (`sidecar-env.ts`), the local-process driver with encrypted manifests and boot restore, and the Docker driver. See [SIDECAR_DRIVERS.md](SIDECAR_DRIVERS.md). |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`; pull request, review, comment and `check_run` events → coalescer; default-branch pushes touching `.corbits-triage.yaml` → policy-file sync. |
 | `src/github/policy-file.ts` | Syncs `.corbits-triage.yaml` on the default branch into the repository's policy, reads it, and exports the policy as a pull request adding it. |
