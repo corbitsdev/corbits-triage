@@ -1,10 +1,11 @@
 import { type } from "arktype";
 import type { AdapterManifest } from "@intx/types";
-import type { SidecarDriver, SidecarEnv, SidecarHandle, SidecarLaunchSpec } from "@corbits/provisioner";
+import type { SidecarDriver, SidecarDriverLimits, SidecarEnv, SidecarHandle, SidecarLaunchSpec } from "@corbits/provisioner";
 
 const ALLOCATION_LABEL = "intx.allocation";
 const GENERATION_LABEL = "intx.generation";
 const SIDECAR_LABEL = "intx.sidecar";
+const TENANT_LABEL = "intx.tenant";
 const DATA_DIR = "/var/lib/intx-sidecar";
 const STOP_TIMEOUT_SECONDS = 25;
 /** WORKDIR of the root Dockerfile's `sidecar` stage, one level above vendor/interchange. */
@@ -14,8 +15,15 @@ const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const Container = type({
   Id: "string",
   State: "string",
-  Labels: { [ALLOCATION_LABEL]: "string", [GENERATION_LABEL]: "string.integer.parse", [SIDECAR_LABEL]: "string" },
+  Created: "number",
+  Labels: { [ALLOCATION_LABEL]: "string", [GENERATION_LABEL]: "string.integer.parse", [SIDECAR_LABEL]: "string", [TENANT_LABEL]: "string" },
 });
+
+/** The size class every container gets. Unset fields are unbounded. */
+export type DockerSidecarSize = {
+  readonly memoryBytes?: number;
+  readonly cpus?: number;
+};
 
 export type CreateDockerDriverOpts = {
   /** Path of the Docker Engine socket. */
@@ -25,6 +33,8 @@ export type CreateDockerDriverOpts = {
   readonly hostRoot: string;
   /** The hub's adapter manifest, checked at boot so a module the image cannot load fails here, not at the first ensure. */
   readonly adapterManifest: AdapterManifest;
+  readonly size?: DockerSidecarSize;
+  readonly limits?: SidecarDriverLimits;
 };
 
 class DockerEngineError extends Error {
@@ -34,7 +44,7 @@ class DockerEngineError extends Error {
 }
 
 /** One container per allocation from the sidecar image: its own filesystem and processes, sharing only the kernel. */
-export function createDockerDriver({ socketPath, image, hostRoot, adapterManifest }: CreateDockerDriverOpts): SidecarDriver {
+export function createDockerDriver({ socketPath, image, hostRoot, adapterManifest, size = {}, limits = {} }: CreateDockerDriverOpts): SidecarDriver {
   const hostPrefix = new URL(`file://${hostRoot.replace(/\/+$/, "")}/`).href;
   const imagePrefix = `file://${IMAGE_ROOT}/`;
 
@@ -83,8 +93,10 @@ export function createDockerDriver({ socketPath, image, hostRoot, adapterManifes
       allocationId: container.Labels[ALLOCATION_LABEL],
       generation: container.Labels[GENERATION_LABEL],
       sidecarId: container.Labels[SIDECAR_LABEL],
+      tenantId: container.Labels[TENANT_LABEL],
       externalRef: container.Id,
       running: container.State === "running",
+      startedAt: new Date(container.Created * 1000),
     };
   }
 
@@ -110,12 +122,15 @@ export function createDockerDriver({ socketPath, image, hostRoot, adapterManifes
         [ALLOCATION_LABEL]: launch.allocationId,
         [GENERATION_LABEL]: String(launch.generation),
         [SIDECAR_LABEL]: launch.sidecarId,
+        [TENANT_LABEL]: launch.tenantId,
       },
       HostConfig: {
         ExtraHosts: ["host.docker.internal:host-gateway"],
         // As PID 1 the sidecar would ignore SIGTERM; an init process lets a stop end it at once.
         Init: true,
         RestartPolicy: { Name: "unless-stopped" },
+        ...(size.memoryBytes !== undefined && { Memory: size.memoryBytes }),
+        ...(size.cpus !== undefined && { NanoCpus: Math.round(size.cpus * 1e9) }),
       },
     }));
     try {
@@ -124,22 +139,31 @@ export function createDockerDriver({ socketPath, image, hostRoot, adapterManifes
       await remove(created.Id);
       throw error;
     }
-    return { allocationId: launch.allocationId, generation: launch.generation, sidecarId: launch.sidecarId, externalRef: created.Id, running: true };
+    const { allocationId, generation, sidecarId, tenantId } = launch;
+    return { allocationId, generation, sidecarId, tenantId, externalRef: created.Id, running: true, startedAt: new Date() };
   }
 
-  async function list(allocationId: string): Promise<SidecarHandle[]> {
-    const filters = encodeURIComponent(JSON.stringify({ label: [`${ALLOCATION_LABEL}=${allocationId}`] }));
-    const containers = Container.array().assert(await engine("GET", `/containers/json?all=true&filters=${filters}`)).map(handleOf);
-    return containers.sort((left, right) => right.generation - left.generation);
+  async function containers(label: string): Promise<SidecarHandle[]> {
+    const filters = encodeURIComponent(JSON.stringify({ label: [label] }));
+    return Container.array().assert(await engine("GET", `/containers/json?all=true&filters=${filters}`)).map(handleOf);
+  }
+
+  async function ofAllocation(allocationId: string): Promise<SidecarHandle[]> {
+    const found = await containers(`${ALLOCATION_LABEL}=${allocationId}`);
+    return found.sort((left, right) => right.generation - left.generation);
   }
 
   async function find(allocationId: string): Promise<SidecarHandle | null> {
-    return (await list(allocationId))[0] ?? null;
+    return (await ofAllocation(allocationId))[0] ?? null;
+  }
+
+  function list(): Promise<SidecarHandle[]> {
+    return containers(ALLOCATION_LABEL);
   }
 
   // Also removes containers an interrupted older generation left behind.
   async function stop(handle: SidecarHandle): Promise<void> {
-    for (const container of await list(handle.allocationId)) {
+    for (const container of await ofAllocation(handle.allocationId)) {
       if (container.generation <= handle.generation) await remove(container.externalRef);
     }
   }
@@ -154,8 +178,10 @@ export function createDockerDriver({ socketPath, image, hostRoot, adapterManifes
       { capability: "isolation:workload", state: "available" },
       { capability: "isolation:microvm", state: "blocked" },
     ],
+    limits,
     start,
     stop,
     find,
+    list,
   };
 }

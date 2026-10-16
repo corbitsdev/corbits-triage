@@ -28,8 +28,12 @@ A workflow says what its sidecar must guarantee; the hub places it on the first 
 Any hub on Interchange registers them in a few lines:
 
 ```ts
-const sidecars = createSidecarProvisioners([localDriver, dockerDriver], sidecarCredentialKey);
-await createHubServer({ sidecarProvisioners: sidecars.deployment, probeSidecarProvisioners: sidecars.probe });
+const sidecars = createSidecarProvisioners([localDriver, dockerDriver], { credentialEncryptionKey, onUsage: log });
+await createHubServer({
+  sidecarProvisioners: sidecars.deployment,
+  sidecarProvisionerChooser: sidecars.chooser,
+  probeSidecarProvisioners: sidecars.probe,
+});
 // on shutdown: await sidecars.drain();
 ```
 
@@ -42,16 +46,25 @@ interface SidecarDriver {
   readonly id: string;
   readonly fingerprint: string;
   readonly capabilities: readonly SidecarCapabilityDeclaration[];
+  readonly limits: { maxAllocations?: number };
   start(launch: SidecarLaunchSpec, env: SidecarEnv): Promise<SidecarHandle>;
   stop(handle: SidecarHandle): Promise<void>;
   find(allocationId: string): Promise<SidecarHandle | null>;
+  list(): Promise<readonly SidecarHandle[]>;
 }
 ```
 
 - `start` gets the sidecar's whole environment from `buildSidecarEnv` (`sidecar-env.ts`): the hub URL, the sidecar's id and join token, the sidecar credential key and the adapter manifest. The driver adds only `SIDECAR_DATA_DIR`. Never pass the hub's own environment.
-- `find` reads the allocation id, generation and sidecar id back from the backend itself (labels, metadata), so a restarted hub finds what it started. Keep no table of your own.
+- `find` and `list` read the allocation id, generation, sidecar id, tenant and start time back from the backend itself (labels, metadata), so a restarted hub finds what it started. Keep no table of your own.
 - `stop` succeeds when the capacity is already gone.
 - `fingerprint` is stable and non-secret. Changing it leaves allocations placed under the old value unmanaged, so change it only when the backend really is a different one.
+
+## Limits and usage
+
+- `limits.maxAllocations` caps a driver's running allocations. The chooser skips a matching driver that is full; when every match is full, the ensure is refused as retryable `capacity_full` and the hub retries with backoff until one frees up.
+- Every stop reports `{ driverId, tenantId, allocationId, generation, startedAt, stoppedAt, runtimeMs }` to `onUsage`; the hub logs it as `sidecar_usage`, which is enough to bill runtime to a workspace.
+- Size is per driver: one size class per registered driver (Docker: memory and CPUs). A second size is a second registration declaring its own capability.
+- Wall-clock lifetime is the hub's: the stock lifecycle policy (`maxLifetime`, `capacityRetention`, per workspace or workflow) releases capacity. A driver's own cap, such as E2B's sandbox timeout, is only a backstop for a hub that died.
 
 ## Worked example: Docker
 
@@ -62,11 +75,11 @@ interface SidecarDriver {
    docker build --target sidecar -t corbits-triage-sidecar .
    ```
    Adapter modules the hub names by `file://` URL under the repository are rewritten to the same path under `/app`; a module outside the repository refuses the driver at boot, and so does a `GITHUB_API_ORIGIN` override, whose generated adapter entry lives only on the hub.
-2. **Start.** `POST /containers/create` with the env, labels `intx.allocation`, `intx.generation`, `intx.sidecar`, an init process and `host.docker.internal` mapped to the host; then `/start`. A loopback hub URL is rewritten to `host.docker.internal`.
-3. **Find.** `GET /containers/json?all=true` filtered by `intx.allocation`; the newest generation wins.
+2. **Start.** `POST /containers/create` with the env, labels `intx.allocation`, `intx.generation`, `intx.sidecar`, `intx.tenant`, the size class, an init process and `host.docker.internal` mapped to the host; then `/start`. A loopback hub URL is rewritten to `host.docker.internal`.
+3. **Find and list.** `GET /containers/json?all=true` filtered by the `intx.allocation` label (its value for `find`, where the newest generation wins).
 4. **Stop.** Stop, then remove with its volumes, every container of the allocation up to that generation.
 5. **Capabilities.** One container per allocation, nothing shared but the kernel: `isolation:workload` available, `isolation:microvm` blocked.
-6. **Configuration.** `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE`, read in `apps/hub/src/env.ts` (`dockerSidecarSettings`). Unset, the driver is not registered.
+6. **Configuration.** `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE`, optionally `HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS`, `HUB_SIDECAR_DOCKER_MEMORY_MB` and `HUB_SIDECAR_DOCKER_CPUS`, read in `apps/hub/src/env.ts` (`dockerSidecarSettings`). Unset, the driver is not registered.
 7. **Registration.** `apps/hub/src/server.ts` passes it to `createSidecarProvisioners` after `local-process`. Probes stay on `local-process`, since they evaluate only the workflow source.
 
 ## Adding a driver
