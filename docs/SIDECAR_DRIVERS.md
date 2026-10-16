@@ -33,6 +33,7 @@ await createHubServer({
   sidecarProvisioners: sidecars.deployment,
   sidecarProvisionerChooser: sidecars.chooser,
   probeSidecarProvisioners: sidecars.probe,
+  probeSidecarProvisionerChooser: sidecars.chooser,
 });
 // on shutdown: await sidecars.drain();
 ```
@@ -61,8 +62,8 @@ interface SidecarDriver {
 
 ## Limits and usage
 
-- `limits.maxAllocations` caps a driver's running allocations. The chooser skips a matching driver that is full; when every match is full, the ensure is refused as retryable `capacity_full` and the hub retries with backoff until one frees up.
-- Every stop reports `{ driverId, tenantId, allocationId, generation, startedAt, stoppedAt, runtimeMs }` to `onUsage`; the hub logs it as `sidecar_usage`, which is enough to bill runtime to a workspace.
+- `limits.maxAllocations` caps a driver's running allocations. The chooser skips a matching driver that is full; when every match is full, the ensure is refused as retryable `capacity_full`. A deployment then retries with backoff until one frees up; a probe (stock) fails the deploy with 409.
+- Every stop through the seam (replace, destroy, cleanup after a failed start) reports `{ driverId, tenantId, allocationId, generation, startedAt, stoppedAt, runtimeMs }` to `onUsage`; the hub logs it as `sidecar_usage`. Runtime counts from the backend's start time to the stop, whether or not the sidecar was alive. Not reported: local sidecars stopped at hub shutdown (they respawn at boot, and their runtime before a restart is lost) and older-generation leftovers a stop also removes.
 - Size is per driver: one size class per registered driver (Docker: memory and CPUs). A second size is a second registration declaring its own capability.
 - Wall-clock lifetime is the hub's: the stock lifecycle policy (`maxLifetime`, `capacityRetention`, per workspace or workflow) releases capacity. A driver's own cap, such as E2B's sandbox timeout, is only a backstop for a hub that died.
 
@@ -80,7 +81,7 @@ interface SidecarDriver {
 4. **Stop.** Stop, then remove with its volumes, every container of the allocation up to that generation.
 5. **Capabilities.** One container per allocation, nothing shared but the kernel: `isolation:workload` available, `isolation:microvm` blocked.
 6. **Configuration.** `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE`, optionally `HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS`, `HUB_SIDECAR_DOCKER_MEMORY_MB` and `HUB_SIDECAR_DOCKER_CPUS`, read in `apps/hub/src/env.ts` (`dockerSidecarSettings`). Unset, the driver is not registered.
-7. **Registration.** `apps/hub/src/server.ts` passes it to `createSidecarProvisioners` after `local-process`. Probes stay on `local-process`, since they evaluate only the workflow source.
+7. **Registration.** `apps/hub/src/server.ts` passes it to `createSidecarProvisioners` after `local-process`. Probes use the same list: a probe is matched against workspace policy only, so a workspace that requires `isolation:workload` gets its probe on Docker and the deployment adopts it.
 
 ## Adding a driver
 

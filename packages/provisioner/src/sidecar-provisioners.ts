@@ -4,9 +4,12 @@ import { createDriverProvisioner, type DriverProvisioner, type DriverProvisioner
 export type SidecarProvisioners = {
   /** For `sidecarProvisioners`: a deployment lands on the first that offers what its workflow requires. */
   readonly deployment: readonly SidecarProvisioner[];
-  /** For `sidecarProvisionerChooser`: the first matching driver with room, else the first match (which then refuses as retryable). */
+  /** For `sidecarProvisionerChooser` and `probeSidecarProvisionerChooser`: the first matching driver with room, else the first match (which then refuses as retryable). */
   readonly chooser: SidecarProvisionerChooser;
-  /** For `probeSidecarProvisioners`: probes evaluate only workflow source, so they run on the first driver. */
+  /**
+   * For `probeSidecarProvisioners`: the same drivers. A probe is matched against tenant policy only, so a
+   * workspace that requires a capability the first driver lacks still gets a probe, which its deployment then adopts.
+   */
   readonly probe: readonly SidecarProvisioner[];
   of(driver: SidecarDriver): DriverProvisioner;
   drain(): Promise<void>;
@@ -37,5 +40,5 @@ export function createSidecarProvisioners(drivers: readonly [SidecarDriver, ...S
     await Promise.all(seams.map((seam) => seam.drain()));
   }
 
-  return { deployment: provisioners, chooser, probe: provisioners.slice(0, 1), of, drain };
+  return { deployment: provisioners, chooser, probe: provisioners, of, drain };
 }

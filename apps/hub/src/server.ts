@@ -212,6 +212,7 @@ const composition = await createInterchangeHub({
   sidecarProvisioners: sidecars.deployment,
   sidecarProvisionerChooser: sidecars.chooser,
   probeSidecarProvisioners: sidecars.probe,
+  probeSidecarProvisionerChooser: sidecars.chooser,
 });
 const stock = composition.server;
 
