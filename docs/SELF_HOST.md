@@ -76,7 +76,8 @@ alter role <hub role> set idle_in_transaction_session_timeout = '10min';
    - Permissions: Pull requests, Issues and Contents: write; Checks, Members
      and Metadata: read.
    - Events: Pull request, Pull request review, Issue comment, Check run,
-     Check suite, Push, Installation, Installation repositories.
+     Check suite and Push. GitHub sends installation events to every App
+     without ticking them.
 
    Bitbucket Data Center connects with an access token instead; see
    [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md).
