@@ -115,6 +115,19 @@ export async function listOpenPrs(gh: GithubFetch, repo: string) {
   }));
 }
 
+const CLOSED_PRS_PER_PAGE = 100;
+
+export type ClosedPr = { number: number; merged: boolean; closedAt: string };
+
+/** One page of closed pull requests, most recently updated first; `next` is the following page when this one was full. */
+export async function listClosedPrsPage(gh: GithubFetch, repo: string, page: number): Promise<{ prs: ClosedPr[]; next?: number }> {
+  if (!Number.isSafeInteger(page) || page < 1) throw new Error(`invalid page ${page}`);
+  const rows = await json(gh, `/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=${CLOSED_PRS_PER_PAGE}&page=${page}`);
+  if (!Array.isArray(rows)) throw new Error(`github returned an invalid closed pull request page for ${repo}`);
+  const prs = rows.map((p: any) => ({ number: p.number, merged: p.merged_at !== null, closedAt: p.closed_at }));
+  return rows.length === CLOSED_PRS_PER_PAGE ? { prs, next: page + 1 } : { prs };
+}
+
 type GithubRepoOwner = { login?: unknown; type?: unknown };
 
 export async function listOrgMembersForRepo(gh: GithubFetch, repo: string): Promise<{ organization: string; members: string[] }> {

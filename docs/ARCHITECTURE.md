@@ -86,7 +86,7 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
 
 ## Workflows
 
-Both are `onTrigger` mail listeners: each mail spawns a child run that
+Each is an `onTrigger` mail listener: each mail spawns a child run that
 executes and ends.
 
 - `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
@@ -99,6 +99,15 @@ executes and ends.
 - `pr-triage-historical`: one run that triages every open pull request of a
   repository. The hub mails it through its backlog route when a user turns
   triage on for the repository, or clicks **Triage open pull requests again**.
+- `repo-scan`: one run that reads a repository's most recently updated closed
+  pull requests (200 by default) and measures what maintainers merged and closed. Its
+  `history` step is pr-triage's facts director with `kind: "history"`: it
+  lists closed pull requests a page at a time, then reads each one's facts,
+  without patches, ten at a time; one whose reviews, commits or checks it
+  cannot read is left unread rather than counted as empty. The `measure` action turns them into one
+  record per pull request and merged-against-closed counts per signal. It is
+  not deployed by the hub yet; proposing rules, replaying them and opening the
+  policy pull request come next.
 
 The bridge and the reconciler find the target by workflow name per tenant; no
 deployment ids are configured anywhere.

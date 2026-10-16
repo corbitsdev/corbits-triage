@@ -12,6 +12,7 @@ import {
   getReviews,
   listIssueComments,
   listOrgMembersForRepo,
+  listClosedPrsPage,
   listOpenPrs,
   listPrCommits,
   listPrFilesPage,
@@ -53,6 +54,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_list_open_prs",
     description: "List open pull requests for a repository.",
     inputSchema: obj({ repo }),
+  },
+  {
+    name: "github_list_closed_prs",
+    description: "List one page of closed pull requests for a repository, most recently updated first, with whether each was merged. Call again with next until next is absent.",
+    inputSchema: obj({ repo, page: { type: "integer" } }),
   },
   {
     name: "github_get_pr",
@@ -208,6 +214,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, login: AppLogin): 
       return { repositories: await listInstallationRepositories(gh, a.installationId) };
     case "github_list_open_prs":
       return { prs: await listOpenPrs(gh, a.repo) };
+    case "github_list_closed_prs":
+      return listClosedPrsPage(gh, a.repo, a.page);
     case "github_get_pr":
       return getPr(gh, a.repo, a.number);
     case "github_get_checks":
