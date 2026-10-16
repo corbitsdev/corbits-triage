@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import type { EnsureSidecarRequest } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
-import { createLocalProcessSidecarProvisioner } from "./local-provisioner.js";
+import { createDriverProvisioner } from "./driver-provisioner.js";
+import { createLocalProcessDriver } from "./local-driver.js";
 import type { LocalSidecarManifest } from "./manifest-store.js";
 
 const HUB_ADAPTERS: AdapterManifest = [
@@ -20,24 +20,24 @@ const RECORD_WITHOUT_ADAPTERS: LocalSidecarManifest = {
 };
 
 test("restore launches a record without adapterManifest with the hub's adapters", async () => {
-  const spawned: EnsureSidecarRequest[] = [];
-  const local = createLocalProcessSidecarProvisioner({
+  const spawned: string[] = [];
+  const driver = createLocalProcessDriver({
     dataRoot: "/data",
     adapterManifest: HUB_ADAPTERS,
-    spawnSidecar: function spawnSidecar({ request }) {
-      spawned.push(request);
+    spawnSidecar: function spawnSidecar(env) {
+      spawned.push(env.SIDECAR_ADAPTER_MANIFEST);
       return { pid: 1, exited: new Promise<number>(function never() {}), kill() {} };
     },
     manifests: {
       readAll: async () => [RECORD_WITHOUT_ADAPTERS],
       write: async () => {},
-      readDataDir: async () => null,
+      read: async () => RECORD_WITHOUT_ADAPTERS,
       remove: async () => {},
     },
     log: () => {},
   });
 
-  await local.restore(async () => true);
+  await driver.restore(createDriverProvisioner(driver, "key"), async () => true, "key");
 
-  expect(spawned.map((request) => request.adapterManifest)).toEqual([HUB_ADAPTERS]);
+  expect(spawned).toEqual([JSON.stringify(HUB_ADAPTERS)]);
 });

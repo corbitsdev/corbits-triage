@@ -19,7 +19,8 @@ export type LocalSidecarManifest = {
 export interface LocalSidecarManifestStore {
   write(manifest: LocalSidecarManifest): Promise<void>;
   readAll(): Promise<LocalSidecarManifest[]>;
-  readDataDir(allocationId: string): Promise<string | null>;
+  /** The record without its token, or null when there is none. */
+  read(allocationId: string): Promise<Omit<LocalSidecarManifest, "token"> | null>;
   remove(allocationId: string): Promise<void>;
 }
 
@@ -106,10 +107,10 @@ export function createLocalSidecarManifestStore({
     }
   }
 
-  async function readDataDir(allocationId: string): Promise<string | null> {
+  async function read(allocationId: string): Promise<Omit<LocalSidecarManifest, "token"> | null> {
     try {
-      const stored = JSON.parse(await fs.readFile(manifestPath(allocationId), "utf8")) as StoredManifest;
-      return stored.dataDir;
+      const { token: _, ...record } = JSON.parse(await fs.readFile(manifestPath(allocationId), "utf8")) as StoredManifest;
+      return record;
     } catch (error) {
       if (isMissing(error)) return null;
       throw error;
@@ -120,5 +121,5 @@ export function createLocalSidecarManifestStore({
     await fs.rm(manifestPath(allocationId), { force: true });
   }
 
-  return { write, readAll, readDataDir, remove };
+  return { write, readAll, read, remove };
 }
