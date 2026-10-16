@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AdapterManifest } from "@intx/types";
-import type { DriverProvisioner, SidecarDriver, SidecarEnv, SidecarHandle, SidecarLaunchSpec } from "@corbits/provisioner";
+import type { DriverProvisioner, SidecarDriver, SidecarDriverLimits, SidecarEnv, SidecarHandle, SidecarLaunchSpec } from "@corbits/provisioner";
 import type { LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
@@ -21,6 +21,7 @@ export type CreateLocalProcessDriverOpts = {
   /** Restores records written before manifests carried `adapterManifest`. */
   readonly adapterManifest: AdapterManifest;
   readonly stopTimeoutMs?: number;
+  readonly limits?: SidecarDriverLimits;
   readonly log: (entry: Record<string, unknown>) => void;
 };
 
@@ -36,6 +37,7 @@ export interface LocalProcessDriver extends SidecarDriver {
 type Running = {
   readonly manifest: LocalSidecarManifest;
   readonly process: LocalSidecarProcess;
+  readonly startedAt: Date;
   exited: boolean;
 };
 
@@ -85,8 +87,13 @@ async function trackExit(running: Running): Promise<void> {
   }
 }
 
-function handleOf(manifest: Omit<LocalSidecarManifest, "token">, externalRef: string, running: boolean): SidecarHandle {
-  return { allocationId: manifest.allocationId, generation: manifest.generation, sidecarId: manifest.sidecarId, externalRef, running };
+function handleOf(manifest: Omit<LocalSidecarManifest, "token">, externalRef: string, running: boolean, startedAt?: Date): SidecarHandle {
+  const { allocationId, generation, sidecarId, tenantId } = manifest;
+  return { allocationId, generation, sidecarId, tenantId, externalRef, running, ...(startedAt !== undefined && { startedAt }) };
+}
+
+function handleOfRunning(running: Running): SidecarHandle {
+  return handleOf(running.manifest, String(running.process.pid), !running.exited, running.startedAt);
 }
 
 /** Child processes of the hub: posix tools and the network, no isolation from the hub or each other. */
@@ -96,13 +103,14 @@ export function createLocalProcessDriver({
   manifests,
   adapterManifest,
   stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
+  limits = {},
   log,
 }: CreateLocalProcessDriverOpts): LocalProcessDriver {
   if (stopTimeoutMs <= 0) throw new Error("Local sidecar stop timeout must be positive");
   const processes = new Map<string, Running>();
 
   function launch(manifest: LocalSidecarManifest, env: SidecarEnv): Running {
-    const running: Running = { manifest, process: spawnSidecar({ ...env, SIDECAR_DATA_DIR: manifest.dataDir }), exited: false };
+    const running: Running = { manifest, process: spawnSidecar({ ...env, SIDECAR_DATA_DIR: manifest.dataDir }), startedAt: new Date(), exited: false };
     void trackExit(running);
     processes.set(manifest.allocationId, running);
     return running;
@@ -139,7 +147,7 @@ export function createLocalProcessDriver({
     try {
       running = launch(manifest, env);
       await manifests.write(manifest);
-      return handleOf(manifest, String(running.process.pid), true);
+      return handleOfRunning(running);
     } catch (error) {
       // A process that will not stop stays tracked, so the caller finds it and cannot report that nothing exists.
       if (running !== undefined) {
@@ -166,9 +174,13 @@ export function createLocalProcessDriver({
 
   async function find(allocationId: string): Promise<SidecarHandle | null> {
     const running = processes.get(allocationId);
-    if (running !== undefined) return handleOf(running.manifest, String(running.process.pid), !running.exited);
+    if (running !== undefined) return handleOfRunning(running);
     const stored = await manifests.read(allocationId);
     return stored === null ? null : handleOf(stored, "", false);
+  }
+
+  async function list(): Promise<readonly SidecarHandle[]> {
+    return [...processes.values()].map(handleOfRunning);
   }
 
   async function restore(seam: DriverProvisioner, isLive: IsLocalSidecarLive): Promise<void> {
@@ -203,9 +215,11 @@ export function createLocalProcessDriver({
       // Every sidecar runs as the hub's OS user over the hub's data root.
       { capability: "isolation:*", state: "blocked" },
     ],
+    limits,
     start,
     stop,
     find,
+    list,
     restore,
     stopAll,
   };

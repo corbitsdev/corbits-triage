@@ -40,8 +40,12 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
   "HUB_SIDECAR_DOCKER_SOCKET?": "string",
   "HUB_SIDECAR_DOCKER_IMAGE?": "string",
+  "HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS?": positiveInteger,
+  "HUB_SIDECAR_DOCKER_MEMORY_MB?": positiveInteger,
+  "HUB_SIDECAR_DOCKER_CPUS?": type("string.numeric").narrow((value, ctx) => Number(value) > 0 || ctx.mustBe("a positive number")),
   "HUB_SIDECAR_E2B_API_KEY?": "string",
   "HUB_SIDECAR_E2B_TEMPLATE?": "string",
+  "HUB_SIDECAR_E2B_MAX_ALLOCATIONS?": positiveInteger,
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_BATCH_SIZE?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
@@ -216,7 +220,12 @@ export function signInSettings(env: HubEnv): SignInSettings {
   };
 }
 
-export type DockerSidecarSettings = { socketPath: string; image: string };
+export type DockerSidecarSettings = {
+  socketPath: string;
+  image: string;
+  size: { memoryBytes?: number; cpus?: number };
+  limits: { maxAllocations?: number };
+};
 
 /** Unset means no Docker driver: workflows that require workload isolation are refused. */
 export function dockerSidecarSettings(env: HubEnv): DockerSidecarSettings | undefined {
@@ -229,10 +238,16 @@ export function dockerSidecarSettings(env: HubEnv): DockerSidecarSettings | unde
   if (githubApiOrigin(env) !== DEFAULT_GITHUB_API_ORIGIN) {
     throw new Error("HUB_SIDECAR_DOCKER_SOCKET cannot be combined with GITHUB_API_ORIGIN");
   }
-  return { socketPath, image };
+  const { HUB_SIDECAR_DOCKER_MEMORY_MB: memoryMb, HUB_SIDECAR_DOCKER_CPUS: cpus, HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS: max } = env;
+  return {
+    socketPath,
+    image,
+    size: { ...(memoryMb !== undefined && { memoryBytes: Number(memoryMb) * 1024 * 1024 }), ...(cpus !== undefined && { cpus: Number(cpus) }) },
+    limits: { ...(max !== undefined && { maxAllocations: Number(max) }) },
+  };
 }
 
-export type E2bSettings = { apiKey: string; template: string };
+export type E2bSettings = { apiKey: string; template: string; limits: { maxAllocations?: number } };
 
 /** Unset means no E2B driver. A sandbox dials the hub from the internet, so the sidecar URL must be public wss. */
 export function e2bSettings(env: HubEnv): E2bSettings | undefined {
@@ -247,7 +262,8 @@ export function e2bSettings(env: HubEnv): E2bSettings | undefined {
   if (env.HUB_SIDECAR_WEBSOCKET_URL?.startsWith("wss://") !== true) {
     throw new Error("HUB_SIDECAR_E2B_API_KEY requires a public wss:// HUB_SIDECAR_WEBSOCKET_URL");
   }
-  return { apiKey, template };
+  const max = env.HUB_SIDECAR_E2B_MAX_ALLOCATIONS;
+  return { apiKey, template, limits: { ...(max !== undefined && { maxAllocations: Number(max) }) } };
 }
 
 export type EmailSettings = { smtpUrl: string; from: string };
