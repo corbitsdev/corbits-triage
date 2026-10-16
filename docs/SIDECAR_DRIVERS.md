@@ -20,7 +20,7 @@ A workflow says what its sidecar must guarantee; the hub places it on the first 
 
 | Package | Holds |
 | --- | --- |
-| `@corbits/provisioner` | The seam, `buildSidecarEnv`, `createSidecarProvisioners` |
+| `@corbits/provisioner` | The seam, `buildSidecarEnv`, `createSidecarProvisioners`, `deriveSidecarKey` |
 | `@corbits/provisioner-local` | `local-process` driver and its encrypted manifests for boot restore |
 | `@corbits/provisioner-docker` | `docker` driver |
 | `@corbits/provisioner-e2b` | `e2b` driver (one microVM per allocation; [DEPLOY.md](DEPLOY.md#isolated-sidecars-on-e2b)) |
@@ -28,7 +28,10 @@ A workflow says what its sidecar must guarantee; the hub places it on the first 
 Any hub on Interchange registers them in a few lines:
 
 ```ts
-const sidecars = createSidecarProvisioners([localDriver, dockerDriver], { credentialEncryptionKey, onUsage: log });
+const sidecars = createSidecarProvisioners([
+  { driver: localDriver, credentialEncryptionKey: rootKey },
+  { driver: dockerDriver, credentialEncryptionKey: deriveSidecarKey(rootKey, dockerDriver.id) },
+], { onUsage: log });
 await createHubServer({
   sidecarProvisioners: sidecars.deployment,
   sidecarProvisionerChooser: sidecars.chooser,
@@ -54,7 +57,8 @@ interface SidecarDriver {
 }
 ```
 
-- `start` gets the sidecar's whole environment from `buildSidecarEnv` (`sidecar-env.ts`): the hub URL, the sidecar's id and join token, the sidecar credential key and the adapter manifest. The driver adds only `SIDECAR_DATA_DIR`. Never pass the hub's own environment.
+- `start` gets the sidecar's whole environment from `buildSidecarEnv` (`sidecar-env.ts`): the hub URL, the sidecar's id and join token, the sidecar credential key and the adapter manifest. The driver adds only what its backend needs (`SIDECAR_DATA_DIR`, Docker's proxy). Never pass the hub's own environment.
+- Each driver's sidecars get their own credential key, `deriveSidecarKey(root, driver.id)` (HKDF-SHA256). Code inside a sidecar can read its key, so a key leaked from one backend never unseals another's stores. `local-process` keeps the root `SIDECAR_CREDENTIAL_ENCRYPTION_KEY`, which its existing stores are sealed with.
 - `find` and `list` read the allocation id, generation, sidecar id, tenant and start time back from the backend itself (labels, metadata), so a restarted hub finds what it started. Keep no table of your own.
 - `stop` succeeds when the capacity is already gone.
 - `fingerprint` is stable and non-secret. Changing it leaves allocations placed under the old value unmanaged, so change it only when the backend really is a different one.
@@ -75,12 +79,34 @@ interface SidecarDriver {
    docker build --target sidecar -t corbits-triage-sidecar .
    ```
    Adapter modules the hub names by `file://` URL under the repository are rewritten to the same path under `/app`; a module outside the repository (a `GITHUB_API_ORIGIN` override) refuses the driver at boot.
-2. **Start.** `POST /containers/create` with the env, labels `intx.allocation`, `intx.generation`, `intx.sidecar`, `intx.tenant`, the size class, an init process and `host.docker.internal` mapped to the host; then `/start`. A loopback hub URL is rewritten to `host.docker.internal`.
+2. **Start.** `POST /containers/create` with the env, labels `intx.allocation`, `intx.generation`, `intx.sidecar`, `intx.tenant`, the size class and the hardening below; `PUT /containers/{id}/archive` with the secrets file; then `/start`.
 3. **Find and list.** `GET /containers/json?all=true` filtered by the `intx.allocation` label (its value for `find`, where the newest generation wins).
 4. **Stop.** Stop, then remove with its volumes, every container of the allocation up to that generation.
 5. **Capabilities.** One container per allocation, nothing shared but the kernel: `isolation:workload` available, `isolation:microvm` blocked.
-6. **Configuration.** `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE`, optionally `HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS`, `HUB_SIDECAR_DOCKER_MEMORY_MB` and `HUB_SIDECAR_DOCKER_CPUS`, read in `apps/hub/src/env.ts` (`dockerSidecarSettings`). Unset, the driver is not registered.
-7. **Registration.** `apps/hub/src/server.ts` passes it to `createSidecarProvisioners` after `local-process`. Probes use the same list: a probe is matched against workspace policy only, so a workspace that requires `isolation:workload` gets its probe on Docker and the deployment adopts it.
+6. **Containment.** See [Docker containment](#docker-containment).
+7. **Configuration.** `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE`, optionally `HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS`, `HUB_SIDECAR_DOCKER_MEMORY_MB` and `HUB_SIDECAR_DOCKER_CPUS`, read in `apps/hub/src/env.ts` (`dockerSidecarSettings`). Unset, the driver is not registered.
+8. **Registration.** `apps/hub/src/server.ts` passes it to `createSidecarProvisioners` after `local-process`. Probes use the same list: a probe is matched against workspace policy only, so a workspace that requires `isolation:workload` gets its probe on Docker and the deployment adopts it.
+
+## Docker containment
+
+The sidecar runs workflow code, so a container gets as little of the host as Docker allows.
+
+| Concern | What the driver does |
+| --- | --- |
+| Network | Sidecars sit on `intx-sidecars`, an internal network with no route out. Their only peer is one relay container, `intx-sidecar-relay` (the same image, `packages/provisioner-docker/src/relay.ts`), on that network and the default bridge. |
+| Hub | The relay forwards `intx-hub:8080` to the hub's own port on the host (`host.docker.internal:$PORT`). The sidecar dials `ws://intx-hub:8080/<path>` whatever URL the hub advertises, so a public `wss://` URL for E2B does not affect Docker. |
+| Internet | `HTTPS_PROXY` points at the relay's CONNECT proxy (`intx-egress:3128`), which resolves the name, refuses any loopback, private, link-local, CGNAT or multicast address (so `host.docker.internal` and every other host port), and connects to the address it checked. Plain HTTP and anything that ignores the proxy has no route. |
+| Secrets | `SIDECAR_TOKEN` and the sidecar key go in `/var/lib/intx-sidecar/secrets.env`, uploaded before start and read by `bun --env-file`. `docker inspect` shows neither. |
+| Privileges | User `bun`, every capability dropped, `no-new-privileges`, read-only root, `/tmp` on tmpfs, 1024 PIDs, the operator's memory and CPU size class. State lives in a per-container volume removed with the container. |
+
+Limits that stay:
+
+- Anyone with the Docker socket is root on the host: they can `docker exec` into a sidecar or read the volume. Hiding secrets from `inspect` keeps them out of logs, support bundles and monitoring agents, not from the host's administrators.
+- The hub link inside the internal network is cleartext `ws://` (the sidecar warns once); it never leaves the Docker host.
+- The relay allows HTTPS to any public address. A per-workflow allowlist is the next step (`exec:network`).
+- A host service listening on the host's public address is reachable through the proxy, as it is from the internet.
+- The relay is shared by every Docker sidecar on the host; it holds no secret. A hub whose port changes recreates it, and live sidecars reconnect.
+- Requires Docker Engine 25 or later (a container created on two networks at once).
 
 ## Adding a driver
 
