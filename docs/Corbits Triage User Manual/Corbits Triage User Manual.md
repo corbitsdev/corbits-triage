@@ -86,7 +86,7 @@ Every repository has its own page under **Repositories** in the menu under your 
 
 ### Turning triage on
 
-The switch labeled **Triage pull requests in this repository** is the master control. While it is off, Triage ignores the repository entirely and the rest of the page is grayed out. You can turn it on before any rule: the page then says **Triage is enabled. Switch on a rule to have it start triggering.** and nothing is checked until you do. Once a rule is on, Triage checks every open pull request, and from then on it reacts to each new pull request event as it happens. On GitHub, the link **Triage open pull requests again** re-checks everything that is currently open, which is useful after you change the rules.
+The switch labeled **Triage pull requests in this repository** is the master control. While it is off, Triage ignores the repository entirely and the rest of the page is grayed out. You can turn it on before any rule: the page then says **Triage is enabled. Switch on a rule to have it start triggering.** and nothing is checked until you do. Once a rule is on, Triage checks every open pull request, and from then on it reacts to each new pull request event as it happens. On GitHub, the link **Triage open pull requests again** re-checks everything that is currently open, which is useful after you change the rules. When the run finishes, each pull request's new result replaces its old one in the inbox. Drafts are skipped until they are marked ready for review; one without a result shows **Draft** and **Draft: Not evaluated** instead of **Not triaged yet** and **Not evaluated**.
 
 ### Bitbucket Data Center repositories
 
@@ -256,7 +256,7 @@ The **All open** view groups pull requests by repository and adds two chips to e
 | PASS, FAIL or UNSURE | The verdict. Green means pass, red means fail, and gray means Triage could not tell. |
 | WAITS ON YOU, WAITS ON AUTHOR, WAITS ON NOBODY | Whose move it is. |
 
-A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened.
+A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened. A draft shows **Draft** and **Draft: Not evaluated** instead, since Triage waits until it is marked ready for review.
 
 ### The reading pane
 

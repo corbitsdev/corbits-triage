@@ -124,6 +124,54 @@ describe("batch pairing through the real facts director and evaluate action", ()
   });
 });
 
+describe("a backlog run", () => {
+  test("records a verdict for every pull request it could read, from a mail that names none", async () => {
+    const replies: string[] = [];
+    const caps = {
+      executeTools(calls: ToolCall[]) { return { type: "execute_tools", calls }; },
+      reply(content: string) { replies.push(content); return { type: "reply", content }; },
+    } as unknown as ReactorCapabilities;
+    const facts = triageDirectorFactory({ role: "facts" }, {} as never, { systemPrompt: "" } as never);
+    function done(callId: string, content: Record<string, unknown>, isError = false) {
+      return facts.decide({ type: "tool.done", result: { callId, content, isError } } as ReactorInboundEvent, {} as ReactorState, caps);
+    }
+    const mail = { kind: "backlog", repo: REPO, policy: { enabled: true }, checkPack: emptyPack(REPO) };
+    await facts.decide({ type: "message.received", message: { content: JSON.stringify(mail) } } as ReactorInboundEvent, {} as ReactorState, caps);
+    await done("github_list_open_prs", { prs: [{ number: 3 }, { number: 2 }] });
+    await done("pr:3", { error: "404" }, true);
+    await done("pr:2", { title: "PR 2", author: "octocat", sha: "sha2", state: "open", draft: false, mergeable: true, requestedReviewers: 0 });
+    for (const n of [3, 2]) {
+      await done(`reviews:${n}`, { reviews: [] });
+      await done(`comments:${n}`, { comments: [] });
+      await done(`commits:${n}`, { commits: [] });
+      await done(`files:${n}:0`, { files: [] });
+    }
+    await done("checks:2", { checks: [] });
+    const ruled = await rules({ reply: replies[0] }, ctx, signal);
+    const evaluated = await evaluate(ruled, ctx, signal);
+    const at = "2026-10-07T01:00:00.000Z";
+    const log: WorkflowRunEvent[] = [
+      { seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0, at, trigger: { type: "mail", payload: stockTriggerMail({ kind: "backlog", repo: REPO }) } } },
+      { seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "rules", output: { ref: `inline:${JSON.stringify(ruled)}` } } },
+      { seq: 2, type: "StepCompleted", body: { type: "StepCompleted", seq: 2, at, stepId: "evaluateRules", output: { ref: `inline:${JSON.stringify(evaluated)}` } } },
+    ];
+    let read = log.slice(0, 1);
+    const reader = {
+      async readRunEvents() { return read; },
+      async readLatestRunEvents(_repo: unknown, _ref: string, include: (id: string) => boolean) {
+        return { tip: "t", events: new Map(include("run_backlog") ? [["run_backlog", read.at(-1)!]] : []) };
+      },
+    } as unknown as WorkflowRunReader;
+    const observeRuns = createTriageRuns({ runReader: reader, readSettled: async () => new Map(), maxKnownRuns: 100 });
+    expect((await observeRuns(ANCHOR, DOMAIN)).verdicts).toEqual([]);
+    read = log;
+    const { verdicts } = await observeRuns(ANCHOR, DOMAIN);
+    expect(verdicts.map(({ number, headSha, state, detail }) => ({ number, headSha, state, reason: detail?.reason }))).toEqual([
+      { number: 2, headSha: "sha2", state: "ready-monitoring", reason: "every rule passed, and the policy has no decision-model rule" },
+    ]);
+  });
+});
+
 describe("verdicts the decision model was never asked about", () => {
   const pack: CheckPack = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: true }, focused: { enabled: true } } };
   const at = (minute: number) => new Date(Date.UTC(2026, 9, 7, 1, minute)).toISOString();

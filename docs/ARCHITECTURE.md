@@ -100,8 +100,10 @@ executes and ends.
   the earlier `pr-triage` workflow is released once `pr-triage-github` is
   live.
 - `pr-triage-historical`: one run that triages every open pull request of a
-  repository. The hub mails it through its backlog route when a user turns
-  triage on for the repository, or clicks **Triage open pull requests again**.
+  repository, skipping drafts. The hub mails it through its backlog route when
+  a user turns triage on for the repository, or clicks **Triage open pull
+  requests again**, and records its verdicts as it does pr-triage's; the
+  reconcilers never mail or rotate it.
 - `repo-scan`: one run that reads a repository's most recently updated closed
   pull requests (200 by default) and measures what maintainers merged and closed. Its
   `history` step is pr-triage's facts director with `kind: "history"`: it

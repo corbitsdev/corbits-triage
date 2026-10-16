@@ -24,10 +24,12 @@ const INBOX_STATUS_LABEL: Record<QueueState, string> = {
   new: "Not triaged yet",
 };
 
-export type StatusFields = Pick<PrItem, "running" | "state" | "comment" | "checks" | "reviewAnswered">;
+export type StatusFields = Pick<PrItem, "running" | "state" | "draft" | "comment" | "checks" | "reviewAnswered">;
 
 export function inboxStatus(item: StatusFields): string {
   if (item.running) return "Running";
+  // Triage skips drafts until they are marked ready, so a draft without a result is not waiting on it.
+  if (item.state === "new" && item.draft) return "Draft";
   return INBOX_STATUS_LABEL[isReReview(item) ? "awaiting-review" : item.state];
 }
 

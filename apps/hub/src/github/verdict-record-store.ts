@@ -67,12 +67,13 @@ function ofPulls(pulls: readonly PullRef[]): SQL | undefined {
   return or(...pulls.map((pull) => and(eq(verdictRecord.repo, pull.repo), eq(verdictRecord.number, pull.number))));
 }
 
+/** The run started last read the newest head: a backlog run started before a push can make its verdict after the push's. */
 function latestOf(db: DB["db"], where: SQL | undefined): Promise<VerdictRecord[]> {
   return db
     .selectDistinctOn([verdictRecord.repo, verdictRecord.number])
     .from(verdictRecord)
     .where(where)
-    .orderBy(verdictRecord.repo, verdictRecord.number, desc(verdictRecord.verdictAt));
+    .orderBy(verdictRecord.repo, verdictRecord.number, desc(verdictRecord.startedAt), desc(verdictRecord.verdictAt));
 }
 
 export function createVerdictRecordStore(db: DB["db"]) {

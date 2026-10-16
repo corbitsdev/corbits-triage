@@ -34,6 +34,8 @@ export type Approval = { repo: string; number: number; principalId?: string; app
 type KnownRun = {
   anchorRunId: string;
   heads: Head[];
+  /** A backlog mail names no heads, so its run is read until it ends, when its verdicts name them. */
+  backlog?: { ended: boolean };
   approval?: Approval;
   /** The newest event read; a running run is read again once its log moves past it. */
   seq: number;
@@ -82,6 +84,10 @@ function headOf(item: unknown, repo: string, startedAt: string, event: string | 
 function eventOf(payload: Record<string, unknown>): string | undefined {
   const { event, action } = payload;
   return typeof event === "string" && typeof action === "string" ? `${event}:${action}` : undefined;
+}
+
+function isBacklog(started: Record<string, unknown>): boolean {
+  return triggerRequestOf(asRecord(started["trigger"])?.["payload"])?.["kind"] === "backlog";
 }
 
 /** The heads a mail named: one as `prNumber`/`headSha`, or several as `items` of the same. */
@@ -273,16 +279,31 @@ function headVerdictOf<T>(verdicts: readonly T[], heads: number, index: number):
   return undefined;
 }
 
+type Paired = { trigger: Trigger; verdict: Record<string, unknown> | undefined };
+
 /** The verdict step's output is the verdict: one per head in mail order, or one degraded verdict for every head. Any other count pairs nothing, so no head settles on another's verdict. */
-function headsOf(events: readonly WorkflowRunEvent[], triggers: readonly Trigger[]): Head[] {
+function mailPairs(started: Record<string, unknown>, verdicts: ReadonlyArray<Record<string, unknown> | undefined>): Paired[] {
+  const triggers = triggersOf(started);
+  return triggers.map((trigger, i) => ({ trigger, verdict: headVerdictOf(verdicts, triggers.length, i) }));
+}
+
+/** A backlog mail names no heads: they are the pull requests its run made a verdict for, each paired with its own. */
+function backlogPairs(started: Record<string, unknown>, verdicts: ReadonlyArray<Record<string, unknown> | undefined>): Paired[] {
+  const repo = triggerRequestOf(asRecord(started["trigger"])?.["payload"])?.["repo"];
+  const startedAt = started["at"];
+  if (typeof repo !== "string" || typeof startedAt !== "string") return [];
+  return verdicts.flatMap((verdict) => headOf({ prNumber: verdict?.["number"], headSha: verdict?.["headSha"] }, repo, startedAt, undefined).map((trigger) => ({ trigger, verdict })));
+}
+
+function headsOf(events: readonly WorkflowRunEvent[], started: Record<string, unknown>): Head[] {
   const status = terminalStatus(events);
   const verdicts = verdictsOf(events);
   const verdictAt = lastCompleted(events, VERDICT_STEPS)?.body["at"];
   const mirrored = mirroredCalls(events);
   const ruled = ruledOf(events);
+  const pairs = isBacklog(started) ? backlogPairs(started, verdicts) : mailPairs(started, verdicts);
   // The verdict is kept from when its step completed, so a run that fails after it still shows it.
-  return triggers.map(function headVerdict(trigger, i) {
-    const verdict = headVerdictOf(verdicts, triggers.length, i);
+  return pairs.map(function headVerdict({ trigger, verdict }) {
     const summary = verdict && summaryOf(verdict, verdictAt, trigger, mirrored, ruled.get(`${trigger.repo}#${trigger.number}`));
     const kept = { trigger, ...(summary && { summary }) };
     if (status === undefined) return kept;
@@ -351,7 +372,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
   }
 
   function running(run: KnownRun): boolean {
-    return run.heads.some((head) => head.terminal === undefined) || (run.approval !== undefined && run.approval.approved === undefined);
+    return run.heads.some((head) => head.terminal === undefined) || (run.approval !== undefined && run.approval.approved === undefined) || run.backlog?.ended === false;
   }
 
   /** A finished log never changes, so a settled run is never read again. */
@@ -382,9 +403,10 @@ export function createTriageRuns(deps: TriageRunsDeps) {
       const started = events.find((e) => e.type === "RunStarted");
       // A run that has not committed RunStarted yet is read again next pass.
       if (!started) continue;
-      const heads = headsOf(events, triggersOf(started.body));
+      const heads = headsOf(events, started.body);
       const approval = approvalOf(started.body);
-      const run: KnownRun = { anchorRunId, heads, ...(approval && { approval: approvedOf(approval, events) }), seq: events.at(-1)?.seq ?? -1 };
+      const backlog = isBacklog(started.body) && { backlog: { ended: terminalStatus(events) !== undefined } };
+      const run: KnownRun = { anchorRunId, heads, ...(approval && { approval: approvedOf(approval, events) }), ...backlog, seq: events.at(-1)?.seq ?? -1 };
       remember(runId, run);
       if (running(run)) open.push(runId);
     }
@@ -393,7 +415,7 @@ export function createTriageRuns(deps: TriageRunsDeps) {
       const run = known.get(runId);
       if (!run) continue;
       const approval = run.approval && { ...run.approval, approved: run.approval.approved ?? [] };
-      remember(runId, { ...run, heads: run.heads.map((head) => ({ ...head, terminal: { status } })), ...(approval && { approval }) });
+      remember(runId, { ...run, heads: run.heads.map((head) => ({ ...head, terminal: { status } })), ...(approval && { approval }), ...(run.backlog && { backlog: { ended: true } }) });
     }
 
     const byRepo: ObservedRuns["byRepo"] = new Map();
