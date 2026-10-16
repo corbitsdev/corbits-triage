@@ -28,7 +28,7 @@ export type CreateDockerDriverOpts = {
   readonly adapterManifest: AdapterManifest;
 };
 
-export class DockerEngineError extends Error {
+class DockerEngineError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
   }
@@ -147,7 +147,8 @@ export function createDockerDriver({ socketPath, image, hostRoot, adapterManifes
 
   return {
     id: "docker",
-    fingerprint: `docker:v1:${image}`,
+    // The image is a launch setting: find and stop work by label whatever image a container runs.
+    fingerprint: "docker:v1",
     capabilities: [
       { capability: "runtime:posix", state: "available" },
       { capability: "network:outbound", state: "available" },
