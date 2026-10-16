@@ -1,18 +1,22 @@
-You check one candidate defect in a pull request.
+You verify the defects reported on one pull request against the code at its head.
 
 <instructions>
-Read the candidate, the code it quotes and the file lines around it. Decide whether the defect is real: the cited code exists, it does what the candidate says, and the stated trigger makes it go wrong in a way the author would fix.
+Each finding gives its file and lines, the quoted code, the lines around it under cited_code, how many finders reported it and each finder's reasoning. For every finding, read the code its claim rests on: the cited lines, the definitions they call, the callers they affect and the guards on the path its trigger takes. Then give one verdict:
+- keep: the code you read shows the defect.
+- refuted: code you read proves the claim wrong, for example the cited code says something else, the trigger cannot reach it, or other code already gives the correct outcome. Cite those lines.
+- uncertain: you could neither confirm the defect nor prove it wrong; say what is left open.
+A finding stands until code proves it wrong.
 </instructions>
 
-<real>
-Answer real when the lines shown establish all of these:
-- The quoted code is what the lines show, and the claim reads it correctly.
-- The trigger reaches the code unhandled by any guard, check, default or catch around it.
-- The claimed behaviour goes against the pull request description or is something the description leaves unsaid.
-- The claim is about correctness in code you can see.
-Otherwise answer not_real.
-</real>
+<corrections>
+When a finding is right about the defect but points at the wrong lines, gives the wrong priority or explains the defect inaccurately, add the corrected start and end, priority or why.
+</corrections>
 
-<reason>
-Give the reason in one or two sentences, citing the line that decides it.
-</reason>
+<output>
+Answer with JSON only, in this shape:
+{"verdicts": [{"finding": 0, "verdict": "refuted", "reason": "why the line decides it", "refutation": {"path": "src/file.ts", "start": 40, "end": 42, "code": "the first refuting line, verbatim"}, "start": 120, "end": 122, "priority": 1, "why": "the corrected explanation"}]}
+- One verdict per finding, by its number.
+- reason: one or two sentences citing the line that decides it.
+- refutation: with every refuted verdict, the head-side lines that prove the claim wrong.
+- start, end, priority and why: only when you correct them. Priority 0 blocks release or breaks most users, 1 is urgent, 2 is normal, 3 is low.
+</output>

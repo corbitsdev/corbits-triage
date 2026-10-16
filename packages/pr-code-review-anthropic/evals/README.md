@@ -47,8 +47,10 @@ A bug is caught when a finding on its path overlaps any of its sites within
 three lines. A finding that hits no bug is a false alarm, so a complete key
 makes false alarms meaningful. A clean case is flagged when anything is
 reported on it. `--e2e` scores the finders' union, the consolidated findings,
-the confirmed ones (all of them unless `--check`), the final review, and the
-review's comments found by both finders and by one.
+those the check kept (all of them unless `--check`), refuted and left
+uncertain, the final review, and the review's comments found by both finders
+and by one. A bug caught by a refuted finding is one the check wrongly
+dropped.
 
 ## Running
 
@@ -96,3 +98,25 @@ Of the comments in the second run, those both finders reported score
 precision 46.3 and recall 37.6; those one finder reported, 26.7 and 27.1. The
 agreement line on each comment carries that signal to the reader instead of a
 filter.
+
+## The check
+
+The same models on the 25 cases, the check at medium effort. "Before" is the
+same run's consolidated findings, so finder variance between runs drops out.
+
+| Check | Bugs caught before → after | False alarms before → after | Refuted (real bugs among them) | Uncertain | $ per PR |
+| --- | --- | --- | --- | --- | --- |
+| Old (keep only `real`), Haiku | 44 → 23 | 37 → 9 | 55 dropped | - | 0.13 |
+| Disproof only, Haiku | 43 → 40 | 43 → 35 | 12 (4) | 43 | 0.13 |
+| Disproof only, Opus | 42 → 42 | 44 → 34 | 12 (3) | 2 | 0.28 |
+
+On the 42 Martian Code Review Bench pull requests outside these cases (Core
+profile, Claude Opus 4.5 judge), precision / recall / F1:
+
+| Check | Before | After | Real bugs dropped |
+| --- | --- | --- | --- |
+| Old, Haiku | 36.7 / 60.2 / 45.6 | 53.6 / 27.8 / 36.6 | 45 |
+| Disproof only, Haiku | 37.0 / 60.2 / 45.8 | 37.3 / 56.4 / 44.9 | 4 |
+| Disproof only, Opus | 35.7 / 57.1 / 43.9 | 37.7 / 51.9 / 43.7 | 6 |
+
+Recall varies by about four points between runs of the same pipeline.

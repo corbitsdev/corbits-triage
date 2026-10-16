@@ -198,19 +198,23 @@ come first. Steps that call a model take their effort from the request.
    describe the same defect. A finding left out of every group is a group of
    its own, and groups whose findings land on the same line with the same
    first quoted line once moved are joined.
-5. **check**, only when the request sets `check`: one call per group, over
-   its representative and the lines read around it; only `real` verdicts go
-   on. It is off by default: on 42 held-out public pull requests with known
-   bugs it raised precision from 35.8 to 51.9 but cut recall from 60.9 to
-   40.6, for an F1 of 45.6 against 45.1 without it (see the eval README).
+5. **check**, only when the request sets `check`: one call over every group:
+   its representative, the lines read around it, its agreement and each
+   finder's reasoning. Like the repository finder, it checks the head out and
+   reads it with `read_file`, `grep` and `list` on a budget of billable tokens
+   per group. Each group is kept, refuted or left uncertain, and may come back
+   with corrected lines, priority or explanation. Only a refutation that cites
+   the head-side lines proving the claim wrong drops a group; a group the
+   check does not settle, or gives no valid verdict, is posted marked
+   unconfirmed. It is off by default (see the eval README).
 6. **write**: the groups in order of severity (the most severe priority a
    finder gave) and then agreement (how many finders reported it, then how
    many findings it stands for): a summary of the change and one comment per
-   group, ending with its agreement. A group the model leaves without a
-   comment gets one from the finder's title, explanation, trigger and quoted
-   code.
+   group, ending with what the check left open, if anything, and its
+   agreement. A group the model leaves without a comment gets one from the
+   finder's title, explanation, trigger and quoted code.
 
-The structured steps (plan, consolidate, check, write) answer against a JSON
+The structured steps (plan, consolidate, write) answer against a JSON
 schema. Checkout and file reads reach the host through its bound credential,
 so, as with triage's facts step, they run in directors. The eval and its
 numbers are in `packages/pr-code-review-anthropic/evals/README.md`.

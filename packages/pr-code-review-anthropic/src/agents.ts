@@ -55,13 +55,6 @@ const PLAN_SCHEMA = {
   },
 };
 
-const CHECK_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["verdict", "reason"],
-  properties: { verdict: { type: "string", enum: ["real", "not_real"] }, reason: { type: "string" } },
-};
-
 const CONSOLIDATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -118,9 +111,19 @@ export function repoFinderAgent(sources: Sources, systemPrompt = prompt("finder-
   });
 }
 
-export const planAgent = structuredAgent("code-review-plan", "plan", PLAN_SCHEMA);
+/** The verifier: its director checks the head out, and the model reads it to settle each finding. */
+export function checkAgent(sources: Sources) {
+  return defineAgent({
+    id: "code-review-check",
+    systemPrompt: prompt("check"),
+    tools: [...readsOf(sources), repoRead],
+    capabilities: [],
+    inference,
+    director: reader.build({ tools: "check" }),
+  });
+}
 
-export const checkAgent = structuredAgent("code-review-check", "check", CHECK_SCHEMA);
+export const planAgent = structuredAgent("code-review-plan", "plan", PLAN_SCHEMA);
 
 export const writeAgent = structuredAgent("code-review-write", "write", WRITE_SCHEMA);
 

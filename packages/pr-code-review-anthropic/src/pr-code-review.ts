@@ -15,8 +15,9 @@ function inferenceOf(role: string) {
 
 /**
  * reviewInput → plan → findDiff ‖ findRepo → candidates (fold exact duplicates) → consolidate (read the cited lines at
- * the head, group findings by defect) → checks (every group, by severity then agreement) → check (one call per group,
- * only when the request asks for it) → writeInput → write → review (the review to post).
+ * the head, group findings by defect) → checks (every group, by severity then agreement) → check (one call that reads
+ * the head and keeps, refutes or leaves uncertain each group; only when the request asks for it and something was found) →
+ * writeInput (drop the refuted, apply corrections) → write → review (the review to post).
  * Each model step's effort comes from the request; its model is the source its agent resolves to.
  * The definition for the given hosts under `id`, also its mail address, binds only their read bundles' credentials; the
  * deployed packages are one per host, and a request's checkout names that host.
@@ -36,7 +37,7 @@ export function prCodeReview({ id = PR_CODE_REVIEW_ADDRESS, sources }: { id?: st
       checks: action({ handler: "checks", input: stepsOf("reviewInput", "candidates", "consolidate"), after: ["consolidate"] }),
       check: map({
         over: { from: "steps.checks.output.checks" },
-        step: step({ agent: checkAgent, input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: TIMEOUT }),
+        step: step({ agent: checkAgent(sources), input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: TIMEOUT }),
         after: ["checks"],
       }),
       writeInput: action({ handler: "writeInput", input: stepsOf("reviewInput", "candidates", "checks", "check"), after: ["check"] }),

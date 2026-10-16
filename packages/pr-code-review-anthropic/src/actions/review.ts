@@ -1,9 +1,12 @@
 import { type } from "arktype";
 import { triggerRequestOf } from "@corbits/triage-contracts";
-import { changedFiles, parseFindings, quotedLine, samePath, type Finding, type Site } from "../findings.js";
+import { changedFiles, firstJsonObject, isRecord, parseFindings, quotedLine, samePath, type Finding, type Site } from "../findings.js";
 import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, repositoryTag } from "./checkout.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
+
+// The check's budget of billable tokens for each finding it verifies.
+const CHECK_BUDGET_PER_FINDING = 40_000;
 
 const Effort = type("'low' | 'medium' | 'high'");
 
@@ -81,9 +84,37 @@ interface Group {
   representative: number;
 }
 
-interface Verdict {
-  verdict: "real" | "not_real";
+/** A finder's own report of a defect a group stands for. */
+interface Reasoning {
+  finders: Finder[];
+  title?: string;
+  why?: string;
+  trigger?: string;
+}
+
+const Line = "number.integer > 0";
+
+const Verdict = type({
+  finding: "number.integer >= 0",
+  verdict: "'keep' | 'uncertain' | 'refuted'",
+  reason: "string",
+  "refutation?": { path: "string > 0", start: Line, end: Line, code: "string" },
+  "start?": Line,
+  "end?": Line,
+  "priority?": "0 | 1 | 2 | 3",
+  "why?": "string",
+});
+type Verdict = typeof Verdict.infer;
+
+/** A finding the review posts, and why the check left it uncertain when it did. */
+interface Posted extends Reported {
+  uncertain?: string;
+}
+
+/** A finding the check proved wrong, with the reason and the lines that prove it. */
+interface Refuted extends Reported {
   reason: string;
+  refutation: NonNullable<Verdict["refutation"]>;
 }
 
 interface Checks {
@@ -93,8 +124,8 @@ interface Checks {
 
 interface WriteInput {
   budgetExhausted: boolean;
-  verdicts: Verdict[];
-  findings: Reported[];
+  findings: Posted[];
+  refuted: Refuted[];
   text: string;
   inference: StepInference;
 }
@@ -240,45 +271,83 @@ function bySeverityThenAgreement(a: Reported, b: Reported): number {
   return severityOf(a) - severityOf(b) || b.agreement.finders - a.agreement.finders || b.agreement.reports - a.agreement.reports;
 }
 
-function checkMessage(request: ReviewRequest, finding: Reported, excerpt: string): string {
-  const claim = { title: finding.title, why: finding.why, trigger: finding.trigger };
-  return [
-    aboutPullRequest(request),
-    `<candidate path="${finding.path}" start="${finding.start}" end="${finding.end}">\n${JSON.stringify(claim, null, 2)}\n</candidate>`,
-    `<quoted_code>\n${finding.code}\n</quoted_code>`,
-    `<file path="${finding.path}">\n${excerpt}\n</file>`,
-    "Is this defect real?",
-  ].join("\n\n");
+function reasoningOf(group: Group, kept: readonly Candidate[]): Reasoning[] {
+  return group.members.map((i) => kept[i]!).map(({ finders, title, why, trigger }) => ({ finders, title, why, trigger }));
 }
 
-/** Every consolidated finding, ordered by severity then agreement, and one check of each when the request asks for the check. */
+interface Ordered {
+  finding: Reported;
+  excerpt: string;
+  reasoning: Reasoning[];
+}
+
+function checkMessage(request: ReviewRequest, ordered: readonly Ordered[]): string {
+  function listed({ finding: { path, start, end, code, priority, agreement }, excerpt, reasoning }: Ordered, finding: number) {
+    return { finding, path, start, end, code, priority, agreement, reports: reasoning, cited_code: excerpt };
+  }
+  const findings = JSON.stringify(ordered.map(listed), null, 2);
+  return `${repositoryTag(request.checkout)}${budgetTag(ordered.length * CHECK_BUDGET_PER_FINDING)}${pullRequest(request)}\n\n<findings>\n${findings}\n</findings>\n\nVerify each finding.`;
+}
+
+/** Every consolidated finding, ordered by severity then agreement, and one check of them all when the request asks for the check and there are any. */
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { kept } = stepOutput(steps, "candidates");
   const { groups, sites, excerpts } = jsonReply<{ groups: Group[]; sites: Site[]; excerpts: string[] }>(stepOutput(steps, "consolidate"));
-  function reported(group: Group) {
-    return { finding: reportedOf(group, kept, sites), excerpt: excerpts[group.representative]! };
+  function ordered(group: Group): Ordered {
+    return { finding: reportedOf(group, kept, sites), excerpt: excerpts[group.representative]!, reasoning: reasoningOf(group, kept) };
   }
-  const ordered = joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
-  function check({ finding, excerpt }: (typeof ordered)[number]) {
-    return { text: checkMessage(request, finding, excerpt), inference: inference.check };
-  }
-  return { findings: ordered.map((o) => o.finding), checks: request.check ? ordered.map(check) : [] };
+  const all = joinedAtAnchors(groupsOf(groups, kept.length), kept, sites).map(ordered).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
+  const checked = request.check && all.length > 0 ? [{ text: checkMessage(request, all), inference: inference.check }] : [];
+  return { findings: all.map((o) => o.finding), checks: checked };
 }
 
 const STOPPED_EARLY = "<stopped_early>The review spent its budget before it finished reading the repository. Say in the summary that it stopped early and reports what it found.</stopped_early>\n\n";
 
-/** The findings to report, all of them or, when the request asks for the check, those it found real, and the write step's user message. */
+const UNSETTLED = "The check did not settle it.";
+
+/** The check's verdict on each finding by number; a finding it gave no valid verdict is uncertain. */
+function verdictsOf(output: unknown, count: number): Verdict[] {
+  const json = firstJsonObject(replyOf(output).replace(BUDGET_EXHAUSTED, ""));
+  const given = isRecord(json) && Array.isArray(json.verdicts) ? json.verdicts.map((v) => Verdict(v)) : [];
+  const valid = given.filter((v): v is Verdict => !(v instanceof type.errors));
+  function verdict(finding: number): Verdict {
+    return valid.find((v) => v.finding === finding) ?? { finding, verdict: "uncertain", reason: UNSETTLED };
+  }
+  return Array.from({ length: count }, (_, finding) => verdict(finding));
+}
+
+/** The finding with the lines, priority and explanation the check corrected. */
+function corrected(finding: Reported, { start, end, priority, why }: Verdict): Reported {
+  const lines = start !== undefined && end !== undefined && start <= end ? { start, end } : {};
+  return { ...finding, ...lines, ...(priority !== undefined && { priority }), ...(why !== undefined && { why }) };
+}
+
+/** The findings to post, corrected and with the uncertain ones marked (all of them as found when the check did not run), the refuted ones, and the write step's user message. */
 export async function writeInput(steps: Steps): Promise<WriteInput> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { budgetExhausted } = stepOutput(steps, "candidates");
   const { findings: checked } = stepOutput(steps, "checks");
-  const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
-  const findings = request.check ? checked.filter((_, i) => verdicts[i]?.verdict === "real") : checked;
+  const [check] = stepOutput(steps, "check");
+  const verdicts = check === undefined ? [] : verdictsOf(check, checked.length);
+  const findings: Posted[] = [];
+  const refuted: Refuted[] = [];
+  for (const [i, finding] of checked.entries()) {
+    const verdict = verdicts[i];
+    if (!verdict) {
+      findings.push(finding);
+      continue;
+    }
+    const { refutation } = verdict;
+    // A refutation that cites no code leaves the finding open.
+    if (verdict.verdict === "refuted" && refutation) refuted.push({ ...finding, reason: verdict.reason, refutation });
+    else if (verdict.verdict === "keep") findings.push(corrected(finding, verdict));
+    else findings.push({ ...corrected(finding, verdict), uncertain: verdict.reason });
+  }
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${request.title}</title>\n<description>${request.description}</description>\n<changed_files>\n${changedFiles(request.diff).join("\n")}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${JSON.stringify(listed, null, 2)}\n</findings>\n\n${budgetExhausted ? STOPPED_EARLY : ""}Write the review.`;
-  return { budgetExhausted, verdicts, findings, text, inference: inference.write };
+  return { budgetExhausted, findings, refuted, text, inference: inference.write };
 }
 
 interface Written {
@@ -298,16 +367,17 @@ function agreementLine({ finders, reports }: Agreement): string {
 }
 
 /**
- * The review to post: the summary, one comment per finding in order, anchored where the finding is and ending with its
- * agreement, and whether it stopped early. A finding the write step left without a comment gets one in its finder's words.
+ * The review to post: the summary, one comment per finding in order, anchored where the finding is and ending with what
+ * the check left open, if anything, and its agreement, and whether it stopped early. A finding the write step left
+ * without a comment gets one in its finder's words.
  */
 export async function review(steps: Steps) {
   const { findings, budgetExhausted } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
-  function comment(finding: Reported, index: number) {
-    const { path, start, end, agreement, priority } = finding;
+  function comment(finding: Posted, index: number) {
+    const { path, start, end, agreement, priority, uncertain } = finding;
     const { title, body } = written.comments.find((c) => c.finding === index) ?? ownWords(finding);
-    return { path, start, end, title, body: `${body}\n\n${agreementLine(agreement)}`, ...(priority !== undefined && { priority }), agreement };
+    return { path, start, end, title, body: [body, ...(uncertain === undefined ? [] : [`_Unconfirmed: ${uncertain}_`]), agreementLine(agreement)].join("\n\n"), ...(priority !== undefined && { priority }), agreement };
   }
   return { summary: written.summary, comments: findings.map(comment), budgetExhausted };
 }

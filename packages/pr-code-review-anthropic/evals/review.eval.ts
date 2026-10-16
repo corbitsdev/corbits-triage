@@ -10,8 +10,8 @@
 //   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--check] [--out <file.json>]
 //   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write;
 //   runs the whole pr-code-review workflow on each case's head and scores the finders' union, the consolidated findings,
-//   the confirmed ones (all of them unless --check), the final review, and its comments found by both finders and by
-//   one, with each step's tokens, dollars and seconds.
+//   those the check kept (all of them unless --check), refuted and left uncertain, the final review, and its comments
+//   found by both finders and by one, with each step's tokens, dollars and seconds.
 //
 // Inference is native Anthropic when ANTHROPIC_API_KEY is set, else OpenCode Zen with OPENCODE_API_KEY.
 import { execFileSync } from "node:child_process";
@@ -305,7 +305,7 @@ const ROLE_OF_AGENT: Record<string, Role | undefined> = {
   "code-review-write": "write",
 };
 
-const STAGES = ["union", "consolidated", "confirmed", "final", "bothFinders", "oneFinder"] as const;
+const STAGES = ["union", "consolidated", "kept", "refuted", "uncertain", "final", "bothFinders", "oneFinder"] as const;
 type Stage = (typeof STAGES)[number];
 
 interface StepCost {
@@ -403,7 +403,12 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
   }
   if (outputs.candidates) score("union", reanchor(findingsAt(outputs.candidates.found), testCase.diff).findings);
   if (outputs.checks) score("consolidated", findingsAt(outputs.checks.findings));
-  if (outputs.writeInput) score("confirmed", findingsAt(outputs.writeInput.findings));
+  if (outputs.writeInput) {
+    const posted: (Finding & { uncertain?: string })[] = outputs.writeInput.findings;
+    score("kept", findingsAt(posted));
+    score("refuted", findingsAt(outputs.writeInput.refuted));
+    score("uncertain", findingsAt(posted.filter((f) => f.uncertain !== undefined)));
+  }
   if (outputs.review) {
     const comments: (Finding & { agreement: { finders: number } })[] = outputs.review.comments;
     score("final", findingsAt(comments));

@@ -17,7 +17,8 @@ deployed packages, each binding only its host's read credential.
    each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it
    onto its quoted line and groups the findings by defect.
-5. **check** confirms each group, only when the request sets `check`.
+5. **check**, only when the request sets `check`, reads the head and drops
+   only the groups it disproves.
 6. **write** comments on every group, most severe and most agreed-on first;
    each comment ends with how many finders reported it.
 

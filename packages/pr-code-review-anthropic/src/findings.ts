@@ -37,7 +37,7 @@ function parseJson(json: string): unknown {
 }
 
 /** The first balanced JSON object in `text` that parses. */
-function firstJsonObject(text: string): unknown {
+export function firstJsonObject(text: string): unknown {
   for (let open = text.indexOf("{"); open !== -1; open = text.indexOf("{", open + 1)) {
     const close = closingBrace(text, open);
     if (close === -1) return undefined;
@@ -62,7 +62,7 @@ function closingBrace(text: string, open: number): number {
   return -1;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
