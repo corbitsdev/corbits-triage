@@ -36,10 +36,10 @@ import { runCronMigrations } from "@corbits/cron/migrations";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
-import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
+import { createDriverProvisioner } from "./sidecar/driver-provisioner.js";
+import { createLocalProcessDriver, createSpawnLocalSidecar } from "./sidecar/local-driver.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
-import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
 import { createInstallationSync } from "./github/installation-sync.js";
@@ -145,14 +145,10 @@ await migrateWebhooks(database, logJson);
 
 const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
-const local = createLocalProcessSidecarProvisioner({
+const localDriver = createLocalProcessDriver({
   dataRoot: localSidecarDataRoot,
   ...(env.HUB_SIDECAR_STOP_TIMEOUT_MS !== undefined && { stopTimeoutMs: Number(env.HUB_SIDECAR_STOP_TIMEOUT_MS) }),
-  spawnSidecar: createSpawnLocalSidecar({
-    interchangeDir: V,
-    credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
-    processEnv: childProcessEnv(env),
-  }),
+  spawnSidecar: createSpawnLocalSidecar(V, childProcessEnv(env)),
   manifests: createLocalSidecarManifestStore({
     dataRoot: localSidecarDataRoot,
     cipher: credentialCipher,
@@ -161,6 +157,7 @@ const local = createLocalProcessSidecarProvisioner({
   adapterManifest: sidecarAdapterManifest,
   log: logJson,
 });
+const local = createDriverProvisioner(localDriver, env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY);
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
@@ -177,7 +174,8 @@ async function shutdown(): Promise<void> {
   coalescer?.stop();
   coordinator?.stop();
   try {
-    await local.shutdown();
+    await local.drain();
+    await localDriver.stopAll();
   } finally {
     process.exit(0);
   }
@@ -203,7 +201,7 @@ const composition = await createInterchangeHub({
 });
 const stock = composition.server;
 
-await restoreLocalSidecars(composition.db, local);
+await restoreLocalSidecars(composition.db, localDriver, local, env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY);
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },
