@@ -36,10 +36,9 @@ import { runCronMigrations } from "@corbits/cron/migrations";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
-import { createDockerDriver } from "./sidecar/docker-driver.js";
-import { createDriverProvisioner } from "./sidecar/driver-provisioner.js";
-import { createLocalProcessDriver, createSpawnLocalSidecar } from "./sidecar/local-driver.js";
-import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
+import { createSidecarProvisioners } from "@corbits/provisioner";
+import { createDockerDriver } from "@corbits/provisioner-docker";
+import { createLocalProcessDriver, createLocalSidecarManifestStore, createSpawnLocalSidecar } from "@corbits/provisioner-local";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
@@ -158,12 +157,12 @@ const localDriver = createLocalProcessDriver({
   adapterManifest: sidecarAdapterManifest,
   log: logJson,
 });
-const local = createDriverProvisioner(localDriver, env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY);
 const docker = dockerSidecarSettings(env);
-// First match in this order wins: a workflow with no placement rule runs on the hub.
-const configuredDrivers = docker === undefined ? [] : [
-  createDriverProvisioner(createDockerDriver({ ...docker, hostRoot: ROOT, adapterManifest: sidecarAdapterManifest }), env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY),
-];
+// Placement order: a workflow with no placement rule runs on the hub.
+const sidecars = createSidecarProvisioners([
+  localDriver,
+  ...(docker === undefined ? [] : [createDockerDriver({ ...docker, hostRoot: ROOT, adapterManifest: sidecarAdapterManifest })]),
+], env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY);
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
@@ -180,7 +179,7 @@ async function shutdown(): Promise<void> {
   coalescer?.stop();
   coordinator?.stop();
   try {
-    await Promise.all([local, ...configuredDrivers].map((driver) => driver.drain()));
+    await sidecars.drain();
     await localDriver.stopAll();
   } finally {
     process.exit(0);
@@ -202,12 +201,12 @@ const composition = await createInterchangeHub({
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(smtp && { sendResetPassword: smtp.passwordReset }) },
   credentialCipher,
   adapterManifest: sidecarAdapterManifest,
-  sidecarProvisioners: [local, ...configuredDrivers].map((driver) => driver.provisioner),
-  probeSidecarProvisioners: [local.provisioner],
+  sidecarProvisioners: sidecars.deployment,
+  probeSidecarProvisioners: sidecars.probe,
 });
 const stock = composition.server;
 
-await restoreLocalSidecars(composition.db, localDriver, local, env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY);
+await restoreLocalSidecars(composition.db, localDriver, sidecars.of(localDriver));
 const requireGrant = createRequireGrant({
   grantStore: createGrantStore(composition.db),
   conditionRegistry: { time_window: timeWindowEvaluator },

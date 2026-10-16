@@ -15,9 +15,25 @@ A workflow says what its sidecar must guarantee; the hub places it on the first 
 | `local-process` | `runtime:posix`, `network:outbound` | `isolation:*` |
 | `docker` | `runtime:posix`, `network:outbound`, `isolation:workload` | `isolation:microvm` |
 
+## Packages
+
+| Package | Holds |
+| --- | --- |
+| `@corbits/provisioner` | The seam, `buildSidecarEnv`, `createSidecarProvisioners` |
+| `@corbits/provisioner-local` | `local-process` driver and its encrypted manifests for boot restore |
+| `@corbits/provisioner-docker` | `docker` driver |
+
+Any hub on Interchange registers them in a few lines:
+
+```ts
+const sidecars = createSidecarProvisioners([localDriver, dockerDriver], sidecarCredentialKey);
+await createHubServer({ sidecarProvisioners: sidecars.deployment, probeSidecarProvisioners: sidecars.probe });
+// on shutdown: await sidecars.drain();
+```
+
 ## The seam
 
-`apps/hub/src/sidecar/driver-provisioner.ts` implements the stock `SidecarProvisioner` contract once: per-allocation ordering, idempotent ensure, generation fencing, and destroy that works from the allocation id alone. A driver only starts, stops and finds capacity:
+`createDriverProvisioner` in `@corbits/provisioner` implements the stock `SidecarProvisioner` contract once: per-allocation ordering, idempotent ensure, generation fencing, and destroy that works from the allocation id alone. A driver only starts, stops and finds capacity:
 
 ```ts
 interface SidecarDriver {
@@ -37,7 +53,7 @@ interface SidecarDriver {
 
 ## Worked example: Docker
 
-`apps/hub/src/sidecar/docker-driver.ts` talks to the Docker Engine API over its socket.
+`@corbits/provisioner-docker` talks to the Docker Engine API over its socket.
 
 1. **Image.** The root `Dockerfile`'s `sidecar` stage is the repository with dependencies installed, starting the stock sidecar:
    ```sh
@@ -49,10 +65,10 @@ interface SidecarDriver {
 4. **Stop.** Stop, then remove with its volumes, every container of the allocation up to that generation.
 5. **Capabilities.** One container per allocation, nothing shared but the kernel: `isolation:workload` available, `isolation:microvm` blocked.
 6. **Configuration.** `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE`, read in `apps/hub/src/env.ts` (`dockerSidecarSettings`). Unset, the driver is not registered.
-7. **Registration.** `server.ts` wraps it with `createDriverProvisioner` and appends it after `local-process`. Probes stay on `local-process`, since they evaluate only the workflow source.
+7. **Registration.** `apps/hub/src/server.ts` passes it to `createSidecarProvisioners` after `local-process`. Probes stay on `local-process`, since they evaluate only the workflow source.
 
 ## Adding a driver
 
-1. Write `apps/hub/src/sidecar/<name>-driver.ts` returning a `SidecarDriver`. Declare only what the backend enforces.
-2. Read its settings in `apps/hub/src/env.ts` and register it in `server.ts` only when they are set.
+1. Add a package `packages/provisioner-<name>` whose driver is a `SidecarDriver`. Declare only what the backend enforces.
+2. Read its settings in `apps/hub/src/env.ts` and add it to `createSidecarProvisioners` in `apps/hub/src/server.ts` only when they are set.
 3. Prove it on a local hub: a workflow that requires one of its capabilities lands on it, its capacity disappears on cancel, and a hub restart with live capacity neither duplicates nor loses it.

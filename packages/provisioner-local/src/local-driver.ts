@@ -1,10 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AdapterManifest } from "@intx/types";
-import type { ChildProcessEnv } from "../env.js";
-import type { DriverProvisioner, SidecarDriver, SidecarHandle } from "./driver-provisioner.js";
+import type { DriverProvisioner, SidecarDriver, SidecarEnv, SidecarHandle, SidecarLaunchSpec } from "@corbits/provisioner";
 import type { LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
-import { buildSidecarEnv, type SidecarEnv, type SidecarLaunchSpec } from "./sidecar-env.js";
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
 
@@ -30,7 +28,7 @@ type IsLocalSidecarLive = (manifest: LocalSidecarManifest) => Promise<boolean>;
 
 export interface LocalProcessDriver extends SidecarDriver {
   /** Respawns the sidecars a previous hub process left live; removes the rest. */
-  restore(seam: DriverProvisioner, isLive: IsLocalSidecarLive, credentialEncryptionKey: string): Promise<void>;
+  restore(seam: DriverProvisioner, isLive: IsLocalSidecarLive): Promise<void>;
   /** Stops every process; data dirs and manifests stay so the next boot can respawn. */
   stopAll(): Promise<void>;
 }
@@ -41,7 +39,8 @@ type Running = {
   exited: boolean;
 };
 
-export function createSpawnLocalSidecar(interchangeDir: string, processEnv: ChildProcessEnv): SpawnLocalSidecar {
+/** `processEnv` is what the child needs to find binaries and scratch space (PATH, HOME, TMPDIR), never the hub's own secrets. */
+export function createSpawnLocalSidecar(interchangeDir: string, processEnv: Readonly<Record<string, string>>): SpawnLocalSidecar {
   return function spawnSidecar(env) {
     const child = Bun.spawn(["bun", "--conditions=intx-src", "apps/sidecar/src/index.ts"], {
       cwd: interchangeDir,
@@ -172,7 +171,7 @@ export function createLocalProcessDriver({
     return stored === null ? null : handleOf(stored, "", false);
   }
 
-  async function restore(seam: DriverProvisioner, isLive: IsLocalSidecarLive, credentialEncryptionKey: string): Promise<void> {
+  async function restore(seam: DriverProvisioner, isLive: IsLocalSidecarLive): Promise<void> {
     for (const manifest of await manifests.readAll()) {
       await seam.exclusive(manifest.allocationId, async function restoreAllocation() {
         // Ensure or destroy may reach an allocation before restore does; their outcome wins.
@@ -182,7 +181,7 @@ export function createLocalProcessDriver({
           log({ level: "info", msg: "local_sidecar_removed", allocationId: manifest.allocationId, generation: manifest.generation, sidecarId: manifest.sidecarId });
           return;
         }
-        launch(manifest, buildSidecarEnv({ ...manifest, adapterManifest: manifest.adapterManifest ?? adapterManifest }, credentialEncryptionKey));
+        launch(manifest, seam.envFor({ ...manifest, adapterManifest: manifest.adapterManifest ?? adapterManifest }));
         log({ level: "info", msg: "local_sidecar_respawned", allocationId: manifest.allocationId, generation: manifest.generation, sidecarId: manifest.sidecarId });
       });
     }
