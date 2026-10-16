@@ -40,6 +40,8 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
   "HUB_SIDECAR_DOCKER_SOCKET?": "string",
   "HUB_SIDECAR_DOCKER_IMAGE?": "string",
+  "HUB_SIDECAR_E2B_API_KEY?": "string",
+  "HUB_SIDECAR_E2B_TEMPLATE?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_BATCH_SIZE?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
@@ -224,6 +226,21 @@ export function dockerSidecarSettings(env: HubEnv): DockerSidecarSettings | unde
   }
   if (socketPath === undefined || image === undefined) return undefined;
   return { socketPath, image };
+}
+
+export type E2bSettings = { apiKey: string; template: string };
+
+/** Unset means no E2B driver. A sandbox dials the hub from the internet, so the sidecar URL must be public wss. */
+export function e2bSettings(env: HubEnv): E2bSettings | undefined {
+  const { HUB_SIDECAR_E2B_API_KEY: apiKey, HUB_SIDECAR_E2B_TEMPLATE: template } = env;
+  if ((apiKey === undefined) !== (template === undefined)) {
+    throw new Error("HUB_SIDECAR_E2B_API_KEY and HUB_SIDECAR_E2B_TEMPLATE must be set together");
+  }
+  if (apiKey === undefined || template === undefined) return undefined;
+  if (env.HUB_SIDECAR_WEBSOCKET_URL?.startsWith("wss://") !== true) {
+    throw new Error("HUB_SIDECAR_E2B_API_KEY requires a public wss:// HUB_SIDECAR_WEBSOCKET_URL");
+  }
+  return { apiKey, template };
 }
 
 export type EmailSettings = { smtpUrl: string; from: string };

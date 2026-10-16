@@ -38,6 +38,7 @@ import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createSidecarProvisioners } from "@corbits/provisioner";
 import { createDockerDriver } from "@corbits/provisioner-docker";
+import { createE2bDriver, E2B_API_URL, E2B_SANDBOX_URL } from "@corbits/provisioner-e2b";
 import { createLocalProcessDriver, createLocalSidecarManifestStore, createSpawnLocalSidecar } from "@corbits/provisioner-local";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { buildSidecarAdapterManifest } from "./sidecar-config.js";
@@ -52,7 +53,7 @@ import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, dockerSidecarSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, dockerSidecarSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -158,10 +159,12 @@ const localDriver = createLocalProcessDriver({
   log: logJson,
 });
 const docker = dockerSidecarSettings(env);
+const e2b = e2bSettings(env);
 // Placement order: a workflow with no placement rule runs on the hub.
 const sidecars = createSidecarProvisioners([
   localDriver,
   ...(docker === undefined ? [] : [createDockerDriver({ ...docker, hostRoot: ROOT, adapterManifest: sidecarAdapterManifest })]),
+  ...(e2b === undefined ? [] : [createE2bDriver({ ...e2b, apiUrl: E2B_API_URL, sandboxUrl: E2B_SANDBOX_URL, hubRoot: ROOT })]),
 ], env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY);
 
 let shuttingDown = false;

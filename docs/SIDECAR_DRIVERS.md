@@ -14,6 +14,7 @@ A workflow says what its sidecar must guarantee; the hub places it on the first 
 | --- | --- | --- |
 | `local-process` | `runtime:posix`, `network:outbound` | `isolation:*` |
 | `docker` | `runtime:posix`, `network:outbound`, `isolation:workload` | `isolation:microvm` |
+| `e2b` | `runtime:posix`, `network:outbound`, `isolation:workload`, `isolation:microvm` | none |
 
 ## Packages
 
@@ -22,6 +23,7 @@ A workflow says what its sidecar must guarantee; the hub places it on the first 
 | `@corbits/provisioner` | The seam, `buildSidecarEnv`, `createSidecarProvisioners` |
 | `@corbits/provisioner-local` | `local-process` driver and its encrypted manifests for boot restore |
 | `@corbits/provisioner-docker` | `docker` driver |
+| `@corbits/provisioner-e2b` | `e2b` driver (one microVM per allocation; [DEPLOY.md](DEPLOY.md#isolated-sidecars-on-e2b)) |
 
 Any hub on Interchange registers them in a few lines:
 
