@@ -80,7 +80,7 @@ interface SidecarDriver {
 4. **Stop.** Stop, then remove with its volumes, every container of the allocation up to that generation.
 5. **Capabilities.** One container per allocation, nothing shared but the kernel: `isolation:workload` available, `isolation:microvm` blocked.
 6. **Configuration.** `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE`, optionally `HUB_SIDECAR_DOCKER_MAX_ALLOCATIONS`, `HUB_SIDECAR_DOCKER_MEMORY_MB` and `HUB_SIDECAR_DOCKER_CPUS`, read in `apps/hub/src/env.ts` (`dockerSidecarSettings`). Unset, the driver is not registered.
-7. **Registration.** `apps/hub/src/server.ts` passes it to `createSidecarProvisioners` after `local-process`. Probes stay on `local-process`, since they evaluate only the workflow source.
+7. **Registration.** `apps/hub/src/server.ts` passes it to `createSidecarProvisioners` after `local-process`. Probes use the same list: a probe is matched against workspace policy only, so a workspace that requires `isolation:workload` gets its probe on Docker and the deployment adopts it.
 
 ## Adding a driver
 
