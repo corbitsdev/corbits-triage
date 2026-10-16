@@ -36,7 +36,7 @@ import { runCronMigrations } from "@corbits/cron/migrations";
 import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
-import { createSidecarProvisioners, deriveSidecarKey, type PlacedDriver, type SidecarDriver } from "@corbits/provisioner";
+import { createSidecarProvisioners } from "@corbits/provisioner";
 import { createDockerDriver } from "@corbits/provisioner-docker";
 import { createE2bDriver, E2B_API_URL, E2B_SANDBOX_URL } from "@corbits/provisioner-e2b";
 import { createLocalProcessDriver, createLocalSidecarManifestStore, createSpawnLocalSidecar } from "@corbits/provisioner-local";
@@ -160,16 +160,13 @@ const localDriver = createLocalProcessDriver({
 });
 const docker = dockerSidecarSettings(env);
 const e2b = e2bSettings(env);
-function withOwnKey(driver: SidecarDriver): PlacedDriver {
-  return { driver, credentialEncryptionKey: deriveSidecarKey(env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY, driver.id) };
-}
-// Placement order: a workflow with no placement rule runs on the hub. Local sidecars keep the root key,
-// which their existing stores are sealed with.
+// Placement order: a workflow with no placement rule runs on the hub.
 const sidecars = createSidecarProvisioners([
-  { driver: localDriver, credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY },
-  ...(docker === undefined ? [] : [withOwnKey(createDockerDriver({ ...docker, hostRoot: ROOT, adapterManifest: sidecarAdapterManifest }))]),
-  ...(e2b === undefined ? [] : [withOwnKey(createE2bDriver({ ...e2b, apiUrl: E2B_API_URL, sandboxUrl: E2B_SANDBOX_URL, hubRoot: ROOT }))]),
+  localDriver,
+  ...(docker === undefined ? [] : [createDockerDriver({ ...docker, hostRoot: ROOT, adapterManifest: sidecarAdapterManifest })]),
+  ...(e2b === undefined ? [] : [createE2bDriver({ ...e2b, apiUrl: E2B_API_URL, sandboxUrl: E2B_SANDBOX_URL, hubRoot: ROOT })]),
 ], {
+  credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
   onUsage(usage) {
     logJson({ level: "info", msg: "sidecar_usage", ...usage });
   },

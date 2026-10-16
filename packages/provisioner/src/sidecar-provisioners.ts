@@ -1,5 +1,5 @@
 import type { SidecarProvisioner, SidecarProvisionerChooser } from "@intx/hub-sessions";
-import { createDriverProvisioner, type DriverProvisioner, type SidecarDriver, type SidecarUsage } from "./driver-provisioner.js";
+import { createDriverProvisioner, type DriverProvisioner, type DriverProvisionerOpts, type SidecarDriver } from "./driver-provisioner.js";
 
 export type SidecarProvisioners = {
   /** For `sidecarProvisioners`: a deployment lands on the first that offers what its workflow requires. */
@@ -15,19 +15,13 @@ export type SidecarProvisioners = {
   drain(): Promise<void>;
 };
 
-/** A driver and the sidecar credential key its sidecars get; see `deriveSidecarKey`. */
-export type PlacedDriver = {
-  readonly driver: SidecarDriver;
-  readonly credentialEncryptionKey: string;
-};
-
 /** Drivers in placement order. */
-export function createSidecarProvisioners(placed: readonly [PlacedDriver, ...PlacedDriver[]], { onUsage }: { readonly onUsage: (usage: SidecarUsage) => void }): SidecarProvisioners {
-  const seams = placed.map(({ driver, credentialEncryptionKey }) => createDriverProvisioner(driver, { credentialEncryptionKey, onUsage }));
+export function createSidecarProvisioners(drivers: readonly [SidecarDriver, ...SidecarDriver[]], opts: DriverProvisionerOpts): SidecarProvisioners {
+  const seams = drivers.map((driver) => createDriverProvisioner(driver, opts));
   const provisioners = seams.map((seam) => seam.provisioner);
 
   function of(driver: SidecarDriver): DriverProvisioner {
-    const seam = seams[placed.findIndex((entry) => entry.driver === driver)];
+    const seam = seams[drivers.indexOf(driver)];
     if (seam === undefined) throw new Error(`Sidecar driver ${driver.id} is not registered`);
     return seam;
   }
