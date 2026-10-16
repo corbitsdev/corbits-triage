@@ -58,7 +58,7 @@ export async function runDefinition({ fetch, apiKey, endpoint, triggerPayload }:
   const origin = new URL(endpoint.url).origin;
   const run = await runLocalWorkflow({
     workflow,
-    director: triageDirector.factory,
+    directors: [triageDirector.factory],
     actions,
     credentialBindings,
     authorize: loggedAuthorize,

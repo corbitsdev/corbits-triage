@@ -84,7 +84,7 @@ function scanMail(repo: string) {
 async function scan(repo: string, github: Parameters<typeof runLocalWorkflow>[0]["github"]): Promise<Measured> {
   const run = await runLocalWorkflow({
     workflow,
-    director: triageDirector.factory,
+    directors: [triageDirector.factory],
     actions,
     credentialBindings,
     authorize: allow,

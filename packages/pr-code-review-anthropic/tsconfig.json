@@ -7,5 +7,5 @@
       "@corbits/triage-contracts": ["../triage-contracts/src/index.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "evals"]
 }

@@ -28,6 +28,7 @@
     "test": "bun --conditions=intx-src test ./apps/ ./packages/ ./tooling/",
     "check": "tsc --noEmit -p tooling && tsc -b apps/web && tsc --noEmit -p apps/extension && tsc --noEmit -p apps/extension/e2e && tsc --noEmit -p apps/hub && tsc --noEmit -p packages/triage-workflows && tsc --noEmit -p packages/pr-code-review-anthropic && bun build --conditions=intx-src apps/hub/src/server.ts --target bun --outfile /dev/null",
     "lint": "oxlint",
+    "eval:review": "bun --conditions=intx-src packages/pr-code-review-anthropic/evals/review.eval.ts",
     "holdback": "bun --conditions=intx-src tooling/holdback-replay.ts",
     "injection": "bun --conditions=intx-src tooling/injection-run.ts",
     "report": "bun --conditions=intx-src tooling/cost-latency-report.ts",

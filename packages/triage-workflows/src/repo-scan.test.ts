@@ -48,7 +48,7 @@ async function github(input: string | URL | Request): Promise<Response> {
 test("repo-scan reads the last closed pull requests through the facts director and measures what was merged", async () => {
   const run = await runLocalWorkflow({
     workflow,
-    director: triageDirector.factory,
+    directors: [triageDirector.factory],
     actions,
     credentialBindings,
     authorize: allow,

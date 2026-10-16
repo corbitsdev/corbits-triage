@@ -9,6 +9,7 @@ import { createIsogitStore } from "@intx/storage-isogit/node";
 import type { GrantRule } from "@intx/types/authz";
 import type { CredentialDelivery } from "@intx/types/credential-delivery";
 import { createRuntimeCapabilities } from "@intx/types/runtime-capabilities";
+import type { InferenceEvent } from "@intx/types/inference-events";
 import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvokeRequest, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
 import { createWorkflowStepInvoker } from "@intx/workflow-host";
 
@@ -18,8 +19,8 @@ type Source = { id: string; provider: string; baseURL: string; credentialId: str
 
 interface RunLocalInput {
   workflow: WorkflowDefinition;
-  /** The workflow's director factory, as its package exports it. */
-  director: Parameters<typeof createWorkflowDirectorRegistry>[0][number];
+  /** The workflow's director factories, as its package exports them; none when every agent runs the stock director. */
+  directors?: Parameters<typeof createWorkflowDirectorRegistry>[0];
   actions: Record<string, unknown>;
   credentialBindings: readonly { handle: string; package: string }[];
   authorize: WorkflowAuthorizeFn;
@@ -30,6 +31,10 @@ interface RunLocalInput {
   /** The inference source an agent's step runs on. */
   sourceFor: (req: StepInvokeRequest) => Source;
   triggerPayload: unknown;
+  /** Every agent step's inference events, for usage and transcripts. */
+  onEvent?: (event: InferenceEvent) => void;
+  /** Each agent step's wall time, by agent id. */
+  onStepDone?: (agentId: string, ms: number) => void;
 }
 
 /** The credential-use grants the hub stamps on a run from a definition's bindings. */
@@ -65,7 +70,7 @@ export async function runLocalWorkflow(input: RunLocalInput) {
   };
   const providers = createCredentialProviderRegistry([createHttpCredentialProvider({ fetch: input.github })]);
   const adapters = await loadAdapterRegistry([{ provider: "corbits-system-one", specifier: "@corbits/system-one", export: "createSystemOneAdapterFactory" }]);
-  const directors = createWorkflowDirectorRegistry([input.director]);
+  const directors = createWorkflowDirectorRegistry(input.directors ?? []);
   const root = mkdtempSync(join(tmpdir(), "workflow-run-"));
 
   /** What the sidecar gives a step, less the mail transport these workflows never use. */
@@ -100,6 +105,16 @@ export async function runLocalWorkflow(input: RunLocalInput) {
     return handler;
   }
 
+  const invoke = createWorkflowStepInvoker({ workflowAuthorize: authorize, buildEnv, ...(input.onEvent ? { onEvent: input.onEvent } : {}) });
+  async function invokeStep(req: StepInvokeRequest) {
+    const started = performance.now();
+    try {
+      return await invoke(req);
+    } finally {
+      input.onStepDone?.(req.agent.id, performance.now() - started);
+    }
+  }
+
   const body = (workflow.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the workflow body is not inline");
   try {
@@ -107,7 +122,7 @@ export async function runLocalWorkflow(input: RunLocalInput) {
       authorize,
       directors,
       hasUpstreamSignalResolver: true,
-      invokeStep: createWorkflowStepInvoker({ workflowAuthorize: authorize, buildEnv }),
+      invokeStep,
       actionResolver: resolveAction,
       triggerPayload: input.triggerPayload,
     }).complete;
