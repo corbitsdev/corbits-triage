@@ -1,1 +1,1 @@
-export { createDockerDriver, type CreateDockerDriverOpts } from "./docker-driver.js";
+export { createDockerDriver, type CreateDockerDriverOpts, type DockerSidecarSize } from "./docker-driver.js";

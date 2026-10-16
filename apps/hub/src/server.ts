@@ -165,7 +165,12 @@ const sidecars = createSidecarProvisioners([
   localDriver,
   ...(docker === undefined ? [] : [createDockerDriver({ ...docker, hostRoot: ROOT, adapterManifest: sidecarAdapterManifest })]),
   ...(e2b === undefined ? [] : [createE2bDriver({ ...e2b, apiUrl: E2B_API_URL, sandboxUrl: E2B_SANDBOX_URL, hubRoot: ROOT })]),
-], env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY);
+], {
+  credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
+  onUsage(usage) {
+    logJson({ level: "info", msg: "sidecar_usage", ...usage });
+  },
+});
 
 let shuttingDown = false;
 let cronTicker: CronTicker | undefined;
@@ -205,6 +210,7 @@ const composition = await createInterchangeHub({
   credentialCipher,
   adapterManifest: sidecarAdapterManifest,
   sidecarProvisioners: sidecars.deployment,
+  sidecarProvisionerChooser: sidecars.chooser,
   probeSidecarProvisioners: sidecars.probe,
 });
 const stock = composition.server;
