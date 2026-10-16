@@ -86,8 +86,9 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
 
 ## Packages
 
-- `triage-workflows`: `pr-triage`, `pr-triage-historical`, their steps
-  (`triage-steps.ts`), directors and the deterministic logic under `logic/`.
+- `triage-workflows`: `pr-triage`, `pr-triage-historical`, `repo-scan`, their
+  steps (`triage-steps.ts`, `repo-scan.ts`), directors and the deterministic
+  logic under `logic/`.
 - `github-reads`: GitHub read helpers and types.
 - `github-tool`: the mirror write (marker-comment upsert), actions and the sidecar
   tool bundles.
@@ -121,6 +122,7 @@ GitHub emulator).
 | `bun run lint` | oxlint. |
 | `bun run holdback`, `injection`, `report` | Eval scripts: holdback replay, prompt-injection run, cost and latency report. |
 | `bun run eval` in `packages/triage-workflows` | Decision-model eval over `packages/triage-workflows/evals`. |
+| `bun run eval:scan` in `packages/triage-workflows` | Repository scan eval over recorded fixtures; see `packages/triage-workflows/evals/SCAN.md`. |
 | `bun run vendor:health`, `sh tooling/vendor-diff-check.sh` | Vendored Interchange health and drift gate. |
 
 ## Build and deploy

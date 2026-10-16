@@ -10,9 +10,9 @@ import type {
   ToolResult,
 } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, classificationSources, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, ruleLabel, triageEventsOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, classificationSources, emptyPack, isFromTriageSender, PolicySourceShape, repoPolicy, repoSourceOf, ruleLabel, triageEventsOf, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import type { DoInput, DoOutcome } from "@corbits/github-tool/do";
-import { repoDocs, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
+import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import type { SuggestedAction, SuggestedDo } from "./logic/actions.js";
 import { hasModelChecks, NEEDS_SETUP_REASON, packFromInput } from "./logic/checks.js";
 import { unrunnable } from "./logic/execute-do.js";
@@ -23,6 +23,7 @@ import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import type { ApprovalOutput } from "./actions/approval.js";
 import type { Judgment } from "./actions/evaluate.js";
+import type { History } from "./logic/history.js";
 import type { Judged } from "./logic/item.js";
 import type { RulesItem } from "./actions/rules.js";
 
@@ -175,6 +176,24 @@ function automaticKinds(message: InboundMail, input: Record<string, unknown> | u
   return ACTION_KINDS.filter((kind) => kinds.includes(kind));
 }
 
+interface FetchContext {
+  policy: ReturnType<typeof repoPolicy>;
+  pack: CheckPack;
+  events: TriageEvent[];
+  docs: RepoDocs | string;
+  firstFiles: FilesCursor;
+  /** A scan counts reviews, commits and checks, so one it could not read leaves the pull request unread instead of empty. */
+  wholeReads: boolean;
+}
+
+/** A scan reads paths and sizes, not patches. */
+const HISTORY_FILES_PAGE: FilesCursor = { offset: 0, patches: false };
+
+/** Pull requests read at once, so GitHub sees a bounded number of concurrent requests. */
+const HISTORY_CHUNK = 10;
+
+const HISTORY_LIMIT = 200;
+
 function factsDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
   let carried = new Map<number, Judged>();
@@ -191,14 +210,14 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
     return reply([{ error: reason }], false);
   }
 
-  function fetchTargets(repo: string, numbers: number[], batch: boolean, policy: ReturnType<typeof repoPolicy>, pack: CheckPack, events: TriageEvent[], docs: RepoDocs | string) {
+  function fetchTargets(repo: string, numbers: number[], { policy, pack, events, docs, firstFiles, wholeReads }: FetchContext, then: (items: RulesItem[]) => DirectorActions) {
     function prCalls(n: number): ToolCall[] {
       return [
         call(tool("get_pr"), { repo, number: n }, `pr:${n}`),
         call(tool("get_reviews"), { repo, number: n }, `reviews:${n}`),
         call(tool("list_issue_comments"), { repo, number: n }, `comments:${n}`),
         call(tool("list_pr_commits"), { repo, number: n }, `commits:${n}`),
-        filesCall(n, FIRST_FILES_PAGE),
+        filesCall(n, firstFiles),
       ];
     }
 
@@ -252,7 +271,14 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       }
 
       function onChecks(r2: BatchResults) {
+        function unreadParts(n: number): string[] {
+          const reads = [r1.get(`reviews:${n}`), r1.get(`commits:${n}`), ...(prs.get(n)?.sha ? [r2.get(`checks:${n}`)] : [])];
+          return reads.flatMap((r, i) => (data(r) === null ? [["reviews", "commits", "checks"][i]!] : []));
+        }
+
         function itemFor(n: number): RulesItem {
+          const unread = wholeReads ? unreadParts(n) : [];
+          if (unread.length > 0) return { error: `could not read the ${unread.join(", ")} of #${n}` };
           const item = assembleItem(n, {
             pr: prs.get(n) ?? null,
             checks: data<{ checks: CheckRun[] }>(r2.get(`checks:${n}`))?.checks ?? [],
@@ -267,10 +293,10 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
           const stamped = { ...item, automatic, ...(source && { source }), ...(repoSource !== "github" && { repoSource }) };
           return judged === undefined ? stamped : { ...stamped, judged };
         }
-        return reply(numbers.map(itemFor), batch);
+        return then(numbers.map(itemFor));
       }
 
-      return readFiles(r1, numbers.map((n) => [n, FIRST_FILES_PAGE]));
+      return readFiles(r1, numbers.map((n) => [n, firstFiles]));
     }
 
     return b.run(numbers.flatMap(prCalls), onPrs);
@@ -302,15 +328,49 @@ function factsDirector(caps: ReactorCapabilities): ReactorDirector {
       const listed = list?.prs ?? [];
       const triageable = listed.filter((p) => p.draft !== true).map((p) => p.number);
       function withDocs(docs: RepoDocs | string) {
-        return fetchTargets(repo, targets ?? triageable, batch, policy, pack, events, docs);
+        return fetchTargets(repo, targets ?? triageable, { policy, pack, events, docs, firstFiles: FIRST_FILES_PAGE, wholeReads: false }, (items) => reply(items, batch));
       }
       return judged ? readDocs(repo, 0, r.get("docs:0"), [], withDocs) : withDocs({ docs: {}, rules: {} });
     });
   }
 
+  /** Lists the closed pull requests a page at a time, then reads their facts a chunk at a time, without patches or a policy. */
+  function fetchHistory(repo: string, limit: number) {
+    const closed: ClosedPr[] = [];
+    const items: RulesItem[] = [];
+    const listTool = tool("list_closed_prs");
+    const context: FetchContext = { policy: repoPolicy(undefined), pack: emptyPack(repo), events: [], docs: { docs: {}, rules: {} }, firstFiles: HISTORY_FILES_PAGE, wholeReads: true };
+
+    function listPage(page: number): DirectorActions {
+      return b.run([call(listTool, { repo, page })], function onPage(r): DirectorActions {
+        const listed = data<{ prs: ClosedPr[]; next?: number }>(r.get(listTool));
+        if (!listed) return fail(`${listTool} failed on page ${page}`);
+        closed.push(...listed.prs.slice(0, limit - closed.length));
+        return closed.length < limit && listed.next !== undefined ? listPage(listed.next) : readChunk(0);
+      });
+    }
+
+    function readChunk(start: number): DirectorActions {
+      if (start >= closed.length) return caps.reply(JSON.stringify({ repo, closed, items } satisfies History));
+      const numbers = closed.slice(start, start + HISTORY_CHUNK).map((pr) => pr.number);
+      return fetchTargets(repo, numbers, context, function onChunk(read) {
+        items.push(...read);
+        return readChunk(start + HISTORY_CHUNK);
+      });
+    }
+
+    return listPage(1);
+  }
+
   function start(message: InboundMail) {
     const input = parseInput(message.content);
     const repo = input?.repo;
+    if (input?.kind === "history") {
+      const limit = input.limit ?? HISTORY_LIMIT;
+      if (typeof repo !== "string") return fail("facts: input has no repo");
+      if (!Number.isSafeInteger(limit) || (limit as number) < 1) return fail("facts: history limit must be a positive integer");
+      return fetchHistory(repo, limit as number);
+    }
     const policy = repoPolicy(input?.policy);
     if (typeof repo !== "string") return fail("facts: input has no repo");
     if (!policy.enabled) return fail("Triage is disabled for this repository.");

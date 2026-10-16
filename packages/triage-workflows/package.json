@@ -18,7 +18,8 @@
     }
   },
   "scripts": {
-    "eval": "bun --conditions=intx-src evals/judge.eval.ts"
+    "eval": "bun --conditions=intx-src evals/judge.eval.ts",
+    "eval:scan": "bun --conditions=intx-src evals/scan.eval.ts"
   },
   "dependencies": {
     "@corbits/common": "workspace:*",
