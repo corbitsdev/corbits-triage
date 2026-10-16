@@ -134,8 +134,8 @@ connection queue for minutes.
 
    - Permissions: Pull requests, Issues and Contents: write; Checks, Members
      and Metadata: read.
-   - Events: Pull request, Pull request review, Issue comment, Check run,
-     Push, Installation, Installation repositories.
+   - Events: Pull request, Pull request review, Issue comment, Check run and
+     Push. GitHub sends installation events to every App without ticking them.
 
    An App created before the Push event was added keeps working, but its
    repositories' `.corbits-triage.yaml` is read only on **Use file** until
