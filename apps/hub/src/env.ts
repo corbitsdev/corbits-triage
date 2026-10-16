@@ -223,6 +223,7 @@ export function signInSettings(env: HubEnv): SignInSettings {
 export type DockerSidecarSettings = {
   socketPath: string;
   image: string;
+  hubPort: number;
   size: { memoryBytes?: number; cpus?: number };
   limits: { maxAllocations?: number };
 };
@@ -242,6 +243,7 @@ export function dockerSidecarSettings(env: HubEnv): DockerSidecarSettings | unde
   return {
     socketPath,
     image,
+    hubPort: Number(env.PORT),
     size: { ...(memoryMb !== undefined && { memoryBytes: Number(memoryMb) * 1024 * 1024 }), ...(cpus !== undefined && { cpus: Number(cpus) }) },
     limits: { ...(max !== undefined && { maxAllocations: Number(max) }) },
   };
