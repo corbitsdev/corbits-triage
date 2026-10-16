@@ -1,0 +1,10 @@
+<pull_request>
+<title>{{title}}</title>
+<description>{{description}}</description>
+</pull_request>
+
+<diff>
+{{diff}}
+</diff>
+
+Review the diff above and report the defects this change introduces.

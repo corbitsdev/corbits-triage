@@ -11,6 +11,7 @@ tooling/shots/
 packages/github-tool/dist/
 packages/github-write-tool/dist/
 packages/triage-workflows/evals/.cache/
+packages/pr-code-review-anthropic/evals/.cache/
 
 # vendored interchange local state
 vendor/interchange/tmp/
