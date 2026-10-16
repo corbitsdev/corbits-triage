@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { type } from "arktype";
 import type { AdapterManifest } from "@intx/types";
-import type { SidecarDriver, SidecarDriverLimits, SidecarEnv, SidecarHandle, SidecarLaunchSpec } from "@corbits/provisioner";
+import type { SidecarDriver, SidecarEnv, SidecarHandle, SidecarLaunchSpec } from "@corbits/provisioner";
 
 export const E2B_API_URL = "https://api.e2b.app";
 export const E2B_SANDBOX_URL = "https://sandbox.e2b.app";
@@ -19,7 +19,6 @@ const CreatedSandbox = type({ sandboxID: "string", envdAccessToken: "string" });
 const ListedSandboxes = type({
   sandboxID: "string",
   state: "'running' | 'paused'",
-  startedAt: "string.date.iso.parse",
   "metadata?": "Record<string, string>",
 }).array();
 type ListedSandbox = typeof ListedSandboxes.infer[number];
@@ -36,7 +35,6 @@ export type E2bDriverOpts = {
   readonly sandboxUrl: string;
   /** The hub's checkout; `file:` adapter specifiers under it are moved to the image's copy. */
   readonly hubRoot: string;
-  readonly limits?: SidecarDriverLimits;
 };
 
 async function apiError(response: Response): Promise<Error> {
@@ -101,21 +99,19 @@ function toImagePaths(manifestJson: string, hubRoot: string): string {
 }
 
 function handleOf(sandbox: ListedSandbox): SidecarHandle | null {
-  const { intxAllocation, intxGeneration, intxSidecar, intxTenant } = sandbox.metadata ?? {};
-  if (intxAllocation === undefined || intxGeneration === undefined || intxSidecar === undefined || intxTenant === undefined) return null;
+  const { intxAllocation, intxGeneration, intxSidecar } = sandbox.metadata ?? {};
+  if (intxAllocation === undefined || intxGeneration === undefined || intxSidecar === undefined) return null;
   return {
     allocationId: intxAllocation,
     generation: Number(intxGeneration),
     sidecarId: intxSidecar,
-    tenantId: intxTenant,
     externalRef: sandbox.sandboxID,
     running: sandbox.state === "running",
-    startedAt: sandbox.startedAt,
   };
 }
 
 /** One E2B sandbox (a Firecracker microVM) per allocation; the sandbox's metadata is the durable hold. */
-export function createE2bDriver({ apiKey, template, apiUrl, sandboxUrl, hubRoot, limits = {} }: E2bDriverOpts): SidecarDriver {
+export function createE2bDriver({ apiKey, template, apiUrl, sandboxUrl, hubRoot }: E2bDriverOpts): SidecarDriver {
   const fingerprint = "e2b:v1";
 
   function api(path: string, init: RequestInit = {}): Promise<Response> {
@@ -154,17 +150,8 @@ export function createE2bDriver({ apiKey, template, apiUrl, sandboxUrl, hubRoot,
     await readStartedPid(response.body);
   }
 
-  async function sandboxes(match: Record<string, string>): Promise<SidecarHandle[]> {
-    const metadata = new URLSearchParams(match).toString();
-    const query = new URLSearchParams({ metadata, state: "running,paused", limit: "100" });
-    const response = await api(`/v2/sandboxes?${query.toString()}`);
-    if (!response.ok) throw await apiError(response);
-    return ListedSandboxes.assert(await response.json()).map(handleOf).filter((handle) => handle !== null);
-  }
-
   return {
     id: "e2b",
-    limits,
     fingerprint,
     capabilities: [
       { capability: "runtime:posix", state: "available" },
@@ -184,7 +171,6 @@ export function createE2bDriver({ apiKey, template, apiUrl, sandboxUrl, hubRoot,
             intxAllocation: launch.allocationId,
             intxGeneration: String(launch.generation),
             intxSidecar: launch.sidecarId,
-            intxTenant: launch.tenantId,
           },
         }),
       });
@@ -200,22 +186,21 @@ export function createE2bDriver({ apiKey, template, apiUrl, sandboxUrl, hubRoot,
         allocationId: launch.allocationId,
         generation: launch.generation,
         sidecarId: launch.sidecarId,
-        tenantId: launch.tenantId,
         externalRef: sandbox.sandboxID,
         running: true,
-        startedAt: new Date(),
       };
     },
     async stop(handle) {
       await kill(handle.externalRef);
     },
     async find(allocationId) {
-      const handles = await sandboxes({ intxBinding: fingerprint, intxAllocation: allocationId });
+      const metadata = new URLSearchParams({ intxBinding: fingerprint, intxAllocation: allocationId }).toString();
+      const query = new URLSearchParams({ metadata, state: "running,paused", limit: "100" });
+      const response = await api(`/v2/sandboxes?${query.toString()}`);
+      if (!response.ok) throw await apiError(response);
+      const handles = ListedSandboxes.assert(await response.json()).map(handleOf).filter((handle) => handle !== null);
       if (handles.length === 0) return null;
       return handles.reduce((newest, handle) => handle.generation > newest.generation ? handle : newest);
-    },
-    list() {
-      return sandboxes({ intxBinding: fingerprint });
     },
   };
 }

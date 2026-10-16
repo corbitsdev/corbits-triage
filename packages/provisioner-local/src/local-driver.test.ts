@@ -40,7 +40,7 @@ test("restore launches a record without adapterManifest with the hub's adapters"
     log: () => {},
   });
 
-  await driver.restore(createDriverProvisioner(driver, { credentialEncryptionKey: "key", onUsage() {} }), async () => true);
+  await driver.restore(createDriverProvisioner(driver, "key"), async () => true);
 
   expect(spawned).toEqual([JSON.stringify(HUB_ADAPTERS)]);
 });
@@ -61,7 +61,7 @@ test("an ensure whose failed start leaves a process that will not stop throws in
     },
     log: () => {},
   });
-  const { provisioner } = createDriverProvisioner(driver, { credentialEncryptionKey: "key", onUsage() {} });
+  const { provisioner } = createDriverProvisioner(driver, "key");
 
   const ensure = provisioner.ensure({ allocationId: "a1", generation: 1, sidecarId: "s1", tenantId: "t", anchorRunId: "r", token: "tok", hubWebSocketUrl: "ws://hub" });
 

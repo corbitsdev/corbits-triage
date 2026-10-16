@@ -14,28 +14,8 @@ export type SidecarHandle = {
   readonly allocationId: string;
   readonly generation: number;
   readonly sidecarId: string;
-  readonly tenantId: string;
   readonly externalRef: string;
   readonly running: boolean;
-  /** When the backend started this capacity; absent when it cannot know (a local record whose process is gone). */
-  readonly startedAt?: Date;
-};
-
-/** Operator limits on one driver. Unset means unbounded. */
-export type SidecarDriverLimits = {
-  /** Running allocations at once; a new one beyond it is refused as retryable `capacity_full`. */
-  readonly maxAllocations?: number;
-};
-
-/** One allocation's capacity from start to stop, for cost attribution. */
-export type SidecarUsage = {
-  readonly driverId: string;
-  readonly tenantId: string;
-  readonly allocationId: string;
-  readonly generation: number;
-  readonly startedAt: Date;
-  readonly stoppedAt: Date;
-  readonly runtimeMs: number;
 };
 
 /**
@@ -47,15 +27,12 @@ export interface SidecarDriver {
   /** Stable and non-secret; a change orphans the allocations placed under the old value. */
   readonly fingerprint: string;
   readonly capabilities: readonly SidecarCapabilityDeclaration[];
-  readonly limits: SidecarDriverLimits;
   /** Starts the sidecar with exactly `env`. A throw must leave nothing behind that `find` cannot see. */
   start(launch: SidecarLaunchSpec, env: SidecarEnv): Promise<SidecarHandle>;
   /** Idempotent: capacity already gone is not an error. */
   stop(handle: SidecarHandle): Promise<void>;
   /** The allocation's newest capacity, running or not, or null when it has none. */
   find(allocationId: string): Promise<SidecarHandle | null>;
-  /** Every allocation's capacity this driver holds, running or not. */
-  list(): Promise<readonly SidecarHandle[]>;
 }
 
 export type DriverProvisioner = {
@@ -64,15 +41,8 @@ export type DriverProvisioner = {
   envFor(launch: SidecarLaunchSpec): SidecarEnv;
   /** Runs `operation` in the allocation's queue, ordered with its ensure and destroy calls. */
   exclusive<T>(allocationId: string, operation: () => Promise<T>): Promise<T>;
-  /** False when the driver's `maxAllocations` are all running. */
-  hasRoom(): Promise<boolean>;
   /** Refuses new operations and waits for the ones in flight. */
   drain(): Promise<void>;
-};
-
-export type DriverProvisionerOpts = {
-  readonly credentialEncryptionKey: string;
-  readonly onUsage: (usage: SidecarUsage) => void;
 };
 
 type Fence = {
@@ -99,10 +69,9 @@ async function after<T>(previous: Promise<void> | undefined, operation: () => Pr
 }
 
 /** Implements the stock provisioner contract (idempotency, generation fencing, ordering) once for every driver. */
-export function createDriverProvisioner(driver: SidecarDriver, { credentialEncryptionKey, onUsage }: DriverProvisionerOpts): DriverProvisioner {
+export function createDriverProvisioner(driver: SidecarDriver, credentialEncryptionKey: string): DriverProvisioner {
   const fences = new Map<string, Fence>();
   const queues = new Map<string, Promise<void>>();
-  let admissions: Promise<void> = Promise.resolve();
   let draining = false;
 
   async function release(allocationId: string, settled: Promise<void>): Promise<void> {
@@ -119,52 +88,15 @@ export function createDriverProvisioner(driver: SidecarDriver, { credentialEncry
     return pending;
   }
 
-  async function hasRoom(): Promise<boolean> {
-    const { maxAllocations } = driver.limits;
-    if (maxAllocations === undefined) return true;
-    const running = (await driver.list()).filter((handle) => handle.running);
-    return running.length < maxAllocations;
-  }
-
-  async function stop(handle: SidecarHandle): Promise<void> {
-    await driver.stop(handle);
-    if (handle.startedAt === undefined) return;
-    const stoppedAt = new Date();
-    onUsage({
-      driverId: driver.id,
-      tenantId: handle.tenantId,
-      allocationId: handle.allocationId,
-      generation: handle.generation,
-      startedAt: handle.startedAt,
-      stoppedAt,
-      runtimeMs: stoppedAt.getTime() - handle.startedAt.getTime(),
-    });
-  }
-
-  // A capped driver checks room and starts one allocation at a time, so concurrent ensures cannot all take the last slot.
-  function admitted(operation: () => Promise<EnsureSidecarResult>): Promise<EnsureSidecarResult> {
-    if (driver.limits.maxAllocations === undefined) return operation();
-    const pending = after(admissions, operation);
-    admissions = settle(pending);
-    return pending;
-  }
-
   async function startFresh(request: EnsureSidecarRequest): Promise<EnsureSidecarResult> {
     request.signal?.throwIfAborted();
-    return admitted(() => startWithRoom(request));
-  }
-
-  async function startWithRoom(request: EnsureSidecarRequest): Promise<EnsureSidecarResult> {
-    if (!(await hasRoom())) {
-      return rejected("capacity_full", `Sidecar driver ${driver.id} already runs its ${String(driver.limits.maxAllocations)} allowed allocations`, true);
-    }
     const { signal: _, ...launch } = request;
     let handle: SidecarHandle;
     try {
       handle = await driver.start(launch, envFor(launch));
     } catch (error) {
       const leftover = await driver.find(request.allocationId);
-      if (leftover !== null && leftover.generation === request.generation) await stop(leftover);
+      if (leftover !== null && leftover.generation === request.generation) await driver.stop(leftover);
       return rejected("spawn_failed", errorText(error), true);
     }
     fences.set(request.allocationId, { generation: request.generation, sidecarId: request.sidecarId, destroyed: false });
@@ -193,7 +125,7 @@ export function createDriverProvisioner(driver: SidecarDriver, { credentialEncry
       fences.set(request.allocationId, { generation: request.generation, sidecarId: request.sidecarId, destroyed: false });
       return { kind: "accepted", externalRef: current.externalRef };
     }
-    if (current !== null) await stop(current);
+    if (current !== null) await driver.stop(current);
     return startFresh(request);
   }
 
@@ -206,7 +138,7 @@ export function createDriverProvisioner(driver: SidecarDriver, { credentialEncry
     const supersedes = current !== null &&
       (current.generation > request.generation ||
         (current.generation === request.generation && current.sidecarId !== request.sidecarId));
-    if (current !== null && !supersedes) await stop(current);
+    if (current !== null && !supersedes) await driver.stop(current);
     fences.set(request.allocationId, { generation: request.generation, sidecarId: request.sidecarId, destroyed: true });
     return { kind: "destroyed" };
   }
@@ -235,5 +167,5 @@ export function createDriverProvisioner(driver: SidecarDriver, { credentialEncry
     return buildSidecarEnv(launch, credentialEncryptionKey);
   }
 
-  return { provisioner, envFor, exclusive, hasRoom, drain };
+  return { provisioner, envFor, exclusive, drain };
 }

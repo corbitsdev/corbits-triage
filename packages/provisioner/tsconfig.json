@@ -1,8 +1,0 @@
-{
-  "extends": "../../tsconfig.json",
-  "compilerOptions": {
-    "noEmit": true,
-    "customConditions": ["intx-src"]
-  },
-  "include": ["src", "../provisioner-local/src", "../provisioner-docker/src", "../provisioner-e2b/src"]
-}

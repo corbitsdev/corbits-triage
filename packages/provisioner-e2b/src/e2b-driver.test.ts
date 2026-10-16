@@ -3,7 +3,7 @@ import type { EnsureSidecarRequest } from "@intx/hub-sessions";
 import { createDriverProvisioner } from "@corbits/provisioner";
 import { createE2bDriver } from "./e2b-driver.js";
 
-type FakeSandbox = { sandboxID: string; state: "running" | "paused"; startedAt: string; metadata: Record<string, string> };
+type FakeSandbox = { sandboxID: string; state: "running" | "paused"; metadata: Record<string, string> };
 type Started = { sandboxId: string | null; token: string | null; envs: Record<string, string>; args: string[] };
 
 function frame(flags: number, message: unknown): Uint8Array {
@@ -39,7 +39,7 @@ function fakeE2b() {
       const body = await request.json() as { metadata: Record<string, string> };
       created.push(body);
       next += 1;
-      const sandbox: FakeSandbox = { sandboxID: `sbx${String(next)}`, state: "running", startedAt: new Date().toISOString(), metadata: body.metadata };
+      const sandbox: FakeSandbox = { sandboxID: `sbx${String(next)}`, state: "running", metadata: body.metadata };
       sandboxes.set(sandbox.sandboxID, sandbox);
       return Response.json({ sandboxID: sandbox.sandboxID, envdAccessToken: `envd-${sandbox.sandboxID}`, templateID: "tpl" }, { status: 201 });
     }
@@ -78,7 +78,7 @@ function hub() {
   const url = `http://127.0.0.1:${String(fake.server.port)}`;
   return createDriverProvisioner(
     createE2bDriver({ apiKey: "key", template: "corbits-sidecar", apiUrl: url, sandboxUrl: url, hubRoot: "/srv/hub" }),
-    { credentialEncryptionKey: "sidecar-key", onUsage() {} },
+    "sidecar-key",
   ).provisioner;
 }
 
@@ -106,7 +106,7 @@ test("ensure starts the sidecar in a tagged sandbox, a restarted hub adopts it, 
     templateID: "corbits-sidecar",
     timeout: 3600,
     autoPause: false,
-    metadata: { intxBinding: "e2b:v1", intxAllocation: "sal_1", intxGeneration: "1", intxSidecar: "sc_1", intxTenant: "tnt_1" },
+    metadata: { intxBinding: "e2b:v1", intxAllocation: "sal_1", intxGeneration: "1", intxSidecar: "sc_1" },
   }]);
   const [started] = fake.started;
   expect(started?.sandboxId).toBe("sbx1");
