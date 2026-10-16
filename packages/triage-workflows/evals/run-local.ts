@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkflowDirectorRegistry } from "@intx/agent";
@@ -72,6 +72,9 @@ export async function runLocalWorkflow(input: RunLocalInput) {
   async function buildEnv(req: StepInvokeRequest) {
     const workdir = mkdtempSync(join(root, "step-"));
     const storage = await createIsogitStore(workdir);
+    // A deployed step's tools work in a throwaway workspace beside its storage, never in the storage itself.
+    const toolCwd = join(workdir, "workspace");
+    mkdirSync(toolCwd);
     const factories = req.agent.toolFactories.map((factory) => ({ packageName: factory.id, declaredCredentials: [], factory }));
     const credentials = [...buildCredentialCapabilities(factories, { materialCell: cell, resolveGrants: () => grants, providers }).values()];
     // The sidecar layers one capability bag per tool bundle; a step env holds one, which serves an agent with one package.
@@ -83,6 +86,7 @@ export async function runLocalWorkflow(input: RunLocalInput) {
       storage,
       audit: storage,
       workdir,
+      toolCwd,
       directors,
       deps: createDependencies(adapters),
       readCurrentMaterial: createInferenceCredentialResolver(cell),

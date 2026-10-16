@@ -25,6 +25,7 @@
   "dependencies": {
     "@corbits/bitbucket-datacenter-reads": "workspace:*",
     "@corbits/github-reads": "workspace:*",
+    "@corbits/repo-read-tool": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/types": "workspace:*",

@@ -93,6 +93,11 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
 - `github-tool`: the mirror write (marker-comment upsert), actions and the sidecar
   tool bundles.
 - `github-write-tool`: build wrapper for the write bundle.
+- `repo-read-tool`: `read_file`, `grep` and `list`, read-only and confined to
+  the step's working tree (no `..`, absolute path or symlink out). The GitHub
+  and Bitbucket Data Center read bundles add `*_checkout`, which unpacks a
+  repository at a commit into that tree, and `*_read_file`, which reads lines
+  of one file at a commit through the host API.
 - `triage-contracts`: policy schema (`schemaVersion` 2) with the workspace
   policy and override schemas, `resolve-policy.ts` (a repository policy over
   the workspace policy it extends), repository settings, triage state,
