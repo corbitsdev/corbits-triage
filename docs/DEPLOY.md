@@ -63,7 +63,7 @@ Unrelated domains without a rewrite (for example `*.vercel.app` and `*.up.railwa
 
 ## Splitting sidecars out later
 
-Sidecars start through Interchange's `SidecarProvisioner` interface. The local-process provisioner is registered in `apps/hub/src/server.ts`; a remote provisioner (QEMU, Kubernetes, E2B) replaces it there. Remote sidecars would dial the hub's `/api/sidecars/ws` at `HUB_SIDECAR_WEBSOCKET_URL`. No remote provisioner exists yet, so this is not supported today.
+Sidecars start through drivers registered in `apps/hub/src/server.ts`: local processes first, then Docker when `HUB_SIDECAR_DOCKER_SOCKET` and `HUB_SIDECAR_DOCKER_IMAGE` are set. A workflow that requires `isolation:workload` lands on Docker. Railway gives no Docker socket, so there it needs a Docker host the hub can reach. Sidecars off the hub's machine dial `HUB_SIDECAR_WEBSOCKET_URL`, which should then be `wss://`. See [SIDECAR_DRIVERS.md](SIDECAR_DRIVERS.md).
 
 ## Known limitations
 

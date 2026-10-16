@@ -388,4 +388,4 @@ model's earlier answers for anything unchanged. See
 
 - The repository scan measures a repository's closed pull requests but does
   not propose a policy yet, and the hub does not run it.
-- Sidecars run on the hub's own machine; there is no remote provisioner yet.
+- Sidecars run on the hub's own machine, as processes or, when configured, Docker containers; there is no cloud driver yet.
