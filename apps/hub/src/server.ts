@@ -771,7 +771,7 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       const refused = await tenantManagerRefusal({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
       if (refused) return refused;
       const prepared = await prepareCorbitsTriagePatch(composition.db, tenantId, req, function grantEnabled(tx, repo) {
-        return grantEnabledKinds(tx, tenantId, repo, now());
+        return grantEnabledKinds(tx, tenantId, repo, "github", now());
       });
       if (prepared instanceof Response) return prepared;
       return stock.fetch(prepared, server);

@@ -407,8 +407,8 @@ function mirrors(v: Verdict): boolean {
 }
 
 /**
- * The mirror writes triage's labels when the pr-triage role holds labels and its reply when it holds comment, and takes
- * back what earlier approve and request-changes Dos left standing; the portal offers the rest.
+ * The mirror writes triage's labels when the pr-triage role holds labels and its reply when it holds comment; a host
+ * without labels writes the verdict build status with the comment. It takes back what earlier approve and request-changes Dos left standing; the portal offers the rest.
  */
 function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   const b = batcher(caps);
@@ -432,9 +432,10 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
   function mirrorCall(v: Verdict): ToolCall {
     const r = v.request;
     const source = repoSourceOf(v.repoSource);
-    const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned, ...(source === "bitbucket-datacenter" && { build: verdictBuild(v) }) } : { labels: [], owned: [] };
+    const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
     const comment = v.automatic.includes("comment") ? { comment: r.comment, ...(r.header && { header: r.header }) } : {};
-    return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
+    const build = source === "bitbucket-datacenter" && v.automatic.includes("comment") ? { build: verdictBuild(v) } : {};
+    return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...build, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
   return {

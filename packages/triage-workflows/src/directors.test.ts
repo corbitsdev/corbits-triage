@@ -604,14 +604,20 @@ describe("mirror director grants", () => {
     return calls;
   }
 
-  test("a Bitbucket Data Center verdict mirrors through its own tool, with the verdict as a build status in place of labels", async () => {
+  test("a Bitbucket Data Center verdict mirrors through its own tool, with the verdict as a build status beside its comment", async () => {
     const checks = [{ check: "ci-green", result: "fail" }, { check: "linked-issue", result: "pass" }];
-    const [[call]] = await mirrorCalls({ ...verdict, verdict: "fail", checks, repoSource: "bitbucket-datacenter", automatic: ["comment", "labels"] });
+    const { labels: _labels, owned: _owned, ...pull } = request;
+    const [[call]] = await mirrorCalls({ ...verdict, verdict: "fail", checks, repoSource: "bitbucket-datacenter", automatic: ["comment"] });
     expect(call).toEqual({
       id: "mirror:acme--widgets:8",
       name: "bitbucket_datacenter_mirror_auto",
-      arguments: { ...request, build: { state: "FAILED", description: "Fail: rule: ci-green" } },
+      arguments: { ...pull, labels: [], owned: [], build: { state: "FAILED", description: "Fail: rule: ci-green" } },
     });
+  });
+
+  test("a Bitbucket Data Center repository holding labels but not comment writes no build status", async () => {
+    const [[call]] = await mirrorCalls({ ...verdict, repoSource: "bitbucket-datacenter", automatic: ["labels"] });
+    expect(call?.arguments).not.toHaveProperty("build");
   });
 
   test("comment alone posts the reply and leaves labels alone; approve alone still runs it to take approvals back", async () => {

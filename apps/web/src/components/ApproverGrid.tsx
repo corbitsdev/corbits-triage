@@ -3,7 +3,7 @@ import { Switch, Table, TableBody, TableCell, TableHead, TableHeader, TableRow }
 import { errorText } from "@corbits/common";
 import { DO_GRANT_ACTION, doResource, type ActionKind } from "@corbits/triage-contracts";
 import { DeniedNotice } from "../lib/denied.tsx";
-import { GRID_KINDS, gridCell, gridRoles, roleName, type GridCell } from "../lib/automation-grid.ts";
+import { GRID_KINDS, gridCell, gridRoles, hostCased, roleName, type GridCell } from "../lib/automation-grid.ts";
 import type { CreateGrantInput } from "../lib/grant-actions.ts";
 import type { HubGrant, HubRole } from "../lib/hub-api.ts";
 import { DO_NAMES } from "../lib/pack-prose.ts";
@@ -11,6 +11,7 @@ import { DO_NAMES } from "../lib/pack-prose.ts";
 type ApproverGridProps = {
   roles: HubRole[];
   grants: HubGrant[];
+  repos: string[];
   loading: boolean;
   denied: boolean;
   disabled: boolean;
@@ -19,10 +20,11 @@ type ApproverGridProps = {
   onError: (message: string) => void;
 };
 
-type ApproverCellProps = { role: HubRole; kind: ActionKind; grants: HubGrant[]; disabled: boolean; toggle: (role: HubRole, kind: ActionKind, cell: GridCell) => void };
+type ApproverCellProps = { role: HubRole; kind: ActionKind; grants: HubGrant[]; repos: string[]; disabled: boolean; toggle: (role: HubRole, kind: ActionKind, cell: GridCell) => void };
 
-function ApproverCell({ role, kind, grants, disabled, toggle }: ApproverCellProps) {
-  const cell = gridCell(role, kind, grants);
+function ApproverCell({ role, kind, grants, repos, disabled, toggle }: ApproverCellProps) {
+  const held = gridCell(role, kind, grants);
+  const cell = { ...held, repos: held.repos.map((repo) => hostCased(repos, repo)) };
   // A locked cell holds the action through a wider grant, so it reads as a fact rather than a dead switch.
   if (cell.locked) return <TableCell><span className="model">always</span></TableCell>;
   return (
@@ -39,7 +41,7 @@ function ApproverCell({ role, kind, grants, disabled, toggle }: ApproverCellProp
   );
 }
 
-export default function ApproverGrid({ roles, grants, loading, denied, disabled, addGrant, removeGrants, onError }: ApproverGridProps) {
+export default function ApproverGrid({ roles, grants, repos, loading, denied, disabled, addGrant, removeGrants, onError }: ApproverGridProps) {
   const [pending, setPending] = useState<string | null>(null);
   const columns = gridRoles(roles);
 
@@ -81,7 +83,7 @@ export default function ApproverGrid({ roles, grants, loading, denied, disabled,
               {GRID_KINDS.map((kind) => (
                 <TableRow key={kind}>
                   <TableCell>{DO_NAMES[kind]}</TableCell>
-                  {columns.map((role) => <ApproverCell key={role.id} role={role} kind={kind} grants={grants} disabled={disabled || pending !== null} toggle={startToggle} />)}
+                  {columns.map((role) => <ApproverCell key={role.id} role={role} kind={kind} grants={grants} repos={repos} disabled={disabled || pending !== null} toggle={startToggle} />)}
                 </TableRow>
               ))}
             </TableBody>

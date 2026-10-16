@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { gridCell, panelKinds, triageRunsAlone, triageScope } from "./automation-grid.ts";
+import { gridCell, hostCased, triageRunsAlone, triageScope } from "./automation-grid.ts";
 import type { HubGrant } from "./hub-api.ts";
 
 const TRIAGE = { id: "rol_triage", name: "pr-triage", isSystem: true };
@@ -29,8 +29,8 @@ describe("automation grid", () => {
     expect(triageScope(TRIAGE, "comment", [grant("g4", "triage-do:*")])).toEqual({ locked: true, everywhere: undefined, repos: [] });
   });
 
-  test("the repository panel leaves out the kinds a Bitbucket Data Center host has no way to do", () => {
-    expect(panelKinds("github")).toEqual(["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "merge"]);
-    expect(panelKinds("bitbucket-datacenter")).toEqual(["request-review", "comment", "approve", "request-changes", "close", "merge"]);
+  test("a repository a grant names lowercased reads with the host's casing", () => {
+    expect(hostCased(["TRI/widgets"], "tri/widgets")).toBe("TRI/widgets");
+    expect(hostCased(["TRI/widgets"], "acme/gone")).toBe("acme/gone");
   });
 });

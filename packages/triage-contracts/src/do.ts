@@ -1,5 +1,6 @@
 import { type } from "arktype";
-import { VERDICTS, type ActionKind, type VerdictWord } from "./check-pack.js";
+import { ACTION_KINDS, VERDICTS, type ActionKind, type VerdictWord } from "./check-pack.js";
+import type { RepoSource } from "./repo-source.js";
 
 export const DoList = type.enumerated(...VERDICTS);
 
@@ -17,6 +18,14 @@ export const ANY_DO_RESOURCE = `${DO_GRANT_PREFIX}:*`;
 /** Holding `invoke` on it lets a person approve a held Do of `kind` in `repo`, and the pr-triage role run it unattended. */
 export function doResource(kind: ActionKind, repo: string): string {
   return `${DO_GRANT_PREFIX}:${kind}:${repo.toLowerCase()}`;
+}
+
+/** Bitbucket Data Center has no labels or assignees. */
+const HOSTLESS_KINDS: Record<RepoSource, readonly ActionKind[]> = { github: [], "bitbucket-datacenter": ["labels", "assign"] };
+
+/** The action kinds the host can write. */
+export function hostKinds(source: RepoSource): ActionKind[] {
+  return ACTION_KINDS.filter((kind) => !HOSTLESS_KINDS[source].includes(kind));
 }
 
 /** Closing on an unsure verdict, and merging on anything but a pass, always waits for a person. */

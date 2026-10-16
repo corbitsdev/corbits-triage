@@ -101,9 +101,11 @@ A recorded repository the token no longer sees is listed with
 
 Needs `manage` on the workspace and `use` on both credentials. Records the
 repository enabled with its default branch and creates its webhook, or keeps
-the one it created before. Enabling a repository switches on Comment and Labels;
-every other action stays off until you switch it on. Turning triage off
-and on again switches Comment and Labels back on.
+the one it created before. Enabling a repository switches on Comment, which
+also writes the verdict as the `Corbits Triage` build status, since the host
+has no labels; every other action stays off until you switch it on. Turning
+triage off and on again switches Comment back on. At each start the hub
+removes Labels and Assign grants left on Bitbucket repositories.
 
 | Status | Body |
 | --- | --- |

@@ -15,6 +15,7 @@ export function AccessSection({ repos }: { repos: RepoRecord[] }) {
   const canManageGrants = useAllowed("grant:*", "manage");
   const grantProps = {
     roles: roles.rows,
+    repos: repos.map((repo) => repo.name),
     grants: grants.rows,
     loading: [grants, roles].some((section) => section.loading || section.unavailable),
     denied: grants.denied || roles.denied,
@@ -29,7 +30,7 @@ export function AccessSection({ repos }: { repos: RepoRecord[] }) {
       {error && <p role="alert" className="error">{error}</p>}
       <InvitePeople onSetupPage={false} />
       <ApproverGrid {...grantProps} />
-      <TriageOnItsOwn {...grantProps} repos={repos.map((repo) => repo.name)} />
+      <TriageOnItsOwn {...grantProps} repos={repos} />
     </section>
   );
 }
