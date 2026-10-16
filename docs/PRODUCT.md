@@ -93,8 +93,9 @@ read in full) contains one of its phrases, or with `not-contains` when one
 contains none of them; phrases match without regard to case, and the evidence
 quotes each matching line. The recommended policy has one on: fail when the
 description or any commit message contains `Co-Authored-By:`, `Generated with`
-or `Claude-Session:`. Who opened the pull request is a step's **for** (see
-[Steps](#steps)), not a rule.
+or `Claude-Session:`. Who opened the pull request, whether it links an issue,
+its CI and its size are a step's **when** conditions (see [Steps](#steps)), not
+rules.
 
 ### Decision models
 
@@ -182,7 +183,7 @@ Triage never writes to a closed or merged pull request: no comment, label or act
 
 The policy holds one **When** and three ordered lists of steps: **On Pass**,
 **On Fail** and **On Unsure**. The verdict picks the list. Each step names an
-**action** and who it is **for**.
+**action** and, optionally, **when** it runs.
 
 - **When**: opened, updated, checks, ready; all four by default. Catching up
   runs the policy whatever it names.
@@ -193,32 +194,41 @@ The policy holds one **When** and three ordered lists of steps: **On Pass**,
   kinds it holds, and actions of the kinds Triage holds run on GitHub during
   triage; the rest wait in the Inbox for a click. New workspaces automate
   nothing.
-- **For**: the pull request's author, who opened it and never changes: anyone
-  (the default), first-timers, maintainers (owner, member or collaborator),
-  external (contributor, first-timer or outside), bots, the members of a team,
-  or named people. A step not for the author is skipped, and the verdict
-  records it as skipped with why. One whose author GitHub cannot place, such
-  as an unknown association or an unconfirmed team membership, is skipped too.
+- **When**: conditions that must all hold for the step to run, beside the
+  verdict its list is for. Left out, the step runs for every pull request.
+  - `author`: any of first-timers, maintainers (owner, member or collaborator),
+    external (contributor, first-timer or outside), bots, the members of a
+    team (`{ team }`), or named people (`{ users }`).
+  - `linkedIssue`: true or false; an issue from GitHub or Linear, as the linked
+    issue rule finds it, whatever tracker that rule names.
+  - `ci`: any of passing, failing, pending or none.
+  - `files` and `lines`: `{ over: N }`, `{ atMost: N }` or both; lines are
+    additions plus deletions.
 
-In the policy artifact, `for` may be left out for anyone:
+  A step whose conditions do not hold is skipped, and the verdict records it as
+  skipped with why. One whose author GitHub cannot place, such as an unknown
+  association or an unconfirmed team membership, is skipped too. The portal
+  sets only the author; the other conditions are written in the policy file.
+  A policy written before conditions named a step's author as `for`; it still
+  reads, as that author alone.
 
-```json
-"actions": {
-  "when": ["opened", "updated", "checks", "ready"],
-  "pass": [
-    { "do": "approve" },
-    { "do": "merge", "for": "maintainers" },
-    { "do": "request-review", "target": { "to": "teams", "teams": ["acme/ledger-maintainers"] }, "for": "first-timers" }
-  ],
-  "fail": [
-    { "do": "request-changes" },
-    { "do": "labels", "target": { "from": "rules" }, "for": { "team": "acme/core" } }
-  ],
-  "unsure": [
-    { "do": "request-review", "target": { "to": "codeowners" } },
-    { "do": "close", "for": "bots" }
-  ]
-}
+In the policy file, under `actions` (`on` names the events, every one when left
+out):
+
+```yaml
+actions:
+  on: [opened, updated, checks, ready]
+  pass:
+    - do: approve
+    - do: merge
+      when: { author: [maintainers], ci: [passing] }
+  fail:
+    - do: request-changes
+    - do: close
+      when: { author: [bots, first-timers], lines: { over: 1000 }, linkedIssue: false }
+  unsure:
+    - do: request-review
+      target: { to: codeowners }
 ```
 
 Close never runs on its own on Unsure, and merge never runs on its own on
@@ -306,22 +316,46 @@ policy resolved but cannot edit it yet.
 ### Policy file
 
 A repository may keep its policy in `.corbits-triage.yaml` at the root of its
-default branch, so policy changes are reviewed like code. The file holds what
-the stored policy holds, without `kind`, `schemaVersion` and `repo`; it may
-`extends` a workspace policy; any other key is refused. Its JSON Schema is
-`policyFile` at the hub's `/api/integrations/pack-schema`. Only YAML is read
-today, up to 64 KB and without anchors or aliases. A text rule in the file:
+default branch, so policy changes are reviewed like code. The file lists its
+`rules`, `actions` and `labels`, and may `extends` a workspace policy; any other
+key is refused. Each rule is one sentence (`text`), how it is checked
+(`check`: a built-in rule's id, `model` for a yes/no question the decision
+model answers about the whole pull request, or `text` for a phrase match) and
+why it exists: a one-line `reason` and its `evidence`, pull request references
+(`#44`, `owner/name#44`), links or `maintainer-stated`. All four are required.
+A built-in rule is named by its check; a model or text rule names its own `id`.
+An empty `when` is refused rather than read as no condition.
+A built-in rule takes its setting as `max` (size limits), `tracker` (linked
+issue) or `paths` (forbidden paths); `enabled: false` keeps a rule written
+down but off. Its JSON Schema is `policyFile` at the hub's
+`/api/integrations/pack-schema`. Only YAML is read today, up to 64 KB and
+without anchors or aliases.
 
 ```yaml
-custom:
+rules:
+  - check: max-lines-changed
+    text: A pull request changes at most 400 lines.
+    max: 400
+    reason: Large changes were split before review.
+    evidence: ["#44", "#57"]
+  - id: errors-are-handled
+    check: model
+    text: Every new call that can fail handles or propagates its error.
+    reason: Two outages came from swallowed errors.
+    evidence: ["acme/api#312"]
   - id: no-attribution-trailers
-    name: No attribution trailers
-    group: pull-request
-    kind: text
+    check: text
+    text: Descriptions and commits carry no tool attribution.
     fields: [description, commits] # any of title, description, commits
     failWhen: contains # or not-contains
     phrases: ["Co-Authored-By:", "Generated with", "Claude-Session:"]
+    reason: Maintainer-stated.
+    evidence: [maintainer-stated]
 ```
+
+A file without `rules` is read in the stored policy's shape (`checks`, `custom`,
+`actions` with `when` events and `for` on steps), so files written before keep
+working; score and choose rules and file or hunk scope exist only in that shape.
 
 The file becomes the repository's policy; a workspace policy it extends fills
 what it leaves out. A push to the default branch that changes the file (or a

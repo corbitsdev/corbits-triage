@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Textarea } from "@corbits/react-ui";
 import { alwaysHeld, VERDICTS, type ActionKind, type PeopleTarget, type ReviewTarget, type Step, type StepKind, type VerdictWord } from "@corbits/triage-contracts";
 import { STEPS_MAX } from "../../lib/pack-draft.ts";
-import { FOR_NAMES, forChoice, freshStep, STEP_DO_NAMES, STEP_DOS, withFor, type ForChoice } from "../../lib/policy-view.ts";
+import { FOR_NAMES, forChoice, freshStep, STEP_DO_NAMES, STEP_DOS, stepFor, withFor, withStepFor, type ForChoice } from "../../lib/policy-view.ts";
 import { logins, type PolicyView, type StepRow } from "../../lib/use-policy-view.ts";
 import RunPill from "./RunPill.tsx";
 import TokenList from "./TokenList.tsx";
@@ -61,9 +61,10 @@ export default function StepsSection({ view, automatic, disabled }: StepsSection
   }
 
   function audience(at: string, step: Step, change: (next: Step) => void) {
-    if (typeof step.for !== "object") return null;
-    if ("team" in step.for) return <input className="val lbl" aria-label={`${at}: team`} placeholder={TEAM_PLACEHOLDER} disabled={disabled} value={step.for.team} onChange={(event) => change({ ...step, for: { team: event.target.value } })} />;
-    return <TokenList values={step.for.users} noun="person" placeholder="login" disabled={disabled} onChange={(users) => change({ ...step, for: { users: logins(users) } })} />;
+    const match = stepFor(step);
+    if (typeof match !== "object") return null;
+    if ("team" in match) return <input className="val lbl" aria-label={`${at}: team`} placeholder={TEAM_PLACEHOLDER} disabled={disabled} value={match.team} onChange={(event) => change(withStepFor(step, { team: event.target.value }))} />;
+    return <TokenList values={match.users} noun="person" placeholder="login" disabled={disabled} onChange={(users) => change(withStepFor(step, { users: logins(users) }))} />;
   }
 
   function under(at: string, step: Step, change: (next: Step) => void) {

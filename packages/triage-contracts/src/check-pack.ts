@@ -106,7 +106,16 @@ export const RECOMMENDED_TEXT: Readonly<TextCustomCheck> = {
   phrases: ["Co-Authored-By:", "Generated with", "Claude-Session:"],
 };
 
-export type CatalogCheck = {
+/**
+ * Why a rule exists: its sentence (`text`, which a model rule keeps as its `claim`), a one-line `reason`, and `evidence`,
+ * pull request references (`#44`, `owner/name#44`), links, or `maintainer-stated`. Policies written before rules carried
+ * them have none.
+ */
+export type RuleNote = { text?: string; reason?: string; evidence?: string[] };
+
+const MAINTAINER_STATED = "maintainer-stated";
+
+export type CatalogCheck = RuleNote & {
   enabled: boolean;
   maxFiles?: number;
   maxLines?: number;
@@ -168,7 +177,7 @@ export type TextCheck = { fields: TextField[]; failWhen: TextMatch; phrases: str
  * A custom rule is asked of the decision model, or a text rule read from the pull request without it; `enabled` is
  * stored only as false, and an absent flag means it runs.
  */
-type CustomBase = { id: string; name: string; group: CheckPackGroup; enabled?: boolean };
+type CustomBase = RuleNote & { id: string; name: string; group: CheckPackGroup; enabled?: boolean };
 export type ModelCustomCheck = CustomBase & { kind: "model" } & ModelCheck;
 export type TextCustomCheck = CustomBase & { kind: "text" } & TextCheck;
 export type CustomCheck = ModelCustomCheck | TextCustomCheck;
@@ -188,17 +197,21 @@ export type StepKind = (typeof STEP_KINDS)[number];
 export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "merge"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
-export const AUTHOR_GROUPS = ["anyone", "first-timers", "maintainers", "external", "bots"] as const;
+export const AUTHOR_GROUPS = ["first-timers", "maintainers", "external", "bots"] as const;
 export type AuthorGroup = (typeof AUTHOR_GROUPS)[number];
-export type StepFor = AuthorGroup | { team: string } | { users: string[] };
+export type AuthorMatch = AuthorGroup | { team: string } | { users: string[] };
 
-/** The author kinds each group holds; `anyone` holds every author, known or not. */
-const AUTHOR_GROUP_KINDS: Record<Exclude<AuthorGroup, "anyone">, readonly AuthorKind[]> = {
-  "first-timers": ["first-timer"],
-  maintainers: ["owner", "member", "collaborator"],
-  external: ["contributor", "first-timer", "outside"],
-  bots: ["bot"],
-};
+export const CI_STATES = ["passing", "failing", "pending", "none"] as const;
+export type CiState = (typeof CI_STATES)[number];
+
+export type SizeBound = { over?: number; atMost?: number };
+
+/**
+ * What must all hold for a step to run, beside the verdict its list is for: the author is any of `author`, the pull
+ * request does or does not link an issue, its CI is any of `ci`, and it changes more than `over` and at most `atMost`
+ * files or lines.
+ */
+export type StepWhen = { author?: AuthorMatch[]; linkedIssue?: boolean; ci?: CiState[]; files?: SizeBound; lines?: SizeBound };
 
 export const TRIAGE_EVENTS = [
   "opened",
@@ -254,7 +267,7 @@ export type Step = (
   | { do: "close" }
   | { do: "request-changes" }
   | { do: "nothing" }
-) & { for?: StepFor };
+) & { when?: StepWhen };
 
 export type PolicyActions = { when: PolicyEvent[] } & Record<VerdictWord, Step[]>;
 
@@ -276,8 +289,8 @@ export function defaultActions(): PolicyActions {
   return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [{ do: "request-review", target: { to: "codeowners" } }] };
 }
 
-const Text = type(/\S/).atMostLength(LINE_MAX);
-const Label = type(/\S/).atMostLength(LABEL_MAX);
+export const Text = type(/\S/).atMostLength(LINE_MAX);
+export const Label = type(/\S/).atMostLength(LABEL_MAX);
 const Texts = Text.array().atLeastLength(1).atMostLength(LIST_MAX);
 const RepoName = type(/^\s*(?!.*\.\.)(?!\.\/)[^\s\\/]+\/(?!\.\s*$)[^\s\\/]+\s*$/);
 
@@ -285,8 +298,18 @@ const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
   .or({ "+": "reject", to: "'teams'", teams: Texts })
   .or({ "+": "reject", to: "'codeowners'" });
 
-const StepForSchema = type.enumerated(...AUTHOR_GROUPS).or({ "+": "reject", team: Text }).or({ "+": "reject", users: Texts });
-const STEP_BASE = { "+": "reject", "for?": StepForSchema } as const;
+const AuthorMatchSchema = type.enumerated(...AUTHOR_GROUPS).or({ "+": "reject", team: Text }).or({ "+": "reject", users: Texts });
+const Count = type("number.integer").atLeast(0);
+const SizeBoundSchema = type({ "+": "reject", "over?": Count, "atMost?": Count });
+const stepWhenSchema = type({
+  "+": "reject",
+  "author?": AuthorMatchSchema.array().atLeastLength(1).atMostLength(LIST_MAX),
+  "linkedIssue?": "boolean",
+  "ci?": type.enumerated(...CI_STATES).array().atLeastLength(1),
+  "files?": SizeBoundSchema,
+  "lines?": SizeBoundSchema,
+});
+const STEP_BASE = { "+": "reject", "when?": stepWhenSchema } as const;
 
 const StepSchema = type({
   ...STEP_BASE,
@@ -298,19 +321,25 @@ const StepSchema = type({
   .or({ ...STEP_BASE, do: "'comment'", target: { "+": "reject", body: type(/\S/).atMostLength(COMMENT_BODY_MAX) } })
   .or({ ...STEP_BASE, do: "'approve' | 'merge' | 'close' | 'request-changes' | 'nothing'" });
 
-const DoList = StepSchema.array().atMostLength(STEPS_MAX);
+export const stepListSchema = StepSchema.array().atMostLength(STEPS_MAX);
 
 /** Packs written before verdicts stored an empty list of actions, which reads as no steps. */
 const PolicyActionsObject = type({
   "+": "reject",
   when: type.enumerated(...POLICY_EVENTS).array().atLeastLength(1),
-  pass: DoList,
-  fail: DoList,
-  unsure: DoList,
+  pass: stepListSchema,
+  fail: stepListSchema,
+  unsure: stepListSchema,
 });
 const PolicyActionsSchema = PolicyActionsObject.or(type("unknown[]").atMostLength(0));
 
+const EVIDENCE = /^(?:(?:[\w.-]+\/[\w.-]+)?#\d+|https:\/\/\S+|maintainer-stated)$/;
+const EVIDENCE_MAX = 20;
+export const Evidence = type(EVIDENCE).atMostLength(LINE_MAX).array().atLeastLength(1).atMostLength(EVIDENCE_MAX);
+const NOTE = { "text?": Text, "reason?": Text, "evidence?": Evidence } as const;
+
 const CatalogCheckSchema = type({
+  ...NOTE,
   enabled: "boolean",
   "maxFiles?": "number",
   "maxLines?": "number",
@@ -318,7 +347,8 @@ const CatalogCheckSchema = type({
   "forbiddenGlobs?": "string[]",
 });
 
-const CUSTOM_BASE = { id: type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX), name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
+export const CustomId = type(CUSTOM_ID).atMostLength(CUSTOM_ID_MAX);
+const CUSTOM_BASE = { ...NOTE, id: CustomId, name: Text, group: type.enumerated(...CHECK_PACK_GROUPS), "enabled?": "boolean" } as const;
 const MODEL = { ...CUSTOM_BASE, kind: "'model'" } as const;
 
 const CustomCheckSchema = type({ ...MODEL, shape: "'is-true'", claim: Text, "scope?": type.enumerated(...CUSTOM_SCOPES), "when?": Texts })
@@ -459,7 +489,7 @@ function parseGlobs(value: unknown, where: string): string[] | undefined {
 function parseCatalogCheck(id: CatalogId, raw: unknown): CatalogCheck | undefined {
   const row = asRecord(raw);
   if (!row) return undefined;
-  const check: CatalogCheck = { enabled: row.enabled === false ? false : true };
+  const check: CatalogCheck = { enabled: row.enabled === false ? false : true, ...parseNote(row, CHECK_CATALOG[id].name) };
   if (id === "max-files-changed") {
     const maxFiles = finiteNumber(row.maxFiles);
     if (maxFiles !== undefined) check.maxFiles = maxFiles;
@@ -538,6 +568,22 @@ function distinctTexts(value: unknown, where: string): string[] {
   return out;
 }
 
+function parseEvidence(value: unknown, where: string): string[] {
+  const refs = texts(value, where);
+  if (refs.length > EVIDENCE_MAX) throw new Error(`${where} must list at most ${EVIDENCE_MAX}.`);
+  const bad = refs.find((ref) => !EVIDENCE.test(ref));
+  if (bad !== undefined) throw new Error(`${where} must be pull request references (#44 or owner/name#44), https links or ${MAINTAINER_STATED}, not ${bad}.`);
+  return refs;
+}
+
+function parseNote(row: Record<string, unknown>, where: string): RuleNote {
+  return {
+    ...(row.text !== undefined && { text: text(row.text, `${where} text`) }),
+    ...(row.reason !== undefined && { reason: text(row.reason, `${where} reason`) }),
+    ...(row.evidence !== undefined && { evidence: parseEvidence(row.evidence, `${where} evidence`) }),
+  };
+}
+
 function parseScore(row: Record<string, unknown>, where: string): ModelCheck {
   const levels = distinctTexts(row.levels, `${where} levels`);
   if (levels.length < LEVELS_MIN || levels.length > LEVELS_MAX) throw new Error(`${where} levels must list ${LEVELS_MIN} to ${LEVELS_MAX} levels.`);
@@ -585,7 +631,7 @@ function parseCustomRow(row: Record<string, unknown>, index: number): CustomChec
   if (row.enabled !== undefined && typeof row.enabled !== "boolean") throw new Error(`${where} enabled must be true or false.`);
   if (row.kind === "rule") throw new Error(`${where} is a ${String(row.rule)} rule over GitHub data, which Triage no longer runs; remove it.`);
   const kind = oneOf(row.kind, ["model", "text"] as const, `${where} kind`);
-  const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }) };
+  const base = { id: row.id, name: text(row.name, `${where} name`), group: oneOf(row.group, CHECK_PACK_GROUPS, `${where} group`), ...(row.enabled === false && { enabled: false }), ...parseNote(row, where) };
   return kind === "text" ? { ...base, kind, ...parseText(row, where) } : { ...base, kind, ...parseModel(row, where) };
 }
 
@@ -624,9 +670,7 @@ function parsePeopleTarget(target: Record<string, unknown>, allowAuthor: boolean
   return { to, teams: texts(target.teams, `${where} teams`) };
 }
 
-/** Anyone is the default, so it is not kept. */
-function parseFor(raw: unknown, where: string): StepFor | undefined {
-  if (raw === undefined || raw === "anyone") return undefined;
+function parseAuthorMatch(raw: unknown, where: string): AuthorMatch {
   if (typeof raw === "string") return oneOf(raw, AUTHOR_GROUPS, where);
   const row = record(raw, where);
   if ("team" in row) {
@@ -637,13 +681,57 @@ function parseFor(raw: unknown, where: string): StepFor | undefined {
   return { users: texts(row.users, `${where} users`).map((login) => login.replace(/^@/, "")) };
 }
 
+function parseBound(raw: unknown, where: string): SizeBound {
+  const row = record(raw, where);
+  const extra = Object.keys(row).filter((key) => key !== "over" && key !== "atMost");
+  if (extra.length || Object.keys(row).length === 0) throw new Error(`${where} must set over, atMost or both.`);
+  const bound: SizeBound = {};
+  for (const key of ["over", "atMost"] as const) {
+    if (row[key] === undefined) continue;
+    if (!Number.isSafeInteger(row[key]) || (row[key] as number) < 0) throw new Error(`${where} ${key} must be a whole number.`);
+    bound[key] = row[key] as number;
+  }
+  if (bound.over !== undefined && bound.atMost !== undefined && bound.atMost <= bound.over) throw new Error(`${where} atMost must be more than over.`);
+  return bound;
+}
+
+const WHEN_KEYS = ["author", "linkedIssue", "ci", "files", "lines"] as const;
+
+function parseStepWhen(raw: unknown, where: string): StepWhen {
+  const row = record(raw, where);
+  const extra = Object.keys(row).filter((key) => !(WHEN_KEYS as readonly string[]).includes(key));
+  if (extra.length) throw new Error(`${where} must set only ${WHEN_KEYS.join(", ")}, not ${extra.join(", ")}.`);
+  if (Object.keys(row).length === 0) throw new Error(`${where} must set a condition, or be left out.`);
+  const when: StepWhen = {};
+  if (row.author !== undefined) when.author = list(row.author, `${where} author`).map((item) => parseAuthorMatch(item, `${where} author`));
+  if (row.linkedIssue !== undefined) {
+    if (typeof row.linkedIssue !== "boolean") throw new Error(`${where} linkedIssue must be true or false.`);
+    when.linkedIssue = row.linkedIssue;
+  }
+  if (row.ci !== undefined) {
+    const states = new Set(list(row.ci, `${where} ci`).map((state) => oneOf(state, CI_STATES, `${where} ci`)));
+    when.ci = CI_STATES.filter((state) => states.has(state));
+  }
+  if (row.files !== undefined) when.files = parseBound(row.files, `${where} files`);
+  if (row.lines !== undefined) when.lines = parseBound(row.lines, `${where} lines`);
+  return when;
+}
+
+/** A step written before conditions named who it is for; `for: anyone` held no condition. */
+function stepCondition(row: Record<string, unknown>, where: string): StepWhen | undefined {
+  if (row.for !== undefined && row.when !== undefined) throw new Error(`${where} must set when, not for and when.`);
+  if (row.when !== undefined) return parseStepWhen(row.when, `${where} when`);
+  if (row.for === undefined || row.for === "anyone") return undefined;
+  return { author: [parseAuthorMatch(row.for, `${where} for`)] };
+}
+
 function parseStep(row: Record<string, unknown>, where: string): Step {
-  const extra = Object.keys(row).filter((key) => row[key] !== undefined && !["do", "target", "for"].includes(key));
+  const extra = Object.keys(row).filter((key) => row[key] !== undefined && !["do", "target", "for", "when"].includes(key));
   if (extra.length) throw new Error(`${where} must not set ${extra.join(", ")}.`);
   const kind = oneOf(row.do, STEP_KINDS, `${where} do`);
   const at = `${where} target`;
-  const audience = parseFor(row.for, `${where} for`);
-  const step = audience === undefined ? {} : { for: audience };
+  const when = stepCondition(row, where);
+  const step = when === undefined ? {} : { when };
   switch (kind) {
     case "labels":
       return { do: kind, target: parseLabelsTarget(record(row.target, at), at), ...step };
@@ -681,7 +769,7 @@ function parseList(raw: unknown, where: string, dropped: string[]): Step[] {
   });
 }
 
-function parseWhen(raw: unknown, where: string): PolicyEvent[] {
+function parseEvents(raw: unknown, where: string): PolicyEvent[] {
   const events = new Set<PolicyEvent>();
   for (const event of list(raw, where)) events.add(oneOf(event, POLICY_EVENTS, where));
   return POLICY_EVENTS.filter((event) => events.has(event));
@@ -713,7 +801,7 @@ function parseActions(raw: unknown, dropped: string[]): PolicyActions {
   const row = record(raw, "Actions");
   exactKeys(row, ["when", ...VERDICTS], "Actions");
   return {
-    when: parseWhen(row.when, "Actions when"),
+    when: parseEvents(row.when, "Actions when"),
     pass: distinctSteps(parseList(row.pass, "Pass step", dropped)),
     fail: distinctSteps(parseList(row.fail, "Fail step", dropped)),
     unsure: distinctSteps(parseList(row.unsure, "Unsure step", dropped)),
@@ -874,7 +962,7 @@ const STEP_WHERE: Record<VerdictWord, string> = { pass: "Pass step", fail: "Fail
 /** The schema has already refused an unknown list or a step for a removed role, so nothing is dropped. */
 function parseOverrideActions(row: Partial<Record<"when" | VerdictWord, unknown>> | undefined): Partial<PolicyActions> {
   const actions: Partial<PolicyActions> = {};
-  if (row?.when !== undefined) actions.when = parseWhen(row.when, "Actions when");
+  if (row?.when !== undefined) actions.when = parseEvents(row.when, "Actions when");
   for (const verdict of VERDICTS) {
     if (row?.[verdict] !== undefined) actions[verdict] = distinctSteps(parseList(row[verdict], STEP_WHERE[verdict], []));
   }
@@ -909,27 +997,8 @@ export function ruleLabel(id: string): string {
   return `${RULE_LABEL_PREFIX}${id}`;
 }
 
-export function stepForAuthor(
-  audience: StepFor | undefined,
-  author: { login: string; kind?: AuthorKind; teams?: readonly string[]; teamsUnknown?: readonly string[] },
-): { matches: boolean; reason: string } | { matches: undefined; reason: string } {
-  if (audience === undefined || audience === "anyone") return { matches: true, reason: "for anyone" };
-  if (typeof audience === "string") {
-    if (!author.kind) return { matches: undefined, reason: `the author's kind is not known, so it cannot tell whether they are ${audience}` };
-    const matches = AUTHOR_GROUP_KINDS[audience].includes(author.kind);
-    return { matches, reason: matches ? `the author is ${author.kind}, one of ${audience}` : `the author is ${author.kind}, not one of ${audience}` };
-  }
-  if ("users" in audience) {
-    const matches = audience.users.some((login) => login.toLowerCase() === author.login.toLowerCase());
-    return { matches, reason: matches ? `the author is one of ${audience.users.join(", ")}` : `the author is not one of ${audience.users.join(", ")}` };
-  }
-  if (author.teams?.includes(audience.team)) return { matches: true, reason: `the author is in ${audience.team}` };
-  if (!author.teams || author.teamsUnknown?.includes(audience.team)) return { matches: undefined, reason: `membership of ${audience.team} is not known` };
-  return { matches: false, reason: `the author is not in ${audience.team}` };
-}
-
 export function stepTeams(pack: CheckPack): string[] {
-  return [...new Set(VERDICTS.flatMap((list) => pack.actions[list].flatMap((step) => (typeof step.for === "object" && "team" in step.for ? [step.for.team] : []))))];
+  return [...new Set(VERDICTS.flatMap((list) => pack.actions[list].flatMap((step) => (step.when?.author ?? []).flatMap((match) => (typeof match === "object" && "team" in match ? [match.team] : [])))))];
 }
 
 export function parseCheckPack(raw: unknown, expectedRepo?: string): CheckPack | null {

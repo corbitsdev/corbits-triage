@@ -1,8 +1,9 @@
-// A repository's policy kept in the repository itself. The file holds what the stored policy holds, less what the
-// repository already says: `kind`, `schemaVersion` and `repo`. Only YAML is read; another format is another path.
+// A repository's policy kept in the repository itself: schema 3 (`rules`, see policy-rules.ts), or the stored policy's
+// shape less what the repository already says (`kind`, `schemaVersion` and `repo`). Only YAML is read; another format is another path.
 import { dump, JSON_SCHEMA, load, YAMLException } from "js-yaml";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, checkPackSchema, policyOverrideSchema, readCheckPack, readPolicyOverride } from "./check-pack.js";
+import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, readCheckPack, readPolicyOverride } from "./check-pack.js";
+import { isPolicyRulesFile, policyRulesSchema, rulesToPolicy } from "./policy-rules.js";
 
 export const POLICY_FILE_PATH = ".corbits-triage.yaml";
 export const POLICY_FILE_MAX_BYTES = 64 * 1024;
@@ -14,8 +15,8 @@ const NODES_MAX = 10_000;
 const DEPTH_MAX = 32;
 const TOO_LARGE = `${POLICY_FILE_PATH} is too large or uses aliases.`;
 
-/** Published as JSON Schema. `readPolicyFile` stays the authority. */
-export const policyFileSchema = checkPackSchema.omit(...IMPLIED_KEYS).or(policyOverrideSchema.omit(...IMPLIED_KEYS));
+/** Published as JSON Schema: schema 3, the shape new files are written in. `readPolicyFile` stays the authority and still reads the older shape. */
+export const policyFileSchema = policyRulesSchema;
 
 function parseYaml(text: string): unknown {
   if (new TextEncoder().encode(text).length > POLICY_FILE_MAX_BYTES) throw new Error(TOO_LARGE);
@@ -68,12 +69,11 @@ export function readPolicyFile(text: string, repo: string): Record<string, unkno
   const file = asRecord(parsed);
   if (!file) throw new Error(`${POLICY_FILE_PATH} must be a mapping.`);
   const header = { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION } as const;
-  if (file.extends !== undefined) {
-    refuseUnknown(file, OVERRIDE_KEYS);
-    return { ...header, ...readPolicyOverride({ ...file, ...header, repo }, repo) };
-  }
-  refuseUnknown(file, PACK_KEYS);
-  const { dropped, ...pack } = readCheckPack({ ...file, ...header, repo }, repo);
+  const rules = isPolicyRulesFile(file);
+  if (!rules) refuseUnknown(file, file.extends === undefined ? PACK_KEYS : OVERRIDE_KEYS);
+  const body = rules ? rulesToPolicy(file) : file;
+  if (body.extends !== undefined) return { ...header, ...readPolicyOverride({ ...body, ...header, repo }, repo) };
+  const { dropped, ...pack } = readCheckPack({ ...body, ...header, repo }, repo);
   if (dropped) throw new Error(`${POLICY_FILE_PATH} holds what no longer runs: ${listed(dropped)}.`);
   return pack;
 }

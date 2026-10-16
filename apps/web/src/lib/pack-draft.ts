@@ -207,7 +207,8 @@ export function stepProblem(draft: RepoDraft, list: VerdictWord, step: Step, pos
   const found = contractProblem({ ...emptyPack(draft.pack.repo), actions: { ...defaultActions(), [list]: [step] } });
   if (found) return found;
   // GitHub resolves a team only inside the repository's own organization.
-  const teams = [...(typeof step.for === "object" && "team" in step.for ? [step.for.team] : []), ...("target" in step && "teams" in step.target ? step.target.teams : [])];
+  const authorTeams = (step.when?.author ?? []).flatMap((match) => (typeof match === "object" && "team" in match ? [match.team] : []));
+  const teams = [...authorTeams, ...("target" in step && "teams" in step.target ? step.target.teams : [])];
   const outside = teams.find((team) => teamSlug(team, draft.pack.repo) === null);
   return outside === undefined ? null : `Team ${outside} is not in ${draft.pack.repo.split("/", 1)[0]}.`;
 }

@@ -50,7 +50,7 @@ export const APPROVE_DO_KIND = "approve-do";
 
 /** A Do as deployments built before steps read it; one they cannot run as the policy means is left out. */
 function legacyDo(step: Step) {
-  if (step.for !== undefined || step.do === "merge" || step.do === "nothing") return [];
+  if (step.when !== undefined || step.do === "merge" || step.do === "nothing") return [];
   if (step.do === "labels" && step.target.from === "rules") return [];
   return [{ kind: step.do, target: "target" in step ? step.target : {} }];
 }

@@ -34,9 +34,12 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     Temporary until the hub runs `@corbits/webhooks` 0.4, which is the next
     step: release the package, then fold the bridges into the coordinator.
   - **Policy file sync**: a repository may keep its policy in
-    `.corbits-triage.yaml` on its default branch. A sync stores the file as a
-    new version of the repository's policy, marked with its blob sha, so
-    triage keeps reading the hub's copy. A push or
+    `.corbits-triage.yaml` on its default branch. A sync reads the file (its
+    `rules` mapped onto the stored policy's built-in rows and custom rules, or
+    a file in the stored policy's shape as is) and stores it as a new version
+    of the repository's policy, marked with its blob sha, so triage keeps
+    reading the hub's copy. A step's `when` conditions are evaluated in the
+    workflow's action step against the facts it already reads. A push or
     `POST …/github-triage/{tenantId}/policy/sync` runs a sync.
     `GET …/policy/file` reads the file and whether the policy matches it.
     `POST …/policy/export` opens a pull request adding the file from the

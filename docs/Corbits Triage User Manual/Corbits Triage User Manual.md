@@ -122,6 +122,19 @@ The **Policy** card says where the repository's rules and actions are kept. At f
 - When someone changes the file, the card says **Not in sync** until Triage reads it again. Press **Use file** to read it now.
 - If the file has a mistake, the card says why and Triage keeps using the last policy it could read.
 
+In the file, each rule is one sentence with how it is checked and why it exists: a one-line `reason` and its `evidence`, such as the pull requests that led to it (`"#44"`) or `maintainer-stated`. For example:
+
+```yaml
+rules:
+  - check: max-lines-changed
+    text: A pull request changes at most 400 lines.
+    max: 400
+    reason: Large changes were split before review.
+    evidence: ["#44", "#57"]
+```
+
+A file exported before rules carried reasons keeps working as it is.
+
 A file can also start from a workspace-wide policy with `extends`, and then set only what differs for this repository. This is useful when many repositories should follow the same rules.
 
 Enabling a repository switches on Comment and Labels (Comment only on Bitbucket, which has no labels); every other action stays off until you switch it on. Turning triage off and on again switches them back on.
@@ -182,6 +195,8 @@ Below the summary line are three lists of steps, one per verdict: **Pass**, **Fa
 | Add label… | Adds the labels you list. |
 
 The **for** choice limits a step to some authors: **anyone**, **first-timers**, **maintainers**, **external contributors**, **bots**, **a GitHub team…** or **specific people…**. For example, a Fail step can post a friendly comment for first-timers only. By default, Unsure asks the code owners for a review.
+
+In the repository's `.corbits-triage.yaml`, a step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for.
 
 Each step shows whether it **Waits for you** or runs on its own. If something is incomplete, such as a comment with no text, the step says **Not saved yet** in red and the rest of your changes are still saved.
 

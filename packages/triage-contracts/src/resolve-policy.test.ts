@@ -10,7 +10,7 @@ const SIZE: CustomCheck = { id: "scope", name: "Scope", group: "pull-request", k
 const TESTS: CustomCheck = { id: "coverage", name: "Coverage", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "Changed code has tests." };
 const REVIEW: Step = { do: "request-review", target: { to: "codeowners" } };
 const APPROVE: Step = { do: "approve" };
-const CLOSE: Step = { do: "close", for: "external" };
+const CLOSE: Step = { do: "close", when: { author: ["external"] } };
 
 const SHARED = {
   ...HEADER,

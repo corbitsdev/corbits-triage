@@ -1,8 +1,8 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, stepForAuthor, type ActionKind, type CheckPack, type ResolvedTarget, type Step, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
-import type { CheckResult, PrFacts } from "./checks.js";
+import { alwaysHeld, CATALOG_IDS, checkName, classificationSources, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
 import { authorFailures } from "./render.js";
 import { compare, errorText } from "@corbits/common";
 import { unrunnable } from "./execute-do.js";
@@ -162,21 +162,34 @@ function sentence(text: string): string {
   return `${text[0]!.toUpperCase()}${text.slice(1)}.`;
 }
 
+const CI: Record<PrFacts["checks"], CiState> = { success: "passing", failure: "failing", pending: "pending", none: "none" };
+
+/** A linked issue is one from either tracker, whatever the linked issue rule asks for. */
+function stepSubject(facts: PrFacts): StepSubject {
+  return {
+    author: { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown },
+    linkedIssue: issueReference(facts, "either") !== null,
+    ci: CI[facts.checks],
+    files: facts.changedFiles,
+    lines: facts.additions + facts.deletions,
+  };
+}
+
 /**
- * The Dos of the verdict's list on this head; none when the event does not wake the policy. A step not for this author
- * is skipped, and one that does nothing is not listed. Suggest only: nothing here writes to GitHub.
+ * The Dos of the verdict's list on this head; none when the event does not wake the policy. A step whose conditions do
+ * not hold, or cannot be told, is skipped, and one that does nothing is not listed. Suggest only: nothing here writes to GitHub.
  */
 export function evaluateActions(input: ActionInput): SuggestedAction[] {
   if (!wakes(input.pack, input.facts)) return [];
   const { verdict: list, reason, facts } = input;
-  const author = { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown };
+  const subject = stepSubject(facts);
   const out: SuggestedAction[] = [];
   for (const [index, step] of input.pack.actions[list].entries()) {
     if (step.do === "nothing") continue;
     const base = { list, index, kind: step.do };
-    const audience = stepForAuthor(step.for, author);
-    if (audience.matches !== true) {
-      out.push({ ...base, skipped: true, reason: sentence(`not run: ${audience.reason}`) });
+    const holds = whenHolds(step.when, subject);
+    if (holds.matches !== true) {
+      out.push({ ...base, skipped: true, reason: sentence(`not run: ${holds.reason}`) });
       continue;
     }
     try {
