@@ -27,7 +27,7 @@ export interface SidecarDriver {
   /** Stable and non-secret; a change orphans the allocations placed under the old value. */
   readonly fingerprint: string;
   readonly capabilities: readonly SidecarCapabilityDeclaration[];
-  /** Starts the sidecar with exactly `env`; on failure it leaves nothing behind or throws. */
+  /** Starts the sidecar with exactly `env`. A throw must leave nothing behind that `find` cannot see. */
   start(launch: SidecarLaunchSpec, env: SidecarEnv): Promise<SidecarHandle>;
   /** Idempotent: capacity already gone is not an error. */
   stop(handle: SidecarHandle): Promise<void>;

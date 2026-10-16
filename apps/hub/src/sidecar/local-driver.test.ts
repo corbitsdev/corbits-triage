@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AdapterManifest } from "@intx/types";
 import { createDriverProvisioner } from "./driver-provisioner.js";
 import { createLocalProcessDriver } from "./local-driver.js";
@@ -40,4 +43,27 @@ test("restore launches a record without adapterManifest with the hub's adapters"
   await driver.restore(createDriverProvisioner(driver, "key"), async () => true, "key");
 
   expect(spawned).toEqual([JSON.stringify(HUB_ADAPTERS)]);
+});
+
+test("an ensure whose failed start leaves a process that will not stop throws instead of rejecting", async () => {
+  const driver = createLocalProcessDriver({
+    dataRoot: await mkdtemp(join(tmpdir(), "local-driver-")),
+    adapterManifest: [],
+    stopTimeoutMs: 10,
+    spawnSidecar: function spawnSidecar() {
+      return { pid: 4242, exited: new Promise<number>(function never() {}), kill() {} };
+    },
+    manifests: {
+      readAll: async () => [],
+      write: async () => { throw new Error("disk full"); },
+      read: async () => null,
+      remove: async () => {},
+    },
+    log: () => {},
+  });
+  const { provisioner } = createDriverProvisioner(driver, "key");
+
+  const ensure = provisioner.ensure({ allocationId: "a1", generation: 1, sidecarId: "s1", tenantId: "t", anchorRunId: "r", token: "tok", hubWebSocketUrl: "ws://hub" });
+
+  await expect(ensure).rejects.toThrow("did not exit");
 });

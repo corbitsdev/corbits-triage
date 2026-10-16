@@ -1,7 +1,3 @@
-// Production copy of the provisioning logic in
-// vendor/interchange/tests/admin-ui-e2e/harness/local-process-sidecar-provisioner.ts.
-// The hub must not import from the vendor test harness: tests/ trees are not
-// shipped and may change without notice.
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AdapterManifest } from "@intx/types";
@@ -12,7 +8,7 @@ import { buildSidecarEnv, type SidecarEnv, type SidecarLaunchSpec } from "./side
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
 
-export interface LocalSidecarProcess {
+interface LocalSidecarProcess {
   readonly pid: number;
   readonly exited: Promise<number>;
   kill(signal: NodeJS.Signals): void;
@@ -146,9 +142,10 @@ export function createLocalProcessDriver({
       await manifests.write(manifest);
       return handleOf(manifest, String(running.process.pid), true);
     } catch (error) {
+      // A process that will not stop stays tracked, so the caller finds it and cannot report that nothing exists.
       if (running !== undefined) {
-        processes.delete(allocationId);
         await stopProcess(running);
+        processes.delete(allocationId);
       }
       await removeStored(allocationId, dataDir);
       throw error;
