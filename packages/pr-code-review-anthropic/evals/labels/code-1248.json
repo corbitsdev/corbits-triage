@@ -1,0 +1,41 @@
+{
+  "id": "code-1248",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "The new glued-sentinel strip is skipped when the start-at-0 standing token itself ends with \"...\", so a without-file re-fold of such a token longer than 160 chars still appends the token again instead of keeping it once.",
+      "sites": [
+        {
+          "path": "src/session/compaction-handoff.ts",
+          "start": 160,
+          "end": 163
+        }
+      ],
+      "reach": "diff",
+      "evidence": "src/session/compaction-handoff.ts:160-163 `if (goal.endsWith(SPINE_CUT_SENTINEL) && !token.endsWith(SPINE_CUT_SENTINEL))`; cutSpineGoal (:197-199) returns `${kept}${SPINE_CUT_SENTINEL}` for any start-at-0 token, so a token ending in \"...\" becomes token+\"...\" in Goal and falls through to the append at :171-175. Fix PR #1249 drops the `!token.endsWith(...)` guard (condition becomes `if (goal.endsWith(SPINE_CUT_SENTINEL))`) and adds a test with token `FILES_DONE=...end...` asserting one Output token after two re-folds.",
+      "confidence": "certain"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "model cluster (bake-off 11 + round 2 ~14 prompts, 156-170): new strip branch removes an operator-authored trailing ellipsis / bypasses trailingEllipsisIsStandingToken",
+      "why": "Unreachable: Output tokens are harvested from the same spine.goal as the Goal line (renderHandoffSpine :871-874), so an operator-written `FILES_DONE=a.ts...` yields Output token `FILES_DONE=a.ts...`, which ends with the sentinel (guard :162 skips) and is already standing (:155 returns). Prose after a token keeps the token standing in goal (:155). The prefix-only match happens only when the sentinel is glued to the token by cutSpineGoal."
+    },
+    {
+      "was": "model cluster (12-sourcegraph-cra, 13-factory, v-every-instance-medium, v-no-speculation-exclusion-high): token+\"...\" matched anywhere in goal, not at the glued position",
+      "why": "Only reachable if the operator writes the same standing token both bare and with trailing dots in one goal and the bare one falls past the cap; no realistic input shown. Speculation."
+    },
+    {
+      "was": "model cluster (bake-off 16 + round 2 ~20 prompts, 180-189): cutSpineGoal early return lets 161-163 char lines ending in \"...\" through uncut",
+      "why": "Stated intent of the PR (leave an already-capped Goal ending in \"...\" uncut). cutSpineGoal's own output is already up to cap+3 chars (`${kept}${SPINE_CUT_SENTINEL}`), so a 163-char line is within its normal output length; no downstream breakage."
+    },
+    {
+      "was": "round2/22-silent-failure-hunter-medium: no debug log when the sentinel is stripped",
+      "why": "Style/observability suggestion, not a defect."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 4
+}

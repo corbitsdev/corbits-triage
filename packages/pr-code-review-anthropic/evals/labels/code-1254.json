@@ -1,0 +1,154 @@
+{
+  "id": "code-1254",
+  "verdict": "defect",
+  "bugs": [
+    {
+      "id": "b1",
+      "source": "original",
+      "summary": "The new apply_patch tool is mounted outside the posix plugin stack and only does a lexical containment check, so it skips the secret-guard denylist (a patch can add/update/delete .env or runtime extra-denied paths) and the realpath workspace bound (a patch through an in-workspace symlink writes outside the workspace), unlike write_file/edit_file.",
+      "sites": [
+        {
+          "path": "src/agent/apply-patch-tool.ts",
+          "start": 34,
+          "end": 41
+        },
+        {
+          "path": "src/agent/apply-patch-tool.ts",
+          "start": 81,
+          "end": 81
+        },
+        {
+          "path": "src/agent/tools.ts",
+          "start": 673,
+          "end": 673
+        },
+        {
+          "path": "src/subagent/run.ts",
+          "start": 821,
+          "end": 821
+        }
+      ],
+      "reach": "repo",
+      "evidence": "src/agent/apply-patch-tool.ts:34-41 `contained()` uses only `resolve`/`relative` (no realpath, no denylist); every add/delete/update/moveTo path goes through it (45, 52, 55, 69) and is written/removed at 93-99. It is mounted raw at src/agent/tools.ts:673 `createApplyPatchTool(cwd)` (outside `createPosixTools({ plugins: buildCorePosixToolPlugins(...) })` at tools.ts:535-557) and src/subagent/run.ts:821. The posix tools get `pathEscapePlugin(cwd, rootsProvider, {allowOutside})` and `secretGuardPlugin({extraDeniedPaths})` from src/agent/posix-tool-plugins.ts:134-145 (outside the diff). Fix PR #1259 (base blob 4909e4c0 = head) replaces `contained` with `guardedPath` calling `isSensitivePathResolved`/`createExtraDeniedPathMatcher` and `resolveWorkspacePath(cwd, abs, rootsProvider)`, threads an ApplyPatchGuard from tools.ts:673 and run.ts:821, and adds tests refusing an `.env` add and a write through `link/` symlinked outside.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b2",
+      "source": "added",
+      "summary": "Planning reads every Update source from disk, so an envelope with two sections on the same file (two Update File: a.txt, or Add then Update) plans the later one against the original content; the last write wins and the earlier section's edits are silently lost (or the later hunk fails) while the tool reports Success.",
+      "sites": [
+        {
+          "path": "src/agent/apply-patch-tool.ts",
+          "start": 55,
+          "end": 64
+        },
+        {
+          "path": "src/agent/apply-patch-tool.ts",
+          "start": 92,
+          "end": 92
+        }
+      ],
+      "reach": "diff",
+      "evidence": "apply-patch-tool.ts:58 `original = await readFile(source, \"utf8\")` runs for every op inside the planning loop at :92, before any step at :93-99 is written; no in-memory staging of earlier planned content. codex-apply-patch.ts parseCodexApplyPatch does not reject repeated paths. Steps for both ops are then written in order at :96, so the second overwrites the first.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b3",
+      "source": "added",
+      "summary": "An Update File section with *** Move to: naming the same path writes the new content to that path and then removes the source, which is the same file, so the file is deleted while the tool reports 'M <path>'.",
+      "sites": [
+        {
+          "path": "src/agent/apply-patch-tool.ts",
+          "start": 66,
+          "end": 74
+        }
+      ],
+      "reach": "diff",
+      "evidence": "apply-patch-tool.ts:69 `path: contained(cwd, op.moveTo)` and :73 `{ kind: \"remove\", path: source }`; when moveTo resolves to source the steps run write (:96) then `rm(step.path, { force: true })` (:98) on the same absolute path. codex-apply-patch.ts:152-178 accepts moveTo without comparing it to path.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b4",
+      "source": "added",
+      "summary": "The containment check `rel.startsWith(\"..\")` also matches in-workspace names that merely begin with two dots (e.g. `..notes.md`, `..cache/x`), so apply_patch refuses them as workspace escapes although write_file/edit_file accept them.",
+      "sites": [
+        {
+          "path": "src/agent/apply-patch-tool.ts",
+          "start": 37,
+          "end": 37
+        }
+      ],
+      "reach": "diff",
+      "evidence": "apply-patch-tool.ts:36-37 `const rel = relative(cwd, abs); if (rel === \"\" || rel.startsWith(\"..\") ...)`: relative(cwd, cwd+'/..notes.md') is '..notes.md'. Fix PR #1259 deletes this check in favour of resolveWorkspacePath.",
+      "confidence": "certain"
+    },
+    {
+      "id": "b5",
+      "source": "added",
+      "summary": "Adding apply_patch to UNADVERTISED_MOUNTED_BUILTINS makes the dynamic runner dispatch it even when the call gate refuses it, so exec runs under a closed director allowlist without file-write tools (READ_TOOLS directors draper/emil, migrator) and non-gpt sessions can still mutate files through apply_patch, which is mounted on every primary/exec toolset.",
+      "sites": [
+        {
+          "path": "src/agent/tool-search.ts",
+          "start": 171,
+          "end": 174
+        },
+        {
+          "path": "src/agent/tools.ts",
+          "start": 673,
+          "end": 673
+        }
+      ],
+      "reach": "repo",
+      "evidence": "src/tui/dynamic-tool-runner.ts:163-176 (outside diff) skips the gate refusal when `UNADVERTISED_MOUNTED_BUILTINS.has(resolved)`; exec sets the gate to isAdvertised over `overlay.advertisedAllow` (src/exec/runner.ts:913, src/session/assemble-runtime.ts:474-485), and foldFileToolNames only adds apply_patch when a write tool is in that prefix; src/exec/runner.ts:261-275 documents the allowlist as the single point so 'a tool outside the allow can never become callable'. tools.ts:673 mounts createApplyPatchTool(cwd) unconditionally. Likely rather than certain: the permission gate may still prompt/deny the write, and those directors already hold run_shell.",
+      "confidence": "likely"
+    }
+  ],
+  "rejected": [
+    {
+      "was": "original label sites apply-patch-tool.ts:2, 36, 43, 45, 52, 55, 69, 92 and run.ts:37 as separate sites",
+      "why": "Merged into one bug; re-anchored to contained() (34-41), the factory signature (81) and the two mount calls. Call sites 45/52/55/69/92 only change signature plumbing; run.ts:37 is an unrelated config import (the fix's import landed at run.ts:70 area)."
+    },
+    {
+      "was": "lexical check refusing sibling worktrees and yolo (skip-permissions) mode",
+      "why": "Behaviour mismatch with write/edit, which the fix also aligns, but it fails safe (over-refuses); folded into b1's evidence rather than labelled separately as a defect."
+    },
+    {
+      "was": "apply_patch added to UNADVERTISED_MOUNTED_BUILTINS so the gpt profile never sees it (tool-search.ts:171-174, ~20 findings)",
+      "why": "Wrong: the set only filters tool_search (tool-search.ts:313) and promotion flush (assemble-runtime.ts:494); gpt advertising comes from foldFileToolNames on the prefix (assemble-runtime.ts:463, tool-aliases.ts:63-75) and advertisedTools does not consult the set; subagents fold via run.ts:1160."
+    },
+    {
+      "was": "Add File / Move to silently overwrite existing files",
+      "why": "Matches the Codex apply_patch reference semantics the tool implements; not a defect introduced against any stated contract."
+    },
+    {
+      "was": "Delete File of a missing file reports success (rm force:true)",
+      "why": "End state (file absent) matches the request; no caller depends on an error here."
+    },
+    {
+      "was": "Blanket catch around readFile hides the real error",
+      "why": "Style; the returned message names the file and the update cannot proceed either way."
+    },
+    {
+      "was": "Write phase not atomic: I/O failures after some writes leave a partial patch",
+      "why": "The docstring and PR claim atomicity only for hunk/plan failures, which holds; I/O rollback was never promised."
+    },
+    {
+      "was": "Non-CodexApplyPatchError fs errors (incl. deleting a directory) escape as thrown exceptions",
+      "why": "dynamic-tool-runner.ts:197-210 catches handler throws and returns an isError result, so nothing escapes."
+    },
+    {
+      "was": "codex-tool-mount.test.ts removed negative assertions",
+      "why": "Test change matching the new intended behaviour (apply_patch mounted everywhere); not a product defect."
+    },
+    {
+      "was": "Subagent may mount apply_patch twice",
+      "why": "Subagent tools are built from posixTools, web tools, shell_collect, inherited MCP/web_fetch and skill tools (run.ts:747-807); none include apply_patch, so it is appended once."
+    },
+    {
+      "was": "Subagent mount is conditional on write tools while the session mount is unconditional",
+      "why": "Intended design: subagents honour the capability filter; primary advertising is gated by the gpt fold. The unconditional primary mount's real consequence is captured in b5."
+    }
+  ],
+  "complete": true,
+  "adjudicated": 15
+}
