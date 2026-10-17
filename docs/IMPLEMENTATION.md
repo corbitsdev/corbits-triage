@@ -55,8 +55,14 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
 ## Portal (`apps/web`)
 
 - `src/lib/portal.tsx`: convergence on sign-in.
-- `src/lib/workflow-deploy.ts`: `suggestOfferings` matches tenant offerings;
-  `ensureWorkflows` publishes the tool and workflow tarballs to the tenant's
+- `src/lib/model-catalog.ts`: the models the workflows name, each with its
+  provider (`decision` on `corbits-system-one`, `claude-opus-5-5` and
+  `claude-haiku-5-5` on `anthropic`). `reconcileModelCatalog` adds whatever
+  the tenant catalog lacks through the stock catalog routes, on each
+  converge and after a key is saved; a provider's offerings appear once its
+  key is in the vault. `offeringsFor` picks each deploy's offerings from the
+  same list and refuses a model the tenant does not offer.
+- `src/lib/workflow-deploy.ts`: `ensureWorkflows` publishes the tool and workflow tarballs to the tenant's
   `corbits` package registry and deploys each workflow pinned to its version
   through the hub's workflow-deploy route, redeploying a workflow only when
   its deployment runs another version or the decision model was saved. Before
@@ -71,9 +77,13 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
 - `src/lib/hub-api.ts`: typed calls over the hub routes.
 - Decision model presets (`@corbits/triage-contracts`): TypeSafe, Vercel AI
   Gateway, OpenCode Zen, all serving Jev, plus a custom provider. Saving
-  stores the key as a vault credential, sets the `corbits-system-one` provider
-  `baseURL`, and points the `decision` catalog model's offering at the
-  provider's own model name (`quirks.model`).
+  stores the key as a vault credential and the choice in tenant config; the
+  catalog reconcile sets the `corbits-system-one` provider `baseURL` and
+  points the `decision` offering at the provider's own model name
+  (`quirks.model`).
+- The Anthropic key (Settings, Code review) is a vault credential named
+  `anthropic`. Removing it deletes the `anthropic` catalog provider and its
+  offerings first, because the vault keeps a key a catalog provider uses.
 
 ### Decision model
 

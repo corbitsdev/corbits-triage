@@ -1,4 +1,4 @@
-import { BITBUCKET_DATACENTER_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
+import { ANTHROPIC_CREDENTIAL_NAME, BITBUCKET_DATACENTER_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, GITHUB_HOOK_CREDENTIAL_NAME, INFERENCE_CREDENTIAL_NAME, type HubCredential } from "./hub-api.ts";
 
 type CredentialAction = "rotate" | "revoke";
 
@@ -19,6 +19,7 @@ function secretDisplayName(storedName: string): string {
   if (storedAs(name, GITHUB_HOOK_CREDENTIAL_NAME)) return "Webhook";
   if (storedAs(name, GITHUB_CREDENTIAL_NAME)) return "GitHub App";
   if (storedAs(name, INFERENCE_CREDENTIAL_NAME)) return "Inference";
+  if (name === ANTHROPIC_CREDENTIAL_NAME) return "Anthropic";
   if (!name) return "Secret";
   return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 }
@@ -31,6 +32,10 @@ export function modelSecrets(credentials: readonly HubCredential[]): HubCredenti
   return credentials.filter((credential) => storedAs(credential.name, INFERENCE_CREDENTIAL_NAME));
 }
 
+export function anthropicSecrets(credentials: readonly HubCredential[]): HubCredential[] {
+  return credentials.filter((credential) => credential.name.trim() === ANTHROPIC_CREDENTIAL_NAME);
+}
+
 const BITBUCKET_DATACENTER_CREDENTIAL_NAMES = new Set([BITBUCKET_DATACENTER_CREDENTIAL_NAME, `${BITBUCKET_DATACENTER_CREDENTIAL_NAME}-hook`]);
 
 /** Bitbucket Data Center's token and hook secret are written and removed only by connecting and disconnecting. */
@@ -39,7 +44,7 @@ function bitbucketDatacenterSecrets(credentials: readonly HubCredential[]): HubC
 }
 
 export function otherSecrets(credentials: readonly HubCredential[]): HubCredential[] {
-  const ours = new Set([...githubSecrets(credentials), ...modelSecrets(credentials), ...bitbucketDatacenterSecrets(credentials)]);
+  const ours = new Set([...githubSecrets(credentials), ...modelSecrets(credentials), ...anthropicSecrets(credentials), ...bitbucketDatacenterSecrets(credentials)]);
   return credentials.filter((credential) => !ours.has(credential));
 }
 
