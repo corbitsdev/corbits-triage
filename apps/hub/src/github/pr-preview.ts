@@ -167,6 +167,7 @@ export function createGithubPrPreview(deps: GithubPrPreviewDeps) {
     else {
       const stored = await deps.readCheckPack(tenantId, repo);
       if (stored.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: stored.reason });
+      if (stored.status === "invalid") return failure(409, "policy_file_invalid", `Triage does not run until ${stored.path} is fixed.`, { reason: stored.reason });
       if (stored.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
       pack = stored.pack;
     }

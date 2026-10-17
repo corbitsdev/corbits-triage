@@ -5,31 +5,30 @@ import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { createArtifact, runArtifactMigrations, writeArtifactVersion } from "@corbits/artifacts";
+import { createArtifact, runArtifactMigrations } from "@corbits/artifacts";
 import { checkPackName, emptyPack, readPolicyFile } from "@corbits/triage-contracts";
-import { loadCheckPack, repoPolicyRow } from "./check-pack-store.js";
+import { loadPolicy } from "./check-pack-store.js";
 import { createPolicyFile, EXPORT_BRANCH } from "./policy-file.js";
 import { createTenantGithub } from "./tenant-open-heads.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_policy_file";
-const SYNCED = "acme/synced";
+const FROM_FILE = "acme/from-file";
 const EXPORTED = "acme/exported";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
-const VIEWER = { tenantId: TENANT, principalId: "prn_viewer" };
-const FILE = `checks:
-  ci-green:
-    enabled: true
-actions:
-  when: [opened]
-  pass: []
-  fail: []
-  unsure: []
+const FILE = `rules:
+  - check: ci-green
+    text: CI passes.
+    reason: Required by branch protection.
+    evidence: [maintainer-stated]
 `;
+const YML = ".corbits-triage.yml";
+const YAML = ".corbits-triage.yaml";
 
-/** A null `text` is a file over 1 MB, whose content GitHub leaves out; the sha `DIRECTORY` is a directory at the path. */
+/** Keyed by `repo/path`. A null `text` is a file over 1 MB, whose content GitHub leaves out; the sha `DIRECTORY` is a directory at the path. */
 const DIRECTORY = "directory";
 const files = new Map<string, { sha: string; text: string | null }>();
+let readFails = false;
 const branches = new Set<string>();
 const opened: Array<{ head: string; base: string; title: string }> = [];
 const committed: Array<{ branch: string; text: string }> = [];
@@ -41,12 +40,14 @@ async function github(req: Request): Promise<Response> {
   const [, , owner, name, ...rest] = pathname.split("/");
   const repo = `${owner}/${name}`;
   const path = rest.join("/");
-  if (req.method === "GET" && path === "contents/.corbits-triage.yaml") {
-    const file = files.get(repo);
+  if (req.method === "GET" && path.startsWith("contents/")) {
+    if (readFails) return new Response(null, { status: 502 });
+    const name = path.slice("contents/".length);
+    const file = files.get(`${repo}/${name}`);
     if (!file) return new Response(null, { status: 404 });
     if (file.sha === DIRECTORY) return Response.json([{ type: "file", name: "inner.yaml" }]);
     const content = file.text === null ? { content: "", encoding: "none" } : { content: Buffer.from(file.text).toString("base64"), encoding: "base64" };
-    return Response.json({ type: "file", sha: file.sha, ...content, html_url: `https://github.com/${repo}/blob/main/.corbits-triage.yaml` });
+    return Response.json({ type: "file", sha: file.sha, ...content, html_url: `https://github.com/${repo}/blob/main/${name}` });
   }
   if (req.method === "DELETE" && path.startsWith("git/refs/heads/")) {
     branches.delete(`${repo}:refs/heads/${path.slice("git/refs/heads/".length)}`);
@@ -60,7 +61,7 @@ async function github(req: Request): Promise<Response> {
     branches.add(`${repo}:${ref}`);
     return Response.json({ ref }, { status: 201 });
   }
-  if (req.method === "PUT" && path === "contents/.corbits-triage.yaml") {
+  if (req.method === "PUT" && path === `contents/${YML}`) {
     if (commitFails) return Response.json({ message: "Server Error" }, { status: 500 });
     const { branch, content } = await req.json() as { branch: string; content: string };
     committed.push({ branch, text: Buffer.from(content, "base64").toString("utf8") });
@@ -88,7 +89,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [SYNCED, EXPORTED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 }));
+  const repos = [FROM_FILE, EXPORTED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 }));
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -106,15 +107,9 @@ beforeAll(async () => {
     cipher,
     tenantBitbucket: async () => undefined,
     async authorize(principalId, _tenantId, resource, action) {
-      if (resource === "credential:crd_github") return action === "use" && ["prn_user", "prn_viewer"].includes(principalId);
-      return principalId === "prn_user" && ((resource === "artifact:*" && action === "create") || (resource.startsWith("artifact:") && action === "write"));
+      return resource === "credential:crd_github" && action === "use" && principalId === "prn_user";
     },
     tenantGithub: createTenantGithub({ db, cipher, githubApiOrigin }),
-    async writerFor() {
-      return "prn_github";
-    },
-    async grantWriters() {},
-    now: () => new Date("2026-10-13T12:00:00Z"),
     log() {},
   });
 }, 120_000);
@@ -126,22 +121,13 @@ afterAll(async () => {
   await admin.close();
 });
 
-function readPack(tenantId: string, repo: string) {
-  return loadCheckPack({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {} }, tenantId, repo);
+function readPack(repo: string) {
+  return loadPolicy({ db: handle.db, artifacts: handle.db, async automaticKinds() { return []; }, log() {}, policyFile: policyFile.current }, TENANT, repo);
 }
 
 async function fileOf(repo: string): Promise<unknown> {
   const res = await policyFile.fileRoute({ repo }, MEMBER);
   return ((await res.json()) as { file: unknown }).file;
-}
-
-async function latestAuthor(artifactId: string): Promise<unknown> {
-  const [row] = await handle.db.execute(sql`select author_id from artifacts.artifact_version where artifact_id = ${artifactId} order by version desc limit 1`);
-  return (row as { author_id: unknown } | undefined)?.author_id;
-}
-
-async function syncedRow() {
-  return (await repoPolicyRow({ db: handle.db, artifacts: handle.db }, TENANT, SYNCED))!;
 }
 
 /** Each level holds eight of the one before, so ten levels expand to a billion strings once serialised. */
@@ -150,75 +136,57 @@ function aliasBomb(): string {
   return `checks: {}\nbomb:\n${levels.map((line) => `  ${line}`).join("\n")}\n`;
 }
 
-test("PostgreSQL: syncing stores the policy file as the repository's policy, marked with its sha, until the hub's copy changes", async () => {
-  expect(await fileOf(SYNCED)).toBeNull();
-  expect((await policyFile.syncRoute({ repo: SYNCED }, MEMBER)).status).toBe(404);
+test("PostgreSQL: the policy file is the policy while it is there, a refused one stops triage rather than fall back, and a push reads it again", async () => {
+  await writePolicy(FROM_FILE, JSON.stringify({ ...emptyPack(FROM_FILE), checks: { focused: { enabled: true } } }));
+  const stored = await readPack(FROM_FILE);
+  expect(stored).toMatchObject({ status: "ok", source: { repo: { version: 1 } } });
+  expect(await fileOf(FROM_FILE)).toBeNull();
 
-  files.set(SYNCED, { sha: "blob1", text: FILE });
-  // Using the file writes the policy, which credential `use` alone does not allow.
-  expect((await policyFile.syncRoute({ repo: SYNCED }, VIEWER)).status).toBe(403);
-  const first = await policyFile.syncRoute({ repo: SYNCED }, MEMBER);
-  expect(await first.json()).toEqual({ status: "synced", sha: "blob1" });
-  const read = await readPack(TENANT, SYNCED);
-  expect(read).toMatchObject({ status: "ok", source: { repo: { version: 1 }, file: { path: ".corbits-triage.yaml", sha: "blob1" } } });
-  expect(read.status === "ok" && read.pack.checks).toEqual({ "ci-green": { enabled: true } });
-  expect(await latestAuthor((await syncedRow()).id)).toBe("prn_github");
-  expect((await policyFile.syncRoute({ repo: SYNCED }, VIEWER)).status).toBe(403);
-  expect(await fileOf(SYNCED)).toEqual({ path: ".corbits-triage.yaml", sha: "blob1", url: "https://github.com/acme/synced/blob/main/.corbits-triage.yaml", syncedAt: "2026-10-13T12:00:00.000Z", inSync: true });
-  expect(await (await policyFile.syncRoute({ repo: SYNCED }, MEMBER)).json()).toEqual({ status: "unchanged", sha: "blob1" });
-
-  // The same policy with its keys in another order is still the file's.
-  const row = await syncedRow();
-  const reordered = Object.fromEntries(Object.entries(JSON.parse(row.content) as Record<string, unknown>).reverse());
-  await writeArtifactVersion(handle.db, { scope: { tenantId: TENANT, principalId: "prn_user" }, artifactId: row.id, content: JSON.stringify(reordered) });
-  expect(await fileOf(SYNCED)).toMatchObject({ inSync: true });
-
-  // A save from the portal carries the marker's metadata forward; the content no longer matches it.
-  await writeArtifactVersion(handle.db, { scope: { tenantId: TENANT, principalId: "prn_user" }, artifactId: row.id, content: JSON.stringify(emptyPack(SYNCED)) });
-  const edited = await readPack(TENANT, SYNCED);
-  expect(edited.status === "ok" && edited.source.file).toBeUndefined();
-  expect(await fileOf(SYNCED)).toMatchObject({ sha: "blob1", inSync: false });
-
-  expect(await policyFile.onPush(TENANT, SYNCED, false)).toEqual({ status: "synced", sha: "blob1" });
+  // The answer is kept until a push to the default branch says the file changed.
+  files.set(`${FROM_FILE}/${YML}`, { sha: "blob1", text: FILE });
+  expect(await readPack(FROM_FILE)).toEqual(stored);
+  expect(await policyFile.onPush(TENANT, FROM_FILE)).toMatchObject({ status: "ok", file: { path: YML, sha: "blob1" } });
+  const read = await readPack(FROM_FILE);
+  expect(read).toEqual({ status: "ok", pack: expect.anything(), automatic: [], source: { file: { path: YML, sha: "blob1" } } });
+  expect(read.status === "ok" && read.pack.checks).toEqual({ "ci-green": { enabled: true, text: "CI passes.", reason: "Required by branch protection.", evidence: ["maintainer-stated"] } });
+  expect(await fileOf(FROM_FILE)).toEqual({ path: YML, sha: "blob1", url: `https://github.com/${FROM_FILE}/blob/main/${YML}` });
 
   const manyKeys = Array.from({ length: 7 }, (_, i) => `k${i}: 1`).join("\n");
   const refused: Array<[string | null, string]> = [
-    ["checks: [", "is not YAML: unexpected end of the stream within a flow collection at line 2, column 1."],
-    [`${FILE}${manyKeys}\n`, "unknown keys: k0, k1, k2, k3, k4 and 2 more."],
+    ["rules: [", "Line 2: The policy file is not YAML: unexpected end of the stream within a flow collection."],
+    [`rules:\n  - check: ci-green\n    text: CI passes.\n    evidence: [maintainer-stated]\n`, "Line 2: rules[0].reason must be"],
+    [`checks: {}\n${manyKeys}\n`, "unknown keys: k0, k1, k2, k3, k4 and 2 more."],
     ["checks:\n  ci-gren:\n    enabled: true\n", "unknown checks: ci-gren."],
-    [DIRECTORY, "is not a file"],
+    [DIRECTORY, `${YML} is not a file.`],
     [aliasBomb(), "too large or uses aliases"],
     [`checks: {}\n#${"x".repeat(70 * 1024)}\n`, "too large or uses aliases"],
     [null, "too large or uses aliases"],
   ];
   for (const [i, [text, reason]] of refused.entries()) {
-    files.set(SYNCED, text === DIRECTORY ? { sha: DIRECTORY, text: null } : { sha: `bad${i}`, text });
+    files.set(`${FROM_FILE}/${YML}`, text === DIRECTORY ? { sha: DIRECTORY, text: null } : { sha: `bad${i}`, text });
     const started = performance.now();
-    const res = await policyFile.syncRoute({ repo: SYNCED }, MEMBER);
-    expect(res.status).toBe(422);
-    expect(await res.json()).toMatchObject({ error: { message: expect.stringContaining(reason) } });
+    await policyFile.onPush(TENANT, FROM_FILE);
+    expect(await readPack(FROM_FILE)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(reason) });
     expect(performance.now() - started).toBeLessThan(2_000);
     if (text === DIRECTORY) {
-      const status = await policyFile.fileRoute({ repo: SYNCED }, MEMBER);
-      expect(status.status).toBe(422);
+      expect((await policyFile.fileRoute({ repo: FROM_FILE }, MEMBER)).status).toBe(422);
       continue;
     }
-    expect(await fileOf(SYNCED)).toMatchObject({ sha: `bad${i}`, inSync: false, problem: expect.stringContaining(reason) });
+    expect(await fileOf(FROM_FILE)).toMatchObject({ sha: `bad${i}`, problem: expect.stringContaining(reason) });
   }
 
-  // A file not found on a push that did not remove it writes nothing; one that removed it ends the marker.
-  files.set(SYNCED, { sha: "blob1", text: FILE });
-  await policyFile.onPush(TENANT, SYNCED, false);
-  const before = await syncedRow();
-  files.delete(SYNCED);
-  expect(await policyFile.onPush(TENANT, SYNCED, false)).toEqual({ status: "absent" });
-  expect((await syncedRow()).version).toBe(before.version);
-  expect(await policyFile.onPush(TENANT, SYNCED, true)).toEqual({ status: "removed" });
-  const after = await readPack(TENANT, SYNCED);
-  expect(after.status === "ok" && after.source.file).toBeUndefined();
-  expect((await syncedRow()).content).toBe(before.content);
+  // `.yml` is read first; `.yaml` still counts when it is the only one.
+  files.delete(`${FROM_FILE}/${YML}`);
+  files.set(`${FROM_FILE}/${YAML}`, { sha: "blob2", text: FILE });
+  await policyFile.onPush(TENANT, FROM_FILE);
+  expect(await readPack(FROM_FILE)).toMatchObject({ status: "ok", source: { file: { path: YAML, sha: "blob2" } } });
 
-  expect((await policyFile.syncRoute({ repo: SYNCED }, { tenantId: TENANT, principalId: "prn_github" })).status).toBe(403);
+  // A push whose read fails keeps nothing, so the next trigger reads the file itself.
+  files.delete(`${FROM_FILE}/${YAML}`);
+  readFails = true;
+  await expect(policyFile.onPush(TENANT, FROM_FILE)).rejects.toThrow("502");
+  readFails = false;
+  expect(await readPack(FROM_FILE)).toEqual(stored);
 }, 60_000);
 
 test("PostgreSQL: exporting opens one pull request adding the file the hub's policy reads back as, and takes back its branch when it fails", async () => {

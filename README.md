@@ -28,7 +28,7 @@ http://localhost:5173. Open the portal and follow
 account, the GitHub App and the decision model, then turn on triage for a
 repository. Its open pull requests appear in the Inbox with a verdict, a
 score and the reasons for it. A repository can keep its policy in
-`.corbits-triage.yaml` on its default branch; the hub syncs it on push (see
+`.corbits-triage.yml` on its default branch; the hub reads it directly (see
 [Policy file](docs/PRODUCT.md#policy-file)).
 
 To run it for real, build the root `Dockerfile` and follow

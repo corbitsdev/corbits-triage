@@ -144,9 +144,8 @@ function openHeadOf(drafts: number[]): BridgeDeps["openHeadFor"] {
 }
 
 type Recheck = [string, string, number];
-type Synced = [string, boolean];
 
-function bridge({ synced = [], ...overrides }: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[]; synced?: Synced[] } = {}) {
+function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?: Sent[]; rechecks?: Recheck[]; refreshed?: string[] } = {}) {
   const sent = overrides.sent ?? [];
   const rechecks = overrides.rechecks ?? [];
   async function accept(input: CoalescedEvent) {
@@ -167,9 +166,9 @@ function bridge({ synced = [], ...overrides }: Partial<BridgeDeps> & { sent?: Se
     readCheckPack: packsFor(["octocat/hello"]),
     openHeadFor: openHeadOf([]),
     recheckOpenPulls,
-    async syncPolicyFile(_tenantId, repo, removed) {
-      synced.push([repo, removed]);
-      return { status: "synced", sha: "blob1" };
+    async refreshPolicyFile(_tenantId, repo) {
+      refreshed.push(repo);
+      return { status: "absent" };
     },
     ...overrides,
   });
@@ -323,15 +322,15 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("a push to the default branch that changes or removes the policy file, or is forced, syncs it", async () => {
-    const synced: Synced[] = [];
-    const handle = bridge({ synced });
+  test("a push to the default branch that changes or removes either policy file name, or is forced, reads it again", async () => {
+    const refreshed: string[] = [];
+    const handle = bridge({ refreshed });
     function push(ref: string, commit: Record<string, string[]>, forced = false) {
       return JSON.stringify({ ref, forced, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [commit] });
     }
     const deliveries: Array<[string, string]> = [
       [push("refs/heads/main", { modified: [".corbits-triage.yaml"] }), "accepted"],
-      [push("refs/heads/main", { removed: [".corbits-triage.yaml"] }), "accepted"],
+      [push("refs/heads/main", { removed: [".corbits-triage.yml"] }), "accepted"],
       [push("refs/heads/main", { modified: ["README.md"] }, true), "accepted"],
       [push("refs/heads/main", { modified: ["README.md"] }), "ignored"],
       [push("refs/heads/feature", { modified: [".corbits-triage.yaml"] }), "ignored"],
@@ -340,7 +339,7 @@ describe("bridge handler", () => {
       const res = await handle(githubRequest(body, { event: "push", delivery: `p${i}` }), TARGET);
       expect(await res.json()).toEqual({ status });
     }
-    expect(synced).toEqual([["octocat/hello", false], ["octocat/hello", true], ["octocat/hello", false]]);
+    expect(refreshed).toEqual(["octocat/hello", "octocat/hello", "octocat/hello"]);
   });
 
   test("a base move the triage state refused is 500 and releases the id for retry", async () => {
@@ -470,6 +469,18 @@ describe("bridge handler", () => {
     const res = await bridge({ sent, readCheckPack: packsFor([]) })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "needs-setup" });
     expect(sent).toHaveLength(0);
+  });
+
+  test("a policy file read that fails is 500 and releases the id for retry", async () => {
+    let failures = 1;
+    const read = packsFor(["octocat/hello"]);
+    async function readCheckPack(tenantId: string, repo: string) {
+      if (failures-- > 0) throw new Error("github GET /repos/octocat/hello/contents/.corbits-triage.yml -> 502");
+      return read(tenantId, repo);
+    }
+    const handle = bridge({ readCheckPack });
+    expect(await (await handle(githubRequest(prPayload, { delivery: "unread" }), TARGET)).json()).toEqual({ error: "policy_read_failed" });
+    expect((await handle(githubRequest(prPayload, { delivery: "unread" }), TARGET)).status).toBe(202);
   });
 
   test("a failed queue write is 500 and releases the id for retry", async () => {

@@ -1,6 +1,6 @@
 import { errorText } from "@corbits/common";
 import { readRepoFileResponse, type RepoFileRead } from "@corbits/github-reads";
-import { POLICY_FILE_PATH, readCheckPack, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
+import { POLICY_FILE_PATHS, readCheckPack, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
 import type { GithubApi } from "./github-api.ts";
 import { savedPackFor } from "./pack-store.ts";
 import { keepPolicyFile, localPacks, policyFiles } from "./storage.ts";
@@ -10,16 +10,16 @@ const REVALIDATE_MS = 10 * 60 * 1000;
 
 type FileOutcome = { kind: "absent" } | { kind: "policy"; url: string; policy: Record<string, unknown> } | { kind: "refused"; reason: string };
 
-export type KeptPolicyFile = { etag: string | null; checkedAt: string; outcome: FileOutcome };
+/** `etag` is the response for `path`, the name the file was found under. */
+export type KeptPolicyFile = { path?: string; etag: string | null; checkedAt: string; outcome: FileOutcome };
 
 export type PolicyOrigin = { from: "file"; url: string } | { from: "saved" } | { from: "default" };
 
 export type PolicyRead = { pack: CheckPack; origin: PolicyOrigin };
 
-function outcomeOf(read: RepoFileRead | undefined, repo: string): FileOutcome {
-  if (read === undefined) return { kind: "absent" };
-  if (read.kind === "not-a-file") return { kind: "refused", reason: `${POLICY_FILE_PATH} is not a file.` };
-  if (read.text === null) return { kind: "refused", reason: `${POLICY_FILE_PATH} is too large.` };
+function outcomeOf(read: RepoFileRead, repo: string, path: string): FileOutcome {
+  if (read.kind === "not-a-file") return { kind: "refused", reason: `${path} is not a file.` };
+  if (read.text === null) return { kind: "refused", reason: `${path} is too large.` };
   try {
     return { kind: "policy", url: read.url, policy: readPolicyFile(read.text, repo) };
   } catch (cause) {
@@ -31,22 +31,28 @@ function outcomeOf(read: RepoFileRead | undefined, repo: string): FileOutcome {
 async function policyFile(api: GithubApi, repo: string, fresh: boolean): Promise<FileOutcome> {
   const kept = (await policyFiles.getValue())[repo];
   if (kept && !fresh && Date.now() - Date.parse(kept.checkedAt) < REVALIDATE_MS) return kept.outcome;
-  const headers = new Headers({ accept: "application/vnd.github+json" });
-  if (kept?.etag) headers.set("if-none-match", kept.etag);
-  const url = `/repos/${repo}/contents/${POLICY_FILE_PATH}`;
-  const res = await api.gh(url, { headers, cache: "no-store" });
   const checkedAt = new Date().toISOString();
-  if (res.status === 304 && kept) {
-    await keepPolicyFile(repo, { ...kept, checkedAt });
-    return kept.outcome;
+  for (const path of POLICY_FILE_PATHS) {
+    const headers = new Headers({ accept: "application/vnd.github+json" });
+    if (kept?.etag && kept.path === path) headers.set("if-none-match", kept.etag);
+    const url = `/repos/${repo}/contents/${path}`;
+    const res = await api.gh(url, { headers, cache: "no-store" });
+    if (res.status === 304 && kept) {
+      await keepPolicyFile(repo, { ...kept, checkedAt });
+      return kept.outcome;
+    }
+    const read = await readRepoFileResponse(res, url);
+    if (read === undefined) continue;
+    const outcome = outcomeOf(read, repo, path);
+    await keepPolicyFile(repo, { path, etag: res.headers.get("etag"), checkedAt, outcome });
+    return outcome;
   }
-  const outcome = outcomeOf(await readRepoFileResponse(res, url), repo);
-  await keepPolicyFile(repo, { etag: res.headers.get("etag"), checkedAt, outcome });
-  return outcome;
+  await keepPolicyFile(repo, { etag: null, checkedAt, outcome: { kind: "absent" } });
+  return { kind: "absent" };
 }
 
 function fromFile(policy: Record<string, unknown>, url: string, repo: string): PolicyRead {
-  if (policy.extends !== undefined) throw new Error(`${POLICY_FILE_PATH} extends a shared policy only the hub holds, so it is not checked here.`);
+  if (policy.extends !== undefined) throw new Error("The policy file extends a shared policy only the hub holds, so it is not checked here.");
   return { pack: readCheckPack(policy, repo), origin: { from: "file", url } };
 }
 

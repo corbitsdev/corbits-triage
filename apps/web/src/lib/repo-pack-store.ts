@@ -7,7 +7,8 @@ import type { DraftPolicy } from "./pack-draft.ts";
 /** The artifact a write must land on. */
 export type PackRef = { id: string; version: number };
 
-export type PackArtifact = (PackRef & { pack: CheckPack }) | (PackRef & { corrupt: string });
+/** A pack read from the policy file has no artifact to write to. */
+export type PackArtifact = (PackRef & { pack: CheckPack }) | (PackRef & { corrupt: string }) | { pack: CheckPack };
 
 export type LoadedRepoPack = { artifact: PackArtifact | null; policy: DraftPolicy };
 
@@ -22,9 +23,16 @@ export type RepoPackStore = {
 };
 
 export function packArtifact(found: CheckPackArtifact | null): PackArtifact | null {
-  if (!found) return null;
-  const { id, version } = found;
-  return found.kind === "pack" ? { id, version, pack: found.pack } : { id, version, corrupt: found.reason };
+  switch (found?.kind) {
+    case "pack":
+      return { id: found.id, version: found.version, pack: found.pack };
+    case "corrupt":
+      return { id: found.id, version: found.version, corrupt: found.reason };
+    case "file":
+      return { pack: found.pack };
+    default:
+      return null;
+  }
 }
 
 export function draftPolicy(policy: DraftPolicy): DraftPolicy {

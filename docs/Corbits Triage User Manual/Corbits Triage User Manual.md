@@ -110,17 +110,15 @@ A few things work differently from GitHub, because Bitbucket works differently:
 - **No assignments.** Bitbucket has no assignees, so **Assign to…** steps are not carried out.
 - **Bitbucket's own reviews.** Approve, Request changes, Close and Merge become Bitbucket's approve, needs work, decline and merge.
 - **CI is checked on a timer.** Bitbucket sends no event when a build finishes, so a pull request waiting for CI is checked within a few minutes of its builds ending. While the **CI must pass** rule is waiting on a build, or failing because of one, Triage looks at the build again after five minutes, then less often, and checks the pull request again once it has changed.
-- **No export.** The Policy card does not offer **Export to repository**, but a `.corbits-triage.yaml` you add yourself works the same way.
+- **No export.** The Policy card does not offer **Export to repository**, but a `.corbits-triage.yml` you add yourself works the same way.
 
 ### Policy
 
-The **Policy** card says where the repository's rules and actions are kept. At first they are kept in Corbits Triage. Press **Export to repository** to open a pull request that adds them to the repository as a file called `.corbits-triage.yaml`. Once that file is on the default branch, it is the policy: changes to it are reviewed like any other code, and the rules and actions on this page become read-only.
-
-![The Policy card for a repository whose .corbits-triage.yaml was changed on GitHub: Not in sync, with Use file and Edit on GitHub buttons. The rules below are grayed out because the file decides them](images/07.png)
+The **Policy** card says where the repository's rules and actions are kept. At first they are kept in Corbits Triage. Press **Export to repository** to open a pull request that adds them to the repository as a file called `.corbits-triage.yml`. Once that file is on the default branch, it is the policy: changes to it are reviewed like any other code, and the rules and actions on this page become read-only. A file named `.corbits-triage.yaml` works too.
 
 - **Edit on GitHub**, or **Edit on Bitbucket** for a Bitbucket repository, opens the file there.
-- When someone changes the file, the card says **Not in sync** until Triage reads it again. Press **Use file** to read it now.
-- If the file has a mistake, the card says why and Triage keeps using the last policy it could read.
+- When a change to the file reaches the default branch, the next triage uses it.
+- If the file has a mistake, Triage runs nothing on the repository until it is fixed. The card lists each problem with its line, and the Inbox names the repository. Triage does not fall back to the rules kept here, because a missing rule could let an approve or merge through.
 
 In the file, each rule is one sentence with how it is checked and why it exists: a one-line `reason` and its `evidence`, such as the pull requests that led to it (`"#44"`) or `maintainer-stated`. For example:
 
@@ -196,7 +194,7 @@ Below the summary line are three lists of steps, one per verdict: **Pass**, **Fa
 
 The **for** choice limits a step to some authors: **anyone**; **first-timers**, **maintainers**, **external contributors** or **bots**; one kind of author as GitHub reports it (**owners**, **organization members**, **collaborators**, **past contributors**, **first-time contributors**, **people new to GitHub**, **outside authors** or **imported authors**); **a GitHub team…**; or **specific people…**. For example, a Fail step can post a friendly comment for first-timers only. By default, Unsure asks the code owners for a review.
 
-In the repository's `.corbits-triage.yaml`, a step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for. In the file, authors are named by GitHub's own author types: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE` and `MANNEQUIN`, plus `BOT` for bots. A file that names first-timers, maintainers, external or bots still works and means the same authors as before.
+In the repository's `.corbits-triage.yml`, a step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for. In the file, authors are named by GitHub's own author types: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE` and `MANNEQUIN`, plus `BOT` for bots. A file that names first-timers, maintainers, external or bots still works and means the same authors as before.
 
 Each step shows whether it **Waits for you** or runs on its own. If something is incomplete, such as a comment with no text, the step says **Not saved yet** in red and the rest of your changes are still saved.
 
@@ -417,7 +415,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 | Score | How sure the decision model is that the pull request passes, from 0 to 1. A score of 0.9 means 90 percent sure. |
 | Action | One step in a repository's policy, such as adding a label or requesting a review. |
 | Held action | An action that is waiting for a person to approve it in the Inbox. |
-| Policy | A repository's rules, verdict steps and labels. Kept in Triage or in the repository's `.corbits-triage.yaml` file. |
+| Policy | A repository's rules, verdict steps and labels. Kept in Triage or in the repository's `.corbits-triage.yml` file. |
 | Role | A workspace role (Owner, Admin, Member) that controls what a person may do in Triage. |
 | CI | Continuous integration: the automated tests and checks a repository runs on every pull request. |
 | Draft | A pull request its author has marked as not ready. Triage waits until it is marked ready. |
@@ -437,7 +435,7 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **The author pushed a fix. Do I need to do anything?** No. Every new commit gets its own verdict, and Triage updates its comment. If you had requested changes through Triage and every failed rule is now fixed, Triage withdraws the request for you.
 
-**Can I try new rules without affecting anyone?** Changes on the repository page take effect as soon as they are saved, and actions that Triage does not run on its own still wait for a person. To have rule changes reviewed first, keep the policy in the repository's `.corbits-triage.yaml` and change it through a pull request.
+**Can I try new rules without affecting anyone?** Changes on the repository page take effect as soon as they are saved, and actions that Triage does not run on its own still wait for a person. To have rule changes reviewed first, keep the policy in the repository's `.corbits-triage.yml` and change it through a pull request.
 
 **Where do I change my password?** Sign out. If the sign-in screen shows **Forgot password?**, use it, and a reset link is sent to your email.
 

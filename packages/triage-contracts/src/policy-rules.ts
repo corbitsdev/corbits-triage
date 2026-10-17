@@ -33,6 +33,17 @@ export const policyRulesSchema = type({
 
 type PolicyRulesFile = typeof policyRulesSchema.infer;
 
+/** Where in the file each problem is, as keys from its root, so a reader can point at the line. */
+export class PolicyFileError extends Error {
+  constructor(message: string, readonly problems: ReadonlyArray<{ message: string; path: readonly PropertyKey[] }>) {
+    super(message);
+  }
+}
+
+function refuse(message: string, path: readonly PropertyKey[]): never {
+  throw new PolicyFileError(message, [{ message, path }]);
+}
+
 /** A file holds schema 3 when it lists `rules`. */
 export function isPolicyRulesFile(file: Record<string, unknown>): boolean {
   return file.rules !== undefined;
@@ -78,9 +89,9 @@ function mapRules(rules: PolicyRule[]): { checks: Record<string, unknown>; custo
   const checks: Record<string, unknown> = {};
   const custom: Array<Record<string, unknown>> = [];
   const seen = new Set<string>();
-  for (const rule of rules) {
+  for (const [at, rule] of rules.entries()) {
     const id = ruleId(rule);
-    if (seen.has(id)) throw new Error(`Rule ${id} is listed twice.`);
+    if (seen.has(id)) refuse(`Rule ${id} is listed twice.`, ["rules", at]);
     seen.add(id);
     if (isCatalogRule(rule)) checks[id] = catalogRow(rule);
     else custom.push(customRow(rule));
@@ -94,7 +105,7 @@ function refuseFor(actions: Record<string, unknown> | undefined): void {
     const steps = actions?.[verdict];
     if (!Array.isArray(steps)) continue;
     const at = steps.findIndex((step) => asRecord(step)?.for !== undefined);
-    if (at >= 0) throw new Error(`${verdict} step ${at + 1} must say who it is for in when.author, not for.`);
+    if (at >= 0) refuse(`${verdict} step ${at + 1} must say who it is for in when.author, not for.`, ["actions", verdict, at]);
   }
 }
 
@@ -110,7 +121,7 @@ function actionsOf(file: PolicyRulesFile): Record<string, unknown> | undefined {
 export function rulesToPolicy(raw: Record<string, unknown>): Record<string, unknown> {
   refuseFor(asRecord(raw.actions));
   const file = policyRulesSchema(withAuthorKinds(raw));
-  if (file instanceof type.errors) throw new Error(file.summary);
+  if (file instanceof type.errors) throw new PolicyFileError(file.summary, file.map((error) => ({ message: error.message, path: error.path })));
   const actions = actionsOf(file);
   return {
     ...(file.extends !== undefined && { extends: file.extends }),

@@ -7,7 +7,7 @@ export default defineConfig({
   manifestVersion: 3,
   manifest: ({ browser }) => ({
     name: "Corbits Triage",
-    description: "Checks the GitHub pull request you are viewing against its repository's .corbits-triage.yaml, read-only.",
+    description: "Checks the GitHub pull request you are viewing against its repository's .corbits-triage.yml, read-only.",
     permissions: ["storage", ...(browser === "firefox" ? [] : ["sidePanel"])],
     // Every read goes through GitHub's REST API; the content script's github.com match comes from its own entrypoint.
     host_permissions: ["https://api.github.com/*"],

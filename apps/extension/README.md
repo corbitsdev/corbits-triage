@@ -13,7 +13,7 @@ against its repository's policy and shows the result on the pull request page.
 
 The policy comes from, in order:
 
-1. `.corbits-triage.yaml` on the repository's default branch, read through GitHub's contents API. A pull request's own
+1. `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the repository's default branch, read through GitHub's contents API. A pull request's own
    head is never read for it, so a pull request cannot change the rules it is checked by. The file is kept for 10
    minutes, then revalidated by ETag; files over 64 KB are refused.
 2. Rules saved in this browser for the repository, edited in the side panel.
