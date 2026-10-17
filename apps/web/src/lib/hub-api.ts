@@ -6,7 +6,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -869,6 +869,15 @@ export async function loadPolicyFile(transport: Transport, tenantId: string, rep
 export async function exportPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicyExported> {
   const clean = validateRepo(repo);
   return PolicyExported.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/export`, { repo: clean }));
+}
+
+export async function loadPolicyUpgrades(transport: Transport, tenantId: string): Promise<PolicyUpgrades["repos"]> {
+  return PolicyUpgrades.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/upgrades`)).repos;
+}
+
+/** Archiving hides an artifact and keeps it restorable. */
+export async function archiveArtifact(transport: Transport, tenantId: string, id: string): Promise<void> {
+  await transport.fetch<unknown>("POST", `/api/tenants/${enc(requireTenantId(tenantId))}/artifacts/${enc(id)}/archive`);
 }
 
 export async function triagePullRequest(transport: Transport, tenantId: string, repo: string, number: number): Promise<void> {

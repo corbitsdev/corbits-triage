@@ -157,8 +157,9 @@ connection queue for minutes.
    below it save as you change them, and turning triage on triages its open
    pull requests. New pull request events are triaged from then on. **Triage
    open pull requests again** re-runs it. To keep the policy in the
-   repository instead, use **Export to repository** on the Policy card and
-   merge the pull request it opens; from then on the hub reads
+   repository instead, use **Open pull request** in the repository's
+   **Upgrade this repository to a policy file** note and merge the pull
+   request it opens; from then on the hub reads
    `.corbits-triage.yml` again on every push to the default branch that
    changes it (see
    [Policy file](PRODUCT.md#policy-file)).
