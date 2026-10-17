@@ -124,7 +124,8 @@ export function appGithubFetch(
   return function appCredentialFetch(path, init) {
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${appJson}`);
-    headers.set("accept", "application/vnd.github+json");
+    // A read that asks for another media type, such as a pull request's diff, keeps it.
+    if (!headers.has("accept")) headers.set("accept", "application/vnd.github+json");
     return appFetch(`${apiOrigin}${path}`, { ...init, headers });
   };
 }
