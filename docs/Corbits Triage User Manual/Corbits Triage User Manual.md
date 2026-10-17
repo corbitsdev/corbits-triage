@@ -38,8 +38,8 @@ Nothing runs until you turn it on. Connecting GitHub or Bitbucket Data Center on
 
 Code review reads each new commit of a pull request for bugs: mistakes in the changed lines and breakage the change causes elsewhere in the repository. It is separate from the verdict and optional.
 
-- **Turning it on.** Save an Anthropic API key under Settings → Code review, then switch on **Review the code in every pull request for bugs** in each repository's [Code review card](#code-review-1). Switch it off there to stop.
-- **What it costs.** About $0.14 for each commit it reviews, on your Anthropic account. It reviews a pull request when it is opened and after every push while it is not a draft, and **Review again** is one more review, so a pull request reviewed five times costs about $0.70.
+- **Turning it on.** Save an Anthropic API key under [Settings → Models](#models), then switch on **Review the code in every pull request for bugs** in each repository's [Code review section](#code-review-1). Switch it off there to stop.
+- **What it costs.** Each commit it reviews is billed to your Anthropic account. It reviews a pull request when it is opened and after every push while it is not a draft, and **Review again** is one more review.
 - **Where you see it.** In the Inbox's reading pane, under **Code review**: each bug with how severe it is, its file and line, and the code it points at. **Review again** reviews the latest commit once more. A very large change is read up to a size limit, and the review says how much of it was read.
 - **What it does not do.** It only reads code; it never runs it. Nothing is posted to the pull request: findings stay in Triage.
 
@@ -89,19 +89,19 @@ Once all three steps are done, the portal takes you to the Inbox. Nothing appear
 
 ## Setting up a repository: rules, verdicts and actions
 
-Every repository has its own page under **Repositories** in the menu under your name. That page is where you decide what Triage checks, how it reaches a verdict, and what it does afterward. There is no Save button: every change is saved as you make it. The word beside the repository's name says where things stand: **Saving…** while a change is on its way, **Saved** once it is stored, and **Not saved** if something is unfinished or the save failed.
+Every repository has its own page under **Repositories** in the menu under your name. A repository's rules, and what Triage does with each verdict, live in a file in the repository called `.corbits-triage.yml`. The page reads that file back to you. From top to bottom it holds the triage switch, the **Policy**, **Code review**, **Actions Triage takes on its own**, **Outcomes** and **Remove repository**. Switches are saved as you change them; the word beside the repository's name says **Saving…** while a change is on its way, **Saved** once it is stored, and **Not saved** if the save failed.
 
-![The repository page for acme/widgets: Saved beside the name, the triage switch, the Policy card, and the Size and Checks rule cards, each rule with its own switch](images/06.png)
+![The repository page for acme/gadgets beside the Repositories list: the triage switch on, then Policy with Change on GitHub and its rules read back as sentences, from Flag pull requests over 25 files changed to Never accept changes to vendor/**, node_modules/**, then Pass: Approve, for maintainers; Fail: Nothing; Unsure: Request review from code owners, and Code review below](images/06.png)
 
 ### Turning triage on
 
-The switch labeled **Triage pull requests in this repository** is the master control. While it is off, Triage ignores the repository entirely and the rest of the page is grayed out. You can turn it on before any rule: the page then says **Triage is enabled. Switch on a rule to have it start triggering.** and nothing is checked until you do. Once a rule is on, Triage checks every open pull request, and from then on it reacts to each new pull request event as it happens. On GitHub, the link **Triage open pull requests again** re-checks everything that is currently open, which is useful after you change the rules. When the run finishes, each pull request's new result replaces its old one in the inbox. Drafts are skipped until they are marked ready for review; one without a result shows **Draft** and **Draft: Not evaluated** instead of **Not triaged yet** and **Not evaluated**.
+The switch labeled **Triage pull requests in this repository** is the master control. While it is off, Triage ignores the repository entirely and the rest of the page is grayed out. You can turn it on before the policy has any rule: the page then says **Triage is on. It starts once the policy has a rule.** and nothing is checked until it does. Once the policy has a rule, Triage checks every open pull request, and from then on it reacts to each new pull request event as it happens. On GitHub, the link **Triage open pull requests again** re-checks everything that is currently open, which is useful after you change the policy. When the run finishes, each pull request's new result replaces its old one in the inbox. Drafts are skipped until they are marked ready for review; one without a result shows **Draft** and **Draft: Not evaluated** instead of **Not triaged yet** and **Not evaluated**.
 
 ### Bitbucket Data Center repositories
 
 Repositories from Bitbucket Data Center are named by project key and repository, such as `TRI/widgets`, and carry a **Bitbucket Data Center** mark under their name in the list. The link in the corner of the repository page opens it on Bitbucket.
 
-![The repository page for TRI/widgets, a Bitbucket Data Center repository: the triage switch on with the notice Triage is enabled. Switch on a rule to have it start triggering, then Set up the webhook on Bitbucket with the Webhook URL, the Webhook secret and the events to select](images/25.png)
+![The repository page for TRI/widgets, a Bitbucket Data Center repository: the triage switch on, then Set up the webhook on Bitbucket with the Webhook URL, the Webhook secret and the events to select](images/25.png)
 
 Bitbucket tells Triage about pull request events through a webhook on each repository. When you turn triage on, Triage creates that webhook itself if its token is allowed to. If not, the page shows **Webhook setup** with the webhook URL, a secret and the list of events. A repository admin on Bitbucket then:
 
@@ -115,33 +115,52 @@ The secret is shown only this once. Turning triage off removes a webhook Triage 
 
 A few things work differently from GitHub, because Bitbucket works differently:
 
-- **No labels.** Bitbucket Data Center has no labels, so the Labels card and **Add label…** steps have no effect there. Triage shows its verdict as a build status named **Corbits Triage** on the pull request's latest commit instead, while Comment is on for the repository.
-- **No assignments.** Bitbucket has no assignees, so **Assign to…** steps are not carried out.
+- **No labels.** Bitbucket Data Center has no labels, so verdict labels and **Add labels** steps have no effect there. Triage shows its verdict as a build status named **Corbits Triage** on the pull request's latest commit instead, while Comment is on for the repository.
+- **No assignments.** Bitbucket has no assignees, so **Assign to** steps are not carried out.
 - **Bitbucket's own reviews.** Approve, Request changes, Close and Merge become Bitbucket's approve, needs work, decline and merge.
 - **CI is checked on a timer.** Bitbucket sends no event when a build finishes, so a pull request waiting for CI is checked within a few minutes of its builds ending. While the **CI must pass** rule is waiting on a build, or failing because of one, Triage looks at the build again after five minutes, then less often, and checks the pull request again once it has changed.
 
-### Code review
-
-![The Code review card for acme/widgets: Review the code in every pull request for bugs, about $0.14 a push, with its switch off, and an Anthropic key field with Save key below it](images/27.png)
-
-Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it; each commit it reviews costs about $0.14 on your Anthropic account. It needs the workspace's Anthropic key: if none is saved, the card asks for it, and the key is kept in the same place as under Settings → Code review. Switch it off to stop.
-
 ### Policy
 
-Rules can live in a file in the repository called `.corbits-triage.yml` (`.corbits-triage.yaml` works too). Once that file is on the default branch, it is the policy: changes to it are reviewed like any other code, and the **Policy** card links to it while the rules and actions on this page become read-only.
+A repository's policy is the file `.corbits-triage.yml` (`.corbits-triage.yaml` works too) on its default branch, so changes to it are reviewed like any other code. The **Policy** section reads it back in plain sentences: each rule that is on, then what Triage does on **Pass**, **Fail** and **Unsure**. Rules and actions change only in the file. **Change on GitHub**, or **Change on Bitbucket** for a Bitbucket repository, opens it there.
 
-Rules saved here before the file existed move into it once, through a pull request:
-
-- **Upgrade this repository to a policy file.** The repository has saved rules and no file. **Open pull request** opens one adding the file with your saved rules. They keep applying until it is merged. Anything a file can't hold, such as a score question, is listed in the note and in the pull request.
-- **Your policy file differs from your saved rules.** The repository has both, and they don't do the same thing; the note lists each difference. Your saved rules apply until they match. **Make the file match** opens a pull request changing the file to your saved rules. **Keep the file** keeps the file as it is and puts the saved rules away.
-
-![The acme/gadgets repository page with the note "Your policy file differs from your saved rules", its differences listed, and Make the file match and Keep the file below them](images/29.png)
-
-While its pull request is open, **Update pull request** brings it up to date with your saved rules; a second one is never opened. When the file already holds everything from your saved rules that a file can hold, only **Keep the file** is offered. The Repositories list shows these repositories as **Upgrade to a policy file** or **Policy file differs**, and the Inbox names them. Once the file and the saved rules match, the note goes away and the file alone is the policy.
-
-- **Edit on GitHub**, or **Edit on Bitbucket** for a Bitbucket repository, opens the file there.
+- With no file, the section says to add `.corbits-triage.yml` to the default branch.
 - When a change to the file reaches the default branch, the next triage uses it.
-- If the file has a mistake, Triage runs nothing on the repository until it is fixed. The card lists each problem with its line, and the Inbox names the repository. Triage does not fall back to the rules kept here, because a missing rule could let an approve or merge through.
+- If the file has a mistake, Triage runs nothing on the repository until it is fixed. The section says so and lists each problem, and the Inbox names the repository. A repository that still has rules saved in Triage keeps running on them instead, and its card below says **Triage can't read** the file and why.
+
+#### Moving saved rules into the file
+
+A repository set up before policy files has its rules saved in Triage. They move into the file once, through a pull request, with one card in the Policy section that walks through the steps **Review**, **Open pull request**, **Merge on GitHub** (or Bitbucket) and **Done**. Your saved rules keep applying until the move is done.
+
+- **Move this repository's rules into a policy file.** The repository has saved rules and no file. **Open the pull request** opens one adding the file with your saved rules and actions. Anything a file can't hold is listed above it, one plain line each, such as "Risk stops after the merge; a policy file can't hold it."
+
+  ![The Policy section for acme/widgets: Move this repository's rules into a policy file, They keep working here until .corbits-triage.yml is merged, the steps Review, Open pull request, Merge on GitHub and Done, the line Risk stops after the merge; a policy file can't hold it, and Open the pull request](images/30.png)
+
+- **Your policy file differs from your saved rules.** The repository has both, and they don't do the same thing. Each difference shows the rule with its **Saved** and **File** values, the changed value marked. **Update the file to match** opens a pull request changing the file to your saved rules. **Use the file instead** keeps the file as it is and puts the saved rules away. It first asks you to confirm, with one line for each thing that will change, such as "Pull requests that change vendor/** will no longer fail." Press **Use the file** to go ahead, or **Cancel**.
+
+  ![The Policy section for corbitsdev/corbits-code: Your policy file differs from your saved rules, the rule Never accept changes to with Saved vendor/** and node_modules/** and File node_modules/**, vendor/** marked, then Update the file to match and Use the file instead](images/29.png)
+
+  ![The same card after Use the file instead: Pull requests that change vendor/** will no longer fail, with Use the file and Cancel](images/31.png)
+
+- **While the pull request is open,** the card shows it as **Open, waiting for merge**, with **Merge on GitHub** to open it there. **Update the pull request with your saved rules** brings it up to date; a second one is never opened. The card notices the merge on its own. If your file differs, **Use the file instead** is still offered.
+
+  ![The card at Merge on GitHub: Pull request #2, Open, waiting for merge, a Merge on GitHub button and the link Update the pull request with your saved rules; the Repositories list marks acme/widgets Waiting for merge](images/32.png)
+
+- **Finish moving to the policy file.** The file holds everything from your saved rules that a file can hold. What is left is shown as a difference; press **Use the file**, then confirm, to switch.
+
+  ![The card Finish moving to the policy file: The file holds everything it can, the rule Risk with a saved score question and off in the file, and Use the file](images/33.png)
+
+Once the move is done, the file alone is the policy. If the page is open when that happens, the Policy section says **Done. Your rules now come from .corbits-triage.yml.** above the rules.
+
+![The Policy section for acme/widgets after the move: Done. Your rules now come from .corbits-triage.yml, above its rules and its Pass, Fail and Unsure steps](images/34.png)
+
+The Repositories list marks each repository that still has a step to take: **Move rules to a file**, **Rules differ from file**, **Waiting for merge** or **Switch to the file**. The Inbox shows the same words in one line, each repository linking to its page.
+
+![The Repositories list: acme/widgets and corbitsdev/corbits-code marked Waiting for merge, acme/gadgets Needs setup](images/35.png)
+
+![The Needs you view with the line acme/widgets: Waiting for merge · corbitsdev/corbits-code: Waiting for merge above Inbox zero](images/36.png)
+
+#### Writing the file
 
 In the file, each rule is one sentence with how it is checked and why it exists: a one-line `reason` and its `evidence`, such as the pull requests that led to it (`"#44"`) or `maintainer-stated`. For example:
 
@@ -158,85 +177,72 @@ A file exported before rules carried reasons keeps working as it is.
 
 A file can also start from a workspace-wide policy with `extends`, and then set only what differs for this repository. This is useful when many repositories should follow the same rules.
 
-Enabling a repository switches on Comment and Labels (Comment only on Bitbucket, which has no labels); every other action stays off until you switch it on. Turning triage off and on again switches them back on.
-
-Under the switch, **Actions Triage takes on its own** lists each action with its own switch. On, Triage does that action in this repository without asking; off, it waits for you in the Inbox, in this repository only. An action allowed in every repository under Settings → Access shows on and changes only there. Bitbucket Data Center repositories do not list Add labels or Assign, and Settings → Access does not offer them for those actions.
-
 ### Rules
 
-A rule asks one question about a pull request and answers pass, fail or unconfirmed. The rules are grouped into three cards, and each rule has a switch. The heading shows how many are on. Hover over the small **i** beside a rule for a one-line explanation of how it is checked.
+A rule asks one question about a pull request and answers pass, fail or unconfirmed. The Policy section shows each rule that is on as one sentence. A file can turn on:
 
 - **Size**: **Flag pull requests over N files changed** and **over N lines changed**. Big changes are hard to review. You choose the limits.
-- **Checks**, facts the host already knows:
+- **Facts the host already knows**:
   - **Require a linked issue** from GitHub, Linear or either. The pull request's title, description, commits or branch must mention an issue.
-  - **No merge conflicts with the base branch.**
-  - **CI must pass.** The repository's automated checks must be green. While they are still running, the rule is unconfirmed rather than passed.
-  - **Never accept changes to** certain paths, such as vendored code. Add as many paths as you like.
-  - **+ Fail when …** adds a text rule of your own, such as "Fail when any commit message contains "Co-Authored-By:"". Choose where to look (the title, the description, any commit message, or several of them), whether the rule fails when the text **contains** or **does not contain** your phrases, and add the phrases. Case does not matter. Only the first 100 commits are read. The rule's evidence quotes the line that matched. Text rules count toward the eight rules of your own.
-- **Judgement**, questions the decision model answers from the diff and the documentation. These are optional, and each carries a **decision model** tag:
-  - **The change is focused on one thing.**
-  - **Docs are updated when behavior changes.**
+  - **Flag merge conflicts with the base branch.**
+  - **CI must pass before merge.** The repository's automated checks must be green. While they are still running, the rule is unconfirmed rather than passed.
+  - **Never accept changes to** certain paths, such as vendored code.
+  - **Fail when …**, a text rule of your own, such as "Fail when any commit message contains "Co-Authored-By:"". It names where to look (the title, the description, any commit message, or several of them), whether the rule fails when the text **contains** or **does not contain** its phrases, and the phrases. Case does not matter. Only the first 100 commits are read. The rule's evidence quotes the line that matched. Text rules count toward the eight rules of your own.
+- **Judgement**, questions the decision model answers from the diff and the documentation:
+  - **Check the change is focused on one thing.**
+  - **Check docs are updated when behavior changes.**
+  - **Is it true that …**, a yes-or-no question of your own, such as "Is it true that the title says what changed?" The rule fails when the answer is no.
 
-Two rules always run and have no switch: a draft pull request waits until it is ready for review, and a pull request with changes requested fails.
+Two rules always run: a draft pull request waits until it is ready for review, and a pull request with changes requested fails.
 
-Below the Judgement rules you can add rules of your own that are questions for the decision model:
-
-- **+ Is it true that …** asks a yes-or-no question, such as "Is it true that the title says what changed?" The rule fails when the answer is no.
-- **+ Score …** asks the decision model to place the pull request on a scale of levels you name, worst first, such as poor, fair, good and great. Choose the level it **fails** below, or **never** to record the score without failing anyone.
-
-![The Judgement card: the two built-in decision-model rules, then an Is it true that rule and a Score rule with the levels poor, fair, good and great and fails below fair](images/08.png)
-
-Rules in the Size and Checks cards only use facts the host already knows, so they cost nothing and always give the same answer for the same pull request. Judgement rules cost one model request per pull request.
+Size rules and facts the host already knows cost nothing and always give the same answer for the same pull request. Judgement rules cost one model request per pull request.
 
 ### How the verdict is decided
 
-The **Then** section starts with one line that sums up the decision.
-
-![The Then section: the line A failed rule decides Fail; otherwise the model decides, and Unsure below 70% sure, then the steps for Pass, Fail and Unsure, each marked Waits for you](images/09.png)
-
 1. If any rule fails, the verdict is **Fail** right away. That includes a Judgement rule the decision model answered no to.
-2. If the repository has no Judgement rules, there is nothing left to judge: the verdict is **Pass** when every rule passes, and **Unsure** when a rule could not be confirmed, such as CI that is still running.
+2. If the policy has no Judgement rules, there is nothing left to judge: the verdict is **Pass** when every rule passes, and **Unsure** when a rule could not be confirmed, such as CI that is still running.
 3. Otherwise the decision model reads the whole pull request together with every rule's result and answers one question: does this pull request pass this repository's policy? If it is at least 70% sure the answer is yes, the verdict is **Pass**. If it is at least 70% sure the answer is no, the verdict is **Fail**. Anything in between is **Unsure**, which means a person should look. A pull request with a Judgement rule the model could not confirm is never more than Unsure.
 
 Draft and closed pull requests are not decided at all.
 
 ### Actions
 
-Below the summary line are three lists of steps, one per verdict: **Pass**, **Fail** and **Unsure**. Press **+ Add a step** to add one. Each step names an action and who it is for.
+The file lists steps for each verdict, and the Policy section shows them under **Pass**, **Fail** and **Unsure**, or **Nothing** when a verdict has none. Each step names an action and who it is for.
 
 | Action | What it does |
 | --- | --- |
 | Approve | Approves the pull request. |
 | Merge | Merges the pull request. Only on Pass. |
 | Close | Closes the pull request. |
-| Comment | Posts a comment you write. |
+| Comment | Posts the comment the step gives. |
 | Request changes | Sends the author a review listing the rules to fix. |
-| Request review from… | Asks the code owners, named people or teams to review. |
-| Assign to… | Assigns the pull request to the author, the code owners, named people or teams. |
-| Add label… | Adds the labels you list. |
+| Request review from | Asks the code owners, named people or teams to review. |
+| Assign to | Assigns the pull request to the author, the code owners, named people or teams. |
+| Add labels | Adds the labels the step lists, or one label for each failed rule. |
 
-The **for** choice limits a step to some authors: **anyone**; **first-timers**, **maintainers**, **external contributors** or **bots**; one kind of author as GitHub reports it (**owners**, **organization members**, **collaborators**, **past contributors**, **first-time contributors**, **people new to GitHub**, **outside authors** or **imported authors**); **a GitHub team…**; or **specific people…**. For example, a Fail step can post a friendly comment for first-timers only. By default, Unsure asks the code owners for a review.
+A step can be limited to some authors, shown after it, such as "Approve, for maintainers": **first-timers**, **maintainers**, **external contributors** or **bots**; one kind of author as GitHub reports it; a GitHub team; or specific people. A step for anyone shows no one. For example, a Fail step can post a friendly comment for external contributors only. In the file, authors are named by GitHub's own author types: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE` and `MANNEQUIN`, plus `BOT` for bots. A file that names first-timers, maintainers, external or bots still works and means the same authors as before.
 
-In the repository's `.corbits-triage.yml`, a step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for. In the file, authors are named by GitHub's own author types: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE` and `MANNEQUIN`, plus `BOT` for bots. A file that names first-timers, maintainers, external or bots still works and means the same authors as before.
+A step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for.
 
-Each step shows whether it **Waits for you** or runs on its own. If something is incomplete, such as a comment with no text, the step says **Not saved yet** in red and the rest of your changes are still saved.
+Under Code review, **Actions Triage takes on its own** lists each action with its own switch. On, Triage does that action in this repository without asking; off, it waits for you in the Inbox, in this repository only. An action allowed in every repository under [Settings → Access](#access) shows on and changes only there. Bitbucket Data Center repositories list **Comment and build status** instead of Comment, and do not list Add labels or Assign; Settings → Access does not offer them for those actions.
 
-Triage only carries out an action on its own when the workspace allows that action in that repository under [Settings → Access](#access). Everything else waits in the Inbox for a person to click. Enabling a repository allows Comment and Labels on it; every other action waits until you allow it, so you can watch what Triage suggests before you let it act. Two actions are always held for a person: Close on Unsure, and Merge on anything but Pass.
+Enabling a repository switches on Comment and Add labels (Comment only on Bitbucket, which has no labels); every other action waits for a person to click until you switch it on, so you can watch what Triage suggests before you let it act. Turning triage off and on again switches them back on. Two actions are always held for a person: Close on Unsure, and Merge on anything but Pass.
 
-When the repository's rules or actions depend on CI (the **CI must pass** rule is on, a step has a CI condition, or a step approves or merges), Triage waits for a pull request's CI to finish before it checks it, so it gives one result instead of an early Unsure. Meanwhile the Inbox shows **Waiting for CI** and keeps the pull request out of Needs you, and the pull request itself shows **Triage: Waiting for CI**: as a label on GitHub where Triage adds labels on its own, and as the **Corbits Triage** build status on Bitbucket where Triage comments on its own. The verdict replaces it once Triage has checked the pull request. Triage goes ahead as soon as any check fails, after two minutes when the repository has no CI, and after an hour at most. **Triage again** does not wait.
+When the policy depends on CI (the **CI must pass** rule is on, a step has a CI condition, or a step approves or merges), Triage waits for a pull request's CI to finish before it checks it, so it gives one result instead of an early Unsure. Meanwhile the Inbox shows **Waiting for CI** and keeps the pull request out of Needs you, and the pull request itself shows **Triage: Waiting for CI**: as a label on GitHub where Triage adds labels on its own, and as the **Corbits Triage** build status on Bitbucket where Triage comments on its own. The verdict replaces it once Triage has checked the pull request. Triage goes ahead as soon as any check fails, after two minutes when the repository has no CI, and after an hour at most. **Triage again** does not wait.
 
 If Triage checks a pull request while its CI is still running anyway, it holds every action, and its comment on the pull request lists them under **Waiting for checks to finish**. They go ahead once the checks are done.
 
 ### Labels
 
-The **Labels** card sets the labels Triage keeps on every pull request so that other tools, such as a coding agent, can react to them.
+Triage keeps a verdict label on every pull request so that other tools, such as a coding agent, can react to it. It puts the verdict's label on the pull request and takes the other two off. The defaults are **Triage: Ready** for Pass, **Triage: Not Ready** for Fail and **Triage: Needs Human Review** for Unsure; the file can rename them. A step that labels each failed rule, shown as **Label each failed rule**, adds a label such as `rule: linked-issue` for every rule that failed.
 
-![The Labels card: the verdict labels Triage: Ready, Triage: Not Ready and Triage: Needs Human Review, marked always, and the switch Also label each failed rule with rule: <id>](images/10.png)
+On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repositories](#bitbucket-data-center-repositories).
 
-On Bitbucket Data Center this card has no effect; see [Bitbucket Data Center repositories](#bitbucket-data-center-repositories).
+### Code review
 
-- **Label each pull request with its verdict** is always on. Triage puts the verdict's label on the pull request and takes the other two off. The defaults are **Triage: Ready** for Pass, **Triage: Not Ready** for Fail and **Triage: Needs Human Review** for Unsure. You can rename them.
-- **Also label each failed rule** adds a label such as `rule: linked-issue` for every rule that failed.
+![The Code review section of a repository page: Review the code in every pull request for bugs, with its switch off, and Needs an Anthropic key in Settings → Models below it](images/27.png)
+
+Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. It needs the workspace's Anthropic key: until one is saved, the section says **Needs an Anthropic key in Settings → Models**, with a link to [Models](#models).
 
 ### Removing a repository
 
@@ -329,7 +335,7 @@ Authors do not use the portal. Depending on the repository's actions, they see a
 
 ## Settings: people, access and workspace configuration
 
-**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with six sections: Triage, Sources, Decision model, Code review, Access and Your account. The links at the top jump to each section. Most teams visit it once during setup and then only to invite people or change what Triage may do on its own.
+**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with five sections: Triage, Sources, Models, Access and Your account. The links at the top jump to each section. Most teams visit it once during setup and then only to invite people or change what Triage may do on its own.
 
 ### Triage
 
@@ -363,17 +369,18 @@ Create the token for a dedicated Bitbucket user named **Corbits Triage**, not fo
 
 Once connected, the card says **Connected to** the instance and shows the **Webhook URL**, where Bitbucket sends pull request events. Triage creates each repository's webhook when you turn triage on, if the token allows it. **Disconnect** stops triage on every Bitbucket Data Center repository and removes the webhooks Triage created; their rules are kept. If a webhook cannot be removed, the card names the repositories where an admin must delete it by hand.
 
-### Decision model
+### Models
 
-![The Decision model section: Using OpenCode Zen (Jev) with model jev-1.13, the stored inference secret with a Remove link, the choice of providers and an API key field](images/18.png)
+![The Models section with both keys stored: Judge pull requests with TypeSafe (Jev) and Review code with Anthropic, each marked Key stored with Change and Remove](images/18.png)
 
-This is where the AI decision model lives. The first line says which provider and model are in use. To change it, pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. Keys are kept in the server's vault, so after saving the field goes blank and the key shows as **stored**. To change the key, paste a new one and save again. Every save redeploys Triage's workers, so give it a minute before expecting new verdicts.
+The keys Triage uses to judge and review pull requests, one row each:
 
-### Code review
+- **Judge pull requests with** names the decision model in use, by its provider, or by its address and model name for your own provider.
+- **Review code with Anthropic** is the key [code review](#code-review) runs on.
 
-![The Code review section: Reads each pull request for bugs, with the stored Anthropic secret, a Replace secret button and a Remove link](images/26.png)
+Each row says **Key stored** or **No key**. With no key, its form is open below it: for the decision model, pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service; for code review, paste the Anthropic key and press **Save key**. **Change** opens the form again to replace a stored key, and **Remove** deletes it after you confirm; whatever uses it stops working. Keys are kept in the server's vault and never shown again. Every save of the decision model redeploys Triage's workers, so give it a minute before expecting new verdicts.
 
-Code review is Triage's bug finder, and it runs on Anthropic. Here you store the Anthropic API key it uses; then switch code review on for each repository in its [Code review card](#code-review-1). Paste the key and press **Save key**. Like every key, it is kept in the server's vault and then shows as **stored**, with **Replace secret** to change it and **Remove** to delete it.
+![The Models section with no Anthropic key: Judge pull requests with TypeSafe (Jev), Key stored, with Change and Remove, then Review code with Anthropic, No key, with the Anthropic key field and Save key open below it](images/26.png)
 
 ### Access
 
@@ -395,7 +402,7 @@ There are three roles:
 
 ![What Triage does on its own: a row per action, with Add labels allowed on its own in acme/widgets and every other action waiting for approval](images/23.png)
 
-**What Triage does on its own** is the important one. Each action has a list of repositories where Triage carries it out on the pull request by itself during triage, without waiting for anyone. Pick a repository from **Add repository…**, or **All repositories**, to allow it; press × to take it away. An action with no repositories listed waits for approval everywhere. In a new workspace every list is empty. Allow actions one at a time as you gain confidence, starting with low-risk ones such as adding labels. The repository page then marks those steps as running on their own instead of **Waits for you**.
+**What Triage does on its own** is the important one. Each action has a list of repositories where Triage carries it out on the pull request by itself during triage, without waiting for anyone. Pick a repository from **Add repository…**, or **All repositories**, to allow it; press × to take it away. An action with no repositories listed waits for approval everywhere. In a new workspace every list is empty. Allow actions one at a time as you gain confidence, starting with low-risk ones such as adding labels. The repository page's **Actions Triage takes on its own** then shows them on.
 
 ### Your account
 
@@ -435,12 +442,12 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 | HTTP access token | The connection between Triage and Bitbucket Data Center, created for a Bitbucket user named Corbits Triage. |
 | Build status | The pass or fail mark Bitbucket shows beside a commit. Triage writes its verdict there as **Corbits Triage**, since Bitbucket has no labels. |
 | Rule | One question Triage asks about a pull request, answered pass, fail or unconfirmed. |
-| Decision model | The AI service that answers questions needing judgment, and that gives the final verdict when the policy has Judgement rules. |
+| Decision model | The AI service that answers questions needing judgment, and that gives the final verdict when the policy has Judgement rules. Set under Settings → Models. |
 | Verdict | Triage's overall answer for one commit of a pull request: Pass, Fail or Unsure. |
 | Score | How sure the decision model is that the pull request passes, from 0 to 1. A score of 0.9 means 90 percent sure. |
 | Action | One step in a repository's policy, such as adding a label or requesting a review. |
 | Held action | An action that is waiting for a person to approve it in the Inbox. |
-| Policy | A repository's rules, verdict steps and labels. Kept in Triage or in the repository's `.corbits-triage.yml` file. |
+| Policy | A repository's rules, verdict steps and labels, kept in its `.corbits-triage.yml` file. |
 | Role | A workspace role (Owner, Admin, Member) that controls what a person may do in Triage. |
 | CI | Continuous integration: the automated tests and checks a repository runs on every pull request. |
 | Draft | A pull request its author has marked as not ready. Triage waits until it is marked ready. |
@@ -454,17 +461,17 @@ Type in the search box to narrow the list by actor, action or pull request. The 
 
 **Triage says Unsure. What should I do?** Read the pull request yourself. Unsure means the rules did not catch a problem but the decision model was not confident either way. Approve, request changes or comment as you would normally. If a rule could not run because the host had not finished computing something, such as CI, Triage will check again on its own.
 
-**A pull request shows "Not triaged yet" for a long time.** Check that triage is on for its repository, that its source is still connected under Settings → Sources, and that a decision model is saved under Settings → Decision model. If all three look right, open the repository and press **Triage open pull requests again**. On Bitbucket, also check the repository has its **Corbits Triage** webhook.
+**A pull request shows "Not triaged yet" for a long time.** Check that triage is on for its repository, that its source is still connected under Settings → Sources, and that a decision model key is stored under Settings → Models. If all three look right, open the repository and press **Triage open pull requests again**. On Bitbucket, also check the repository has its **Corbits Triage** webhook.
 
 **Does Triage ever merge, close or approve on its own?** Only if you allow it. Each action has a list of repositories under **What Triage does on its own** in Settings → Access. Enabling a repository adds it to the Comment and Labels lists only; the others start empty. Close is never run automatically on an Unsure verdict, and Merge never on anything but Pass, even when they are allowed.
 
 **Why did Triage not call the decision model for a failing pull request?** When a rule fails, the answer is already Fail, so the model is not asked the verdict question. A repository with no Judgement rules never asks it at all. This saves money and keeps verdicts predictable.
 
-**Code review shows nothing for a pull request.** Check that code review is on in the repository's Code review card and that an Anthropic key is saved under Settings → Code review. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one.
+**Code review shows nothing for a pull request.** Check that code review is on in the repository's Code review section and that an Anthropic key is stored under Settings → Models. Drafts are not reviewed until they are marked ready. A review takes a minute or two; the section says **Reviewing** while it runs. **Review again** starts a new one.
 
 **The author pushed a fix. Do I need to do anything?** No. Every new commit gets its own verdict, and Triage updates its comment. If you had requested changes through Triage and every failed rule is now fixed, Triage withdraws the request for you.
 
-**Can I try new rules without affecting anyone?** Changes on the repository page take effect as soon as they are saved, and actions that Triage does not run on its own still wait for a person. To have rule changes reviewed first, keep the policy in the repository's `.corbits-triage.yml` and change it through a pull request.
+**Can I try new rules without affecting anyone?** Rules change only in the repository's `.corbits-triage.yml`, so every change is reviewed in a pull request and applies once it reaches the default branch. Actions that Triage does not run on its own still wait for a person.
 
 **Where do I change my password?** Sign out. If the sign-in screen shows **Forgot password?**, use it, and a reset link is sent to your email.
 

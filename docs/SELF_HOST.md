@@ -145,7 +145,7 @@ connection queue for minutes.
    anything new.
 3. **Choose repositories on GitHub**. The hub records them from GitHub's
    installation events, with triage off; nothing runs yet.
-4. **Add the decision model** (during onboarding, or the **Decision model** section of Settings). Pick
+4. **Add the decision model** (during onboarding, or the **Models** section of Settings). Pick
    TypeSafe, Vercel AI Gateway or OpenCode Zen and paste an API key, or **Add
    my own provider** with a System One–compatible base URL (requests go to
    it + `/systemone`), model and key. The key goes to the hub's vault. Every
@@ -153,16 +153,14 @@ connection queue for minutes.
    only once its host is connected) and `pr-triage-historical` afresh; triage is not
    live until then.
 5. **Turn on triage.** Open a repository under Repositories and turn on
-   **Triage pull requests in this repository**; the rules, steps and labels
-   below it save as you change them, and turning triage on triages its open
-   pull requests. New pull request events are triaged from then on. **Triage
-   open pull requests again** re-runs it. To keep the policy in the
-   repository instead, use **Open pull request** in the repository's
-   **Upgrade this repository to a policy file** note and merge the pull
-   request it opens; from then on the hub reads
-   `.corbits-triage.yml` again on every push to the default branch that
-   changes it (see
-   [Policy file](PRODUCT.md#policy-file)).
+   **Triage pull requests in this repository**; turning triage on triages its
+   open pull requests, and new pull request events are triaged from then on.
+   **Triage open pull requests again** re-runs it. Rules and actions come only
+   from the repository's `.corbits-triage.yml`, which the hub reads again on
+   every push to the default branch that changes it (see
+   [Policy file](PRODUCT.md#policy-file)). A repository with rules saved in
+   the portal shows **Move this repository's rules into a policy file**; use
+   **Open the pull request** and merge it.
 6. **Verify.** Open a test pull request; it appears in the Inbox once its
    triage run completes.
 
