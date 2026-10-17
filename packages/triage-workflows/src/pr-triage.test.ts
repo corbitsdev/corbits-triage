@@ -10,6 +10,7 @@ import { triageDirectorFactory, type DoResult } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
 import { MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { RULES_PASS_REASON, type Verdict } from "./logic/render.js";
+import { decidesDos } from "./logic/settled.js";
 import { workflow } from "./pr-triage.js";
 import { workflow as historical } from "./pr-triage-historical.js";
 
@@ -38,7 +39,7 @@ function bytes(text: string): number {
 }
 
 type Comment = { id: number; user: { login?: string; type: string }; body: string; updated_at?: string };
-type Review = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body: string };
+type Review = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body: string; submitted_at?: string };
 type Ci = "none" | "pending" | "success" | "failure";
 
 const RUNS: Record<Ci, unknown[]> = {
@@ -234,6 +235,26 @@ describe("pr-triage body", () => {
     expect(judged).toEqual([]);
     expect(verdict).toMatchObject({ verdict: "pass", score: null, reason: RULES_PASS_REASON, reasons: [], actions: [{ list: "pass", kind: "comment" }] });
     expect((verdict as Verdict).request.labels).toEqual(["Triage: Ready"]);
+  });
+
+  test("requested changes wait on the author, then on the reviewer once the author pushes, until the reviewer reviews again", async () => {
+    const github = fakeGithub();
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO };
+    function review(state: string) {
+      github.reviews.push({ id: github.reviews.length + 1, user: { login: "maya", type: "User" }, state, commit_id: github.pr.head, body: "", submitted_at: new Date(Date.UTC(2026, 9, github.reviews.length + 1)).toISOString() });
+    }
+    review("CHANGES_REQUESTED");
+    expect((await triage(pack, { github })).verdict).toMatchObject({ verdict: "fail", state: "needs-author-update", actor: "author" });
+    github.pr.head = "def";
+    const { path, verdict } = await triage(pack, { github });
+    expect(path).toEqual(RULES_PATH);
+    expect(verdict).toMatchObject({ verdict: "fail", state: "awaiting-review", actor: "maintainer", nextAction: "Re-review: the author responded to changes requested by @maya", actions: [{ list: "fail", kind: "comment" }] });
+    expect(decidesDos(verdict as Verdict)).toBe(true);
+    expect((verdict as Verdict).request).toMatchObject({ labels: ["Triage: Not Ready"], comment: "" });
+    review("CHANGES_REQUESTED");
+    expect((await triage(pack, { github })).verdict).toMatchObject({ verdict: "fail", state: "needs-author-update" });
+    review("APPROVED");
+    expect((await triage(pack, { github })).verdict).toMatchObject({ verdict: "pass", state: "ready-monitoring" });
   });
 
   test("the mirror writes the policy's own verdict label and takes back the defaults and the policy's other verdict labels", async () => {

@@ -419,8 +419,8 @@ describe("requested changes rendering", () => {
 
   test("hands an answered review back to the maintainer without a comment", () => {
     const answered = { ...review, reason: REVIEW_ANSWERED_REASON };
-    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, checks: [answered] } });
-    expect(verdict).toMatchObject({ state: "needs-author-update", actor: "maintainer", nextAction: "Re-review: the author responded to changes requested by @maya", feedback: "" });
+    const verdict = renderVerdict({ author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, state: "awaiting-review", checks: [answered] } });
+    expect(verdict).toMatchObject({ verdict: "fail", state: "awaiting-review", actor: "maintainer", nextAction: "Re-review: the author responded to changes requested by @maya", feedback: "" });
   });
 
   test("leaves the review out of a comment that has other reasons", () => {

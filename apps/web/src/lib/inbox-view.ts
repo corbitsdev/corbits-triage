@@ -89,7 +89,7 @@ function onlyRequestedChanges(item: Omit<StatusFields, "running">): boolean {
 }
 
 export function isReReview(item: Omit<StatusFields, "running">): boolean {
-  return onlyRequestedChanges(item) && item.reviewAnswered;
+  return item.reviewAnswered && (item.state === "awaiting-review" || onlyRequestedChanges(item));
 }
 
 function awaitsReviewFix(item: PrItem): boolean {
