@@ -136,6 +136,11 @@ export function checkPolicyFile(text: string, repo: string): PolicyFileCheck {
   }
 }
 
+/** Why a directory or submodule at a policy file path is refused. */
+export function notAFileReason(path: string): string {
+  return `${path} is not a file.`;
+}
+
 /** One problem per line, each led by where it is. */
 export function policyFileReason(problems: readonly PolicyFileProblem[]): string {
   return problems.map((problem) => (problem.line === undefined ? problem.message : `Line ${problem.line}: ${problem.message}`)).join("\n");

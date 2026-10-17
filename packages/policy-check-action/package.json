@@ -1,0 +1,11 @@
+{
+  "name": "@corbits/policy-check-action",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "dependencies": {
+    "@corbits/triage-contracts": "workspace:*"
+  },
+  "description": "GitHub Action that checks .corbits-triage.yml as the hub reads it"
+}

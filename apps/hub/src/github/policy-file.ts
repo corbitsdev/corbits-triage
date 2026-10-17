@@ -12,7 +12,7 @@ import { defaultBranch, readRepo } from "../bitbucket-datacenter/client.js";
 import * as bitbucketPull from "../bitbucket-datacenter/policy-pull.js";
 import { splitName } from "../bitbucket-datacenter/records.js";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { checkPolicyFile, exportPolicyFile, POLICY_FILE_PATH, POLICY_FILE_PATHS, policyFileReason, type PolicyFileStatus, type PolicyUpgrades, type RepoSource } from "@corbits/triage-contracts";
+import { checkPolicyFile, exportPolicyFile, POLICY_FILE_PATH, notAFileReason, POLICY_FILE_PATHS, policyFileReason, type PolicyFileStatus, type PolicyUpgrades, type RepoSource } from "@corbits/triage-contracts";
 import type { PolicySettled } from "./check-pack-store.js";
 import { forInstallation } from "./open-pulls.js";
 import * as github from "./policy-pull.js";
@@ -54,7 +54,7 @@ export type PolicyFileState =
 type FoundFile = { path: string; read: RepoFileRead };
 
 function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
-  if (read.kind === "not-a-file") return { status: "invalid", path, reason: `${path} is not a file.` };
+  if (read.kind === "not-a-file") return { status: "invalid", path, reason: notAFileReason(path) };
   const file = { path, sha: read.sha, url: read.url };
   if (read.text === null) return { status: "invalid", path, reason: `${path} is too large or uses aliases.`, file };
   const checked = checkPolicyFile(read.text, repo);

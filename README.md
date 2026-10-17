@@ -29,7 +29,29 @@ account, the GitHub App and the decision model, then turn on triage for a
 repository. Its open pull requests appear in the Inbox with a verdict, a
 score and the reasons for it. A repository can keep its policy in
 `.corbits-triage.yml` on its default branch; the hub reads it directly (see
-[Policy file](docs/PRODUCT.md#policy-file)).
+[Policy file](docs/PRODUCT.md#policy-file)). To check that file on every
+pull request that changes it, add the GitHub Action in
+[packages/policy-check-action](packages/policy-check-action/action.yml); it
+needs no hub or secrets and sets up its own Bun for the job. It marks each
+problem on its line, or on the file when it has no line. `@main` will be
+replaced by a release tag with the first pre-release.
+
+```yaml
+name: Corbits Triage policy
+on:
+  pull_request:
+    paths: [".corbits-triage.yml", ".corbits-triage.yaml"]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: corbitsdev/corbits-triage/packages/policy-check-action@main
+```
 
 To run it for real, build the root `Dockerfile` and follow
 [docs/SELF_HOST.md](docs/SELF_HOST.md).
