@@ -245,7 +245,7 @@ Each view has a search box, a **Filter** button and quick filters such as Action
 
 ![The Needs you view: pull requests grouped under Unblock and Merge, each with its title, the reason, its age and a button for the next step. The right pane shows TRI/widgets pull request 1, Blocked with three things to fix, and View on Bitbucket in its corner](images/11.png)
 
-Pull requests are grouped by what you need to do: **Unblock** for ones that are stuck on something, **Merge** for ones that passed, and so on. Each row shows the title, on GitHub rows a chip describing the author (Member, First-timer, Bot), Triage's one-line reason, how long ago it was triaged, and a button for the most likely next step. Click anywhere on a row to open it in the reading pane on the right.
+Pull requests are grouped by what you need to do: **Unblock** for ones that are stuck on something, **Merge** for ones that passed, and so on. Each row shows the author's login, a **Bot** chip when that applies, and on GitHub rows a **First-timer** chip and the author's role when you hover the login (Bitbucket Data Center rows show the user slug only), the title, Triage's one-line reason, how long ago it was triaged, and a button for the most likely next step. Click anywhere on a row to open it in the reading pane on the right.
 
 ### All open
 
