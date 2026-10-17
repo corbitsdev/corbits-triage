@@ -97,6 +97,7 @@ describe("paneStatus", () => {
     expect(statusOf({ running: true })).toMatchObject({ text: "Triage running…", live: true });
     expect(statusOf({ state: "new", runId: null, failure: "stuck" }).text).toBe("Couldn't triage: the run stopped responding");
     expect(statusOf({ state: "new", runId: null }).text).toBe("Not triaged yet");
+    expect(statusOf({ state: "new", runId: null, draft: true }).text).toBe("Draft");
   });
 
   test("agrees with the list and the primary: re-review, rechecking, and never asking for a reply when the button approves", () => {

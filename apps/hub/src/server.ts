@@ -366,13 +366,13 @@ const tenantVersions = createTenantVersions();
 const reconcilePolicy = triageReconcilePolicy(env);
 const runRecorder = createRunRecorder({ verdicts: verdictRecordStore, log: logJson });
 
-/** One host's observer, run recorder, rotation and reconciler over its own workflow's deployments. */
-function triageStack(triage: TriageWorkflow) {
+/** The observer and recording loop that copy one workflow's verdicts from its deployments' run logs into the verdict table. */
+function recordingStack(workflowId: string) {
   function liveDeployments(tenantId: string) {
-    return liveTriageDeployments(tenantId, triage.id);
+    return liveTriageDeployments(tenantId, workflowId);
   }
   async function workerDeployments(tenantId: string, endedSince: Date) {
-    return withWorkflowVersions(launchSpecs, await recentWorkers(composition.db, tenantId, triage.id, endedSince));
+    return withWorkflowVersions(launchSpecs, await recentWorkers(composition.db, tenantId, workflowId, endedSince));
   }
   const observer = createTenantObserver({
     liveDeployments,
@@ -387,7 +387,7 @@ function triageStack(triage: TriageWorkflow) {
   const recordPass = createRecordPass({
     observer,
     activeTenants: function activeTriageTenants(what, endedSince) {
-      return activeTenants(composition.db, triage.id, what, endedSince);
+      return activeTenants(composition.db, workflowId, what, endedSince);
     },
     endedWithinMs: 2 * TRIAGE_RECORD_MS,
     backoffMs: TRIAGE_RECORD_MS,
@@ -395,6 +395,12 @@ function triageStack(triage: TriageWorkflow) {
     now,
     log: logJson,
   });
+  return { observer, recordPass, liveDeployments };
+}
+
+/** One host's observer, run recorder, rotation and reconciler over its own workflow's deployments. */
+function triageStack(triage: TriageWorkflow) {
+  const { observer, recordPass, liveDeployments } = recordingStack(triage.id);
   const rotation = createDeploymentRotation({
     db: composition.db,
     launchSpecs,
@@ -430,12 +436,14 @@ function triageStack(triage: TriageWorkflow) {
 }
 
 const stacks = TRIAGE_WORKFLOWS.map(triageStack);
+// pr-triage-historical is only recorded: the reconcilers never mail or rotate it.
+const recordings = [...stacks, recordingStack(prTriageHistoricalWorkflow.id)];
 // The portal's verdict listing reads every host's observations; connection changes use the GitHub stack's rotation to release.
 const github = stacks.find((stack) => stack.triage.source === "github")!;
 const deploymentRotation = github.rotation;
 const tenantObserver = {
   last(tenantId: string) {
-    const observations = stacks.flatMap((stack) => stack.observer.last(tenantId) ?? []);
+    const observations = recordings.flatMap((stack) => stack.observer.last(tenantId) ?? []);
     if (observations.length === 0) return undefined;
     return {
       deployments: observations.flatMap((observation) => observation.deployments),
@@ -445,10 +453,10 @@ const tenantObserver = {
   },
 };
 function recordsReady(tenantId: string): boolean {
-  return stacks.every((stack) => stack.recordPass.ready(tenantId));
+  return recordings.every((stack) => stack.recordPass.ready(tenantId));
 }
 async function recordAll() {
-  for (const stack of stacks) await stack.recordPass.pass();
+  for (const stack of recordings) await stack.recordPass.pass();
   return { retry: false };
 }
 async function reconcileAll() {

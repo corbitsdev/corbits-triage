@@ -308,3 +308,15 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
     expect(openPulls.kept(TENANT, Infinity)).toBe(kept);
   });
 }, 120_000);
+
+test("PostgreSQL: a re-triage started before a push and done after it does not replace the pushed head's verdict", async () => {
+  await withDatabase(async function latestHead(db) {
+    await db.insert(schema.tenant).values({ id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config: CONFIG });
+    const store = createVerdictRecordStore(db);
+    await store.record(TENANT, [
+      verdict("run_backlog", 8, 5, { headSha: "sha_old", startedAt: minutes(0) }),
+      verdict("run_push", 8, 3, { headSha: "sha_new", startedAt: minutes(2) }),
+    ]);
+    expect((await store.latestFor(TENANT, REPO, 8))?.headSha).toBe("sha_new");
+  });
+});

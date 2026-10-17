@@ -5,9 +5,12 @@ import { NOT_EVALUATED, VERDICT_LABEL, verdictText } from "../lib/triage-view.ts
 
 const VERDICT_TONE: Record<VerdictWord, BadgeTone> = { pass: "success", fail: "danger", unsure: "neutral" };
 
-type VerdictChipProps = { item: Pick<PrItem, "verdict" | "score" | "reasons">; className?: string };
+type VerdictChipProps = { item: Pick<PrItem, "verdict" | "score" | "reasons"> & Partial<Pick<PrItem, "draft">>; className?: string };
 
 export function VerdictChip({ item, className }: VerdictChipProps) {
-  if (item.verdict === null) return <Badge tone="neutral" className={className} title={NOT_EVALUATED}>{NOT_EVALUATED}</Badge>;
+  if (item.verdict === null) {
+    const label = item.draft ? `Draft: ${NOT_EVALUATED}` : NOT_EVALUATED;
+    return <Badge tone="neutral" className={className} title={label}>{label}</Badge>;
+  }
   return <Badge tone={VERDICT_TONE[item.verdict]} className={className} title={verdictText(item)}>{VERDICT_LABEL[item.verdict]}</Badge>;
 }
