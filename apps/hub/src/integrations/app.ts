@@ -7,7 +7,7 @@ import { HTTPException } from "hono/http-exception";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import type { DB } from "@intx/db";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, CodeReviewPlace, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyUpgrades, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
@@ -84,6 +84,7 @@ export type IntegrationHandlers = {
   codeReview: BodyHandler<typeof CodeReviewBody.infer>;
   codeReviewRun: BodyHandler<typeof CodeReviewRunBody.infer>;
   codeReviewLatest: BodyHandler<typeof CodeReviewQuery.infer>;
+  codeReviewPlace: (member: Member) => Promise<Response>;
   workflowVersions: (member: Member) => Promise<Response>;
   invitations: {
     create: (body: typeof InviteBody.infer, member: Member, req: Request) => Promise<Response>;
@@ -624,7 +625,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${CODE_REVIEW_PATH}/:tenantId`,
     describeRoute({
       summary: "Turn code review on or off for a repository",
-      description: "Needs `manage` on the workspace. Sets `codeReview` on the repository's record (`source` absent means GitHub). Turning it on needs the repository's host connected and the workspace's Anthropic key; the portal then deploys that host's code review. Turning off the last repository of a host releases its code review deployment.",
+      description: "Needs `manage` on the workspace. Sets `codeReview` on the repository's record (`source` absent means GitHub). Turning it on needs a provisioner code review can run on (`no_isolated_place` otherwise; see `GET /api/integrations/code-review/{tenantId}/place`), the repository's host connected and the workspace's Anthropic key; the portal then deploys that host's code review. Turning off the last repository of a host releases its code review deployment.",
       tags: TAGS,
       responses: {
         200: json("The repository's code review setting", CodeReviewSet),
@@ -632,7 +633,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         401: failures[401],
         403: failures[403],
         404: json("No such repository", Failure),
-        409: json("`source_not_connected` or `anthropic_key_missing`", Failure),
+        409: json("`no_isolated_place`, `source_not_connected` or `anthropic_key_missing`", Failure),
       },
     }),
     member,
@@ -658,6 +659,20 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     },
   );
 
+  app.get(
+    `${CODE_REVIEW_PATH}/:tenantId/place`,
+    describeRoute({
+      summary: "Where the workspace's code review runs",
+      description: "The id of the registered sidecar provisioner Interchange selects for code review, which requires `isolation:workload`, under the workspace's sidecar placement policies. Null when none matches: Interchange would refuse it with `provisioner_no_match`, so code review cannot be turned on and is not run.",
+      tags: TAGS,
+      responses: { 200: json("The provisioner, or null", CodeReviewPlace), 401: failures[401], 403: failures[403] },
+    }),
+    member,
+    function codeReviewPlace(c) {
+      return handlers.codeReviewPlace(memberOf(c));
+    },
+  );
+
   app.post(
     `${CODE_REVIEW_PATH}/:tenantId/run`,
     describeRoute({
@@ -670,7 +685,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
         401: failures[401],
         403: failures[403],
         404: json("No such connected repository", Failure),
-        409: json("`code_review_off`, `draft` or `not_open`", Failure),
+        409: json("`no_isolated_place`, `code_review_off`, `draft` or `not_open`", Failure),
         502: json("The host or the run trigger failed", Failure),
       },
     }),

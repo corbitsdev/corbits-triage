@@ -3,11 +3,13 @@ import { Button, Input } from "@corbits/react-ui";
 import { useMutation } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
 import { presetFor } from "@corbits/triage-contracts";
+import { DOCKER_GUIDE } from "../../lib/code-review-place.ts";
 import { anthropicSecrets, modelSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
 import type { HubCredential, PortalSnapshot } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { DecisionModelForm } from "../DecisionModelForm.tsx";
+import { ExternalIcon } from "../inbox-icons.tsx";
 
 /** A preset by its name; your own provider by its endpoint and model. */
 function judgeModel(saved: { endpoint: string; model: string }): ReactNode {
@@ -86,6 +88,20 @@ function KeyRow({ words, name, keys, denied, remove, editor }: KeyRowProps) {
   );
 }
 
+function ReviewPlace({ provisioner }: { provisioner: string | null | undefined }) {
+  if (provisioner === undefined) return null;
+  if (provisioner === null) {
+    return (
+      <div className="sentence">
+        <span className="txt">Code review can't run yet: this server has no isolated place for it.</span>
+        <Button asChild variant="outline" size="sm"><a href={DOCKER_GUIDE} target="_blank" rel="noreferrer">Set up Docker <ExternalIcon /></a></Button>
+      </div>
+    );
+  }
+  const where = provisioner === "docker" ? "a Docker container on your Triage server" : "an isolated place";
+  return <div className="sentence"><span className="txt">Code review runs in {where}.</span></div>;
+}
+
 function active(credential: HubCredential): boolean {
   return credential.status.toLowerCase() === "active";
 }
@@ -119,6 +135,7 @@ export function ModelsSection({ snapshot }: { snapshot: PortalSnapshot }) {
             remove={removeAnthropic}
             editor={(onSaved) => <AnthropicKeyForm onSaved={onSaved} />}
           />
+          <ReviewPlace provisioner={snapshot.codeReviewPlace} />
         </div>
       </div>
     </section>

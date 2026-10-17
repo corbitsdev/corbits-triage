@@ -182,6 +182,10 @@ export const DeployedVersions = type({
 });
 export type DeployedVersions = typeof DeployedVersions.infer;
 
+/** The provisioner the workspace's code review deploys to; null when none can run it. */
+export const CodeReviewPlace = type({ provisioner: "string | null" });
+export type CodeReviewPlace = typeof CodeReviewPlace.infer;
+
 /** One thing the workspace recorded; `actor` is a person's email or principal id, `Triage` for the workflow, `hub` for the hub itself, or `unknown`. */
 export const AuditEntry = type({ time: "string", actor: "string", action: "string", target: "string", detail: "string" });
 export type AuditEntry = typeof AuditEntry.infer;

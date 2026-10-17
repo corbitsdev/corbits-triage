@@ -147,6 +147,15 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   can still overshoot the free figure by that much. A failed deployment whose
   copy is declined is tried again on the reconciler's short retry, not the
   next interval.
+  Code review requires `isolation:workload`, a sidecar of its own, so it
+  lands on Docker, and without Docker stock Interchange refuses it with
+  `provisioner_no_match`. `GET /api/integrations/code-review/{tenantId}/place`
+  names the provisioner stock's plugin registry selects for it under the
+  workspace's sidecar placement policies, or null. While it is null the
+  switch and "Review again" refuse (`no_isolated_place`), the feed sends
+  nothing, the host's code review deployments are released
+  (`no_isolated_place`), and the portal shows a setup card linking
+  [provisioners/](provisioners/README.md) in place of the switch.
 - **Portal** (`apps/web`): owns setup. After sign-in it converges the tenant,
   GitHub credentials, inference offering, workflow sources and deployments
   over stock hub routes. The hub seeds nothing for it. It is a wrapper over

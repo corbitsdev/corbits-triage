@@ -11,6 +11,8 @@ Every triage run, code review and workflow probe runs in a sidecar: a process th
 
 Workflows and tenants state the capabilities a sidecar needs, such as `isolation:workload`; provisioners declare the capabilities they offer. The hub tries provisioners in the order it registered them (local process, then Docker) and takes the first whose capabilities satisfy every rule. A workflow with no rule therefore runs on the local process provisioner. When no provisioner matches, the deployment fails with `provisioner_no_match` and names what each provisioner lacked.
 
+Code review requires `isolation:workload`, so it runs only on Docker. Without it, code review cannot be turned on, and the portal shows how to set Docker up in place of the switch.
+
 With Docker registered, workflow probes (the hub's check of a workflow's source before it is deployed) require `isolation:workload`, so no probe runs on the hub's machine.
 
 ## Which to use

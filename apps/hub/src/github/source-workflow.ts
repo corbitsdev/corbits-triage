@@ -86,6 +86,7 @@ export async function connectedSources(db: DB["db"], tenantId: string): Promise<
 type SourceDeploymentsDeps = {
   connectedSources: (tenantId: string) => Promise<RepoSource[]>;
   codeReviewSources: (tenantId: string) => Promise<RepoSource[]>;
+  codeReviewPlaced: (tenantId: string) => Promise<boolean>;
   liveDeployments: (tenantId: string, workflow: string) => Promise<Array<{ runId: string; cancelling: boolean }>>;
   release: (tenantId: string, anchorRunId: string) => Promise<void>;
   log: (entry: Record<string, unknown>) => void;
@@ -95,7 +96,7 @@ type SourceDeploymentsDeps = {
  * Keeps a workspace's pr-triage deployments to the hosts it connected: a disconnected host's live deployment is released,
  * and a connected host without one is logged for the portal to deploy, which only it can, as it publishes the packages.
  * A deployment of the workflow from before hosts is released once the GitHub one is live. A host's code review is
- * released once no repository of it has code review on, or the Anthropic key is gone.
+ * released once no repository of it has code review on, the Anthropic key is gone, or no provisioner can run it.
  */
 export function createSourceDeployments(deps: SourceDeploymentsDeps) {
   async function releaseAll(tenantId: string, workflow: string, reason: string): Promise<void> {
@@ -117,9 +118,11 @@ export function createSourceDeployments(deps: SourceDeploymentsDeps) {
       if (live.some((deployment) => !deployment.cancelling)) continue;
       deps.log({ level: "warn", msg: "triage_deployment_missing", tenantId, workflow: workflow.id, source: workflow.source });
     }
+    const placed = await deps.codeReviewPlaced(tenantId);
     const reviewed = await deps.codeReviewSources(tenantId);
     for (const workflow of CODE_REVIEW_WORKFLOWS) {
-      if (!connected.includes(workflow.source) || !reviewed.includes(workflow.source)) await releaseAll(tenantId, workflow.id, "code_review_off");
+      if (!placed) await releaseAll(tenantId, workflow.id, "no_isolated_place");
+      else if (!connected.includes(workflow.source) || !reviewed.includes(workflow.source)) await releaseAll(tenantId, workflow.id, "code_review_off");
     }
     if ((await deps.liveDeployments(tenantId, triageWorkflowFor("github").id)).some((deployment) => !deployment.cancelling)) {
       await releaseAll(tenantId, LEGACY_TRIAGE_WORKFLOW, "superseded_by_pr_triage_github");

@@ -53,7 +53,7 @@ import { codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourc
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
-import { createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
+import { createCodeReviewPlace, createCodeReviewPlacement, createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
@@ -337,10 +337,17 @@ async function sendTriageMail(job: TriageJob): Promise<void> {
   await sendToWorker({ ...job, workflow: workflowIdFor(job.workflow) });
 }
 const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
+const placeCodeReview = createCodeReviewPlacement(composition.db, composition.sidecarPlugins);
+async function codeReviewPlaced(tenantId: string): Promise<boolean> {
+  return (await placeCodeReview(tenantId)) !== null;
+}
+// Repositories left switched on send nothing while code review has nowhere to run.
+async function reviewedSources(tenantId: string) {
+  if (!(await codeReviewPlaced(tenantId))) return [];
+  return codeReviewSources(composition.db, tenantId);
+}
 const codeReviewFeed = createCodeReviewFeed({
-  reviewed: function reviewedSources(tenantId) {
-    return codeReviewSources(composition.db, tenantId);
-  },
+  reviewed: reviewedSources,
   read: createPullRequestReader({ tenantGithub, tenantBitbucket }),
   send: sendToWorker,
   log: logJson,
@@ -550,6 +557,7 @@ const reconcileSourceDeployments = createSourceDeployments({
   codeReviewSources: function codeReviewSourcesOf(tenantId) {
     return codeReviewSources(composition.db, tenantId);
   },
+  codeReviewPlaced,
   liveDeployments: function liveOf(tenantId, workflow) {
     return resolveLiveDeployments(composition.db, tenantId, workflow);
   },
@@ -749,8 +757,9 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   }),
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
-  codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged }),
-  codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed }),
+  codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged, place: placeCodeReview }),
+  codeReviewPlace: createCodeReviewPlace(placeCodeReview),
+  codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed, place: placeCodeReview }),
   codeReviewLatest: createCodeReviewRuns({ db: composition.db, runReader: composition.runReader }),
   invitations: createInvitations({
     db: composition.db,
