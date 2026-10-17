@@ -59,7 +59,10 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   `ensureWorkflows` publishes the tool and workflow tarballs to the tenant's
   `corbits` package registry and deploys each workflow pinned to its version
   through the hub's workflow-deploy route, redeploying a workflow only when
-  its deployment runs another version or the decision model was saved.
+  its deployment runs another version or the decision model was saved. Before
+  publishing it removes every tarball neither this build nor a live
+  deployment pins, since Interchange delivers the registry's whole tree under
+  a 32 MiB cap; removed versions stay in the asset's git history.
 - `scripts/build-workflows.ts`: packs the GitHub tools and each workflow of
   `packages/triage-workflows` as tarballs into `public/packages/`, listed in
   `index.json`. Each version is `<base>-sha-<8 hex>`, a SHA-256 over the

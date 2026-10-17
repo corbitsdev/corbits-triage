@@ -174,6 +174,8 @@ export const DeployedVersions = type({
     workflow: "string",
     createdAt: "string",
     cancelling: "boolean",
+    /** A worker runs one triage job on a copy of a listener; it still pins that listener's versions. */
+    worker: "boolean",
     package: PackageVersion.or("null"),
     tools: PackageVersion.array(),
   }).array(),

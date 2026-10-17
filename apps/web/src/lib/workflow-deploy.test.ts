@@ -26,6 +26,7 @@ function fakeHub(tarballSeed: Record<string, string> = {}, unconnected: readonly
   const pins = new Map<string, string>();
   const requests: string[] = [];
   const deployed: unknown[] = [];
+  const workers: Array<{ package: { name: string; version: string }; tools: Array<{ name: string; version: string }> }> = [];
 
   async function json<T>(method: string, path: string, body?: unknown): Promise<T> {
     requests.push(`${method} ${path}`);
@@ -34,16 +35,17 @@ function fakeHub(tarballSeed: Record<string, string> = {}, unconnected: readonly
     if (path === "/api/tenants/t/workflows/deployments") return deployments as T;
     if (path === "/api/integrations/workflow-versions/t") {
       const live = deployments.filter((row) => row.status === "deployed").reverse();
-      return {
-        deployments: live.map((row) => ({
-          id: row.id,
-          workflow: assets.find((asset) => asset.id === row.definitionAssetId)?.name,
-          createdAt: row.createdAt,
-          cancelling: false,
-          package: packageOf(pins.get(row.id)!),
-          tools: [{ name: INDEX[0]!.name, version: INDEX[0]!.version }],
-        })),
-      } as T;
+      const listeners = live.map((row) => ({
+        id: row.id,
+        workflow: assets.find((asset) => asset.id === row.definitionAssetId)?.name,
+        createdAt: row.createdAt,
+        cancelling: false,
+        worker: false,
+        package: packageOf(pins.get(row.id)!),
+        tools: [{ name: INDEX[0]!.name, version: INDEX[0]!.version }],
+      }));
+      const running = workers.map((row, n) => ({ ...row, id: `worker_${n}`, workflow: "pr-triage-github", createdAt: "2026-10-09T00:00:00.000Z", cancelling: false, worker: true }));
+      return { deployments: [...listeners, ...running] } as T;
     }
     if (method === "GET" && url.pathname === "/api/tenants/t/assets") {
       return assets.filter((asset) => asset.kind === url.searchParams.get("kind")) as T;
@@ -71,6 +73,10 @@ function fakeHub(tarballSeed: Record<string, string> = {}, unconnected: readonly
       pins.set(deployment.id, pin);
       return deployment as T;
     }
+    if (method === "DELETE" && url.pathname.includes("/tarballs/")) {
+      tarballs.delete(decodeURIComponent(path.split("/").at(-1) ?? ""));
+      return { commit: "c" } as T;
+    }
     if (method === "DELETE") {
       const deployment = deployments.find((row) => path.endsWith(`/${row.id}`));
       if (deployment) deployment.status = "released";
@@ -95,7 +101,7 @@ function fakeHub(tarballSeed: Record<string, string> = {}, unconnected: readonly
   }
 
   const transport: Transport = { fetch: json, subscribe: () => () => {} };
-  return { transport, fetchRaw: raw as typeof fetch, assets, tarballs, deployments, pins, requests, deployed };
+  return { transport, fetchRaw: raw as typeof fetch, assets, tarballs, deployments, pins, requests, deployed, workers };
 }
 
 function puts(requests: string[]): string[] {
@@ -176,6 +182,35 @@ describe("ensureWorkflows", () => {
       .rejects.toThrow("@corbits/pr-triage-historical-workflow@0.1.0-sha-bbbbbbbb is already published with different contents; this build did not pack reproducibly.");
     expect(puts(hub.requests)).toEqual([]);
     expect(hub.deployed).toEqual([]);
+  });
+
+  test("before publishing, removes every tarball neither this build nor a live listener or worker pins", async () => {
+    const hub = fakeHub();
+    await ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw);
+    hub.pins.set("run_1", "@corbits/pr-triage-github-workflow@0.1.0-sha-00000000");
+    hub.workers.push({ package: { name: "@corbits/pr-triage-github-workflow", version: "0.1.0-sha-22222222" }, tools: [{ name: "@corbits/github-tool", version: "0.1.0" }] });
+    hub.tarballs.set("@corbits-pr-triage-github-workflow-0.1.0-sha-00000000.tgz", "sha512-listener");
+    hub.tarballs.set("@corbits-pr-triage-github-workflow-0.1.0-sha-22222222.tgz", "sha512-worker");
+    hub.tarballs.set("@corbits-github-tool-0.1.0.tgz", "sha512-worker-tool");
+    hub.tarballs.set("@corbits-pr-triage-github-workflow-0.1.0-sha-11111111.tgz", "sha512-old");
+    hub.tarballs.set("@corbits-github-tool-0.0.9.tgz", "sha512-old-tool");
+    hub.tarballs.delete(INDEX[1]!.filename);
+    hub.requests.length = 0;
+
+    expect(await ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw)).toEqual(["pr-triage-github"]);
+    const changes = hub.requests.filter((line) => /^(DELETE|PUT) .*\/tarballs\//.test(line) || line.includes("workflow-deploy"));
+    expect(changes.map((line) => decodeURIComponent(line))).toEqual([
+      expect.stringMatching(/^DELETE .*\/@corbits-pr-triage-github-workflow-0\.1\.0-sha-11111111\.tgz$/),
+      expect.stringMatching(/^DELETE .*\/@corbits-github-tool-0\.0\.9\.tgz$/),
+      expect.stringMatching(/^PUT .*\/@corbits-pr-triage-github-workflow-0\.1\.0-sha-aaaaaaaa\.tgz$/),
+      "POST /api/integrations/workflow-deploy/t",
+    ]);
+    expect([...hub.tarballs.keys()].sort()).toEqual([
+      ...INDEX.map((entry) => entry.filename),
+      "@corbits-pr-triage-github-workflow-0.1.0-sha-00000000.tgz",
+      "@corbits-pr-triage-github-workflow-0.1.0-sha-22222222.tgz",
+      "@corbits-github-tool-0.1.0.tgz",
+    ].sort());
   });
 });
 

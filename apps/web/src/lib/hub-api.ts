@@ -827,7 +827,7 @@ export async function listDeployedWorkflows(transport: Transport, tenantId: stri
 }
 
 export function currentDeployment(deployments: readonly DeployedWorkflow[], workflow: string): DeployedWorkflow | undefined {
-  return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling);
+  return deployments.find((deployment) => deployment.workflow === workflow && !deployment.cancelling && !deployment.worker);
 }
 
 export const WAITING_FOR_WORKFLOW = "Waiting for the workflow to be ready…";

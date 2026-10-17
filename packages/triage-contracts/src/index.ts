@@ -19,3 +19,4 @@ export * from "./repo-source.js";
 export * from "./rule-prose.js";
 export * from "./step-when.js";
 export * from "./policy-rules.js";
+export * from "./tarball.js";

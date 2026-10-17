@@ -4,8 +4,8 @@
 // its offering when deployed).
 import { ApiError, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { requestOrigin } from "./hub-origin.ts";
-import { currentDeployment, DECISION_MODEL_ALIAS, isLiveDeployment, listDeployedWorkflows } from "./hub-api.ts";
-import type { RepoSource } from "@corbits/triage-contracts";
+import { currentDeployment, DECISION_MODEL_ALIAS, isLiveDeployment, listDeployedWorkflows, type DeployedWorkflow } from "./hub-api.ts";
+import { tarballFilename, type RepoSource } from "@corbits/triage-contracts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry } from "./workflow-packages.ts";
 
 const INFERENCE_PLUGIN = "corbits-system-one";
@@ -38,8 +38,7 @@ async function portalPackage(fetchRaw: typeof fetch, file: string): Promise<Resp
 }
 
 async function putTarball(fetchRaw: typeof fetch, tenantId: string, registryId: string, entry: PackageIndexEntry, bytes: ArrayBuffer): Promise<void> {
-  const path = `/api/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(registryId)}/tarballs/${encodeURIComponent(entry.filename)}`;
-  const response = await fetchRaw(`${requestOrigin()}${path}`, {
+  const response = await fetchRaw(`${requestOrigin()}${tarballPath(tenantId, registryId, entry.filename)}`, {
     method: "PUT",
     credentials: "include",
     headers: { "content-type": "application/octet-stream" },
@@ -51,21 +50,28 @@ async function putTarball(fetchRaw: typeof fetch, tenantId: string, registryId: 
   throw new ApiError(response.status, detail.error?.code ?? "unknown", detail.error?.message ?? `HTTP ${response.status}`);
 }
 
+function tarballPath(tenantId: string, registryId: string, filename?: string): string {
+  const base = `/api/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(registryId)}/tarballs`;
+  return filename === undefined ? base : `${base}/${encodeURIComponent(filename)}`;
+}
+
 /**
- * Publishes each tarball the registry lacks, in index order so the tool lands
- * before the workflows that depend on it. A version is never overwritten.
+ * Interchange delivers a workflow the registry's whole tip tree under a size
+ * cap, so the registry keeps only this build's tarballs and those a live
+ * deployment's closure pins; the asset's git history keeps the rest. Runs
+ * before anything is published or deployed, so a registry already over the
+ * cap shrinks before this build's deploy is probed. A version is never
+ * overwritten, and a tarball already removed by another converge is skipped.
  */
-async function publishPackages(
+async function syncRegistry(
   transport: Transport,
   fetchRaw: typeof fetch,
   tenantId: string,
   registryId: string,
   index: PackageIndexEntry[],
+  deployments: readonly DeployedWorkflow[],
 ): Promise<void> {
-  const listed = await transport.fetch<Array<{ filename: string; integrity: string }>>(
-    "GET",
-    `/api/tenants/${encodeURIComponent(tenantId)}/assets/${encodeURIComponent(registryId)}/tarballs`,
-  );
+  const listed = await transport.fetch<Array<{ filename: string; integrity: string }>>("GET", tarballPath(tenantId, registryId));
   const missing: PackageIndexEntry[] = [];
   for (const entry of index) {
     const existing = listed.find((tarball) => tarball.filename === entry.filename);
@@ -74,8 +80,24 @@ async function publishPackages(
       throw new Error(`${entry.name}@${entry.version} is already published with different contents; this build did not pack reproducibly.`);
     }
   }
+  const kept = new Set(index.map((entry) => entry.filename));
+  for (const deployment of deployments) {
+    for (const pkg of [deployment.package, ...deployment.tools]) if (pkg) kept.add(tarballFilename(pkg));
+  }
+  for (const { filename } of listed) {
+    if (!kept.has(filename)) await deleteTarball(transport, tenantId, registryId, filename);
+  }
+  // In index order, so the tool lands before the workflows that depend on it.
   for (const entry of missing) {
     await putTarball(fetchRaw, tenantId, registryId, entry, await (await portalPackage(fetchRaw, entry.filename)).arrayBuffer());
+  }
+}
+
+async function deleteTarball(transport: Transport, tenantId: string, registryId: string, filename: string): Promise<void> {
+  try {
+    await transport.fetch("DELETE", tarballPath(tenantId, registryId, filename));
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 404)) throw error;
   }
 }
 
@@ -144,7 +166,7 @@ export async function ensureWorkflows(
   await ensureKeepDeployedLifetime(transport, tenantId);
   const registry = await ensureAsset(transport, tenantId, "package-registry", REGISTRY_NAME);
   const index = await (await portalPackage(fetchRaw, "index.json")).json() as PackageIndexEntry[];
-  await publishPackages(transport, fetchRaw, tenantId, registry.id, index);
+  await syncRegistry(transport, fetchRaw, tenantId, registry.id, index, deployments);
   const deployed: string[] = [];
   for (const workflow of WORKFLOW_PACKAGES.filter((row) => connected.includes(row.source))) {
     const pkg = index.find((entry) => entry.name === workflow.packageName);
