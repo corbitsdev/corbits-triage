@@ -31,7 +31,8 @@ export function bitbucketFetch(fetchImpl: typeof fetch, baseUrl: string, token: 
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${token}`);
     headers.set("accept", "application/json");
-    if (init?.body !== undefined) headers.set("content-type", "application/json");
+    // A form sets its own content type, with the boundary its parts are split on.
+    if (init?.body !== undefined && !(init.body instanceof FormData)) headers.set("content-type", "application/json");
     return fetchImpl(`${baseUrl}${path}`, { ...init, headers, redirect: "manual" });
   };
 }

@@ -379,17 +379,39 @@ directly; a workspace policy it extends fills what it leaves out. Runs name the
 file and its blob sha. A push to the default branch that changes the file (or
 a forced push) is read before the next verdict, so the next triage uses the
 new rules. A file triage refuses stops triage on the repository: nothing runs
-and no step is taken until the file is fixed, and Triage never falls back to
-the rules kept in the portal. Removing the file returns the repository to the
-policy kept in Triage. A repository without the file is untouched.
+and no step is taken until the file is fixed. Removing the file returns the
+repository to the policy kept in Triage. A repository without the file is
+untouched.
+
+Rules saved in the portal before the file are moved into it, never dropped:
+
+- **Upgrade.** A repository with saved rules and no file keeps running on the
+  saved rules. Writing them to the file opens a pull request adding
+  `.corbits-triage.yml` (schema 3, each rule with `reason: Set in the portal
+  before the policy file.` and `evidence: [maintainer-stated]`); its
+  description lists anything a file cannot hold (score or choice questions,
+  file or hunk scope, a rule on without a value). The saved rules apply until
+  it is merged.
+- **Differs.** A repository whose file and saved rules run differently, or
+  whose file Triage refuses, keeps running on the saved rules, so nothing a
+  maintainer did not review starts or stops. Two ways out: a pull request
+  making the file match the saved rules, or keeping the file, which archives
+  the saved rules.
+- **Matches.** Once the file and the saved rules run the same, the saved rules
+  are archived and the file alone is the policy.
+
+Wording, reasons and evidence never count as a difference; what each rule
+checks and every step, in order, do. Every pull request goes on the
+`corbits-triage/policy` branch: asking again updates the open one.
 
 In the portal the repository's Policy card links the file; the rules, steps
 and labels are then read-only, with **Edit on GitHub**. A refused file is shown
 with each problem and its line on the Policy card, and named above the Inbox. A repository without the file
 can **Export to repository**: the hub opens a pull request adding the file
 from the current policy on the `corbits-triage/policy` branch. The same reads
-and writes are hub routes: `GET …/github-triage/{tenantId}/policy/file` and
-`POST …/policy/export`. `POST /api/integrations/policy/validate` takes a
+and writes are hub routes: `GET …/github-triage/{tenantId}/policy/file`,
+`GET …/policy/upgrades` and `POST …/policy/export`; keeping the file archives
+the saved rules through the stock artifact route. `POST /api/integrations/policy/validate` takes a
 file's text and the repository it is for, and answers the policy it holds or
 each problem with the line of the rule or section it is in (the exact line and
 column, for YAML errors); it needs no sign-in

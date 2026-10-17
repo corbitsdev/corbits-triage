@@ -15,13 +15,17 @@ export const GITHUB_VERB = {
   close: "close",
 } as const;
 
-/** A GitHub failure as a sentence; the transport line (method, path, status) is for logs only. */
-function githubRefusal(what: string, err: unknown): string {
+/** A host's failure as a sentence; the transport line (method, path, status) is for logs only. */
+function refusal(host: string, what: string, err: unknown): string {
   const message = errorText(err);
-  const status = /-> (\d{3})$/.exec(message)?.[1];
-  return `GitHub refused to ${what}${status ? ` (HTTP ${status})` : `: ${message}`}.`;
+  const status = /(?:-> |answered )(\d{3})\b/.exec(message)?.[1];
+  return `${host} refused to ${what}${status ? ` (HTTP ${status})` : `: ${message}`}.`;
 }
 
 export function githubFailed(what: string, err: unknown): Response {
-  return failure(502, "github_failed", githubRefusal(what, err));
+  return failure(502, "github_failed", refusal("GitHub", what, err));
+}
+
+export function bitbucketFailed(what: string, err: unknown): Response {
+  return failure(502, "bitbucket_failed", refusal("Bitbucket", what, err));
 }

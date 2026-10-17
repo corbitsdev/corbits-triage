@@ -1,5 +1,5 @@
 export { getPrTimes, listClosedPrsBefore, listPrTimeline } from "./activities.js";
-export { jsonAll, repoPath, type BitbucketFetch } from "./client.js";
+export { filePath, jsonAll, repoParts, repoPath, type BitbucketFetch } from "./client.js";
 export { getChecks, TRIAGE_BUILD_KEY } from "./builds.js";
 export { listPrCommits, listPrFiles, listPrFilesPage } from "./changes.js";
 export { isTriageComment, listIssueComments } from "./comments.js";

@@ -1,6 +1,6 @@
 // A repository's policy kept in the repository itself: schema 3 (`rules`, see policy-rules.ts), or the stored policy's
 // shape less what the repository already says (`kind`, `schemaVersion` and `repo`). Only YAML is read; another format is another path.
-import { dump, JSON_SCHEMA, load, YAMLException } from "js-yaml";
+import { JSON_SCHEMA, load, YAMLException } from "js-yaml";
 import { asRecord } from "@corbits/common";
 import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, readCheckPack, readPolicyOverride } from "./check-pack.js";
 import { isPolicyRulesFile, PolicyFileError, policyRulesSchema, rulesToPolicy } from "./policy-rules.js";
@@ -15,7 +15,6 @@ export type PolicyFileProblem = { message: string; line?: number; column?: numbe
 
 export type PolicyFileCheck = { ok: true; policy: Record<string, unknown> } | { ok: false; problems: PolicyFileProblem[] };
 
-const IMPLIED_KEYS = ["kind", "schemaVersion", "repo"] as const;
 const PACK_KEYS = ["checks", "custom", "actions", "labels"];
 const OVERRIDE_KEYS = ["extends", ...PACK_KEYS];
 const NODES_MAX = 10_000;
@@ -147,10 +146,4 @@ export function readPolicyFile(text: string, repo: string): Record<string, unkno
   const checked = checkPolicyFile(text, repo);
   if (!checked.ok) throw new Error(policyFileReason(checked.problems));
   return checked.policy;
-}
-
-/** The file for a stored policy. Repositories can be public, so it names nothing about the hub that wrote it. */
-export function policyFileText(stored: Record<string, unknown>): string {
-  const body = Object.fromEntries(Object.entries(stored).filter(([key]) => !(IMPLIED_KEYS as readonly string[]).includes(key) && key !== "dropped"));
-  return `# Corbits Triage policy.\n${dump(body, { schema: JSON_SCHEMA, lineWidth: -1 })}`;
 }
