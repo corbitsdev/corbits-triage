@@ -82,9 +82,9 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
       rechecked.push([repo, except]);
       return 2;
     },
-    async syncPolicyFile(_tenant, repo) {
+    async refreshPolicyFile(_tenant, repo) {
       synced.push(repo);
-      return { status: "unchanged", sha: "abc" };
+      return { status: "absent" };
     },
     ...overrides,
   };

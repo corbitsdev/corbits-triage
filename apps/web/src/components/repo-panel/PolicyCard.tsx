@@ -2,7 +2,6 @@ import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { POLICY_FILE_PATH, type PolicyFileStatus, type RepoSource } from "@corbits/triage-contracts";
 import { useRepoPack as useStoredPack } from "../../lib/check-packs.ts";
-import { relativeTime } from "../../lib/duration.ts";
 import type { usePolicyFile } from "../../lib/policy-file.ts";
 import { ExternalIcon } from "../inbox-icons.tsx";
 
@@ -14,24 +13,22 @@ const IN_HUB = <>Rules are kept in Corbits Triage. Add <code>{POLICY_FILE_PATH}<
 
 function sourceText(file: PolicyFileStatus | null) {
   if (!file) return IN_HUB;
-  return <>From <code>{POLICY_FILE_PATH}</code> on the default branch{file.syncedAt ? ` · synced ${relativeTime(file.syncedAt)}` : ""}</>;
+  return <>From <code>{file.path}</code> on the default branch</>;
 }
 
-/** Where the repository's policy comes from: its `.corbits-triage.yaml` when it has one, else an offer to export it there where the host supports it. */
+/** Where the repository's policy comes from: its policy file when it has one, else an offer to export it there where the host supports it. */
 export default function PolicyCard({ repo, source, policyFile, disabled }: PolicyCardProps) {
-  const { file: query, sync, exported } = policyFile;
+  const { file: query, exported } = policyFile;
   const stored = useStoredPack(repo);
   const file = query.data;
-  const failed = sync.error ?? exported.error;
 
   function fileRow(found: PolicyFileStatus) {
     return (
       <div className="sentence rule">
         <div className="rmain">
-          <div className="rline"><span className="w">{found.inSync ? "The rules and steps below are read from the file." : "Not in sync: the policy differs from the file."}</span></div>
-          {found.problem ? <p className="reason">The file is not used: {found.problem}</p> : null}
+          <div className="rline"><span className="w">{found.problem ? "Triage runs nothing until the file is fixed:" : "The rules and steps below are read from the file."}</span></div>
+          {found.problem?.split("\n").map((line) => <p key={line} className="reason">{line}</p>)}
         </div>
-        {found.inSync || found.problem ? null : <Button type="button" variant="outline" size="sm" disabled={disabled || sync.isPending} onClick={() => sync.mutate()}>Use file</Button>}
         <Button asChild variant="ghost" size="sm"><a href={found.url} target="_blank" rel="noreferrer">Edit on {HOST_NAME[source]} <ExternalIcon /></a></Button>
       </div>
     );
@@ -70,7 +67,7 @@ export default function PolicyCard({ repo, source, policyFile, disabled }: Polic
       </header>
       {file ? <div className="sentences">{fileRow(file)}</div> : null}
       {!file && exportable ? <div className="sentences">{exportRow()}</div> : null}
-      {failed ? <p role="alert" className="error">{errorText(failed)}</p> : null}
+      {exported.error ? <p role="alert" className="error">{errorText(exported.error)}</p> : null}
     </section>
   );
 }

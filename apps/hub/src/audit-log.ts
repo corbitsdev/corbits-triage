@@ -4,7 +4,7 @@
 import { and, desc, eq, gte, inArray, isNotNull, ne, sql, type SQL } from "drizzle-orm";
 import { type } from "arktype";
 import { getArtifact, listArtifactVersions, type ArtifactDb } from "@corbits/artifacts";
-import { WORKSPACE_POLICY_TITLE_PREFIX, type AuditEntry, type AuditLog } from "@corbits/triage-contracts";
+import { WORKSPACE_POLICY_TITLE_PREFIX, type AuditEntry, type AuditLog, type PolicySource } from "@corbits/triage-contracts";
 import { schema, type DB } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -155,9 +155,9 @@ export function createAuditLog(deps: AuditLogDeps) {
     const shared = new Set<string>();
     for (const name of repos) {
       const read = await deps.readCheckPack(tenantId, name);
-      if (read.status === "missing") continue;
-      const source = read.status === "ok" ? read.source : { repo: read.repo };
-      entries.push(...(await versionsOf(source.repo.id, "checks", name, limit)));
+      if (read.status === "missing" || read.status === "invalid") continue;
+      const source: PolicySource = read.status === "ok" ? read.source : { repo: read.repo };
+      if (source.repo) entries.push(...(await versionsOf(source.repo.id, "checks", name, limit)));
       if (source.shared) shared.add(source.shared.id);
     }
     for (const id of shared) entries.push(...(await versionsOf(id, "workspace policy", await workspacePolicyName(id), limit)));

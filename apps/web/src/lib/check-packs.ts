@@ -31,7 +31,7 @@ export function checkPackQuery(tenantId: string | undefined, repo: string) {
 export function useRepoPack(repo: string): CheckPack | null {
   const { snapshot } = usePortal();
   const found = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo)).data;
-  return found?.kind === "pack" ? found.pack : null;
+  return found && "pack" in found ? found.pack : null;
 }
 
 /** Catalog checks switched on plus every custom check, which has no off state. */

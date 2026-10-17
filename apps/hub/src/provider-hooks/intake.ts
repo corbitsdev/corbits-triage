@@ -28,7 +28,7 @@ export type ProviderHook = {
   ownUser?: (ns: CorbitsTriageNs) => string | undefined;
 };
 
-export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "codeReview" | "log" | "readCheckPack" | "recheckOpenPulls" | "syncPolicyFile">;
+export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "codeReview" | "log" | "readCheckPack" | "recheckOpenPulls" | "refreshPolicyFile">;
 
 type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord; ns: CorbitsTriageNs };
 
@@ -56,15 +56,15 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     return json(202, { status: "ignored" });
   }
 
-  async function policyPush(at: Delivery, { repo, removed }: PolicyPush): Promise<Response> {
-    let synced: Awaited<ReturnType<ProviderHookDeps["syncPolicyFile"]>>;
+  async function policyPush(at: Delivery, { repo }: PolicyPush): Promise<Response> {
+    let read: Awaited<ReturnType<ProviderHookDeps["refreshPolicyFile"]>>;
     try {
-      synced = await d.syncPolicyFile(at.hook.tenantId, repo, removed);
+      read = await d.refreshPolicyFile(at.hook.tenantId, repo);
     } catch (err) {
-      return failed(at, 500, "policy_file_sync_failed", err);
+      return failed(at, 500, "policy_file_read_failed", err);
     }
-    if (!synced) return ignored(at, "unconfigured_repo");
-    log({ level: "info", msg: "policy_file_pushed", delivery: at.delivery, event: at.event, repo, status: synced.status, hook: at.hook.credentialId });
+    if (!read) return ignored(at, "unconfigured_repo");
+    log({ level: "info", msg: "policy_file_pushed", delivery: at.delivery, event: at.event, repo, status: read.status, hook: at.hook.credentialId });
     return json(202, { status: "accepted" });
   }
 
@@ -87,7 +87,12 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     // Its conversion to draft is triaged once, so the verdict stops offering it as ready.
     if (mail.draft === true && mail.action !== "converted_to_draft") return ignored(at, "draft", { pr: mail.prNumber });
     if (mail.headSha === null) return ignored(at, "not_open", { pr: mail.prNumber });
-    const stored = await resolvedPack(d.readCheckPack, at.hook.tenantId, at.record.name);
+    let stored: Awaited<ReturnType<typeof resolvedPack>>;
+    try {
+      stored = await resolvedPack(d.readCheckPack, at.hook.tenantId, at.record.name);
+    } catch (err) {
+      return failed(at, 500, "policy_read_failed", err);
+    }
     if (!stored) {
       log({ level: "info", msg: "needs_setup", delivery: at.delivery, event: at.event, repo: at.record.name, hook: at.hook.credentialId });
       return json(202, { status: "needs-setup" });

@@ -43,6 +43,7 @@ function checksLabel(row: RepoRow, state: PackState | undefined): string {
   if (!state || state.pending) return "";
   if (state.error) return "Could not read";
   if (state.found?.kind === "corrupt") return "Unreadable";
+  if (state.found?.kind === "invalid") return "Policy file refused";
   return state.found ? `${plural(enabledCheckCount(state.found.pack), "rule")} on` : "Not set up";
 }
 

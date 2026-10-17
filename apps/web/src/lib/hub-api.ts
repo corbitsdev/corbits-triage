@@ -6,7 +6,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse, WorkflowRunResponse } from "@intx/types";
-import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, PolicySynced, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { AuditLog, BacklogStarted, PolicyExported, PolicyFileRead, PolicyRead, readCheckPack, repoPolicy, repoSourceOf, checkPackName, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type ArtifactRef, type AuthorKind, type CheckOutput, type CheckPack, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { assertCanRemoveGrant, createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -359,15 +359,23 @@ export async function findArtifactByTitle(transport: Transport, tenantId: string
 export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack; shared?: ArtifactRef };
 /** The repository's artifact holds something that is not a check pack; a save replaces it in place. */
 type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
-export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack;
+/** Read from the repository's policy file, which only a change to the file edits. */
+type FileCheckPack = { kind: "file"; path: string; pack: CheckPack; shared?: ArtifactRef };
+/** The repository's policy file is refused, so triage runs nothing until it is fixed. */
+type InvalidPolicyFile = { kind: "invalid"; path: string; reason: string };
+export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack | FileCheckPack | InvalidPolicyFile;
 
 export async function loadRepoCheckPack(transport: Transport, tenantId: string, repo: string): Promise<CheckPackArtifact | null> {
   const clean = validateRepo(repo);
   const read = PolicyRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy?repo=${enc(clean)}`));
   if (read.status === "missing") return null;
   if (read.status === "corrupt") return { kind: "corrupt", ...read.repo, reason: read.reason };
-  const { repo: stored, shared } = read.source;
-  return { kind: "pack", ...stored, pack: readCheckPack(read.pack, clean), ...(shared && { shared }) };
+  if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
+  const { repo: stored, shared, file } = read.source;
+  const pack = readCheckPack(read.pack, clean);
+  if (file) return { kind: "file", path: file.path, pack, ...(shared && { shared }) };
+  if (!stored) throw new Error(`The hub named no policy ${clean} was read from.`);
+  return { kind: "pack", ...stored, pack, ...(shared && { shared }) };
 }
 
 export type CheckPackLookup = (repo: string) => Promise<boolean>;
@@ -856,11 +864,6 @@ export async function startBacklogTriage(transport: Transport, tenantId: string,
 export async function loadPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicyFileStatus | null> {
   const clean = validateRepo(repo);
   return PolicyFileRead.assert(await transport.fetch<unknown>("GET", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/file?repo=${enc(clean)}`)).file;
-}
-
-export async function syncPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicySynced> {
-  const clean = validateRepo(repo);
-  return PolicySynced.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/sync`, { repo: clean }));
 }
 
 export async function exportPolicyFile(transport: Transport, tenantId: string, repo: string): Promise<PolicyExported> {

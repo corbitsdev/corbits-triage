@@ -39,7 +39,7 @@ export class ExtendedPolicyError extends Error {
 /** Versions the artifact the draft was loaded from while triage still reads it; `expectedVersion` refuses it when anyone wrote since. */
 async function versionCheckPack(transport: Transport, tenantId: string, repo: string, content: string, loaded: LoadedCheckPack): Promise<number> {
   const current = await loadRepoCheckPack(transport, tenantId, repo);
-  if (current?.id !== loaded.id) throw new StaleCheckPackError();
+  if ((current?.kind !== "pack" && current?.kind !== "corrupt") || current.id !== loaded.id) throw new StaleCheckPackError();
   if (current.kind === "pack" && current.shared) throw new ExtendedPolicyError();
   const title = checkPackName(repo);
   try {

@@ -1,12 +1,13 @@
 import { type } from "arktype";
 import { Hono, type Context } from "hono";
 import { every } from "hono/combine";
+import { bodyLimit } from "hono/body-limit";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { describeRoute, resolver, validator } from "hono-openapi";
 import type { DB } from "@intx/db";
 import { createHubContextMiddleware, createResolveTenant, requireAuth, type GetSession, type RequireGrant, type SessionInfo, type SessionUser, type TenantEnv } from "@intx/hub-api";
-import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, PolicyExported, PolicyFileRead, PolicyRead, PolicySynced, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
+import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, checkPolicyFile, PolicyExported, PolicyFileRead, PolicyRead, PolicyValidated, POLICY_FILE_MAX_BYTES, DeployedVersions, InviteRoles, InviteSent, policyFileSchema, policyOverrideSchema, repoPolicySchema, SessionList, sharedPolicySchema, TriageStats, TriageVerdicts } from "@corbits/triage-contracts";
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
@@ -35,6 +36,8 @@ import { WORKFLOW_VERSIONS_PATH } from "../workflow-versions.js";
 
 export const INTEGRATIONS_PREFIX = "/api/integrations/";
 const PACK_SCHEMA_PATH = `${INTEGRATIONS_PREFIX}pack-schema`;
+const POLICY_VALIDATE_PATH = `${INTEGRATIONS_PREFIX}policy/validate`;
+const PolicyValidateBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, text: "string" });
 const packSchemas = {
   checkPack: checkPackSchema.toJsonSchema(),
   sharedPolicy: sharedPolicySchema.toJsonSchema(),
@@ -65,7 +68,6 @@ export type IntegrationHandlers = {
   prTriage: BodyHandler<typeof TriageBody.infer>;
   policyRead: BodyHandler<typeof PolicyQuery.infer>;
   policyFileRead: BodyHandler<typeof PolicyFileBody.infer>;
-  policyFileSync: BodyHandler<typeof PolicyFileBody.infer>;
   policyFileExport: BodyHandler<typeof PolicyFileBody.infer>;
   backlog: BodyHandler<typeof BacklogBody.infer>;
   openPulls: (member: Member) => Promise<Response>;
@@ -202,12 +204,28 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     PACK_SCHEMA_PATH,
     describeRoute({
       summary: "JSON Schemas of the policy, workspace policy, repository override, repository settings and policy file",
-      description: "`checkPack`, `sharedPolicy`, `policyOverride`, `repoPolicy` and `policyFile`, what `.corbits-triage.yaml` holds.",
+      description: "`checkPack`, `sharedPolicy`, `policyOverride`, `repoPolicy` and `policyFile`, what `.corbits-triage.yml` holds.",
       tags: TAGS,
       responses: { 200: json("Policy and repository settings JSON Schemas", PackSchemas) },
     }),
     function packSchema() {
       return Response.json(packSchemas);
+    },
+  );
+
+  app.post(
+    POLICY_VALIDATE_PATH,
+    describeRoute({
+      summary: "Check a policy file's text as triage reads it",
+      description: "Open to anyone; reads nothing but the body. `repo` is the repository the file is for. Answers the policy the file holds, or each problem with the line of the rule or section it is in (for YAML errors, the exact line and column).",
+      tags: TAGS,
+      responses: { 200: json("The policy the file holds, or why it is refused", PolicyValidated), ...invalid, 413: json("The body is too large", Failure) },
+    }),
+    bodyLimit({ maxSize: 4 * POLICY_FILE_MAX_BYTES, onError: function tooLarge() { return failure(413, "too_large", "The policy file is too large."); } }),
+    body(PolicyValidateBody),
+    function policyValidate(c) {
+      const { repo, text } = c.req.valid("json");
+      return Response.json(checkPolicyFile(text, repo));
     },
   );
 
@@ -329,7 +347,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy`,
     describeRoute({
       summary: "A repository's policy as triage reads it",
-      description: "Any member of the workspace. Answers `ok` with the resolved pack and the policy versions it came from, `missing`, or `corrupt` with the reason and the artifact a save replaces. `source.file` names the policy file the current version was synced from.",
+      description: "Any member of the workspace. Answers `ok` with the resolved pack and what it came from, `missing`, `corrupt` with the reason and the artifact a save replaces, or `invalid` with why triage refuses the repository's policy file. `source.file` names the policy file when the pack was read from it, `source.repo` the stored policy otherwise.",
       tags: TAGS,
       parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
       responses: { 200: json("The resolved pack and the policy versions it was read from, or why there is none", PolicyRead), ...invalid, ...failures },
@@ -344,8 +362,8 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   app.get(
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/file`,
     describeRoute({
-      summary: "A repository's .corbits-triage.yaml and whether its policy holds what the file says",
-      description: "Needs `read` or `use` on the workspace's GitHub App credential and a connected repository. Reads the file on the default branch; `file` is null when there is none.",
+      summary: "A repository's policy file and why triage refuses it, if it does",
+      description: "Needs `read` or `use` on the workspace's source credential and a connected repository. Reads `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the default branch; `file` is null when there is none. While a file is there, triage runs on it in place of the stored policy, and runs nothing while it has a `problem`.",
       tags: TAGS,
       parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
       responses: { 200: json("The policy file, or null", PolicyFileRead), ...invalid, ...failures, ...githubFailed },
@@ -358,31 +376,9 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
   );
 
   app.post(
-    `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/sync`,
-    describeRoute({
-      summary: "Read a repository's .corbits-triage.yaml into its policy now",
-      description: "Needs `use` on the workspace's GitHub App credential and a connected repository. Stores the file on the default branch as a new version of the repository's policy when it differs; pushes to the default branch do the same.",
-      tags: TAGS,
-      responses: {
-        200: json("Synced, or already what the file holds", PolicySynced),
-        ...invalid,
-        ...failures,
-        404: json("The repository has no policy file", Failure),
-        422: json("The policy file is not a valid policy", Failure),
-        ...githubFailed,
-      },
-    }),
-    member,
-    body(PolicyFileBody),
-    function policyFileSync(c) {
-      return handlers.policyFileSync(c.req.valid("json"), memberOf(c));
-    },
-  );
-
-  app.post(
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/export`,
     describeRoute({
-      summary: "Open a pull request adding .corbits-triage.yaml from the repository's policy",
+      summary: "Open a pull request adding .corbits-triage.yml from the repository's policy",
       description: "Needs `use` on the workspace's GitHub App credential, a connected repository and a stored policy. One commit on `corbits-triage/policy`; refused when the file or the branch already exists.",
       tags: TAGS,
       responses: { 200: json("The pull request opened", PolicyExported), ...invalid, ...failures, ...githubFailed },

@@ -190,27 +190,28 @@ export type AuditLog = typeof AuditLog.infer;
 
 const ArtifactRefShape = type({ id: "string", version: "number" });
 
-/**
- * The repository's policy file on its default branch. `syncedAt` is when the hub's copy was last read from the file,
- * `inSync` whether the hub's copy holds what the file does, and `problem` why the file cannot be used.
- */
-export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "syncedAt?": "string", inSync: "boolean", "problem?": "string" });
+/** The repository's policy file on its default branch; `problem` is why triage does not run on it. */
+export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "problem?": "string" });
 export type PolicyFileStatus = typeof PolicyFileStatus.infer;
 
 const FileRefShape = type({ path: "string", sha: "string" });
 
-export const PolicySourceShape = type({ repo: ArtifactRefShape, "shared?": ArtifactRefShape, "file?": FileRefShape });
+export const PolicySourceShape = type({ "repo?": ArtifactRefShape, "shared?": ArtifactRefShape, "file?": FileRefShape });
 
+/** `invalid` is a policy file triage refuses, so nothing runs until it is fixed. */
 export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape })
   .or({ status: "'missing'" })
-  .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape });
+  .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape })
+  .or({ status: "'invalid'", reason: "string", path: "string" });
 
 /** Read apart from the policy because it asks GitHub, which the repositories table must not do for every repository. */
 export const PolicyFileRead = type({ file: PolicyFileStatus.or("null") });
 export type PolicyFileRead = typeof PolicyFileRead.infer;
 
-export const PolicySynced = type({ status: "'synced' | 'unchanged'", sha: "string" });
-export type PolicySynced = typeof PolicySynced.infer;
+const PolicyProblem = type({ message: "string", "line?": "number", "column?": "number" });
+
+export const PolicyValidated = type({ ok: "true", policy: "Record<string, unknown>" }).or({ ok: "false", problems: PolicyProblem.array() });
+export type PolicyValidated = typeof PolicyValidated.infer;
 
 export const PolicyExported = type({ status: "'opened'", url: "string", number: "number" });
 export type PolicyExported = typeof PolicyExported.infer;

@@ -25,7 +25,7 @@ export function openSession(repo: string, found: LoadedRepoPack): PackSession {
   const artifact = found.artifact;
   const pack = artifact && "pack" in artifact ? artifact.pack : emptyPack(repo);
   return {
-    loaded: artifact ? { id: artifact.id, version: artifact.version } : null,
+    loaded: artifact && "id" in artifact ? { id: artifact.id, version: artifact.version } : null,
     corrupt: artifact && "corrupt" in artifact ? artifact.corrupt : null,
     saved: fromPack(pack, found.policy),
     unlinked: false,

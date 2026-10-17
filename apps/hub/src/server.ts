@@ -85,7 +85,7 @@ import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
 import { createGithubPolicyRead } from "./github/policy-read.js";
 import { createGithubBacklog } from "./github/backlog-triage.js";
-import { loadCheckPack } from "./github/check-pack-store.js";
+import { loadCheckPack, loadPolicy } from "./github/check-pack-store.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { createTriageReconciler } from "./github/triage-reconciler.js";
@@ -338,8 +338,21 @@ const codeReviewFeed = createCodeReviewFeed({
   send: sendCodeReviewMail,
   log: logJson,
 });
+const policyFile = createPolicyFile({
+  db: composition.db,
+  artifacts: composition.db,
+  cipher: composition.credentialCipher,
+  authorize: authorizePortal,
+  tenantGithub,
+  tenantBitbucket,
+  log: logJson,
+});
+const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
+function readStoredCheckPack(tenantId: string, repo: string) {
+  return loadCheckPack(checkPackStore, tenantId, repo);
+}
 function readCheckPack(tenantId: string, repo: string) {
-  return loadCheckPack({ db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson }, tenantId, repo);
+  return loadPolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo);
 }
 // A tenant's system principal never changes once minted.
 const githubSenderPrincipals = new Map<string, string>();
@@ -598,18 +611,6 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number):
   if (due > 0) kickTriage();
   return due;
 }
-const policyFile = createPolicyFile({
-  db: composition.db,
-  artifacts: composition.db,
-  cipher: composition.credentialCipher,
-  authorize: authorizePortal,
-  tenantGithub,
-  tenantBitbucket,
-  writerFor: githubSenderPrincipal,
-  grantWriters: createArtifactGrants(now),
-  now,
-  log: logJson,
-});
 const deliveryCache = new DeliveryCache({ filePath: `${env.HUB_DATA_DIR}/delivery-cache.json` });
 const bridge = createBridgeHandler({
   db: hookDeps.db,
@@ -620,7 +621,7 @@ const bridge = createBridgeHandler({
   readCheckPack,
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
-  syncPolicyFile: policyFile.onPush,
+  refreshPolicyFile: policyFile.onPush,
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
   db: hookDeps.db,
@@ -630,7 +631,7 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   codeReview: codeReviewFeed,
   readCheckPack,
   recheckOpenPulls,
-  syncPolicyFile: policyFile.onPush,
+  refreshPolicyFile: policyFile.onPush,
 }));
 
 function decodeSegments(rest: string): string[] | null {
@@ -674,7 +675,6 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),
   policyFileRead: policyFile.fileRoute,
-  policyFileSync: policyFile.syncRoute,
   policyFileExport: policyFile.exportRoute,
   backlog: createGithubBacklog({
     db: composition.db,
@@ -730,7 +730,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   audit: createAuditLog({
     db: composition.db,
     artifacts: composition.db,
-    readCheckPack,
+    readCheckPack: readStoredCheckPack,
     runReader: composition.runReader,
     sameSource: deploymentRotation.sameSource,
     authorize: authorizePortal,

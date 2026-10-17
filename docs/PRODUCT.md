@@ -331,8 +331,9 @@ policy resolved but cannot edit it yet.
 
 ### Policy file
 
-A repository may keep its policy in `.corbits-triage.yaml` at the root of its
-default branch, so policy changes are reviewed like code. The file lists its
+A repository may keep its policy in `.corbits-triage.yml` at the root of its
+default branch (`.corbits-triage.yaml` is read when there is no `.yml`), so
+policy changes are reviewed like code. The file lists its
 `rules`, `actions` and `labels`, and may `extends` a workspace policy; any other
 key is refused. Each rule is one sentence (`text`), how it is checked
 (`check`: a built-in rule's id, `model` for a yes/no question the decision
@@ -373,22 +374,26 @@ A file without `rules` is read in the stored policy's shape (`checks`, `custom`,
 `actions` with `when` events and `for` on steps), so files written before keep
 working; score and choose rules and file or hunk scope exist only in that shape.
 
-The file becomes the repository's policy; a workspace policy it extends fills
-what it leaves out. A push to the default branch that changes the file (or a
-forced push) stores it as a new version of the repository's policy, marked
-with the file's blob sha, and runs name that file; a file that is not a valid
-policy is logged and changes nothing. Removing the file keeps the policy as it
-was, no longer marked as from the file. A repository without the file is
-untouched.
+While the file is on the default branch it is the repository's policy, read
+directly; a workspace policy it extends fills what it leaves out. Runs name the
+file and its blob sha. A push to the default branch that changes the file (or
+a forced push) is read before the next verdict, so the next triage uses the
+new rules. A file triage refuses stops triage on the repository: nothing runs
+and no step is taken until the file is fixed, and Triage never falls back to
+the rules kept in the portal. Removing the file returns the repository to the
+policy kept in Triage. A repository without the file is untouched.
 
-In the portal the repository's Policy card links the file and says when it
-was synced; the rules, steps and labels are then read-only, with **Edit on
-GitHub**. When the hub's copy differs from the file it says **Not in sync**,
-and **Use file** reads the file now. A repository without the file can
-**Export to repository**: the hub opens a pull request adding the file from
-the current policy on the `corbits-triage/policy` branch. The same reads and
-writes are hub routes: `GET …/github-triage/{tenantId}/policy/file`, and
-`POST …/policy/sync` and `…/policy/export`.
+In the portal the repository's Policy card links the file; the rules, steps
+and labels are then read-only, with **Edit on GitHub**. A refused file is shown
+with each problem and its line on the Policy card, and named above the Inbox. A repository without the file
+can **Export to repository**: the hub opens a pull request adding the file
+from the current policy on the `corbits-triage/policy` branch. The same reads
+and writes are hub routes: `GET …/github-triage/{tenantId}/policy/file` and
+`POST …/policy/export`. `POST /api/integrations/policy/validate` takes a
+file's text and the repository it is for, and answers the policy it holds or
+each problem with the line of the rule or section it is in (the exact line and
+column, for YAML errors); it needs no sign-in
+and reads nothing else.
 
 ## Code review
 

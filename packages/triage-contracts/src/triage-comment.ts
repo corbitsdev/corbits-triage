@@ -16,7 +16,7 @@ export type CommentHost = {
 };
 
 const ArtifactRefShape = type({ id: "string", version: "number" });
-const TriageHeaderShape = type({ head: "string", policy: type({ repo: ArtifactRefShape, "shared?": ArtifactRefShape }).or("null"), verdict: "string" });
+const TriageHeaderShape = type({ head: "string", policy: type({ "repo?": ArtifactRefShape, "shared?": ArtifactRefShape, "file?": { path: "string", sha: "string" } }).or("null"), verdict: "string" });
 
 /** How a host writes the header on a Triage comment's first line, so a later run can read it back. */
 export type MarkerFormat = {
@@ -68,7 +68,7 @@ function sameRef(a: ArtifactRef | undefined, b: ArtifactRef | undefined): boolea
 }
 
 function samePolicy(a: PolicySource | null, b: PolicySource | null): boolean {
-  return sameRef(a?.repo, b?.repo) && sameRef(a?.shared, b?.shared);
+  return sameRef(a?.repo, b?.repo) && sameRef(a?.shared, b?.shared) && a?.file?.sha === b?.file?.sha;
 }
 
 /** The rules changed under an unchanged head and changed its verdict, so the earlier comment is history rather than stale. */
@@ -81,8 +81,13 @@ function versionChange(name: string, before: ArtifactRef | undefined, after: Art
   return [`${name} ${before ? `version ${before.version}` : "none"} → ${after ? `version ${after.version}` : "none"}`];
 }
 
+function fileChange(before: PolicySource | null, after: PolicySource | null): string[] {
+  const [was, now] = [before?.file?.sha.slice(0, 7), after?.file?.sha.slice(0, 7)];
+  return was === now ? [] : [`policy file ${was ?? "none"} → ${now ?? "none"}`];
+}
+
 function supersedesNote(before: TriageHeader, after: TriageHeader): string {
-  const changes = [...versionChange("repository policy", before.policy?.repo, after.policy?.repo), ...versionChange("workspace policy", before.policy?.shared, after.policy?.shared)];
+  const changes = [...versionChange("repository policy", before.policy?.repo, after.policy?.repo), ...versionChange("workspace policy", before.policy?.shared, after.policy?.shared), ...fileChange(before.policy, after.policy)];
   return `${SUPERSEDES_NOTE}: ${changes.join(", ")}.`;
 }
 

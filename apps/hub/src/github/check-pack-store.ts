@@ -1,30 +1,24 @@
-// A repository's policy is the artifact its record pins by id, which the portal writes when it saves the policy. A
-// repository not saved since pins existed, or whose pinned policy is archived, reads the newest artifact titled for it.
-// A policy that extends a workspace policy is resolved against that policy's current version here, so each mail carries
-// the pack and the versions it was built from. Reading writes nothing.
-import { type } from "arktype";
+// A repository's policy is its policy file when it has one (see policy-file.ts), else the artifact its record pins by
+// id, which the portal writes when it saves the policy. A repository not saved since pins existed, or whose pinned
+// policy is archived, reads the newest artifact titled for it. A policy that extends a workspace policy is resolved
+// against that policy's current version here, so each mail carries the pack and the versions it was built from.
+// Reading writes nothing.
 import { eq } from "drizzle-orm";
 import { findArtifactByTitle, getArtifact, type ArtifactDb, type ArtifactRow } from "@corbits/artifacts";
 import { schema, type DB } from "@intx/db";
-import { asRecord } from "@corbits/common";
 import { checkPackName, extendsOf, storedPolicyPack, type ActionKind, type ArtifactRef, type CheckPack, type PolicySource } from "@corbits/triage-contracts";
+import type { PolicyFileState } from "./policy-file.js";
 import { repoRecords, triageNs } from "./tenant-config.js";
-
-/** Version metadata a sync from the repository's policy file writes; `contentSha256` is the content it wrote. */
-export const FileMarker = type({ path: "string", sha: "string", syncedAt: "string", contentSha256: "string" });
-export type FileMarker = typeof FileMarker.infer;
-
-/** A later save from the portal carries metadata forward, so the marker holds only while the content is what the sync wrote. */
-export function fileMarkerOf(row: ArtifactRow): FileMarker | undefined {
-  const marker = FileMarker(asRecord(row.metadata)?.["policyFile"]);
-  return marker instanceof type.errors || marker.contentSha256 !== row.contentSha256 ? undefined : marker;
-}
 
 /** `automatic` is the Do kinds the pr-triage role is granted on the repository; `source` is what `pack` was resolved from. */
 export type StoredPack = { pack: CheckPack; automatic: ActionKind[]; source: PolicySource };
 
-/** A corrupt policy names its artifact, which a save replaces in place. */
-export type CheckPackRead = ({ status: "ok" } & StoredPack) | { status: "missing" } | { status: "corrupt"; reason: string; repo: ArtifactRef };
+/** A corrupt policy names its artifact, which a save replaces in place; an invalid one is a policy file triage refuses. */
+export type CheckPackRead =
+  | ({ status: "ok" } & StoredPack)
+  | { status: "missing" }
+  | { status: "corrupt"; reason: string; repo: ArtifactRef }
+  | { status: "invalid"; reason: string; path: string };
 
 /** One database, typed for Interchange and for the artifact package. */
 export type CheckPackStoreDeps = {
@@ -57,13 +51,14 @@ export async function repoPolicyRow({ db, artifacts }: Pick<CheckPackStoreDeps, 
 }
 
 /** `shared` is undefined when the policy extends none. An archived shared policy still applies: archiving hides, it does not revoke. */
-function readStored(tenantId: string, repo: string, row: ArtifactRow, shared: ArtifactRow | null | undefined): Pick<StoredPack, "pack" | "source"> {
+function resolved(tenantId: string, repo: string, content: unknown, shared: ArtifactRow | null | undefined): Pick<StoredPack, "pack"> & { shared?: ArtifactRef } {
   if (shared && shared.tenantId !== tenantId) throw new Error("The workspace policy it extends belongs to another workspace.");
-  const file = fileMarkerOf(row);
-  return {
-    pack: storedPolicyPack(repo, row.content, shared && { title: shared.title, content: shared.content }),
-    source: { repo: refOf(row), ...(shared && { shared: refOf(shared) }), ...(file && { file: { path: file.path, sha: file.sha } }) },
-  };
+  return { pack: storedPolicyPack(repo, content, shared && { title: shared.title, content: shared.content }), ...(shared && { shared: refOf(shared) }) };
+}
+
+async function sharedOf(artifacts: ArtifactDb, content: unknown): Promise<ArtifactRow | null | undefined> {
+  const id = extendsOf(content);
+  return id === undefined ? undefined : getArtifact(artifacts, id);
 }
 
 function corrupt(row: ArtifactRow, error: unknown): CheckPackRead {
@@ -79,19 +74,29 @@ export async function loadCheckPack(deps: CheckPackStoreDeps, tenantId: string, 
   }
   const row = await repoPolicyRow(deps, tenantId, repo);
   if (!row) return { status: "missing" };
-  let sharedId: string | undefined;
+  let read: ReturnType<typeof resolved>;
   try {
-    sharedId = extendsOf(row.content);
+    read = resolved(tenantId, repo, row.content, await sharedOf(deps.artifacts, row.content));
   } catch (error) {
     return corrupt(row, error);
   }
-  const shared = sharedId === undefined ? undefined : await getArtifact(deps.artifacts, sharedId);
-  let resolved: Pick<StoredPack, "pack" | "source">;
+  const source = { repo: refOf(row), ...(read.shared && { shared: read.shared }) };
+  if (source.shared) deps.log({ level: "info", msg: "policy_shared_resolved", tenantId, repo, source });
+  return { status: "ok", pack: read.pack, source, automatic: await deps.automaticKinds(tenantId, repo) };
+}
+
+/** The policy triage runs on: the repository's policy file when it has one, refused rather than replaced when invalid, else the stored policy. */
+export async function loadPolicy(deps: CheckPackStoreDeps & { policyFile: (tenantId: string, repo: string) => Promise<PolicyFileState> }, tenantId: string, repo: string): Promise<CheckPackRead> {
+  const file = await deps.policyFile(tenantId, repo);
+  if (file.status === "absent") return loadCheckPack(deps, tenantId, repo);
+  if (file.status === "invalid") return { status: "invalid", reason: file.reason, path: file.path };
+  let read: ReturnType<typeof resolved>;
   try {
-    resolved = readStored(tenantId, repo, row, shared);
+    read = resolved(tenantId, repo, file.policy, await sharedOf(deps.artifacts, file.policy));
   } catch (error) {
-    return corrupt(row, error);
+    if (!(error instanceof Error)) throw error;
+    return { status: "invalid", reason: error.message, path: file.file.path };
   }
-  if (resolved.source.shared) deps.log({ level: "info", msg: "policy_shared_resolved", tenantId, repo, source: resolved.source });
-  return { status: "ok", ...resolved, automatic: await deps.automaticKinds(tenantId, repo) };
+  const source: PolicySource = { file: { path: file.file.path, sha: file.file.sha }, ...(read.shared && { shared: read.shared }) };
+  return { status: "ok", pack: read.pack, source, automatic: await deps.automaticKinds(tenantId, repo) };
 }

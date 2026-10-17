@@ -137,9 +137,10 @@ connection queue for minutes.
    - Events: Pull request, Pull request review, Issue comment, Check run,
      Push, Installation, Installation repositories.
 
-   An App created before the Push event was added keeps working, but its
-   repositories' `.corbits-triage.yaml` is read only on **Use file** until
-   Push is ticked under the App's settings → Permissions & events. Contents
+   An App created before the Push event was added keeps working, but a change
+   to its repositories' `.corbits-triage.yml` is read only after the hub
+   restarts until Push is ticked under the App's settings → Permissions &
+   events. Contents
    access already covers it, so installations are not asked to approve
    anything new.
 3. **Choose repositories on GitHub**. The hub records them from GitHub's
@@ -158,7 +159,8 @@ connection queue for minutes.
    open pull requests again** re-runs it. To keep the policy in the
    repository instead, use **Export to repository** on the Policy card and
    merge the pull request it opens; from then on the hub reads
-   `.corbits-triage.yaml` on every push to the default branch (see
+   `.corbits-triage.yml` again on every push to the default branch that
+   changes it (see
    [Policy file](PRODUCT.md#policy-file)).
 6. **Verify.** Open a test pull request; it appears in the Inbox once its
    triage run completes.

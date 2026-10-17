@@ -23,7 +23,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     request, review, comment and `check_run` events to the coalescer. A pull
     request merged into the default branch marks the repository's other
     triaged heads `stale`. A push to the default branch that touches
-    `.corbits-triage.yaml` syncs the policy file. Signatures are checked by
+    `.corbits-triage.yml` or `.corbits-triage.yaml` reads the policy file
+    again. Signatures are checked by
     the X-Hub-Signature verifier in `@corbits/common/x-hub-signature`, the
     same scheme `@corbits/webhooks` 0.4 adds as `verify: "x-hub-signature"`
     (`sha256=` and the hex HMAC of the raw body, the header names taken from
@@ -33,15 +34,23 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     credentials written with `standard-webhooks` keep working.
     Temporary until the hub runs `@corbits/webhooks` 0.4, which is the next
     step: release the package, then fold the bridges into the coordinator.
-  - **Policy file sync**: a repository may keep its policy in
-    `.corbits-triage.yaml` on its default branch. A sync reads the file (its
-    `rules` mapped onto the stored policy's built-in rows and custom rules, or
-    a file in the stored policy's shape as is) and stores it as a new version
-    of the repository's policy, marked with its blob sha, so triage keeps
-    reading the hub's copy. A step's `when` conditions are evaluated in the
-    workflow's action step against the facts it already reads. A push or
-    `POST …/github-triage/{tenantId}/policy/sync` runs a sync.
-    `GET …/policy/file` reads the file and whether the policy matches it.
+  - **Policy file**: a repository may keep its policy in
+    `.corbits-triage.yml` (or `.corbits-triage.yaml`, read when the first is
+    absent) on its default branch. When the file is there, every trigger
+    mail, preview and portal read takes the policy from it (its `rules`
+    mapped onto the stored policy's built-in rows and custom rules, or a file
+    in the stored policy's shape as is), naming the file and its blob sha as
+    the source; the stored policy is read only when there is no file. A file
+    triage refuses is `invalid`: no mail is sent and nothing runs until it is
+    fixed, never a fall back to the stored policy. The hub keeps each
+    repository's read in memory, nothing stored; a push to the default branch
+    that touches the file (GitHub `push`, Bitbucket `repo:refs_changed`)
+    reads it again, and a failed read is not kept, so the next trigger reads
+    the file itself. A step's `when` conditions are evaluated in the
+    workflow's action step against the facts it already reads.
+    `GET …/policy/file` reads the file and why it is refused, if it is.
+    `POST /api/integrations/policy/validate` (open, reads only its body)
+    checks a file's text and answers each problem with its line.
     `POST …/policy/export` opens a pull request adding the file from the
     stored policy.
   - **Coalescer**: one pull request's burst of webhook events goes out as one

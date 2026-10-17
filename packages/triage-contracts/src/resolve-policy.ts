@@ -15,10 +15,11 @@ import {
 
 export type ArtifactRef = { id: string; version: number };
 
-/** `sha` is the blob the version was synced from. */
+/** `sha` is the file's blob on the default branch. */
 export type PolicyFileRef = { path: string; sha: string };
 
-export type PolicySource = { repo: ArtifactRef; shared?: ArtifactRef; file?: PolicyFileRef };
+/** What a policy was read from: the repository's policy file, or else its stored policy; either may extend a workspace policy. */
+export type PolicySource = { repo?: ArtifactRef; shared?: ArtifactRef; file?: PolicyFileRef };
 
 /**
  * A repository's policy over the shared policy it extends. The shared policy holds wherever the repository is silent:

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { POLICY_EVENTS } from "./check-pack.ts";
-import { readPolicyFile } from "./policy-file.ts";
+import { checkPolicyFile, readPolicyFile } from "./policy-file.ts";
 
 const REPO = "acme/widgets";
 
@@ -97,5 +97,11 @@ actions:
     ["rules: []\nactions:\n  pass: [{ do: approve, when: {} }]\n", "must set a condition"],
   ])("refuses %#", (text, reason) => {
     expect(() => readPolicyFile(text, REPO)).toThrow(reason);
+  });
+
+  test("a refused file says on which line each problem is", () => {
+    const missingReason = "rules:\n  - check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [maintainer-stated]\n  - check: focused\n    text: One change.\n    evidence: [maintainer-stated]\n";
+    expect(checkPolicyFile(missingReason, REPO)).toEqual({ ok: false, problems: [{ message: expect.stringContaining("reason must be"), line: 6 }] });
+    expect(checkPolicyFile("# policy\nrules: [\n", REPO)).toEqual({ ok: false, problems: [{ message: expect.stringContaining("is not YAML"), line: 3, column: 1 }] });
   });
 });

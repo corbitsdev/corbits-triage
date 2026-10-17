@@ -219,6 +219,7 @@ test("composed hub documents the integration routes and still answers an invalid
   expect(Object.fromEntries(integrations)).toEqual({
     "/api/integrations/auth-methods": ["get"],
     "/api/integrations/pack-schema": ["get"],
+    "/api/integrations/policy/validate": ["post"],
     "/api/integrations/github-manifest/{tenantId}/start": ["post"],
     "/api/integrations/github-manifest/callback": ["get"],
     "/api/integrations/github-installations/{tenantId}/sync": ["post"],
@@ -227,7 +228,6 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/github-triage/{tenantId}": ["post"],
     "/api/integrations/github-triage/{tenantId}/policy": ["get"],
     "/api/integrations/github-triage/{tenantId}/policy/file": ["get"],
-    "/api/integrations/github-triage/{tenantId}/policy/sync": ["post"],
     "/api/integrations/github-triage/{tenantId}/policy/export": ["post"],
     "/api/integrations/github-triage/{tenantId}/backlog": ["post"],
     "/api/integrations/github-open-pulls/{tenantId}": ["get"],

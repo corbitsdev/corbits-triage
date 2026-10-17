@@ -54,6 +54,7 @@ export async function readyToTriage(
   if (!policy.enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
   const pack = await deps.readCheckPack(tenantId, repo);
   if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: pack.reason });
+  if (pack.status === "invalid") return failure(409, "policy_file_invalid", `Triage does not run until ${pack.path} is fixed.`, { reason: pack.reason });
   if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
   if (!hasEnabledRules(pack.pack)) return failure(409, "no_rules", "Switch on a rule first; with every rule off there is nothing to triage.");
   return { tenant, record, policy, pack };

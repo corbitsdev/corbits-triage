@@ -80,7 +80,7 @@ import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { findPrItem } from "../lib/triage-view.ts";
-import { useRepoPack } from "../lib/check-packs.ts";
+import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { CheckIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
@@ -477,6 +477,19 @@ function NoneOpen({ title }: { title: string }) {
 
 type EmptyListProps = { view: ListView; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
 
+/** A repository whose policy file triage refuses runs nothing, so its pull requests wait here without a verdict. */
+function RefusedPolicies({ repos }: { repos: string[] }) {
+  const packs = useCheckPacks(repos);
+  function refusedPath(repo: string): string | undefined {
+    const found = packs.get(repo)?.found;
+    return found?.kind === "invalid" ? found.path : undefined;
+  }
+  const refused = repos.filter((repo) => refusedPath(repo) !== undefined);
+  return refused.map((repo) => (
+    <p key={repo} role="status" className="note">Triage runs nothing on <Link to={`/repositories/${repo}`}>{repo}</Link> until its {refusedPath(repo)} is fixed.</p>
+  ));
+}
+
 function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
@@ -553,6 +566,7 @@ export default function Inbox({ view }: { view: ListView }) {
   const paneRef = useRef<HTMLDivElement>(null);
   const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? []), [snapshot]);
   const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
+  const enabledNames = useMemo(() => [...enabled], [enabled]);
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
   const entries = useMemo(() => viewEntries(view, open, enabled), [open, view, enabled]);
   const items = useMemo(() => entries.map((entry) => entry.item), [entries]);
@@ -686,6 +700,7 @@ export default function Inbox({ view }: { view: ListView }) {
           <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} />
         </div>
         <div className="scroll" id="main">
+          <RefusedPolicies repos={enabledNames} />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
           {flat.length === 0 ? (
             <EmptyList view={view} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
