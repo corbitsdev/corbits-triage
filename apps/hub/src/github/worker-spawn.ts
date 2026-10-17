@@ -7,12 +7,12 @@
 import { and, eq, ne, notInArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { WorkflowProvisioningError, type WorkflowLifecycleService } from "@intx/hub-sessions";
-import { WorkerCapacityError, type WorkerSpawner, type TriageJob } from "./coordinator.js";
-import { DeploymentNotReadyError, NoLiveDeploymentError, liveWorkers, resolveLiveDeployment, resolveLiveDeployments, WORKER_MARKER, type Redeployed } from "./deployment.js";
+import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
+import { WorkerDeferredError, type WorkerSpawner, type TriageJob } from "./coordinator.js";
+import { DeploymentNotReadyError, liveWorkers, resolveLiveDeployment, resolveLiveDeployments, WORKER_MARKER, type Redeployed } from "./deployment.js";
 
 const WORKER_RELEASE_REASON = "Triage worker finished its run";
 const RESTART_RELEASE_REASON = "Triage worker orphaned by a hub restart";
-const CAPACITY_CODE = "capacity_unavailable";
 
 export type WorkerSpawnDeps = {
   db: DB["db"];
@@ -43,12 +43,13 @@ export function createWorkerSpawner(deps: WorkerSpawnDeps): WorkerSpawner {
 
   async function spawn(job: TriageJob): Promise<string> {
     const seed = await resolveLiveDeployment(deps.db, job.tenantId, job.workflow);
-    if (!seed) throw new NoLiveDeploymentError(job.workflow);
+    // The listener is being deployed or healed; the reconciler sees to it.
+    if (!seed) throw new WorkerDeferredError(`no live ${job.workflow} listener to copy`);
     let copy: Redeployed;
     try {
       copy = await deps.redeploy(job.tenantId, seed.runId, { [WORKER_MARKER]: true });
     } catch (err) {
-      if (err instanceof WorkflowProvisioningError && err.code === CAPACITY_CODE) throw new WorkerCapacityError(err.message);
+      if (err instanceof WorkflowProvisioningError && err.code === CAPACITY_UNAVAILABLE) throw new WorkerDeferredError(err.message);
       throw err;
     }
     if (copy.status !== "deployed") throw new Error(`worker not deployed: ${copy.reason}`);

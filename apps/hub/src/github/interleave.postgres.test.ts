@@ -72,8 +72,6 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver, 
     readCheckPack: async () => ({ status: "ok", pack, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
     send: async ({ payload }) => deliver(payload),
     policy: DEFAULT_RECONCILE_POLICY,
-    batchSize: DEFAULT_RECONCILE_POLICY.maxInFlight,
-    batched: true,
     now: () => NOW,
     log: () => {},
   });

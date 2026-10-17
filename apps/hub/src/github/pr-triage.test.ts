@@ -14,7 +14,7 @@ const PACK = { ...emptyPack(REPO), checks: { "no-merge-conflicts": { enabled: tr
 const ENABLED = { name: REPO, connected: true, enabled: true };
 const ANCHOR = { runId: "anchor-1", address: "anchor-1@tenant.example", createdAt: NOW, cancelling: false };
 
-type Delivered = { address: string | undefined; payload: unknown };
+type Delivered = { payload: unknown };
 type Stub = { delivered: Delivered[]; saved: PrTriageRow[][]; authorized: unknown[][] };
 
 function stubDb(repo: Record<string, unknown>) {
@@ -71,8 +71,8 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
     liveDeployments: async () => [ANCHOR],
     observeRuns: observed([]),
     store: stored([], s.saved),
-    send: async ({ address, payload }) => {
-      s.delivered.push({ address, payload });
+    send: async ({ payload }) => {
+      s.delivered.push({ payload });
     },
     policy: DEFAULT_RECONCILE_POLICY,
     now: () => NOW,
@@ -96,13 +96,12 @@ function queuedRow(agoMs: number): PrTriageRow {
 }
 
 describe("createGithubPrTriage", () => {
-  test("mails the live pr-triage deployment the bridge's payload and remembers the head as queued", async () => {
+  test("sends the bridge's payload and remembers the head as queued", async () => {
     const s = stub();
     const res = await handler(ENABLED, s)(request(), MEMBER);
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ status: "queued", headSha: "abc123" });
     expect(s.delivered).toHaveLength(1);
-    expect(s.delivered[0]!.address).toBe("anchor-1@tenant.example");
     expect(s.delivered[0]!.payload).toMatchObject({
       kind: "pr",
       repo: REPO,
@@ -166,14 +165,7 @@ describe("createGithubPrTriage", () => {
     await refused(await handler(ENABLED, s, { store: stored([running(60_000)], s.saved) })(request(), MEMBER), 409, "already_running");
     expect(s.delivered).toEqual([]);
     expect((await handler(ENABLED, s, { store: stored([running(2 * DEFAULT_RECONCILE_POLICY.stuckAfterMs)], s.saved) })(request(), MEMBER)).status).toBe(202);
-    expect(s.delivered).toEqual([{ address: ANCHOR.address, payload: expect.anything() }]);
-  });
-
-  test("never mails a deployment whose cancellation was requested, even when it is the newest", async () => {
-    const copy = { ...ANCHOR, runId: "anchor-copy", address: "anchor-copy@tenant.example", createdAt: new Date(NOW.getTime() + 1), cancelling: true };
-    const s = stub();
-    expect((await handler(ENABLED, s, { liveDeployments: async () => [copy, ANCHOR] })(request(), MEMBER)).status).toBe(202);
-    expect(s.delivered.map((entry) => entry.address)).toEqual([ANCHOR.address]);
+    expect(s.delivered).toEqual([{ payload: expect.anything() }]);
   });
 
   test("refuses a head the hub queued within the unstarted grace; one queued longer ago is requeued keeping its attempts", async () => {

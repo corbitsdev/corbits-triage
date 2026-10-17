@@ -83,7 +83,7 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
   - **Reconciler**: on an interval, compares each enabled repository's open
     pull requests with the run logs and stored state, and re-queues every
     head without a verdict, and every stale head at most once per 15 minutes,
-    in batches and under a per-tenant in-flight cap. It reads the CI of every
+    one head per job, under a per-tenant in-flight cap. It reads the CI of every
     `waiting` head and queues it once CI finished or its wait ran out, in a
     mail of its own with the events it waited with; this releases Bitbucket
     heads, whose builds send no webhook, and any head whose `check_run` never
@@ -99,6 +99,13 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     pr-triage deployment with a fresh copy once its run log grows past a
     limit, and redeploys one that Interchange failed, after two minutes and
     at most three times an hour.
+  - **Coordinator**: every triage mail (webhook, retry, reconciler) and
+    every code review mail is a job in one in-memory queue keyed per workflow
+    and pull request. Each job runs in a worker deployment of its own, copied
+    from the host's live deployment, which only seeds workers, and released
+    once its run ends. How many run at once is the provisioner's call: a
+    placement it declines for want of room, or a job with no live deployment
+    to copy yet, waits and is retried with backoff.
   - **Run recorder**: reads the live logs of tenants with a pr-triage run in
     flight and records each verdict and executed action.
   - **App Manifest conversion**: GitHub returns a one-time code that must be
@@ -121,6 +128,18 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
 - **Sidecars**: one per live deployment, started by the hub's
   `SidecarProvisioner`. Today it runs local child processes and restores
   them on boot; a remote provisioner replaces it without touching other code.
+  The local provisioner declines a new sidecar while free memory, less one
+  footprint for each sidecar it started that has not connected yet, is below
+  one more footprint. Free memory is the container's cgroup limit less its
+  usage, reclaimable page cache counted free (v2, else v1), else Linux's
+  `MemAvailable`. A box with neither, such as a macOS dev machine, never
+  declines. The footprint is 1 GiB: on a local stack (2026-10-17, macOS,
+  GitHub emulator) four pr-triage-github workers peaked at 793, 784, 852 and
+  860 MiB RSS over a full run, and idle listeners held 471 to 653 MiB. A
+  sidecar connects with about half its peak in use, so a burst right after
+  can still overshoot the free figure by that much. A failed deployment whose
+  copy is declined is tried again on the reconciler's short retry, not the
+  next interval.
 - **Portal** (`apps/web`): owns setup. After sign-in it converges the tenant,
   GitHub credentials, inference offering, workflow sources and deployments
   over stock hub routes. The hub seeds nothing for it. It is a wrapper over
@@ -132,7 +151,7 @@ Each is an `onTrigger` mail listener: each mail spawns a child run that
 executes and ends.
 
 - `pr-triage-github` and `pr-triage-bitbucket-datacenter`: one mail names one
-  pull request, or a batch of heads from the reconciler, and triages them.
+  pull request and triages it.
   Both are built by `prTriage({ sources })` in `@corbits/triage-workflows`.
   Each binds only its host's credential, since an unresolved binding fails a
   deployment, so a workspace deploys one per connected host. A deployment of
@@ -241,8 +260,8 @@ host's `pr-code-review-<host>` with an offering for each model it names
 host's code review once none of its repositories has it on, the host is
 disconnected or the key is gone. Each new non-draft head of a pull request
 in such a repository (opened, reopened, a push, marked ready) is mailed to it
-once, whether or not triage is on; with the coordinator on it runs in a
-worker of its own, keyed apart from the pull request's triage.
+once, whether or not triage is on; it runs in a worker of its own, keyed
+apart from the pull request's triage.
 `POST /api/integrations/code-review/{tenantId}/run` reviews the current head
 again. The hub sends the host's unified diff (on GitHub, built from the
 files' patches when the pull request is too large for GitHub's diff), cut at

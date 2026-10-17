@@ -74,17 +74,18 @@ All optional; the defaults suit most installs.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `TRIAGE_RECONCILE_INTERVAL_MS` | 300000 | How often the hub re-queues open pull requests whose latest commit has no verdict. |
-| `TRIAGE_BATCH_SIZE` | 5 | Pull request heads one catch-up run carries at most. |
-| `TRIAGE_MAX_IN_FLIGHT` | 5 | Heads a tenant may have queued or running at once. Higher trades throughput for a bigger pack each rotation has to receive. |
+| `TRIAGE_MAX_IN_FLIGHT` | 5 | Heads the reconciler lets a tenant have queued or running at once; each runs in a sidecar of its own. |
 | `TRIAGE_CAPPED_RETRY_MS` | 21600000 | How long a head that ran out of attempts waits before a fresh set. |
 | `TRIAGE_ROTATE_AFTER_RUNS` | 15 | Runs a pr-triage deployment's log may hold before the hub deploys a fresh copy. |
 | `TRIAGE_COALESCE_QUIET_MS` | 30000 | Quiet time before a pull request's webhook events go out as one run; at most four times this after the first. A new commit, an opened, reopened or ready pull request, an approval or a change request waits only 3 seconds (or this, if shorter); comments, other chatter and check events wait this long. Must stay below 150000. |
-| `TRIAGE_COORDINATOR` | off | `on` runs each coalesced pull request in a worker deployment of its own, spawned from the host's live pr-triage deployment and released when its run ends, instead of mailing that deployment. |
-| `TRIAGE_WORKERS_GLOBAL` | 8 | Worker deployments alive at once on this hub, with the coordinator on. |
-| `TRIAGE_WORKERS_PER_TENANT` | 4 | Worker deployments one workspace may have alive at once. |
-| `TRIAGE_SPAWNS_PER_SECOND` | 2 | Worker deployments the coordinator starts per second. |
 
 ### Hub and sidecars
+
+Each triage and code review runs in a sidecar of its own. The box declines a
+new sidecar while its free memory is below one sidecar's footprint (1 GiB) for
+it and for each sidecar still starting: the container's memory limit less its
+usage where one is set, else Linux's `MemAvailable`. The run waits and is
+retried; there is no setting.
 
 | Variable | Default | Effect |
 | --- | --- | --- |

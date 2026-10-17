@@ -8,8 +8,8 @@ import type { CheckRun } from "@corbits/github-reads";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
-import { createRunTriggerDeliverer, type RunTriggerMaterialize } from "@corbits/webhooks";
-import { readyMaterializer, type LiveDeployment } from "./deployment.js";
+import { createRunTriggerDeliverer } from "@corbits/webhooks";
+import type { LiveDeployment } from "./deployment.js";
 import type { RotationRecord } from "./tenant-config.js";
 import { createRunRecorder } from "./run-recorder.js";
 import { createTenantObserver, createTenantVersions } from "./tenant-observer.js";
@@ -83,7 +83,7 @@ function rendered(verdict: Record<string, unknown>): WorkflowRunEvent {
 const completed: WorkflowRunEvent = { seq: 2, type: "RunCompleted", body: { type: "RunCompleted", seq: 2 } };
 
 type Logs = Record<string, Record<string, WorkflowRunEvent[]>>;
-type Delivered = Array<{ address: string | undefined; payload: Record<string, unknown> }>;
+type Delivered = Array<{ payload: Record<string, unknown> }>;
 
 function mailedHeads(delivered: Delivered): Array<[string, number]> {
   return delivered.flatMap((entry) => (entry.payload["items"] as Array<{ prNumber: number }>).map((item): [string, number] => [entry.payload["repo"] as string, item.prNumber]));
@@ -210,14 +210,9 @@ function fakeReader(logs: Logs) {
 
 type HarnessOptions = {
   github?: boolean;
-  batchSize?: number;
-  batched?: boolean;
   maxInFlight?: string;
-  failDeliveryAt?: number;
-  deliver?: (tenantId: string, address: string | undefined, payload: unknown) => Promise<void>;
   refuseSaves?: number;
   onRefusedSave?: (repo: string) => void;
-  onSave?: (repo: string, rows: PrTriageRow[]) => void;
   rotateAfterRuns?: number;
   now?: () => Date;
   deployments?: LiveDeployment[];
@@ -324,14 +319,10 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
       if (options.noPack) return { status: "missing" };
       return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: options.automatic ?? [], source: { repo: { id: "art_pack", version: 1 } } };
     },
-    send: async function send({ tenantId, address, payload }) {
-      if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
-      await options.deliver?.(tenantId, address, payload);
-      delivered.push({ address, payload: payload as Record<string, unknown> });
+    send: async function send({ payload }) {
+      delivered.push({ payload: payload as Record<string, unknown> });
     },
     policy: triageReconcilePolicy({ ...(options.maxInFlight !== undefined && { TRIAGE_MAX_IN_FLIGHT: options.maxInFlight }) }),
-    batchSize: options.batchSize ?? DEFAULT_RECONCILE_POLICY.maxInFlight,
-    batched: options.batched ?? true,
     now,
     log: (entry) => logged.push(entry),
   });
@@ -347,7 +338,6 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
           throw new TriageStateConflictError(repo);
         }
         saved.set(repo, rows);
-        options.onSave?.(repo, rows);
         return expected;
       },
     };
@@ -431,7 +421,7 @@ describe("triage reconciler", () => {
     expect(latestOf.map(([repo]) => repo)).toEqual([repoKey(LIVE.runId)]);
     expect(reads.every((read) => read.repo === repoKey(LIVE.runId))).toBe(true);
     expect(delivered).toHaveLength(1);
-    expect(delivered[0]).toMatchObject({ address: LIVE.address, payload: { kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] } });
+    expect(delivered[0]).toMatchObject({ payload: { kind: "pr", repo: REPO, items: [{ prNumber: 1, headSha: "sha1" }] } });
   });
 
   test("the Dos a run executed are recorded on its verdict", async () => {
@@ -653,10 +643,10 @@ describe("triage reconciler", () => {
       now = at(minute + 1);
       await reconcile();
     }
-    expect(delivered).toHaveLength(1);
+    expect(delivered).toHaveLength(2);
     now = at(2 + BASE_MOVE_WINDOW);
     await reconcile();
-    expect(delivered).toHaveLength(2);
+    expect(delivered).toHaveLength(4);
     expect(mailedNumbers(delivered)).toEqual([1, 2, 1, 2]);
   });
 
@@ -687,13 +677,13 @@ describe("triage reconciler", () => {
     test("a head re-checked after a merge reuses its decisive answers, while its conflicts are read afresh", async () => {
       const { first, payload } = await remailed(0.8);
       expect(first.asked).toBe(2);
-      expect((payload["items"] as Array<{ judged?: object }>).map((item) => Object.keys(item.judged ?? {}).length)).toEqual([2, 2]);
+      expect((payload["items"] as Array<{ judged?: object }>).map((item) => Object.keys(item.judged ?? {}).length)).toEqual([2]);
       const reused = await triageMail(stockTriggerMail(payload), { mergeable: true });
       expect(reused.asked).toBe(0);
-      expect(reused.verdicts.map(({ verdict, checks }) => [verdict, checks.find((check) => check.check === "focused")?.result])).toEqual([["pass", "pass"], ["pass", "pass"]]);
+      expect(reused.verdicts.map(({ verdict, checks }) => [verdict, checks.find((check) => check.check === "focused")?.result])).toEqual([["pass", "pass"]]);
       const conflicted = await triageMail(stockTriggerMail(payload), { mergeable: false });
       expect(conflicted.asked).toBe(0);
-      expect(conflicted.verdicts.map(({ verdict, checks }) => [verdict, checks.find((check) => check.check === "no-merge-conflicts")?.result])).toEqual([["fail", "fail"], ["fail", "fail"]]);
+      expect(conflicted.verdicts.map(({ verdict, checks }) => [verdict, checks.find((check) => check.check === "no-merge-conflicts")?.result])).toEqual([["fail", "fail"]]);
     });
 
     test("answers ride only on mail whose From is the hub's bare address on the deployment's domain", async () => {
@@ -725,7 +715,7 @@ describe("triage reconciler", () => {
       for (const from of [named, "github@other.test"]) {
         const mail = stockTriggerMail(payload);
         const forged = { ...mail, headers: { ...mail.headers, from }, rawHeaders: { ...mail.rawHeaders, from: [from] } };
-        expect((await triageMail(forged, { mergeable: true })).asked).toBe(2);
+        expect((await triageMail(forged, { mergeable: true })).asked).toBe(1);
       }
     });
 
@@ -760,10 +750,9 @@ describe("triage reconciler", () => {
     expect(latestOf[1]).toEqual([repoKey(LIVE.runId)]);
   });
 
-  test("the in-flight budget is per tenant across repositories, oldest pull requests first, one mail per repository", async () => {
+  test("the in-flight budget is per tenant across repositories, oldest pull requests first", async () => {
     const { reconcile, delivered } = harness({}, { "acme/one": heads(1, 3), "acme/two": heads(100, 3) });
     await reconcile();
-    expect(delivered.map((entry) => entry.payload["repo"])).toEqual(["acme/one", "acme/two"]);
     expect(mailedHeads(delivered)).toEqual([["acme/one", 1], ["acme/one", 2], ["acme/one", 3], ["acme/two", 100], ["acme/two", 101]]);
   });
 
@@ -773,14 +762,8 @@ describe("triage reconciler", () => {
     expect(mailedNumbers(delivered)).toEqual([1, 2]);
   });
 
-  test("a repository's heads are mailed in batches of at most the batch size", async () => {
-    const { reconcile, delivered } = harness({}, heads(1, 5), { batchSize: 2 });
-    await reconcile();
-    expect(delivered.map((entry) => mailedNumbers([entry]))).toEqual([[1, 2], [3, 4], [5]]);
-  });
-
-  test("under the coordinator each head is its own job, keyed by that head", async () => {
-    const { reconcile, delivered } = harness({}, heads(1, 3), { batched: false });
+  test("each head is its own job, keyed by that head", async () => {
+    const { reconcile, delivered } = harness({}, heads(1, 3));
     await reconcile();
     expect(delivered.map((entry) => mailedNumbers([entry]))).toEqual([[1], [2], [3]]);
   });
@@ -794,7 +777,6 @@ describe("triage reconciler", () => {
     };
     const { reconcile, delivered, saved, logged } = harness(logs, heads(1, 5));
     await reconcile();
-    expect(delivered).toHaveLength(1);
     expect(mailedNumbers(delivered)).toEqual([2, 4, 5]);
     expect(logged.filter((entry) => entry["msg"] === "triage_requeued").map((entry) => entry["reason"])).toEqual(["verdict made on head sha2-pushed", "degraded: facts interrupted: abort", "degraded: facts interrupted: abort"]);
     const rows = saved.get(REPO) ?? [];
@@ -815,58 +797,6 @@ describe("triage reconciler", () => {
     const rows = saved.get(REPO) ?? [];
     expect(rows.filter((row) => row.status === "triaged").map((row) => row.number)).toEqual([1, 2, 3, 4, 5]);
     expect(rows.filter((row) => row.status === "new").map((row) => row.number)).toEqual([11, 12]);
-  });
-
-  test("queued heads are written before the mail goes out, and the heads of a mail that fails are put back", async () => {
-    const saves: string[][] = [];
-    const { reconcile, delivered, saved } = harness({}, [head(1), head(2)], {
-      failDeliveryAt: 0,
-      onSave: (repo, rows) => { if (repo === REPO) saves.push(rows.map((row) => row.status)); },
-    });
-    await reconcile();
-    expect(delivered).toEqual([]);
-    expect(saves).toEqual([["queued", "queued"], ["new", "new"]]);
-    expect(saved.get(REPO)!.map((row) => row.error)).toEqual(["delivery failed: Error: unroutable", "delivery failed: Error: unroutable"]);
-  });
-
-  test("a deployment that has not recorded credential resolution keeps its heads unqueued until a later pass delivers", async () => {
-    const outcomes: Array<Awaited<ReturnType<RunTriggerMaterialize>>> = [{ outcome: "notReady" }, { outcome: "materialized", stepGrants: [] }];
-    const routed: string[] = [];
-    async function materialize() {
-      return outcomes.shift()!;
-    }
-    async function routeMail(address: string) {
-      routed.push(address);
-      return true;
-    }
-    async function tenantDomain() {
-      return DOMAIN;
-    }
-    async function sign() {
-      return new Uint8Array(64);
-    }
-    async function resolve() {
-      return { address: `github@${DOMAIN}`, publicKey: "00".repeat(32), sign };
-    }
-    const trigger = createRunTriggerDeliverer({
-      materialize: readyMaterializer(materialize),
-      router: { routeMail },
-      tenantDomain,
-      senderLocalPart: "github",
-      systemSender: { resolve },
-    });
-    async function deliver(tenantId: string, address: string | undefined, payload: unknown) {
-      if (address === undefined) throw new Error("no listener address");
-      await trigger.to(address, JSON.stringify(payload), tenantId, undefined);
-    }
-    const { reconcile, delivered, saved } = harness({}, [head(1)], { deliver });
-    expect(await reconcile()).toEqual({ retry: true });
-    expect(routed).toEqual([]);
-    expect(saved.get(REPO)!.map((row) => `${row.status}:${row.error}`)).toEqual(["new:delivery failed: Error: The workflow deployment is still starting."]);
-    expect(await reconcile()).toEqual({ retry: false });
-    expect(routed).toEqual([LIVE.address]);
-    expect(mailedNumbers(delivered)).toEqual([1]);
-    expect(saved.get(REPO)!.map((row) => row.status)).toEqual(["queued"]);
   });
 
   test("a state write refused as stale is retried once on the other writer's rows, keeping the newer row of each head", async () => {
@@ -911,16 +841,6 @@ describe("triage reconciler", () => {
     expect(mailedNumbers(delivered)).toEqual([2, 3, 4, 5]);
   });
 
-  test("a delivery failure keeps every later repository's heads unqueued and asks for retry", async () => {
-    const { reconcile, delivered, saved, logged } = harness({}, { "acme/a": heads(1, 2), "acme/b": heads(10, 2) }, { failDeliveryAt: 1 });
-    const outcome = await reconcile();
-    expect(outcome.retry).toBe(true);
-    expect(mailedHeads(delivered)).toEqual([["acme/a", 1], ["acme/a", 2]]);
-    expect(saved.get("acme/a")!.map((row) => row.status)).toEqual(["queued", "queued"]);
-    expect(saved.get("acme/b")!.every((row) => row.status === "new")).toBe(true);
-    expect(logged.filter((entry) => entry["msg"] === "triage_reconcile_failed").map((entry) => entry["repo"])).toEqual(["acme/b"]);
-  });
-
   test("heads first seen together queue lowest pull request number first, whatever order GitHub lists them", async () => {
     const { reconcile, delivered } = harness({}, heads(1, 10).reverse());
     await reconcile();
@@ -936,7 +856,6 @@ describe("triage reconciler", () => {
     expect(deployments.map((live) => live.runId)).toEqual(["run_live_fresh", LIVE.runId]);
     expect(records.rotation).toEqual({ from: LIVE.runId, to: "run_live_fresh", at: NOW.toISOString() });
     const fresh = deployments[0]!;
-    expect(delivered.map((entry) => entry.address)).toEqual([fresh.address]);
     expect(mailedNumbers(delivered)).toEqual([21]);
 
     await reconcile();
@@ -998,7 +917,6 @@ describe("triage reconciler", () => {
     await same.reconcile();
     expect(same.records.rotation).toEqual({ from: LIVE.runId, to: newer.runId, at: NOW.toISOString() });
     expect(same.released).toEqual([LIVE.runId]);
-    expect(same.delivered.map((entry) => entry.address)).toEqual([newer.address]);
 
     const other = harness(logs, [head(20)], { deployments: [newer, LIVE] });
     await other.reconcile();
@@ -1023,10 +941,9 @@ describe("triage reconciler", () => {
     state = harness(logs, [head(20)], { rotateAfterRuns: 15, now });
     await state.reconcile();
     expect(state.deployments.map((live) => live.runId)).toEqual([portal.runId]);
-    expect(state.delivered.map((entry) => entry.address)).toEqual([portal.address]);
   });
 
-  test("a copy that finished deploying after another deployment landed is released and not mailed", async () => {
+  test("a copy that finished deploying after another deployment landed is released", async () => {
     const logs: Logs = { [repoKey(LIVE.runId)]: settled(1, 19) };
     const portal = deployment("run_portal_v2", NOW);
     const { reconcile, deployments, delivered, released, records } = harness(logs, [head(20)], {
@@ -1037,7 +954,6 @@ describe("triage reconciler", () => {
     expect(released).toEqual(["run_live_fresh"]);
     expect(records.rotation).toBeUndefined();
     expect(deployments.map((live) => [live.runId, live.cancelling])).toEqual([["run_live_fresh", true], [portal.runId, false], [LIVE.runId, false]]);
-    expect(delivered.map((entry) => entry.address)).toEqual([portal.address]);
   });
 
   test("a copy that outlived a failed post-deploy check never overtakes the user's newer deployment", async () => {
@@ -1060,7 +976,6 @@ describe("triage reconciler", () => {
     await state.reconcile();
     expect(state.released).toEqual(["run_live_fresh"]);
     expect(state.records.rotation).toBeUndefined();
-    expect(state.delivered.map((entry) => entry.address)).not.toContain(formatRunAddress("run_live_fresh", DOMAIN));
     await state.reconcile();
     expect(state.released).toEqual(["run_live_fresh"]);
   });

@@ -1,6 +1,6 @@
 # Plan: pr-triage coordinator and per-triage worker deployments (CL-10705)
 
-Status: step 0 (spike) done, results in section 12; 12.4 reproduced and decided (12.6); step 1 built behind `TRIAGE_COORDINATOR`; step 2 (worker observation) built, proof in 12.8. Paths are repository-relative; `vendor/` is the
+Status: step 0 (spike) done, results in section 12; 12.4 reproduced and decided (12.6); step 1 built behind `TRIAGE_COORDINATOR`; step 2 (worker observation) built, proof in 12.8; the coordinator is now the only path, with the flag, batching and worker caps removed and capacity left to the provisioner. Paths are repository-relative; `vendor/` is the
 vendored Interchange at stock `cd02c313` (`vendor/interchange/VENDORED.md`).
 Upstream docs are cited by name at that ref.
 

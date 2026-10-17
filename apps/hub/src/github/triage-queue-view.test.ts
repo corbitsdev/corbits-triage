@@ -19,10 +19,5 @@ test("the queue route lists the workspace's waiting and running jobs with their 
     now: () => NOW,
   });
   const body = TriageQueue.assert(await (await handle(member)).json());
-  expect(body).toMatchObject({ coordinator: "on", queued: [{ number: 7, ageMs: 10_000 }], running: [{ number: 8, ageMs: 6_000, runId: "run_1" }] });
-});
-
-test("with the coordinator off the queue is empty", async () => {
-  const handle = createTriageQueueView({ coordinator: undefined, now: () => NOW });
-  expect(TriageQueue.assert(await (await handle(member)).json())).toEqual({ coordinator: "off", queued: [], running: [] });
+  expect(body).toMatchObject({ queued: [{ number: 7, ageMs: 10_000 }], running: [{ number: 8, ageMs: 6_000, runId: "run_1" }] });
 });

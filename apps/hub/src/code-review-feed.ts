@@ -1,5 +1,5 @@
 // Feeds code review: each new non-draft head of a pull request in a repository with code review on is mailed to its
-// host's pr-code-review once, through the same send path as triage (a worker of its own with the coordinator on).
+// host's pr-code-review once, through the same send path as triage, in a worker of its own.
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readPr, readPrDiff, type GithubFetch } from "@corbits/github-reads";
 import type { RepoSource } from "@corbits/triage-contracts";
