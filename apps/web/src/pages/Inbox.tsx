@@ -79,7 +79,7 @@ import { usePulse } from "../lib/pulse-visit.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
 import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
-import { usePolicyUpgrades } from "../lib/policy-upgrades.ts";
+import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
 import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
@@ -490,11 +490,11 @@ function RefusedPolicies({ repos }: { repos: string[] }) {
   ));
 }
 
-/** Saved rules that still need moving into a repository's policy file; the repository's panel says how. */
+/** Each repository whose saved rules still need moving into its policy file; its panel walks through it. */
 function PolicyUpgradeNotice() {
-  const repos = usePolicyUpgrades().map((row) => row.repo);
-  if (repos.length === 0) return null;
-  return <p role="status" className="note">Upgrade to a policy file: {repos.map((repo, at) => <Fragment key={repo}>{at > 0 ? ", " : null}<Link to={`/repositories/${repo}`}>{repo}</Link></Fragment>)}.</p>;
+  const rows = usePolicyUpgrades();
+  if (rows.length === 0) return null;
+  return <p role="status" className="note">{rows.map((row, at) => <Fragment key={row.repo}>{at > 0 ? " · " : null}<Link to={`/repositories/${row.repo}`}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p>;
 }
 
 function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {

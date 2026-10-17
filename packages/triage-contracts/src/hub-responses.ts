@@ -217,14 +217,21 @@ export const PolicyExported = type({ status: "'opened'", url: "string", number: 
 export type PolicyExported = typeof PolicyExported.infer;
 
 /**
+ * One way the file's policy runs differently from the saved one: the rule or step list, its values in each (empty is
+ * off or nothing), and in plain words what changes if the file is used instead.
+ */
+export const PolicyDifference = type({ rule: "string", saved: "string[]", file: "string[]", instead: "string" });
+export type PolicyDifference = typeof PolicyDifference.infer;
+
+/**
  * How a repository's saved rules stand against its policy file. `upgrade`: saved rules and no file. `differs`: both, and
- * they run differently (or triage refuses the file at `path`); the saved rules apply until the file matches them or the
- * saved artifact is archived; `fixable` is false when writing the saved rules to the file would change nothing it does,
+ * they run differently, or triage refuses the file at `path` for `problem`; the saved rules apply until the file matches
+ * them or the saved artifact is archived; `fixable` is false when writing the saved rules to the file would change nothing it does,
  * because the rest is what a file cannot hold. `unexpressed` lists what the saved rules hold that a policy file cannot.
  */
 export const PolicyUpgrade = type({ state: "'ok'" })
   .or({ state: "'upgrade'", saved: ArtifactRefShape, unexpressed: "string[]" })
-  .or({ state: "'differs'", path: "string", saved: ArtifactRefShape, differences: "string[]", fixable: "boolean", unexpressed: "string[]" });
+  .or({ state: "'differs'", path: "string", saved: ArtifactRefShape, differences: PolicyDifference.array(), "problem?": "string", fixable: "boolean", unexpressed: "string[]" });
 export type PolicyUpgrade = typeof PolicyUpgrade.infer;
 
 /** Each enabled repository the member may read; `pull` is the open pull request writing the saved rules to the file, `error` why the repository could not be read. */

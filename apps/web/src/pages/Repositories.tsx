@@ -14,7 +14,7 @@ import { githubAppPickerUrl, GITHUB_APP_PICKER_UNAVAILABLE } from "../lib/github
 import { useGithubSync } from "../lib/github-sync.ts";
 import { awaitingText } from "../lib/inbox-view.ts";
 import { useOpenPulls, useQueueItems, useQueueLoading } from "../lib/open-pulls.ts";
-import { usePolicyUpgrades } from "../lib/policy-upgrades.ts";
+import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { useHubRepoPackStore } from "../lib/repo-pack.ts";
 import { repoRows, type RepoRow } from "../lib/repo-rows.ts";
@@ -65,8 +65,6 @@ function selectedRepo(params: { owner?: string; repo?: string }): { name: string
   if (params.owner && params.repo) return { name: `${params.owner}/${params.repo}`, redirect: null };
   return { name: null, redirect: params.owner === undefined ? null : "/repositories" };
 }
-
-const UPGRADE_HEALTH = { upgrade: "Upgrade to a policy file", differs: "Policy file differs" } as const;
 
 export default function Repositories() {
   const { snapshot, readOnly } = usePortal();
@@ -141,8 +139,10 @@ export default function Repositories() {
 
   /** A repository whose saved rules still need moving into its policy file says so in place of its usual health. */
   function healthOf(row: RepoRow): ReactNode {
-    const upgrade = upgrades.find((found) => found.repo === row.name)?.upgrade;
-    if (upgrade && upgrade.state !== "ok") return <HealthMark health={{ tone: "warn", label: UPGRADE_HEALTH[upgrade.state] }} />;
+    const found = upgrades.find((upgrade) => upgrade.repo === row.name);
+    const label = found && upgradeLabel(found);
+    if (found?.pull) return <span className="hl wait"><span className="dot" />{label}</span>;
+    if (label) return <HealthMark health={{ tone: "warn", label }} />;
     return row.health.tone === "warn" ? <HealthMark health={row.health} /> : live(<HealthMark health={row.health} />);
   }
 

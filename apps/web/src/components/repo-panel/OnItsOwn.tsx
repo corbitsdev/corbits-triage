@@ -9,20 +9,9 @@ import type { HubGrant, HubRole } from "../../lib/hub-api.ts";
 import { DO_NAMES } from "../../lib/pack-prose.ts";
 import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
 
-const DOES: Record<ActionKind, string> = {
-  labels: "adds its labels",
-  assign: "assigns people",
-  "request-review": "requests reviewers",
-  comment: "posts its comment",
-  approve: "approves the pull request",
-  "request-changes": "requests changes",
-  close: "closes the pull request",
-  merge: "merges the pull request",
-};
-
 /** A host without labels shows the verdict as a build status, written with the comment. */
-function does(source: RepoSource, kind: ActionKind): string {
-  return kind === "comment" && !hostKinds(source).includes("labels") ? "posts its comment and the verdict build status" : DOES[kind];
+function doName(source: RepoSource, kind: ActionKind): string {
+  return kind === "comment" && !hostKinds(source).includes("labels") ? "Comment and build status" : DO_NAMES[kind];
 }
 
 type Change = { roleId: string; kind: ActionKind; on: boolean; own: HubGrant[] };
@@ -51,7 +40,7 @@ export default function OnItsOwn({ repo, source, roles, grants, disabled }: OnIt
     return (
       <div key={kind} className={`sentence${on ? "" : " off"}`}>
         <span className="txt">
-          <b>{DO_NAMES[kind]}</b>: Triage {does(source, kind)} without asking.
+          {doName(source, kind)}
           {wider ? <span className="wide">On in every repository (<Link to="/settings/access">Settings → Access</Link>)</span> : null}
         </span>
         <Switch className="sw" checked={on} onCheckedChange={(next) => change.mutate({ roleId: triage.id, kind, on: next, own })} label={`${DO_NAMES[kind]} on its own`} disabled={disabled || change.isPending || wider || !own.every(canRemoveGrant)} />
@@ -62,9 +51,9 @@ export default function OnItsOwn({ repo, source, roles, grants, disabled }: OnIt
   return (
     <section className="rs alone" aria-labelledby="rs-alone" id="rp-alone">
       <h3 id="rs-alone">Actions Triage takes on its own</h3>
-      <p className="help">The rest wait for you in the inbox.</p>
-      <div className="gcard"><div className="sentences">{hostKinds(source).map((kind) => row(triage, kind))}</div></div>
-      {change.error && change.variables ? <p role="alert" className="error">Could not change whether Triage {does(source, change.variables.kind)} on its own. {errorText(change.error)} Try again.</p> : null}
+      <p className="help">Triage does these without asking. The rest wait for you in the inbox.</p>
+      <div className="sentences">{hostKinds(source).map((kind) => row(triage, kind))}</div>
+      {change.error && change.variables ? <p role="alert" className="error">Could not change {doName(source, change.variables.kind)} on its own. {errorText(change.error)} Try again.</p> : null}
     </section>
   );
 }

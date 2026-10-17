@@ -34,7 +34,7 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
   }
 
   function hint() {
-    if (!enabled) return <span className="gate-note">Turn on triage to set rules and actions</span>;
+    if (!enabled) return <span className="gate-note">Turn on triage to run this repository's policy</span>;
     if (!triaging || !rerunnable) return null;
     return <button type="button" className="linkish quiet" disabled={disabled} onClick={() => void triageAgain()}>Triage open pull requests again</button>;
   }
@@ -48,7 +48,7 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, edit, 
         </div>
         <Switch className="sw lg" checked={enabled} onCheckedChange={setEnabled} label="Triage pull requests in this repository" disabled={disabled} />
       </div>
-      {triaging && !ruleOn ? <p className="help" role="status">Triage is enabled. Switch on a rule to have it start triggering.</p> : null}
+      {triaging && !ruleOn ? <p className="help" role="status">Triage is on. It starts once the policy has a rule.</p> : null}
       {rerunError ? <p role="alert" className="error">{rerunError}</p> : null}
     </>
   );

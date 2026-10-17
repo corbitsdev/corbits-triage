@@ -13,15 +13,17 @@ import {
   type CheckPack,
   type CustomCheck,
   type ModelCustomCheck,
+  type PeopleTarget,
   type Step,
   type VerdictWord,
 } from "./check-pack.js";
+import type { PolicyDifference } from "./hub-responses.js";
 import { ruleNameOf } from "./policy-rules.js";
-import { catalogSentence, customSentence } from "./rule-prose.js";
+import { catalogSentence, customSentence, ISSUE_TRACKER_NAMES } from "./rule-prose.js";
 
 const REASON = "Set in the portal before the policy file.";
 const EVIDENCE = ["maintainer-stated"];
-const VERDICT_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
+export const VERDICT_NAMES: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
 
 export type PolicyFileExport = { text: string; unexpressed: string[] };
 
@@ -53,21 +55,21 @@ function catalogRule(pack: CheckPack, id: CatalogId, unexpressed: string[]): Rec
   if (!row) return [];
   const params = catalogParams(id, row);
   if (!params) {
-    if (row.enabled) unexpressed.push(`"${catalogSentence(id, pack)}" is on without a value a policy file can hold, so the file leaves it out.`);
+    if (row.enabled) unexpressed.push(`${catalogSentence(id, pack)} stops after the merge; a policy file can't hold it without a value.`);
     return [];
   }
   return [written(row, { check: id }, row.text ?? `${catalogSentence(id, pack)}.`, params)];
 }
 
 function customRule(row: CustomCheck, unexpressed: string[]): Record<string, unknown>[] {
-  if (row.name !== ruleNameOf(row.id)) unexpressed.push(`Rule "${row.name}" is named "${ruleNameOf(row.id)}" in the file.`);
+  if (row.name !== ruleNameOf(row.id)) unexpressed.push(`${row.name} is called ${ruleNameOf(row.id)} in the file.`);
   if (row.kind === "text") {
     return [written(row, { id: row.id, check: "text" }, row.text ?? row.name, { fields: row.fields, failWhen: row.failWhen, phrases: row.phrases })];
   }
   if (row.shape === "is-true" && row.when === undefined && (row.scope ?? "pull-request") === "pull-request") {
     return [written(row, { id: row.id, check: "model" }, row.claim, {})];
   }
-  unexpressed.push(`Rule "${row.name}" (${customSentence(row)}) cannot be written in a policy file, so the file leaves it out.`);
+  unexpressed.push(`${row.name} stops after the merge; a policy file can't hold it.`);
   return [];
 }
 
@@ -105,7 +107,7 @@ function fileLabels(pack: CheckPack): Record<string, string> | undefined {
  */
 export function exportPolicyFile(pack: CheckPack, extended: boolean): PolicyFileExport {
   const unexpressed: string[] = [];
-  if (extended) unexpressed.push("The workspace's shared rules are copied into the file, so later changes to them no longer reach this repository.");
+  if (extended) unexpressed.push("Later changes to the workspace's shared rules stop reaching this repository.");
   const rules = [...CATALOG_IDS.flatMap((id) => catalogRule(pack, id, unexpressed)), ...pack.custom.flatMap((row) => customRule(row, unexpressed))];
   const actions = fileActions(pack);
   const labels = fileLabels(pack);
@@ -173,63 +175,150 @@ const STEP_WORDS: Record<Step["do"], string> = {
   nothing: "do nothing",
 };
 
-function thirdPerson(phrase: string): string {
-  return phrase.replace(/^(\w+)/, (verb) => (verb === "do" ? "does" : `${verb}s`));
+const CATALOG_RULES: Partial<Record<CatalogId, string>> = {
+  "max-files-changed": "Most files changed",
+  "max-lines-changed": "Most lines changed",
+  "linked-issue": "Require a linked issue from",
+  "no-forbidden-paths": "Never accept changes to",
+};
+
+// CI green has three states: required, absent (merges still wait for CI) and written off (merges skip it).
+const CI_STATES = { [CI_SKIPPED]: "merges skip CI", absent: "merges wait for CI" } as const;
+
+function catalogValues(pack: CheckPack, id: CatalogId): string[] {
+  const row = pack.checks[id];
+  if (id === "ci-green" && row?.enabled === false) return [CI_STATES[CI_SKIPPED]];
+  if (id === "ci-green" && !row?.enabled) return [CI_STATES.absent];
+  if (!row?.enabled) return [];
+  switch (id) {
+    case "max-files-changed":
+      return [count(row.maxFiles)];
+    case "max-lines-changed":
+      return [count(row.maxLines)];
+    case "linked-issue":
+      return [ISSUE_TRACKER_NAMES[row.tracker && row.tracker !== "off" ? row.tracker : "either"]];
+    case "no-forbidden-paths":
+      return row.forbiddenGlobs ?? [];
+    default:
+      return ["on"];
+  }
 }
 
-/** What a list of steps does, after "your saved rules" or, with `one`, after "the file". */
-function stepsText(steps: readonly Step[], one: boolean): string {
-  const words = steps.length ? steps.map((step) => STEP_WORDS[step.do]) : [STEP_WORDS.nothing];
-  return (one ? words.map(thirdPerson) : words).join(", then ");
+function count(value: number | undefined): string {
+  return value === undefined ? "no limit" : value.toLocaleString("en-US");
 }
 
-function catalogWords(pack: CheckPack, id: CatalogId, checks: string): string {
-  return checks === CI_SKIPPED ? CI_SKIPPED : catalogSentence(id, pack);
+function listed(values: readonly string[]): string {
+  return values.join(", ");
 }
 
-function catalogDifferences(saved: CheckPack, file: CheckPack): string[] {
+/** What using the file changes, after "Use the file instead". */
+function instead(rule: string, saved: readonly string[], file: readonly string[]): string {
+  if (file.length === 0) return `${rule} will be off.`;
+  if (saved.length === 0) return `${rule} will be ${listed(file)}.`;
+  return `${rule}: ${listed(file)} instead of ${listed(saved)}.`;
+}
+
+function pathsInstead(saved: readonly string[], file: readonly string[]): string {
+  const freed = saved.filter((path) => !file.includes(path));
+  const barred = file.filter((path) => !saved.includes(path));
+  return [
+    ...(freed.length ? [`Pull requests that change ${listed(freed)} will no longer fail.`] : []),
+    ...(barred.length ? [`Pull requests that change ${listed(barred)} will fail.`] : []),
+  ].join(" ");
+}
+
+function ciInstead(file: CheckPack): string {
+  const checks = catalogChecks(file, "ci-green");
+  if (checks === CI_SKIPPED) return "Merges will no longer wait for CI.";
+  return checks === undefined ? "Failing CI will no longer fail pull requests; merges still wait for it." : "Pull requests with failing CI will fail.";
+}
+
+function catalogInstead(id: CatalogId, rule: string, saved: readonly string[], file: readonly string[], filePack: CheckPack): string {
+  if (id === "no-forbidden-paths") return pathsInstead(saved, file);
+  return id === "ci-green" ? ciInstead(filePack) : instead(rule, saved, file);
+}
+
+function catalogDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[] {
   return CATALOG_IDS.flatMap(function differs(id) {
-    const [inSaved, inFile] = [catalogChecks(saved, id), catalogChecks(file, id)];
-    if (inSaved === inFile) return [];
-    if (inFile === undefined) return [`Your saved rules have "${catalogWords(saved, id, inSaved!)}"; the file does not.`];
-    if (inSaved === undefined) return [`The file has "${catalogWords(file, id, inFile)}"; your saved rules do not.`];
-    return [`Your saved rules say "${catalogWords(saved, id, inSaved)}"; the file says "${catalogWords(file, id, inFile)}".`];
+    if (catalogChecks(saved, id) === catalogChecks(file, id)) return [];
+    const rule = CATALOG_RULES[id] ?? catalogSentence(id, saved);
+    const [inSaved, inFile] = [catalogValues(saved, id), catalogValues(file, id)];
+    return [{ rule, saved: inSaved, file: inFile, instead: catalogInstead(id, rule, inSaved, inFile, file) }];
   });
 }
 
-function customDifferences(saved: CheckPack, file: CheckPack): string[] {
+function customDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[] {
   const ids = [...new Set([...saved.custom, ...file.custom].map((row) => row.id))];
   return ids.flatMap(function differs(id) {
     const [savedRow, fileRow] = [saved.custom.find((row) => row.id === id), file.custom.find((row) => row.id === id)];
-    const [inSaved, inFile] = [customChecks(savedRow), customChecks(fileRow)];
-    if (inSaved === inFile) return [];
-    const name = (savedRow ?? fileRow)!.name;
-    if (inFile === undefined) return [`Rule "${name}" is on in your saved rules but not in the file.`];
-    if (inSaved === undefined) return [`Rule "${name}" is on in the file but not in your saved rules.`];
-    return [`Rule "${name}" checks something different in the file.`];
+    if (customChecks(savedRow) === customChecks(fileRow)) return [];
+    const rule = (savedRow ?? fileRow)!.name;
+    const [inSaved, inFile] = [customChecks(savedRow) ? [customSentence(savedRow!)] : [], customChecks(fileRow) ? [customSentence(fileRow!)] : []];
+    return [{ rule, saved: inSaved, file: inFile, instead: inFile.length && inSaved.length ? `${rule} will check something different.` : instead(rule, inSaved, inFile) }];
   });
 }
 
-function actionDifferences(saved: CheckPack, file: CheckPack): string[] {
-  const out: string[] = [];
+const VERDICT_RULES: Record<VerdictWord, string> = { pass: "When it passes", fail: "When it fails", unsure: "When Triage is unsure" };
+
+/** Whom a review request or assignment goes to, in words. */
+export function people(target: PeopleTarget): string {
+  switch (target.to) {
+    case "codeowners":
+      return "code owners";
+    case "author":
+      return "the author";
+    case "users":
+      return target.users.map((user) => `@${user}`).join(", ");
+    case "teams":
+      return target.teams.map((team) => `@${team}`).join(", ");
+  }
+}
+
+/** What a step acts on, after its action word. */
+function targetWords(step: Step): string {
+  switch (step.do) {
+    case "labels":
+      return step.target.from === "rules" ? " for each failed rule" : ` ${step.target.labels.join(", ")}`;
+    case "assign":
+      return ` to ${people(step.target)}`;
+    case "request-review":
+      return ` from ${people(step.target)}`;
+    case "comment":
+      return ` "${step.target.body}"`;
+    default:
+      return "";
+  }
+}
+
+/** A step as its words: the action, what it acts on, and whom it is for. */
+function stepWords(step: Step): string {
+  const author = step.when?.author;
+  const words = `${STEP_WORDS[step.do]}${targetWords(step)}`;
+  return author?.length ? `${words} for ${authorGroups(author).join(", ")}` : words;
+}
+
+function actionDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[] {
+  const out: PolicyDifference[] = [];
   if (canonical(saved.actions.when) !== canonical(file.actions.when)) {
-    out.push(`Your saved rules act when a pull request is ${saved.actions.when.join(", ")}; the file when it is ${file.actions.when.join(", ")}.`);
+    out.push({ rule: "Act when a pull request is", saved: saved.actions.when, file: file.actions.when, instead: `Triage will act when a pull request is ${listed(file.actions.when)}.` });
   }
   for (const verdict of VERDICTS) {
     const [inSaved, inFile] = [saved.actions[verdict], file.actions[verdict]];
     if (canonical(inSaved.map(stepRuns)) === canonical(inFile.map(stepRuns))) continue;
-    const [savedText, fileText] = [stepsText(inSaved, false), stepsText(inFile, true)];
-    out.push(stepsText(inSaved, true) === fileText
-      ? `On ${VERDICT_NAMES[verdict]}, the steps are for different people or conditions.`
-      : `On ${VERDICT_NAMES[verdict]}, your saved rules ${savedText}; the file ${fileText}.`);
+    const [savedWords, fileWords] = [inSaved.map(stepWords), inFile.map(stepWords)];
+    const does = fileWords.length ? fileWords.join(", then ") : "do nothing";
+    out.push({ rule: VERDICT_RULES[verdict], saved: savedWords, file: fileWords, instead: `${VERDICT_RULES[verdict]}, Triage will ${does}.` });
   }
   for (const verdict of VERDICTS) {
-    if (saved.labels[verdict] !== file.labels[verdict]) out.push(`The ${VERDICT_NAMES[verdict]} label is "${saved.labels[verdict]}" in your saved rules and "${file.labels[verdict]}" in the file.`);
+    if (saved.labels[verdict] === file.labels[verdict]) continue;
+    const rule = `The ${VERDICT_NAMES[verdict]} label`;
+    out.push({ rule, saved: [saved.labels[verdict]], file: [file.labels[verdict]], instead: instead(rule, [saved.labels[verdict]], [file.labels[verdict]]) });
   }
   return out;
 }
 
-/** Each way the file's policy runs differently from the saved one, in plain words; none when they run the same. */
-export function policyDifferences(saved: CheckPack, file: CheckPack): string[] {
+/** Each way the file's policy runs differently from the saved one; none when they run the same. */
+export function policyDifferences(saved: CheckPack, file: CheckPack): PolicyDifference[] {
   return [...catalogDifferences(saved, file), ...customDifferences(saved, file), ...actionDifferences(saved, file)];
 }

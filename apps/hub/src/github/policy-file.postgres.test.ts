@@ -238,12 +238,12 @@ test("PostgreSQL: saved rules apply while the file runs differently or is refuse
   onMain(SAVED, YAML, "checks:\n  no-forbidden-paths: { enabled: true, forbiddenGlobs: [node_modules/**] }\n");
   await policyFile.onPush(TENANT, SAVED);
   expect(await readPack(SAVED)).toEqual(stored);
-  expect(await upgradeOf(SAVED)).toMatchObject({ upgrade: { state: "differs", path: YAML, differences: ['Your saved rules say "Never accept changes to vendor/**, node_modules/**"; the file says "Never accept changes to node_modules/**".'], fixable: true } });
+  expect(await upgradeOf(SAVED)).toMatchObject({ upgrade: { state: "differs", path: YAML, differences: [{ rule: "Never accept changes to", saved: ["vendor/**", "node_modules/**"], file: ["node_modules/**"] }], fixable: true } });
 
   onMain(SAVED, YAML, "rules: [");
   await policyFile.onPush(TENANT, SAVED);
   expect(await readPack(SAVED)).toEqual(stored);
-  expect(await upgradeOf(SAVED)).toMatchObject({ upgrade: { state: "differs", differences: ["Triage can't read .corbits-triage.yaml: Line 2: The policy file is not YAML: unexpected end of the stream within a flow collection."] } });
+  expect(await upgradeOf(SAVED)).toMatchObject({ upgrade: { state: "differs", differences: [], problem: "Line 2: The policy file is not YAML: unexpected end of the stream within a flow collection." } });
 
   onMain(SAVED, YAML, "checks:\n  no-forbidden-paths: { enabled: true, forbiddenGlobs: [node_modules/**, vendor/**] }\n");
   await policyFile.onPush(TENANT, SAVED);
@@ -297,7 +297,7 @@ test("PostgreSQL: a file already holding all a file can of the saved rules is no
   onMain(FROM_FILE, YML, exportPolicyFile(saved, false).text);
   await policyFile.onPush(TENANT, FROM_FILE);
   expect(await readPack(FROM_FILE)).toMatchObject({ status: "ok", source: { repo: { version: 1 } } });
-  expect(await upgradeOf(FROM_FILE)).toMatchObject({ upgrade: { state: "differs", differences: ['Rule "Risk" is on in your saved rules but not in the file.'], fixable: false } });
+  expect(await upgradeOf(FROM_FILE)).toMatchObject({ upgrade: { state: "differs", differences: [{ rule: "Risk", file: [] }], fixable: false } });
   expect(await exportOf(FROM_FILE)).toMatchObject({ http: 409, error: { code: "policy_file_full" } });
 }, 60_000);
 
