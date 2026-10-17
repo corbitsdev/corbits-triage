@@ -1,6 +1,6 @@
 # Corbits Triage User Manual
 
-Oct 13, 2026 · @Brian J. Fox
+Oct 16, 2026 · @Brian J. Fox
 
 ## Contents
 
@@ -94,7 +94,7 @@ Repositories from Bitbucket Data Center are named by project key and repository,
 
 ![The repository page for TRI/widgets, a Bitbucket Data Center repository: the triage switch on with the notice Triage is enabled. Switch on a rule to have it start triggering, then Set up the webhook on Bitbucket with the Webhook URL, the Webhook secret and the events to select](images/25.png)
 
-Bitbucket tells Triage about pull request events through a webhook on each repository. When you turn triage on, Triage creates that webhook itself if its token is allowed to. If not, the page shows **Set up the webhook on Bitbucket** with the webhook URL, a secret and the list of events. A repository admin on Bitbucket then:
+Bitbucket tells Triage about pull request events through a webhook on each repository. When you turn triage on, Triage creates that webhook itself if its token is allowed to. If not, the page shows **Webhook setup** with the webhook URL, a secret and the list of events. A repository admin on Bitbucket then:
 
 1. Opens the repository, then **Repository settings → Webhooks → Create webhook**.
 2. Names it **Corbits Triage** and pastes the URL.
@@ -256,9 +256,9 @@ The **All open** view groups pull requests by repository and adds two chips to e
 | Chip | Meaning |
 | --- | --- |
 | PASS, FAIL or UNSURE | The verdict. Green means pass, red means fail, and gray means Triage could not tell. |
-| WAITS ON YOU, WAITS ON AUTHOR, WAITS ON NOBODY | Whose move it is. |
+| WAITS ON YOU, WAITS ON AUTHOR, WAITS ON CI, WAITS ON NOBODY | Whose move it is. |
 
-A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. In **All open** it waits on CI. A draft shows **Draft** and **Draft: Not evaluated** instead, since Triage waits until it is marked ready for review.
+A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. In **All open** its chip is WAITS ON CI. A draft shows **Draft** and **Draft: Not evaluated** instead, since Triage waits until it is marked ready for review.
 
 ### The reading pane
 
@@ -350,7 +350,7 @@ This is where the AI decision model lives. The first line says which provider an
 
 ![The Code review section: Reads each pull request for bugs, with the stored Anthropic secret, a Replace secret button and a Remove link](images/26.png)
 
-Code review reads each pull request for bugs and runs on Anthropic. Paste an Anthropic API key and press **Save key**. Like every key, it is kept in the server's vault and then shows as **stored**, with **Replace secret** to change it and **Remove** to delete it.
+Code review is Triage's bug finder, and it runs on Anthropic. Here you store the Anthropic API key it uses; Triage does not use it to review pull requests yet. Paste the key and press **Save key**. Like every key, it is kept in the server's vault and then shows as **stored**, with **Replace secret** to change it and **Remove** to delete it.
 
 ### Access
 
