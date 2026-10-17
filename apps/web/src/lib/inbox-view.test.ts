@@ -190,9 +190,9 @@ describe("groupOpen", () => {
 describe("All open", () => {
   const open: OpenItem[] = [
     { item: item({}), handled: null },
-    { item: item({ key: "acme/widgets#2", state: "new", runId: null }), handled: null },
-    { item: item({ key: "acme/widgets#3", state: "ready", authorKind: "first-timer" }), handled: { kind: "approve" } },
-    { item: item({ key: "acme/off#4", repo: "acme/off", authorKind: "first-timer" }), handled: null },
+    { item: item({ key: "acme/widgets#2", state: "new", runId: null, authorKind: "FIRST_TIMER" }), handled: null },
+    { item: item({ key: "acme/widgets#3", state: "ready", authorKind: "FIRST_TIME_CONTRIBUTOR" }), handled: { kind: "approve" } },
+    { item: item({ key: "acme/off#4", repo: "acme/off", authorKind: "FIRST_TIME_CONTRIBUTOR" }), handled: null },
   ];
 
   test("lists only the open pull requests of repositories with triage enabled", () => {
@@ -201,12 +201,12 @@ describe("All open", () => {
   });
 
   test("First-timers lists only first-timers' open pull requests of repositories with triage enabled", () => {
-    expect(firstTimers(open, READY).map((entry) => entry.item.key)).toEqual(["acme/widgets#3"]);
+    expect(firstTimers(open, READY).map((entry) => entry.item.key)).toEqual(["acme/widgets#2", "acme/widgets#3"]);
     expect(firstTimers(open, new Set())).toEqual([]);
   });
 
   test("Needs you, All open and First-timers count only repositories with triage enabled", () => {
-    expect(listCounts(open, READY)).toEqual({ "needs-you": 1, "all-open": 3, "first-timers": 1 });
+    expect(listCounts(open, READY)).toEqual({ "needs-you": 1, "all-open": 3, "first-timers": 2 });
     expect(listCounts(open, new Set())).toEqual({ "needs-you": 0, "all-open": 0, "first-timers": 0 });
     expect(listCounts([], READY)).toEqual({ "needs-you": 0, "all-open": 0, "first-timers": 0 });
   });

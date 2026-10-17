@@ -111,7 +111,7 @@ function AuthorTag({ kind }: { kind: AuthorKind | null }) {
 
 function RowAuthor({ author, kind }: { author: string | null; kind: AuthorKind | null }) {
   const role = kind === null ? "" : ` (${AUTHOR_KIND_LABEL[kind]})`;
-  const login = kind === "bot" ? author?.replace(/\[bot\]$/, "") : author;
+  const login = kind === "BOT" ? author?.replace(/\[bot\]$/, "") : author;
   return (
     <>
       {login == null ? null : <span className="tag quiet login" title={`Author: ${author}${role}`}><span className="sr-only">Author: </span>{login}</span>}

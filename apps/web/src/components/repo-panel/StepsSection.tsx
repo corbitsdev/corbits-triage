@@ -63,8 +63,8 @@ export default function StepsSection({ view, automatic, disabled }: StepsSection
   function audience(at: string, step: Step, change: (next: Step) => void) {
     const match = stepFor(step);
     if (typeof match !== "object") return null;
-    if ("team" in match) return <input className="val lbl" aria-label={`${at}: team`} placeholder={TEAM_PLACEHOLDER} disabled={disabled} value={match.team} onChange={(event) => change(withStepFor(step, { team: event.target.value }))} />;
-    return <TokenList values={match.users} noun="person" placeholder="login" disabled={disabled} onChange={(users) => change(withStepFor(step, { users: logins(users) }))} />;
+    if ("team" in match) return <input className="val lbl" aria-label={`${at}: team`} placeholder={TEAM_PLACEHOLDER} disabled={disabled} value={match.team} onChange={(event) => change(withStepFor(step, [{ team: event.target.value }]))} />;
+    return <TokenList values={match.users} noun="person" placeholder="login" disabled={disabled} onChange={(users) => change(withStepFor(step, [{ users: logins(users) }]))} />;
   }
 
   function under(at: string, step: Step, change: (next: Step) => void) {

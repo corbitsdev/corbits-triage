@@ -1,4 +1,4 @@
-import { NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
+import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
 import type { PrItem, QueueState } from "./hub-api.ts";
 import { priorityRank } from "./triage-view.ts";
 
@@ -232,7 +232,7 @@ export function needsYou(open: OpenItem[], enabled: ReadonlySet<string>): OpenIt
 }
 
 export function firstTimers(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
-  return allOpen(open, enabled).filter((entry) => entry.item.authorKind === "first-timer");
+  return allOpen(open, enabled).filter((entry) => entry.item.authorKind !== null && isFirstTimer(entry.item.authorKind));
 }
 
 export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Record<ListView, number> {
@@ -244,18 +244,24 @@ export function listCounts(open: OpenItem[], enabled: ReadonlySet<string>): Reco
 }
 
 export const AUTHOR_KIND_LABEL: Record<AuthorKind, string> = {
-  owner: "Owner",
-  member: "Member",
-  collaborator: "Collaborator",
-  contributor: "Contributor",
-  "first-timer": "First-timer",
-  outside: "Outside",
-  bot: "Bot",
+  OWNER: "Owner",
+  MEMBER: "Member",
+  COLLABORATOR: "Collaborator",
+  CONTRIBUTOR: "Contributor",
+  FIRST_TIME_CONTRIBUTOR: "First-timer",
+  FIRST_TIMER: "New to GitHub",
+  NONE: "Outside",
+  MANNEQUIN: "Imported",
+  BOT: "Bot",
 };
+
+function isFirstTimer(kind: AuthorKind): boolean {
+  return (AUTHOR_GROUPS["first-timers"] as readonly AuthorKind[]).includes(kind);
+}
 
 /** Only first-timers and bots change how a pull request is read; the other kinds stay quiet. */
 export function isLoudAuthorKind(kind: AuthorKind): boolean {
-  return kind === "first-timer" || kind === "bot";
+  return isFirstTimer(kind) || kind === "BOT";
 }
 
 export type InboxGrouping = "action" | "repo" | "owner";

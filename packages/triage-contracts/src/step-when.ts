@@ -1,11 +1,4 @@
-import type { AuthorGroup, AuthorKind, AuthorMatch, CiState, SizeBound, StepWhen } from "./check-pack.js";
-
-const AUTHOR_GROUP_KINDS: Record<AuthorGroup, readonly AuthorKind[]> = {
-  "first-timers": ["first-timer"],
-  maintainers: ["owner", "member", "collaborator"],
-  external: ["contributor", "first-timer", "outside"],
-  bots: ["bot"],
-};
+import type { AuthorKind, AuthorMatch, CiState, SizeBound, StepWhen } from "./check-pack.js";
 
 export type StepAuthor = { login: string; kind?: AuthorKind; teams?: readonly string[]; teamsUnknown?: readonly string[] };
 
@@ -21,7 +14,7 @@ function matchName(match: AuthorMatch): string {
 }
 
 function authorMatches(match: AuthorMatch, author: StepAuthor): boolean | undefined {
-  if (typeof match === "string") return author.kind === undefined ? undefined : AUTHOR_GROUP_KINDS[match].includes(author.kind);
+  if (typeof match === "string") return author.kind === undefined ? undefined : match === author.kind;
   if ("users" in match) return match.users.some((login) => login.toLowerCase() === author.login.toLowerCase());
   if (author.teams?.includes(match.team)) return true;
   if (!author.teams || author.teamsUnknown?.includes(match.team)) return undefined;
@@ -29,7 +22,7 @@ function authorMatches(match: AuthorMatch, author: StepAuthor): boolean | undefi
 }
 
 function authorHolds(matches: readonly AuthorMatch[], author: StepAuthor): Holds {
-  const names = matches.map(matchName).join(" or ");
+  const names = [...new Set(matches.map(matchName))].join(" or ");
   const answers = matches.map((match) => authorMatches(match, author));
   if (answers.includes(true)) return { matches: true, reason: `the author is ${names}` };
   if (answers.includes(undefined)) return { matches: undefined, reason: `it is not known whether the author is ${names}` };
