@@ -56,7 +56,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     its first check fail, mails the head once with those events. A head with
     no checks yet waits up to 2 minutes for CI to start, and no head waits
     more than 60 minutes from when it was first seen. Manual runs, the backlog
-    run and retries after the base branch moves are not held.
+    run and retries after the base branch moves are not held. When a head
+    starts waiting, and the `pr-triage` role holds Labels on GitHub or Comment
+    on Bitbucket, the hub also mails it once with `kind: "waiting"`: the run
+    triages nothing and only mirrors the waiting marker (see step 7).
   - **Reconciler**: on an interval, compares each enabled repository's open
     pull requests with the run logs and stored state, and re-queues every
     head without a verdict, and every stale head at most once per 15 minutes,
@@ -65,7 +68,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     mail of its own with the events it waited with; this releases Bitbucket
     heads, whose builds send no webhook, and any head whose `check_run` never
     arrived. A head it finds with no webhook behind it, such as an open pull
-    request when triage is turned on, waits the same way while its CI runs. Moving a head from `waiting` to `queued` is a compare-and-swap
+    request when triage is turned on, waits the same way while its CI runs,
+    and is mailed to be marked waiting the same way. Moving a head from `waiting` to `queued` is a compare-and-swap
     write, so a check run and the reconciler releasing it together start one
     run. A catch-up mail carries
     the decision-model answers recorded in the head's last verdict (from its
@@ -176,6 +180,13 @@ one does.
 7. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`) when the
    `pr-triage` role holds the labels grant, and one marker comment when it holds the comment grant; on Bitbucket the comment
    grant also writes the verdict as the `Corbits Triage` build status. It runs before execute so a merge or close finds the final verdict on the head it closes.
+   A waiting mail from the hub's sender skips every other step: the `waiting` action and `held` gate route it to `markWaiting`,
+   which mirrors only the waiting marker under the effect id `waiting:<owner>--<name>:<number>:<head sha>`: the
+   `Triage: Waiting for CI` label in place of the verdict label on GitHub, or the `Corbits Triage` build status as
+   `INPROGRESS` "Triage: Waiting for CI" on Bitbucket. Both writes are no-ops when the head already shows them, and
+   nothing is written once the pull request moved past the head the mail named. The
+   verdict's own mirror replaces it: the waiting label is one of the labels it owns and takes back, and the build status
+   is overwritten under the same key.
 8. **execute**: runs the actions whose kind the `pr-triage` role holds on the host.
    Every other action is held in the verdict (`held: true`) and the run finishes.
 

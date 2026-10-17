@@ -86,6 +86,7 @@ const MIRROR_INPUT = obj({
   },
   notReadyHead: str,
   fixedHead: str,
+  onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
 }, ["repo", "number", "labels"]);
 
 const MIRROR_DESCRIPTION =
@@ -177,7 +178,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return checkout(bb, a.repo, a.sha, reads.toolCwd);
     case "bitbucket_datacenter_mirror":
     case "bitbucket_datacenter_mirror_auto": {
-      const mirrored = await mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, build: a.build, close: false }, user);
+      const mirrored = await mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, build: a.build, onHead: a.onHead, close: false }, user);
       if ("skipped" in mirrored) return mirrored;
       if (a.notReadyHead !== mirrored.sha && a.fixedHead !== mirrored.sha) return mirrored;
       return { ...mirrored, dismissed: await takeBack(bb, a, mirrored.sha, await user()) };

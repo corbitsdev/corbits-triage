@@ -14,7 +14,7 @@
 // traffic then flows through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEventOf, type RepoPolicy } from "@corbits/triage-contracts";
+import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATH, repoPolicy, triageEventOf, WAITING_KIND, type RepoPolicy } from "@corbits/triage-contracts";
 import { asRecord, errorText, isRecord } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
@@ -179,6 +179,11 @@ export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy:
     pack,
     automatic,
   };
+}
+
+/** The mail for a head held for its CI: triage marks it waiting where it writes the verdict, and triages nothing. */
+export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, pack: StoredPack, head: { number: number; headSha: string }) {
+  return { ...mailPayload(record, policy, pack, { prNumber: head.number, headSha: head.headSha }), kind: WAITING_KIND };
 }
 
 export async function resolvedPack(

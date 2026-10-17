@@ -18,6 +18,8 @@ export interface MirrorInput {
   comment?: string;
   /** What the comment is written for; without it the comment is written whatever it said before. */
   header?: TriageHeader;
+  /** Writes nothing once the pull request has moved past this head. */
+  onHead?: string;
   close: boolean;
 }
 
@@ -38,6 +40,7 @@ export async function syncLabels(gh: GithubFetch, input: { repo: string; number:
 }
 
 export const NOT_OPEN = "the pull request is not open";
+const HEAD_MOVED = "the pull request has moved past the head";
 
 /** `login` names the App, whose comments alone are read back. */
 export async function mirror(gh: GithubFetch, i: MirrorInput, login: AppLogin) {
@@ -45,6 +48,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput, login: AppLogin) {
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   // A closed or merged pull request is history; a close Do reads it open before it comes here.
   if (pr.state !== "open") return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: NOT_OPEN };
+  if (i.onHead !== undefined && i.onHead !== pr.head.sha) return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: HEAD_MOVED };
   // An empty comment means nothing is asked of the author, so an earlier one would be stale instructions.
   if (i.comment === "") await deleteTriageComments(gh, repo, number);
   const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header }, login) : null;

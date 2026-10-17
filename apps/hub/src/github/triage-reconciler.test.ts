@@ -3,7 +3,7 @@ import { createEd25519Crypto, generateKeyPair } from "@intx/crypto";
 import { decodeMail, extractAddrSpec } from "@intx/mime";
 import { formatRunAddress } from "@intx/types";
 import { workflowRunRepoIdForAddress, type RepoId, type WorkflowRunEvent, type WorkflowRunReader } from "@intx/hub-sessions";
-import { emptyPack, stockTriggerMail, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { emptyPack, stockTriggerMail, type ActionKind, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import type { CheckRun } from "@corbits/github-reads";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
@@ -225,6 +225,7 @@ type HarnessOptions = {
   rotation?: RotationRecord;
   sameSource?: boolean;
   pack?: CheckPack;
+  automatic?: ActionKind[];
   noPack?: boolean;
   /** Build statuses of every head, for a host whose builds the reconciler polls. */
   headChecks?: CheckRun[];
@@ -321,7 +322,7 @@ function harness(logs: Logs, prs: OpenPr[] | Record<string, OpenPr[]>, options: 
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
       if (options.noPack) return { status: "missing" };
-      return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
+      return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: options.automatic ?? [], source: { repo: { id: "art_pack", version: 1 } } };
     },
     send: async function send({ tenantId, address, payload }) {
       if (delivered.length === options.failDeliveryAt) throw new Error("unroutable");
@@ -397,6 +398,14 @@ describe("triage reconciler", () => {
     await run.reconcile();
     expect(mailedNumbers(run.delivered)).toEqual([1]);
     expect(run.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "build_status_changed" }));
+  });
+
+  test("a head the reconciler holds for CI is mailed to be marked waiting once, where triage writes labels", async () => {
+    const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+    const run = harness({ [repoKey(LIVE.runId)]: {} }, [head(1)], { pack, automatic: ["labels"], headChecks: [{ name: "build", status: "in_progress", conclusion: null }] });
+    await run.reconcile();
+    await run.reconcile();
+    expect(run.delivered.map((entry) => entry.payload)).toEqual([expect.objectContaining({ kind: "waiting", prNumber: 1, headSha: "sha1" })]);
   });
 
   test("a repository with every rule off, or no policy, starts no run and is logged once per head", async () => {

@@ -4,7 +4,7 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, ToolResult } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
-import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
+import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, WAITING_LABEL, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
 import * as actions from "./actions/index.js";
 import { triageDirectorFactory, type DoResult } from "./directors.js";
 import type { SuggestedDo } from "./logic/actions.js";
@@ -404,6 +404,25 @@ describe("pr-triage body", () => {
     expect((await approve(github, unreadable)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: expect.stringContaining("invalid Do") }]);
     github.pr.head = "def";
     expect((await approve(github, mail)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: expect.stringContaining("has new commits") }]);
+  });
+
+  test("a waiting mail labels the head Waiting for CI in place of its verdict label without triaging it; the verdict takes it back", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+    const waiting = { kind: "waiting", repo: REPO, prNumber: 8, headSha: "abc", pack, automatic: ["labels"] };
+    const held = fakeGithub({ labels: ["Triage: Ready"] });
+    expect(await approve(held, hubMail(waiting, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", invoked: ["triage-mirror"] });
+    expect(held.requests.filter((r) => r.method !== "GET")).toEqual([
+      { method: "POST", path: `/repos/${REPO}/issues/8/labels` },
+      { method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Triage%3A%20Ready` },
+    ]);
+    const ungranted = fakeGithub();
+    expect(await approve(ungranted, hubMail({ ...waiting, automatic: ["comment"] }, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", invoked: ["triage-mirror"] });
+    expect(ungranted.requests).toEqual([]);
+    const moved = fakeGithub();
+    await approve(moved, hubMail({ ...waiting, headSha: "old" }, "github@acme.test"));
+    expect(moved.requests.filter((r) => r.method !== "GET")).toEqual([]);
+    const { requests } = await triage(pack, { labels: [WAITING_LABEL] });
+    expect(requests).toContainEqual({ method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Triage%3A%20Waiting%20for%20CI` });
   });
 
   test("an approval mail from anyone but the hub's sender writes nothing", async () => {

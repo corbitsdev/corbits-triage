@@ -4,8 +4,8 @@
 // stored state, then queues what the plan says to the newest deployment.
 // A head waiting for CI is released here once its CI finished or its wait ran
 // out, on hosts and pull requests whose CI results send no webhook.
-import { dependsOnCi, hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
-import { mailPayload } from "./bridge.js";
+import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
@@ -241,6 +241,19 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     await deps.store.save(tenantId, repo, withHeads(fresh.rows, restored), fresh.version);
   }
 
+  /** Mails the heads this pass started holding for CI to be marked waiting; the marker is only shown, so a mail that did not go out is logged and the head still waits. */
+  async function markHeld(pass: TenantPass, repo: LoadedRepo, rows: readonly PrTriageRow[]): Promise<void> {
+    if (!marksWaiting(sourceOf(repo.record), repo.automatic)) return;
+    const waited = new Set(repo.stored.rows.filter((row) => row.status === "waiting").map(headKey));
+    for (const row of rows.filter((candidate) => candidate.status === "waiting" && !waited.has(headKey(candidate)))) {
+      try {
+        await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, source: "reconcile", address: pass.deployment.address, payload: waitingPayload(repo.record, repo.policy, repo, row) });
+      } catch (err) {
+        deps.log({ level: "warn", msg: "waiting_mail_failed", tenantId: pass.tenantId, repo: repo.record.name, pr: row.number, headSha: row.headSha, error: String(err) });
+      }
+    }
+  }
+
   /** Deliveries stop for the tenant once one fails: the failure is passed on so later repositories keep their heads unqueued. */
   async function deliverRepo(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan, failed: Failure | undefined): Promise<Failure | undefined> {
     const name = repo.record.name;
@@ -251,6 +264,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     const claimed = await claim(pass.tenantId, key, repo.stored, plan);
     if (claimed === undefined) return undefined;
+    await markHeld(pass, repo, claimed.rows);
     const headShaOf = (queued: QueuedPr) => claimed.rows.find((row) => row.number === queued.number)!.headSha;
     // A head that waited for CI gets a mail of its own carrying the events it waited with; one listener mail carries up to `batchSize` other heads: each mail costs the deployment a fixed set of commits, whatever it carries.
     const waited = claimed.enqueue.filter((queued) => queued.events !== undefined);

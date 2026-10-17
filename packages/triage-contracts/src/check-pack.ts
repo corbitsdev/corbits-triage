@@ -265,6 +265,9 @@ export type VerdictWord = (typeof VERDICTS)[number];
 
 export const VERDICT_LABELS: Record<VerdictWord, string> = { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" };
 
+/** On a head held for its CI until the verdict replaces it. */
+export const WAITING_LABEL = "Triage: Waiting for CI";
+
 /** `rules` labels each failed rule (`ruleLabel`); the verdict's label is the policy's `labels`, which the mirror writes. */
 export type LabelsTarget = { from: "list"; labels: string[] } | { from: "rules" };
 export type PeopleTarget =

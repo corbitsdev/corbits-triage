@@ -251,7 +251,11 @@ or a step approves or merges), Triage waits for CI to finish on the head, or
 for its first check to fail, before it triages it, and the Inbox shows the
 pull request as **Waiting for CI**. A head with no checks after 2 minutes is
 taken as having no CI, and none waits longer than an hour. A run by hand does
-not wait.
+not wait. Meanwhile the pull request shows it is waiting where Triage writes
+its verdict: the `Triage: Waiting for CI` label on GitHub when the `pr-triage`
+role holds Labels, and the `Corbits Triage` build status as in progress,
+"Triage: Waiting for CI", on Bitbucket when it holds Comment. The verdict
+replaces it.
 While CI is still running on a head triaged anyway, every action is held and
 the comment says "Waiting for checks to finish". When the policy's When includes checks,
 as it does by default, a completed check run has Triage triage the head again
@@ -272,6 +276,7 @@ them and react through their own webhooks. Their names are stable:
 | `Triage: Ready` | The head passes. |
 | `Triage: Not Ready` | The head fails. |
 | `Triage: Needs Human Review` | The head is unsure. |
+| `Triage: Waiting for CI` | Triage is waiting for the head's CI to finish before it decides; the verdict label replaces it. |
 | `rule: <rule id>` | A built-in or custom rule that failed on the head, such as `rule: docs` or `rule: ci-green`. Not a draft and No changes requested get none. |
 
 A head carries one verdict label at a time, written by Triage's mirror when the

@@ -8,7 +8,7 @@ import { unsettledBy } from "./logic/settled.js";
 import { NO_FACTS } from "./logic/item.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
-import { evaluate, parts, rules } from "./actions/index.js";
+import { evaluate, parts, rules, waiting } from "./actions/index.js";
 import type { RulesOutput } from "./actions/rules.js";
 import type { EffectContext } from "@intx/workflow";
 
@@ -613,6 +613,16 @@ describe("mirror director grants", () => {
       name: "bitbucket_datacenter_mirror_auto",
       arguments: { ...pull, labels: [], owned: [], build: { state: "FAILED", description: "Fail: rule: ci-green" } },
     });
+  });
+
+  test("a Bitbucket Data Center head held for CI shows the waiting build status where its verdict would, under its effect id", async () => {
+    const mail = { headers: { from: "github@acme.test", to: ["run_1@acme.test"] }, kind: "waiting", repo: "acme/widgets", prNumber: 8, headSha: "abc", repoSource: "bitbucket-datacenter", pack: emptyPack("acme/widgets") };
+    expect(await mirrorCalls(await waiting({ ...mail, automatic: ["comment"] }, ctx, signal))).toEqual([[{
+      id: "waiting:acme--widgets:8:abc",
+      name: "bitbucket_datacenter_mirror_auto",
+      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], build: { state: "INPROGRESS", description: "Triage: Waiting for CI" } },
+    }]]);
+    expect(await mirrorCalls(await waiting({ ...mail, automatic: ["labels"] }, ctx, signal))).toEqual([]);
   });
 
   test("a Bitbucket Data Center repository holding labels but not comment writes no build status", async () => {

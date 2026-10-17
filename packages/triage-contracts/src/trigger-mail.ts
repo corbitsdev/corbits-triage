@@ -1,5 +1,6 @@
 import { asRecord } from "@corbits/common";
-import { isModelCheck, LEGACY_SCHEMA_VERSION, VERDICTS, type CheckPack, type ModelCustomCheck, type Step } from "./check-pack.js";
+import { isModelCheck, LEGACY_SCHEMA_VERSION, VERDICTS, type ActionKind, type CheckPack, type ModelCustomCheck, type Step } from "./check-pack.js";
+import type { RepoSource } from "./repo-source.js";
 
 export const TRIAGE_MAIL_SENDER = "github";
 
@@ -47,6 +48,14 @@ export function triggerRequestOf(payload: unknown): Record<string, unknown> | un
 }
 
 export const APPROVE_DO_KIND = "approve-do";
+
+/** The hub's mail for a head it holds for its CI; triage writes only the waiting marker. */
+export const WAITING_KIND = "waiting";
+
+/** Whether triage marks a held head: only where it writes the verdict, as labels on GitHub and as the build status beside its comment on Bitbucket Data Center. */
+export function marksWaiting(source: RepoSource, automatic: readonly ActionKind[]): boolean {
+  return automatic.includes(source === "bitbucket-datacenter" ? "comment" : "labels");
+}
 
 /** A Do as deployments built before steps read it; one they cannot run as the policy means is left out. */
 function legacyDo(step: Step) {

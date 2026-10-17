@@ -11,12 +11,12 @@
 // running, the head waits instead, holding its events, and the window that
 // sees CI finish, or the reconciler, mails it. The window map lives in
 // process: the hub runs as one replica.
-import { dependsOnCi, type ActionKind, type CheckPack, type PolicySource, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
+import { dependsOnCi, marksWaiting, type ActionKind, type CheckPack, type PolicySource, type PrTriageRow, type RepoPolicy, type TriageEvent } from "@corbits/triage-contracts";
 import { checkPending, summarizeChecks, type CheckRun } from "@corbits/github-reads";
-import { mailPayload } from "./bridge.js";
+import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import type { PrMail } from "./normalize.js";
-import { triageStateKey, type RepoRecord } from "./tenant-config.js";
+import { sourceOf, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader } from "./tenant-open-heads.js";
 import { inFlight, waitsForCi, type ReconcilePolicy } from "./reconcile-plan.js";
 import { failHead, queueHead, restoreHead, waitHead, type QueuedHead, type Remembered } from "./triage-queue.js";
@@ -145,6 +145,16 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     deps.log({ level: "info", msg: "coalesced_dropped", ...entry, reason });
   }
 
+  /** The waiting marker is only shown, so a mail that did not go out is logged and the head still waits. */
+  async function markWaiting({ latest, head }: Open): Promise<void> {
+    if (!marksWaiting(sourceOf(latest.record), latest.automatic)) return;
+    try {
+      await deps.sendMail({ ...head, workflow: latest.workflow, source: "event", payload: waitingPayload(latest.record, latest.policy, latest, head) });
+    } catch (err) {
+      deps.log({ level: "warn", msg: "waiting_mail_failed", tenantId: head.tenantId, repo: latest.record.name, pr: head.number, headSha: head.headSha, error: String(err) });
+    }
+  }
+
   async function flush(key: string): Promise<void> {
     const open = windows.get(key);
     if (!open) return;
@@ -167,6 +177,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     if (readsCi && waitsForCi(ci, firstSeenAt, deps.now(), deps.ciWait)) {
       await waitHead(deps.store, head, events, deps.now());
       deps.log({ level: "info", msg: "triage_waiting_ci", ...entry, events, ci });
+      if (prior?.status !== "waiting") await markWaiting(open);
       return;
     }
     try {

@@ -22,6 +22,7 @@ import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount,
 import type { Verdict } from "./logic/render.js";
 import { decidesDos } from "./logic/settled.js";
 import type { ApprovalOutput } from "./actions/approval.js";
+import type { WaitingOutput } from "./actions/waiting.js";
 import type { Judgment } from "./actions/evaluate.js";
 import type { History } from "./logic/history.js";
 import type { Judged } from "./logic/item.js";
@@ -498,12 +499,18 @@ function mirrorDirector(caps: ReactorCapabilities): ReactorDirector {
     return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...build, ...dismissals(v) }, `mirror:${r.repo.replace("/", "--")}:${r.number}`);
   }
 
+  function markWaiting({ mark }: WaitingOutput & { waiting: true }) {
+    if (!mark) return caps.reply(JSON.stringify({ skipped: true }));
+    return b.run([call(toolName(mark.repoSource, "mirror_auto"), mark.args, mark.effectId)], finish);
+  }
+
   return {
     async decide(event: ReactorInboundEvent) {
       switch (event.type) {
         case "message.received": {
           const input = parseInput(event.message.content);
           if (!input) return caps.reply(JSON.stringify({ skipped: true, reason: "mirror: input is not JSON" }));
+          if (input.waiting === true) return markWaiting(input as WaitingOutput & { waiting: true });
           const parsed = verdictsOf(input);
           batch = parsed.batch;
           const mirrored = parsed.verdicts.filter(mirrors);
