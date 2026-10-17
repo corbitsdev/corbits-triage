@@ -9,7 +9,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { PulseProvider } from "../lib/pulse-visit.tsx";
 import { triageEnabledRepos } from "../lib/repo-rows.ts";
 import { useSession } from "../lib/session.tsx";
-import { CheckIcon, DownIcon, GearIcon, InboxIcon, ListIcon, PersonIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
+import { CheckIcon, DownIcon, GearIcon, InboxIcon, ListIcon, PulseIcon, RepoIcon, SignOutIcon, UpDownIcon } from "./inbox-icons.tsx";
 
 function WorkspaceSwitcher() {
   const { snapshot } = usePortal();
@@ -94,7 +94,6 @@ export default function Layout({ children }: { children: ReactNode }) {
   const room = roomOf(path, pullPage);
   const needsYouActive = path.startsWith("/inbox") || path.startsWith("/triage") || pullPage;
   const allOpenActive = path.startsWith("/open");
-  const firstTimersActive = path.startsWith("/first-timers");
   // The inbox and the repositories table draw their own inset panels, so they skip the stage card.
   const ownPanels = room === "inbox" || room === "repos";
   const stageClass = room === "pr" ? "stage has-sliver" : "stage";
@@ -131,11 +130,6 @@ export default function Layout({ children }: { children: ReactNode }) {
             All open
             {openPullsUnanswered ? null : <span className="n">{counts["all-open"]}</span>}
           </Link>
-          <h3>Saved views</h3>
-          <Link className="nav-a" to="/first-timers" aria-current={firstTimersActive ? "true" : undefined}>
-            First-timers
-            {openPullsUnanswered ? null : <span className="n">{counts["first-timers"]}</span>}
-          </Link>
           <span className="grow" />
           <UserBlock />
         </nav>
@@ -152,10 +146,6 @@ export default function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/open" className={allOpenActive ? "active" : undefined}>
             <ListIcon />
             All open
-          </NavLink>
-          <NavLink to="/first-timers" className={firstTimersActive ? "active" : undefined}>
-            <PersonIcon />
-            First-timers
           </NavLink>
           <NavLink to="/repositories">
             <RepoIcon />

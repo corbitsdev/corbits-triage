@@ -55,7 +55,7 @@ type VisitArea = "pulse" | "inbox";
 
 function visitArea(path: string): VisitArea | null {
   if (path.startsWith("/pulse")) return "pulse";
-  if (["/inbox", "/open", "/first-timers", "/triage"].some((root) => path.startsWith(root))) return "inbox";
+  if (["/inbox", "/open", "/triage"].some((root) => path.startsWith(root))) return "inbox";
   return null;
 }
 

@@ -36,9 +36,6 @@ export function InboxIcon() {
 export function ListIcon() {
   return <Icon><path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.5M2.5 8h.5M2.5 12h.5" /></Icon>;
 }
-export function PersonIcon() {
-  return <Icon><circle cx="8" cy="5" r="2.5" /><path d="M3 13.5c0-2.8 2.2-4.5 5-4.5s5 1.7 5 4.5" /></Icon>;
-}
 export function RepoIcon() {
   return <Icon><path d="M3.5 2.5h9v11h-9zM6 2.5v11" /></Icon>;
 }
