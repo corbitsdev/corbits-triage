@@ -148,7 +148,8 @@
 .inbox .seg button { border: 0; background: none; font: 500 12px var(--font); color: inherit; padding: 5px 9px; border-radius: 7px; cursor: pointer; }
 .inbox .seg button[aria-pressed="true"] { background: var(--white); font-weight: 700; box-shadow: 0 0 0 1px var(--rule); }
 .inbox .tbtn { height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); background: var(--white); font: 600 13px var(--font); color: inherit; cursor: pointer; white-space: nowrap; }
-.inbox .tbtn:hover, .inbox .tbtn[aria-expanded="true"] { background: var(--fill); }
+.inbox .tbtn:hover, .inbox .tbtn[aria-expanded="true"], .inbox .tbtn[aria-pressed="true"] { background: var(--fill); }
+.inbox .tbtn[aria-pressed="true"] { border-color: var(--ink); }
 .inbox .tbtn .n { font: 700 11px var(--mono); background: var(--ink); color: var(--white); border-radius: 8px; padding: 0 5px; }
 .inbox .linkish { background: none; border: 0; padding: 0; font: 600 12px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .inbox .pills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }

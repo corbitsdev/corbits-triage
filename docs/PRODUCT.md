@@ -32,6 +32,10 @@ wakes the policy as if it were opened.
   triage again); the rest and the policy's actions are under More. Merging from the
   portal is pinned to the commit Triage checked. Needs you lists repositories
   with triage on; a pull request with a pending approval stays until it is answered.
+  Every other open pull request (not triaged yet, waiting on the author, or
+  already acted on) sits behind its **Waiting** filter, in the same list and
+  pane, each marked with what it waits on. One that already needed you stays
+  while Triage checks it again or waits for CI.
 - **Pulse**: what changed since your last visit and what is stuck.
 - **Repositories**: per repository, the triage switch and **Triage open pull
   requests again**, its policy file read back, code review, and the actions

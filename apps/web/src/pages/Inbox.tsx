@@ -61,7 +61,8 @@ import {
   regroupInbox,
   rowActionLabel,
   rowWhy,
-  waitsOn,
+  waitingOnOthers,
+  waitsOnIn,
   type InboxAction,
   type InboxGrouping,
   type HandledMark,
@@ -81,7 +82,7 @@ import { triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
-import { useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
+import { reposNeedingSetup, useCheckPacks, useRepoPack } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { CheckIcon, DownIcon, ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
@@ -92,7 +93,11 @@ const GROUPING_LABEL: Record<InboxGrouping | OpenGrouping, string> = { action: "
 
 const LIST_TITLE: Record<ListView, string> = { "needs-you": "Needs you", "all-open": "All open" };
 
-const WAITS_ON_TONE: Record<WaitsOn, BadgeTone> = { maintainer: "accent", author: "info", ci: "neutral", nobody: "neutral" };
+const WAITS_ON_TONE: Record<WaitsOn, BadgeTone> = { maintainer: "accent", author: "info", ci: "neutral", triage: "neutral", setup: "warning", nobody: "neutral" };
+
+const WAITING = "Waiting";
+
+const WAITING_PARAM = "waiting";
 
 function actionDot(action: InboxAction | null): string {
   if (action === "merge") return "dot ready";
@@ -151,9 +156,11 @@ function Row({ item, selected, search }: RowProps) {
   );
 }
 
-function OpenRow({ view, entry, selected, search }: Omit<RowProps, "item"> & { view: ListView; entry: OpenItem }) {
+type OpenRowProps = Omit<RowProps, "item"> & { view: ListView; entry: OpenItem; needsSetup: ReadonlySet<string> };
+
+function OpenRow({ view, entry, needsSetup, selected, search }: OpenRowProps) {
   const { item, handled } = entry;
-  const waits = waitsOn(item, handled);
+  const waits = waitsOnIn(entry, needsSetup);
   const posted = postedLabel(item, handled);
   return (
     <Link className="row open-row" role="option" aria-selected={selected} to={{ pathname: listHref(view, item), search }} data-inbox-row={item.key}>
@@ -167,16 +174,18 @@ function OpenRow({ view, entry, selected, search }: Omit<RowProps, "item"> & { v
   );
 }
 
-function PileRow({ view, entry, selected, search }: Omit<RowProps, "item"> & { view: ListView; entry: OpenItem }) {
-  if (listsOpen(view)) return <OpenRow view={view} entry={entry} selected={selected} search={search} />;
+function PileRow({ view, rest, entry, needsSetup, selected, search }: OpenRowProps & { rest: boolean }) {
+  if (rest) return <OpenRow view={view} entry={entry} needsSetup={needsSetup} selected={selected} search={search} />;
   return <Row item={entry.item} selected={selected} search={search} />;
 }
 
-function Pile({ view, pile, selectedKey, search }: { view: ListView; pile: OpenPile; selectedKey: string | undefined; search: string }) {
+type PileProps = { view: ListView; rest: boolean; needsSetup: ReadonlySet<string>; pile: OpenPile; selectedKey: string | undefined; search: string };
+
+function Pile({ view, rest, needsSetup, pile, selectedKey, search }: PileProps) {
   return (
     <>
       <div className="gh">{pile.label}<span className="n">{pile.items.length}</span></div>
-      {pile.items.map((entry) => <PileRow key={entry.item.key} view={view} entry={entry} selected={entry.item.key === selectedKey} search={search} />)}
+      {pile.items.map((entry) => <PileRow key={entry.item.key} view={view} rest={rest} needsSetup={needsSetup} entry={entry} selected={entry.item.key === selectedKey} search={search} />)}
     </>
   );
 }
@@ -475,7 +484,7 @@ function NoneOpen({ title }: { title: string }) {
   return <EmptyState title={title} description={`${repositoriesText(repos.length)} checked.`} />;
 }
 
-type EmptyListProps = { view: ListView; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
+type EmptyListProps = { view: ListView; waiting: boolean; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void };
 
 /** A repository whose policy file triage refuses runs nothing, so its pull requests wait here without a verdict. */
 function RefusedPolicies({ repos }: { repos: string[] }) {
@@ -497,7 +506,7 @@ function PolicyUpgradeNotice() {
   return <p role="status" className="note">{rows.map((row, at) => <Fragment key={row.repo}>{at > 0 ? " · " : null}<Link to={`/repositories/${row.repo}`}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p>;
 }
 
-function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
+function EmptyList({ view, waiting, loading, denied, noRepos, filtered, onClear }: EmptyListProps) {
   if (loading) return null;
   if (denied) return <DeniedNotice section="logs" />;
   if (noRepos) {
@@ -507,6 +516,7 @@ function EmptyList({ view, loading, denied, noRepos, filtered, onClear }: EmptyL
     return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing here</h2><p>No pull requests match these filters.</p><Button type="button" variant="outline" size="sm" onClick={onClear}>Clear filters</Button></div>;
   }
   if (view === "all-open") return <NoneOpen title="No open pull requests" />;
+  if (waiting) return <div className="zero"><h2 style={{ fontSize: 20 }}>Nothing waiting</h2><p>No pull requests are waiting on others.</p></div>;
   return <div className="zero"><div className="glyph"><CheckIcon /></div><h2>Inbox zero</h2><p>Nothing needs you.</p></div>;
 }
 
@@ -547,6 +557,14 @@ function PulseLine() {
   );
 }
 
+function WaitingToggle({ on, count, onToggle }: { on: boolean; count: number; onToggle: () => void }) {
+  return (
+    <button type="button" className="tbtn" aria-pressed={on} onClick={onToggle}>
+      {WAITING}{count > 0 ? <span className="n">{count}</span> : null}
+    </button>
+  );
+}
+
 function needsYouPiles(piles: InboxPile[]): OpenPile[] {
   return piles.map((pile) => ({ key: pile.key, label: pile.label, items: pile.items.map((item) => ({ item, handled: null })) }));
 }
@@ -567,31 +585,41 @@ export default function Inbox({ view }: { view: ListView }) {
   const [query, setQuery] = useState("");
   const [needsYouGrouping, setNeedsYouGrouping] = useState<InboxGrouping>("action");
   const [openGrouping, setOpenGrouping] = useState<OpenGrouping>("repo");
+  const [waitingGrouping, setWaitingGrouping] = useState<OpenGrouping>("waits");
   const searchRef = useRef<HTMLInputElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? []), [snapshot]);
   const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
   const enabledNames = useMemo(() => [...enabled], [enabled]);
+  const packs = useCheckPacks(enabledNames);
+  const needsSetup = useMemo(() => reposNeedingSetup(packs), [packs]);
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
-  const entries = useMemo(() => viewEntries(view, open, enabled), [open, view, enabled]);
+  const waiting = view === "needs-you" && searchParams.has(WAITING_PARAM);
+  const listsRest = listsOpen(view) || waiting;
+  const waitingEntries = useMemo(() => waitingOnOthers(open, enabled), [open, enabled]);
+  const viewed = useMemo(() => viewEntries(view, open, enabled), [open, view, enabled]);
+  const entries = waiting ? waitingEntries : viewed;
   const items = useMemo(() => entries.map((entry) => entry.item), [entries]);
   const searched = useMemo(() => entries.filter((entry) => matchesQuery(entry.item, query)), [entries, query]);
-  const rows = useMemo(() => searched.map((entry) => entry.item).filter((item) => listsOpen(view) || inNeedsYou(item)), [searched, view]);
+  const rows = useMemo(() => searched.map((entry) => entry.item).filter((item) => listsRest || inNeedsYou(item)), [searched, listsRest]);
   const now = useMemo(() => Date.now(), [searched, filters]);
   const shown = useMemo(() => searched.filter((entry) => matchesFilters(entry.item, filters, now)), [searched, filters, now]);
   const needsYou = useMemo(() => groupInbox(shown.map((entry) => entry.item), ready), [shown, ready]);
   const piles = useMemo(function pilesOfView() {
-    return listsOpen(view) ? groupOpen(shown, openGrouping) : needsYouPiles(regroupInbox(needsYou, needsYouGrouping));
-  }, [view, shown, openGrouping, needsYou, needsYouGrouping]);
+    if (listsOpen(view)) return groupOpen(shown, openGrouping, needsSetup);
+    if (waiting) return groupOpen(shown, waitingGrouping, needsSetup);
+    return needsYouPiles(regroupInbox(needsYou, needsYouGrouping));
+  }, [view, waiting, shown, openGrouping, waitingGrouping, needsSetup, needsYou, needsYouGrouping]);
   const flat = useMemo(() => piles.flatMap((pile) => pile.items), [piles]);
   const selected = params.number === undefined ? flat[0]?.item : findPrItem(items, params);
   const selectedMark = entries.find((entry) => entry.item.key === selected?.key)?.handled ?? null;
   // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
   const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
-  const paneMark = listsOpen(view) ? selectedMark : null;
-  const groupings: Array<InboxGrouping | OpenGrouping> = listsOpen(view) ? OPEN_GROUPINGS : INBOX_GROUPINGS;
-  const grouping = listsOpen(view) ? openGrouping : needsYouGrouping;
+  const paneMark = listsRest ? selectedMark : null;
+  const groupings: Array<InboxGrouping | OpenGrouping> = listsRest ? OPEN_GROUPINGS : INBOX_GROUPINGS;
+  const grouping = currentGrouping();
+  const listTitle = waiting ? WAITING : LIST_TITLE[view];
   const hasConnectedRepo = snapshot !== null && snapshot.repos.some((repo) => repo.connected);
 
   function setFilters(next: InboxFilters) {
@@ -603,10 +631,24 @@ export default function Inbox({ view }: { view: ListView }) {
     setFilters(NO_FILTERS);
   }
 
+  function currentGrouping(): InboxGrouping | OpenGrouping {
+    if (listsOpen(view)) return openGrouping;
+    return waiting ? waitingGrouping : needsYouGrouping;
+  }
+
+  function toggleWaiting() {
+    const next = new URLSearchParams(searchParams);
+    if (waiting) next.delete(WAITING_PARAM);
+    else next.set(WAITING_PARAM, "1");
+    navigate({ pathname: listRoot(view), search: next.toString() });
+  }
+
   function groupBy(index: number) {
-    if (listsOpen(view)) {
+    if (listsRest) {
       const mode = OPEN_GROUPINGS[index];
-      if (mode !== undefined) setOpenGrouping(mode);
+      if (mode === undefined) return;
+      if (waiting) setWaitingGrouping(mode);
+      else setOpenGrouping(mode);
       return;
     }
     const mode = INBOX_GROUPINGS[index];
@@ -662,7 +704,7 @@ export default function Inbox({ view }: { view: ListView }) {
 
   /** Needs you moves on to the next row; the other views keep the pull request selected unless it left the list. */
   function holdAction(item: NumberedItem, write: PaneWrite, draft: PaneDraft) {
-    if (write.settles !== null && (view === "needs-you" || leavesOpen(write.settles))) {
+    if (write.settles !== null && (!listsRest || leavesOpen(write.settles))) {
       const index = flat.findIndex((row) => row.item.key === item.key);
       const next = flat[index + 1] ?? flat[index - 1];
       moveTo(next?.item);
@@ -690,13 +732,14 @@ export default function Inbox({ view }: { view: ListView }) {
     <div className={`inbox${selected ? " has-selection" : ""}`} ref={paneRef} tabIndex={-1}>
       <section className="panel list" aria-label="Pull requests">
         <div className="lh">
-          <div className="lh-top"><h1>{LIST_TITLE[view]}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}<PulseLine /></div>
+          <div className="lh-top"><h1>{listTitle}</h1>{openPullsUnanswered ? null : <span className="n">{flat.length}</span>}{view === "needs-you" && !waiting && needsYou.awaiting > 0 ? <span className="awaiting">{awaitingText(needsYou.awaiting)}</span> : null}<PulseLine /></div>
           <div className="tools">
             <label className="search">
               <SearchIcon />
               <input ref={searchRef} placeholder="Search" aria-keyshortcuts="/" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search pull requests" autoComplete="off" />
             </label>
             <FilterMenu items={rows} now={now} filters={filters} onChange={setFilters} triggerRef={filterRef} />
+            {view === "needs-you" ? <WaitingToggle on={waiting} count={waitingEntries.length} onToggle={toggleWaiting} /> : null}
             <div className="seg" role="group" aria-label="Group by">
               {groupings.map((mode, index) => (
                 <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
@@ -710,10 +753,10 @@ export default function Inbox({ view }: { view: ListView }) {
           <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
           {flat.length === 0 ? (
-            <EmptyList view={view} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
+            <EmptyList view={view} waiting={waiting} loading={loading} denied={denied} noRepos={!hasConnectedRepo && items.length === 0} filtered={query.trim() !== "" || activeFilters(filters).length > 0} onClear={clearFilters} />
           ) : (
             <div className="groups">
-              {piles.map((pile) => <Pile key={pile.key} view={view} pile={pile} selectedKey={selected?.key} search={search} />)}
+              {piles.map((pile) => <Pile key={pile.key} view={view} rest={listsRest} needsSetup={needsSetup} pile={pile} selectedKey={selected?.key} search={search} />)}
             </div>
           )}
         </div>
@@ -723,7 +766,7 @@ export default function Inbox({ view }: { view: ListView }) {
           key={paneKey}
           item={selected}
           handled={paneMark}
-          listTitle={LIST_TITLE[view]}
+          listTitle={listTitle}
           restored={paneDraft}
           sectionRef={sectionRef}
           onHold={holdAction}

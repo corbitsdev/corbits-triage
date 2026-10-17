@@ -1,8 +1,10 @@
+import { useCallback } from "react";
 import { queryOptions, skipToken, useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { CATALOG_IDS, catalogCheckEnabled, type CheckPack } from "@corbits/triage-contracts";
 import { listCheckPacks } from "./check-pack.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { loadRepoCheckPack, type CheckPackArtifact } from "./hub-api.ts";
+import { hasRuleOn } from "./pack-draft.ts";
 import { usePortal } from "./portal.tsx";
 
 export const CHECK_PACK_INDEX_QUERY_KEY = "check-pack-index";
@@ -44,8 +46,18 @@ export type PackState = { found: CheckPackArtifact | null; pending: boolean; err
 export function useCheckPacks(repos: string[]): Map<string, PackState> {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
-  function byRepo(results: Array<UseQueryResult<CheckPackArtifact | null>>): Map<string, PackState> {
+  // A stable combine lets TanStack hand back the same Map until a result changes.
+  const byRepo = useCallback(function byRepo(results: Array<UseQueryResult<CheckPackArtifact | null>>): Map<string, PackState> {
     return new Map(results.map((result, i) => [repos[i]!, { found: result.data ?? null, pending: result.isLoading, error: result.error }]));
-  }
+  }, [repos]);
   return useQueries({ queries: repos.map((repo) => checkPackQuery(tenantId, repo)), combine: byRepo });
+}
+
+/** Repositories whose policy cannot run: refused, missing, unreadable or with no rule on. One still loading or failing to load is not named. */
+export function reposNeedingSetup(packs: Map<string, PackState>): Set<string> {
+  const needing = [...packs].filter(function cannotRun([, state]) {
+    if (state.pending || state.error !== null) return false;
+    return state.found === null || !("pack" in state.found) || !hasRuleOn(state.found.pack);
+  });
+  return new Set(needing.map(([repo]) => repo));
 }

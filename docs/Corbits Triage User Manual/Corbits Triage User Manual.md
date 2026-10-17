@@ -251,7 +251,7 @@ Under Code review, **Actions Triage takes on its own** lists each action with it
 
 Enabling a repository switches on Comment and Add labels (Comment only on Bitbucket, which has no labels); every other action waits for a person to click until you switch it on, so you can watch what Triage suggests before you let it act. Turning triage off and on again switches them back on. Two actions are always held for a person: Close on Unsure, and Merge on anything but Pass.
 
-When the policy depends on CI (the **CI must pass** rule is on, a step has a CI condition, or a step approves or merges), Triage waits for a pull request's CI to finish before it checks it, so it gives one result instead of an early Unsure. Meanwhile the Inbox shows **Waiting for CI** (**Waiting for CI · new commits since Triage checked** when an earlier result is still on show) and keeps the pull request out of Needs you. The pull request's page notes **New commits since Triage checked** above the earlier result, which stays until the new one lands. The pull request itself shows **Triage: Waiting for CI**, as a label on GitHub where Triage adds labels on its own and as the **Corbits Triage** build status on Bitbucket where Triage comments on its own. The verdict replaces it once Triage has checked the pull request. Triage goes ahead as soon as any check fails, after two minutes when the repository has no CI, and after an hour at most. **Triage again** does not wait.
+When the policy depends on CI (the **CI must pass** rule is on, a step has a CI condition, or a step approves or merges), Triage waits for a pull request's CI to finish before it checks it, so it gives one result instead of an early Unsure. Meanwhile the Inbox shows **Waiting for CI** (**Waiting for CI · new commits since Triage checked** when an earlier result is still on show). A pull request that already needed you stays in Needs you meanwhile; one Triage has not checked yet waits under **Waiting**. The pull request's page notes **New commits since Triage checked** above the earlier result, which stays until the new one lands. The pull request itself shows **Triage: Waiting for CI**, as a label on GitHub where Triage adds labels on its own and as the **Corbits Triage** build status on Bitbucket where Triage comments on its own. The verdict replaces it once Triage has checked the pull request. Triage goes ahead as soon as any check fails, after two minutes when the repository has no CI, and after an hour at most. **Triage again** does not wait.
 
 If Triage checks a pull request while its CI is still running anyway, it holds every action, and its comment on the pull request lists them under **Waiting for checks to finish**. They go ahead once the checks are done.
 
@@ -291,16 +291,20 @@ The dark strip on the left is the same on every page:
 
 - **Workspace name** at the top. If you belong to more than one workspace, click it to switch.
 - **Pulse**: a summary of what changed since your last visit.
-- **Inbox**, with two views. **Needs you** shows only pull requests waiting on a person, in repositories with triage on. A pull request with an approval waiting stays there even after triage is turned off. **All open** shows every open pull request in every repository with triage on.
+- **Inbox**, with two views. **Needs you** shows only pull requests waiting on a person, in repositories with triage on. A pull request with an approval waiting stays there even after triage is turned off. **All open** shows every open pull request in every repository with triage on, and any with an approval waiting.
 - **Your name** at the bottom. Click it for Repositories, Settings and Sign out.
 
-Each view has a search box, a **Filter** button and quick filters such as Action, Repo and Owner; **All open** adds Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
+Each view has a search box, a **Filter** button and quick filters such as Action, Repo and Owner; **All open** and **Waiting** add Waits on. The three counters in the corner show how many pull requests are new since your last visit, how many were resolved, and how many are stuck.
 
 ### Needs you
 
 ![The Needs you view: pull requests grouped under Unblock and Merge, each with its title, the reason, its age and a button for the next step. The right pane shows TRI/widgets pull request 1, Blocked with three things to fix, and View on Bitbucket in its corner](images/11.png)
 
 Pull requests are grouped by what you need to do: **Unblock** for ones that are stuck on something, **Merge** for ones that passed, and so on. Each row shows the author's login, a **Bot** chip when that applies, and on GitHub rows a **First-timer** or **New to GitHub** chip and the author's role when you hover the login (Bitbucket Data Center rows show the user slug only), the title, Triage's one-line reason, how long ago it was triaged, and a button for the most likely next step. Click anywhere on a row to open it in the reading pane on the right.
+
+Pull requests waiting on something else stay out of the list: ones Triage has not checked yet (drafts and ones waiting for CI among them), ones you already acted on, and ones waiting on the author after feedback was posted or changes were requested. A pull request that already needed you stays while Triage checks it again or waits for CI on new commits, and one with an approval waiting always stays. Click **Waiting** next to **Filter** to list the others instead, in the same list and pane, each with a chip saying what it waits on; Needs you and Waiting together are All open. Click **Waiting** again to go back.
+
+![The Waiting view grouped by Waits on: a failed pull request with feedback posted and a draft under Waits on author, a new pull request under Waits on Triage. The pane shows the failed pull request, Waiting on @lena-k to fix 1 thing](images/37.png)
 
 ### All open
 
@@ -309,9 +313,10 @@ The **All open** view groups pull requests by repository and adds two chips to e
 | Chip | Meaning |
 | --- | --- |
 | PASS, FAIL or UNSURE | The verdict. Green means pass, red means fail, and gray means Triage could not tell. |
-| WAITS ON YOU, WAITS ON AUTHOR, WAITS ON CI, WAITS ON NOBODY | Whose move it is. |
+| WAITS ON YOU, WAITS ON AUTHOR, WAITS ON CI, WAITS ON TRIAGE, WAITS ON NOBODY | Whose move it is. |
+| NEEDS SETUP | Triage cannot check it until its repository is set up: its policy is refused, missing, unreadable or has no rule on. |
 
-A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. In **All open** its chip is WAITS ON CI. A draft shows **Draft** and **Draft: Not evaluated** instead, since Triage waits until it is marked ready for review.
+A pull request that has not been checked yet shows **Not triaged yet** and **Not evaluated** until its first run finishes, usually within a minute of being opened, or **Waiting for CI** while Triage waits for its checks. In **All open** and **Waiting** its chip is WAITS ON TRIAGE, or WAITS ON CI while Triage waits for its checks. A draft shows **Draft** and **Draft: Not evaluated** instead, since Triage waits until it is marked ready for review.
 
 ### The reading pane
 
