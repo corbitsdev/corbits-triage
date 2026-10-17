@@ -132,6 +132,7 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
       versions,
       openPulls,
       list: async () => { throw new Error("the workspace has no host credential"); },
+      triageState: { load: async () => ({ rows: [], version: null }) },
       now: () => now,
     });
     const app = guardedApp(db, async () => session as never, createInMemoryGrantStore(grants), { triageVerdicts });
@@ -222,6 +223,7 @@ test("PostgreSQL: pull requests of a repository with triage off are listed only 
       versions: createTenantVersions(),
       openPulls,
       list: async () => { throw new Error("the workspace has no host credential"); },
+      triageState: { load: async () => ({ rows: [], version: null }) },
       now: () => minutes(0),
     });
     const grants: GrantRule[] = [{ id: "grt_runs", resource: "workflow-run:*", action: "read", effect: "allow", origin: "system", conditions: null, expiresAt: null, roleId: null, principalId: "prn_verdicts" }];
@@ -271,6 +273,7 @@ test("PostgreSQL: a host with no credential costs only its own repositories, whi
       observer: { last: () => undefined },
       ready: () => true,
       versions: createTenantVersions(),
+      triageState: { load: async () => ({ rows: [], version: null }) },
       now: () => now,
     });
     const githubOpenPulls = createGithubOpenPulls({ ...deps, cache: openPulls });

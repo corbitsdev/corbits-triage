@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import type { CheckRun } from "@corbits/github-reads";
 import { emptyPack, repoPolicy, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
 import { createCoalescer, type CoalescedEvent, type CoalescerDeps } from "./coalescer.js";
+import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
 import type { PrMail } from "./normalize.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 
@@ -90,6 +92,7 @@ function harness(rows: PrTriageRow[] = [], overrides: Partial<CoalescerDeps> = {
       return [{ name: "build", status: "completed", conclusion: "success" }];
     },
     window: WINDOW,
+    ciWait: DEFAULT_RECONCILE_POLICY,
     setTimer: clock.setTimer,
     now: clock.now,
     log() {},
@@ -249,4 +252,26 @@ test("stopping cancels every open window's timers", async () => {
   expect(clock.pending()).toBe(2);
   coalescer.stop();
   expect(clock.pending()).toBe(0);
+});
+
+test("a policy that reads CI holds the head while CI runs, mails it once on its first failed check with the events it held, and not again while checks still run", async () => {
+  const running = { name: "test", status: "in_progress", conclusion: null };
+  let checks: CheckRun[] = [{ name: "lint", status: "in_progress", conclusion: null }, running];
+  const { clock, state, mails, coalescer } = harness([], { headChecks: async () => checks });
+  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+  const event = (name: TriageEvent) => ({ ...delivery(name, "sha1"), pack });
+
+  await coalescer.accept(event("opened"));
+  await clock.advance(WINDOW.burstMs);
+  expect(mails).toHaveLength(0);
+  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting", events: ["opened"] })]);
+
+  checks = [{ name: "lint", status: "completed", conclusion: "failure" }, running];
+  await coalescer.accept(event("checks"));
+  await clock.advance(WINDOW.quietMs);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["opened", "checks"] })]);
+
+  await coalescer.accept(event("checks"));
+  await clock.advance(WINDOW.quietMs);
+  expect(mails).toHaveLength(1);
 });

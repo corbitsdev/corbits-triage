@@ -2,18 +2,21 @@
 // without relying on any webhook, sidecar or portal visit having survived:
 // reads GitHub's open pull requests, the live deployments' run logs and the
 // stored state, then queues what the plan says to the newest deployment.
-import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+// A head waiting for CI is released here once its CI finished or its wait ran
+// out, on hosts and pull requests whose CI results send no webhook.
+import { dependsOnCi, hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import { triageWorkflowFor } from "./source-workflow.js";
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
-import { summarizeChecks } from "@corbits/github-reads";
+import { summarizeChecks, type CiState } from "@corbits/github-reads";
 import { repoRecords, rotationRecord, sourceOf, triageNs, triageStateKey, type RepoRecord, type RotationRecord } from "./tenant-config.js";
 import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
 import { newestLive, type DeploymentRecord, type LiveDeployment, type Redeployed } from "./deployment.js";
 import { isRunning, mergeObservedRuns, type ObservedRuns } from "./triage-runs.js";
 import type { TenantObserver } from "./tenant-observer.js";
+import type { VerdictRecord, VerdictRecordStore } from "./verdict-record-store.js";
 import { TriageStateConflictError, type LoadedTriageState, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
 
 export type ReconcileTenant = { id: string; domain: string; config: unknown };
@@ -39,10 +42,13 @@ export type TriageReconcilerDeps = {
   /** Undefined when the tenant holds no credential for any pull request host. */
   openHeadsFor: (tenantId: string) => Promise<OpenHeadsReader | undefined>;
   /**
-   * For a host that sends no webhook when a build finishes: the build statuses of a settled head whose verdict waits on
-   * CI are read again on the unconfirmed retry interval, with backoff, and the head queued once they changed.
+   * Reads the CI of heads waiting for it, and of settled heads whose verdict waits on CI: those are read again on the
+   * unconfirmed retry interval, with backoff, and queued once CI changed, for a host that sends no webhook when a build
+   * finishes and for a completed check run whose event was lost or not delivered.
    */
-  headChecks?: HeadChecksReader;
+  headChecks: HeadChecksReader;
+  /** Recorded verdicts, so a head is polled whichever deployment's run, live or released since, gave its verdict. */
+  verdicts: Pick<VerdictRecordStore, "latest">;
   /** Reads and records the live deployments' runs, shared with the recording loop. */
   observeTenant: TenantObserver["observe"];
   store: TriageStateStore;
@@ -59,7 +65,7 @@ export type TriageReconcilerDeps = {
 
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
-type LoadedRepo = EnabledRepo & StoredPack & { prs: OpenPr[]; stored: LoadedTriageState };
+type LoadedRepo = EnabledRepo & StoredPack & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
 type Failure = { repo: string; error: unknown };
 
 /** `retry` asks for another pass soon: a deployment was not routable yet, or is being redeployed. */
@@ -108,7 +114,7 @@ const BUILD_STATUS_CHANGED = "build_status_changed";
 
 type BuildPoll = { polls: number; at: number };
 
-/** A verdict CI decided, or is still to decide: both change when the builds do, so both are polled on a host without build webhooks. */
+/** A verdict CI decided, or is still to decide: both change when the builds do, so both are polled. */
 function waitsOnCi(verdict: { checks: ReadonlyArray<{ check: string; result: string }> }): boolean {
   return verdict.checks.some((check) => check.check === "ci-green" && (check.result === "unconfirmed" || check.result === "fail"));
 }
@@ -119,19 +125,20 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   /** Repositories skipped last pass and why, so the skip is logged once rather than every pass. */
   const skippedRepos = new Map<string, string>();
 
-  function latestVerdict(pass: TenantPass, repo: string, row: PrTriageRow) {
-    return pass.runs.verdicts.filter((verdict) => verdict.repo === repo && verdict.number === row.number && verdict.headSha === row.headSha).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
+  /** The newest verdict on the head, from the live logs or as recorded, since the run that gave it may be on a released deployment. */
+  function latestVerdict(pass: TenantPass, recorded: readonly VerdictRecord[], repo: string, row: PrTriageRow) {
+    return [...pass.runs.verdicts, ...recorded].filter((verdict) => verdict.repo === repo && verdict.number === row.number && verdict.headSha === row.headSha).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
   }
 
   /** Queues a settled head whose CI the verdict waited on once its build statuses are no longer pending. */
   async function pollBuilds(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan): Promise<void> {
-    if (!deps.headChecks) return;
     const name = repo.record.name;
     const now = deps.now().getTime();
-    for (const row of plan.rows) {
-      if (row.status !== "triaged") continue;
+    const triaged = plan.rows.filter((row) => row.status === "triaged");
+    const recorded = await deps.verdicts.latest(pass.tenantId, triaged.map((row) => ({ repo: name, number: row.number })));
+    for (const row of triaged) {
       const key = `${pass.tenantId}\n${name}\n${runKey(row.number, row.headSha)}`;
-      const verdict = latestVerdict(pass, name, row);
+      const verdict = latestVerdict(pass, recorded, name, row);
       if (!verdict || !waitsOnCi(verdict)) {
         buildPolls.delete(key);
         continue;
@@ -156,6 +163,24 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
   }
 
+  /** CI of the open heads waiting for it or due as never seen, by run key; a head whose CI could not be read is left out, so it is not held. */
+  async function headsCi(tenantId: string, record: RepoRecord, prs: readonly OpenPr[], rows: readonly PrTriageRow[]): Promise<Map<string, CiState>> {
+    const byHead = new Map(rows.map((row) => [headKey(row), row]));
+    const now = deps.now().getTime();
+    const ci = new Map<string, CiState>();
+    for (const pr of prs) {
+      const key = runKey(pr.number, pr.headSha);
+      const status = byHead.get(key)?.status ?? "new";
+      if (status !== "waiting" && !(status === "new" && now - new Date(pr.updatedAt).getTime() >= deps.policy.webhookGraceMs)) continue;
+      try {
+        ci.set(key, summarizeChecks(await deps.headChecks(tenantId, record, pr.headSha)));
+      } catch (err) {
+        deps.log({ level: "warn", msg: "waiting_checks_unread", tenantId, repo: record.name, pr: pr.number, headSha: pr.headSha, error: String(err) });
+      }
+    }
+    return ci;
+  }
+
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name);
     const prs = (await pass.openHeads(repo.record)).filter((pr) => !pr.draft);
@@ -163,7 +188,9 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const key = `${pass.tenantId}\n${repo.record.name}`;
     if (read.status === "ok" && hasEnabledRules(read.pack)) {
       skippedRepos.delete(key);
-      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored: await deps.store.load(pass.tenantId, triageStateKey(repo.record)) };
+      const stored = await deps.store.load(pass.tenantId, triageStateKey(repo.record));
+      const ci = dependsOnCi(read.pack) ? await headsCi(pass.tenantId, repo.record, prs, stored.rows) : new Map<string, CiState>();
+      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, prs, stored, ci };
     }
     const skipped = read.status === "ok" ? "triage_skipped_no_rules" : "triage_skipped_no_policy";
     // Once per repository, and again only once a policy or rule came and went, so a repository left unset stays quiet.
@@ -224,21 +251,27 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
     const claimed = await claim(pass.tenantId, key, repo.stored, plan);
     if (claimed === undefined) return undefined;
-    // One listener mail carries up to `batchSize` heads: each mail costs the deployment a fixed set of commits, whatever it carries.
+    const headShaOf = (queued: QueuedPr) => claimed.rows.find((row) => row.number === queued.number)!.headSha;
+    // A head that waited for CI gets a mail of its own carrying the events it waited with; one listener mail carries up to `batchSize` other heads: each mail costs the deployment a fixed set of commits, whatever it carries.
+    const waited = claimed.enqueue.filter((queued) => queued.events !== undefined);
+    const caughtUp = claimed.enqueue.filter((queued) => queued.events === undefined);
     const size = deps.batched ? deps.batchSize : 1;
-    for (let from = 0; from < claimed.enqueue.length; from += size) {
-      const batch = claimed.enqueue.slice(from, from + size);
-      const items = batch.map((queued) => ({ prNumber: queued.number, headSha: claimed.rows.find((row) => row.number === queued.number)!.headSha, ...(queued.judged && { judged: queued.judged }) }));
-      const head = deps.batched ? { number: 0, headSha: "" } : { number: items[0]!.prNumber, headSha: items[0]!.headSha };
+    const mails = [...waited.map((queued) => [queued]), ...Array.from({ length: Math.ceil(caughtUp.length / size) }, (_, i) => caughtUp.slice(i * size, (i + 1) * size))];
+    for (const [sent, batch] of mails.entries()) {
+      const first = batch[0]!;
+      const head = deps.batched && first.events === undefined ? { number: 0, headSha: "" } : { number: first.number, headSha: headShaOf(first) };
+      const extra = first.events === undefined
+        ? { items: batch.map((queued) => ({ prNumber: queued.number, headSha: headShaOf(queued), ...(queued.judged && { judged: queued.judged }) })) }
+        : { prNumber: first.number, headSha: headShaOf(first), events: first.events };
       try {
-        await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, ...head, source: "reconcile", address: pass.deployment.address, payload: mailPayload(repo.record, repo.policy, repo, { items }) });
+        await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, ...head, source: "reconcile", address: pass.deployment.address, payload: mailPayload(repo.record, repo.policy, repo, extra) });
       } catch (err) {
-        const restored = claimed.enqueue.slice(from).map((queued) => ({ ...queued.undelivered, error: `delivery failed: ${String(err)}` }));
+        const restored = mails.slice(sent).flat().map((queued) => ({ ...queued.undelivered, error: `delivery failed: ${String(err)}` }));
         await restoreRows(pass.tenantId, key, claimed, restored);
         return { repo: name, error: err };
       }
-      for (const [i, queued] of batch.entries()) {
-        deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha: items[i]!.headSha, reason: queued.reason });
+      for (const queued of batch) {
+        deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha: headShaOf(queued), reason: queued.reason });
       }
     }
     return undefined;
@@ -431,7 +464,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       }
     }
     const plans = planTenant({
-      repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored.rows })),
+      repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored.rows, ci: repo.ci })),
       runs: pass.runs.byRepo,
       now: deps.now(),
       policy: deps.policy,

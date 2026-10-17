@@ -49,11 +49,25 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     (`pr-triage-github` or `pr-triage-bitbucket-datacenter`), as the tenant
     system sender, the same path cron uses. The mail names the host as
     `repoSource`. A new commit or a newly opened pull request waits only a few
-    seconds.
+    seconds. When the policy depends on CI (CI green is on, a step has a `ci`
+    condition, or a step approves or merges), a head whose CI is still running
+    is not mailed: its row in the triage state turns `waiting` and keeps the
+    window's events (`triage_waiting_ci`). The window that sees CI finish, or
+    its first check fail, mails the head once with those events. A head with
+    no checks yet waits up to 2 minutes for CI to start, and no head waits
+    more than 60 minutes from when it was first seen. Manual runs, the backlog
+    run and retries after the base branch moves are not held.
   - **Reconciler**: on an interval, compares each enabled repository's open
     pull requests with the run logs and stored state, and re-queues every
     head without a verdict, and every stale head at most once per 15 minutes,
-    in batches and under a per-tenant in-flight cap. A catch-up mail carries
+    in batches and under a per-tenant in-flight cap. It reads the CI of every
+    `waiting` head and queues it once CI finished or its wait ran out, in a
+    mail of its own with the events it waited with; this releases Bitbucket
+    heads, whose builds send no webhook, and any head whose `check_run` never
+    arrived. A head it finds with no webhook behind it, such as an open pull
+    request when triage is turned on, waits the same way while its CI runs. Moving a head from `waiting` to `queued` is a compare-and-swap
+    write, so a check run and the reconciler releasing it together start one
+    run. A catch-up mail carries
     the decision-model answers recorded in the head's last verdict (from its
     run log) when the deployment runs the
     same workflow version and decision-model offering. One reconciler runs
@@ -148,10 +162,17 @@ one does.
    and resolves the verdict's list of steps when the policy's When is woken, skipping each step not for the pull request's author.
    While CI is pending, every runnable action is held and an approve that may
    not stand is skipped. The comment says "Waiting for checks to finish" and
-   the head settles, so the reconciler does not retry it. When the policy's
+   the head settles, so the reconciler does not retry it. A policy that
+   depends on CI meets this only when its head was released by the wait's
+   limit or run by hand; others are triaged at once. When the policy's
    When includes checks, as it does by default, the completed `check_run`
-   webhook triages the head again and resolves the held actions; a Bitbucket
-   head is polled for its build statuses instead.
+   webhook triages the head again and resolves the held actions. The
+   reconciler also re-reads the CI of such a head on the unconfirmed retry
+   interval and queues it once CI changed, finding the verdict among the
+   recorded ones as well as the live logs, so a verdict given by a deployment
+   since replaced still counts, which covers Bitbucket, whose
+   builds send no webhook, and a check run whose event was lost or failed to
+   mail.
 7. **mirror**: writes the default verdict label (`Triage: Ready`, `Triage: Not Ready` or `Triage: Needs Human Review`) when the
    `pr-triage` role holds the labels grant, and one marker comment when it holds the comment grant; on Bitbucket the comment
    grant also writes the verdict as the `Corbits Triage` build status. It runs before execute so a merge or close finds the final verdict on the head it closes.

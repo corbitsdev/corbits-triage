@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrTriageRow } from "@corbits/triage-contracts";
+import type { CiState } from "@corbits/github-reads";
 import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr, type RepoPlan } from "./reconcile-plan.js";
 
 const MINUTE = 60_000;
@@ -322,5 +323,34 @@ describe("triage again on a head that already has a verdict", () => {
 
   test("the next pass reports the maintainer's running run, not the old verdict", () => {
     expect(plan([pr(8)], [requeued], at(0), [[pr(8), [oldVerdict, run("run-new", "running", 0)]]]).rows[0]).toMatchObject({ status: "running", runId: "run-new" });
+  });
+});
+
+describe("a head waiting for CI", () => {
+  const waiting = row(1, { status: "waiting", firstSeenAt: at(0).toISOString(), queuedAt: at(0).toISOString(), events: ["opened"] });
+
+  function release(ci: CiState | undefined, minute: number): RepoPlan {
+    const input = { repos: [{ name: REPO, prs: [pr(1)], rows: [waiting], ci: new Map(ci === undefined ? [] : [[runKey(1, "sha1"), ci]]) }], runs: new Map(), now: at(minute), policy, workflowVersion: VERSION };
+    return planTenant(input).get(REPO)!;
+  }
+
+  test("waits while CI runs or has not started, within its bounds, then is queued once with the events it held", () => {
+    expect(enqueued(release("pending", 59))).toEqual([]);
+    expect(status(release("pending", 59), 1)).toEqual(waiting);
+    expect(enqueued(release("none", 1))).toEqual([]);
+    for (const [ci, minute] of [["pending", 60], ["none", 2], ["success", 1], ["failure", 1], [undefined, 1]] as const) {
+      const released = release(ci, minute);
+      expect(released.enqueue).toEqual([{ number: 1, reason: "waited for CI", events: ["opened"], undelivered: waiting }]);
+      expect(status(released, 1)).toMatchObject({ status: "queued", events: ["opened"], attempts: 1, queuedAt: at(minute).toISOString() });
+    }
+  });
+
+  test("a head no webhook queued waits for its running CI too", () => {
+    function seen(ci: CiState): RepoPlan {
+      return planTenant({ repos: [{ name: REPO, prs: [pr(2)], rows: [], ci: new Map([[runKey(2, "sha2"), ci]]) }], runs: new Map(), now: at(0), policy, workflowVersion: VERSION }).get(REPO)!;
+    }
+    expect(enqueued(seen("pending"))).toEqual([]);
+    expect(status(seen("pending"), 2)?.status).toBe("waiting");
+    expect(enqueued(seen("none"))).toEqual([2]);
   });
 });

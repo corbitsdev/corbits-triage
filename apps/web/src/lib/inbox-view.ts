@@ -24,17 +24,18 @@ const INBOX_STATUS_LABEL: Record<QueueState, string> = {
   new: "Not triaged yet",
 };
 
-export type StatusFields = Pick<PrItem, "running" | "state" | "draft" | "comment" | "checks" | "reviewAnswered">;
+export type StatusFields = Pick<PrItem, "running" | "waitingForCi" | "state" | "draft" | "comment" | "checks" | "reviewAnswered">;
 
 export function inboxStatus(item: StatusFields): string {
   if (item.running) return "Running";
+  if (item.waitingForCi) return "Waiting for CI";
   // Triage skips drafts until they are marked ready, so a draft without a result is not waiting on it.
   if (item.state === "new" && item.draft) return "Draft";
   return INBOX_STATUS_LABEL[isReReview(item) ? "awaiting-review" : item.state];
 }
 
 export function rowWhy(item: StatusFields & Pick<PrItem, "evidence">): string | null {
-  return item.running ? inboxStatus(item) : (item.evidence[0] ?? null);
+  return item.running || item.waitingForCi ? inboxStatus(item) : (item.evidence[0] ?? null);
 }
 
 export const UNASSIGNED = "Unassigned";
@@ -96,7 +97,7 @@ function awaitsReviewFix(item: PrItem): boolean {
 }
 
 export function inNeedsYou(item: PrItem): boolean {
-  return inboxAction(item) !== null && !awaitsReviewFix(item);
+  return !item.waitingForCi && inboxAction(item) !== null && !awaitsReviewFix(item);
 }
 
 /** A comment only counts as a draft when it holds non-empty text; a degraded verdict's empty feedback is nothing to post. */
@@ -145,7 +146,7 @@ const AUTHOR_TURN: ReadonlySet<HandledKind | null> = new Set(["changes", "reply"
 export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
   if ((entry === null && inNeedsYou(item)) || item.pendingApprovalId !== null) return "maintainer";
   if (item.draft === true || item.state === "needs-author-update" || (entry !== null && AUTHOR_TURN.has(entry.kind))) return "author";
-  if (item.ci === "pending") return "ci";
+  if (item.ci === "pending" || item.waitingForCi) return "ci";
   return "nobody";
 }
 

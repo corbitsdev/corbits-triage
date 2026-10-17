@@ -1031,6 +1031,14 @@ export function customCheckEnabled(row: CustomCheck): boolean {
   return row.enabled !== false;
 }
 
+const CI_ACTIONS = new Set<Step["do"]>(["approve", "merge"]);
+
+/** The policy reads CI: ci-green is on, or a step names a CI condition or acts only on green CI. */
+export function dependsOnCi(pack: CheckPack): boolean {
+  if (catalogCheckEnabled(pack, "ci-green")) return true;
+  return VERDICTS.some((verdict) => pack.actions[verdict].some((step) => step.when?.ci !== undefined || CI_ACTIONS.has(step.do)));
+}
+
 /** Whether any rule is switched on; with none, triage has nothing to decide and the hub starts no run. */
 export function hasEnabledRules(pack: CheckPack): boolean {
   return CATALOG_IDS.some((id) => catalogCheckEnabled(pack, id)) || pack.custom.some(customCheckEnabled);
