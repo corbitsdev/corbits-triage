@@ -112,13 +112,15 @@ where marked. Durations are whole numbers ending in `s`, `m`, `h` or `d`.
 | `HUB_MAIL_ACK_MAX_RETRIES` | 10 (hub default) |
 | `WORKFLOW_DEFAULT_MAX_LIFETIME` | `7d` (above zero) |
 | `WORKFLOW_DEFAULT_MAX_DISCONNECTED` | `15m` (above zero) |
-| `WORKFLOW_DEFAULT_RETENTION_COMPLETED` | `30m` |
-| `WORKFLOW_DEFAULT_RETENTION_FAILED` | `24h` |
-| `WORKFLOW_DEFAULT_RETENTION_CANCELLED` | `1h` |
 
 The three hub defaults are above stock because triage mail is routed: only the
 router's acknowledgement retries keep it alive while a pack receive holds the
 connection queue for minutes.
+
+The hub's default capacity retention is `0s` for completed, failed and
+cancelled runs: a workflow's sidecar is released as soon as its run ends, as
+the run's history lives on the hub. A tenant or definition lifecycle policy can
+still set its own `capacityRetention`.
 
 ## Set up in the portal
 

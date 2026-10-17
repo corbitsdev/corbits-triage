@@ -1,11 +1,15 @@
 // Requires PostgreSQL at TEST_DB. A triage job through the coordinator and the
 // real worker spawner: a missing listener and a provisioner's capacity decline
-// defer the job, and a worker still starting is polled until it takes its mail.
+// defer the job, a worker still starting is polled until it takes its mail, and
+// under the hub's lifecycle policy the stock sweep releases a finished worker's
+// sidecar as soon as its run ends.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { sql } from "drizzle-orm";
-import { createDB, createWorkflowRunLaunchSpecStore, runMigrations, schema } from "@intx/db";
-import { WorkflowProvisioningError } from "@intx/hub-sessions";
+import { eq, sql } from "drizzle-orm";
+import { createDB, createWorkflowRunLaunchSpecStore, runMigrations, schema, type DB } from "@intx/db";
+import { createWorkflowHistoryReceiveTracker, createWorkflowLifecycleService, WorkflowProvisioningError } from "@intx/hub-sessions";
+import type { ResolvedWorkflowLifecyclePolicy } from "@intx/types";
+import { interchangeSettings, type HubEnv } from "../env.js";
 import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { createCoordinator, type TriageJob } from "./coordinator.js";
 import { DeploymentNotReadyError } from "./deployment.js";
@@ -29,7 +33,7 @@ async function until(done: () => boolean): Promise<void> {
   while (!done()) await Bun.sleep(5);
 }
 
-test("PostgreSQL: a job with no listener to copy, then refused for capacity, is deferred both times and its worker is fired once it starts", async () => {
+async function withDatabase(body: (db: DB["db"]) => Promise<void>): Promise<void> {
   const database = `corbits_spawn_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
   await admin.db.execute(sql.raw(`create database ${database}`));
@@ -42,8 +46,34 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
     await db.insert(schema.tenant).values({ id: TENANT, name: "Spawn", slug: "spawn", domain: DOMAIN, config: {} });
     await db.insert(schema.principal).values({ id: "prn_deployer", tenantId: TENANT, kind: "user", refId: "deployer", status: "active" });
     await db.insert(schema.workflowDefinition).values({ id: "wfd_triage", tenantId: TENANT, name: WORKFLOW });
-    const launchSpecs = createWorkflowRunLaunchSpecStore(db);
+    await body(db);
+  } finally {
+    await handle?.close();
+    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
+    await admin.close();
+  }
+}
 
+async function deployWorker(db: DB["db"], content: Record<string, unknown>, lifecyclePolicy?: ResolvedWorkflowLifecyclePolicy): Promise<void> {
+  await db.insert(schema.workflowRun).values({ id: "run_worker", anchorRunId: "run_worker", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed", lifecyclePolicy });
+  await createWorkflowRunLaunchSpecStore(db).create({
+    anchorRunId: "run_worker",
+    sessionId: "ses_worker",
+    deploymentDomain: DOMAIN,
+    sourceAuthorityPrincipalId: "prn_deployer",
+    frozenApprovalBundle: BUNDLE,
+    sourceOfferingIds: ["off_a"],
+    defaultSourceOfferingId: "off_a",
+    deployContent: { systemPrompt: "Triage pull requests.", ...content },
+  });
+}
+
+function notReached(): never {
+  throw new Error("only reached with pending history or a live sidecar");
+}
+
+test("PostgreSQL: a job with no listener to copy, then refused for capacity, is deferred both times and its worker is fired once it starts", async () => {
+  await withDatabase(async function deferThenFire(db) {
     const timers: Array<() => Promise<void>> = [];
     const delivered: string[] = [];
     const failed: string[] = [];
@@ -55,17 +85,7 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
         db,
         async redeploy(_tenantId, _seed, content) {
           if (refusals-- > 0) throw new WorkflowProvisioningError(CAPACITY_UNAVAILABLE, "424 MiB free, 512 MiB needed");
-          await db.insert(schema.workflowRun).values({ id: "run_worker", anchorRunId: "run_worker", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed" });
-          await launchSpecs.create({
-            anchorRunId: "run_worker",
-            sessionId: "ses_worker",
-            deploymentDomain: DOMAIN,
-            sourceAuthorityPrincipalId: "prn_deployer",
-            frozenApprovalBundle: BUNDLE,
-            sourceOfferingIds: ["off_a"],
-            defaultSourceOfferingId: "off_a",
-            deployContent: { systemPrompt: "Triage pull requests.", ...content },
-          });
+          await deployWorker(db, content);
           return { status: "deployed", runId: "run_worker" };
         },
         async deliver(_tenantId, address) {
@@ -110,9 +130,90 @@ test("PostgreSQL: a job with no listener to copy, then refused for capacity, is 
     expect(released).toEqual(["run_worker"]);
     expect(failed).toEqual([]);
     coordinator.stop();
-  } finally {
-    await handle?.close();
-    await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));
-    await admin.close();
-  }
+  });
 }, 120_000);
+
+test("PostgreSQL: under the hub's lifecycle policy, a worker's sidecar is released as soon as its run ends", async () => {
+  await withDatabase(async function releaseOnEnd(db) {
+    const { defaultLifecyclePolicy } = interchangeSettings({ PORT: "0", HUB_DATA_DIR: "unused", PRINCIPAL_KEY_ENCRYPTION_KEY: "0".repeat(64) } as HubEnv);
+    await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed" });
+    const lifecycle = createWorkflowLifecycleService({
+      db,
+      retentionRouter: {
+        getRetentionCandidates: () => [],
+        fenceAllocation() {},
+        retainAllocation: notReached,
+        getAllocationRetention: notReached,
+        holdsAllocatedBinding: notReached,
+        retireAllocation: notReached,
+      },
+      runReader: {
+        listRunIds: notReached,
+        readRunEvents: notReached,
+        readLatestRunEvents: notReached,
+        resolveRefTip: notReached,
+        hasRepository: notReached,
+      },
+      historyReceives: createWorkflowHistoryReceiveTracker(),
+    });
+    const errors: Array<Record<string, unknown>> = [];
+    const coordinator = createCoordinator({
+      spawner: createWorkerSpawner({
+        db,
+        async redeploy(_tenantId, _seed, content) {
+          await deployWorker(db, content, defaultLifecyclePolicy);
+          await db.insert(schema.sidecarAllocation).values({
+            id: "alc_worker",
+            anchorRunId: "run_worker",
+            tenantId: TENANT,
+            provisionerId: "docker",
+            provisionerApiVersion: 2,
+            provisionerBindingFingerprint: "fp",
+            adapterManifestDigest: "digest",
+            status: "allocated",
+            maxDisconnectedMs: 60_000,
+          });
+          return { status: "deployed", runId: "run_worker" };
+        },
+        async deliver() {
+          await db.insert(schema.workflowRun).values({ id: "run_body", anchorRunId: "run_worker", definitionId: "wfd_triage", tenantId: TENANT, status: "completed" });
+        },
+        lifecycle,
+        sleep: () => Bun.sleep(5),
+        fireTimeoutMs: 60_000,
+        pollMs: 5,
+      }),
+      retry: { minMs: 1, maxMs: 1 },
+      failed: async () => {},
+      setTimer: () => () => {},
+      now: () => new Date(),
+      log: (entry) => entry.level === "error" && errors.push(entry),
+    });
+
+    coordinator.enqueue(JOB);
+    while ((await workerRun(db)).cancellationRequestedAt === null) await Bun.sleep(5);
+    // Stock stops the idle anchor once its cancel grace runs out.
+    const endedAt = Date.now();
+    await db.update(schema.workflowRun).set({ status: "cancelled", endedAt: new Date(endedAt) }).where(eq(schema.workflowRun.id, "run_worker"));
+    let allocation = await workerAllocation(db);
+    while (allocation.status === "allocated" && Date.now() - endedAt < 1_000) {
+      await lifecycle.reconcileNext();
+      allocation = await workerAllocation(db);
+    }
+    expect(allocation.status).toBe("releasing");
+    expect(errors).toEqual([]);
+    coordinator.stop();
+  });
+}, 120_000);
+
+async function workerRun(db: DB["db"]): Promise<typeof schema.workflowRun.$inferSelect> {
+  const [run] = await db.select().from(schema.workflowRun).where(eq(schema.workflowRun.id, "run_worker"));
+  if (!run) throw new Error("worker run missing");
+  return run;
+}
+
+async function workerAllocation(db: DB["db"]): Promise<typeof schema.sidecarAllocation.$inferSelect> {
+  const [allocation] = await db.select().from(schema.sidecarAllocation).where(eq(schema.sidecarAllocation.id, "alc_worker"));
+  if (!allocation) throw new Error("worker allocation missing");
+  return allocation;
+}
