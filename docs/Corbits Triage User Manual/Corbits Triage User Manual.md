@@ -244,6 +244,10 @@ On Bitbucket Data Center labels have no effect; see [Bitbucket Data Center repos
 
 Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it, and off to stop. It needs the workspace's Anthropic key: until one is saved, the section says **Needs an Anthropic key in Settings → Models**, with a link to [Models](#models).
 
+### Where code review runs
+
+Code review runs on the server that runs Triage, beside Triage itself.
+
 ### Removing a repository
 
 **Remove repository**, at the bottom of the repository page, asks you to confirm, then stops Triage on that repository and takes it off Repositories. Its pull requests leave the Inbox and Pulse. For a Bitbucket Data Center repository it also deletes the webhook Triage created; if the token may not, Triage tells you to delete it by hand.

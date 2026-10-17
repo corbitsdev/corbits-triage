@@ -1,4 +1,6 @@
+import { homedir } from "node:os";
 import { type, type ArkError } from "arktype";
+import type { FindDockerHostOpts } from "@corbits/provisioner-docker";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 import type { CoalesceWindow } from "./github/coalescer.js";
@@ -37,6 +39,8 @@ const HubEnvSchema = type({
   "HUB_SIDECAR_WEBSOCKET_URL?": "string.url",
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
+  "DOCKER_HOST?": "string",
+  "DOCKER_CONTEXT?": "string",
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
@@ -87,6 +91,17 @@ export function loadHubEnv(raw: Record<string, string | undefined>): HubEnv {
 /** Unset means production GitHub; a set origin (e.g. a local emulator) loses any trailing slash. */
 export function githubApiOrigin(env: HubEnv): string {
   return env.GITHUB_API_ORIGIN === undefined ? DEFAULT_GITHUB_API_ORIGIN : env.GITHUB_API_ORIGIN.trim().replace(/\/+$/, "");
+}
+
+export type DockerSettings = FindDockerHostOpts;
+
+/** Where to look for the Docker daemon, as the docker CLI does: `DOCKER_HOST`, `DOCKER_CONTEXT`, then its config and sockets under `home`. */
+export function dockerSettings(env: HubEnv): DockerSettings {
+  return {
+    ...(env.DOCKER_HOST !== undefined && { dockerHost: env.DOCKER_HOST }),
+    ...(env.DOCKER_CONTEXT !== undefined && { dockerContext: env.DOCKER_CONTEXT }),
+    home: env.HOME ?? homedir(),
+  };
 }
 
 export type ChildProcessEnv = { PATH?: string; HOME?: string; TMPDIR?: string };

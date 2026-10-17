@@ -81,16 +81,16 @@ All optional; the defaults suit most installs.
 
 ### Hub and sidecars
 
-Each triage and code review runs in a sidecar of its own. The box declines a
-new sidecar while its free memory is below one sidecar's footprint (1 GiB) for
-it and for each sidecar still starting: the container's memory limit less its
-usage where one is set, else Linux's `MemAvailable`. The run waits and is
-retried; there is no setting.
+Each triage and code review runs in a sidecar of its own, on the hub's
+machine by default. [provisioners/README.md](provisioners/README.md) covers
+where sidecars run, their capacity and setting up Docker.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long each local sidecar gets to finish writing run state after SIGTERM before SIGKILL. The platform's drain time must exceed it. |
-| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset: it matters only for sidecars on another machine, which are not supported yet. |
+| `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Docker containers dial it with a loopback host replaced by `host.docker.internal`. |
+| `DOCKER_HOST` | the docker CLI's context, else its default sockets | The Docker daemon for the [Docker provisioner](provisioners/docker.md). |
+| `DOCKER_CONTEXT` | the docker CLI's current context | The docker CLI context whose daemon the Docker provisioner uses, when `DOCKER_HOST` is unset. |
 | `GITHUB_API_ORIGIN` | `https://api.github.com` | GitHub API origin; for the local emulator only. |
 | `PG_SCHEMA` | default `search_path` | Postgres schema. |
 | `DB_STATEMENT_TIMEOUT_MS` | 60000 | Postgres statement timeout. |

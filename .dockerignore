@@ -5,6 +5,12 @@ apps/web/dist/
 tmp/
 tooling/shots/
 mockups/
+research/
+.claude/
+.corbits/
+vendor/interchange/tmp/
+packages/*/evals/.cache/
+apps/web/public/packages/
 # Never copy active environment files (including nested vendored files) into an image.
 .env*
 **/.env*

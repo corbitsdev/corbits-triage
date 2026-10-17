@@ -61,9 +61,9 @@ Build `apps/web` (`bun run --cwd apps/web build`) and host `apps/web/dist` anywh
 
 Unrelated domains without a rewrite (for example `*.vercel.app` and `*.up.railway.app`) do not work: browsers do not send the session cookie across sites.
 
-## Splitting sidecars out later
+## Sidecar provisioners
 
-Sidecars start through Interchange's `SidecarProvisioner` interface. The local-process provisioner is registered in `apps/hub/src/server.ts`; a remote provisioner (QEMU, Kubernetes, E2B) replaces it there. Remote sidecars would dial the hub's `/api/sidecars/ws` at `HUB_SIDECAR_WEBSOCKET_URL`. No remote provisioner exists yet, so this is not supported today. [PROVISIONERS.md](PROVISIONERS.md) describes how to write one.
+Sidecars run on the hub's machine by default. With Docker set up, workflow probes and workflows that require a sidecar of their own each run in a container. [provisioners/README.md](provisioners/README.md) describes each provisioner, how the hub picks one and how to set it up.
 
 ## Known limitations
 
