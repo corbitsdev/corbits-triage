@@ -14,6 +14,7 @@ import type {
   SidecarProvisioner,
 } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
+import { CAPACITY_UNAVAILABLE, shortfall, type HostCapacity } from "./host-capacity.js";
 import type { LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
@@ -34,6 +35,7 @@ export type CreateLocalProcessSidecarProvisionerOpts = {
   readonly dataRoot: string;
   readonly spawnSidecar: SpawnLocalSidecar;
   readonly manifests: LocalSidecarManifestStore;
+  readonly capacity: HostCapacity;
   /** Restores records written before manifests carried `adapterManifest`. */
   readonly adapterManifest: AdapterManifest;
   readonly stopTimeoutMs?: number;
@@ -46,6 +48,8 @@ type IsLocalSidecarLive = (manifest: LocalSidecarManifest) => Promise<boolean>;
 export interface LocalProcessSidecarProvisioner {
   readonly provisioner: SidecarProvisioner;
   restore(isLive: IsLocalSidecarLive): Promise<void>;
+  /** The hub saw this allocation's sidecar connect, so its memory now shows in the box's own figures. */
+  connected(allocation: { allocationId: string; generation: number }): void;
   shutdown(): Promise<void>;
 }
 
@@ -90,11 +94,12 @@ async function exitedWithin(
   }
 }
 
-async function trackExit(managed: ManagedProcess): Promise<void> {
+async function trackExit(managed: ManagedProcess, onExit?: () => void): Promise<void> {
   try {
     await managed.handle.exited;
   } finally {
     managed.exited = true;
+    onExit?.();
   }
 }
 
@@ -110,6 +115,7 @@ export function createLocalProcessSidecarProvisioner({
   dataRoot,
   spawnSidecar,
   manifests,
+  capacity,
   adapterManifest,
   stopTimeoutMs = DEFAULT_STOP_TIMEOUT_MS,
   log,
@@ -130,7 +136,13 @@ export function createLocalProcessSidecarProvisioner({
 
   const allocations = new Map<string, AllocationState>();
   const operations = new Map<string, Promise<void>>();
+  /** Sidecars started and not yet connected or exited, by allocation and generation. */
+  const starting = new Set<string>();
   let shutdownPromise: Promise<void> | null = null;
+
+  function startingKey({ allocationId, generation }: { allocationId: string; generation: number }): string {
+    return `${allocationId}@${String(generation)}`;
+  }
 
   async function runAfter<R, T>(
     previous: Promise<void> | undefined,
@@ -244,17 +256,25 @@ export function createLocalProcessSidecarProvisioner({
     if (existing?.kind === "live") {
       await stopAndRemove(request.allocationId, existing);
     }
-
-    await fs.mkdir(dataRoot, { recursive: true });
-    const dataDir = await fs.mkdtemp(
-      path.join(dataRoot, `${request.allocationId}-`),
-    );
+    // Decided and counted in one turn, so ensures running side by side each see the others.
+    const full = shortfall(await capacity.freeBytes(), starting.size);
+    if (full !== undefined) {
+      return { kind: "rejected" as const, code: CAPACITY_UNAVAILABLE, message: full, retryable: true };
+    }
+    const key = startingKey(request);
+    starting.add(key);
+    function startedExited(): void {
+      starting.delete(key);
+    }
+    let dataDir: string | undefined;
     let live: Extract<AllocationState, { kind: "live" }> | undefined;
     try {
+      await fs.mkdir(dataRoot, { recursive: true });
+      dataDir = await fs.mkdtemp(path.join(dataRoot, `${request.allocationId}-`));
       request.signal?.throwIfAborted();
       const handle = spawnSidecar({ request, dataDir });
       const managed: ManagedProcess = { handle, exited: false };
-      void trackExit(managed);
+      void trackExit(managed, startedExited);
       live = {
         kind: "live",
         generation: request.generation,
@@ -276,11 +296,12 @@ export function createLocalProcessSidecarProvisioner({
       });
       return { kind: "accepted" as const, externalRef: String(handle.pid) };
     } catch (error) {
-      if (live === undefined) {
-        await fs.rm(dataDir, { recursive: true, force: true });
-      } else {
+      starting.delete(key);
+      if (live !== undefined) {
         allocations.delete(request.allocationId);
         await stopAndRemove(request.allocationId, live);
+      } else if (dataDir !== undefined) {
+        await fs.rm(dataDir, { recursive: true, force: true });
       }
       return {
         kind: "rejected" as const,
@@ -405,6 +426,9 @@ export function createLocalProcessSidecarProvisioner({
   return {
     provisioner,
     restore,
+    connected(allocation) {
+      starting.delete(startingKey(allocation));
+    },
     shutdown() {
       shutdownPromise ??= stopAll();
       return shutdownPromise;

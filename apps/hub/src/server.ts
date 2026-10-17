@@ -37,6 +37,7 @@ import { TRIAGE_MAIL_SENDER } from "@corbits/triage-contracts";
 import { createArtifactGrants, grantAdminsPolicyWrites } from "./artifact-grants.js";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
+import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { restoreLocalSidecars } from "./sidecar/restore.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
@@ -55,7 +56,7 @@ import { createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
-import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
+import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
 import { createBridgeHandler, logJson } from "./github/bridge.js";
 import { createProviderHookApp, isProviderHookPath } from "./provider-hooks/app.js";
@@ -166,6 +167,7 @@ const local = createLocalProcessSidecarProvisioner({
     cipher: credentialCipher,
     log: logJson,
   }),
+  capacity: createHostCapacity({ cgroupRoot: "/sys/fs/cgroup", meminfo: "/proc/meminfo" }),
   adapterManifest: sidecarAdapterManifest,
   log: logJson,
 });
@@ -210,6 +212,7 @@ const composition = await createInterchangeHub({
   probeSidecarProvisioners: [local.provisioner],
 });
 const stock = composition.server;
+composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
 
 await restoreLocalSidecars(composition.db, local);
 const requireGrant = createRequireGrant({
@@ -312,23 +315,18 @@ async function sendBridgeMail(tenantId: string, workflow: string, payload: unkno
   if (!live) throw new NoLiveDeploymentError(id);
   await deliverToDeployment(tenantId, live.address, payload);
 }
-const coordination = triageCoordinator(env);
 /** The workflow a job's worker is seeded from: a host's triage workflow, by either name it goes by. */
 function workflowIdFor(name: string): string {
   const triage = triageWorkflowOf(name);
   if (!triage) throw new Error(`Not a triage workflow: ${name}`);
   return triage.id;
 }
-/** Every triage mail, whatever started it, goes out through here: to the live listener, or with the coordinator on, to a worker of its own. */
-async function sendTriageMail(job: TriageJob): Promise<void> {
-  if (coordinator) return coordinator.enqueue({ ...job, workflow: workflowIdFor(job.workflow) });
-  if (job.address === undefined) return sendBridgeMail(job.tenantId, job.workflow, job.payload);
-  await deliverToDeployment(job.tenantId, job.address, job.payload);
+/** Every triage and code review mail, whatever started it, runs in a worker of its own. */
+async function sendToWorker(job: TriageJob): Promise<void> {
+  coordinator!.enqueue(job);
 }
-/** Code review mail goes the way triage mail does: to the live listener, or with the coordinator on, to a worker of its own. */
-async function sendCodeReviewMail(job: TriageJob): Promise<void> {
-  if (coordinator) return coordinator.enqueue(job);
-  await sendBridgeMail(job.tenantId, job.workflow, job.payload);
+async function sendTriageMail(job: TriageJob): Promise<void> {
+  await sendToWorker({ ...job, workflow: workflowIdFor(job.workflow) });
 }
 const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
 const codeReviewFeed = createCodeReviewFeed({
@@ -336,7 +334,7 @@ const codeReviewFeed = createCodeReviewFeed({
     return codeReviewSources(composition.db, tenantId);
   },
   read: createPullRequestReader({ tenantGithub, tenantBitbucket }),
-  send: sendCodeReviewMail,
+  send: sendToWorker,
   log: logJson,
 });
 const policyFile = createPolicyFile({
@@ -472,8 +470,6 @@ function triageStack(triage: TriageWorkflow) {
     readCheckPack,
     send: sendTriageMail,
     policy: reconcilePolicy,
-    batchSize: triageBatchSize(env),
-    batched: !coordination.enabled,
     now,
     log: logJson,
   });
@@ -585,27 +581,23 @@ async function failCoordinatedJob(job: TriageJob, error: string): Promise<void> 
   }
   await failHead(triageStateStore, job, error, now());
 }
-if (coordination.enabled) {
-  await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleService, logJson);
-  const triageCoordination = createCoordinator({
-    spawner: createWorkerSpawner({
-      db: composition.db,
-      redeploy: github.rotation.redeploy,
-      deliver: deliverToDeployment,
-      lifecycle: composition.workflowLifecycleService,
-      sleep: Bun.sleep,
-      fireTimeoutMs: WORKER_FIRE_TIMEOUT_MS,
-      pollMs: WORKER_POLL_MS,
-    }),
-    limits: coordination.limits,
-    retry: { minMs: TRIAGE_RETRY_MS, maxMs: TRIAGE_RETRY_MAX_MS },
-    failed: failCoordinatedJob,
-    setTimer,
-    now,
-    log: logJson,
-  });
-  coordinator = triageCoordination;
-}
+await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleService, logJson);
+coordinator = createCoordinator({
+  spawner: createWorkerSpawner({
+    db: composition.db,
+    redeploy: github.rotation.redeploy,
+    deliver: deliverToDeployment,
+    lifecycle: composition.workflowLifecycleService,
+    sleep: Bun.sleep,
+    fireTimeoutMs: WORKER_FIRE_TIMEOUT_MS,
+    pollMs: WORKER_POLL_MS,
+  }),
+  retry: { minMs: TRIAGE_RETRY_MS, maxMs: TRIAGE_RETRY_MAX_MS },
+  failed: failCoordinatedJob,
+  setTimer,
+  now,
+  log: logJson,
+});
 coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendTriageMail,

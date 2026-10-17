@@ -96,8 +96,8 @@ export type TenantPlanInput = {
   offeringId?: string;
 };
 
-/** A head to queue, why, the judge answers its earlier runs got, the events it waited on CI with, and the row to keep instead when its mail cannot be delivered. */
-export type QueuedPr = { number: number; reason: string; judged?: Judged; events?: TriageEvent[]; undelivered: PrTriageRow };
+/** A head to queue, why, the judge answers its earlier runs got, and the events it waited on CI with. */
+export type QueuedPr = { number: number; reason: string; judged?: Judged; events?: TriageEvent[] };
 
 /** Rows for exactly the open heads; queued heads are already marked queued. */
 export type RepoPlan = { rows: PrTriageRow[]; enqueue: QueuedPr[] };
@@ -300,7 +300,7 @@ export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: D
   const at = now.toISOString();
   const { runId: _run, error: _error, events: _events, ...rest } = row;
   plan.rows[index] = { ...rest, status: "queued", attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
-  plan.enqueue.push({ number: row.number, reason, undelivered: row });
+  plan.enqueue.push({ number: row.number, reason });
 }
 
 /** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running. */
@@ -333,7 +333,7 @@ export function planTenant({ repos, runs, now, policy, workflowVersion, offering
     // The events stay on the row while its run is in flight, so a check run finishing meanwhile is known to be covered by it.
     plan.rows[index] = { ...rest, status: "queued", ...(events !== undefined && { events }), attempts: row.attempts + 1, queuedAt: at, updatedAt: at };
     const reason = row.status === "waiting" ? "waited for CI" : row.error ?? "never triaged";
-    plan.enqueue.push({ number: row.number, reason, ...(Object.keys(judged).length > 0 && { judged }), ...(events !== undefined && { events }), undelivered: row });
+    plan.enqueue.push({ number: row.number, reason, ...(Object.keys(judged).length > 0 && { judged }), ...(events !== undefined && { events }) });
   }
   return plans;
 }

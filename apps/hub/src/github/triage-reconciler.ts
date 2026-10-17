@@ -1,10 +1,12 @@
 // Brings every open pull request on an enabled repository to a triaged head
 // without relying on any webhook, sidecar or portal visit having survived:
 // reads GitHub's open pull requests, the live deployments' run logs and the
-// stored state, then queues what the plan says to the newest deployment.
+// stored state, then queues what the plan says, each head to a worker of its own.
 // A head waiting for CI is released here once its CI finished or its wait ran
 // out, on hosts and pull requests whose CI results send no webhook.
 import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { WorkflowProvisioningError } from "@intx/hub-sessions";
+import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { mailPayload, waitingPayload } from "./bridge.js";
 import type { TriageJob } from "./coordinator.js";
 import { triageWorkflowFor } from "./source-workflow.js";
@@ -55,10 +57,6 @@ export type TriageReconcilerDeps = {
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   send: (job: TriageJob) => Promise<void>;
   policy: ReconcilePolicy;
-  /** Heads one listener mail carries at most; one job per head when not `batched`. */
-  batchSize: number;
-  /** Mail to a listener carries a batch of heads; the coordinator spawns one worker per head. */
-  batched: boolean;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -66,9 +64,8 @@ export type TriageReconcilerDeps = {
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; deployment: LiveDeployment; openHeads: OpenHeadsReader; runs: ObservedRuns };
 type LoadedRepo = EnabledRepo & StoredPack & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
-type Failure = { repo: string; error: unknown };
 
-/** `retry` asks for another pass soon: a deployment was not routable yet, or is being redeployed. */
+/** `retry` asks for another pass soon: a repository's pass failed, or a failed deployment is being redeployed. */
 export type ReconcileOutcome = { retry: boolean };
 
 /** A failed deployment is left this long first, so a portal visit can bring one back. */
@@ -92,11 +89,6 @@ type Claimed = { rows: PrTriageRow[]; version: TriageStateVersion; enqueue: Queu
 
 function headKey(row: Pick<PrTriageRow, "number" | "headSha">): string {
   return runKey(row.number, row.headSha);
-}
-
-function withHeads(rows: readonly PrTriageRow[], replacements: readonly PrTriageRow[]): PrTriageRow[] {
-  const byHead = new Map(replacements.map((row) => [headKey(row), row]));
-  return rows.map((row) => byHead.get(headKey(row)) ?? row);
 }
 
 /** Theirs in their order, each head replaced by ours only when ours is newer; heads only we have follow. */
@@ -229,66 +221,30 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
   }
 
-  /** Puts back the rows of heads whose mail did not go out; refused as stale, it is retried once on a fresh load. */
-  async function restoreRows(tenantId: string, repo: string, claimed: Claimed, restored: PrTriageRow[]): Promise<void> {
-    try {
-      await deps.store.save(tenantId, repo, withHeads(claimed.rows, restored), claimed.version);
-      return;
-    } catch (err) {
-      if (!(err instanceof TriageStateConflictError)) throw err;
-    }
-    const fresh = await deps.store.load(tenantId, repo);
-    await deps.store.save(tenantId, repo, withHeads(fresh.rows, restored), fresh.version);
-  }
-
-  /** Mails the heads this pass started holding for CI to be marked waiting; the marker is only shown, so a mail that did not go out is logged and the head still waits. */
+  /** Mails the heads this pass started holding for CI to be marked waiting. */
   async function markHeld(pass: TenantPass, repo: LoadedRepo, rows: readonly PrTriageRow[]): Promise<void> {
     if (!marksWaiting(sourceOf(repo.record), repo.automatic)) return;
     const waited = new Set(repo.stored.rows.filter((row) => row.status === "waiting").map(headKey));
     for (const row of rows.filter((candidate) => candidate.status === "waiting" && !waited.has(headKey(candidate)))) {
-      try {
-        await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, source: "reconcile", address: pass.deployment.address, payload: waitingPayload(repo.record, repo.policy, repo, row) });
-      } catch (err) {
-        deps.log({ level: "warn", msg: "waiting_mail_failed", tenantId: pass.tenantId, repo: repo.record.name, pr: row.number, headSha: row.headSha, error: String(err) });
-      }
+      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, source: "reconcile", payload: waitingPayload(repo.record, repo.policy, repo, row) });
     }
   }
 
-  /** Deliveries stop for the tenant once one fails: the failure is passed on so later repositories keep their heads unqueued. */
-  async function deliverRepo(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan, failed: Failure | undefined): Promise<Failure | undefined> {
-    const name = repo.record.name;
+  async function deliverRepo(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan): Promise<void> {
     const key = triageStateKey(repo.record);
-    if (failed !== undefined) {
-      await saveRows(pass.tenantId, key, repo.stored, withHeads(plan.rows, plan.enqueue.map((queued) => queued.undelivered)));
-      return failed;
-    }
     const claimed = await claim(pass.tenantId, key, repo.stored, plan);
-    if (claimed === undefined) return undefined;
+    if (claimed === undefined) return;
     await markHeld(pass, repo, claimed.rows);
     const headShaOf = (queued: QueuedPr) => claimed.rows.find((row) => row.number === queued.number)!.headSha;
-    // A head that waited for CI gets a mail of its own carrying the events it waited with; one listener mail carries up to `batchSize` other heads: each mail costs the deployment a fixed set of commits, whatever it carries.
-    const waited = claimed.enqueue.filter((queued) => queued.events !== undefined);
-    const caughtUp = claimed.enqueue.filter((queued) => queued.events === undefined);
-    const size = deps.batched ? deps.batchSize : 1;
-    const mails = [...waited.map((queued) => [queued]), ...Array.from({ length: Math.ceil(caughtUp.length / size) }, (_, i) => caughtUp.slice(i * size, (i + 1) * size))];
-    for (const [sent, batch] of mails.entries()) {
-      const first = batch[0]!;
-      const head = deps.batched && first.events === undefined ? { number: 0, headSha: "" } : { number: first.number, headSha: headShaOf(first) };
-      const extra = first.events === undefined
-        ? { items: batch.map((queued) => ({ prNumber: queued.number, headSha: headShaOf(queued), ...(queued.judged && { judged: queued.judged }) })) }
-        : { prNumber: first.number, headSha: headShaOf(first), events: first.events };
-      try {
-        await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, ...head, source: "reconcile", address: pass.deployment.address, payload: mailPayload(repo.record, repo.policy, repo, extra) });
-      } catch (err) {
-        const restored = mails.slice(sent).flat().map((queued) => ({ ...queued.undelivered, error: `delivery failed: ${String(err)}` }));
-        await restoreRows(pass.tenantId, key, claimed, restored);
-        return { repo: name, error: err };
-      }
-      for (const queued of batch) {
-        deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: name, pr: queued.number, headSha: headShaOf(queued), reason: queued.reason });
-      }
+    // A head that waited for CI carries the events it waited with.
+    for (const queued of claimed.enqueue) {
+      const headSha = headShaOf(queued);
+      const extra = queued.events === undefined
+        ? { items: [{ prNumber: queued.number, headSha, ...(queued.judged && { judged: queued.judged }) }] }
+        : { prNumber: queued.number, headSha, events: queued.events };
+      await deps.send({ tenantId: pass.tenantId, workflow: triageWorkflowFor(deps.source).id, repo: key, number: queued.number, headSha, source: "reconcile", payload: mailPayload(repo.record, repo.policy, repo, extra) });
+      deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, reason: queued.reason });
     }
-    return undefined;
   }
 
   /** A save refused because someone else wrote first is retried once on their rows, keeping the newer row of each head; refused again, it waits for the next pass. */
@@ -411,8 +367,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   /**
    * With no live deployment, the newest one is deployed again from its launch
    * spec when Interchange failed it, rather than someone cancelling it. True
-   * when a pass soon is worth it: the failure is still recent, or a copy was
-   * just made and its sidecar is starting.
+   * when a pass soon is worth it: the failure is still recent, a copy was just
+   * made and its sidecar is starting, or the host had no room for it yet.
    */
   async function heal(tenantId: string): Promise<boolean> {
     const latest = await deps.latestDeployments(tenantId, HEAL_CAP);
@@ -430,8 +386,9 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     try {
       redeployed = await deps.rotation.redeploy(tenantId, failed.runId);
     } catch (error) {
-      deps.log({ level: "warn", msg: "triage_heal_skipped", tenantId, deployment: failed.runId, reason: String(error) });
-      return false;
+      const full = error instanceof WorkflowProvisioningError && error.code === CAPACITY_UNAVAILABLE;
+      deps.log({ level: "warn", msg: full ? "triage_heal_deferred" : "triage_heal_skipped", tenantId, deployment: failed.runId, reason: String(error) });
+      return full;
     }
     if (redeployed.status === "skipped") {
       deps.log({ level: "warn", msg: "triage_heal_skipped", tenantId, deployment: failed.runId, reason: redeployed.reason });
@@ -441,7 +398,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     return true;
   }
 
-  /** True when the pass is worth repeating soon: a delivery failed because the deployment was not routable yet, or a failed one is being redeployed. */
+  /** True when the pass is worth repeating soon: a repository's pass failed, or a failed deployment is being redeployed. */
   async function reconcileTenant(tenant: ReconcileTenant): Promise<boolean> {
     const repos = enabledRepos(tenant.config, deps.source);
     if (repos.length === 0) return false;
@@ -485,18 +442,17 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       workflowVersion: pass.deployment.workflowVersion,
       offeringId: pass.deployment.offeringId,
     });
-    let failure: Failure | undefined;
+    let failed = false;
     for (const repo of loaded) {
       try {
         await pollBuilds(pass, repo, plans.get(repo.record.name)!);
-        failure = await deliverRepo(pass, repo, plans.get(repo.record.name)!, failure);
+        await deliverRepo(pass, repo, plans.get(repo.record.name)!);
       } catch (err) {
-        failure = { repo: repo.record.name, error: err };
+        failed = true;
+        deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: repo.record.name, error: String(err) });
       }
     }
-    if (failure === undefined) return false;
-    deps.log({ level: "error", msg: "triage_reconcile_failed", tenantId: tenant.id, repo: failure.repo, error: String(failure.error) });
-    return true;
+    return failed;
   }
 
   return async function reconcileTriage(): Promise<ReconcileOutcome> {

@@ -2,7 +2,6 @@ import { type, type ArkError } from "arktype";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 import type { CoalesceWindow } from "./github/coalescer.js";
-import type { CoordinatorLimits } from "./github/coordinator.js";
 import { DEFAULT_RECONCILE_POLICY, type ReconcilePolicy } from "./github/reconcile-plan.js";
 
 const secret = type("string").narrow((value, ctx) =>
@@ -39,15 +38,10 @@ const HubEnvSchema = type({
   "HUB_MAX_TARBALL_BYTES?": positiveInteger,
   "HUB_SIDECAR_STOP_TIMEOUT_MS?": positiveInteger,
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
-  "TRIAGE_BATCH_SIZE?": positiveInteger,
   "TRIAGE_ROTATE_AFTER_RUNS?": positiveInteger,
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
   "TRIAGE_CAPPED_RETRY_MS?": positiveInteger,
   "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
-  "TRIAGE_COORDINATOR?": "'on' | 'off'",
-  "TRIAGE_WORKERS_GLOBAL?": positiveInteger,
-  "TRIAGE_WORKERS_PER_TENANT?": positiveInteger,
-  "TRIAGE_SPAWNS_PER_SECOND?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -138,11 +132,6 @@ export function triageReconcileIntervalMs(env: HubEnv): number {
   return env.TRIAGE_RECONCILE_INTERVAL_MS === undefined ? 5 * 60_000 : Number(env.TRIAGE_RECONCILE_INTERVAL_MS);
 }
 
-/** Heads one catch-up mail carries at most; each run's steps share one timeout, so this bounds per-step load. */
-export function triageBatchSize(env: HubEnv): number {
-  return env.TRIAGE_BATCH_SIZE === undefined ? 5 : Number(env.TRIAGE_BATCH_SIZE);
-}
-
 /**
  * The stock hub checks every commit pushed to a deployment's run log against
  * the whole log, so the hub replaces the pr-triage deployment with a fresh copy
@@ -152,7 +141,7 @@ export function triageRotateAfterRuns(env: HubEnv): number {
   return numberOr(env.TRIAGE_ROTATE_AFTER_RUNS, 15);
 }
 
-/** Heads a tenant may have queued or running at once; each in-flight run adds commits to the pack a rotation receives. */
+/** Heads the reconciler lets a tenant have queued or running at once; each runs in a worker sidecar of its own. */
 export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" | "TRIAGE_CAPPED_RETRY_MS">): ReconcilePolicy {
   return {
     ...DEFAULT_RECONCILE_POLICY,
@@ -162,18 +151,6 @@ export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" |
 }
 
 const COALESCE_BURST_MS = 3_000;
-
-/** Off by default: coalesced mail goes to the host's live listener. On, each window closes into a worker deployment of its own. */
-export function triageCoordinator(env: HubEnv): { enabled: boolean; limits: CoordinatorLimits } {
-  return {
-    enabled: env.TRIAGE_COORDINATOR === "on",
-    limits: {
-      global: numberOr(env.TRIAGE_WORKERS_GLOBAL, 8),
-      perTenant: numberOr(env.TRIAGE_WORKERS_PER_TENANT, 4),
-      spawnsPerSecond: numberOr(env.TRIAGE_SPAWNS_PER_SECOND, 2),
-    },
-  };
-}
 
 /**
  * A pull request's webhook events go out as one mail once none arrived for the quiet period, or at most four quiet periods after the first; the window must close before the reconciler gives up on its queued head.

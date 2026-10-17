@@ -19,6 +19,7 @@ describeProvisionerConformance("local-process", async () => {
 
   const local = createLocalProcessSidecarProvisioner({
     dataRoot,
+    capacity: { freeBytes: async () => undefined },
     adapterManifest: [],
     spawnSidecar: function spawnSidecar({ request }) {
       const process: FakeProcess = { ...request, running: true };

@@ -522,7 +522,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${TRIAGE_QUEUE_PATH}/:tenantId`,
     describeRoute({
       summary: "Triage jobs waiting and running in the workspace",
-      description: "Needs `workflow-run:*` read. The triage coordinator's queue for the workspace: jobs waiting for a worker and workers running, each with its repository, pull request head, where it came from (`event`, `retry`, `reconcile`) and `ageMs` since it was queued. Read from the hub's memory; with the coordinator off both lists are empty.",
+      description: "Needs `workflow-run:*` read. The triage coordinator's queue for the workspace: jobs waiting for a worker and workers running, each with its repository, pull request head, where it came from (`event`, `retry`, `reconcile`) and `ageMs` since it was queued. Read from the hub's memory.",
       tags: TAGS,
       responses: { 200: json("Queued and running jobs", TriageQueue), 401: failures[401], 403: failures[403] },
     }),

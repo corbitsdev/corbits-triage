@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createCoordinator, WorkerCapacityError, type TriageJob } from "./coordinator.js";
+import { createCoordinator, WorkerDeferredError, type TriageJob } from "./coordinator.js";
 
 const START = new Date("2026-10-14T12:00:00Z").getTime();
 
@@ -67,15 +67,12 @@ function job(tenantId: string, number: number, payload = {}): TriageJob {
 
 async function noFailure(): Promise<void> {}
 
-const NO_LIMITS = { global: 10, perTenant: 10, spawnsPerSecond: Infinity };
-
-function setup(limits = { global: 2, perTenant: 1, spawnsPerSecond: Infinity }, failed: (j: TriageJob, error: string) => Promise<void> = noFailure) {
+function setup(failed: (j: TriageJob, error: string) => Promise<void> = noFailure) {
   const clock = fakeClock();
   const fake = fakeSpawner();
   const failures: string[] = [];
   const coordinator = createCoordinator({
     spawner: fake.spawner,
-    limits,
     retry: { minMs: 1_000, maxMs: 3_000 },
     async failed(j, error) {
       failures.push(`${j.number}:${error}`);
@@ -88,43 +85,8 @@ function setup(limits = { global: 2, perTenant: 1, spawnsPerSecond: Infinity }, 
   return { clock, fake, failed: failures, coordinator };
 }
 
-test("a queued pull request is replaced by its newer job, and limits hold per tenant and globally", async () => {
-  const { clock, fake, coordinator } = setup();
-  coordinator.enqueue(job("t1", 1));
-  coordinator.enqueue(job("t1", 2, { head: "old" }));
-  coordinator.enqueue(job("t1", 2, { head: "new" }));
-  coordinator.enqueue(job("t2", 7));
-  coordinator.enqueue(job("t3", 9));
-  await clock.advance(0);
-  expect(fake.spawned.map((j) => `${j.tenantId}#${j.number}`)).toEqual(["t1#1", "t2#7"]);
-
-  await fake.end("run_1");
-  expect(fake.released).toEqual(["run_1"]);
-  // t3 has never spawned, so it goes before t1's second pull request.
-  expect(fake.spawned.at(-1)!.tenantId).toBe("t3");
-
-  await fake.end("run_2");
-  await fake.end("run_3");
-  expect(fake.spawned.at(-1)).toMatchObject({ tenantId: "t1", number: 2, payload: { head: "new" } });
-  expect(fake.spawned).toHaveLength(4);
-});
-
-test("spawns are spaced by the rate limit", async () => {
-  const { clock, fake, coordinator } = setup({ global: 10, perTenant: 10, spawnsPerSecond: 2 });
-  for (let n = 1; n <= 3; n++) coordinator.enqueue(job("t1", n));
-  await clock.advance(0);
-  expect(fake.spawned).toHaveLength(1);
-  await clock.advance(499);
-  expect(fake.spawned).toHaveLength(1);
-  await clock.advance(1);
-  expect(fake.spawned).toHaveLength(2);
-  await clock.advance(500);
-  expect(fake.spawned).toHaveLength(3);
-});
-
-test("a failed spawn fails the head and frees its slot", async () => {
-  const { clock, fake, failed, coordinator } = setup({ global: 1, perTenant: 1, spawnsPerSecond: Infinity });
-  const spawn = fake.spawner.spawn;
+test("a failed spawn fails the head", async () => {
+  const { clock, fake, failed, coordinator } = setup();
   fake.spawner.spawn = async function noSeed(): Promise<string> {
     throw new Error("no seed");
   };
@@ -132,14 +94,10 @@ test("a failed spawn fails the head and frees its slot", async () => {
   await clock.advance(0);
   await Bun.sleep(0);
   expect(failed).toEqual(["1:spawn failed: Error: no seed"]);
-  fake.spawner.spawn = spawn;
-  coordinator.enqueue(job("t1", 2));
-  await clock.advance(0);
-  expect(fake.spawned.map((j) => j.number)).toEqual([2]);
 });
 
 test("a job for a pull request whose worker is running waits for it, then spawns", async () => {
-  const { clock, fake, coordinator } = setup(NO_LIMITS);
+  const { clock, fake, coordinator } = setup();
   coordinator.enqueue(job("t1", 1, { head: "old" }));
   await clock.advance(0);
   coordinator.enqueue(job("t1", 1, { head: "new" }));
@@ -151,21 +109,19 @@ test("a job for a pull request whose worker is running waits for it, then spawns
   expect(fake.spawned.at(-1)).toMatchObject({ number: 1, payload: { head: "new" } });
 });
 
-test("a worker whose end could not be observed is still released, and its slot freed", async () => {
-  const { clock, fake, coordinator } = setup({ global: 1, perTenant: 1, spawnsPerSecond: Infinity });
+test("a worker whose end could not be observed is still released", async () => {
+  const { clock, fake, coordinator } = setup();
   coordinator.enqueue(job("t1", 1));
-  coordinator.enqueue(job("t1", 2));
   await clock.advance(0);
   await fake.lose("run_1");
   expect(fake.released).toEqual(["run_1"]);
-  expect(fake.spawned.map((j) => j.number)).toEqual([1, 2]);
 });
 
 test("a head that could not be failed does not stall the queue", async () => {
   async function stateConflict(): Promise<void> {
     throw new Error("state conflict");
   }
-  const { clock, fake, failed, coordinator } = setup({ global: 1, perTenant: 1, spawnsPerSecond: Infinity }, stateConflict);
+  const { clock, fake, failed, coordinator } = setup(stateConflict);
   const spawn = fake.spawner.spawn;
   fake.spawner.spawn = async function noSeedForFirst(j: TriageJob): Promise<string> {
     if (j.number === 1) throw new Error("no seed");
@@ -180,13 +136,13 @@ test("a head that could not be failed does not stall the queue", async () => {
 });
 
 test("a spawn refused for capacity is retried with backoff, not failed", async () => {
-  const { clock, fake, failed, coordinator } = setup(NO_LIMITS);
+  const { clock, fake, failed, coordinator } = setup();
   const spawn = fake.spawner.spawn;
   let refusals = 0;
   fake.spawner.spawn = async function refuseThrice(j: TriageJob): Promise<string> {
     if (refusals < 3) {
       refusals += 1;
-      throw new WorkerCapacityError("no sidecar slots");
+      throw new WorkerDeferredError("no sidecar slots");
     }
     return spawn(j);
   };
@@ -204,7 +160,7 @@ test("a spawn refused for capacity is retried with backoff, not failed", async (
 });
 
 test("a job from another source for a running pull request waits for its worker, and the queue says so", async () => {
-  const { clock, fake, coordinator } = setup(NO_LIMITS);
+  const { clock, fake, coordinator } = setup();
   coordinator.enqueue(job("t1", 1));
   await clock.advance(0);
   coordinator.enqueue({ ...job("t1", 1, { head: "retry" }), source: "retry" });
@@ -222,7 +178,7 @@ test("a job from another source for a running pull request waits for its worker,
 });
 
 test("a pull request's code review is a job of its own beside its triage", async () => {
-  const { clock, fake, coordinator } = setup({ global: 2, perTenant: 2, spawnsPerSecond: Infinity });
+  const { clock, fake, coordinator } = setup();
   coordinator.enqueue(job("t1", 1));
   coordinator.enqueue({ ...job("t1", 1), workflow: "pr-code-review-github" });
   await clock.advance(0);

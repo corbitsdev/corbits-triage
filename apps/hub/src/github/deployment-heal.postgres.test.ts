@@ -5,8 +5,9 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { createDB, createWorkflowRunLaunchSpecStore, runMigrations, schema } from "@intx/db";
-import type { PrepareProvisionedWorkflowDeploymentArgs, WorkflowAllocationService, WorkflowLifecycleService } from "@intx/hub-sessions";
+import { WorkflowProvisioningError, type PrepareProvisionedWorkflowDeploymentArgs, type WorkflowAllocationService, type WorkflowLifecycleService } from "@intx/hub-sessions";
 import { emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { CAPACITY_UNAVAILABLE } from "../sidecar/host-capacity.js";
 import { createDeploymentRotation, latestDeployments, recentWorkers, resolveLiveDeployments, WORKER_MARKER } from "./deployment.js";
 import { DEFAULT_RECONCILE_POLICY, type ObservedRun } from "./reconcile-plan.js";
 import { createRunRecorder } from "./run-recorder.js";
@@ -74,7 +75,7 @@ async function withHub(body: (hub: ReturnType<typeof harness>) => Promise<void>)
 function harness(db: ReturnType<typeof createDB>["db"]) {
   const launchSpecs = createWorkflowRunLaunchSpecStore(db);
   const prepared: PrepareProvisionedWorkflowDeploymentArgs[] = [];
-  const delivered: { address: string | undefined; payload: unknown }[] = [];
+  const delivered: { payload: unknown }[] = [];
   const logged: Record<string, unknown>[] = [];
   const rows = new Map<string, PrTriageRow[]>();
   const runs = new Map<string, ObservedRuns>();
@@ -95,9 +96,13 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     });
   }
 
+  // Runs once the reconciler has read the failed deployment and before it looks for a live one, like a portal deploy landing mid-pass.
+  const hooks: { beforeRedeploy?: () => Promise<void>; full?: boolean } = {};
+
   // Stands in for Interchange's provisioning: the new deployment is an anchor run born `deployed` with its own launch spec.
   const allocation = {
     async prepareProvisionedDeployment(args: PrepareProvisionedWorkflowDeploymentArgs) {
+      if (hooks.full) throw new WorkflowProvisioningError(CAPACITY_UNAVAILABLE, "100 MiB free, 512 MiB needed");
       prepared.push(args);
       await anchor(args.anchorRunId, { status: "deployed", createdAt: NOW });
       return { anchorRunId: args.anchorRunId, deploymentAddress: `${args.anchorRunId}@${DOMAIN}`, allocationId: "alc", status: "pending" as const };
@@ -108,8 +113,6 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
     return resolveLiveDeployments(db, TENANT, WORKFLOW);
   }
 
-  // Runs once the reconciler has read the failed deployment and before it looks for a live one, like a portal deploy landing mid-pass.
-  const hooks: { beforeRedeploy?: () => Promise<void> } = {};
   async function liveDeployments() {
     await hooks.beforeRedeploy?.();
     hooks.beforeRedeploy = undefined;
@@ -161,12 +164,10 @@ function harness(db: ReturnType<typeof createDB>["db"]) {
       },
     },
     readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
-    send: async function send({ address, payload }) {
-      delivered.push({ address, payload });
+    send: async function send({ payload }) {
+      delivered.push({ payload });
     },
     policy: DEFAULT_RECONCILE_POLICY,
-    batchSize: DEFAULT_RECONCILE_POLICY.maxInFlight,
-    batched: true,
     now: () => NOW,
     log: (entry) => logged.push(entry),
   });
@@ -182,7 +183,7 @@ function messages(logged: readonly Record<string, unknown>[]): unknown[] {
   return logged.map((entry) => entry["msg"]).filter((msg) => String(msg).startsWith("triage_heal") || msg === "triage_deployment_healed");
 }
 
-test("PostgreSQL: a deployment Interchange failed is deployed again from its launch spec, and the next pass mails the copy", async () => {
+test("PostgreSQL: a deployment Interchange failed is deployed again from its launch spec, and the next pass sends its heads", async () => {
   await withHub(async (hub) => {
     await hub.anchor("run_failed", { status: "failed", createdAt: ago(60 * MINUTE), endedAt: ago(3 * MINUTE) });
     expect(await hub.reconcile()).toEqual({ retry: true });
@@ -193,7 +194,20 @@ test("PostgreSQL: a deployment Interchange failed is deployed again from its lau
     expect(hub.logged).toContainEqual(expect.objectContaining({ msg: "triage_deployment_healed", deployment: "run_failed", replacedBy: copy }));
 
     expect(await hub.reconcile()).toEqual({ retry: false });
-    expect(hub.delivered.map((mail) => mail.address)).toEqual([`${copy}@${DOMAIN}`]);
+    expect(hub.delivered).toHaveLength(1);
+    expect(hub.prepared).toHaveLength(1);
+  });
+}, 120_000);
+
+test("PostgreSQL: a copy the host has no room for yet asks for a pass soon, and is made once there is room", async () => {
+  await withHub(async (hub) => {
+    await hub.anchor("run_failed", { status: "failed", createdAt: ago(60 * MINUTE), endedAt: ago(3 * MINUTE) });
+    hub.hooks.full = true;
+    expect(await hub.reconcile()).toEqual({ retry: true });
+    expect(hub.prepared).toEqual([]);
+    expect(messages(hub.logged)).toEqual(["triage_heal_deferred"]);
+    hub.hooks.full = false;
+    expect(await hub.reconcile()).toEqual({ retry: true });
     expect(hub.prepared).toHaveLength(1);
   });
 }, 120_000);
@@ -258,7 +272,7 @@ test("PostgreSQL: a released worker's completed run records its verdict and sett
   });
 }, 120_000);
 
-test("PostgreSQL: a released worker's failed run fails its head, which the listener is mailed for", async () => {
+test("PostgreSQL: a released worker's failed run fails its head, which is sent again", async () => {
   await withHub(async (hub) => {
     await hub.anchor("run_listener", { status: "deployed", createdAt: ago(60 * MINUTE) });
     await hub.anchor("run_worker", { status: "cancelled", createdAt: ago(2 * MINUTE), endedAt: ago(MINUTE), cancellationRequestedAt: ago(MINUTE) }, true);
@@ -267,6 +281,6 @@ test("PostgreSQL: a released worker's failed run fails its head, which the liste
     expect(await hub.reconcile()).toEqual({ retry: false });
     expect(hub.verdicts).toEqual([]);
     expect(hub.rows.get(REPO)![0]).toMatchObject({ status: "queued", attempts: 2 });
-    expect(hub.delivered.map((mail) => mail.address)).toEqual([`run_listener@${DOMAIN}`]);
+    expect(hub.delivered).toHaveLength(1);
   });
 }, 120_000);

@@ -131,11 +131,7 @@ describe("reconcile plan", () => {
     const degraded = { ...run("run_d", "completed", 1), unsettled: "This repository still needs a policy." };
     const result = plan([pr(1)], [], at(60), [[pr(1), [degraded]]]);
     expect(enqueued(result)).toEqual([1]);
-    expect(plan([pr(1)], [], at(60), [[pr(1), [degraded]]]).enqueue[0]?.undelivered).toMatchObject({
-      status: "failed",
-      runId: "run_d",
-      error: "This repository still needs a policy.",
-    });
+    expect(result.enqueue[0]?.reason).toBe("This repository still needs a policy.");
   });
 
   test("a workflow bump keeps settled verdicts, a legacy integer version included", () => {
@@ -340,7 +336,7 @@ describe("a head waiting for CI", () => {
     expect(enqueued(release("none", 1))).toEqual([]);
     for (const [ci, minute] of [["pending", 60], ["none", 2], ["success", 1], ["failure", 1], [undefined, 1]] as const) {
       const released = release(ci, minute);
-      expect(released.enqueue).toEqual([{ number: 1, reason: "waited for CI", events: ["opened"], undelivered: waiting }]);
+      expect(released.enqueue).toEqual([{ number: 1, reason: "waited for CI", events: ["opened"] }]);
       expect(status(released, 1)).toMatchObject({ status: "queued", events: ["opened"], attempts: 1, queuedAt: at(minute).toISOString() });
     }
   });
