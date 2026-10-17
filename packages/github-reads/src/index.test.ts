@@ -9,6 +9,7 @@ import {
   listPrFilesPage,
   listPrTimeline,
   parseCodeowners,
+  readPrDiff,
   readRepoDocsPage,
   REPO_DOCS_MAX_BYTES,
   REPO_RULES_MAX_BYTES,
@@ -130,6 +131,13 @@ describe("listPrFiles", () => {
       deletions: 2,
       patch: "@@ -1 +1 @@",
     }]);
+  });
+});
+
+describe("readPrDiff", () => {
+  test("a pull request too large for GitHub's diff is built from its files' patches", async () => {
+    const { gh } = recorder((path) => (path.includes("/files") ? [{ filename: "src/b.ts", previous_filename: "src/a.ts", status: "renamed", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }] : new Response("too large", { status: 406 })));
+    expect(await readPrDiff(gh, "acme/widgets", 8)).toBe("diff --git a/src/a.ts b/src/b.ts\n--- a/src/a.ts\n+++ b/src/b.ts\n@@ -1 +1 @@\n-a\n+b\n");
   });
 });
 

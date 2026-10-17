@@ -5,6 +5,7 @@ import { activeCredential, failure } from "./github/portal-credential.js";
 import { ANTHROPIC_CREDENTIAL, connectedSources } from "./github/source-workflow.js";
 import { tenantConfigOf } from "./github/bridge.js";
 import { patchCorbitsTriage, repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
+import type { CodeReviewFeed, Offered } from "./code-review-feed.js";
 import type { Member } from "./integrations/app.js";
 
 export const CODE_REVIEW_PATH = "/api/integrations/code-review";
@@ -13,6 +14,14 @@ const Source = type.enumerated(...REPO_SOURCES);
 
 export const CodeReviewBody = type({ repo: "string > 0", "source?": Source, enabled: "boolean" });
 export const CodeReviewSet = type({ repo: "string", source: Source, codeReview: "boolean" });
+export const CodeReviewRunBody = type({ repo: "string > 0", "source?": Source, number: "number.integer > 0" });
+export const CodeReviewQueued = type({ status: "'queued'" });
+
+const REFUSED: Record<Exclude<Offered, "sent">, { code: string; message: string }> = {
+  not_reviewed: { code: "code_review_off", message: "Code review is off for this repository, or the Anthropic key is missing." },
+  draft: { code: "draft", message: "The pull request is a draft; code review starts once it is ready." },
+  not_open: { code: "not_open", message: "The pull request is not open." },
+};
 
 type CodeReviewDeps = {
   db: DB["db"];
@@ -52,5 +61,27 @@ export function createCodeReviewSwitch(deps: CodeReviewDeps) {
     if (!written || !repoRecords(written).some(isRepo)) return failure(404, "repo_not_found", "The workspace has no such repository.");
     await deps.onChanged(tenantId);
     return Response.json({ repo: body.repo, source, codeReview: body.enabled });
+  };
+}
+
+type CodeReviewRunDeps = Pick<CodeReviewDeps, "db" | "authorize"> & { feed: Pick<CodeReviewFeed, "again"> };
+
+/** "Review again": reviews the pull request's current head once more. */
+export function createCodeReviewRun(deps: CodeReviewRunDeps) {
+  return async function runCodeReview(body: typeof CodeReviewRunBody.infer, { tenantId, principalId }: Member): Promise<Response> {
+    if (!(await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage"))) {
+      return failure(403, "forbidden", "You do not have permission to manage this workspace.");
+    }
+    const source = body.source ?? "github";
+    const record = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).find((row) => row.name === body.repo && sourceOf(row) === source && row.connected);
+    if (!record) return failure(404, "repo_not_found", "The workspace has no such connected repository.");
+    let offered: Offered;
+    try {
+      offered = await deps.feed.again(tenantId, record, body.number);
+    } catch (err) {
+      return failure(502, "code_review_unavailable", `Could not send the pull request to code review: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (offered !== "sent") return failure(409, REFUSED[offered].code, REFUSED[offered].message);
+    return Response.json({ status: "queued" }, { status: 202 });
   };
 }

@@ -212,6 +212,19 @@ export async function readPr(gh: GithubFetch, repo: string, number: number) {
   return prFields(await json(gh, `/repos/${repo}/pulls/${number}`));
 }
 
+function fileDiff({ path, previousPath, patch }: PrFile): string {
+  return `diff --git a/${previousPath ?? path} b/${path}\n--- a/${previousPath ?? path}\n+++ b/${path}\n${patch ?? ""}\n`;
+}
+
+/** The pull request's unified diff against its base; GitHub refuses the diff of a very large pull request, which is then built from its files' patches. */
+export async function readPrDiff(gh: GithubFetch, repo: string, number: number): Promise<string> {
+  const path = `/repos/${repo}/pulls/${number}`;
+  const res = await gh(path, { headers: { accept: "application/vnd.github.diff" } });
+  if (res.status === 406) return (await listPrFiles(gh, repo, number)).map(fileDiff).join("");
+  if (!res.ok) throw new Error(`github GET ${path} -> ${res.status}`);
+  return res.text();
+}
+
 /** GitHub computes mergeability lazily; `mergeable: null` means poll again. */
 export async function getPr(gh: GithubFetch, repo: string, number: number) {
   let p = await json(gh, `/repos/${repo}/pulls/${number}`);

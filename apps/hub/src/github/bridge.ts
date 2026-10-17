@@ -39,6 +39,7 @@ import {
 import type { CheckPackRead, StoredPack } from "./check-pack-store.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
+import type { CodeReviewFeed } from "../code-review-feed.js";
 
 const HOOK_VERIFY = ["bearer", "standard-webhooks", "slack", "x-hub-signature"] as const;
 
@@ -61,6 +62,8 @@ export interface BridgeDeps {
   cipher: CredentialCipher;
   cache: DeliveryCache;
   coalescer: Pick<Coalescer, "accept">;
+  /** Code review is fed whether or not triage is on for the repository. */
+  codeReview: Pick<CodeReviewFeed, "offer">;
   log?: (entry: Record<string, unknown>) => void;
   readCheckPack: (tenantId: string, repo: string) => Promise<CheckPackRead>;
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
@@ -491,6 +494,7 @@ export function createBridgeHandler(d: BridgeDeps) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
       return json(202, { status: "ignored" });
     }
+    void d.codeReview.offer(loaded.tenantId, record, mail);
     const policy = policyForRepo(tenantConfig, mail.repo);
     if (!policy.enabled) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });

@@ -3,7 +3,8 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { createCodeReviewSwitch } from "./code-review.js";
+import { createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
+import type { Offered } from "./code-review-feed.js";
 import { codeReviewSources } from "./github/source-workflow.js";
 import { repoRecords, triageNs } from "./github/tenant-config.js";
 
@@ -57,6 +58,27 @@ test("PostgreSQL: code review turns on only with the host connected and the Anth
     const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, TENANT) });
     expect(repoRecords(triageNs(tenant?.config)).map((record) => [record.name, record.codeReview])).toEqual([["acme/widgets", false], ["TRI/widgets", undefined], ["acme/gone", undefined]]);
     expect(changed).toEqual([TENANT, TENANT]);
+
+    const outcomes: Array<Offered | Error> = ["sent", "draft", new Error("github GET /repos/acme/widgets/pulls/7 -> 404")];
+    const runCodeReview = createCodeReviewRun({
+      db,
+      authorize: async () => true,
+      feed: {
+        async again() {
+          const next = outcomes.shift()!;
+          if (next instanceof Error) throw next;
+          return next;
+        },
+      },
+    });
+    async function run(repo: string) {
+      const response = await runCodeReview({ repo, number: 7 }, MEMBER);
+      return [response.status, ((await response.json()) as { status?: string; error?: { code: string } }).error?.code ?? "queued"];
+    }
+    expect(await run("acme/missing")).toEqual([404, "repo_not_found"]);
+    expect(await run("acme/widgets")).toEqual([202, "queued"]);
+    expect(await run("acme/widgets")).toEqual([409, "draft"]);
+    expect(await run("acme/widgets")).toEqual([502, "code_review_unavailable"]);
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

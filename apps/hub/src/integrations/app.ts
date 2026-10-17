@@ -10,7 +10,7 @@ import { AuditLog, AUTHOR_KINDS, BacklogStarted, checkPackSchema, PolicyExported
 import { WorkflowDeploymentResponse } from "@intx/types";
 import { AUDIT_PATH } from "../audit-log.js";
 import { AUTH_METHODS_PATH } from "../auth.js";
-import { CODE_REVIEW_PATH, CodeReviewBody, CodeReviewSet } from "../code-review.js";
+import { CODE_REVIEW_PATH, CodeReviewBody, CodeReviewQueued, CodeReviewRunBody, CodeReviewSet } from "../code-review.js";
 import { GITHUB_HELD_DOS_PATH, HeldDoBody, HeldDoSent } from "../github/held-dos.js";
 import { GITHUB_INSTALLATIONS_PATH } from "../github/installation-sync.js";
 import { GITHUB_MANIFEST_CALLBACK_PATH, GITHUB_MANIFEST_PATH, StartBody, validManifestMutationRequest } from "../github/manifest.js";
@@ -78,6 +78,7 @@ export type IntegrationHandlers = {
   audit: MemberHandler;
   workflowDeploy: BodyHandler<typeof DeployBody.infer>;
   codeReview: BodyHandler<typeof CodeReviewBody.infer>;
+  codeReviewRun: BodyHandler<typeof CodeReviewRunBody.infer>;
   workflowVersions: (member: Member) => Promise<Response>;
   invitations: {
     create: (body: typeof InviteBody.infer, member: Member, req: Request) => Promise<Response>;
@@ -625,6 +626,29 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     body(CodeReviewBody),
     function setCodeReview(c) {
       return handlers.codeReview(c.req.valid("json"), memberOf(c));
+    },
+  );
+
+  app.post(
+    `${CODE_REVIEW_PATH}/:tenantId/run`,
+    describeRoute({
+      summary: "Review a pull request again",
+      description: "Needs `manage` on the workspace. Sends the pull request's current head to its host's code review even when that head was reviewed already. The repository must have code review on and the workspace its Anthropic key. Refuses a draft (`draft`) or a closed pull request (`not_open`).",
+      tags: TAGS,
+      responses: {
+        202: json("Queued", CodeReviewQueued),
+        ...invalid,
+        401: failures[401],
+        403: failures[403],
+        404: json("No such connected repository", Failure),
+        409: json("`code_review_off`, `draft` or `not_open`", Failure),
+        502: json("The host or the run trigger failed", Failure),
+      },
+    }),
+    member,
+    body(CodeReviewRunBody),
+    function runCodeReview(c) {
+      return handlers.codeReviewRun(c.req.valid("json"), memberOf(c));
     },
   );
 

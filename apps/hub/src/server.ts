@@ -51,7 +51,8 @@ import { codeReviewSources, codeReviewWorkflowFor, connectedSources, createSourc
 import { createInvitations } from "./invitations/invitations.js";
 import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
-import { createCodeReviewSwitch } from "./code-review.js";
+import { createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
+import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
@@ -323,6 +324,20 @@ async function sendTriageMail(job: TriageJob): Promise<void> {
   if (job.address === undefined) return sendBridgeMail(job.tenantId, job.workflow, job.payload);
   await deliverToDeployment(job.tenantId, job.address, job.payload);
 }
+/** Code review mail goes the way triage mail does: to the live listener, or with the coordinator on, to a worker of its own. */
+async function sendCodeReviewMail(job: TriageJob): Promise<void> {
+  if (coordinator) return coordinator.enqueue(job);
+  await sendBridgeMail(job.tenantId, job.workflow, job.payload);
+}
+const tenantGithub = createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin });
+const codeReviewFeed = createCodeReviewFeed({
+  reviewed: function reviewedSources(tenantId) {
+    return codeReviewSources(composition.db, tenantId);
+  },
+  read: createPullRequestReader({ tenantGithub, tenantBitbucket }),
+  send: sendCodeReviewMail,
+  log: logJson,
+});
 function readCheckPack(tenantId: string, repo: string) {
   return loadCheckPack({ db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson }, tenantId, repo);
 }
@@ -538,8 +553,14 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
     clearTimeout(handle);
   };
 }
-function failTriageHead(job: TriageJob, error: string): Promise<void> {
-  return failHead(triageStateStore, job, error, now());
+/** A code review job keeps no state to fail: its head is forgotten, so the next event for it sends it again. */
+async function failCoordinatedJob(job: TriageJob, error: string): Promise<void> {
+  if (!triageWorkflowOf(job.workflow)) {
+    codeReviewFeed.forget(job);
+    logJson({ level: "error", msg: "code_review_failed", tenantId: job.tenantId, repo: job.repo, pr: job.number, headSha: job.headSha, error });
+    return;
+  }
+  await failHead(triageStateStore, job, error, now());
 }
 if (coordination.enabled) {
   await releaseOrphanedWorkers(composition.db, composition.workflowLifecycleService, logJson);
@@ -555,7 +576,7 @@ if (coordination.enabled) {
     }),
     limits: coordination.limits,
     retry: { minMs: TRIAGE_RETRY_MS, maxMs: TRIAGE_RETRY_MAX_MS },
-    failed: failTriageHead,
+    failed: failCoordinatedJob,
     setTimer,
     now,
     log: logJson,
@@ -582,7 +603,7 @@ const policyFile = createPolicyFile({
   artifacts: composition.db,
   cipher: composition.credentialCipher,
   authorize: authorizePortal,
-  tenantGithub: createTenantGithub({ db: composition.db, cipher: composition.credentialCipher, githubApiOrigin: githubOrigin }),
+  tenantGithub,
   tenantBitbucket,
   writerFor: githubSenderPrincipal,
   grantWriters: createArtifactGrants(now),
@@ -595,6 +616,7 @@ const bridge = createBridgeHandler({
   cipher: hookDeps.cipher,
   cache: deliveryCache,
   coalescer,
+  codeReview: codeReviewFeed,
   readCheckPack,
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
@@ -605,6 +627,7 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   cipher: hookDeps.cipher,
   cache: deliveryCache,
   coalescer,
+  codeReview: codeReviewFeed,
   readCheckPack,
   recheckOpenPulls,
   syncPolicyFile: policyFile.onPush,
@@ -716,6 +739,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   workflowDeploy: createWorkflowDeploy({ db: composition.db, allocation: composition.workflowAllocationService, onDeployed: onSourcesChanged }),
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged }),
+  codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed }),
   invitations: createInvitations({
     db: composition.db,
     cipher: composition.credentialCipher,

@@ -67,6 +67,7 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
     } as never,
     cipher: { async decrypt() { return SECRET; } } as never,
     cache: new DeliveryCache(),
+    codeReview: { async offer() {} },
     coalescer: {
       async accept(input) {
         accepted.push(input);

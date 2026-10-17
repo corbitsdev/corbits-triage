@@ -22,7 +22,8 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/artifact-grants.ts` | Grants each new artifact's writes to its creator and the admin role; gives admins the same on older policies at start. |
 | `src/invitations/` | Invites as stock invited principals with magic links, and invite email over SMTP. |
 | `src/workflow-deploy.ts`, `src/workflow-versions.ts` | Deploys the portal's published workflow versions; lists what is deployed. |
-| `src/code-review.ts` | `POST /api/integrations/code-review/{tenantId}` turns code review on or off for one repository (`codeReview` on its record); on needs the host connected and the Anthropic key. |
+| `src/code-review.ts` | `POST /api/integrations/code-review/{tenantId}` turns code review on or off for one repository (`codeReview` on its record); on needs the host connected and the Anthropic key. `…/run` reviews a pull request's current head again. |
+| `src/code-review-feed.ts` | Sends each new non-draft head of a pull request with code review on to its host's `pr-code-review` once, with the host's diff cut past `DIFF_LIMIT`. |
 | `src/sidecar/` | Local-process `SidecarProvisioner`: child-process lifecycle, spawn env, encrypted manifests, boot restore. |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider, GitHub App credential adapter). |
 | `src/github/bridge.ts` | HMAC verify, installation events → `corbitsTriage.repos`; pull request, review, comment and `check_run` events → coalescer; default-branch pushes touching `.corbits-triage.yaml` → policy-file sync. |
@@ -32,7 +33,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/github/policy-read.ts` | The route that serves a repository's policy as triage reads it. |
 | `src/github/backlog-triage.ts` | The route that mails `pr-triage-historical` to triage a repository's open pull requests again. |
 | `src/github/coalescer.ts` | Folds a pull request's webhook burst into one mail. |
-| `src/github/coordinator.ts`, `worker-spawn.ts`, `triage-queue-view.ts` | With `TRIAGE_COORDINATOR=on`, every triage mail (webhook, retry, reconciler) is a job in one in-memory queue keyed per pull request, run in a worker deployment of its own within the worker limits; `GET /api/integrations/triage-queue/{tenantId}` lists the workspace's queued and running jobs. Off, the same jobs are mailed to the live listener. |
+| `src/github/coordinator.ts`, `worker-spawn.ts`, `triage-queue-view.ts` | With `TRIAGE_COORDINATOR=on`, every triage mail (webhook, retry, reconciler) and every code review mail is a job in one in-memory queue keyed per workflow and pull request, run in a worker deployment of its own within the worker limits, which code review shares with triage; `GET /api/integrations/triage-queue/{tenantId}` lists the workspace's queued and running jobs. Off, the same jobs are mailed to the live listener. |
 | `src/github/triage-reconciler.ts`, `reconcile-plan.ts`, `reconcile-loop.ts`, `triage-queue.ts` | Re-queues untriaged and stale heads, rotates `pr-triage` deployments and redeploys failed ones. |
 | `src/github/triage-state-store.ts` | The per-repository triage state artifact. |
 | `src/github/tenant-observer.ts`, `run-recorder.ts`, `triage-runs.ts` | Reads `pr-triage` run logs and coordinator worker runs and records verdicts. |

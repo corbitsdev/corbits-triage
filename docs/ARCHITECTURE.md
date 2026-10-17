@@ -219,7 +219,15 @@ connected and the workspace's Anthropic key. The portal then deploys that
 host's `pr-code-review-<host>` with an offering for each model it names
 (Opus 5.5 for the diff finder, Haiku 5.5 elsewhere). The hub releases a
 host's code review once none of its repositories has it on, the host is
-disconnected or the key is gone. Code review only reads: its tools are the
+disconnected or the key is gone. Each new non-draft head of a pull request
+in such a repository (opened, reopened, a push, marked ready) is mailed to it
+once, whether or not triage is on; with the coordinator on it runs in a
+worker of its own, keyed apart from the pull request's triage.
+`POST /api/integrations/code-review/{tenantId}/run` reviews the current head
+again. The hub sends the host's unified diff (on GitHub, built from the
+files' patches when the pull request is too large for GitHub's diff), cut at
+a line boundary past 100,000 characters, with `cut: { lines, of }`, which the review carries.
+Code review only reads: its tools are the
 host read bundle and the confined repository reads, so it stays on the
 local-process sidecar.
 

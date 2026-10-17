@@ -398,7 +398,11 @@ defect it reports names the line, why it is wrong, what triggers it and a fix,
 and says how many of its two finders reported it. Every defect found is
 reported, the most severe and most agreed-on first. A pull request with no
 defects gets one sentence on what it changes.
-It reviews GitHub and Bitbucket Data Center pull requests.
+It reviews GitHub and Bitbucket Data Center pull requests. Once code review
+is on for a repository, every new commit of a pull request that is not a
+draft is reviewed, and "Review again" reviews the current commit once more.
+A diff over 100,000 characters is cut to its first lines, and the review says
+how many it read.
 
 ## Triage over time
 
@@ -415,5 +419,4 @@ model's earlier answers for anything unchanged. See
 - The repository scan measures a repository's closed pull requests but does
   not propose a policy yet, and the hub does not run it.
 - Sidecars run on the hub's own machine; there is no remote provisioner yet.
-- Code review runs as a workflow only: nothing starts it from a pull request
-  event or the portal, and its review is not posted to the pull request yet.
+- Code review's findings are not posted to the pull request.

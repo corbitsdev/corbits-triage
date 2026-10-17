@@ -28,7 +28,7 @@ export type ProviderHook = {
   ownUser?: (ns: CorbitsTriageNs) => string | undefined;
 };
 
-export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "log" | "readCheckPack" | "recheckOpenPulls" | "syncPolicyFile">;
+export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "codeReview" | "log" | "readCheckPack" | "recheckOpenPulls" | "syncPolicyFile">;
 
 type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord; ns: CorbitsTriageNs };
 
@@ -177,6 +177,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       if (intake.branches && (record.defaultBranch === undefined || !intake.branches.includes(record.defaultBranch))) return ignored(at, "not_default_branch", { branches: intake.branches });
       return policyPush(at, intake.push);
     }
+    if (intake.kind === "pr") void d.codeReview.offer(hook.tenantId, record, intake.mail);
     if (!repoPolicy(record).enabled) return ignored(at, "repo_not_enabled");
     if (intake.kind === "base-move") return baseMove(at, intake.move);
     return pullRequest(at, intake.mail, provider);

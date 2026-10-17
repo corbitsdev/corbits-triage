@@ -41,7 +41,7 @@ export function prCodeReview({ id = PR_CODE_REVIEW_ADDRESS, sources }: { id?: st
       }),
       writeInput: action({ handler: "writeInput", input: stepsOf("reviewInput", "candidates", "checks", "check"), after: ["check"] }),
       write: step({ agent: writeAgent, input: { from: "steps.writeInput.output.text" }, inference: { from: "steps.writeInput.output.inference" }, after: ["writeInput"], timeout: TIMEOUT }),
-      review: action({ handler: "review", input: stepsOf("writeInput", "write"), after: ["write"] }),
+      review: action({ handler: "review", input: stepsOf("reviewInput", "writeInput", "write"), after: ["write"] }),
     },
   });
   return defineWorkflow({

@@ -64,8 +64,9 @@ export type Coordinator = {
   stop: () => void;
 };
 
-function keyOf({ tenantId, repo, number }: { tenantId: string; repo: string; number: number }): string {
-  return `${tenantId}\n${repo}\n${number}`;
+/** Triage and code review of one pull request are separate jobs. */
+function keyOf({ tenantId, workflow, repo, number }: Pick<TriageJob, "tenantId" | "workflow" | "repo" | "number">): string {
+  return `${tenantId}\n${workflow}\n${repo}\n${number}`;
 }
 
 function view(job: TriageJob): JobView {
