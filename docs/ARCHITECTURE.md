@@ -66,14 +66,16 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► pr-tria
     mail to the tenant's live pr-triage deployment for the repository's host
     (`pr-triage-github` or `pr-triage-bitbucket-datacenter`), as the tenant
     system sender, the same path cron uses. The mail names the host as
-    `repoSource`. A new commit or a newly opened pull request waits only a few
-    seconds. When the policy depends on CI (CI green is on, a step has a `ci`
-    condition, or a step approves or merges), a head whose CI is still running
-    is not mailed: its row in the triage state turns `waiting` and keeps the
-    window's events (`triage_waiting_ci`). The window that sees CI finish, or
-    its first check fail, mails the head once with those events. A head with
-    no checks yet waits up to 2 minutes for CI to start, and no head waits
-    more than 60 minutes from when it was first seen. Manual runs, the backlog
+    `repoSource`. A new commit, an opened, reopened or ready pull request, an
+    approval or a change request waits only a few seconds; comments, other
+    chatter and check events wait the quiet period. When the policy depends on
+    CI (CI green is on, a step has a `ci` condition, or a step approves or
+    merges), a head whose CI is still running is not mailed: its row in the
+    triage state turns `waiting` and keeps the window's events
+    (`triage_waiting_ci`). The window that sees CI finish, or its first check
+    fail, mails the head once with those events. A head with no checks yet
+    waits up to 2 minutes for CI to start, and no head waits more than 60
+    minutes from when it was first seen. Manual runs, the backlog
     run and retries after the base branch moves are not held. When a head
     starts waiting, and the `pr-triage` role holds Labels on GitHub or Comment
     on Bitbucket, the hub also mails it once with `kind: "waiting"`: the run

@@ -1,9 +1,11 @@
 // Holds a pull request's webhook events for a short window and mails them as
 // one triage run: the head the latest new commit or opening of the pull
-// request named (else the first event's), the latest event for workflows that read one, and every
-// event seen. A new commit or a pull request opened, reopened or marked ready
-// closes its window after a short burst instead, so its triage starts at once
-// with the events GitHub sends alongside it. The head is marked
+// request named (else the first event's), the latest event for workflows that
+// read one, and every event seen. A new commit, or a pull request opened,
+// reopened or marked ready, closes its window after a short burst, as does an
+// approval or a change request, so its triage starts at once with the events
+// GitHub sends alongside it. Comments, other chatter and check events wait out
+// the quiet period. The head is marked
 // queued when its first event is accepted, so a window lost to a restart is
 // recovered by the reconciler. Every accepted event opens or joins a window,
 // even on a head already queued: a queued row does not say whether its run
@@ -65,8 +67,8 @@ type Open = {
   head: QueuedHead;
   remembered: Remembered;
   events: TriageEvent[];
-  /** Holds a new commit or a newly opened pull request, so it closes on the burst and later events do not extend it. */
-  starting: boolean;
+  /** Holds a head-moving event, an approval or a change request, so it closes on the burst and later events do not extend it. */
+  closesOnBurst: boolean;
   cancelQuiet: () => void;
   cancelDeadline: () => void;
 };
@@ -75,6 +77,10 @@ const STARTING_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_fo
 
 function startsTriage({ mail }: CoalescedEvent): boolean {
   return mail.event === "pull_request" && mail.action !== null && STARTING_ACTIONS.has(mail.action);
+}
+
+function endsConversation({ event }: CoalescedEvent): boolean {
+  return event === "approved" || event === "changes-requested";
 }
 
 /** A pull request marked ready before any run triaged it was opened as a draft, so its opening wakes now too. */
@@ -210,7 +216,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     return queued.remembered;
   }
 
-  async function join(key: string, open: Open, input: CoalescedEvent): Promise<Accepted> {
+  async function join(key: string, open: Open, input: CoalescedEvent, closesOnBurst: boolean): Promise<Accepted> {
     if (startsTriage(input) && input.headSha !== open.head.headSha) {
       const head = headOf(input, input.headSha);
       open.remembered = await queue(head);
@@ -218,19 +224,20 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     }
     open.latest = input;
     for (const event of eventsOf(input, open.remembered.rows)) if (!open.events.includes(event)) open.events.push(event);
-    if (open.starting) return "coalesced";
-    open.starting = startsTriage(input);
+    if (open.closesOnBurst) return "coalesced";
+    open.closesOnBurst = closesOnBurst;
     open.cancelQuiet();
-    open.cancelQuiet = timer(key, open.starting ? deps.window.burstMs : deps.window.quietMs);
+    open.cancelQuiet = timer(key, closesOnBurst ? deps.window.burstMs : deps.window.quietMs);
     return "coalesced";
   }
 
   async function acceptNow(key: string, input: CoalescedEvent): Promise<Accepted> {
     const starting = startsTriage(input);
+    const closesOnBurst = starting || endsConversation(input);
     // Other events, even other pull_request ones, may name a superseded commit; only a new commit or an opening says where the head is.
     if (starting) newest.set(key, input.headSha);
     const open = windows.get(key);
-    if (open) return join(key, open, input);
+    if (open) return join(key, open, input, closesOnBurst);
     const head = headOf(input, newest.get(key) ?? input.headSha);
     const remembered = await queue(head);
     windows.set(key, {
@@ -238,8 +245,8 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
       head,
       remembered,
       events: eventsOf(input, remembered.rows),
-      starting,
-      cancelQuiet: timer(key, starting ? deps.window.burstMs : deps.window.quietMs),
+      closesOnBurst,
+      cancelQuiet: timer(key, closesOnBurst ? deps.window.burstMs : deps.window.quietMs),
       cancelDeadline: timer(key, deps.window.maxWaitMs),
     });
     return "queued";
