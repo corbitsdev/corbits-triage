@@ -56,11 +56,11 @@ Needs `gh` signed in (to fetch cases and check heads out) and
 `ANTHROPIC_API_KEY`, or `OPENCODE_API_KEY` for OpenCode Zen.
 
 ```sh
-bun run eval:review -- --e2e \
-  --plan-model claude-haiku-5-5 --diff-finder-model claude-opus-5-5 \
-  --repo-finder-model claude-haiku-5-5 --consolidate-model claude-haiku-5-5 \
-  --write-model claude-haiku-5-5 --write-effort low --out e2e.json
+bun run eval:review -- --e2e --out e2e.json
 ```
+
+Each step runs on the model it is deployed with: Opus 5.5 for the diff
+finder, Haiku 5.5 for the rest. `--<role>-model` overrides one.
 
 `--cases a,b` runs a subset. `--check` turns the check step on, with
 `--check-model` and `--check-effort` for it. Other modes, listed at the top of
