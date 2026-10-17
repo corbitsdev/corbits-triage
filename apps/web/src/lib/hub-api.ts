@@ -16,11 +16,14 @@ const GITHUB_PROVIDER = "github";
 const GITHUB_PROVIDER_PLUGIN = "http";
 export const GITHUB_CREDENTIAL_NAME = "github";
 export const GITHUB_HOOK_CREDENTIAL_NAME = "github-hook";
-const INFERENCE_PROVIDER = "corbits-system-one";
+export const INFERENCE_PROVIDER = "corbits-system-one";
 const INFERENCE_PROVIDER_PLUGIN = "corbits-system-one";
 export const INFERENCE_CREDENTIAL_NAME = "corbits-system-one";
 /** Catalog model the triage workflows declare; its offering carries the provider's own model name. */
 export const DECISION_MODEL_ALIAS = "decision";
+export const ANTHROPIC_PROVIDER = "anthropic";
+export const ANTHROPIC_API = "https://api.anthropic.com";
+export const ANTHROPIC_CREDENTIAL_NAME = "anthropic";
 
 function githubProviderApiBaseUrl(
   env: Record<string, string | undefined> = (import.meta as { env?: Record<string, string | undefined> }).env ?? {},
@@ -209,7 +212,7 @@ async function listPages<T>(transport: Transport, path: string, read: (raw: unkn
   throw new Error("The hub paginated past its page limit.");
 }
 
-async function listAll<T>(transport: Transport, path: string): Promise<T[]> {
+export async function listAll<T>(transport: Transport, path: string): Promise<T[]> {
   return listPages<T>(transport, path, function readPage(raw) {
     if (Array.isArray(raw)) return { rows: raw as T[], next: null };
     const page = raw as Page<T> | undefined;
@@ -219,11 +222,13 @@ async function listAll<T>(transport: Transport, path: string): Promise<T[]> {
 
 const CONFIG_KEY = "corbitsTriage";
 
+export type Inference = { endpoint: string; model: string };
+
 export type AppConfig = {
   repos?: unknown[];
   allowlist?: Record<string, string[]>;
   labelMap?: Record<string, string>;
-  inference?: { endpoint: string; model: string };
+  inference?: Inference;
   allowlistImport?: {
     at: string;
     organizationRuns: Array<{ repo: string; organization: string; count: number; runId: string }>;
@@ -692,58 +697,47 @@ function requireHttpsUrl(value: string, what: string): string {
   return trimmed;
 }
 
-async function ensureInferenceProvider(transport: Transport, tenantId: string, endpoint: string): Promise<string> {
+type ProviderSpec = { name: string; plugin: string; apiBaseUrl: string };
+
+async function ensureCredentialProvider(transport: Transport, tenantId: string, spec: ProviderSpec): Promise<string> {
   const tid = enc(requireTenantId(tenantId));
-  const existing = pickProvider(await listAll<ProviderBody>(transport, `/api/tenants/${tid}/providers`), INFERENCE_PROVIDER);
-  const body = { plugin: INFERENCE_PROVIDER_PLUGIN, apiBaseUrl: endpoint };
-  if (existing) {
-    if (existing.plugin !== INFERENCE_PROVIDER_PLUGIN || existing.apiBaseUrl !== endpoint) {
+  const body = { plugin: spec.plugin, apiBaseUrl: spec.apiBaseUrl };
+  async function converge(existing: ProviderBody): Promise<string> {
+    if (existing.plugin !== spec.plugin || existing.apiBaseUrl !== spec.apiBaseUrl) {
       await transport.fetch("PATCH", `/api/tenants/${tid}/providers/${enc(existing.id)}`, body);
     }
     return existing.id;
   }
+  const existing = pickProvider(await listAll<ProviderBody>(transport, `/api/tenants/${tid}/providers`), spec.name);
+  if (existing) return converge(existing);
   try {
-    const created = await transport.fetch<ProviderBody>("POST", `/api/tenants/${tid}/providers`, {
-      name: INFERENCE_PROVIDER,
-      plugin: INFERENCE_PROVIDER_PLUGIN,
-      apiBaseUrl: endpoint,
-    });
+    const created = await transport.fetch<ProviderBody>("POST", `/api/tenants/${tid}/providers`, { name: spec.name, ...body });
     return created.id;
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
-    const raced = pickProvider(await listAll<ProviderBody>(transport, `/api/tenants/${tid}/providers`), INFERENCE_PROVIDER);
-    if (raced) {
-      if (raced.plugin !== INFERENCE_PROVIDER_PLUGIN || raced.apiBaseUrl !== endpoint) {
-        await transport.fetch("PATCH", `/api/tenants/${tid}/providers/${enc(raced.id)}`, body);
-      }
-      return raced.id;
-    }
+    const raced = pickProvider(await listAll<ProviderBody>(transport, `/api/tenants/${tid}/providers`), spec.name);
+    if (raced) return converge(raced);
     throw cause;
   }
 }
 
-export async function saveInference(
+/** Stores an API key in the vault under its provider, replacing the secret of the one already stored. */
+async function writeApiKey(
   transport: Transport,
   tenantId: string,
-  input: { endpoint: string; model: string; secret: string },
+  input: { providerId: string; name: string; secret: string; metadata?: Record<string, unknown>; what: string },
 ): Promise<void> {
-  const endpoint = requireHttpsUrl(input.endpoint, "Endpoint");
-  const model = requireContent(input.model, "Model");
-  if (!input.secret.trim()) throw new Error("Secret is required.");
-  const secret = requireSecret(input.secret);
   const tid = enc(requireTenantId(tenantId));
-  const providerId = await ensureInferenceProvider(transport, tenantId, endpoint);
-  const name = INFERENCE_CREDENTIAL_NAME;
-  let credentialId: string;
+  const { providerId, name, secret, metadata } = input;
   try {
-    ({ id: credentialId } = await transport.fetch<HubCredential>("POST", `/api/tenants/${tid}/credentials`, {
+    await transport.fetch("POST", `/api/tenants/${tid}/credentials`, {
       providerId,
       name,
       type: "api_key",
       secret,
-      metadata: { model, endpoint },
+      ...(metadata && { metadata }),
       idempotencyKey: credentialIdempotencyKey(providerId, name),
-    }));
+    });
   } catch (cause) {
     if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
     const existing = await transport.fetch<HubCredential>(
@@ -757,50 +751,41 @@ export async function saveInference(
     const status = typeof current.status === "string" ? current.status.toLowerCase() : "";
     if (status !== "active" && !REACTIVATABLE_CREDENTIAL_STATUSES.has(status)) {
       const label = typeof current.status === "string" && current.status.length > 0 ? current.status : "unknown";
-      throw new Error(`The inference secret is ${label} — save a new secret.`);
+      throw new Error(`The ${input.what} is ${label} — save a new secret.`);
     }
-    const patch: Record<string, unknown> = { secret, metadata: { model, endpoint } };
+    const patch: Record<string, unknown> = { secret, ...(metadata && { metadata }) };
     if (REACTIVATABLE_CREDENTIAL_STATUSES.has(status)) patch.status = "active";
     await transport.fetch("PATCH", `/api/tenants/${tid}/credentials/${enc(existing.id)}`, patch);
-    credentialId = existing.id;
   }
-  await ensureInferenceOffering(transport, tenantId, { endpoint, model, credentialId });
+}
+
+export async function saveInference(
+  transport: Transport,
+  tenantId: string,
+  input: { endpoint: string; model: string; secret: string },
+): Promise<Inference> {
+  const endpoint = requireHttpsUrl(input.endpoint, "Endpoint");
+  const model = requireContent(input.model, "Model");
+  if (!input.secret.trim()) throw new Error("Secret is required.");
+  const secret = requireSecret(input.secret);
+  const providerId = await ensureCredentialProvider(transport, tenantId, { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER_PLUGIN, apiBaseUrl: endpoint });
+  await writeApiKey(transport, tenantId, {
+    providerId,
+    name: INFERENCE_CREDENTIAL_NAME,
+    secret,
+    metadata: { model, endpoint },
+    what: "inference secret",
+  });
   await patchAppConfig(transport, tenantId, function setInference(current) {
     return { ...current, inference: { endpoint, model } };
   });
+  return { endpoint, model };
 }
 
-type CatalogRow = { id: string; name?: string; canonicalName?: string; baseURL?: string; modelId?: string; providerId?: string; quirks?: Record<string, unknown> | null };
-
-async function ensureInferenceOffering(
-  transport: Transport,
-  tenantId: string,
-  input: { endpoint: string; model: string; credentialId: string },
-): Promise<void> {
-  const base = `/api/tenants/${enc(requireTenantId(tenantId))}/catalog`;
-  const providers = await listAll<CatalogRow>(transport, `${base}/providers`);
-  let provider = providers.find((row) => row.name === INFERENCE_PROVIDER);
-  if (!provider) {
-    provider = await transport.fetch<CatalogRow>("POST", `${base}/providers`, {
-      name: INFERENCE_PROVIDER,
-      plugin: INFERENCE_PROVIDER_PLUGIN,
-      baseURL: input.endpoint,
-      credentialId: input.credentialId,
-    });
-  } else if (provider.baseURL !== input.endpoint) {
-    await transport.fetch("PATCH", `${base}/providers/${enc(provider.id)}`, { baseURL: input.endpoint });
-  }
-  const models = await listAll<CatalogRow>(transport, `${base}/models`);
-  const model = models.find((row) => row.canonicalName === DECISION_MODEL_ALIAS)
-    ?? await transport.fetch<CatalogRow>("POST", `${base}/models`, { canonicalName: DECISION_MODEL_ALIAS });
-  const quirks = { model: input.model };
-  const offerings = await listAll<CatalogRow>(transport, `${base}/offerings`);
-  const offering = offerings.find((row) => row.modelId === model.id && row.providerId === provider.id);
-  if (!offering) {
-    await transport.fetch("POST", `${base}/offerings`, { modelId: model.id, providerId: provider.id, priority: 0, quirks });
-  } else if (JSON.stringify(offering.quirks) !== JSON.stringify(quirks)) {
-    await transport.fetch("PATCH", `${base}/offerings/${enc(offering.id)}`, { quirks });
-  }
+export async function saveAnthropicKey(transport: Transport, tenantId: string, input: string): Promise<void> {
+  const secret = requireSecret(input);
+  const providerId = await ensureCredentialProvider(transport, tenantId, { name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, apiBaseUrl: ANTHROPIC_API });
+  await writeApiKey(transport, tenantId, { providerId, name: ANTHROPIC_CREDENTIAL_NAME, secret, what: "Anthropic key" });
 }
 
 async function forgetRepo(transport: Transport, tenantId: string, repo: string): Promise<void> {

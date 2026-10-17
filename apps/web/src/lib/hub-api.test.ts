@@ -330,10 +330,6 @@ describe("workspace GitHub App and repository lifecycle", () => {
     const transport: Transport = {
       fetch: async (method, path, body) => {
         calls.push({ method, path, body });
-        if (method === "GET" && path.includes("/catalog/")) return { data: [], nextCursor: null } as never;
-        if (method === "POST" && path.endsWith("/catalog/providers")) return { id: "mpv-inference" } as never;
-        if (method === "POST" && path.endsWith("/catalog/models")) return { id: "mdl-inference" } as never;
-        if (method === "POST" && path.endsWith("/catalog/offerings")) return { id: "mof-inference" } as never;
         if (method === "GET" && path.includes("/providers")) return { data: [], nextCursor: null } as never;
         if (method === "POST" && path.endsWith("/providers")) {
           return { id: "provider-inference", name: "corbits-system-one", plugin: "corbits-system-one" } as never;
@@ -358,21 +354,6 @@ describe("workspace GitHub App and repository lifecycle", () => {
       method: "POST",
       path: "/api/tenants/tenant/providers",
       body: { name: "corbits-system-one", plugin: "corbits-system-one", apiBaseUrl: "https://inference.example/v1" },
-    });
-    expect(calls).toContainEqual({
-      method: "POST",
-      path: "/api/tenants/tenant/catalog/models",
-      body: { canonicalName: "decision" },
-    });
-    expect(calls).toContainEqual({
-      method: "POST",
-      path: "/api/tenants/tenant/catalog/offerings",
-      body: {
-        modelId: "mdl-inference",
-        providerId: "mpv-inference",
-        priority: 0,
-        quirks: { model: "triage-large" },
-      },
     });
     expect(calls).toContainEqual({
       method: "POST",

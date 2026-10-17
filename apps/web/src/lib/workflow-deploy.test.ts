@@ -3,7 +3,7 @@ import { ApiError, type Transport, type WorkflowDeployment } from "@intx/hub-cli
 import { cancelsSuperseded, ensureWorkflows } from "./workflow-deploy.ts";
 import type { PackageIndexEntry } from "./workflow-packages.ts";
 
-const OFFERINGS = { ids: ["mof_1"], defaultId: "mof_1" };
+const DECISION = [{ canonicalName: "decision", offerings: [{ offeringId: "mof_1", providerName: "corbits-system-one" }] }];
 const BOTH = ["github", "bitbucket-datacenter"] as const;
 const INDEX: PackageIndexEntry[] = [
   { name: "@corbits/github-tool", version: "0.2.0", filename: "@corbits-github-tool-0.2.0.tgz", integrity: "sha512-tool" },
@@ -19,7 +19,7 @@ function packageOf(pin: string) {
   return { name: pin.slice(0, at), version: pin.slice(at + 1) };
 }
 
-function fakeHub(tarballSeed: Record<string, string> = {}, unconnected: readonly string[] = []) {
+function fakeHub(tarballSeed: Record<string, string> = {}, unconnected: readonly string[] = [], models: unknown[] = DECISION) {
   const assets: Asset[] = [];
   const tarballs = new Map(Object.entries(tarballSeed));
   const deployments: WorkflowDeployment[] = [];
@@ -33,6 +33,7 @@ function fakeHub(tarballSeed: Record<string, string> = {}, unconnected: readonly
     const url = new URL(path, "http://hub");
     if (path === "/api/tenants/t") return (method === "GET" ? { config: {} } : undefined) as T;
     if (path === "/api/tenants/t/workflows/deployments") return deployments as T;
+    if (path === "/api/tenants/t/models") return models as T;
     if (path === "/api/integrations/workflow-versions/t") {
       const live = deployments.filter((row) => row.status === "deployed").reverse();
       const listeners = live.map((row) => ({
@@ -111,7 +112,7 @@ function puts(requests: string[]): string[] {
 describe("ensureWorkflows", () => {
   test("publishes the tool before the workflows to one corbits registry and deploys each workflow pinned to its version", async () => {
     const hub = fakeHub();
-    expect(await ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-bitbucket-datacenter", "pr-triage-historical"]);
+    expect(await ensureWorkflows(hub.transport, "t", BOTH, false, hub.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-bitbucket-datacenter", "pr-triage-historical"]);
 
     const registries = hub.assets.filter((asset) => asset.kind === "package-registry");
     expect(registries).toEqual([{ id: expect.any(String), kind: "package-registry", name: "corbits" }]);
@@ -151,14 +152,14 @@ describe("ensureWorkflows", () => {
 
   test("an unchanged build publishes and deploys nothing; a deployment of another version is redeployed though its tarball is already published", async () => {
     const hub = fakeHub();
-    await ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw);
+    await ensureWorkflows(hub.transport, "t", BOTH, false, hub.fetchRaw);
     hub.requests.length = 0;
-    expect(await ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw)).toEqual([]);
+    expect(await ensureWorkflows(hub.transport, "t", BOTH, false, hub.fetchRaw)).toEqual([]);
     expect(puts(hub.requests)).toEqual([]);
 
     // A converge published this build, then its deploy failed: the live deployment still runs the older version.
     hub.pins.set("run_1", "@corbits/pr-triage-github-workflow@0.1.0-sha-00000000");
-    expect(await ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw)).toEqual(["pr-triage-github"]);
+    expect(await ensureWorkflows(hub.transport, "t", BOTH, false, hub.fetchRaw)).toEqual(["pr-triage-github"]);
     expect(puts(hub.requests)).toEqual([]);
     expect(hub.deployments.map((row) => [row.id, row.status])).toEqual([
       ["run_1", "released"],
@@ -170,15 +171,15 @@ describe("ensureWorkflows", () => {
 
   test("deploys only the connected hosts' workflows, and skips one the hub reports is no longer connected", async () => {
     const github = fakeHub();
-    expect(await ensureWorkflows(github.transport, "t", OFFERINGS, ["github"], false, github.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical"]);
+    expect(await ensureWorkflows(github.transport, "t", ["github"], false, github.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical"]);
 
     const disconnected = fakeHub({}, ["./pr-triage-bitbucket-datacenter.mjs"]);
-    expect(await ensureWorkflows(disconnected.transport, "t", OFFERINGS, BOTH, false, disconnected.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical"]);
+    expect(await ensureWorkflows(disconnected.transport, "t", BOTH, false, disconnected.fetchRaw)).toEqual(["pr-triage-github", "pr-triage-historical"]);
   });
 
   test("refuses to republish a version whose bytes changed, before publishing or deploying anything", async () => {
     const hub = fakeHub({ [INDEX[3]!.filename]: "sha512-other" });
-    await expect(ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw))
+    await expect(ensureWorkflows(hub.transport, "t", BOTH, false, hub.fetchRaw))
       .rejects.toThrow("@corbits/pr-triage-historical-workflow@0.1.0-sha-bbbbbbbb is already published with different contents; this build did not pack reproducibly.");
     expect(puts(hub.requests)).toEqual([]);
     expect(hub.deployed).toEqual([]);
@@ -186,7 +187,7 @@ describe("ensureWorkflows", () => {
 
   test("before publishing, removes every tarball neither this build nor a live listener or worker pins", async () => {
     const hub = fakeHub();
-    await ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw);
+    await ensureWorkflows(hub.transport, "t", BOTH, false, hub.fetchRaw);
     hub.pins.set("run_1", "@corbits/pr-triage-github-workflow@0.1.0-sha-00000000");
     hub.workers.push({ package: { name: "@corbits/pr-triage-github-workflow", version: "0.1.0-sha-22222222" }, tools: [{ name: "@corbits/github-tool", version: "0.1.0" }] });
     hub.tarballs.set("@corbits-pr-triage-github-workflow-0.1.0-sha-00000000.tgz", "sha512-listener");
@@ -197,7 +198,7 @@ describe("ensureWorkflows", () => {
     hub.tarballs.delete(INDEX[1]!.filename);
     hub.requests.length = 0;
 
-    expect(await ensureWorkflows(hub.transport, "t", OFFERINGS, BOTH, false, hub.fetchRaw)).toEqual(["pr-triage-github"]);
+    expect(await ensureWorkflows(hub.transport, "t", BOTH, false, hub.fetchRaw)).toEqual(["pr-triage-github"]);
     const changes = hub.requests.filter((line) => /^(DELETE|PUT) .*\/tarballs\//.test(line) || line.includes("workflow-deploy"));
     expect(changes.map((line) => decodeURIComponent(line))).toEqual([
       expect.stringMatching(/^DELETE .*\/@corbits-pr-triage-github-workflow-0\.1\.0-sha-11111111\.tgz$/),
@@ -211,6 +212,12 @@ describe("ensureWorkflows", () => {
       "@corbits-pr-triage-github-workflow-0.1.0-sha-22222222.tgz",
       "@corbits-github-tool-0.1.0.tgz",
     ].sort());
+  });
+
+  test("refuses to deploy a workflow whose model the workspace does not offer", async () => {
+    const hub = fakeHub({}, [], []);
+    await expect(ensureWorkflows(hub.transport, "t", ["github"], false, hub.fetchRaw)).rejects.toThrow("The workspace has no decision model. Save its key in Settings.");
+    expect(hub.deployed).toEqual([]);
   });
 });
 

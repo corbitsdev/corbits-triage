@@ -4,25 +4,14 @@
 // its offering when deployed).
 import { ApiError, listWorkflowDeployments, type Transport, type WorkflowDeployment } from "@intx/hub-client";
 import { requestOrigin } from "./hub-origin.ts";
-import { currentDeployment, DECISION_MODEL_ALIAS, isLiveDeployment, listDeployedWorkflows, type DeployedWorkflow } from "./hub-api.ts";
+import { currentDeployment, isLiveDeployment, listDeployedWorkflows, type DeployedWorkflow } from "./hub-api.ts";
+import { offeringsFor } from "./model-catalog.ts";
 import { tarballFilename, type RepoSource } from "@corbits/triage-contracts";
 import { WORKFLOW_PACKAGES, type PackageIndexEntry } from "./workflow-packages.ts";
 
-const INFERENCE_PLUGIN = "corbits-system-one";
 const REGISTRY_NAME = "corbits";
 
-type ModelInfo = { canonicalName: string; offerings: Array<{ offeringId: string; plugin: string; priority: number }> };
 type Asset = { id: string; kind: string; name: string };
-
-export type OfferingSuggestion = { ids: string[]; defaultId: string };
-
-export async function suggestOfferings(transport: Transport, tenantId: string): Promise<OfferingSuggestion | null> {
-  const models = await transport.fetch<ModelInfo[]>("GET", `/api/tenants/${encodeURIComponent(tenantId)}/models`);
-  const offering = models
-    .find((model) => model.canonicalName === DECISION_MODEL_ALIAS)
-    ?.offerings.find((o) => o.plugin === INFERENCE_PLUGIN);
-  return offering ? { ids: [offering.offeringId], defaultId: offering.offeringId } : null;
-}
 
 async function ensureAsset(transport: Transport, tenantId: string, kind: "workflow" | "package-registry", name: string): Promise<Asset> {
   const base = `/api/tenants/${encodeURIComponent(tenantId)}/assets`;
@@ -157,7 +146,6 @@ function sourceNotConnected(cause: unknown): boolean {
 export async function ensureWorkflows(
   transport: Transport,
   tenantId: string,
-  offerings: OfferingSuggestion,
   connected: readonly RepoSource[],
   redeploy: boolean,
   fetchRaw: typeof fetch = fetch,
@@ -176,6 +164,7 @@ export async function ensureWorkflows(
     const current = currentDeployment(deployments, workflow.name)?.package;
     const deploy = redeploy || current?.name !== pkg.name || current.version !== pkg.version;
     if (deploy) {
+      const offerings = await offeringsFor(transport, tenantId, workflow.models);
       try {
         await transport.fetch<WorkflowDeployment>("POST", `/api/integrations/workflow-deploy/${encodeURIComponent(tenantId)}`, {
           registryAssetId: registry.id,

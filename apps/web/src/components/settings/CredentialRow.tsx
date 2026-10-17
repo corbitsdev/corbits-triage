@@ -11,6 +11,8 @@ type CredentialRowProps = {
   name: string;
   /** False where this row only removes: another form writes the secret, or Triage did not create it. */
   replaceable: boolean;
+  /** Removes the secret where removing it also takes down what uses it; otherwise it is revoked. */
+  remove?: (credentialId: string) => Promise<void>;
 };
 
 type Change = { action: "rotate" | "revoke"; secret: string };
@@ -19,13 +21,13 @@ function confirmChange(message: string): boolean {
   return window.confirm(message);
 }
 
-export function CredentialRow({ credential, name, replaceable }: CredentialRowProps) {
+export function CredentialRow({ credential, name, replaceable, remove }: CredentialRowProps) {
   const { replaceSecret, revoke, readOnly } = usePortal();
   const [editing, setEditing] = useState(false);
   const [secret, setSecret] = useState("");
   const change = useMutation({
     mutationFn: async function applyChange({ action, secret: next }: Change) {
-      return runCredentialAction(action, credential, next, { confirm: confirmChange, replaceSecret, revoke }, name);
+      return runCredentialAction(action, credential, next, { confirm: confirmChange, replaceSecret, revoke: remove ?? revoke }, name);
     },
     onSuccess: function closeEditor(completed, { action }) {
       if (!completed || action !== "rotate") return;

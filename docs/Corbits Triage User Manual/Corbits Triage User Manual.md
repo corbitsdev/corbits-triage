@@ -306,7 +306,7 @@ Authors do not use the portal. Depending on the repository's actions, they see a
 
 ## Settings: people, access and workspace configuration
 
-**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with five sections: Triage, Sources, Decision model, Access and Your account. The links at the top jump to each section. Most teams visit it once during setup and then only to invite people or change what Triage may do on its own.
+**Settings** is reached from the menu under your name at the bottom of the left rail. It is one page with six sections: Triage, Sources, Decision model, Code review, Access and Your account. The links at the top jump to each section. Most teams visit it once during setup and then only to invite people or change what Triage may do on its own.
 
 ### Triage
 
@@ -345,6 +345,12 @@ Once connected, the card says **Connected to** the instance and shows the **Webh
 ![The Decision model section: Using OpenCode Zen (Jev) with model jev-1.13, the stored inference secret with a Remove link, the choice of providers and an API key field](images/18.png)
 
 This is where the AI decision model lives. The first line says which provider and model are in use. To change it, pick one of the listed providers and paste its API key, or choose **Add my own provider** and enter the address of a compatible service. Keys are kept in the server's vault, so after saving the field goes blank and the key shows as **stored**. To change the key, paste a new one and save again. Every save redeploys Triage's workers, so give it a minute before expecting new verdicts.
+
+### Code review
+
+![The Code review section: Reads each pull request for bugs, with the stored Anthropic secret, a Replace secret button and a Remove link](images/26.png)
+
+Code review reads each pull request for bugs and runs on Anthropic. Paste an Anthropic API key and press **Save key**. Like every key, it is kept in the server's vault and then shows as **stored**, with **Replace secret** to change it and **Remove** to delete it.
 
 ### Access
 

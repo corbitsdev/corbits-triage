@@ -23,6 +23,7 @@ import {
   removeRepository,
   resolveApproval,
   revokeCredential,
+  saveAnthropicKey,
   saveInference,
   startBacklogTriage,
   githubPrAction,
@@ -30,6 +31,7 @@ import {
   untilDeploymentReady,
   WAITING_FOR_WORKFLOW,
   type HubGrant,
+  type Inference,
   type InvitedAccess,
   type PrGithubWriteInput,
   type PrGithubWriteResult,
@@ -39,7 +41,8 @@ import {
 } from "./hub-api.ts";
 import { readChosenWorkspace, writeChosenWorkspace } from "./chosen-workspace.ts";
 import type { CreateGrantInput } from "./grant-actions.ts";
-import { ensureWorkflows, suggestOfferings } from "./workflow-deploy.ts";
+import { ensureWorkflows } from "./workflow-deploy.ts";
+import { reconcileModelCatalog, removeAnthropicKey } from "./model-catalog.ts";
 import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { hasDecisionModelCredential } from "./decision-models.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
@@ -75,6 +78,8 @@ interface PortalContextValue {
   addGrant: (input: CreateGrantInput) => Promise<void>;
   removeGrants: (grants: readonly HubGrant[]) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
+  saveAnthropic: (secret: string) => Promise<void>;
+  removeAnthropic: (credentialId: string) => Promise<void>;
 }
 
 const NO_INVITATIONS: WorkspaceOption[] = [];
@@ -250,16 +255,16 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const credentials = snapshot?.credentials;
   const sources = useMemo(() => (credentials ? connectedSources(credentials) : []), [credentials]);
   const decisionModelConnected = snapshot ? hasDecisionModelCredential(snapshot.credentials) : false;
-  const convergeWorkflows = useCallback(function convergeWorkflows(id: string, connected: RepoSource[], redeploy: boolean) {
+  const inference = snapshot?.config?.inference;
+  const convergeWorkflows = useCallback(function convergeWorkflows(id: string, connected: RepoSource[], saved: Inference | undefined, redeploy: boolean) {
     const key = `${id}:${connected.join(",")}`;
     if (!redeploy && convergedTenants.has(key)) return;
     convergedTenants.add(key);
     async function deploy() {
       try {
         const transport = createHubTransport();
-        const offerings = await suggestOfferings(transport, id);
-        if (!offerings) throw new Error("No decision model offering found. Save it again in Settings → Model.");
-        const deployed = await ensureWorkflows(transport, id, offerings, connected, redeploy);
+        await reconcileModelCatalog(transport, id, saved);
+        const deployed = await ensureWorkflows(transport, id, connected, redeploy);
         if (deployed.length) refresh();
       } catch (cause: unknown) {
         convergedTenants.delete(key);
@@ -270,8 +275,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   }, [refresh, warn]);
 
   useEffect(function convergeOnConnect() {
-    if (tenantId && sources.length > 0 && decisionModelConnected) convergeWorkflows(tenantId, sources, false);
-  }, [convergeWorkflows, decisionModelConnected, sources, tenantId]);
+    if (tenantId && sources.length > 0 && decisionModelConnected) convergeWorkflows(tenantId, sources, inference, false);
+  }, [convergeWorkflows, decisionModelConnected, inference, sources, tenantId]);
 
   const requireSnapshot = useCallback(function requireSnapshot() {
     if (readOnly || !snapshot) {
@@ -433,13 +438,35 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const saveInferenceSecret = useCallback(
     async function saveInferenceSecret(input: { endpoint: string; model: string; secret: string }) {
       const current = requireSnapshot();
-      await saveInference(createHubTransport(), current.workspace.tenantId, input);
+      const saved = await saveInference(createHubTransport(), current.workspace.tenantId, input);
       notify("Decision model saved.");
       refresh();
       const connected = connectedSources(current.credentials);
-      if (connected.length > 0) convergeWorkflows(current.workspace.tenantId, connected, true);
+      if (connected.length > 0) convergeWorkflows(current.workspace.tenantId, connected, saved, true);
     },
     [convergeWorkflows, notify, refresh, requireSnapshot],
+  );
+
+  const saveAnthropic = useCallback(
+    async function saveAnthropic(secret: string) {
+      const current = requireSnapshot();
+      const transport = createHubTransport();
+      await saveAnthropicKey(transport, current.workspace.tenantId, secret);
+      await reconcileModelCatalog(transport, current.workspace.tenantId, current.config?.inference);
+      notify("Anthropic key saved.");
+      refresh();
+    },
+    [notify, refresh, requireSnapshot],
+  );
+
+  const removeAnthropic = useCallback(
+    async function removeAnthropic(credentialId: string) {
+      const current = requireSnapshot();
+      await removeAnthropicKey(createHubTransport(), current.workspace.tenantId, credentialId);
+      notify("Anthropic key removed.");
+      refresh();
+    },
+    [notify, refresh, requireSnapshot],
   );
 
   const value = useMemo<PortalContextValue>(
@@ -470,6 +497,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         addGrant,
         removeGrants,
         saveInferenceSecret,
+        saveAnthropic,
+        removeAnthropic,
       };
     },
     [
@@ -497,6 +526,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       addGrant,
       removeGrants,
       saveInferenceSecret,
+      saveAnthropic,
+      removeAnthropic,
     ],
   );
 
