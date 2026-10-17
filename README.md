@@ -49,6 +49,8 @@ To run it for real, build the root `Dockerfile` and follow
 - [docs/DEPLOY.md](docs/DEPLOY.md): Docker Compose, Railway, a separately
   hosted portal, known limitations.
 - [docs/DEV.md](docs/DEV.md): local setup and the GitHub emulator.
+- [docs/PROVISIONERS.md](docs/PROVISIONERS.md): writing a sidecar provisioner
+  for another backend.
 - [DESIGN.md](DESIGN.md): the portal's design tokens and rules.
 - [AGENTS.md](AGENTS.md): how the code is built and its boundaries.
 

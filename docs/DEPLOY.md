@@ -63,7 +63,7 @@ Unrelated domains without a rewrite (for example `*.vercel.app` and `*.up.railwa
 
 ## Splitting sidecars out later
 
-Sidecars start through Interchange's `SidecarProvisioner` interface. The local-process provisioner is registered in `apps/hub/src/server.ts`; a remote provisioner (QEMU, Kubernetes, E2B) replaces it there. Remote sidecars would dial the hub's `/api/sidecars/ws` at `HUB_SIDECAR_WEBSOCKET_URL`. No remote provisioner exists yet, so this is not supported today.
+Sidecars start through Interchange's `SidecarProvisioner` interface. The local-process provisioner is registered in `apps/hub/src/server.ts`; a remote provisioner (QEMU, Kubernetes, E2B) replaces it there. Remote sidecars would dial the hub's `/api/sidecars/ws` at `HUB_SIDECAR_WEBSOCKET_URL`. No remote provisioner exists yet, so this is not supported today. [PROVISIONERS.md](PROVISIONERS.md) describes how to write one.
 
 ## Known limitations
 
