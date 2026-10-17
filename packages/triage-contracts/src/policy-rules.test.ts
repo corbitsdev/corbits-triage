@@ -32,7 +32,7 @@ rules:
 actions:
   pass:
     - do: approve
-      when: { author: [maintainers], ci: [passing] }
+      when: { author: [OWNER, MEMBER, COLLABORATOR], ci: [passing] }
   fail:
     - do: close
       when: { author: [bots, first-timers], lines: { over: 1000 }, linkedIssue: false }
@@ -52,8 +52,8 @@ describe("policy file schema 3", () => {
     ]);
     expect(policy.actions).toEqual({
       when: [...POLICY_EVENTS],
-      pass: [{ do: "approve", when: { author: ["maintainers"], ci: ["passing"] } }],
-      fail: [{ do: "close", when: { author: ["bots", "first-timers"], linkedIssue: false, lines: { over: 1000 } } }],
+      pass: [{ do: "approve", when: { author: ["OWNER", "MEMBER", "COLLABORATOR"], ci: ["passing"] } }],
+      fail: [{ do: "close", when: { author: ["BOT", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"], linkedIssue: false, lines: { over: 1000 } } }],
       unsure: [],
     });
     expect(policy.labels).toMatchObject({ pass: "Ready" });
@@ -69,7 +69,7 @@ actions:
   fail: [{ do: close, for: { team: acme/core } }]
   unsure: []
 `, REPO);
-    expect(policy.actions).toEqual({ when: ["opened"], pass: [{ do: "approve", when: { author: ["maintainers"] } }, { do: "merge" }], fail: [{ do: "close", when: { author: [{ team: "acme/core" }] } }], unsure: [] });
+    expect(policy.actions).toEqual({ when: ["opened"], pass: [{ do: "approve", when: { author: ["OWNER", "MEMBER", "COLLABORATOR"] } }, { do: "merge" }], fail: [{ do: "close", when: { author: [{ team: "acme/core" }] } }], unsure: [] });
   });
 
   test("a schema 3 file that extends a workspace policy holds only what it sets", () => {

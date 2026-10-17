@@ -194,9 +194,9 @@ Below the summary line are three lists of steps, one per verdict: **Pass**, **Fa
 | Assign to… | Assigns the pull request to the author, the code owners, named people or teams. |
 | Add label… | Adds the labels you list. |
 
-The **for** choice limits a step to some authors: **anyone**, **first-timers**, **maintainers**, **external contributors**, **bots**, **a GitHub team…** or **specific people…**. For example, a Fail step can post a friendly comment for first-timers only. By default, Unsure asks the code owners for a review.
+The **for** choice limits a step to some authors: **anyone**; **first-timers**, **maintainers**, **external contributors** or **bots**; one kind of author as GitHub reports it (**owners**, **organization members**, **collaborators**, **past contributors**, **first-time contributors**, **people new to GitHub**, **outside authors** or **imported authors**); **a GitHub team…**; or **specific people…**. For example, a Fail step can post a friendly comment for first-timers only. By default, Unsure asks the code owners for a review.
 
-In the repository's `.corbits-triage.yaml`, a step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for.
+In the repository's `.corbits-triage.yaml`, a step can also run only when the pull request links an issue (or does not), when its CI is passing, failing, pending or absent, or when it changes more or fewer files or lines than you say. These conditions are written under the step's `when`; the page shows only who a step is for. In the file, authors are named by GitHub's own author types: `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE` and `MANNEQUIN`, plus `BOT` for bots. A file that names first-timers, maintainers, external or bots still works and means the same authors as before.
 
 Each step shows whether it **Waits for you** or runs on its own. If something is incomplete, such as a comment with no text, the step says **Not saved yet** in red and the rest of your changes are still saved.
 
@@ -245,7 +245,7 @@ Each view has a search box, a **Filter** button and quick filters such as Action
 
 ![The Needs you view: pull requests grouped under Unblock and Merge, each with its title, the reason, its age and a button for the next step. The right pane shows TRI/widgets pull request 1, Blocked with three things to fix, and View on Bitbucket in its corner](images/11.png)
 
-Pull requests are grouped by what you need to do: **Unblock** for ones that are stuck on something, **Merge** for ones that passed, and so on. Each row shows the author's login, a **Bot** chip when that applies, and on GitHub rows a **First-timer** chip and the author's role when you hover the login (Bitbucket Data Center rows show the user slug only), the title, Triage's one-line reason, how long ago it was triaged, and a button for the most likely next step. Click anywhere on a row to open it in the reading pane on the right.
+Pull requests are grouped by what you need to do: **Unblock** for ones that are stuck on something, **Merge** for ones that passed, and so on. Each row shows the author's login, a **Bot** chip when that applies, and on GitHub rows a **First-timer** or **New to GitHub** chip and the author's role when you hover the login (Bitbucket Data Center rows show the user slug only), the title, Triage's one-line reason, how long ago it was triaged, and a button for the most likely next step. Click anywhere on a row to open it in the reading pane on the right.
 
 ### All open
 

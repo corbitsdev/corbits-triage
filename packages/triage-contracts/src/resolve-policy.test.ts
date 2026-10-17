@@ -10,7 +10,7 @@ const SIZE: CustomCheck = { id: "scope", name: "Scope", group: "pull-request", k
 const TESTS: CustomCheck = { id: "coverage", name: "Coverage", group: "code-vs-ci", kind: "model", shape: "is-true", claim: "Changed code has tests." };
 const REVIEW: Step = { do: "request-review", target: { to: "codeowners" } };
 const APPROVE: Step = { do: "approve" };
-const CLOSE: Step = { do: "close", when: { author: ["external"] } };
+const CLOSE: Step = { do: "close", when: { author: ["NONE"] } };
 
 const SHARED = {
   ...HEADER,
@@ -46,6 +46,11 @@ describe("resolvePolicy", () => {
       actions: { when: ["opened", "updated"], pass: [APPROVE], fail: [], unsure: [REVIEW] },
       labels: { pass: "Ready to ship", fail: "Needs work", unsure: VERDICT_LABELS.unsure },
     });
+  });
+
+  test("a stored override naming an author group reads as the kinds it held", () => {
+    const override = readPolicyOverride({ ...HEADER, repo: REPO, extends: "art_shared", actions: { fail: [{ do: "close", when: { author: ["external"] } }] } }, REPO);
+    expect(override.actions.fail).toEqual([{ do: "close", when: { author: ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", "MANNEQUIN"] } }]);
   });
 
   test("refusals: past the custom rule cap, a shared policy that extends, unknown lists, a pack read alone, a target that is no workspace policy", () => {

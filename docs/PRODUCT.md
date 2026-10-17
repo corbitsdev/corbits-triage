@@ -196,9 +196,14 @@ The policy holds one **When** and three ordered lists of steps: **On Pass**,
   nothing.
 - **When**: conditions that must all hold for the step to run, beside the
   verdict its list is for. Left out, the step runs for every pull request.
-  - `author`: any of first-timers, maintainers (owner, member or collaborator),
-    external (contributor, first-timer or outside), bots, the members of a
-    team (`{ team }`), or named people (`{ users }`).
+  - `author`: any of GitHub's author types (`OWNER`, `MEMBER`, `COLLABORATOR`,
+    `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE`,
+    `MANNEQUIN`), `BOT` for a bot whatever its type, the members of a team
+    (`{ team }`), or named people (`{ users }`). A policy written with the
+    groups `maintainers` (`OWNER`, `MEMBER`, `COLLABORATOR`), `external`
+    (`CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE`,
+    `MANNEQUIN`), `first-timers` (`FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`) or
+    `bots` (`BOT`) reads each as exactly those types.
   - `linkedIssue`: true or false; an issue from GitHub or Linear, as the linked
     issue rule finds it, whatever tracker that rule names.
   - `ci`: any of passing, failing, pending or none.
@@ -221,11 +226,11 @@ actions:
   pass:
     - do: approve
     - do: merge
-      when: { author: [maintainers], ci: [passing] }
+      when: { author: [OWNER, MEMBER, COLLABORATOR], ci: [passing] }
   fail:
     - do: request-changes
     - do: close
-      when: { author: [bots, first-timers], lines: { over: 1000 }, linkedIssue: false }
+      when: { author: [BOT, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER], lines: { over: 1000 }, linkedIssue: false }
   unsure:
     - do: request-review
       target: { to: codeowners }

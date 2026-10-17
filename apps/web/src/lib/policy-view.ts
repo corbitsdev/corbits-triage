@@ -1,4 +1,4 @@
-import { type AuthorMatch, type Step, type StepKind } from "@corbits/triage-contracts";
+import { AUTHOR_GROUPS, type AuthorGroup, type AuthorKind, type AuthorMatch, type Step, type StepKind } from "@corbits/triage-contracts";
 
 /** What a new step can do. A verdict with no steps does nothing, so `nothing` is shown only when stored. */
 export const STEP_DOS = ["approve", "merge", "close", "comment", "request-changes", "request-review", "assign", "labels"] as const satisfies readonly StepKind[];
@@ -21,9 +21,17 @@ export const FOR_NAMES = {
   maintainers: "maintainers",
   external: "external contributors",
   bots: "bots",
+  OWNER: "owners",
+  MEMBER: "organization members",
+  COLLABORATOR: "collaborators",
+  CONTRIBUTOR: "past contributors",
+  FIRST_TIME_CONTRIBUTOR: "first-time contributors",
+  FIRST_TIMER: "people new to GitHub",
+  NONE: "outside authors",
+  MANNEQUIN: "imported authors",
   team: "a GitHub team…",
   users: "specific people…",
-} as const;
+} as const satisfies Record<"anyone" | AuthorGroup | Exclude<AuthorKind, "BOT"> | "team" | "users", string>;
 
 export type ForChoice = keyof typeof FOR_NAMES;
 
@@ -32,29 +40,47 @@ export function stepFor(step: Step): AuthorMatch | undefined {
   return step.when?.author?.[0];
 }
 
-export function withStepFor(step: Step, match: AuthorMatch | undefined): Step {
+export function withStepFor(step: Step, author: AuthorMatch[] | undefined): Step {
   const { author: _was, ...rest } = step.when ?? {};
-  const when = match === undefined ? rest : { ...rest, author: [match] };
+  const when = author === undefined ? rest : { ...rest, author };
   const { when: _old, ...bare } = step;
   return (Object.keys(when).length > 0 ? { ...bare, when } : bare) as Step;
 }
 
+function isGroup(author: readonly AuthorMatch[], kinds: readonly AuthorKind[]): boolean {
+  return author.every((match) => typeof match === "string" && kinds.includes(match)) && kinds.every((kind) => author.includes(kind));
+}
+
+function startsWithGroup(author: readonly AuthorMatch[], kinds: readonly AuthorKind[]): boolean {
+  return kinds.every((kind, index) => author[index] === kind);
+}
+
+/** The builder shows one choice; a step for several authors shows its first, as a group when the list starts with one. */
 export function forChoice(step: Step): ForChoice {
-  const match = stepFor(step);
-  if (match === undefined) return "anyone";
-  if (typeof match === "string") return match;
+  const author = step.when?.author;
+  if (author === undefined) return "anyone";
+  const groups = Object.keys(AUTHOR_GROUPS) as AuthorGroup[];
+  const group = groups.find((name) => isGroup(author, AUTHOR_GROUPS[name])) ?? groups.find((name) => startsWithGroup(author, AUTHOR_GROUPS[name]));
+  if (group) return group;
+  const match = author[0]!;
+  if (typeof match === "string") return match === "BOT" ? "bots" : match;
   return "team" in match ? "team" : "users";
 }
 
 /** A team or people start empty, to be filled in. */
-function audienceOf(choice: Exclude<ForChoice, "anyone">): AuthorMatch {
+function audienceOf(choice: Exclude<ForChoice, "anyone">): AuthorMatch[] {
   switch (choice) {
     case "team":
-      return { team: "" };
+      return [{ team: "" }];
     case "users":
-      return { users: [] };
+      return [{ users: [] }];
+    case "first-timers":
+    case "maintainers":
+    case "external":
+    case "bots":
+      return [...AUTHOR_GROUPS[choice]];
     default:
-      return choice;
+      return [choice];
   }
 }
 

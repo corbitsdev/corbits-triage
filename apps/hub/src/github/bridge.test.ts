@@ -650,7 +650,7 @@ test("mailPayload mails the pack whole as `pack`, as `checkPack` only the steps 
   const pack: CheckPack = {
     ...base,
     custom: [score],
-    actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, when: { author: ["first-timers"] } }, { do: "labels", target: { from: "rules" } }] },
+    actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, when: { author: ["FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"] } }, { do: "labels", target: { from: "rules" } }] },
   };
   const source = { repo: { id: "art_pack", version: 3 }, shared: { id: "art_shared", version: 7 } };
   const mail = mailPayload({ name: "octocat/hello" }, repoPolicy({ enabled: true }), { pack, automatic: [], source }, {});

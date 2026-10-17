@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { defaultActions, emptyPack, type Step, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
+import { AUTHOR_ASSOCIATIONS, authorKindOf, defaultActions, emptyPack, readCheckPack, whenHolds, type AuthorAssociation, type Step, type PolicyActions, type VerdictWord } from "@corbits/triage-contracts";
 import { doEffectId, evaluateActions, heldApprovals, holdDos, type ActionInput, type SuggestedAction, type SuggestedDo } from "./actions.js";
 import type { PrFacts } from "./checks.js";
 import { NO_FACTS } from "./item.js";
@@ -101,24 +101,24 @@ describe("evaluateActions", () => {
 
   test("a step not for the author is skipped with why, and one whose author cannot be told apart is skipped too", () => {
     const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [
-      { ...say("maintainers"), when: { author: ["maintainers"] } },
-      { ...say("outside"), when: { author: ["external"] } },
+      { ...say("maintainers"), when: { author: ["OWNER", "MEMBER", "COLLABORATOR"] } },
+      { ...say("outside"), when: { author: ["NONE"] } },
       { ...say("team"), when: { author: [{ team: "acme/core" }] } },
       { ...say("named"), when: { author: [{ users: ["OctoCat"] }] } },
       { do: "nothing" },
       { ...say("unknown team"), when: { author: [{ team: "acme/ops" }] } },
     ] satisfies Step[] } };
-    const author = { ...facts, authorKind: "outside" as const, authorTeams: ["acme/core"], authorTeamsUnknown: ["acme/ops"] };
+    const author = { ...facts, authorKind: "NONE" as const, authorTeams: ["acme/core"], authorTeamsUnknown: ["acme/ops"] };
     const ran = evaluateActions({ facts: author, checks: [], verdict: "pass", reason: "passes", pack });
     expect(ran.map((action) => ("skipped" in action ? action.reason : action.index))).toEqual([
-      "Not run: the author is outside, not maintainers.",
+      "Not run: the author is NONE, not OWNER or MEMBER or COLLABORATOR.",
       1,
       2,
       3,
       "Not run: it is not known whether the author is acme/ops.",
     ]);
     const unknownKind = evaluateActions({ facts, checks: [], verdict: "pass", reason: "passes", pack });
-    expect(unknownKind[0]).toMatchObject({ skipped: true, reason: "Not run: it is not known whether the author is maintainers." });
+    expect(unknownKind[0]).toMatchObject({ skipped: true, reason: "Not run: it is not known whether the author is OWNER or MEMBER or COLLABORATOR." });
   });
 
   test("a step runs only when its linked issue, CI and size conditions all hold", () => {
@@ -171,6 +171,48 @@ describe("evaluateActions", () => {
     const [inserted, moved] = run({ pass: [{ do: "labels", target: { from: "list", labels: ["search"] } }, say("hello")] }) as SuggestedDo[];
     expect(inserted!.effectId).not.toBe(before!.effectId);
     expect(moved!.effectId).not.toBe(before!.effectId);
+  });
+});
+
+describe("author groups written before author kinds were GitHub's", () => {
+  // How a group matched before: the association folded to a kind, and the group's kinds.
+  const OLD_KIND: Record<AuthorAssociation, string> = {
+    OWNER: "owner", MEMBER: "member", COLLABORATOR: "collaborator", CONTRIBUTOR: "contributor",
+    FIRST_TIME_CONTRIBUTOR: "first-timer", FIRST_TIMER: "first-timer", NONE: "outside", MANNEQUIN: "outside",
+  };
+  const OLD_GROUP: Record<string, string[]> = {
+    "first-timers": ["first-timer"], maintainers: ["owner", "member", "collaborator"], external: ["contributor", "first-timer", "outside"], bots: ["bot"],
+  };
+  const AUTHORS: Array<[AuthorAssociation | null, boolean]> = [...AUTHOR_ASSOCIATIONS.map((a): [AuthorAssociation, boolean] => [a, false]), ["NONE", true], [null, false]];
+  const subject = { linkedIssue: false, ci: "passing", files: 1, lines: 1 } as const;
+
+  function oldMatch(group: string, association: AuthorAssociation | null, bot: boolean): boolean | undefined {
+    if (bot) return OLD_GROUP[group]!.includes("bot");
+    return association === null ? undefined : OLD_GROUP[group]!.includes(OLD_KIND[association]);
+  }
+
+  test.each(Object.keys(OLD_GROUP))("%s, as when.author or for, matches exactly the authors it matched before", (group) => {
+    const pass = [{ do: "approve", when: { author: [group] } }, { do: "merge", for: group }];
+    const { actions } = readCheckPack({ ...emptyPack("acme/widgets"), actions: { when: ["opened"], pass, fail: [], unsure: [] } });
+    for (const [association, bot] of AUTHORS) {
+      const author = { login: "octocat", kind: authorKindOf(association, bot) };
+      const matches = actions.pass.map((step) => whenHolds(step.when, { ...subject, author }).matches);
+      expect({ association, bot, matches }).toEqual({ association, bot, matches: [oldMatch(group, association, bot), oldMatch(group, association, bot)] });
+    }
+  });
+
+  test("a policy naming groups keeps every step in its place, so the effect ids its steps run under are unchanged", () => {
+    const pass = [
+      { do: "approve", for: "maintainers" },
+      { do: "labels", target: { from: "list", labels: ["new"] }, when: { author: ["external", "first-timers"] } },
+      { do: "labels", target: { from: "list", labels: ["new"] }, when: { author: ["external"] } },
+      { do: "comment", target: { body: "Welcome" }, when: { author: ["first-timers"] } },
+      { do: "close", for: "bots" },
+    ];
+    const pack = readCheckPack({ ...emptyPack("acme/widgets"), actions: { when: ["opened"], pass, fail: [], unsure: [] } });
+    expect(pack.actions.pass.map(({ when: _when, ...step }) => step)).toEqual(pass.map(({ for: _for, when: _when, ...step }) => step));
+    const ran = evaluateActions({ facts: { ...facts, labels: [], authorKind: "FIRST_TIME_CONTRIBUTOR" }, checks: [], verdict: "pass", reason: "passes", pack });
+    expect(ran.flatMap((a) => ("skipped" in a ? [] : [[a.index, a.kind]]))).toEqual([[1, "labels"], [2, "labels"], [3, "comment"]]);
   });
 });
 

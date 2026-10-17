@@ -3,7 +3,7 @@
 // the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CustomId, Evidence, ISSUE_TRACKERS, Label, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId } from "./check-pack.js";
+import { CATALOG_IDS, CustomId, Evidence, ISSUE_TRACKERS, Label, POLICY_EVENTS, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, withAuthorKinds, type CatalogId } from "./check-pack.js";
 
 const Lines = Text.array().atLeastLength(1).atMostLength(50);
 const Limit = type("number.integer").atLeast(1);
@@ -109,7 +109,7 @@ function actionsOf(file: PolicyRulesFile): Record<string, unknown> | undefined {
 /** The stored policy's shape for a schema 3 file: rules become built-in rows and custom rules, and `actions.on` the events the actions wake on. */
 export function rulesToPolicy(raw: Record<string, unknown>): Record<string, unknown> {
   refuseFor(asRecord(raw.actions));
-  const file = policyRulesSchema(raw);
+  const file = policyRulesSchema(withAuthorKinds(raw));
   if (file instanceof type.errors) throw new Error(file.summary);
   const actions = actionsOf(file);
   return {

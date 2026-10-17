@@ -13,16 +13,16 @@ const custom: CustomCheck[] = [
 
 const everyDo: Step[] = [
   { do: "labels", target: { from: "list", labels: ["needs-review"] } },
-  { do: "labels", target: { from: "rules" }, when: { author: ["maintainers"] } },
+  { do: "labels", target: { from: "rules" }, when: { author: ["OWNER", "MEMBER", "COLLABORATOR"] } },
   { do: "assign", target: { to: "users", users: ["octocat"] } },
   { do: "assign", target: { to: "teams", teams: ["core"] } },
   { do: "assign", target: { to: "codeowners" } },
   { do: "assign", target: { to: "author" } },
   { do: "request-review", target: { to: "codeowners" }, when: { author: [{ team: "acme/core" }] } },
   { do: "comment", target: { body: "Thanks!" }, when: { author: [{ users: ["octocat"] }] } },
-  { do: "close", when: { author: ["bots"] } },
+  { do: "close", when: { author: ["BOT"] } },
   { do: "merge" },
-  { do: "nothing", when: { author: ["first-timers"] } },
+  { do: "nothing", when: { author: ["FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"] } },
 ];
 
 const actions: PolicyActions = { when: ["opened", "ready"], pass: everyDo, fail: everyDo, unsure: [{ do: "close" }] };

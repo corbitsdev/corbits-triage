@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { asRecord, asRepo } from "@corbits/common";
-import type { AuthorAssociation } from "./repo-policy.js";
+import { AUTHOR_ASSOCIATIONS, type AuthorAssociation } from "./repo-policy.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
 /** Version 2 holds steps, model-only custom rules and verdict labels; version 1 is read only when it held no actions. */
@@ -129,23 +129,43 @@ export type ModelShape = (typeof MODEL_SHAPES)[number];
 export const CUSTOM_SCOPES = ["pull-request", "file", "hunk"] as const;
 export type CustomScope = (typeof CUSTOM_SCOPES)[number];
 
-export const AUTHOR_KINDS = ["owner", "member", "collaborator", "contributor", "first-timer", "outside", "bot"] as const;
+/** GitHub's author association, or `BOT` for a bot whatever its association. */
+export const AUTHOR_KINDS = [...AUTHOR_ASSOCIATIONS, "BOT"] as const;
 export type AuthorKind = (typeof AUTHOR_KINDS)[number];
 
-/** GitHub's author association folded to the kinds a pack names; a bot is a bot whatever its association, and no association is unknown. */
+/** No association is unknown. */
 export function authorKindOf(association: AuthorAssociation | null, bot: boolean): AuthorKind | undefined {
-  if (bot) return "bot";
-  switch (association) {
-    case "OWNER": return "owner";
-    case "MEMBER": return "member";
-    case "COLLABORATOR": return "collaborator";
-    case "CONTRIBUTOR": return "contributor";
-    case "FIRST_TIME_CONTRIBUTOR":
-    case "FIRST_TIMER": return "first-timer";
-    case "NONE":
-    case "MANNEQUIN": return "outside";
-    case null: return undefined;
-  }
+  if (bot) return "BOT";
+  return association ?? undefined;
+}
+
+/** Named sets of author kinds. Steps written before author kinds were GitHub's own name them, and each reads as exactly its kinds. */
+export const AUTHOR_GROUPS = {
+  "first-timers": ["FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"],
+  maintainers: ["OWNER", "MEMBER", "COLLABORATOR"],
+  external: ["CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE", "MANNEQUIN"],
+  bots: ["BOT"],
+} as const satisfies Record<string, readonly AuthorKind[]>;
+export type AuthorGroup = keyof typeof AUTHOR_GROUPS;
+
+function authorKinds(match: unknown): readonly unknown[] {
+  return typeof match === "string" && Object.hasOwn(AUTHOR_GROUPS, match) ? AUTHOR_GROUPS[match as AuthorGroup] : [match];
+}
+
+function stepWithAuthorKinds(raw: unknown): unknown {
+  const step = asRecord(raw);
+  const when = asRecord(step?.when);
+  if (!step || !Array.isArray(when?.author)) return raw;
+  return { ...step, when: { ...when, author: when.author.flatMap(authorKinds) } };
+}
+
+/** A policy body for a schema that names only author kinds: any author group in its steps reads as the kinds it held. */
+export function withAuthorKinds(raw: unknown): unknown {
+  const body = asRecord(raw);
+  const actions = asRecord(body?.actions);
+  if (!body || !actions) return raw;
+  const lists = VERDICTS.flatMap((verdict) => (Array.isArray(actions[verdict]) ? [[verdict, actions[verdict].map(stepWithAuthorKinds)]] : []));
+  return { ...body, actions: { ...actions, ...Object.fromEntries(lists) } };
 }
 
 /**
@@ -197,9 +217,7 @@ export type StepKind = (typeof STEP_KINDS)[number];
 export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "merge"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
-export const AUTHOR_GROUPS = ["first-timers", "maintainers", "external", "bots"] as const;
-export type AuthorGroup = (typeof AUTHOR_GROUPS)[number];
-export type AuthorMatch = AuthorGroup | { team: string } | { users: string[] };
+export type AuthorMatch = AuthorKind | { team: string } | { users: string[] };
 
 export const CI_STATES = ["passing", "failing", "pending", "none"] as const;
 export type CiState = (typeof CI_STATES)[number];
@@ -298,7 +316,7 @@ const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
   .or({ "+": "reject", to: "'teams'", teams: Texts })
   .or({ "+": "reject", to: "'codeowners'" });
 
-const AuthorMatchSchema = type.enumerated(...AUTHOR_GROUPS).or({ "+": "reject", team: Text }).or({ "+": "reject", users: Texts });
+const AuthorMatchSchema = type.enumerated(...AUTHOR_KINDS).or({ "+": "reject", team: Text }).or({ "+": "reject", users: Texts });
 const Count = type("number.integer").atLeast(0);
 const SizeBoundSchema = type({ "+": "reject", "over?": Count, "atMost?": Count });
 const stepWhenSchema = type({
@@ -671,7 +689,7 @@ function parsePeopleTarget(target: Record<string, unknown>, allowAuthor: boolean
 }
 
 function parseAuthorMatch(raw: unknown, where: string): AuthorMatch {
-  if (typeof raw === "string") return oneOf(raw, AUTHOR_GROUPS, where);
+  if (typeof raw === "string") return oneOf(raw, AUTHOR_KINDS, where);
   const row = record(raw, where);
   if ("team" in row) {
     exactKeys(row, ["team"], where);
@@ -703,7 +721,7 @@ function parseStepWhen(raw: unknown, where: string): StepWhen {
   if (extra.length) throw new Error(`${where} must set only ${WHEN_KEYS.join(", ")}, not ${extra.join(", ")}.`);
   if (Object.keys(row).length === 0) throw new Error(`${where} must set a condition, or be left out.`);
   const when: StepWhen = {};
-  if (row.author !== undefined) when.author = list(row.author, `${where} author`).map((item) => parseAuthorMatch(item, `${where} author`));
+  if (row.author !== undefined) when.author = list(row.author, `${where} author`).flatMap(authorKinds).map((item) => parseAuthorMatch(item, `${where} author`));
   if (row.linkedIssue !== undefined) {
     if (typeof row.linkedIssue !== "boolean") throw new Error(`${where} linkedIssue must be true or false.`);
     when.linkedIssue = row.linkedIssue;
@@ -722,7 +740,7 @@ function stepCondition(row: Record<string, unknown>, where: string): StepWhen | 
   if (row.for !== undefined && row.when !== undefined) throw new Error(`${where} must set when, not for and when.`);
   if (row.when !== undefined) return parseStepWhen(row.when, `${where} when`);
   if (row.for === undefined || row.for === "anyone") return undefined;
-  return { author: [parseAuthorMatch(row.for, `${where} for`)] };
+  return { author: authorKinds(row.for).map((item) => parseAuthorMatch(item, `${where} for`)) };
 }
 
 function parseStep(row: Record<string, unknown>, where: string): Step {
@@ -978,7 +996,7 @@ function parseOverrideLabels(row: Partial<Record<VerdictWord, unknown>> | undefi
 }
 
 export function readPolicyOverride(raw: unknown, expectedRepo?: string): PolicyOverride {
-  const body = policyOverrideSchema(parseJson(raw));
+  const body = policyOverrideSchema(withAuthorKinds(parseJson(raw)));
   if (body instanceof type.errors) throw new Error(body.summary);
   return {
     repo: readRepo(body, expectedRepo),

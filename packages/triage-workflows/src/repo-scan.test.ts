@@ -61,7 +61,7 @@ test("repo-scan reads the last closed pull requests through the facts director a
   expect(unread).toEqual([]);
   expect(records).toHaveLength(100);
   expect(records.slice(0, 2)).toMatchObject([
-    { number: 3, outcome: "merged", docsOnly: true, linkedIssue: true, checks: "success", authorKind: "contributor", files: 1 },
+    { number: 3, outcome: "merged", docsOnly: true, linkedIssue: true, checks: "success", authorKind: "CONTRIBUTOR", files: 1 },
     { number: 2, outcome: "closed", docsOnly: false, linkedIssue: false, checks: "failure", files: 25 },
   ]);
   expect(buckets.find((b) => b.signal === "files changed" && b.bucket === "> 20")).toEqual({ signal: "files changed", bucket: "> 20", merged: 0, closed: 1 });
