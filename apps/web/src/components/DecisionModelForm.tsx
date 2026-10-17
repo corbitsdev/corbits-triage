@@ -19,7 +19,7 @@ function keyHelp(stored: boolean): string {
   return "Stored in the hub's credential vault. You won't see it again.";
 }
 
-export function DecisionModelForm() {
+export function DecisionModelForm({ onSaved }: { onSaved?: () => void }) {
   const { snapshot, saveInferenceSecret, readOnly } = usePortal();
   const saved = snapshot?.config?.inference;
   const [preset, setPreset] = useState<DecisionModelPreset>(presetFor(saved));
@@ -49,6 +49,7 @@ export function DecisionModelForm() {
         secret: apiKey,
       });
       setApiKey("");
+      onSaved?.();
     } catch (cause) {
       setError(`Could not save the decision model. ${errorText(cause)}`);
     } finally {

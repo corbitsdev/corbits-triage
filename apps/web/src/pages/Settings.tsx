@@ -6,16 +6,14 @@ import { usePortal } from "../lib/portal.tsx";
 import { useDeployedWorkflows, usePrincipals, type TenantSection } from "../lib/tenant-entities.ts";
 import { AccessSection } from "../components/settings/AccessSection.tsx";
 import { AccountSection } from "../components/settings/AccountSection.tsx";
-import { CodeReviewSection } from "../components/settings/CodeReviewSection.tsx";
-import { ModelSection } from "../components/settings/ModelSection.tsx";
+import { ModelsSection } from "../components/settings/ModelsSection.tsx";
 import { SourcesSection } from "../components/settings/SourcesSection.tsx";
 import { TriageSection } from "../components/settings/TriageSection.tsx";
 
 const SECTIONS = [
   { id: "triage", label: "Triage" },
   { id: "sources", label: "Sources" },
-  { id: "model", label: "Decision model" },
-  { id: "code-review", label: "Code review" },
+  { id: "models", label: "Models" },
   { id: "access", label: "Access" },
   { id: "account", label: "Your account" },
 ] as const;
@@ -86,8 +84,7 @@ export default function Settings() {
       </nav>
       <TriageSection snapshot={snapshot} deployed={deployed} />
       <SourcesSection snapshot={snapshot} />
-      <ModelSection snapshot={snapshot} />
-      <CodeReviewSection snapshot={snapshot} />
+      <ModelsSection snapshot={snapshot} />
       <AccessSection repos={snapshot.repos} />
       <AccountSection />
     </main>
