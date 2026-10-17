@@ -1,0 +1,17 @@
+{
+  "name": "@corbits/provisioner-conformance",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "module": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@intx/hub-sessions": "0.5.0",
+    "@intx/types": "workspace:*"
+  },
+  "main": "./src/index.ts",
+  "description": "Conformance tests any Interchange sidecar provisioner can run"
+}

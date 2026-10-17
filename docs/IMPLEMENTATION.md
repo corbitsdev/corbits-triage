@@ -107,6 +107,10 @@ A WXT browser extension that triages the open GitHub pull request locally; see `
   policy and override schemas, `resolve-policy.ts` (a repository policy over
   the workspace policy it extends), repository settings, triage state,
   verdict labels, trigger mail and shared types.
+- `provisioner-template`: a minimal `SidecarProvisioner` to copy for a new
+  backend; see [PROVISIONERS.md](PROVISIONERS.md).
+- `provisioner-conformance`: bun tests any `SidecarProvisioner` runs to prove
+  the stock contract.
 - `openai-null-delta`: inference adapter fix for null stream deltas.
 - `common`: dependency-free helpers shared across apps and packages.
 
@@ -127,7 +131,7 @@ GitHub emulator).
 | --- | --- |
 | `bun run dev` | Hub and portal with prefixed logs (`tooling/dev.ts`). |
 | `bun run hub` | Hub only. |
-| `bun run check` | Typecheck tooling, portal, extension and hub, and bundle the hub. |
+| `bun run check` | Typecheck tooling, portal, extension, hub and packages, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run lint` | oxlint. |
 | `bun run holdback`, `injection`, `report` | Eval scripts: holdback replay, prompt-injection run, cost and latency report. |
