@@ -33,24 +33,21 @@ wakes the policy as if it were opened.
   portal is pinned to the commit Triage checked. Needs you lists repositories
   with triage on; a pull request with a pending approval stays until it is answered.
 - **Pulse**: what changed since your last visit and what is stuck.
-- **Repositories**: per repository, its Size, Checks and Judgement rules,
-  the steps for each verdict, its labels, the triage switch and **Triage open
-  pull requests again**. Every change saves on its own.
-- **Settings**: the deployed workflow versions, the GitHub App, the decision
-  model, invitations, workspace roles, the grid of action kinds by role, and the
-  account.
+- **Repositories**: per repository, the triage switch and **Triage open pull
+  requests again**, its policy file read back, code review, and the actions
+  Triage takes on its own.
+- **Settings**: the deployed workflow versions, the sources, the decision
+  model and Anthropic keys (Models), invitations, workspace roles, the grid of
+  action kinds by role, and the account.
 
 A repository's panel is one scroll. The triage switch comes first; while it is
-off, everything under it is dimmed and cannot be changed. Three cards hold the
-rules: Size, Checks and Judgement, each rule a sentence with a switch, its
-values inline while it is on, and how often it passed this week. Under Checks
-a line notes what always runs: drafts wait until they are ready for review,
-and a pull request with changes requested fails. Then lists the steps for each
-verdict: what each does, whom it is for, and whether it runs on its own
-(automatic) or waits for you, from the grants in Settings → Access. The Labels
-card names each verdict's label and switches a label for each failed rule. The
-header says Saved, Saving… or Not saved; a step or rule that is not filled in
-yet says what it needs and is not saved until it is.
+off, everything under it is dimmed and cannot be changed. Policy reads the
+repository's `.corbits-triage.yml` back as sentences: each rule that is on,
+then the steps for Pass, Fail and Unsure and whom each is for, with **Change on
+GitHub** (or Bitbucket) linking the file. Rules and actions change only in the
+file. Then Code review, and **Actions Triage takes on its own**: one switch per
+action kind, from the grants in Settings → Access. Outcomes and **Remove
+repository** close the panel.
 
 The portal shows the verdict, its score and the reasons. Evidence for a file or a change
 cites its changed lines (`src/router.ts:40-58`) and links them at the commit
@@ -62,7 +59,7 @@ Each repository has one policy: its rules, how they decide a verdict, the
 steps that run for each verdict, and the verdict labels. It is stored as a
 tenant artifact that the repository's record pins by id when the portal saves
 it (until then, the newest artifact titled `check-pack/<owner>/<name>`), may
-extend a workspace policy, and is edited on the Repositories page. The sections below follow it in that order.
+extend a workspace policy, and changes through the repository's policy file. The sections below follow it in that order.
 
 ## Rules
 
@@ -327,7 +324,7 @@ keep using it.
 Today a workspace policy is written through the hub's artifact route as an
 artifact titled `workspace-policy/<name>`, and a repository policy extends it
 by setting `extends` to that artifact's id. The portal shows an extending
-policy resolved but cannot edit it yet.
+policy resolved.
 
 ### Policy file
 
@@ -395,7 +392,7 @@ Rules saved in the portal before the file are moved into it, never dropped:
 - **Differs.** A repository whose file and saved rules run differently, or
   whose file Triage refuses, keeps running on the saved rules, so nothing a
   maintainer did not review starts or stops. Two ways out: a pull request
-  making the file match the saved rules, or keeping the file, which archives
+  making the file match the saved rules, or using the file, which archives
   the saved rules.
 - **Matches.** Once the file and the saved rules run the same, the saved rules
   are archived and the file alone is the policy.
@@ -404,16 +401,21 @@ Wording, reasons and evidence never count as a difference; what each rule
 checks and every step, in order, do. Every pull request goes on the
 `corbits-triage/policy` branch: asking again updates the open one.
 
-In the portal the repository's Policy card links the file; the rules, steps
-and labels are then read-only, with **Edit on GitHub**. A refused file is shown
-with each problem and its line on the Policy card, and named above the Inbox.
-A repository with saved rules to move shows a note at the top of its panel:
-**Upgrade this repository to a policy file** with **Open pull request**, or
-**Your policy file differs from your saved rules** with the differences,
-**Make the file match** and **Keep the file**. The Repositories list marks it
-in the Health column and the Inbox names it. The same reads
+In the portal the repository's Policy section reads the file back, with
+**Change on GitHub** (or Bitbucket). A refused file is shown with each problem
+in the Policy section, and named above the Inbox. A repository with saved
+rules to move shows one card in the Policy section, stepping through Review,
+Open pull request, Merge on the host and Done: **Move this repository's rules
+into a policy file** with **Open the pull request**; **Your policy file
+differs from your saved rules** with each difference's saved and file values,
+**Update the file to match** and **Use the file instead** (after confirming
+what changes); the open pull request, re-read every 30 seconds until it
+merges; or **Finish moving to the policy file** with **Use the file**. The
+Repositories list marks it **Move rules to a file**, **Rules differ from
+file**, **Waiting for merge** or **Switch to the file**, and the Inbox shows
+the same words in one line. The same reads
 and writes are hub routes: `GET …/github-triage/{tenantId}/policy/file`,
-`GET …/policy/upgrades` and `POST …/policy/export`; keeping the file archives
+`GET …/policy/upgrades` and `POST …/policy/export`; using the file archives
 the saved rules through the stock artifact route. `POST /api/integrations/policy/validate` takes a
 file's text and the repository it is for, and answers the policy it holds or
 each problem with the line of the rule or section it is in (the exact line and
@@ -432,10 +434,11 @@ It reviews GitHub and Bitbucket Data Center pull requests. Once code review
 is on for a repository, every new commit of a pull request that is not a
 draft is reviewed, and "Review again" reviews the current commit once more.
 A diff over 100,000 characters is cut to its first lines, and the review says
-how many it read. A workspace turns it on by saving an Anthropic key in
-Settings and switching it on per repository; it costs about $0.14 a reviewed
-commit. Findings show only in the portal, in the pull request's reading pane,
-as the first comment of a thread of their own.
+how many it read. A workspace turns it on by saving an Anthropic key under
+Settings → Models and switching it on per repository; each reviewed commit is
+billed to the workspace's Anthropic account. Findings show only in the portal,
+in the pull request's reading pane, as the first comment of a thread of their
+own.
 
 ## Triage over time
 

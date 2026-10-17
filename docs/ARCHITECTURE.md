@@ -339,11 +339,10 @@ Hub routes that reach GitHub for the portal use the same adapter.
   the repository only when it sets them. A workspace policy is a default, not a floor: an override
   may switch off or replace any of it, and only the policies' creators, admins
   and owners can write either. An archived workspace policy still applies to
-  the repositories extending it. The portal shows such a policy resolved and
-  refuses to save over it. Each trigger mail names what its pack was resolved
-  from under `policy.source` (`{ repo: { id, version }, shared?: { id,
-  version } }`), read when the event was accepted, so a run records which
-  versions it used.
+  the repositories extending it. The portal shows such a policy resolved. Each
+  trigger mail names what its pack was resolved from under `policy.source`
+  (`{ repo: { id, version }, shared?: { id, version } }`), read when the event
+  was accepted, so a run records which versions it used.
 - Triage tables, in the `corbits_triage` schema: `verdict` (verdicts per
   head, with the outcomes of the actions their run executed), applied from `apps/hub/migrations` at hub start in one
   transaction under an advisory lock. Nothing else is stored: the GitHub App

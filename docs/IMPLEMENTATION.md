@@ -89,7 +89,7 @@ from `import.meta.url`, so the origin cannot reach the adapter at runtime.
   catalog reconcile sets the `corbits-system-one` provider `baseURL` and
   points the `decision` offering at the provider's own model name
   (`quirks.model`).
-- The Anthropic key (Settings, Code review) is a vault credential named
+- The Anthropic key (Settings, Models) is a vault credential named
   `anthropic`. Removing it deletes the `anthropic` catalog provider and its
   offerings first, because the vault keeps a key a catalog provider uses.
 
