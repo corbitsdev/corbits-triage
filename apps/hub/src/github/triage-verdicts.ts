@@ -66,7 +66,7 @@ export type TriageVerdictsDeps = PortalCredentialDeps & {
 type LivePull = PullRef & { runs: ObservedRun[] };
 
 /** A pull request whose newest head waits for CI, first seen `since`. */
-type WaitingPull = PullRef & { since: string };
+type WaitingPull = PullRef & { since: string; headSha: string };
 
 function pullKey(pull: PullRef): string {
   return `${pull.repo}#${pull.number}`;
@@ -99,7 +99,7 @@ function runOf(live: ObservedRun | undefined, now: Date, ready: boolean): Run | 
 
 /** Waiting for CI holds the head's run back, so an earlier head's run says nothing about it. */
 function runFor(waiting: WaitingPull | undefined, live: ObservedRun | undefined, now: Date, ready: boolean): Run | null {
-  return waiting === undefined ? runOf(live, now, ready) : { status: "waiting-ci", since: waiting.since };
+  return waiting === undefined ? runOf(live, now, ready) : { status: "waiting-ci", since: waiting.since, headSha: waiting.headSha };
 }
 
 const STATE_VERDICTS: Record<string, VerdictWord> = { "ready-monitoring": "pass", blocked: "fail", "needs-decision": "fail", "needs-author-update": "fail" };
@@ -192,7 +192,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       for (const row of [...rows].sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt))) newest.set(row.number, row);
       for (const row of newest.values()) {
         const pull = { repo: records[index]!.name, number: row.number };
-        if (row.status === "waiting") waiting.set(pullKey(pull), { ...pull, since: row.firstSeenAt });
+        if (row.status === "waiting") waiting.set(pullKey(pull), { ...pull, since: row.firstSeenAt, headSha: row.headSha });
       }
     }
     return waiting;

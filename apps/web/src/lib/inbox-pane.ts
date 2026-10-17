@@ -21,8 +21,9 @@ export function paneFacts(item: PrItem, detail: GithubPullDetail | undefined): P
 
 export type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "unchecked-commits" | "mergeability-unknown" | "not-mergeable" | "draft";
 
-export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha">): boolean {
-  return item.verdictSha !== null && item.headSha !== null && item.verdictSha !== item.headSha;
+export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha" | "waitingHeadSha">): boolean {
+  const head = item.waitingHeadSha ?? item.headSha;
+  return item.verdictSha !== null && head !== null && item.verdictSha !== head;
 }
 
 export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean };
