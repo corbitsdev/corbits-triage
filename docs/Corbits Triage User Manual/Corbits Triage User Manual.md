@@ -112,6 +112,12 @@ A few things work differently from GitHub, because Bitbucket works differently:
 - **CI is checked on a timer.** Bitbucket sends no event when a build finishes, so a pull request waiting for CI is checked within a few minutes of its builds ending. While the **CI must pass** rule is waiting on a build, or failing because of one, Triage looks at the build again after five minutes, then less often, and checks the pull request again once it has changed.
 - **No export.** The Policy card does not offer **Export to repository**, but a `.corbits-triage.yml` you add yourself works the same way.
 
+### Code review
+
+![The Code review card for acme/widgets: Review the code in every pull request for bugs, about $0.14 a push, with its switch off, and an Anthropic key field with Save key below it](images/27.png)
+
+Code review reads each new commit of a pull request for bugs. It runs whether or not triage is on for the repository, and skips drafts. Switch on **Review the code in every pull request for bugs** to start it; each reviewed push costs about $0.14 on your Anthropic account. It needs the workspace's Anthropic key: if none is saved, the card asks for it, and the key is kept in the same place as under Settings → Code review. Switch it off to stop.
+
 ### Policy
 
 The **Policy** card says where the repository's rules and actions are kept. At first they are kept in Corbits Triage. Press **Export to repository** to open a pull request that adds them to the repository as a file called `.corbits-triage.yml`. Once that file is on the default branch, it is the policy: changes to it are reviewed like any other code, and the rules and actions on this page become read-only. A file named `.corbits-triage.yaml` works too.
@@ -348,7 +354,7 @@ This is where the AI decision model lives. The first line says which provider an
 
 ![The Code review section: Reads each pull request for bugs, with the stored Anthropic secret, a Replace secret button and a Remove link](images/26.png)
 
-Code review is Triage's bug finder, and it runs on Anthropic. Here you store the Anthropic API key it uses; Triage does not use it to review pull requests yet. Paste the key and press **Save key**. Like every key, it is kept in the server's vault and then shows as **stored**, with **Replace secret** to change it and **Remove** to delete it.
+Code review is Triage's bug finder, and it runs on Anthropic. Here you store the Anthropic API key it uses; then switch code review on for each repository in its [Code review card](#code-review). Paste the key and press **Save key**. Like every key, it is kept in the server's vault and then shows as **stored**, with **Replace secret** to change it and **Remove** to delete it.
 
 ### Access
 

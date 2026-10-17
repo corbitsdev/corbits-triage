@@ -25,6 +25,7 @@ import {
   revokeCredential,
   saveAnthropicKey,
   saveInference,
+  setCodeReview,
   codeReviewSources,
   startBacklogTriage,
   githubPrAction,
@@ -38,6 +39,7 @@ import {
   type PrGithubWriteResult,
   type RunLog,
   type PortalSnapshot,
+  type RepoRecord,
   type WorkspaceOption,
 } from "./hub-api.ts";
 import { readChosenWorkspace, writeChosenWorkspace } from "./chosen-workspace.ts";
@@ -82,6 +84,7 @@ interface PortalContextValue {
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
   saveAnthropic: (secret: string) => Promise<void>;
   removeAnthropic: (credentialId: string) => Promise<void>;
+  switchCodeReview: (repo: Pick<RepoRecord, "name" | "source">, enabled: boolean) => Promise<void>;
 }
 
 const NO_INVITATIONS: WorkspaceOption[] = [];
@@ -170,6 +173,11 @@ const NO_HOSTS: DeployHosts = { connected: [], codeReview: [] };
 const DEPLOY_MISSING: ReadonlySet<WorkflowKind> = new Set();
 const REDEPLOY_TRIAGE: ReadonlySet<WorkflowKind> = new Set(["triage"]);
 const REDEPLOY_CODE_REVIEW: ReadonlySet<WorkflowKind> = new Set(["code-review"]);
+
+/** A workspace's converges are remembered per set of hosts; switching code review back on must deploy it again even when that set was seen before. */
+function forgetConverged(tenantId: string): void {
+  for (const key of convergedTenants) if (key.startsWith(`${tenantId}:`)) convergedTenants.delete(key);
+}
 
 function hostsOf(snapshot: PortalSnapshot): DeployHosts {
   return { connected: connectedSources(snapshot.credentials), codeReview: codeReviewSources(snapshot) };
@@ -485,6 +493,18 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
+  const switchCodeReview = useCallback(
+    async function switchCodeReview(repo: Pick<RepoRecord, "name" | "source">, enabled: boolean) {
+      const current = requireSnapshot();
+      await setCodeReview(createHubTransport(), current.workspace.tenantId, repo, enabled);
+      notify(enabled ? `Code review is on for ${repo.name}.` : `Code review is off for ${repo.name}.`);
+      // A host whose code review was off has no deployment, so the converge the fresh snapshot starts must deploy it.
+      if (enabled && !hostsOf(current).codeReview.includes(repo.source)) forgetConverged(current.workspace.tenantId);
+      await refreshNow();
+    },
+    [notify, refreshNow, requireSnapshot],
+  );
+
   const value = useMemo<PortalContextValue>(
     function portalValue() {
       return {
@@ -515,6 +535,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         saveInferenceSecret,
         saveAnthropic,
         removeAnthropic,
+        switchCodeReview,
       };
     },
     [
@@ -544,6 +565,7 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       saveInferenceSecret,
       saveAnthropic,
       removeAnthropic,
+      switchCodeReview,
     ],
   );
 

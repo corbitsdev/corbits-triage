@@ -877,9 +877,17 @@ export async function triagePullRequest(transport: Transport, tenantId: string, 
   await transport.fetch("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}`, { repo: clean, number });
 }
 
+export async function setCodeReview(transport: Transport, tenantId: string, repo: Pick<RepoRecord, "name" | "source">, enabled: boolean): Promise<void> {
+  await transport.fetch("POST", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}`, { repo: validateRepo(repo.name), source: repo.source, enabled });
+}
+
+export function hasAnthropicKey(credentials: readonly HubCredential[]): boolean {
+  return credentials.some((credential) => credential.name === ANTHROPIC_CREDENTIAL_NAME && credential.status.toLowerCase() === "active");
+}
+
 /** The hosts with a connected repository that has code review on, while the Anthropic key is stored: the hosts whose code review deploys. */
 export function codeReviewSources(snapshot: Pick<PortalSnapshot, "repos" | "credentials">): RepoSource[] {
-  if (!snapshot.credentials.some((credential) => credential.name === ANTHROPIC_CREDENTIAL_NAME && credential.status.toLowerCase() === "active")) return [];
+  if (!hasAnthropicKey(snapshot.credentials)) return [];
   return [...new Set(snapshot.repos.filter((repo) => repo.connected && repo.codeReview).map((repo) => repo.source))];
 }
 

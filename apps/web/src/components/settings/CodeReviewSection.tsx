@@ -8,7 +8,7 @@ import type { PortalSnapshot } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CredentialRow } from "./CredentialRow.tsx";
 
-function AnthropicKeyForm() {
+export function AnthropicKeyForm() {
   const { saveAnthropic, readOnly } = usePortal();
   const [key, setKey] = useState("");
   const save = useMutation({
