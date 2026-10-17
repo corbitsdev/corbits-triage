@@ -10,17 +10,20 @@ import { getLogger } from "@intx/log";
 import type { HubTransport } from "@intx/mail-memory";
 import { type } from "arktype";
 import {
+  DeploymentRejectedError,
   fitDeploymentError,
   Generation,
   HubFrame,
   MAX_MAIL_OUTBOUND_BODY_BYTES,
   type SidecarFrame,
+  type SidecarCapacity,
   type AgentDeployFrame,
   type AgentDeployErrorFrame,
   type AgentUndeployErrorFrame,
   type SessionErrorFrame,
   type AgentUndeployFrame,
   type DeploymentStoppedFrame,
+  type DeploymentRetention,
   type WorkflowControlFrame,
   type WorkflowRunRefTips,
   type HostedIncarnation,
@@ -232,13 +235,23 @@ export function answerMalformedRequestFrame(
   ) {
     const generation = Generation(envelope.generation);
     if (generation instanceof type.errors) return false;
-    send({
-      type: lifecycleError,
+    const correlation = {
       requestId: envelope.requestId,
       agentAddress: envelope.agentAddress,
       generation,
-      error: fitDeploymentError(`malformed ${frameType} frame: ${summary}`),
-    });
+    };
+    const message = fitDeploymentError(
+      `malformed ${frameType} frame: ${summary}`,
+    );
+    send(
+      lifecycleError === "agent.deploy.error"
+        ? {
+            type: lifecycleError,
+            ...correlation,
+            error: { code: "deployment_failed", message },
+          }
+        : { type: lifecycleError, ...correlation, error: message },
+    );
     return true;
   }
   if (
@@ -359,13 +372,14 @@ export interface DeployRouter {
    * routers can omit the implementation; the link then deletes the directory.
    */
   undeploy?: (frame: AgentUndeployFrame) => Promise<void>;
-  /** Cancel a workflow or stop its process while retaining local inspection state. */
+  /** Cancel, stop, or request durable retention of a workflow's local inspection state. */
   control?: (frame: WorkflowControlFrame) => Promise<WorkflowControlOutcome>;
 }
 
 /** What a handled workflow control reports back to the Hub. */
 export type WorkflowControlOutcome = {
-  /** A stopped worker's ref tips, which the Hub must hold to confirm the stop. */
+  retention?: DeploymentRetention;
+  /** Final history for a live stop, which the Hub must confirm receiving. */
   refTips?: WorkflowRunRefTips;
 };
 
@@ -717,6 +731,7 @@ export type HubLinkConfig = {
    * (tests / deployments with no workflow substrate).
    */
   getIncarnations?: () => HostedIncarnation[];
+  capacity: SidecarCapacity;
   /**
    * Returns the rotatable (non-run) sender addresses this sidecar holds cached
    * keys for. Read at each (re)connect and reported on the hello frame so the
@@ -865,6 +880,7 @@ export function createHubLink(config: HubLinkConfig): HubLink {
     applyWorkflowRunPack,
     workflowProbeExecutor = defaultWorkflowProbeExecutor,
     getIncarnations = () => [],
+    capacity,
     getCachedSenderAddresses = () => [],
     onWorkflowAddressesRoutable,
     onWorkflowAddressesUnroutable,
@@ -937,6 +953,15 @@ export function createHubLink(config: HubLinkConfig): HubLink {
     logger.warn`Unhandled error handling a hub frame: ${msg}`;
   }
   const frameLanes = createFrameLanes(logFrameError);
+  // Consecutive requests for the same generation share teardown, including
+  // across reconnects. An intervening address command ends that group.
+  const pendingUndeploys = new Map<
+    string,
+    {
+      generation: number;
+      replies: { connection: WebSocket; requestId: string }[];
+    }
+  >();
 
   function incarnationOf(address: string): HostedIncarnation | undefined {
     return getIncarnations().find((held) => held.address === address);
@@ -1256,40 +1281,32 @@ export function createHubLink(config: HubLinkConfig): HubLink {
       reply({
         type: "agent.deploy.error",
         ...answering,
-        error: fitDeploymentError(message),
+        error: {
+          code:
+            err instanceof DeploymentRejectedError
+              ? err.code
+              : "deployment_failed",
+          message: fitDeploymentError(message),
+        },
       });
     }
   }
 
   async function handleAgentUndeploy(
     frame: AgentUndeployFrame,
-    reply: Reply,
-  ): Promise<void> {
-    const answering = {
-      requestId: frame.requestId,
-      agentAddress: frame.agentAddress,
-      generation: frame.generation,
-    };
+  ): Promise<string | undefined> {
     // A sidecar holds one incarnation of an address, so with a newer one held
     // nothing of the generation named is left here, and the newer one is not
     // the Hub's to remove through this frame.
-    const held = incarnationOf(frame.agentAddress);
-    if (held !== undefined && held.generation > frame.generation) {
-      reply({ type: "agent.undeploy.ack", ...answering });
-      return;
-    }
     try {
+      const held = incarnationOf(frame.agentAddress);
+      if (held !== undefined && held.generation > frame.generation) return;
       await tearDown(frame);
-      reply({ type: "agent.undeploy.ack", ...answering });
       logger.info`Undeployed ${frame.agentAddress} generation ${String(frame.generation)}: ${frame.reason}`;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error`${message}`;
-      reply({
-        type: "agent.undeploy.error",
-        ...answering,
-        error: fitDeploymentError(message),
-      });
+      return fitDeploymentError(message);
     }
   }
 
@@ -1992,10 +2009,11 @@ export function createHubLink(config: HubLinkConfig): HubLink {
   ): Promise<void> {
     let error: string | undefined;
     let refTips: WorkflowRunRefTips | undefined;
+    let retention: DeploymentRetention | undefined;
     try {
       if (deployRouter.control === undefined)
         throw new Error("Workflow control is not supported by this sidecar");
-      ({ refTips } = await deployRouter.control(frame));
+      ({ refTips, retention } = await deployRouter.control(frame));
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     }
@@ -2004,6 +2022,7 @@ export function createHubLink(config: HubLinkConfig): HubLink {
       requestId: frame.requestId,
       ...(error !== undefined ? { error } : {}),
       ...(refTips !== undefined ? { refTips } : {}),
+      ...(retention !== undefined ? { retention } : {}),
     });
   }
 
@@ -2062,6 +2081,9 @@ export function createHubLink(config: HubLinkConfig): HubLink {
       lanes: Parameters<typeof frameLanes.run>[0],
       handle: () => Promise<void>,
     ): void {
+      for (const lane of lanes) {
+        if (typeof lane === "string") pendingUndeploys.delete(lane);
+      }
       frameLanes.run(lanes, async () => {
         if (ws !== connection) {
           logger.debug`Dropping ${frameType}: the connection that carried it closed`;
@@ -2144,13 +2166,46 @@ export function createHubLink(config: HubLinkConfig): HubLink {
           });
         });
         return;
-      case "agent.undeploy":
+      case "agent.undeploy": {
         // Runs even once its connection closed; only the answer goes with the
         // connection. The Hub sends it when it will not route that generation
         // again, and may close the socket right behind it, so dropping it
         // would leave the deployment running with nothing left to remove it.
-        frameLanes.run([frame.agentAddress], () => handleFrame(frame, reply));
+        const pending = pendingUndeploys.get(frame.agentAddress);
+        const answering = { connection, requestId: frame.requestId };
+        if (pending?.generation === frame.generation) {
+          // A closed connection cannot receive an answer. Keep only the
+          // current socket's waiters while teardown spans reconnects.
+          pending.replies = pending.replies.filter(
+            (waiting) => waiting.connection === connection,
+          );
+          pending.replies.push(answering);
+          return;
+        }
+        const cleanup = { generation: frame.generation, replies: [answering] };
+        pendingUndeploys.set(frame.agentAddress, cleanup);
+        frameLanes.run([frame.agentAddress], async () => {
+          try {
+            const error = await handleAgentUndeploy(frame);
+            for (const waiting of cleanup.replies) {
+              const response = {
+                requestId: waiting.requestId,
+                agentAddress: frame.agentAddress,
+                generation: frame.generation,
+              };
+              replyOn(waiting.connection)(
+                error === undefined
+                  ? { type: "agent.undeploy.ack", ...response }
+                  : { type: "agent.undeploy.error", ...response, error },
+              );
+            }
+          } finally {
+            if (pendingUndeploys.get(frame.agentAddress) === cleanup)
+              pendingUndeploys.delete(frame.agentAddress);
+          }
+        });
         return;
+      }
       default:
         onLanes(frame.type, [frame.agentAddress], () =>
           handleFrame(frame, reply),
@@ -2165,6 +2220,7 @@ export function createHubLink(config: HubLinkConfig): HubLink {
         type:
           | "pong"
           | "welcome"
+          | "agent.undeploy"
           | "workflow.probe.request"
           | "workflow.control"
           | "run.grants"
@@ -2176,9 +2232,6 @@ export function createHubLink(config: HubLinkConfig): HubLink {
     switch (frame.type) {
       case "agent.deploy":
         await handleAgentDeploy(frame, reply);
-        break;
-      case "agent.undeploy":
-        await handleAgentUndeploy(frame, reply);
         break;
       case "repo.pack.push":
         handlePackPush(frame, reply);
@@ -2263,6 +2316,7 @@ export function createHubLink(config: HubLinkConfig): HubLink {
         type: "hello",
         sidecarId,
         token,
+        capacity,
         incarnations: getIncarnations(),
         ...(cachedSenderAddresses.length > 0 ? { cachedSenderAddresses } : {}),
       });

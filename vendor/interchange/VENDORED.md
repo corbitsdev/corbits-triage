@@ -3,8 +3,8 @@
 ## Baseline
 
 - Upstream: <https://github.com/faremeter/interchange>
-- Stock ref: `9ae471437453db9ef1af1eca6d94c524cecf05f1`
-- Composite pin: stock `9ae47143` (upstream main on 2026-10-15) plus the
+- Stock ref: `aa7b78ee4bacb08737c4bd33adf53266f4ca924f`
+- Composite pin: stock `aa7b78ee` (release `v0.5.0`) plus the
   step-env director threading from PR #193, the local CL-10210 carry and the
   INTR-666 adaptive-thinking model ids and Anthropic structured outputs. Do
   not treat any delta as a new stock pin.
@@ -67,7 +67,7 @@ input channel. `hasRecordedSignal` reads the run's event log for that check.
 Stock `cb0bdfb4` stops the child appending a duplicate `SignalReceived`, but
 `dispatchOne` still redelivers the mail and waits for the run to park, which
 a dropped duplicate does not do, so the carry stays. The three files are
-unchanged upstream between `cd02c313` and `9ae47143`, so the carry applies
+unchanged upstream between `cd02c313` and `aa7b78ee`, so the carry applies
 as-is.
 
 Allowed files:

@@ -8,7 +8,7 @@
 # ignored. Keep entries justified: each must cite the tracking issue for
 # its upstream resolution.
 #
-# Composite pin: stock 9ae471437453db9ef1af1eca6d94c524cecf05f1 plus the
+# Composite pin: stock aa7b78ee4bacb08737c4bd33adf53266f4ca924f plus the
 # allowlisted deltas below. Full rationale is in vendor/interchange/VENDORED.md.
 #
 # Upstream PR #193 step-env director threading: the step env and spawned-child

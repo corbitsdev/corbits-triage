@@ -37,3 +37,31 @@ Run it under Bun. Startup requires `SIDECAR_DATA_DIR`, `HUB_WS_URL`,
 relocates the tarball cache (defaults to a subdirectory of the data
 dir), and the cache and registry size caps are read through
 `src/config.ts`.
+
+`SIDECAR_MAX_ACTIVE_DEPLOYMENTS` sets the active deployment limit (default 128,
+positive integer). `SIDECAR_MAX_RETAINED_DEPLOYMENTS` sets the retained-record
+limit (default 256, non-negative integer); zero triggers
+[retention refusal and cleanup](../../docs/SIDECAR_PLACEMENT.md#active-and-retained-capacity). Their sum
+must not exceed the protocol ceiling of 2,048 records. These settings are read
+at startup and advertised to the Hub on every connection, so placement uses
+the sidecar's configured active limit. The complete `hello` frame must also fit
+the 64 MiB WebSocket frame-size limit. Errors in hello use the same
+4,096-character limit as individual stop reports.
+
+Restart is required to change capacity. If the stored active or retained
+inventory exceeds the new limit, startup fails without deleting records; clean
+up deployments before reducing capacity below their counts.
+
+When raising active capacity, size each workflow's `maxDisconnected` for the
+longer [restore time](../../docs/HARNESS_DESIGN.md#self-restoration).
+
+`SIDECAR_DATA_DIR` must be durably established on a filesystem that supports
+file and directory synchronization (`fsync`). Deployment creation, state
+markers, and removal require both; filesystems that reject directory
+synchronization are unsupported. A failed state-marker write or durable
+removal keeps capacity reserved. If undeploy cannot persist its teardown marker,
+it still stops the child but preserves local state until a retry can persist
+the marker and delete the state. A directory-sync failure during the startup
+inventory aborts boot, because the sidecar cannot safely
+reuse capacity based on an unconfirmed record write or deletion. Invalid
+record contents are skipped individually.

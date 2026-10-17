@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, afterEach, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -13,7 +13,9 @@ import {
 } from "@intx/crypto";
 import { hexEncode } from "@intx/types";
 import { computeWireDefinitionHash } from "@intx/types/wire-definition-hash";
+import { deriveWorkflowRunId } from "@intx/types/workflow-run-id";
 import { createInMemoryTransport } from "@intx/mail-memory";
+import { syncRemovedPathDurable } from "@intx/storage-isogit/node";
 import type { RepoId, RepoStore } from "@intx/hub-sessions";
 import {
   createControlChannelSender,
@@ -23,6 +25,8 @@ import {
 } from "@intx/workflow-host";
 import type { WorkflowDefinition } from "@intx/workflow";
 import {
+  DEFAULT_SIDECAR_CAPACITY,
+  DeploymentRejectedError,
   DeploymentStoppedFrame,
   HostedIncarnation,
   MAX_DEPLOYMENT_ERROR_LENGTH,
@@ -59,7 +63,7 @@ import {
   markWorkflowRunRecord,
   writeWorkflowRunRecord,
   updateWorkflowRunRecordSources,
-  type WorkflowRunRecord,
+  WorkflowRunRecord,
 } from "./workflow-run-record";
 
 function deriveWorkflowRunRepoId(agentAddress: string): string {
@@ -130,11 +134,14 @@ function createMinimalStubRepoStore(): RepoStore {
 
 // The production hook removes the run repository, and the run record inside it.
 function removeRunDirectory(dataDir: string) {
-  return (runId: string) =>
-    fs.rm(path.join(dataDir, "workflow-runs", runId), {
+  return async (runId: string) => {
+    const dir = path.join(dataDir, "workflow-runs", runId);
+    await fs.rm(dir, {
       recursive: true,
       force: true,
     });
+    await syncRemovedPathDurable(dir);
+  };
 }
 
 describe("createSidecarWorkflowSupervisor", () => {
@@ -304,6 +311,7 @@ describe("createSidecarDeployRouter provision-step (no-spawn) mode", () => {
     });
 
     const router = createSidecarDeployRouter({
+      ...DEFAULT_SIDECAR_CAPACITY,
       ...deployHostBindings(),
       // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- provisionStep exercises only initRepo
       sessions: {
@@ -815,7 +823,8 @@ describe("createSidecarDeployRouter multi-step branch", () => {
      * rotation's persist window; omitted, the router uses the real writer.
      */
     updateWorkflowRunRecordSources?: typeof updateWorkflowRunRecordSources;
-    maxIncarnations?: number;
+    maxActiveDeployments?: number;
+    maxRetainedDeployments?: number;
     removeRunRepository?: (runId: string) => Promise<void>;
     deleteAgentDir?: (agentAddress: string) => Promise<void>;
     /**
@@ -877,6 +886,7 @@ describe("createSidecarDeployRouter multi-step branch", () => {
       });
     };
     const router = createSidecarDeployRouter({
+      ...DEFAULT_SIDECAR_CAPACITY,
       ...deployHostBindings(),
       // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the workflow path never invokes provisionAgent/persistHubPublicKey (single-step uses the narrow initRepo; the child mints its own key); the stubs throw if it does. initRepo is a no-op for the single-step head repo.
       sessions: {
@@ -936,8 +946,11 @@ describe("createSidecarDeployRouter multi-step branch", () => {
       ...(opts.multistepBinaryPath !== undefined
         ? { multistepBinaryPath: opts.multistepBinaryPath }
         : {}),
-      ...(opts.maxIncarnations !== undefined
-        ? { maxIncarnations: opts.maxIncarnations }
+      ...(opts.maxActiveDeployments !== undefined
+        ? { maxActiveDeployments: opts.maxActiveDeployments }
+        : {}),
+      ...(opts.maxRetainedDeployments !== undefined
+        ? { maxRetainedDeployments: opts.maxRetainedDeployments }
         : {}),
       multistepSubstrateEnv: mergedSubstrateEnv,
       ...(opts.publishWorkflowInferenceEvent !== undefined
@@ -1742,6 +1755,74 @@ describe("createSidecarDeployRouter multi-step branch", () => {
       ),
     ).toBe(false);
   });
+
+  test.each([false, true])(
+    "a failed stopped mark still attempts deletion and holds capacity only if deletion fails (%s)",
+    async (deletionFails) => {
+      const spawnError = new Error("ENOSPC: spawn failed");
+      let spawned = false;
+      const { router, substrateEnv } = await buildMultistepFixture({
+        spawner: () => {
+          spawned = true;
+          throw spawnError;
+        },
+      });
+      const agentAddress = "run_failed-mark@example.com";
+      const frame = makeMultistepFrame({
+        agentAddress,
+        definition: {
+          id: "wf-failed-mark",
+          triggers: [{ type: "manual" }],
+          stepOrder: ["step-1"],
+          steps: { "step-1": { kind: "step" } },
+        },
+        sources: { "step-1": [makeInferenceSource("step-1")] },
+      });
+      const dataDir = substrateEnv.SIDECAR_DATA_DIR;
+      if (dataDir === undefined)
+        throw new Error("fixture data directory unset");
+      const recordFile = path.join(
+        dataDir,
+        "workflow-runs",
+        deriveWorkflowRunRepoId(agentAddress),
+        "deployment.json",
+      );
+      const open = fs.open;
+      const unlink = fs.unlink;
+      let markAttempts = 0;
+      let deleteAttempts = 0;
+      const openSpy = spyOn(fs, "open").mockImplementation(
+        async (target, flags, mode) => {
+          if (spawned && String(target).startsWith(`${recordFile}.tmp.`)) {
+            markAttempts++;
+            throw new Error("ENOSPC: cannot write stopped mark");
+          }
+          return open(target, flags, mode);
+        },
+      );
+      const unlinkSpy = spyOn(fs, "unlink").mockImplementation(
+        async (target) => {
+          if (target === recordFile) {
+            deleteAttempts++;
+            if (deletionFails) throw new Error("EIO: cannot remove record");
+          }
+          return unlink(target);
+        },
+      );
+      try {
+        await expect(router.deploy(frame)).rejects.toBe(spawnError);
+        expect(markAttempts).toBe(1);
+        expect(deleteAttempts).toBe(1);
+        expect(router.incarnations()).toHaveLength(deletionFails ? 1 : 0);
+        expect(
+          await scanWorkflowRunRecords(dataDir, createNoopCredentialCipher()),
+        ).toHaveLength(deletionFails ? 1 : 0);
+      } finally {
+        openSpy.mockRestore();
+        unlinkSpy.mockRestore();
+      }
+    },
+  );
 
   test("rejects a deploy whose step pins an unbuildable provider before spawning", async () => {
     // The source-admission gate runs before any state is claimed or the
@@ -3195,26 +3276,947 @@ describe("createSidecarDeployRouter multi-step branch", () => {
     expect(isRegistered(transport, head)).toBe(true);
   });
 
-  test("refuses a deploy of another address once it holds as many as a hello can report", async () => {
+  test("refuses a deploy when every active slot is reserved", async () => {
     const dataDir = await createTempBaseDir("sidecar-incarnation-cap-");
     const spawner = makeReadyDrivingSpawner(9790);
     const { router } = await buildMultistepFixture({
       spawner: spawner.spawner,
       multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-      maxIncarnations: 1,
+      maxActiveDeployments: 1,
     });
     const held = "run_cap_held@example.com";
     const deployed = router.deploy(singleStepFrame(held, "wf-cap"));
     await spawner.driveReadyFor(0);
     await deployed;
 
-    await expect(
-      router.deploy(singleStepFrame("run_cap_other@example.com", "wf-cap")),
-    ).rejects.toThrow(
-      "this sidecar already holds as many deployments as its hello can report",
-    );
+    const error = await router
+      .deploy(singleStepFrame("run_cap_other@example.com", "wf-cap"))
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(DeploymentRejectedError);
+    expect(error).toMatchObject({ code: "capacity_full" });
+    expect(
+      await recordExists(
+        dataDir,
+        deriveWorkflowRunRepoId("run_cap_other@example.com"),
+      ),
+    ).toBe(false);
+    expect(spawner.spawnCount()).toBe(1);
     expect(heldAddresses(router)).toEqual([held]);
+    const duplicate = await router
+      .deploy(singleStepFrame(held, "wf-cap"))
+      .catch((cause: unknown) => cause);
+    expect(duplicate).not.toBeInstanceOf(DeploymentRejectedError);
+    expect(duplicate).toMatchObject({
+      message: expect.stringContaining("is live here"),
+    });
+    expect(await recordExists(dataDir, deriveWorkflowRunRepoId(held))).toBe(
+      true,
+    );
+    expect(spawner.spawnCount()).toBe(1);
   });
+
+  function retainCommand(agentAddress: string) {
+    return {
+      type: "workflow.control",
+      requestId: `retain-${agentAddress}`,
+      action: "retain",
+      agentAddress,
+      runId: deriveWorkflowRunId(agentAddress),
+      generation: 1,
+      reason: "Keep the finished deployment",
+    } as const;
+  }
+
+  test("zero retained capacity refuses retention without freeing an unremoved copy", async () => {
+    const dataDir = await createTempBaseDir("sidecar-no-retention-");
+    const spawner = makeReadyDrivingSpawner(14900);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+      maxRetainedDeployments: 0,
+    });
+    const address = "run_no_retention@example.com";
+    const deploying = router.deploy(
+      singleStepFrame(address, "wf-no-retention"),
+    );
+    await spawner.driveReadyFor(0);
+    await deploying;
+    expect(await router.control(retainCommand(address))).toEqual({
+      retention: "refused",
+    });
+    expect(
+      (await scanWorkflowRunRecords(dataDir, createNoopCredentialCipher()))[0]
+        ?.record,
+    ).toMatchObject({
+      state: "stopped",
+      retention: "refused",
+    });
+    await expect(
+      router.deploy(singleStepFrame("run_next@example.com", "wf-no-retention")),
+    ).rejects.toThrow("no active deployment slot");
+  });
+
+  test("moves a stopped copy into kept capacity and persists an overflow refusal", async () => {
+    const dataDir = await createTempBaseDir("sidecar-kept-capacity-");
+    const spawner = makeReadyDrivingSpawner(15000);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+      maxRetainedDeployments: 1,
+    });
+    const first = "run_kept_first@example.com";
+    const second = "run_kept_second@example.com";
+    const third = "run_kept_third@example.com";
+    const deployed = router.deploy(singleStepFrame(first, "wf-kept"));
+    await spawner.driveReadyFor(0);
+    await deployed;
+    expect(await router.control(retainCommand(first))).toEqual({
+      retention: "kept",
+    });
+    expect(
+      (await scanWorkflowRunRecords(dataDir, createNoopCredentialCipher()))[0]
+        ?.record,
+    ).toMatchObject({ state: "stopped", retention: "kept" });
+    await expect(
+      router.deploy(singleStepFrame(first, "wf-kept")),
+    ).rejects.toThrow("is stopped here");
+
+    const next = router.deploy(singleStepFrame(second, "wf-kept"));
+    await spawner.driveReadyFor(1);
+    await next;
+    expect(await router.control(retainCommand(second))).toEqual({
+      retention: "refused",
+    });
+    await expect(
+      router.deploy(singleStepFrame(third, "wf-kept")),
+    ).rejects.toThrow("no active deployment slot");
+    if (router.undeploy === undefined) throw new Error("Expected undeploy");
+    await router.undeploy({
+      type: "agent.undeploy",
+      requestId: "remove-kept",
+      agentAddress: first,
+      generation: 1,
+      reason: "test",
+    });
+    // A retry cannot change an already reported refusal when a slot opens.
+    expect(await router.control(retainCommand(second))).toEqual({
+      retention: "refused",
+    });
+    const restartedSpawner = makeReadyDrivingSpawner(15010);
+    const { router: restarted } = await buildMultistepFixture({
+      spawner: restartedSpawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+      maxRetainedDeployments: 1,
+    });
+    await restarted.restoreWorkflowRuns();
+    expect(restartedSpawner.spawnCount()).toBe(0);
+    expect(await restarted.control(retainCommand(second))).toEqual({
+      retention: "refused",
+    });
+  });
+
+  test("retention of live, kept, and restored copies does not depend on post-terminal history", async () => {
+    const dataDir = await createTempBaseDir("sidecar-retain-history-");
+    const spawner = makeReadyDrivingSpawner(15900);
+    const head = "run_retain_history@example.com";
+    let reads = 0;
+    const reportDeploymentRefTips = async () => {
+      reads++;
+      throw new Error("Post-terminal history is unavailable");
+    };
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      reportDeploymentRefTips,
+    });
+    const deploying = router.deploy(singleStepFrame(head, "wf-history"));
+    await spawner.driveReadyFor(0);
+    await deploying;
+    expect(await router.control(retainCommand(head))).toEqual({
+      retention: "kept",
+    });
+    expect(await router.control(retainCommand(head))).toEqual({
+      retention: "kept",
+    });
+    const { router: restarted } = await buildMultistepFixture({
+      spawner: () => {
+        throw new Error("A retained copy must not spawn");
+      },
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      reportDeploymentRefTips,
+    });
+    await restarted.restoreWorkflowRuns();
+    expect(await restarted.control(retainCommand(head))).toEqual({
+      retention: "kept",
+    });
+    expect(reads).toBe(0);
+  });
+
+  test("concurrent retain requests cannot take the same final kept slot", async () => {
+    const dataDir = await createTempBaseDir("sidecar-concurrent-retention-");
+    const spawner = makeReadyDrivingSpawner(15100);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 2,
+      maxRetainedDeployments: 1,
+    });
+    const heads = ["run_retain_a@example.com", "run_retain_b@example.com"];
+    for (const [index, head] of heads.entries()) {
+      const deployed = router.deploy(singleStepFrame(head, "wf-retain"));
+      await spawner.driveReadyFor(index);
+      await deployed;
+    }
+    const outcomes = await Promise.all(
+      heads.map((head) => router.control(retainCommand(head))),
+    );
+    expect(outcomes.map((outcome) => outcome.retention).sort()).toEqual([
+      "kept",
+      "refused",
+    ]);
+    const records = await scanWorkflowRunRecords(
+      dataDir,
+      createNoopCredentialCipher(),
+    );
+    expect(records.map(({ record }) => record.retention).sort()).toEqual([
+      "kept",
+      "refused",
+    ]);
+  });
+
+  test("a retain that waited on a stop does not overwrite a concurrent undeploy's tearing-down mark", async () => {
+    const dataDir = await createTempBaseDir("retain-undeploy-race-");
+    const spawner = makeReadyDrivingSpawner(16100);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      deleteAgentDir: async () => {
+        throw new Error("agent directory removal failed");
+      },
+    });
+    const head = "run_retain_race@example.com";
+    const deployed = router.deploy(singleStepFrame(head, "wf-retain-race"));
+    await spawner.driveReadyFor(0);
+    await deployed;
+    if (router.control === undefined || router.undeploy === undefined)
+      throw new Error("Expected control and undeploy");
+    const stop = router.control({
+      ...retainCommand(head),
+      requestId: "stop-first",
+      action: "stop",
+    });
+    const retain = router.control(retainCommand(head));
+    const undeploy = router.undeploy({
+      type: "agent.undeploy",
+      requestId: "release",
+      agentAddress: head,
+      generation: 2,
+      reason: "release",
+    });
+    const settled = await Promise.allSettled([stop, retain, undeploy]);
+    expect(settled.map((result) => result.status)).toEqual([
+      "fulfilled",
+      "rejected",
+      "rejected",
+    ]);
+    for (const action of ["cancel", "stop", "retain"] as const) {
+      await expect(
+        router.control({ ...retainCommand(head), action }),
+      ).rejects.toThrow("being removed");
+    }
+    expect(router.incarnations()).toEqual([
+      { address: head, generation: 1, state: "tearing-down" },
+    ]);
+    const records = await scanWorkflowRunRecords(
+      dataDir,
+      createNoopCredentialCipher(),
+    );
+    expect(records[0]?.record.state).toBe("tearing-down");
+    expect(records[0]?.record.retention).toBeUndefined();
+  });
+
+  test("a retain committed during undeploy counts the same capacity before and after restart", async () => {
+    const dataDir = await createTempBaseDir("retain-write-undeploy-");
+    const spawner = makeReadyDrivingSpawner(19100);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+      maxRetainedDeployments: 1,
+      deleteAgentDir: async () => {
+        throw new Error("agent directory removal failed");
+      },
+    });
+    const head = "run_retain_write_race@example.com";
+    const deployed = router.deploy(singleStepFrame(head, "wf-retain-race"));
+    await spawner.driveReadyFor(0);
+    await deployed;
+    const renamed = Promise.withResolvers<undefined>();
+    const finishWrite = Promise.withResolvers<undefined>();
+    const rename = fs.rename;
+    let intercepted = false;
+    const spy = spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      await rename(from, to);
+      if (!intercepted && String(to).endsWith("deployment.json")) {
+        intercepted = true;
+        renamed.resolve(undefined);
+        await finishWrite.promise;
+      }
+    });
+    try {
+      const retain = router.control(retainCommand(head));
+      await renamed.promise;
+      if (router.undeploy === undefined) throw new Error("Expected undeploy");
+      const undeploy = router.undeploy({
+        type: "agent.undeploy",
+        requestId: "release",
+        agentAddress: head,
+        generation: 1,
+        reason: "release",
+      });
+      finishWrite.resolve(undefined);
+      const settled = await Promise.allSettled([retain, undeploy]);
+      expect(settled.map((result) => result.status)).toEqual([
+        "rejected",
+        "rejected",
+      ]);
+    } finally {
+      finishWrite.resolve(undefined);
+      spy.mockRestore();
+    }
+    const records = await scanWorkflowRunRecords(
+      dataDir,
+      createNoopCredentialCipher(),
+    );
+    expect(records[0]?.record).toMatchObject({
+      state: "tearing-down",
+      retention: "kept",
+    });
+    expect(router.incarnations()).toEqual([
+      {
+        address: head,
+        generation: 1,
+        state: "tearing-down",
+        retention: "kept",
+      },
+    ]);
+    const { router: restarted } = await buildMultistepFixture({
+      spawner: makeReadyDrivingSpawner(19110).spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+      maxRetainedDeployments: 1,
+    });
+    await restarted.restoreWorkflowRuns();
+    expect(restarted.incarnations()).toEqual(router.incarnations());
+
+    // The persisted kept copy holds only a retained slot. A new live copy fits,
+    // but retaining it must refuse rather than exceed the retained limit.
+    const nextHead = "run_after_retain_race@example.com";
+    const next = router.deploy(singleStepFrame(nextHead, "wf-retain-race"));
+    await spawner.driveReadyFor(1);
+    await next;
+    expect((await router.control(retainCommand(nextHead))).retention).toBe(
+      "refused",
+    );
+  });
+
+  test("undeploy completes even when the stop it waited for fails to persist", async () => {
+    const dataDir = await createTempBaseDir("sidecar-stop-cleanup-");
+    const spawner = makeReadyDrivingSpawner(16110);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+    });
+    const head = "run_stop_cleanup@example.com";
+    const deployed = router.deploy(singleStepFrame(head, "wf-cleanup"));
+    await spawner.driveReadyFor(0);
+    await deployed;
+    const recordDir = path.join(
+      dataDir,
+      "workflow-runs",
+      deriveWorkflowRunRepoId(head),
+    );
+    const syncing = Promise.withResolvers<undefined>();
+    const failSync = Promise.withResolvers<undefined>();
+    const open = fs.open;
+    let intercepted = false;
+    const spy = spyOn(fs, "open").mockImplementation(
+      async (target, flags, mode) => {
+        const handle = await open(target, flags, mode);
+        if (target === recordDir && !intercepted) {
+          intercepted = true;
+          spyOn(handle, "sync").mockImplementation(async () => {
+            syncing.resolve(undefined);
+            await failSync.promise;
+            throw new Error("stop marker sync failed");
+          });
+        }
+        return handle;
+      },
+    );
+    try {
+      const stopping = router
+        .control({ ...retainCommand(head), action: "stop" })
+        .catch((error: unknown) => error);
+      await syncing.promise;
+      if (router.undeploy === undefined) throw new Error("Expected undeploy");
+      const removing = router.undeploy({
+        type: "agent.undeploy",
+        requestId: "remove",
+        agentAddress: head,
+        generation: 2,
+        reason: "release",
+      });
+      failSync.resolve(undefined);
+      expect(await stopping).toBeInstanceOf(Error);
+      await removing;
+      expect(router.incarnations()).toEqual([]);
+      expect(
+        await scanWorkflowRunRecords(dataDir, createNoopCredentialCipher()),
+      ).toEqual([]);
+    } finally {
+      failSync.resolve(undefined);
+      spy.mockRestore();
+    }
+  });
+
+  test("failed retention persistence cannot free the active slot", async () => {
+    const dataDir = await createTempBaseDir("sidecar-retention-persist-");
+    const spawner = makeReadyDrivingSpawner(15200);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 2,
+      maxRetainedDeployments: 1,
+    });
+    const head = "run_retain_persist@example.com";
+    const deployed = router.deploy(singleStepFrame(head, "wf-retain"));
+    await spawner.driveReadyFor(0);
+    await deployed;
+    const second = "run_retain_other@example.com";
+    const other = router.deploy(singleStepFrame(second, "wf-retain"));
+    await spawner.driveReadyFor(1);
+    await other;
+    const recordFile = path.join(
+      dataDir,
+      "workflow-runs",
+      deriveWorkflowRunRepoId(head),
+      "deployment.json",
+    );
+    const record = await fs.readFile(recordFile);
+    await fs.rm(recordFile);
+    await expect(router.control(retainCommand(head))).rejects.toThrow(
+      "retention record is missing",
+    );
+    expect(router.incarnations()).toEqual([
+      { address: head, generation: 1, state: "stopped" },
+      { address: second, generation: 1, state: "live" },
+    ]);
+    await expect(
+      router.deploy(singleStepFrame("run_other@example.com", "wf-retain")),
+    ).rejects.toThrow("no active deployment slot");
+    expect(await router.control(retainCommand(second))).toEqual({
+      retention: "kept",
+    });
+    await fs.writeFile(recordFile, record);
+    expect(await router.control(retainCommand(head))).toEqual({
+      retention: "refused",
+    });
+  });
+
+  test("restart restores all active copies even when kept records sort first", async () => {
+    const dataDir = await createTempBaseDir("sidecar-two-pool-restore-");
+    const kept = "run_a_kept@example.com";
+    const active = "run_z_active@example.com";
+    const first = makeReadyDrivingSpawner(15300);
+    const { router } = await buildMultistepFixture({
+      spawner: first.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+      maxRetainedDeployments: 1,
+    });
+    const firstDeploy = router.deploy(singleStepFrame(kept, "wf-retain"));
+    await first.driveReadyFor(0);
+    await firstDeploy;
+    await router.control(retainCommand(kept));
+    const secondDeploy = router.deploy(singleStepFrame(active, "wf-retain"));
+    await first.driveReadyFor(1);
+    await secondDeploy;
+    const second = makeReadyDrivingSpawner(15310);
+    const { router: restarted } = await buildMultistepFixture({
+      spawner: second.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+      maxRetainedDeployments: 1,
+    });
+    const restoring = restarted.restoreWorkflowRuns();
+    await second.driveReadyFor(0);
+    await restoring;
+    expect(second.spawnCount()).toBe(1);
+    expect(restarted.incarnations()).toEqual([
+      { address: kept, generation: 1, state: "stopped", retention: "kept" },
+      { address: active, generation: 1, state: "live" },
+    ]);
+  });
+
+  test.each(["active", "kept"] as const)(
+    "boot reports counts and restores nothing when the %s pool exceeds its limit",
+    async (pool) => {
+      const dataDir = await createTempBaseDir("sidecar-boot-capacity-");
+      const spawner = makeReadyDrivingSpawner(15920);
+      const { router } = await buildMultistepFixture({
+        spawner: spawner.spawner,
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        maxActiveDeployments: 2,
+        maxRetainedDeployments: 2,
+      });
+      for (const index of [0, 1]) {
+        const head = `run_boot_capacity_${String(index)}@example.com`;
+        const deploying = router.deploy(singleStepFrame(head, "wf-capacity"));
+        await spawner.driveReadyFor(index);
+        await deploying;
+        if (pool === "kept") await router.control(retainCommand(head));
+      }
+      const next = makeReadyDrivingSpawner(15930);
+      const { router: restarted } = await buildMultistepFixture({
+        spawner: next.spawner,
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        maxActiveDeployments: pool === "active" ? 1 : 2,
+        maxRetainedDeployments: pool === "kept" ? 1 : 2,
+      });
+      await expect(restarted.restoreWorkflowRuns()).rejects.toThrow(
+        pool === "active"
+          ? "2 active records (limit 1), 0 kept records (limit 2)"
+          : "0 active records (limit 2), 2 kept records (limit 1)",
+      );
+      expect(next.spawnCount()).toBe(0);
+      expect(restarted.incarnations()).toEqual([]);
+      expect(
+        await scanWorkflowRunRecords(dataDir, createNoopCredentialCipher()),
+      ).toHaveLength(2);
+    },
+  );
+
+  test.each(["write", "directory sync"] as const)(
+    "a failed teardown mark %s stops the child and preserves local state until retry",
+    async (failure) => {
+      const dataDir = await createTempBaseDir("sidecar-teardown-mark-");
+      const head = "run_teardown_mark@example.com";
+      const runId = deriveWorkflowRunRepoId(head);
+      const recordDir = path.join(dataDir, "workflow-runs", runId);
+      const recordFile = path.join(recordDir, "deployment.json");
+      const agentDir = path.join(dataDir, "agent-directory");
+      const spawner = makeReadyDrivingSpawner(15410);
+      let stopped = false;
+      const { router, tempBase, transport } = await buildMultistepFixture({
+        spawner: (args) => {
+          const child = spawner.spawner(args);
+          return {
+            ...child,
+            kill: () => {
+              stopped = true;
+              child.kill();
+            },
+          };
+        },
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        maxActiveDeployments: 1,
+        deleteAgentDir: async () => {
+          expect(stopped).toBe(true);
+          await fs.rm(agentDir, { recursive: true, force: true });
+        },
+      });
+      const deploying = router.deploy(singleStepFrame(head, "wf-mark"));
+      await spawner.driveReadyFor(0);
+      await deploying;
+      const stateDirs = [
+        agentDir,
+        path.join(dataDir, "workflow-step-state", runId),
+        path.join(dataDir, "workflow-definition-closures", runId),
+        path.join(dataDir, "workflow-definition-sources", runId),
+        path.join(dataDir, "workflow-definition-source-gits", runId),
+        conversationStateRoot(dataDir, runId),
+        path.join(tempBase, "agent-state", deriveWorkflowRunId(head)),
+        recordDir,
+      ];
+      for (const dir of stateDirs) {
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(path.join(dir, "preserved"), "deployment state");
+      }
+      const open = fs.open;
+      const error = new Error(`teardown mark ${failure} failed`);
+      const spy = spyOn(fs, "open").mockImplementation(
+        async (target, flags, mode) => {
+          if (
+            failure === "write" &&
+            String(target).startsWith(`${recordFile}.tmp.`)
+          )
+            throw error;
+          const handle = await open(target, flags, mode);
+          if (failure === "directory sync" && target === recordDir)
+            spyOn(handle, "sync").mockRejectedValue(error);
+          return handle;
+        },
+      );
+      const frame = {
+        type: "agent.undeploy",
+        requestId: "failed-teardown-mark",
+        agentAddress: head,
+        generation: 1,
+        reason: "test",
+      } as const;
+      if (router.undeploy === undefined) throw new Error("Expected undeploy");
+      try {
+        await expect(router.undeploy(frame)).rejects.toThrow(
+          `marking its record failed: ${error.message}`,
+        );
+        expect(stopped).toBe(true);
+        expect(isRegistered(transport, head)).toBe(false);
+        expect(router.incarnations()).toEqual([
+          { address: head, generation: 1, state: "tearing-down" },
+        ]);
+        for (const dir of stateDirs) {
+          expect(await fs.readFile(path.join(dir, "preserved"), "utf8")).toBe(
+            "deployment state",
+          );
+        }
+        const record = WorkflowRunRecord.assert(
+          JSON.parse(await fs.readFile(recordFile, "utf8")),
+        );
+        expect(record.state).toBe(
+          failure === "directory sync" ? "tearing-down" : undefined,
+        );
+        await expect(
+          router.deploy(singleStepFrame("run_next@example.com", "wf-mark")),
+        ).rejects.toThrow("no active deployment slot");
+      } finally {
+        spy.mockRestore();
+      }
+      await router.undeploy(frame);
+      for (const dir of stateDirs) {
+        await expect(fs.stat(dir)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+      expect(router.incarnations()).toEqual([]);
+    },
+  );
+
+  test("a failed state-tree sync preserves the teardown record across restart", async () => {
+    const dataDir = await createTempBaseDir("sidecar-state-tree-sync-");
+    const head = "run_state_sync@example.com";
+    const runId = deriveWorkflowRunRepoId(head);
+    const spawner = makeReadyDrivingSpawner(15420);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+    });
+    const deploying = router.deploy(singleStepFrame(head, "wf-sync"));
+    await spawner.driveReadyFor(0);
+    await deploying;
+    const parent = path.join(dataDir, "workflow-step-state");
+    const scratch = path.join(parent, runId);
+    await fs.mkdir(scratch, { recursive: true });
+    await fs.writeFile(path.join(scratch, "leftover"), "state");
+    const open = fs.open;
+    const spy = spyOn(fs, "open").mockImplementation(
+      async (target, flags, mode) => {
+        const handle = await open(target, flags, mode);
+        if (target === parent)
+          spyOn(handle, "sync").mockRejectedValue(
+            new Error("state-tree sync failed"),
+          );
+        return handle;
+      },
+    );
+    const frame = {
+      type: "agent.undeploy",
+      requestId: "durable-state-remove",
+      agentAddress: head,
+      generation: 1,
+      reason: "test",
+    } as const;
+    if (router.undeploy === undefined) throw new Error("Expected undeploy");
+    try {
+      await expect(router.undeploy(frame)).rejects.toThrow(
+        "state-tree sync failed",
+      );
+      await expect(fs.stat(scratch)).rejects.toThrow();
+      expect(router.incarnations()).toEqual([
+        { address: head, generation: 1, state: "tearing-down" },
+      ]);
+      expect(
+        await scanWorkflowRunRecords(dataDir, createNoopCredentialCipher()),
+      ).toHaveLength(1);
+      await expect(
+        router.deploy(singleStepFrame("run_next@example.com", "wf-sync")),
+      ).rejects.toThrow("no active deployment slot");
+    } finally {
+      spy.mockRestore();
+    }
+    const next = makeReadyDrivingSpawner(15430);
+    const { router: restarted } = await buildMultistepFixture({
+      spawner: next.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+    });
+    await restarted.restoreWorkflowRuns();
+    expect(next.spawnCount()).toBe(0);
+    expect(restarted.incarnations()).toEqual([
+      { address: head, generation: 1, state: "tearing-down" },
+    ]);
+    if (restarted.undeploy === undefined) throw new Error("Expected undeploy");
+    await restarted.undeploy(frame);
+    expect(restarted.incarnations()).toEqual([]);
+    expect(
+      await scanWorkflowRunRecords(dataDir, createNoopCredentialCipher()),
+    ).toEqual([]);
+  });
+
+  test("a failed removal sync keeps the kept slot reserved until retry succeeds", async () => {
+    const dataDir = await createTempBaseDir("sidecar-removal-sync-");
+    const spawner = makeReadyDrivingSpawner(15400);
+    const { router } = await buildMultistepFixture({
+      spawner: spawner.spawner,
+      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      maxActiveDeployments: 1,
+      maxRetainedDeployments: 1,
+    });
+    const kept = "run_removal_kept@example.com";
+    const active = "run_removal_active@example.com";
+    const deployed = router.deploy(singleStepFrame(kept, "wf-sync"));
+    await spawner.driveReadyFor(0);
+    await deployed;
+    await router.control(retainCommand(kept));
+    const next = router.deploy(singleStepFrame(active, "wf-sync"));
+    await spawner.driveReadyFor(1);
+    await next;
+    const open = fs.open;
+    const spy = spyOn(fs, "open").mockImplementation(
+      async (target, flags, mode) => {
+        const handle = await open(target, flags, mode);
+        if (target === path.join(dataDir, "workflow-runs"))
+          spyOn(handle, "sync").mockRejectedValue(
+            new Error("directory sync failed"),
+          );
+        return handle;
+      },
+    );
+    const undeploy = {
+      type: "agent.undeploy",
+      requestId: "durable-remove",
+      agentAddress: kept,
+      generation: 1,
+      reason: "test",
+    } as const;
+    if (router.undeploy === undefined) throw new Error("Expected undeploy");
+    try {
+      await expect(router.undeploy(undeploy)).rejects.toThrow(
+        "directory sync failed",
+      );
+      expect(router.incarnations()).toContainEqual({
+        address: kept,
+        generation: 1,
+        state: "tearing-down",
+        retention: "kept",
+      });
+      expect(await router.control(retainCommand(active))).toEqual({
+        retention: "refused",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    await router.undeploy(undeploy);
+    expect(router.incarnations()).toEqual([
+      {
+        address: active,
+        generation: 1,
+        state: "stopped",
+        retention: "refused",
+      },
+    ]);
+  });
+
+  test.each(["retain", "undeploy"])(
+    "an uncertain retained reservation is resolved by %s",
+    async (recovery) => {
+      const dataDir = await createTempBaseDir("sidecar-retention-sync-");
+      const spawner = makeReadyDrivingSpawner(15500);
+      const { router } = await buildMultistepFixture({
+        spawner: spawner.spawner,
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        maxActiveDeployments: 2,
+        maxRetainedDeployments: 1,
+      });
+      const first = "run_sync_first@example.com";
+      const second = "run_sync_second@example.com";
+      for (const [index, head] of [first, second].entries()) {
+        const deployed = router.deploy(singleStepFrame(head, "wf-sync"));
+        await spawner.driveReadyFor(index);
+        await deployed;
+      }
+      const recordDir = path.join(
+        dataDir,
+        "workflow-runs",
+        deriveWorkflowRunRepoId(first),
+      );
+      const open = fs.open;
+      const spy = spyOn(fs, "open").mockImplementation(
+        async (target, flags, mode) => {
+          const handle = await open(target, flags, mode);
+          if (target === recordDir)
+            spyOn(handle, "sync").mockRejectedValue(
+              new Error("retention sync failed"),
+            );
+          return handle;
+        },
+      );
+      try {
+        await expect(router.control(retainCommand(first))).rejects.toThrow(
+          "retention sync failed",
+        );
+        expect(
+          JSON.parse(
+            await fs.readFile(path.join(recordDir, "deployment.json"), "utf8"),
+          ),
+        ).toMatchObject({ retention: "kept" });
+        expect(router.incarnations()).toContainEqual({
+          address: first,
+          generation: 1,
+          state: "stopped",
+        });
+        // A later missing-record result must not discard the earlier uncertain reservation.
+        const recordFile = path.join(recordDir, "deployment.json");
+        const record = await fs.readFile(recordFile);
+        await fs.rm(recordFile);
+        await expect(router.control(retainCommand(first))).rejects.toThrow(
+          "retention record is missing",
+        );
+        await fs.writeFile(recordFile, record);
+        expect(await router.control(retainCommand(second))).toEqual({
+          retention: "refused",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      if (recovery === "undeploy") {
+        if (router.undeploy === undefined) throw new Error("Expected undeploy");
+        await router.undeploy({
+          type: "agent.undeploy",
+          requestId: "remove-uncertain-retention",
+          agentAddress: first,
+          generation: 1,
+          reason: "test",
+        });
+        const third = "run_after_uncertain_retention@example.com";
+        const deployed = router.deploy(singleStepFrame(third, "wf-sync"));
+        await spawner.driveReadyFor(2);
+        await deployed;
+        expect(await router.control(retainCommand(third))).toEqual({
+          retention: "kept",
+        });
+        expect(
+          router.incarnations().some(({ address }) => address === first),
+        ).toBe(false);
+        return;
+      }
+      expect(await router.control(retainCommand(first))).toEqual({
+        retention: "kept",
+      });
+      expect(
+        (
+          await scanWorkflowRunRecords(dataDir, createNoopCredentialCipher())
+        ).filter(({ record }) => record.retention === "kept"),
+      ).toHaveLength(1);
+    },
+  );
+
+  test.each([
+    new Error("injected spawn failure"),
+    new Error(""),
+    new AggregateError([]),
+  ])(
+    "failed initialization (%s) keeps a valid stopped record and its slot until removal",
+    async (cause) => {
+      const dataDir = await createTempBaseDir("sidecar-failed-record-cleanup-");
+      const head = "run_failed_record@example.com";
+      const recordFile = path.join(
+        dataDir,
+        "workflow-runs",
+        deriveWorkflowRunRepoId(head),
+        "deployment.json",
+      );
+      const { router } = await buildMultistepFixture({
+        spawner: () => {
+          throw cause;
+        },
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        maxActiveDeployments: 1,
+      });
+      const unlink = fs.unlink;
+      const spy = spyOn(fs, "unlink").mockImplementation(async (target) => {
+        if (target === recordFile) throw new Error("record cleanup failed");
+        return unlink(target);
+      });
+      try {
+        await expect(
+          router.deploy(singleStepFrame(head, "wf-failure")),
+        ).rejects.toBe(cause);
+        const incarnations = router.incarnations();
+        expect(incarnations).toEqual([
+          {
+            address: head,
+            generation: 1,
+            state: "stopped",
+            error:
+              cause.message || "Deployment failed without an error message",
+          },
+        ]);
+        expect(HostedIncarnation(incarnations[0]) instanceof type.errors).toBe(
+          false,
+        );
+        await expect(
+          router.deploy(
+            singleStepFrame("run_another@example.com", "wf-failure"),
+          ),
+        ).rejects.toThrow("no active deployment slot");
+        expect(await recordExists(dataDir, deriveWorkflowRunRepoId(head))).toBe(
+          true,
+        );
+        const records = await scanWorkflowRunRecords(
+          dataDir,
+          createNoopCredentialCipher(),
+        );
+        expect(records).toHaveLength(1);
+        expect(records[0]?.record).toMatchObject({
+          state: "stopped",
+          error: incarnations[0]?.error,
+        });
+        const restartedSpawner = makeReadyDrivingSpawner(15600);
+        const { router: restarted } = await buildMultistepFixture({
+          spawner: restartedSpawner.spawner,
+          transport: createInMemoryTransport(),
+          multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        });
+        await restarted.restoreWorkflowRuns();
+        expect(restartedSpawner.spawnCount()).toBe(0);
+        expect(restarted.incarnations()).toEqual(incarnations);
+      } finally {
+        spy.mockRestore();
+      }
+      if (router.undeploy === undefined) throw new Error("Expected undeploy");
+      await router.undeploy({
+        type: "agent.undeploy",
+        requestId: "cleanup-failed-record",
+        agentAddress: head,
+        generation: 1,
+        reason: "test",
+      });
+      expect(router.incarnations()).toEqual([]);
+    },
+  );
 
   test("restore holds a deployment its record marks stopped or tearing down without spawning it", async () => {
     const dataDir = await createTempBaseDir("sidecar-restore-marked-");
@@ -3275,6 +4277,47 @@ describe("createSidecarDeployRouter multi-step branch", () => {
       },
     ]);
   });
+
+  test.each(["kept", "refused"] as const)(
+    "does not replay a stopped error after restoring retention: %s",
+    async (retention) => {
+      const dataDir = await createTempBaseDir("sidecar-retained-report-");
+      const head = "run_retained_report@example.com";
+      const first = makeReadyDrivingSpawner(19000);
+      const { router } = await buildMultistepFixture({
+        spawner: first.spawner,
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+      });
+      const deployed = router.deploy(
+        singleStepFrame(head, "wf-retained-report"),
+      );
+      await first.driveReadyFor(0);
+      await deployed;
+      const error = "The child ended itself";
+      await markWorkflowRunRecord(dataDir, deriveWorkflowRunRepoId(head), {
+        state: "stopped",
+        error,
+        retention,
+      });
+      let reads = 0;
+      const { router: restarted } = await buildMultistepFixture({
+        spawner: makeReadyDrivingSpawner(19100).spawner,
+        transport: createInMemoryTransport(),
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        reportDeploymentRefTips: async () => {
+          reads++;
+          return STOPPED_TIPS;
+        },
+      });
+      await restarted.restoreWorkflowRuns();
+      restarted.reportStoppedDeployments();
+      restarted.reportStoppedDeployments();
+      expect(reads).toBe(0);
+      expect(restarted.incarnations()).toEqual([
+        { address: head, generation: 1, state: "stopped", retention, error },
+      ]);
+    },
+  );
 
   test("cuts a stop reason longer than the Hub accepts to the bound it reports", async () => {
     const dataDir = await createTempBaseDir("sidecar-restore-long-error-");
@@ -3403,258 +4446,112 @@ describe("createSidecarDeployRouter multi-step branch", () => {
     expect(routerB.incarnations()).toEqual([]);
   });
 
-  test("reports a record it left unrestored until the Hub undeploys it", async () => {
-    const dataDir = await createTempBaseDir("sidecar-restore-left-");
-    const head = "run_left_unrestored@example.com";
-    const first = makeReadyDrivingSpawner(12300);
-    const { router: routerA } = await buildMultistepFixture({
-      spawner: first.spawner,
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-    });
-    const deployed = routerA.deploy(singleStepFrame(head, "wf-left"));
-    await first.driveReadyFor(0);
-    await deployed;
-
-    const reports: unknown[] = [];
-    let tipReads = 0;
-    let removal: Error | undefined = new Error(
-      "EBUSY: resource busy or locked",
-    );
-    const second = makeReadyDrivingSpawner(12400);
-    const { router: routerB } = await buildMultistepFixture({
-      spawner: second.spawner,
-      transport: createInMemoryTransport(),
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-      maxIncarnations: 0,
-      reportDeploymentRefTips: async () => {
-        tipReads += 1;
-        return STOPPED_TIPS;
-      },
-      publishDeploymentStopped: (report) => {
-        reports.push(report);
-      },
-      removeRunRepository: async (runId) => {
-        if (removal !== undefined) throw removal;
-        await removeRunDirectory(dataDir)(runId);
-      },
-    });
-    await routerB.restoreWorkflowRuns();
-    expect(routerB.incarnations()).toEqual([]);
-
-    routerB.reportStoppedDeployments();
-    await waitUntil(() => reports.length > 0);
-    expect(reports).toEqual([
-      {
-        agentAddress: head,
-        generation: 1,
-        error: expect.stringMatching(/^The sidecar left it unrestored/),
-        refTips: STOPPED_TIPS,
-      },
-    ]);
-
-    const undeploy = routerB.undeploy;
-    if (undeploy === undefined) {
-      throw new Error("router.undeploy is undefined");
-    }
-    const undeployFrame = {
-      type: "agent.undeploy",
-      requestId: "undeploy-left",
-      agentAddress: head,
-      generation: 1,
-      reason: "The Hub does not keep this incarnation on this sidecar",
-    } as const;
-    // An undeploy that fails leaves the record reported outside the hello.
-    await expect(undeploy(undeployFrame)).rejects.toThrow("EBUSY");
-    expect(routerB.incarnations()).toEqual([]);
-    reports.length = 0;
-    routerB.reportStoppedDeployments();
-    await waitUntil(() => reports.length > 0);
-    expect(reports).toMatchObject([{ agentAddress: head, generation: 1 }]);
-
-    removal = undefined;
-    await undeploy(undeployFrame);
-    expect(await recordExists(dataDir, deriveWorkflowRunRepoId(head))).toBe(
-      false,
-    );
-    tipReads = 0;
-    routerB.reportStoppedDeployments();
-    expect(tipReads).toBe(0);
-  });
-
-  test("refuses deployment over an unrestored record until cleanup succeeds", async () => {
-    const dataDir = await createTempBaseDir("sidecar-unrestored-deploy-");
-    const heads = [
-      "run_unrestored_a@example.com",
-      "run_unrestored_b@example.com",
-    ];
-    const first = makeReadyDrivingSpawner(12410);
-    const { router: routerA } = await buildMultistepFixture({
-      spawner: first.spawner,
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-    });
-    for (const [index, head] of heads.entries()) {
-      const deployed = routerA.deploy(singleStepFrame(head, "wf-unrestored"));
-      await first.driveReadyFor(index);
-      await deployed;
-    }
-
-    const second = makeReadyDrivingSpawner(12420);
-    let refuseSpawn = false;
-    let failedRemoval: string | undefined;
-    let tipReads = 0;
-    const deletedAgentDirs: string[] = [];
-    const { router: routerB } = await buildMultistepFixture({
-      spawner: (args) => {
-        if (refuseSpawn) throw new Error("Unexpected deploy reached its spawn");
-        return second.spawner(args);
-      },
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-      maxIncarnations: 1,
-      deleteAgentDir: async (address) => {
-        deletedAgentDirs.push(address);
-      },
-      removeRunRepository: async (runId) => {
-        if (runId === failedRemoval) throw new Error("EBUSY");
-        await removeRunDirectory(dataDir)(runId);
-      },
-      reportDeploymentRefTips: async () => {
-        tipReads += 1;
-        return STOPPED_TIPS;
-      },
-    });
-    const restored = routerB.restoreWorkflowRuns();
-    await second.driveReadyFor(0);
-    await restored;
-    refuseSpawn = true;
-    const [held] = heldAddresses(routerB);
-    const left = heads.find((head) => head !== held);
-    const undeploy = routerB.undeploy;
-    if (held === undefined || left === undefined || undeploy === undefined)
-      throw new Error("Expected one held and one unrestored deployment");
-    const undeployFrame = {
-      type: "agent.undeploy",
-      requestId: "undeploy-held",
-      agentAddress: held,
-      generation: 1,
-      reason: "test",
-    } as const;
-    await undeploy(undeployFrame);
-    expect(routerB.incarnations()).toEqual([]);
-
-    const frame = singleStepFrame(left, "wf-unrestored");
-    const recordFile = path.join(
-      dataDir,
-      "workflow-runs",
-      deriveWorkflowRunRepoId(left),
-      "deployment.json",
-    );
-    const originalRecord = await fs.readFile(recordFile, "utf8");
-    await undeploy({
-      ...undeployFrame,
-      requestId: "undeploy-stale-generation",
-      agentAddress: left,
-      generation: 0,
-    });
-    expect(deletedAgentDirs).toEqual([held]);
-    expect(await fs.readFile(recordFile, "utf8")).toBe(originalRecord);
-    for (const generation of [1, 2]) {
-      await expect(routerB.deploy({ ...frame, generation })).rejects.toThrow(
-        "unrestored",
-      );
-    }
-    await expect(
-      routerB.deploy({ ...frame, provisionStep: true }),
-    ).rejects.toThrow("unrestored");
-    expect(await fs.readFile(recordFile, "utf8")).toBe(originalRecord);
-    expect(second.spawnCount()).toBe(1);
-
-    failedRemoval = deriveWorkflowRunRepoId(left);
-    const removeLeft = {
-      ...undeployFrame,
-      requestId: "undeploy-left",
-      agentAddress: left,
-    };
-    await expect(undeploy(removeLeft)).rejects.toThrow("EBUSY");
-    const failedCleanupRecord = await fs.readFile(recordFile, "utf8");
-    await expect(routerB.deploy(frame)).rejects.toThrow("unrestored");
-    expect(await fs.readFile(recordFile, "utf8")).toBe(failedCleanupRecord);
-
-    failedRemoval = undefined;
-    await undeploy(removeLeft);
-    refuseSpawn = false;
-    const redeployed = routerB.deploy(frame);
-    await second.driveReadyFor(1);
-    await redeployed;
-    expect(routerB.incarnations()).toEqual([
-      { address: left, generation: 1, state: "live" },
-    ]);
-    routerB.reportStoppedDeployments();
-    expect(tipReads).toBe(0);
-  });
-
-  test("drops an unrestored stop report whose record was removed during its history read", async () => {
-    const dataDir = await createTempBaseDir("sidecar-unrestored-report-");
-    const removed = "run_pending_a@example.com";
-    const kept = "run_pending_b@example.com";
-    const first = makeReadyDrivingSpawner(12430);
-    const { router: routerA } = await buildMultistepFixture({
-      spawner: first.spawner,
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-    });
-    for (const [index, head] of [removed, kept].entries()) {
-      const deployed = routerA.deploy(
-        singleStepFrame(head, "wf-pending-report"),
-      );
-      await first.driveReadyFor(index);
-      await deployed;
-    }
-
-    const tips = Promise.withResolvers<typeof STOPPED_TIPS>();
-    const lastReported = Promise.withResolvers<undefined>();
-    const reports: unknown[] = [];
-    const reads: string[] = [];
-    const second = makeReadyDrivingSpawner(12440);
-    const { router: routerB } = await buildMultistepFixture({
-      spawner: second.spawner,
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-      maxIncarnations: 0,
-      reportDeploymentRefTips: ({ agentAddress }) => {
-        reads.push(agentAddress);
-        return tips.promise;
-      },
-      publishDeploymentStopped: (report) => {
-        reports.push(report);
-        if (report.agentAddress === kept) lastReported.resolve(undefined);
-      },
-    });
-    await routerB.restoreWorkflowRuns();
-    const undeploy = routerB.undeploy;
-    if (undeploy === undefined) throw new Error("router.undeploy is undefined");
-    routerB.reportStoppedDeployments();
-    try {
-      expect(reads).toEqual([removed, kept]);
-      await undeploy({
-        type: "agent.undeploy",
-        requestId: "remove-before-report",
-        agentAddress: removed,
-        generation: 1,
-        reason: "test",
+  test.each(["undeploy", "kept", "refused", "retention failed"] as const)(
+    "stopped reports recheck ownership after %s during their history read",
+    async (outcome) => {
+      const dataDir = await createTempBaseDir("sidecar-unrestored-report-");
+      const removed = "run_pending_a@example.com";
+      const kept = "run_pending_b@example.com";
+      const first = makeReadyDrivingSpawner(12430);
+      const { router: routerA } = await buildMultistepFixture({
+        spawner: first.spawner,
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
       });
-    } finally {
-      // Both reports await this promise in inventory order. The second report
-      // signals that the first report's publication callback has also run.
-      tips.resolve(STOPPED_TIPS);
-      await lastReported.promise;
-    }
-    expect(reports).toEqual([
-      {
-        agentAddress: kept,
-        generation: 1,
-        error: expect.stringMatching(/^The sidecar left it unrestored/),
-        refTips: STOPPED_TIPS,
-      },
-    ]);
-  });
+      for (const [index, head] of [removed, kept].entries()) {
+        const deployed = routerA.deploy(
+          singleStepFrame(head, "wf-pending-report"),
+        );
+        await first.driveReadyFor(index);
+        await deployed;
+      }
+
+      for (const head of [removed, kept]) {
+        await markWorkflowRunRecord(dataDir, deriveWorkflowRunRepoId(head), {
+          state: "stopped",
+          error: "test workflow stopped",
+        });
+      }
+
+      const tips = Promise.withResolvers<typeof STOPPED_TIPS>();
+      const lastReported = Promise.withResolvers<undefined>();
+      const reports: unknown[] = [];
+      const reads: string[] = [];
+      const second = makeReadyDrivingSpawner(12440);
+      const { router: routerB } = await buildMultistepFixture({
+        spawner: second.spawner,
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        maxRetainedDeployments: outcome === "refused" ? 0 : 1,
+        reportDeploymentRefTips: ({ agentAddress }) => {
+          reads.push(agentAddress);
+          return tips.promise;
+        },
+        publishDeploymentStopped: (report) => {
+          reports.push(report);
+          if (report.agentAddress === kept) lastReported.resolve(undefined);
+        },
+      });
+      await routerB.restoreWorkflowRuns();
+      const undeploy = routerB.undeploy;
+      if (undeploy === undefined)
+        throw new Error("router.undeploy is undefined");
+      routerB.reportStoppedDeployments();
+      try {
+        expect(reads).toEqual([removed, kept]);
+        if (outcome === "undeploy") {
+          await undeploy({
+            type: "agent.undeploy",
+            requestId: "remove-before-report",
+            agentAddress: removed,
+            generation: 1,
+            reason: "test",
+          });
+        } else if (outcome === "retention failed") {
+          const recordDir = path.join(
+            dataDir,
+            "workflow-runs",
+            deriveWorkflowRunRepoId(removed),
+          );
+          const open = fs.open;
+          const spy = spyOn(fs, "open").mockImplementation(
+            async (target, flags, mode) => {
+              const handle = await open(target, flags, mode);
+              if (target === recordDir)
+                spyOn(handle, "sync").mockRejectedValue(
+                  new Error("Retention sync failed"),
+                );
+              return handle;
+            },
+          );
+          try {
+            await expect(
+              routerB.control(retainCommand(removed)),
+            ).rejects.toThrow("Retention sync failed");
+          } finally {
+            spy.mockRestore();
+          }
+        } else {
+          expect(await routerB.control(retainCommand(removed))).toEqual({
+            retention: outcome,
+          });
+        }
+      } finally {
+        // Both reports await this promise in inventory order. The second report
+        // signals that the first report's publication callback has also run.
+        tips.resolve(STOPPED_TIPS);
+        await lastReported.promise;
+      }
+      expect(reports).toEqual(
+        (outcome === "retention failed" ? [removed, kept] : [kept]).map(
+          (agentAddress) => ({
+            agentAddress,
+            generation: 1,
+            error: "test workflow stopped",
+            refTips: STOPPED_TIPS,
+          }),
+        ),
+      );
+    },
+  );
 
   test("restore spawns several deployments at once", async () => {
     const dataDir = await createTempBaseDir("sidecar-restore-parallel-");
@@ -3692,66 +4589,6 @@ describe("createSidecarDeployRouter multi-step branch", () => {
     ).toEqual(["live", "live"]);
   });
 
-  test("restore leaves records past the incarnation limit unspawned and keeps them", async () => {
-    const dataDir = await createTempBaseDir("sidecar-restore-cap-");
-    const heads = ["run_cap_a@example.com", "run_cap_b@example.com"];
-    const first = makeReadyDrivingSpawner(9800);
-    const { router: routerA } = await buildMultistepFixture({
-      spawner: first.spawner,
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-    });
-    for (const [index, head] of heads.entries()) {
-      const deployed = routerA.deploy(singleStepFrame(head, "wf-cap"));
-      await first.driveReadyFor(index);
-      await deployed;
-    }
-
-    const second = makeReadyDrivingSpawner(9810);
-    const { router: routerB } = await buildMultistepFixture({
-      spawner: second.spawner,
-      transport: createInMemoryTransport(),
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-      maxIncarnations: 1,
-      removeRunRepository: async () => {
-        throw new Error("EBUSY: resource busy or locked");
-      },
-    });
-    const restored = routerB.restoreWorkflowRuns();
-    await second.driveReadyFor(0);
-    await restored;
-
-    expect(second.spawnCount()).toBe(1);
-    expect(routerB.incarnations()).toHaveLength(1);
-    for (const head of heads) {
-      expect(await recordExists(dataDir, deriveWorkflowRunRepoId(head))).toBe(
-        true,
-      );
-    }
-
-    // A failed undeploy of the record left out keeps every hello within the
-    // limit.
-    const held = heldAddresses(routerB);
-    const left = heads.find((head) => !held.includes(head));
-    if (left === undefined) throw new Error("expected a record left out");
-    const undeploy = routerB.undeploy;
-    if (undeploy === undefined) {
-      throw new Error("router.undeploy is undefined");
-    }
-    await expect(
-      undeploy({
-        type: "agent.undeploy",
-        requestId: "undeploy-left-out",
-        agentAddress: left,
-        generation: 1,
-        reason: "The Hub does not keep this incarnation on this sidecar",
-      }),
-    ).rejects.toThrow("EBUSY");
-    expect(heldAddresses(routerB)).toEqual(held);
-    expect(await recordExists(dataDir, deriveWorkflowRunRepoId(left))).toBe(
-      true,
-    );
-  });
-
   test("reports a stop without tips when its history cannot be read", async () => {
     const dataDir = await createTempBaseDir("sidecar-report-no-tips-");
     const head = "run_report_no_tips@example.com";
@@ -3763,6 +4600,10 @@ describe("createSidecarDeployRouter multi-step branch", () => {
     const deployed = routerA.deploy(singleStepFrame(head, "wf-no-tips"));
     await first.driveReadyFor(0);
     await deployed;
+    await markWorkflowRunRecord(dataDir, deriveWorkflowRunRepoId(head), {
+      state: "stopped",
+      error: "test workflow stopped",
+    });
 
     const reports: unknown[] = [];
     const second = makeReadyDrivingSpawner(12800);
@@ -3770,7 +4611,6 @@ describe("createSidecarDeployRouter multi-step branch", () => {
       spawner: second.spawner,
       transport: createInMemoryTransport(),
       multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-      maxIncarnations: 0,
       reportDeploymentRefTips: async () => {
         throw new Error("repository unreadable");
       },
@@ -3786,7 +4626,7 @@ describe("createSidecarDeployRouter multi-step branch", () => {
       {
         agentAddress: head,
         generation: 1,
-        error: expect.stringMatching(/^The sidecar left it unrestored/),
+        error: "test workflow stopped",
       },
     ]);
   });
@@ -4150,52 +4990,96 @@ describe("createSidecarDeployRouter multi-step branch", () => {
     });
   });
 
-  test("restore skips a record whose address does not derive its directory name", async () => {
-    const dataDir = await createTempBaseDir("sidecar-restore-mismatch-data-");
-    const head = "run_mismatch@example.com";
-    // A record filed under a directory that is NOT its own derived slug --
-    // a corrupt or misplaced record that must not be restored under the
-    // wrong slug.
-    const wrongDir = "not-the-right-slug";
-    // Otherwise-valid source-ref record so the scan admits it and the restore
-    // loop reaches (and rejects on) the address-vs-directory mismatch -- not the
-    // schema. Source-ref is the only lineage, so it must carry the pin + hash.
-    const record: WorkflowRunRecord = {
-      version: 1,
-      agentAddress: head,
-      generation: 1,
-      definitionId: "wf-mismatch",
-      sources: { "step-1": [makeInferenceSource("step-1")] },
-      hubPublicKey: "hub-pk",
-      approvedWireHash: "a".repeat(64),
-      lineage: "source-ref",
-      sourceRef: {
-        source: { kind: "registry", registry: "test-registry" },
-        closure: { schemaVersion: "1", topLevel: [], entries: [] },
-      },
-    };
-    await writeWorkflowRunRecord(
-      dataDir,
-      wrongDir,
-      record,
-      createNoopCredentialCipher(),
-    );
+  test.each(["active", "kept"] as const)(
+    "restore excludes misplaced %s records from capacity on later boots",
+    async (pool) => {
+      const dataDir = await createTempBaseDir("sidecar-restore-mismatch-data-");
+      const head = "run_mismatch@example.com";
+      // A record filed under a directory that is NOT its own derived slug --
+      // a corrupt or misplaced record that must not be restored under the
+      // wrong slug.
+      const wrongDir = "not-the-right-slug";
+      // Valid contents let the scan reach the directory-ownership check.
+      const record: WorkflowRunRecord = {
+        version: 1,
+        agentAddress: head,
+        generation: 1,
+        ...(pool === "kept"
+          ? { state: "stopped" as const, retention: "kept" as const }
+          : {}),
+        definitionId: "wf-mismatch",
+        sources: { "step-1": [makeInferenceSource("step-1")] },
+        hubPublicKey: "hub-pk",
+        approvedWireHash: "a".repeat(64),
+        lineage: "source-ref",
+        sourceRef: {
+          source: { kind: "registry", registry: "test-registry" },
+          closure: { schemaVersion: "1", topLevel: [], entries: [] },
+        },
+      };
+      await writeWorkflowRunRecord(
+        dataDir,
+        wrongDir,
+        record,
+        createNoopCredentialCipher(),
+      );
 
-    const spawner = makeReadyDrivingSpawner(9800);
-    const freshTransport = createInMemoryTransport();
-    const { router } = await buildMultistepFixture({
-      spawner: spawner.spawner,
-      transport: freshTransport,
-      multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
-    });
+      const spawner = makeReadyDrivingSpawner(9800);
+      const freshTransport = createInMemoryTransport();
+      const { router } = await buildMultistepFixture({
+        spawner: spawner.spawner,
+        transport: freshTransport,
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        maxActiveDeployments: 1,
+        maxRetainedDeployments: 1,
+      });
 
-    await router.restoreWorkflowRuns();
+      await router.restoreWorkflowRuns();
 
-    expect(spawner.spawnCount()).toBe(0);
-    expect(isRegistered(freshTransport, head)).toBe(false);
-    // The record is kept on a skip, not deleted.
-    expect(await recordExists(dataDir, wrongDir)).toBe(true);
-  });
+      expect(spawner.spawnCount()).toBe(0);
+      expect(isRegistered(freshTransport, head)).toBe(false);
+      const wrongRecordPath = path.join(
+        dataDir,
+        "workflow-runs",
+        wrongDir,
+        "deployment.json",
+      );
+      const wrongRecord = await fs.readFile(wrongRecordPath, "utf8");
+
+      // Fill the real slot after skipping the misplaced record, then restart.
+      // Counting the raw scan would now report two records against a limit of one.
+      const valid = "run_valid_restore@example.com";
+      const deployed = router.deploy(
+        singleStepFrame(valid, "wf-valid-restore"),
+      );
+      await spawner.driveReadyFor(0);
+      await deployed;
+      if (pool === "kept") await router.control(retainCommand(valid));
+
+      const nextSpawner = makeReadyDrivingSpawner(9810);
+      const { router: restarted } = await buildMultistepFixture({
+        spawner: nextSpawner.spawner,
+        multistepSubstrateEnv: { SIDECAR_DATA_DIR: dataDir },
+        maxActiveDeployments: 1,
+        maxRetainedDeployments: 1,
+      });
+      const restored = restarted.restoreWorkflowRuns();
+      if (pool === "active")
+        await Promise.race([nextSpawner.driveReadyFor(0), restored]);
+      await restored;
+      expect(nextSpawner.spawnCount()).toBe(pool === "active" ? 1 : 0);
+      expect(restarted.incarnations()).toEqual([
+        {
+          address: valid,
+          generation: 1,
+          ...(pool === "kept"
+            ? { state: "stopped", retention: "kept" }
+            : { state: "live" }),
+        },
+      ]);
+      expect(await fs.readFile(wrongRecordPath, "utf8")).toBe(wrongRecord);
+    },
+  );
 
   test("restore holds a deployment whose pinned source is no longer buildable as stopped", async () => {
     const dataDir = await createTempBaseDir(
