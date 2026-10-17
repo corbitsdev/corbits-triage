@@ -268,7 +268,7 @@ come first. Steps that call a model take their effort from the request.
 6. **write**: the groups in order of severity (the most severe priority a
    finder gave) and then agreement (how many finders reported it, then how
    many findings it stands for): a summary of the change and one comment per
-   group, ending with its agreement. A group the model leaves without a
+   group, with the code it quotes and its agreement as fields. A group the model leaves without a
    comment gets one from the finder's title, explanation, trigger and quoted
    code.
 

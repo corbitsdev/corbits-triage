@@ -21,6 +21,8 @@ const ReviewRequest = type({
   "efforts?": { "plan?": Effort, "diffFinder?": Effort, "repoFinder?": Effort, "consolidate?": Effort, "check?": Effort, "write?": Effort },
   "check?": "boolean",
   "budgets?": { "repoFinder?": "number.integer > 0" },
+  /** The pull request's number, so a run can be found by it. */
+  "number?": "number.integer > 0",
   /** Set when the diff was cut to its first `lines` of `of` lines to keep the review within its size limit. */
   "cut?": { lines: "number.integer >= 0", of: "number.integer > 0" },
 });
@@ -289,29 +291,24 @@ interface Written {
   comments: { finding: number; title: string; body: string }[];
 }
 
-/** A comment from whatever the finder gave: its title or the defect it was grouped under, why, trigger and quoted code. */
-function ownWords({ title, defect, why, trigger, code, path, start }: Reported) {
-  const quoted = code === undefined ? undefined : `\`\`\`\n${code}\n\`\`\``;
+/** A comment from whatever the finder gave: its title or the defect it was grouped under, why and trigger; the quoted code travels beside it. */
+function ownWords({ title, defect, why, trigger, path, start }: Reported) {
   const heading = [title, defect, why].find((part) => part !== undefined && part !== "") ?? `Defect at ${path}:${start}`;
-  return { title: heading, body: [why, trigger, quoted].filter((part) => part !== undefined).join("\n\n") };
-}
-
-function agreementLine({ finders, reports }: Agreement): string {
-  return `_Found by ${finders} of ${FINDERS.length} finders, ${reports} ${reports === 1 ? "report" : "reports"}._`;
+  return { title: heading, body: [why, trigger].filter((part) => part !== undefined).join("\n\n") };
 }
 
 /**
- * The review to post: the summary, one comment per finding in order, anchored where the finding is and ending with its
- * agreement, and whether it stopped early. A finding the write step left without a comment gets one in its finder's words.
+ * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes and
+ * its agreement, and whether it stopped early. A finding the write step left without a comment gets one in its finder's words.
  */
 export async function review(steps: Steps) {
   const { request } = stepOutput(steps, "reviewInput");
   const { findings, budgetExhausted } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
-    const { path, start, end, agreement, priority } = finding;
+    const { path, start, end, agreement, priority, code } = finding;
     const { title, body } = written.comments.find((c) => c.finding === index) ?? ownWords(finding);
-    return { path, start, end, title, body: `${body}\n\n${agreementLine(agreement)}`, ...(priority !== undefined && { priority }), agreement };
+    return { path, start, end, title, body, ...(priority !== undefined && { priority }), ...(code !== undefined && { quoted: code }), agreement };
   }
   return { summary: written.summary, comments: findings.map(comment), budgetExhausted, ...(request.cut && { cut: request.cut }) };
 }

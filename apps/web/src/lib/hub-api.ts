@@ -877,6 +877,29 @@ export async function triagePullRequest(transport: Transport, tenantId: string, 
   await transport.fetch("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}`, { repo: clean, number });
 }
 
+export type CodeReviewComment = { path: string; start: number; end: number; title: string; body: string; priority?: number; quoted?: string };
+export type CodeReviewRun = {
+  status: "running" | "completed" | "failed";
+  headSha: string;
+  startedAt: string;
+  summary?: string;
+  comments?: CodeReviewComment[];
+  /** Set when the diff was cut to its first `lines` of `of` for size. */
+  cut?: { lines: number; of: number };
+};
+
+/** The newest review, and the newest finished one, whose findings stay shown while a newer review runs. */
+export type CodeReviews = { review: CodeReviewRun | null; completed: CodeReviewRun | null };
+
+export async function latestCodeReview(transport: Transport, tenantId: string, repo: Pick<RepoRecord, "name" | "source">, number: number): Promise<CodeReviews> {
+  const query = new URLSearchParams({ repo: validateRepo(repo.name), source: repo.source, number: String(number) });
+  return transport.fetch<CodeReviews>("GET", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}?${query}`);
+}
+
+export async function reviewAgain(transport: Transport, tenantId: string, repo: Pick<RepoRecord, "name" | "source">, number: number): Promise<void> {
+  await transport.fetch("POST", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}/run`, { repo: validateRepo(repo.name), source: repo.source, number });
+}
+
 export async function setCodeReview(transport: Transport, tenantId: string, repo: Pick<RepoRecord, "name" | "source">, enabled: boolean): Promise<void> {
   await transport.fetch("POST", `/api/integrations/code-review/${enc(requireTenantId(tenantId))}`, { repo: validateRepo(repo.name), source: repo.source, enabled });
 }

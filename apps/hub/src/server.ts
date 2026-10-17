@@ -53,6 +53,7 @@ import { createSmtpEmail } from "./invitations/invite-email.js";
 import { createWorkflowDeploy } from "./workflow-deploy.js";
 import { createCodeReviewRun, createCodeReviewSwitch } from "./code-review.js";
 import { createCodeReviewFeed, createPullRequestReader } from "./code-review-feed.js";
+import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { childProcessEnv, databaseConfig, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, migrationEnv, inviteLinkOrigin, signInSettings, triageBatchSize, triageCoalesceWindow, triageCoordinator, triageReconcileIntervalMs, triageReconcilePolicy, triageRotateAfterRuns } from "./env.js";
 import { HOOK_MOUNT_PATH, createStockHookApp, migrateWebhooks } from "./hooks.js";
@@ -740,6 +741,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   workflowVersions: createWorkflowVersions({ db: composition.db, launchSpecs }),
   codeReview: createCodeReviewSwitch({ db: composition.db, authorize: authorizePortal, onChanged: onSourcesChanged }),
   codeReviewRun: createCodeReviewRun({ db: composition.db, authorize: authorizePortal, feed: codeReviewFeed }),
+  codeReviewLatest: createCodeReviewRuns({ db: composition.db, runReader: composition.runReader }),
   invitations: createInvitations({
     db: composition.db,
     cipher: composition.credentialCipher,

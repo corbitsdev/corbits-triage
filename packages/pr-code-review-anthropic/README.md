@@ -19,10 +19,12 @@ deployed packages, each binding only its host's read credential.
    onto its quoted line and groups the findings by defect.
 5. **check** confirms each group, only when the request sets `check`.
 6. **write** comments on every group, most severe and most agreed-on first;
-   each comment ends with how many finders reported it.
+   each comment carries the code it quotes and how many finders reported
+   it.
 
 The request is `{ kind: "code-review", title, description, diff, checkout }`
-with optional `efforts` per step, `budgets.repoFinder`, `check`, and `cut`
+with optional `number` (the pull request's), `efforts` per step,
+`budgets.repoFinder`, `check`, and `cut`
 (`{ lines, of }`) when the sender cut the diff for size, which the review
 carries.
 `docs/ARCHITECTURE.md` has the detail; `evals/README.md` has the eval and its

@@ -100,6 +100,7 @@ export function createCodeReviewFeed(deps: CodeReviewFeedDeps) {
     const { diff, cut } = cutDiff(pull.diff);
     const request = {
       kind: "code-review",
+      number,
       title: pull.title,
       description: pull.description,
       diff,

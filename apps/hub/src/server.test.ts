@@ -240,7 +240,7 @@ test("composed hub documents the integration routes and still answers an invalid
     "/api/integrations/audit/{tenantId}": ["get"],
     "/api/integrations/workflow-deploy/{tenantId}": ["post"],
     "/api/integrations/workflow-versions/{tenantId}": ["get"],
-    "/api/integrations/code-review/{tenantId}": ["post"],
+    "/api/integrations/code-review/{tenantId}": ["post", "get"],
     "/api/integrations/code-review/{tenantId}/run": ["post"],
     "/api/integrations/invitations/{tenantId}": ["post", "get"],
     "/api/integrations/invitations/{tenantId}/{principalId}/resend": ["post"],
