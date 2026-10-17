@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { CheckRun } from "@corbits/github-reads";
-import { emptyPack, repoPolicy, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
+import { emptyPack, repoPolicy, triageEventOf, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
 import { createCoalescer, type CoalescedEvent, type CoalescerDeps } from "./coalescer.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
 import type { PrMail } from "./normalize.js";
@@ -60,7 +60,11 @@ const PULL_REQUEST: Record<string, [string, string]> = {
   checks: ["check_run", "completed"],
   commented: ["issue_comment", "created"],
   approved: ["pull_request_review", "submitted"],
+  "changes-requested": ["pull_request_review", "submitted"],
+  reviewed: ["pull_request_review", "submitted"],
 };
+
+const REVIEW_STATE: Record<string, string> = { approved: "approved", "changes-requested": "changes_requested", reviewed: "commented" };
 
 function delivery(event: TriageEvent, headSha: string): CoalescedEvent {
   const [name, action] = PULL_REQUEST[event]!;
@@ -68,6 +72,10 @@ function delivery(event: TriageEvent, headSha: string): CoalescedEvent {
     kind: "pr", repo: REPO, prNumber: 8, deliveryId: crypto.randomUUID(), event: name, action, headSha,
     author: null, title: null, body: null, draft: null, review: null,
   };
+  const state = REVIEW_STATE[event];
+  if (state) mail.review = { state };
+  const derived = triageEventOf(mail);
+  if (derived !== event) throw new Error(`delivery ${event} reads as ${derived}`);
   return {
     tenantId: TENANT_ID, workflow: "pr-triage", record: { name: REPO, connected: true }, policy: repoPolicy({ enabled: true }),
     pack: emptyPack(REPO), automatic: [], source: { repo: { id: "art_pack", version: 1 } }, mail, number: 8, headSha, event,
@@ -101,23 +109,64 @@ function harness(rows: PrTriageRow[] = [], overrides: Partial<CoalescerDeps> = {
   return { clock, state, mails, coalescer };
 }
 
-test("a burst of chatter gives one mail with every event seen once none arrived for the quiet period", async () => {
+test("a single review is mailed after the burst, not the quiet period", async () => {
   const { clock, mails, coalescer } = harness();
-  const burst: TriageEvent[] = ["commented", "checks", "approved", "commented", "checks"];
+  await coalescer.accept(delivery("approved", "sha1"));
+  await clock.advance(WINDOW.burstMs);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["approved"] })]);
+});
+
+test("a review joining an open checks window closes it on the burst with both events", async () => {
+  const { clock, mails, coalescer } = harness();
+  await coalescer.accept(delivery("checks", "sha1"));
+  await clock.advance(10_000);
+  await coalescer.accept(delivery("approved", "sha1"));
+  await clock.advance(WINDOW.burstMs - 1);
+  expect(mails).toHaveLength(0);
+  await clock.advance(1);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["checks", "approved"] })]);
+});
+
+test("comments 10 s apart fold into one run after the quiet period", async () => {
+  const { clock, mails, coalescer } = harness();
+  for (let i = 0; i < 3; i++) {
+    await coalescer.accept(delivery("commented", "sha1"));
+    await clock.advance(10_000);
+  }
+  await clock.advance(WINDOW.quietMs - 10_001);
+  expect(mails).toHaveLength(0);
+  await clock.advance(1);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["commented"] })]);
+});
+
+test("commented-only reviews 10 s apart fold into one run after the quiet period", async () => {
+  const { clock, mails, coalescer } = harness();
+  for (let i = 0; i < 3; i++) {
+    await coalescer.accept(delivery("reviewed", "sha1"));
+    await clock.advance(10_000);
+  }
+  await clock.advance(WINDOW.quietMs - 10_001);
+  expect(mails).toHaveLength(0);
+  await clock.advance(1);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["reviewed"] })]);
+});
+
+test("a burst of check events gives one mail once none arrived for the quiet period", async () => {
+  const { clock, mails, coalescer } = harness();
   const accepted = [];
-  for (const event of burst) {
-    accepted.push(await coalescer.accept(delivery(event, "sha1")));
+  for (let i = 0; i < 5; i++) {
+    accepted.push(await coalescer.accept(delivery("checks", "sha1")));
     await clock.advance(5_000);
   }
   expect(accepted).toEqual(["queued", "coalesced", "coalesced", "coalesced", "coalesced"]);
   await clock.advance(WINDOW.quietMs - 5_001);
   expect(mails).toHaveLength(0);
   await clock.advance(1);
-  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", event: "check_run", events: ["commented", "checks", "approved"] })]);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", event: "check_run", events: ["checks"] })]);
 });
 
 for (const start of ["opened", "updated"] as const) {
-  test(`a ${start} pull request is triaged after the burst, and chatter during its run becomes one follow-up`, async () => {
+  test(`a ${start} pull request is triaged after the burst, and a review after its run becomes one follow-up`, async () => {
     const { clock, mails, coalescer } = harness();
     await coalescer.accept(delivery(start, "sha2"));
     await clock.advance(1_000);
@@ -131,7 +180,7 @@ for (const start of ["opened", "updated"] as const) {
     await coalescer.accept(delivery("checks", "sha2"));
     await clock.advance(5_000);
     await coalescer.accept(delivery("approved", "sha2"));
-    await clock.advance(WINDOW.quietMs);
+    await clock.advance(WINDOW.burstMs);
     expect(mails.slice(1)).toEqual([expect.objectContaining({ headSha: "sha2", events: ["checks", "approved"] })]);
   });
 }
@@ -184,19 +233,19 @@ test("a late pull_request event naming an older head never moves the head back, 
 
 test("a new commit closes a window of chatter on the burst and moves its head", async () => {
   const { clock, mails, coalescer } = harness();
-  await coalescer.accept(delivery("commented", "sha1"));
+  await coalescer.accept(delivery("checks", "sha1"));
   await clock.advance(10_000);
   await coalescer.accept(delivery("updated", "sha2"));
   await clock.advance(WINDOW.burstMs);
-  expect(mails).toEqual([expect.objectContaining({ headSha: "sha2", events: ["commented", "updated"] })]);
+  expect(mails).toEqual([expect.objectContaining({ headSha: "sha2", events: ["checks", "updated"] })]);
 });
 
 test("each event restarts the quiet period, but the window still closes at the maximum wait", async () => {
   const { clock, mails, coalescer } = harness();
-  await coalescer.accept(delivery("commented", "sha1"));
+  await coalescer.accept(delivery("checks", "sha1"));
   for (let i = 0; i < 5; i++) {
     await clock.advance(20_000);
-    await coalescer.accept(delivery("commented", "sha1"));
+    await coalescer.accept(delivery("checks", "sha1"));
   }
   await clock.advance(WINDOW.maxWaitMs - 5 * 20_000 - 1);
   expect(mails).toHaveLength(0);
