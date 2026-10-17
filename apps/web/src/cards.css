@@ -23,6 +23,7 @@
 :is(.repos, .settings) .rline { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 :is(.repos, .settings) .rline .w { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
 :is(.repos, .settings) .model { font: 500 11px var(--font); white-space: nowrap; color: var(--ink-mute); }
+:is(.repos, .settings) .key-acts { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
 :is(.repos, .settings) .rm-gap { width: 18px; flex: none; }
 /* Values inside sentences */
 :is(.repos, .settings) .val { font: 700 13px var(--mono); width: 64px; height: 28px; min-height: 0; padding: 0 8px; text-align: center; color: inherit; background: var(--white); border: 1px solid var(--rule-strong); border-radius: var(--r-sm); }
