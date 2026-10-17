@@ -131,12 +131,13 @@ describe("deriveState check output", () => {
 });
 
 describe("review check", () => {
-  test("keeps the author's turn on requested changes and names an answered review", () => {
+  test("keeps the author's turn on requested changes and waits on the reviewer once answered", () => {
     const requested = { ...noisy, changesRequested: ["maya"] };
     const review = (facts: PrFacts) => deriveState(facts, allOff).checks.find((check) => check.check === "no-changes-requested");
     expect(review(requested)).toMatchObject({ result: "fail", reason: "a reviewer requested changes" });
     expect(review({ ...requested, reviewAnswered: true })).toMatchObject({ result: "fail", reason: REVIEW_ANSWERED_REASON });
-    expect(deriveState({ ...requested, reviewAnswered: true }, allOff).state).toBe("needs-author-update");
+    expect(deriveState(requested, allOff).state).toBe("needs-author-update");
+    expect(deriveState({ ...requested, reviewAnswered: true }, allOff).state).toBe("awaiting-review");
   });
 });
 

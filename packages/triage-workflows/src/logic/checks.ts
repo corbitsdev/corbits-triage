@@ -269,8 +269,8 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
     }
     if (on("no-merge-conflicts") && facts.mergeable === false) add("no-merge-conflicts", "blocked", "merge conflicts with base");
     const requested = facts.changesRequested;
-    if (requested.length) add(NO_CHANGES_REQUESTED, "needs-author-update", "a reviewer requested changes");
     const requestedReason = facts.reviewAnswered ? REVIEW_ANSWERED_REASON : "a reviewer requested changes";
+    if (requested.length) add(NO_CHANGES_REQUESTED, facts.reviewAnswered ? "awaiting-review" : "needs-author-update", requestedReason);
     result(NO_CHANGES_REQUESTED, requested.length > 0, requested.length ? requestedReason : "no changes requested", requested.map((login) => `changes requested by @${login}`), {
       kind: "values",
       values: { changesRequested: requested.length },

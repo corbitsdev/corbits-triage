@@ -80,9 +80,10 @@ mergeability or CI.
 Built in: Max files changed, Max lines changed, Linked issue, No merge
 conflicts, CI green, No forbidden paths. Two run on every pull request without
 a switch: Not a draft (a draft is never ready) and No changes requested (a
-requested change waits on the author). The recommended forbidden paths are
-`vendor/**`, `node_modules/**` and `.github/**`: an author who edits the
-workflows can change which checks run and turn CI green.
+requested change fails and waits on the author, then on the reviewer once the
+author pushes or replies, until that reviewer reviews again). The recommended
+forbidden paths are `vendor/**`, `node_modules/**` and `.github/**`: an author
+who edits the workflows can change which checks run and turn CI green.
 
 A custom rule is a decision-model rule (below) or a text rule. A text rule
 fails when the title, the description or any commit message (the first 100,
